@@ -1,0 +1,6 @@
+[submodule "vendor/core"]
+	path = vendor/core
+	url = https://github.com/chatmail/core
+[submodule "vendor/deltachat-desktop"]
+	path = vendor/deltachat-desktop
+	url = https://github.com/deltachat/deltachat-desktop

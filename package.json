@@ -1,0 +1,12 @@
+{
+  "name": "slothfulchat-web",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Feasibility prototype: DeltaChat fully in the browser (WASM core + PWA). Not affiliated with Delta Chat.",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "apply-patches": "scripts/apply-patches.sh",
+    "update-patches": "scripts/update-patches.sh"
+  },
+  "packageManager": "pnpm@11.10.0"
+}
