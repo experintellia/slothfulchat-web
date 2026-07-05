@@ -1,0 +1,16 @@
+[package]
+name = "tokio-wasm-shim"
+version = "1.0.0"
+edition = "2021"
+license = "MPL-2.0"
+description = "tokio facade used by chatmail core under the dep name `tokio` (Cargo forbids per-target dependency sources, so the rename applies to all targets). Native: re-exports real tokio unchanged. wasm32: re-exports the tokio pieces that work on wasm and provides browser implementations for the rest."
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["full"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros", "io-util"] }
+wasmtimer = "0.4"
+wasm-bindgen-futures = "0.4"
+futures = "0.3"
+js-sys = "0.3"
