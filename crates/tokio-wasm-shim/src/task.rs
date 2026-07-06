@@ -195,6 +195,12 @@ impl<T: 'static> JoinSet<T> {
         }
     }
 
+    /// Aborts all tasks and waits for them to finish.
+    pub async fn shutdown(&mut self) {
+        self.abort_all();
+        while self.join_next().await.is_some() {}
+    }
+
     /// Awaits completion of all tasks, discarding cancelled ones.
     pub async fn join_all(mut self) -> Vec<T> {
         let mut results = Vec::new();

@@ -171,6 +171,13 @@ pub async fn try_exists(path: impl AsRef<Path>) -> io::Result<bool> {
     Ok(FS.lock().unwrap().contains_key(&normalize(path.as_ref())))
 }
 
+/// Synchronous existence check. `std::path::Path::exists()` always returns
+/// false on wasm32-unknown-unknown (std::fs is unsupported), so callers use
+/// this instead.
+pub fn sync_exists(path: impl AsRef<Path>) -> bool {
+    FS.lock().unwrap().contains_key(&normalize(path.as_ref()))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FileType {
     is_dir: bool,
@@ -366,10 +373,9 @@ impl OpenOptions {
 
     pub async fn open(&self, path: impl AsRef<Path>) -> io::Result<File> {
         let path = normalize(path.as_ref());
-        let exists = matches!(
-            FS.lock().unwrap().get(&path),
-            Some(Node::File { .. })
-        );
+        // Directories open fine too: core opens parent dirs only to sync_all()
+        // them, and sync is a no-op here.
+        let exists = FS.lock().unwrap().contains_key(&path);
         if self.create_new && exists {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,

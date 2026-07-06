@@ -19,3 +19,19 @@ The real deliverable of this prototype: per-milestone feasibility notes, patch c
 - rusqlite 0.37→0.40 bump: nearly API-compatible; one regression (`usize: ToSql` gone on 32-bit) fixed with an `as i64` cast in receive_imf.rs.
 - Native-only code gated per-site: net/http.rs + net/proxy.rs get parallel `_wasm.rs` stub files selected via `#[cfg]`+`#[path]` in net.rs; tls.rs non-strict branch falls back to rustls (ring provider on wasm); accounts.rs reuses the existing iOS no-lockfile cfg; tools.rs/blob.rs ReadDirStream sites cfg'd (shim ReadDir implements Stream itself).
 - **Runtime caveat found**: blob.rs `create_and_deduplicate` does blocking `std::fs` I/O inside `block_in_place` — compiles on wasm but `std::fs` errors at runtime there. Blob writes (attachments, avatars) need routing through the memfs sync API — M2/M4 work, not an M1 blocker (get_system_info doesn't touch it).
+- **Runtime fix #1**: `Accounts::new` failed "Config is read-only" — `Config::sync()` requires the fd-lock task except on iOS; extended the cfg to wasm.
+- **Runtime fix #2**: sync `Path::exists()` always returns false on wasm (std::fs unsupported) — added `tools::path_exists()` backed by the shim's `fs::sync_exists`; patched the 11 non-test call sites (accounts.rs, context.rs, tools.rs, imex.rs).
+- **Dev-profile wasm (57 MB with debuginfo) crashes the Chromium tab** during instantiation — use `--release` (opt-level=s + LTO) for anything loaded in a browser.
+
+### M1 VERDICT: PASSED (2026-07-06)
+`get_system_info` answers from chatmail core running fully inside a Chromium tab: core v2.54.0-dev, SQLite 3.53.0 (wasm), arch 32. Verified by `node scripts/smoke-core-wasm.mjs` (headless playwright against `packages/core-wasm/example/`).
+
+**Cost of the port so far — the feasibility number this prototype exists to produce:**
+- **4 patches, 853 diff lines** on upstream core (stop/go gate was ~20 patches; we're at a fifth of that)
+- 1 new facade crate (`crates/tokio-wasm-shim`, ~700 lines, reusable as-is)
+- 1 vendored dep fork (async-imap, one feature line)
+- 1 wasm-bindgen wrapper crate (~70 lines)
+- Release wasm: 17 MB unoptimized-for-size (wasm-opt / brotli would shrink it further; dev builds crash the tab, always use --release)
+- Build requirements: clang, rust stable + wasm32 target, wasm-pack
+
+Remaining risk moved to M3 (networking through WS proxy at runtime — async-imap uses real tokio timers on wasm which panic; needs the shim treatment or wasmtimer feature unification) and blob writes via std::fs (M2/M4).

@@ -1,0 +1,357 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Mon, 6 Jul 2026 00:57:11 +0000
+Subject: [PATCH 3/4] wasm: stub HTTP/proxy modules, rustls ring provider
+
+- net/http_wasm.rs, net/proxy_wasm.rs: compile-compatible stubs selected
+  via #[cfg]+#[path]; every operation errors at runtime (fetch()/WS proxy
+  is the upgrade path)
+- tls: default_provider() helper -> aws-lc-rs native, ring on wasm;
+  non-strict TLS falls back to rustls (no native-tls on wasm)
+- session: gate native-tls/socks5/shadowsocks SessionStream impls
+- qr: shadowsocks QR decoding errors on wasm
+---
+ src/net.rs            |  8 +++++
+ src/net/http_wasm.rs  | 75 +++++++++++++++++++++++++++++++++++++++++++
+ src/net/proxy_wasm.rs | 45 ++++++++++++++++++++++++++
+ src/net/session.rs    |  4 +++
+ src/net/tls.rs        | 65 +++++++++++++++++++++++++++----------
+ src/net/tls/danger.rs |  8 ++---
+ src/qr.rs             |  7 ++++
+ 7 files changed, 191 insertions(+), 21 deletions(-)
+ create mode 100644 src/net/http_wasm.rs
+ create mode 100644 src/net/proxy_wasm.rs
+
+diff --git a/src/net.rs b/src/net.rs
+index 01cf1c03c..254a1ac68 100644
+--- a/src/net.rs
++++ b/src/net.rs
+@@ -17,7 +17,15 @@
+ use crate::tools::time;
+ 
+ pub(crate) mod dns;
++#[cfg(not(target_arch = "wasm32"))]
+ pub(crate) mod http;
++#[cfg(target_arch = "wasm32")]
++#[path = "net/http_wasm.rs"]
++pub(crate) mod http;
++#[cfg(not(target_arch = "wasm32"))]
++pub(crate) mod proxy;
++#[cfg(target_arch = "wasm32")]
++#[path = "net/proxy_wasm.rs"]
+ pub(crate) mod proxy;
+ pub(crate) mod session;
+ pub(crate) mod tls;
+diff --git a/src/net/http_wasm.rs b/src/net/http_wasm.rs
+new file mode 100644
+index 000000000..2319619db
+--- /dev/null
++++ b/src/net/http_wasm.rs
+@@ -0,0 +1,75 @@
++//! wasm32 stub for the HTTP module.
++//!
++//! The native implementation uses hyper over raw TCP. On wasm every request
++//! errors at runtime; routing HTTP through `fetch()` or the WebSocket proxy
++//! is the upgrade path (M3+).
++
++use anyhow::{Result, bail};
++use serde::Serialize;
++
++use crate::context::Context;
++
++/// HTTP(S) GET response.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct Response {
++    /// Response body.
++    pub blob: Vec<u8>,
++
++    /// MIME type extracted from the `Content-Type` header, if any.
++    pub mimetype: Option<String>,
++
++    /// Encoding extracted from the `Content-Type` header, if any.
++    pub encoding: Option<String>,
++}
++
++/// Retrieves the text contents of URL using HTTP GET request.
++pub async fn read_url(_context: &Context, _url: &str) -> Result<String> {
++    bail!("HTTP requests are not available on wasm yet")
++}
++
++/// Retrieves the text contents of URL using HTTP GET request.
++pub(crate) async fn read_url_with_tls(
++    _context: &Context,
++    _url: &str,
++    _strict_tls: bool,
++) -> Result<String> {
++    bail!("HTTP requests are not available on wasm yet")
++}
++
++/// Removes expired cache entries.
++pub(crate) async fn http_cache_cleanup(_context: &Context) -> Result<()> {
++    Ok(())
++}
++
++/// Retrieves the binary contents of URL using HTTP GET request.
++pub async fn read_url_blob(_context: &Context, _url: &str) -> Result<Response> {
++    bail!("HTTP requests are not available on wasm yet")
++}
++
++/// Retrieves the binary contents of URL using HTTP GET request.
++pub(crate) async fn read_url_blob_with_tls(
++    _context: &Context,
++    _url: &str,
++    _strict_tls: bool,
++) -> Result<Response> {
++    bail!("HTTP requests are not available on wasm yet")
++}
++
++/// Sends an empty POST request to the URL.
++pub(crate) async fn post_empty(_context: &Context, _url: &str) -> Result<(String, bool)> {
++    bail!("HTTP requests are not available on wasm yet")
++}
++
++/// Sends a POST request with given string as body.
++pub(crate) async fn post_string(_context: &Context, _url: &str, _body: String) -> Result<bool> {
++    bail!("HTTP requests are not available on wasm yet")
++}
++
++/// Posts the given form to the URL.
++pub(crate) async fn post_form<T: Serialize + ?Sized>(
++    _context: &Context,
++    _url: &str,
++    _form: &T,
++) -> Result<bytes::Bytes> {
++    bail!("HTTP requests are not available on wasm yet")
++}
+diff --git a/src/net/proxy_wasm.rs b/src/net/proxy_wasm.rs
+new file mode 100644
+index 000000000..152613428
+--- /dev/null
++++ b/src/net/proxy_wasm.rs
+@@ -0,0 +1,45 @@
++//! wasm32 stub for the proxy module.
++//!
++//! Proxies (SOCKS5/shadowsocks/HTTP) need raw TCP, which browsers don't have.
++//! `ProxyConfig` is an uninhabited enum: `load()` always yields `None`, so
++//! `&self` methods are unreachable.
++
++use anyhow::{Result, bail};
++
++use crate::context::Context;
++use crate::net::session::SessionStream;
++
++/// Default SOCKS5 port.
++pub const DEFAULT_SOCKS_PORT: u16 = 1080;
++
++/// Proxy configuration (never instantiable on wasm).
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum ProxyConfig {}
++
++impl ProxyConfig {
++    /// Creates a new proxy configuration by parsing given proxy URL.
++    pub fn from_url(_url: &str) -> Result<Self> {
++        bail!("proxies are not supported on wasm")
++    }
++
++    /// Serializes the proxy configuration into an URL.
++    pub fn to_url(&self) -> String {
++        match *self {}
++    }
++
++    /// Reads proxy configuration from the database.
++    pub async fn load(_context: &Context) -> Result<Option<Self>> {
++        Ok(None)
++    }
++
++    /// Connects to the target via the proxy.
++    pub(crate) async fn connect(
++        &self,
++        _context: &Context,
++        _target_host: &str,
++        _target_port: u16,
++        _load_dns_cache: bool,
++    ) -> Result<Box<dyn SessionStream>> {
++        match *self {}
++    }
++}
+diff --git a/src/net/session.rs b/src/net/session.rs
+index 981e01fd4..dd1a18505 100644
+--- a/src/net/session.rs
++++ b/src/net/session.rs
+@@ -1,4 +1,5 @@
+ use anyhow::Result;
++#[cfg(not(target_arch = "wasm32"))]
+ use fast_socks5::client::Socks5Stream;
+ use std::net::SocketAddr;
+ use std::pin::Pin;
+@@ -26,6 +27,7 @@ fn peer_addr(&self) -> Result<SocketAddr> {
+         self.as_ref().peer_addr()
+     }
+ }
++#[cfg(not(target_arch = "wasm32"))]
+ impl<T: SessionStream> SessionStream for async_native_tls::TlsStream<T> {
+     fn set_read_timeout(&mut self, timeout: Option<Duration>) {
+         self.get_mut().set_read_timeout(timeout);
+@@ -70,6 +72,7 @@ fn peer_addr(&self) -> Result<SocketAddr> {
+         Ok(self.get_ref().peer_addr()?)
+     }
+ }
++#[cfg(not(target_arch = "wasm32"))]
+ impl<T: SessionStream> SessionStream for Socks5Stream<T> {
+     fn set_read_timeout(&mut self, timeout: Option<Duration>) {
+         self.get_socket_mut().set_read_timeout(timeout)
+@@ -79,6 +82,7 @@ fn peer_addr(&self) -> Result<SocketAddr> {
+         self.get_socket_ref().peer_addr()
+     }
+ }
++#[cfg(not(target_arch = "wasm32"))]
+ impl<T: SessionStream> SessionStream for shadowsocks::ProxyClientStream<T> {
+     fn set_read_timeout(&mut self, timeout: Option<Duration>) {
+         self.get_mut().set_read_timeout(timeout)
+diff --git a/src/net/tls.rs b/src/net/tls.rs
+index 870fe1a8a..c868c7634 100644
+--- a/src/net/tls.rs
++++ b/src/net/tls.rs
+@@ -16,6 +16,18 @@
+ mod danger;
+ use danger::CustomCertificateVerifier;
+ 
++/// Default rustls crypto provider: aws-lc-rs does not build for wasm32; ring does.
++#[cfg(not(target_arch = "wasm32"))]
++pub(crate) fn default_provider() -> rustls::crypto::CryptoProvider {
++    rustls::crypto::aws_lc_rs::default_provider()
++}
++
++/// Default rustls crypto provider: aws-lc-rs does not build for wasm32; ring does.
++#[cfg(target_arch = "wasm32")]
++pub(crate) fn default_provider() -> rustls::crypto::CryptoProvider {
++    rustls::crypto::ring::default_provider()
++}
++
+ mod spki;
+ pub use spki::SpkiHashStore;
+ 
+@@ -49,20 +61,41 @@ pub async fn wrap_tls<'a>(
+         // We use native_tls because it accepts 1024-bit RSA keys.
+         // Rustls does not support them even if
+         // certificate checks are disabled: <https://github.com/rustls/rustls/issues/234>.
+-        let alpns = if alpn.is_empty() {
+-            Box::from([])
+-        } else {
+-            Box::from([alpn])
+-        };
+-        let tls = async_native_tls::TlsConnector::new()
+-            .min_protocol_version(Some(async_native_tls::Protocol::Tlsv12))
+-            .use_sni(use_sni)
+-            .request_alpns(&alpns)
+-            .danger_accept_invalid_hostnames(true)
+-            .danger_accept_invalid_certs(true);
+-        let tls_stream = tls.connect(hostname, stream).await?;
+-        let boxed_stream: Box<dyn SessionStream> = Box::new(tls_stream);
+-        Ok(boxed_stream)
++        #[cfg(not(target_arch = "wasm32"))]
++        {
++            let alpns = if alpn.is_empty() {
++                Box::from([])
++            } else {
++                Box::from([alpn])
++            };
++            let tls = async_native_tls::TlsConnector::new()
++                .min_protocol_version(Some(async_native_tls::Protocol::Tlsv12))
++                .use_sni(use_sni)
++                .request_alpns(&alpns)
++                .danger_accept_invalid_hostnames(true)
++                .danger_accept_invalid_certs(true);
++            let tls_stream = tls.connect(hostname, stream).await?;
++            let boxed_stream: Box<dyn SessionStream> = Box::new(tls_stream);
++            Ok(boxed_stream)
++        }
++        // No native-tls on wasm; accept the stricter rustls behavior instead
++        // of accepting invalid certificates.
++        #[cfg(target_arch = "wasm32")]
++        {
++            let tls_stream = wrap_rustls(
++                hostname,
++                port,
++                use_sni,
++                alpn,
++                stream,
++                tls_session_store,
++                spki_hash_store,
++                sql,
++            )
++            .await?;
++            let boxed_stream: Box<dyn SessionStream> = Box::new(tls_stream);
++            Ok(boxed_stream)
++        }
+     }
+ }
+ 
+@@ -126,9 +159,7 @@ pub async fn wrap_rustls<'a>(
+     let root_cert_store =
+         rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+ 
+-    let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(
+-        rustls::crypto::aws_lc_rs::default_provider(),
+-    ))
++    let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(default_provider()))
+     .with_safe_default_protocol_versions()?
+     .with_root_certificates(root_cert_store)
+     .with_no_client_auth();
+diff --git a/src/net/tls/danger.rs b/src/net/tls/danger.rs
+index 809dd820d..4063fbb6f 100644
+--- a/src/net/tls/danger.rs
++++ b/src/net/tls/danger.rs
+@@ -51,7 +51,7 @@ fn verify_server_cert(
+ 
+         let spki = parsed_certificate.subject_public_key_info();
+ 
+-        let provider = rustls::crypto::aws_lc_rs::default_provider();
++        let provider = super::default_provider();
+ 
+         if let ServerName::DnsName(dns_name) = server_name
+             && dns_name.as_ref().starts_with("_")
+@@ -97,7 +97,7 @@ fn verify_tls12_signature(
+         cert: &CertificateDer<'_>,
+         dss: &rustls::DigitallySignedStruct,
+     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+-        let provider = rustls::crypto::aws_lc_rs::default_provider();
++        let provider = super::default_provider();
+         let supported_schemes = &provider.signature_verification_algorithms;
+         rustls::crypto::verify_tls12_signature(message, cert, dss, supported_schemes)
+     }
+@@ -108,13 +108,13 @@ fn verify_tls13_signature(
+         cert: &CertificateDer<'_>,
+         dss: &rustls::DigitallySignedStruct,
+     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+-        let provider = rustls::crypto::aws_lc_rs::default_provider();
++        let provider = super::default_provider();
+         let supported_schemes = &provider.signature_verification_algorithms;
+         rustls::crypto::verify_tls13_signature(message, cert, dss, supported_schemes)
+     }
+ 
+     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+-        let provider = rustls::crypto::aws_lc_rs::default_provider();
++        let provider = super::default_provider();
+         provider
+             .signature_verification_algorithms
+             .supported_schemes()
+diff --git a/src/qr.rs b/src/qr.rs
+index 9a0724955..981087c11 100644
+--- a/src/qr.rs
++++ b/src/qr.rs
+@@ -763,7 +763,14 @@ fn decode_tg_socks_proxy(_context: &Context, qr: &str) -> Result<Qr> {
+     Ok(Qr::Proxy { url, host, port })
+ }
+ 
++/// Decodes `ss://` URLs for Shadowsocks proxies (unsupported on wasm).
++#[cfg(target_arch = "wasm32")]
++fn decode_shadowsocks_proxy(_qr: &str) -> Result<Qr> {
++    Err(anyhow!("Shadowsocks proxies are not supported on wasm"))
++}
++
+ /// Decodes `ss://` URLs for Shadowsocks proxies.
++#[cfg(not(target_arch = "wasm32"))]
+ fn decode_shadowsocks_proxy(qr: &str) -> Result<Qr> {
+     let server_config = shadowsocks::config::ServerConfig::from_url(qr)?;
+     let addr = server_config.addr();

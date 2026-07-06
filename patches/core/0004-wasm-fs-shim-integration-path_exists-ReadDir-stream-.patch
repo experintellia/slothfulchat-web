@@ -1,0 +1,277 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Mon, 6 Jul 2026 00:57:11 +0000
+Subject: [PATCH 4/4] =?UTF-8?q?wasm:=20fs=20shim=20integration=20=E2=80=94?=
+ =?UTF-8?q?=20path=5Fexists,=20ReadDir=20stream,=20no=20lockfile,=20tar=20?=
+ =?UTF-8?q?stubs?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- tools::path_exists(): sync Path::exists() always returns false on wasm
+  (std::fs unsupported); route through the fs shim's in-memory table
+- accounts: reuse the iOS no-lockfile cfg for wasm (fd-lock unavailable;
+  Config::sync() no longer demands the lock task)
+- tools/blob: ReadDirStream sites cfg'd (shim ReadDir implements Stream)
+- imex: backup import/export bail on wasm until file-based IMEX (tar
+  needs tokio/fs); key import/export unaffected
+---
+ src/accounts.rs | 21 +++++++++++----------
+ src/blob.rs     |  8 +++++++-
+ src/context.rs  |  2 +-
+ src/imex.rs     | 36 +++++++++++++++++++++++++++++++++---
+ src/tools.rs    | 23 +++++++++++++++++++++--
+ 5 files changed, 73 insertions(+), 17 deletions(-)
+
+diff --git a/src/accounts.rs b/src/accounts.rs
+index c825c2d15..0a8e9f737 100644
+--- a/src/accounts.rs
++++ b/src/accounts.rs
+@@ -87,12 +87,12 @@ fn get_id(&self) -> u32 {
+     /// Creates them if the directory doesn't exist, or if it exists but is empty.
+     /// Errors if the directory exists with files but no config.
+     async fn ensure_accounts_dir(dir: &Path) -> Result<()> {
+-        if !dir.exists() {
++        if !crate::tools::path_exists(&dir) {
+             fs::create_dir_all(dir)
+                 .await
+                 .context("Failed to create folder")?;
+             Config::new(dir).await?;
+-        } else if !dir.join(CONFIG_NAME).exists() {
++        } else if !crate::tools::path_exists(dir.join(CONFIG_NAME)) {
+             let mut rd = fs::read_dir(dir).await?;
+             ensure!(rd.next_entry().await?.is_none(), "{dir:?} is not empty");
+             Config::new(dir).await?;
+@@ -103,10 +103,10 @@ async fn ensure_accounts_dir(dir: &Path) -> Result<()> {
+     /// Opens an existing accounts structure. Will error if the folder doesn't exist,
+     /// no account exists and no config exists.
+     async fn open(events: Events, dir: PathBuf, writable: bool) -> Result<Self> {
+-        ensure!(dir.exists(), "directory does not exist");
++        ensure!(crate::tools::path_exists(&dir), "directory does not exist");
+ 
+         let config_file = dir.join(CONFIG_NAME);
+-        ensure!(config_file.exists(), "{config_file:?} does not exist");
++        ensure!(crate::tools::path_exists(&config_file), "{config_file:?} does not exist");
+ 
+         let config = Config::from_file(config_file, writable).await?;
+ 
+@@ -238,8 +238,8 @@ pub async fn migrate_account(&mut self, dbfile: PathBuf) -> Result<u32> {
+         let blobdir = Context::derive_blobdir(&dbfile);
+         let walfile = Context::derive_walfile(&dbfile);
+ 
+-        ensure!(dbfile.exists(), "no database found: {}", dbfile.display());
+-        ensure!(blobdir.exists(), "no blobdir found: {}", blobdir.display());
++        ensure!(crate::tools::path_exists(&dbfile), "no database found: {}", dbfile.display());
++        ensure!(crate::tools::path_exists(&blobdir), "no blobdir found: {}", blobdir.display());
+ 
+         let old_id = self.config.get_selected_account();
+ 
+@@ -264,7 +264,7 @@ pub async fn migrate_account(&mut self, dbfile: PathBuf) -> Result<u32> {
+             try_many_times(|| fs::rename(&blobdir, &new_blobdir))
+                 .await
+                 .context("failed to rename blobdir")?;
+-            if walfile.exists() {
++            if crate::tools::path_exists(&walfile) {
+                 fs::rename(&walfile, &new_walfile)
+                     .await
+                     .context("failed to rename walfile")?;
+@@ -616,15 +616,16 @@ fn drop(&mut self) {
+ }
+ 
+ impl Config {
+-    #[cfg(target_os = "ios")]
++    #[cfg(any(target_os = "ios", target_arch = "wasm32"))]
+     async fn create_lock_task(_dir: PathBuf) -> Result<Option<JoinHandle<anyhow::Result<()>>>> {
+         // Do not lock accounts.toml on iOS.
+         // This results in 0xdead10cc crashes on suspend.
+         // iOS itself ensures that multiple instances of Delta Chat are not running.
++        // On wasm there is no fd-lock; single-tab usage is assumed.
+         Ok(None)
+     }
+ 
+-    #[cfg(not(target_os = "ios"))]
++    #[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
+     #[expect(clippy::arithmetic_side_effects)]
+     async fn create_lock_task(dir: PathBuf) -> Result<Option<JoinHandle<anyhow::Result<()>>>> {
+         let lockfile = dir.join(LOCKFILE_NAME);
+@@ -704,7 +705,7 @@ pub async fn new(dir: &Path) -> Result<Self> {
+     /// Takes a mutable reference because the saved file is a part of the `Config` state. This
+     /// protects from parallel calls resulting to a wrong file contents.
+     async fn sync(&mut self) -> Result<()> {
+-        #[cfg(not(target_os = "ios"))]
++        #[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
+         ensure!(
+             !self
+                 .lock_task
+diff --git a/src/blob.rs b/src/blob.rs
+index a60ebe65c..20267a913 100644
+--- a/src/blob.rs
++++ b/src/blob.rs
+@@ -14,6 +14,7 @@
+ use image::{codecs::jpeg::JpegEncoder, metadata::Orientation};
+ use num_traits::{FromPrimitive, cast};
+ use tokio::{fs, task};
++#[cfg(not(target_arch = "wasm32"))]
+ use tokio_stream::wrappers::ReadDirStream;
+ 
+ use crate::config::Config;
+@@ -595,7 +596,12 @@ pub(crate) struct BlobDirContents<'a> {
+ impl<'a> BlobDirContents<'a> {
+     pub(crate) async fn new(context: &'a Context) -> Result<BlobDirContents<'a>> {
+         let readdir = fs::read_dir(context.get_blobdir()).await?;
+-        let inner = ReadDirStream::new(readdir)
++        // The wasm fs shim's ReadDir implements Stream itself.
++        #[cfg(target_arch = "wasm32")]
++        let readdir_stream = readdir;
++        #[cfg(not(target_arch = "wasm32"))]
++        let readdir_stream = ReadDirStream::new(readdir);
++        let inner = readdir_stream
+             .filter_map(|entry| async move {
+                 match entry {
+                     Ok(entry) => Some(entry),
+diff --git a/src/context.rs b/src/context.rs
+index 3b94c4e02..9f31e0caa 100644
+--- a/src/context.rs
++++ b/src/context.rs
+@@ -402,7 +402,7 @@ pub async fn new_closed(
+         blob_fname.push(dbfile.file_name().unwrap_or_default());
+         blob_fname.push("-blobs");
+         let blobdir = dbfile.with_file_name(blob_fname);
+-        if !blobdir.exists() {
++        if !crate::tools::path_exists(&blobdir) {
+             tokio::fs::create_dir_all(&blobdir).await?;
+         }
+         let context = Context::with_blobdir(
+diff --git a/src/imex.rs b/src/imex.rs
+index e93c98a35..3e901edc2 100644
+--- a/src/imex.rs
++++ b/src/imex.rs
+@@ -11,6 +11,7 @@
+ 
+ use tokio::fs::{self, File};
+ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
++#[cfg(not(target_arch = "wasm32"))]
+ use tokio_tar::Archive;
+ 
+ use crate::blob::BlobDirContents;
+@@ -23,8 +24,8 @@
+ use crate::qr::DCBACKUP_VERSION;
+ use crate::sql;
+ use crate::tools::{
+-    TempPathGuard, create_folder, delete_file, get_filesuffix_lc, read_file, time, usize_to_u64,
+-    write_file,
++    TempPathGuard, create_folder, delete_file, get_filesuffix_lc, path_exists, read_file, time,
++    usize_to_u64, write_file,
+ };
+ 
+ mod transfer;
+@@ -308,9 +309,22 @@ fn poll_read(
+     }
+ }
+ 
++// tar (astral-tokio-tar) requires tokio/fs, which does not exist on wasm.
++// Porting backup import/export is deferred until file-based IMEX lands (M4).
++#[cfg(target_arch = "wasm32")]
++async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
++    _context: &Context,
++    _backup_file: R,
++    _file_size: u64,
++    _passphrase: String,
++) -> (Result<()>,) {
++    (Err(format_err!("backup import is not supported on wasm yet")),)
++}
++
+ // This function returns a tuple (Result<()>,) rather than Result<()>
+ // so that we don't accidentally early-return with `?`
+ // and forget to cleanup.
++#[cfg(not(target_arch = "wasm32"))]
+ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+     context: &Context,
+     backup_file: R,
+@@ -434,7 +448,7 @@ fn get_next_backup_path(
+         let mut destfile = folder.clone();
+         destfile.push(format!("{stem}-{i:02}-{addr}.tar"));
+ 
+-        if !tempdbfile.exists() && !tempfile.exists() && !destfile.exists() {
++        if !path_exists(&tempdbfile) && !path_exists(&tempfile) && !path_exists(&destfile) {
+             return Ok((tempdbfile, tempfile, destfile));
+         }
+     }
+@@ -553,7 +567,23 @@ fn poll_shutdown(
+     }
+ }
+ 
++/// Exports the database and blobs into a stream (unsupported on wasm, see above).
++#[cfg(target_arch = "wasm32")]
++pub(crate) async fn export_backup_stream<'a, W>(
++    _context: &'a Context,
++    _temp_db_path: &Path,
++    _blobdir: BlobDirContents<'a>,
++    _writer: W,
++    _file_size: u64,
++) -> Result<()>
++where
++    W: tokio::io::AsyncWrite + tokio::io::AsyncWriteExt + Unpin + Send + 'static,
++{
++    bail!("backup export is not supported on wasm yet")
++}
++
+ /// Exports the database and blobs into a stream.
++#[cfg(not(target_arch = "wasm32"))]
+ pub(crate) async fn export_backup_stream<'a, W>(
+     context: &'a Context,
+     temp_db_path: &Path,
+diff --git a/src/tools.rs b/src/tools.rs
+index cfa31781a..bd1939b4c 100644
+--- a/src/tools.rs
++++ b/src/tools.rs
+@@ -355,7 +355,7 @@ pub(crate) async fn get_filebytes(context: &Context, path: &Path) -> Result<u64>
+ 
+ pub(crate) async fn delete_file(context: &Context, path: &Path) -> Result<()> {
+     let path_abs = get_abs_path(context, path);
+-    if !path_abs.exists() {
++    if !path_exists(&path_abs) {
+         bail!("path {} does not exist", path_abs.display());
+     }
+     if !path_abs.is_file() {
+@@ -443,7 +443,7 @@ fn as_ref(&self) -> &Path {
+ 
+ pub(crate) async fn create_folder(context: &Context, path: &Path) -> Result<(), io::Error> {
+     let path_abs = get_abs_path(context, path);
+-    if !path_abs.exists() {
++    if !path_exists(&path_abs) {
+         match fs::create_dir_all(path_abs).await {
+             Ok(_) => Ok(()),
+             Err(err) => {
+@@ -534,12 +534,31 @@ pub fn open_file_std(context: &Context, path: impl AsRef<Path>) -> Result<std::f
+ 
+ /// Reads directory and returns a vector of directory entries.
+ pub async fn read_dir(path: &Path) -> Result<Vec<fs::DirEntry>> {
++    #[cfg(not(target_arch = "wasm32"))]
+     let res = tokio_stream::wrappers::ReadDirStream::new(fs::read_dir(path).await?)
+         .try_collect()
+         .await?;
++    // The wasm fs shim's ReadDir implements Stream itself.
++    #[cfg(target_arch = "wasm32")]
++    let res = fs::read_dir(path).await?.try_collect().await?;
+     Ok(res)
+ }
+ 
++/// Returns whether the path exists.
++///
++/// `Path::exists()` uses sync std::fs, which always errors on
++/// wasm32-unknown-unknown; the wasm fs shim tracks files in memory instead.
++pub(crate) fn path_exists(path: impl AsRef<Path>) -> bool {
++    #[cfg(not(target_arch = "wasm32"))]
++    {
++        path.as_ref().exists()
++    }
++    #[cfg(target_arch = "wasm32")]
++    {
++        fs::sync_exists(path.as_ref())
++    }
++}
++
+ pub(crate) fn time() -> i64 {
+     SystemTime::now()
+         .duration_since(SystemTime::UNIX_EPOCH)

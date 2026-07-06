@@ -1,0 +1,171 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Mon, 6 Jul 2026 00:57:11 +0000
+Subject: [PATCH 1/4] wasm: target-gate native-only deps, tokio facade,
+ rusqlite 0.40
+
+- tokio -> tokio-wasm-shim facade (real tokio on native, browser shims on
+  wasm32); Cargo requires one canonical source per dep name across targets
+- native-only: astral-tokio-tar, async-native-tls, fast-socks5, fd-lock,
+  http-body-util, hyper, hyper-util, shadowsocks; per-target features for
+  async_zip, tokio-rustls (ring on wasm), tokio-stream (no fs on wasm)
+- rusqlite 0.37 -> 0.40: first-class wasm32 support via sqlite-wasm-rs
+  (ffi-sqlite-wasm-rs default feature); fallible_uint for u64/usize SQL
+- wasm: getrandom js backends, uuid js feature
+- [patch.crates-io] async-imap -> vendored fork without unused tokio/net
+---
+ .cargo/config.toml           |  3 +++
+ Cargo.toml                   | 49 +++++++++++++++++++++++++-----------
+ deltachat-jsonrpc/Cargo.toml |  5 ++--
+ 3 files changed, 40 insertions(+), 17 deletions(-)
+
+diff --git a/.cargo/config.toml b/.cargo/config.toml
+index e2e5fa90e..e443b86fd 100644
+--- a/.cargo/config.toml
++++ b/.cargo/config.toml
+@@ -9,3 +9,6 @@
+ # invoking `cargo test` threads are allowed to have a large enough
+ # stack size without needing to use an optimised build.
+ RUST_MIN_STACK = "8388608"
++
++[target.wasm32-unknown-unknown]
++rustflags = ["--cfg", 'getrandom_backend="wasm_js"']
+diff --git a/Cargo.toml b/Cargo.toml
+index e4eba3b68..0a752768c 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -45,9 +45,7 @@ anyhow = { workspace = true }
+ async-broadcast = "0.7.2"
+ async-channel = { workspace = true }
+ async-imap = { version = "0.11.1", default-features = false, features = ["runtime-tokio", "compress"] }
+-async-native-tls = { version = "0.6", default-features = false, features = ["runtime-tokio"] }
+ async-smtp = { version = "0.10.2", default-features = false, features = ["runtime-tokio"] }
+-async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio-fs"] }
+ base64 = { workspace = true }
+ blake3 = "1.8.2"
+ brotli = { version = "8", default-features=false, features = ["std"] }
+@@ -56,15 +54,10 @@ chrono = { workspace = true, features = ["alloc", "clock", "std"] }
+ colorutils-rs = { version = "0.8.0", default-features = false }
+ data-encoding = "2.9.0"
+ escaper = "0.1"
+-fast-socks5 = "1"
+-fd-lock = "4"
+ futures-lite = { workspace = true }
+ futures = { workspace = true }
+ hex = "0.4.0"
+-http-body-util = "0.1.3"
+ humansize = "2"
+-hyper = "1"
+-hyper-util = "0.1.16"
+ image = { version = "0.25.6", default-features=false, features = ["gif", "jpeg", "ico", "png", "pnm", "webp", "bmp"] }
+ iroh-gossip = { version = "0.35", default-features = false, features = ["net"] }
+ iroh = { version = "0.35", default-features = false }
+@@ -85,7 +78,7 @@ quick-xml = { version = "0.41", features = ["escape-html"] }
+ rand-old = { package = "rand", version = "0.8" }
+ rand = { workspace = true }
+ regex = { workspace = true }
+-rusqlite = { workspace = true, features = ["sqlcipher"] }
++rusqlite = { workspace = true, features = ["sqlcipher", "fallible_uint"] }
+ sanitize-filename = { workspace = true }
+ sdp = "0.17.1"
+ serde_json = { workspace = true }
+@@ -93,7 +86,6 @@ serde_urlencoded = "0.7.1"
+ serde = { workspace = true, features = ["derive"] }
+ sha-1 = "0.10"
+ sha2 = "0.10"
+-shadowsocks = { version = "1.23.1", default-features = false, features = ["aead-cipher", "aead-cipher-2022"] }
+ smallvec = "1.15.1"
+ strum = "0.28"
+ strum_macros = "0.28"
+@@ -101,11 +93,11 @@ tagger = "4.3.4"
+ textwrap = "0.16.2"
+ thiserror = { workspace = true }
+ tokio-io-timeout = "1.2.1"
+-tokio-rustls = { version = "0.26.2", default-features = false, features = ["aws-lc-rs", "tls12"] }
+-tokio-stream = { version = "0.1.17", features = ["fs"] }
+-astral-tokio-tar = { version = "0.6.3", default-features = false }
++# tokio facade: real tokio on native, browser shims on wasm32.
++# Cargo forbids per-target dependency sources, hence one entry for both targets.
++# Path is relative to the build/ worktree in the slothfulchat-web repo.
++tokio = { package = "tokio-wasm-shim", path = "../../crates/tokio-wasm-shim" }
+ tokio-util = { workspace = true }
+-tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
+ toml = "0.9"
+ tracing = "0.1.41"
+ url = "2"
+@@ -113,6 +105,29 @@ uuid = { version = "1", features = ["serde", "v4"] }
+ walkdir = "2.5.0"
+ webpki-roots = "0.26.8"
+ 
++[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
++astral-tokio-tar = { version = "0.6.3", default-features = false }
++async-native-tls = { version = "0.6", default-features = false, features = ["runtime-tokio"] }
++async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio-fs"] }
++fast-socks5 = "1"
++fd-lock = "4"
++http-body-util = "0.1.3"
++hyper = "1"
++hyper-util = "0.1.16"
++shadowsocks = { version = "1.23.1", default-features = false, features = ["aead-cipher", "aead-cipher-2022"] }
++tokio-rustls = { version = "0.26.2", default-features = false, features = ["aws-lc-rs", "tls12"] }
++tokio-stream = { version = "0.1.17", features = ["fs"] }
++
++[target.'cfg(target_arch = "wasm32")'.dependencies]
++async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio"] }
++tokio-rustls = { version = "0.26.2", default-features = false, features = ["ring", "tls12"] }
++tokio-stream = { version = "0.1.17" }
++# transitive getrandom needs its JS backend switched on for wasm
++getrandom = { version = "0.3", features = ["wasm_js"] }
++getrandom-old = { package = "getrandom", version = "0.2", features = ["js"] }
++js-sys = "0.3"
++uuid = { version = "1", features = ["js"] }
++
+ [dev-dependencies]
+ anyhow = { workspace = true, features = ["backtrace"] } # Enable `backtrace` feature in tests.
+ criterion = { version = "0.8.1", features = ["async_tokio"] }
+@@ -123,7 +138,6 @@ pretty_assertions = "1.4.1"
+ proptest = { version = "1", default-features = false, features = ["std"] }
+ tempfile = { workspace = true }
+ testdir = "0.9.3"
+-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+ 
+ [workspace]
+ members = [
+@@ -194,7 +208,7 @@ nu-ansi-term = "0.50"
+ num-traits = "0.2"
+ rand = "0.9"
+ regex = "1.12"
+-rusqlite = "0.37"
++rusqlite = "0.40"
+ sanitize-filename = "0.6"
+ serde = "1.0"
+ serde_json = "1"
+@@ -215,3 +229,8 @@ vendored = [
+ 
+ [lints.rust]
+ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
++
++[patch.crates-io]
++# fork that drops async-imap's unused tokio/net feature (breaks wasm32);
++# path is relative to the build/ worktree in the slothfulchat-web repo
++async-imap = { path = "../../vendor-crates/async-imap" }
+diff --git a/deltachat-jsonrpc/Cargo.toml b/deltachat-jsonrpc/Cargo.toml
+index 7dd46bcb5..a41392aa9 100644
+--- a/deltachat-jsonrpc/Cargo.toml
++++ b/deltachat-jsonrpc/Cargo.toml
+@@ -17,12 +17,13 @@ async-channel = { workspace = true }
+ serde_json = { workspace = true }
+ yerpc = { workspace = true, features = ["anyhow_expose", "openrpc"] }
+ typescript-type-def = { version = "0.5.13", features = ["json_value"] }
+-tokio = { workspace = true }
+ sanitize-filename = { workspace = true }
+ base64 = { workspace = true }
++# tokio facade: real tokio on native, browser shims on wasm32.
++# Path is relative to the build/ worktree in the slothfulchat-web repo.
++tokio = { package = "tokio-wasm-shim", path = "../../../crates/tokio-wasm-shim" }
+ 
+ [dev-dependencies]
+-tokio = { workspace = true, features = ["full", "rt-multi-thread"] }
+ tempfile = { workspace = true }
+ futures = { workspace = true }
+ 

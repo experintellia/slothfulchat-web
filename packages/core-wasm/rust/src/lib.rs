@@ -1,0 +1,65 @@
+//! Browser entry point for chatmail core.
+//!
+//! Mirrors deltachat-rpc-server, with stdio replaced by a JS callback
+//! (core → JS) and [`DeltaChat::receive`] (JS → core). Both sides carry
+//! plain JSON-RPC strings, so the standard `@deltachat/jsonrpc-client`
+//! TypeScript package works on top unchanged.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use deltachat_jsonrpc::api::{Accounts, CommandApi};
+use futures_lite::stream::StreamExt;
+use tokio::sync::RwLock;
+use wasm_bindgen::prelude::*;
+use yerpc::{RpcClient, RpcSession};
+
+#[wasm_bindgen]
+pub struct DeltaChat {
+    session: RpcSession<CommandApi>,
+}
+
+/// Starts chatmail core with the accounts directory at `/accounts` (in-memory
+/// filesystem) and returns a handle speaking JSON-RPC.
+///
+/// `on_message` is called with every outgoing JSON-RPC message (responses and
+/// event notifications) as a string.
+#[wasm_bindgen]
+pub async fn init(on_message: js_sys::Function) -> Result<DeltaChat, JsValue> {
+    console_error_panic_hook::set_once();
+    let _ = console_log::init_with_level(log::Level::Info);
+
+    let accounts = Accounts::new(PathBuf::from("/accounts"), true)
+        .await
+        .map_err(|e| JsValue::from_str(&format!("failed to create accounts: {e:#}")))?;
+    let accounts = Arc::new(RwLock::new(accounts));
+    let state = CommandApi::from_arc(accounts).await;
+
+    let (client, mut out_receiver) = RpcClient::new();
+    let session = RpcSession::new(client, state);
+
+    wasm_bindgen_futures::spawn_local(async move {
+        while let Some(message) = out_receiver.next().await {
+            match serde_json::to_string(&message) {
+                Ok(message) => {
+                    let _ = on_message.call1(&JsValue::NULL, &JsValue::from_str(&message));
+                }
+                Err(err) => log::error!("failed to serialize RPC message: {err}"),
+            }
+        }
+    });
+
+    Ok(DeltaChat { session })
+}
+
+#[wasm_bindgen]
+impl DeltaChat {
+    /// Feeds one incoming JSON-RPC message (request string) to core.
+    /// Responses arrive via the `on_message` callback passed to `init`.
+    pub fn receive(&self, message: String) {
+        let session = self.session.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            session.handle_incoming(&message).await;
+        });
+    }
+}

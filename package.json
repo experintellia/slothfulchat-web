@@ -6,7 +6,11 @@
   "license": "GPL-3.0-or-later",
   "scripts": {
     "apply-patches": "scripts/apply-patches.sh",
-    "update-patches": "scripts/update-patches.sh"
+    "update-patches": "scripts/update-patches.sh",
+    "smoke": "node scripts/smoke-core-wasm.mjs"
   },
-  "packageManager": "pnpm@11.10.0"
+  "packageManager": "pnpm@11.10.0",
+  "devDependencies": {
+    "playwright": "^1.61.1"
+  }
 }
