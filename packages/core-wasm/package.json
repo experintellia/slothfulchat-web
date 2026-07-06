@@ -1,0 +1,32 @@
+{
+  "name": "@slothfulchat/core-wasm",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "chatmail core compiled to WebAssembly, exposed through the standard @deltachat/jsonrpc-client TypeScript API. Core runs in a Web Worker.",
+  "license": "MPL-2.0",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./worker": "./dist/worker.js",
+    "./wasm-dist/*": "./wasm-dist/*"
+  },
+  "files": [
+    "dist",
+    "wasm-dist"
+  ],
+  "scripts": {
+    "build:wasm": "cd rust && wasm-pack build --target web --release --out-dir ../wasm-dist",
+    "build": "tsc --noEmit && esbuild --format=esm --bundle src/index.ts --outfile=dist/index.js && esbuild --format=esm --bundle src/worker.ts '--external:../wasm-dist/*' --outfile=dist/worker.js",
+    "example": "node ../../scripts/serve-example.mjs",
+    "test": "node ../../scripts/smoke-core-wasm.mjs"
+  },
+  "dependencies": {
+    "@deltachat/jsonrpc-client": "file:../../build/core/deltachat-jsonrpc/typescript"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.5",
+    "typescript": "^5.8.0"
+  }
+}

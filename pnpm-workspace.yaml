@@ -1,2 +1,6 @@
 packages:
   - packages/*
+# esbuild's postinstall swaps its JS bin launcher for the raw ELF, which
+# breaks pnpm's node-based .bin shim — keep it disabled, the JS launcher works.
+allowBuilds:
+  esbuild: false

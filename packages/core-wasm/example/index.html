@@ -7,60 +7,45 @@
     body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1rem; }
     pre { background: #f4f4f4; padding: 1rem; overflow-x: auto; }
     .hint { color: #555; }
+    code { background: #f4f4f4; padding: 0 0.2em; }
   </style>
 </head>
 <body>
   <h1>chatmail core — WASM</h1>
-  <p id="status">loading wasm…</p>
+  <p id="status">loading core in a worker…</p>
   <pre id="output"></pre>
   <p class="hint">
-    Open the browser console: the raw JSON-RPC interface is exposed as
-    <code>window.rpc</code>. Try
-    <code>await rpc.request('get_system_info')</code> or
-    <code>rpc.raw('{"jsonrpc":"2.0","id":99,"method":"get_all_account_ids","params":[]}')</code>.
-    Every core message is logged with <code>←</code>.
+    Open the browser console and poke at core directly:
   </p>
+  <ul class="hint">
+    <li><code>await rpc.request('get_system_info')</code> — raw JSON-RPC, any method name</li>
+    <li><code>await dc.rpc.getAllAccountIds()</code> — generated typed client</li>
+    <li><code>await dc.rpc.addAccount()</code> then <code>await dc.rpc.getAccountInfo(1)</code></li>
+  </ul>
   <script type="module">
-    import initWasm, { init } from '../wasm-dist/deltachat_wasm.js';
+    import { startCore } from '../dist/index.js'
 
-    const status = document.getElementById('status');
-    const output = document.getElementById('output');
+    const status = document.getElementById('status')
+    const output = document.getElementById('output')
     try {
-      await initWasm();
-      status.textContent = 'wasm loaded, starting core…';
+      const { transport, dc } = startCore()
 
-      let nextId = 1;
-      const pending = new Map();
-      const dc = await init((msg) => {
-        const parsed = JSON.parse(msg);
-        console.log('←', parsed);
-        if (parsed.id !== undefined && pending.has(parsed.id)) {
-          pending.get(parsed.id)(parsed);
-          pending.delete(parsed.id);
-        }
-      });
-
+      // raw JSON-RPC access for console exploration
       window.rpc = {
-        raw: (s) => dc.receive(s),
-        request: (method, params = []) =>
-          new Promise((resolve, reject) => {
-            const id = nextId++;
-            pending.set(id, (resp) =>
-              resp.error ? reject(new Error(JSON.stringify(resp.error))) : resolve(resp.result),
-            );
-            dc.receive(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
-          }),
-      };
+        request: (method, params = []) => transport.request(method, params),
+      }
+      // typed client (generated from core at the pinned commit)
+      window.dc = dc
 
-      const info = await window.rpc.request('get_system_info');
-      status.textContent = 'core is running fully inside this browser tab ✔';
-      output.textContent = JSON.stringify(info, null, 2);
+      const info = await window.rpc.request('get_system_info')
+      status.textContent = 'core is running fully inside this browser tab ✔'
+      output.textContent = JSON.stringify(info, null, 2)
       // marker for the smoke test
-      window.__systemInfo = info;
+      window.__systemInfo = info
     } catch (err) {
-      status.textContent = 'failed: ' + err;
-      console.error(err);
-      throw err;
+      status.textContent = 'failed: ' + err
+      console.error(err)
+      throw err
     }
   </script>
 </body>

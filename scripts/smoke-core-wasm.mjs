@@ -48,6 +48,14 @@ try {
     console.log(
       `OK: core ${info.deltachat_core_version} answered get_system_info in the browser (sqlite ${info.sqlite_version ?? '?'}, arch ${info.arch ?? '?'})`,
     );
+    // typed client (generated RawClient) must work too
+    const ids = await page.evaluate(() => window.dc.rpc.getAllAccountIds());
+    if (!Array.isArray(ids)) {
+      console.error('FAIL: typed client getAllAccountIds returned', JSON.stringify(ids));
+      failed = true;
+    } else {
+      console.log(`OK: typed client works (getAllAccountIds -> [${ids}])`);
+    }
   }
 } catch (err) {
   console.error('FAIL:', err.message);
