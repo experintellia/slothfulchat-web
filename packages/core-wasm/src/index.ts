@@ -40,8 +40,13 @@ export interface Core {
 
 /** Spawns the core worker and returns the typed client. */
 export function startCore(
+  options: { wsProxyUrl?: string } = {},
   workerUrl: URL = new URL('./worker.js', import.meta.url),
 ): Core {
+  if (options.wsProxyUrl) {
+    workerUrl = new URL(workerUrl)
+    workerUrl.searchParams.set('proxy', options.wsProxyUrl)
+  }
   const worker = new Worker(workerUrl, { type: 'module' })
   const transport = new WasmTransport(worker)
   const dc = new WasmDeltaChat(transport)

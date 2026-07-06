@@ -257,6 +257,7 @@ dependencies = [
  "stop-token",
  "thiserror 1.0.69",
  "tokio",
+ "wasmtimer",
 ]
 
 [[package]]
@@ -692,8 +693,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link 0.2.1",
 ]
 
@@ -1228,7 +1231,9 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+ "wasm-bindgen-futures",
  "webpki-roots 0.26.11",
+ "ws_stream_wasm",
 ]
 
 [[package]]
@@ -1273,6 +1278,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "console_log",
+ "deltachat",
  "deltachat-jsonrpc",
  "futures-lite",
  "js-sys",
@@ -3094,8 +3100,9 @@ checksum = "9106e1d747ffd48e6be5bb2d97fa706ed25b144fbee4d5c02eae110cd8d6badd"
 [[package]]
 name = "mail-builder"
 version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "900998f307338c4013a28ab14d760b784067324b164448c6d98a89e44810473b"
+dependencies = [
+ "web-time",
+]
 
 [[package]]
 name = "mailparse"
@@ -3836,6 +3843,7 @@ dependencies = [
  "elliptic-curve",
  "flate2",
  "generic-array",
+ "getrandom 0.2.17",
  "hex",
  "hkdf",
  "idea",
@@ -3867,6 +3875,7 @@ dependencies = [
  "snafu 0.9.1",
  "subtle",
  "twofish",
+ "web-time",
  "x25519-dalek",
  "zeroize",
 ]
@@ -4431,6 +4440,9 @@ dependencies = [
 [[package]]
 name = "ratelimit"
 version = "1.0.0"
+dependencies = [
+ "deltachat-time",
+]
 
 [[package]]
 name = "rcgen"

@@ -14,10 +14,13 @@ use futures::task::{Context, Poll};
 use imap_proto::{RequestId, Response, Status};
 use stop_token::prelude::*;
 #[cfg(feature = "runtime-tokio")]
-use tokio::{
-    io::{AsyncRead as Read, AsyncWrite as Write},
-    time::timeout,
-};
+use tokio::io::{AsyncRead as Read, AsyncWrite as Write};
+// wasm fix: tokio's timer uses std::time::Instant::now(), which panics on
+// wasm32-unknown-unknown; wasmtimer::tokio::timeout is a drop-in replacement.
+#[cfg(all(feature = "runtime-tokio", not(target_arch = "wasm32")))]
+use tokio::time::timeout;
+#[cfg(all(feature = "runtime-tokio", target_arch = "wasm32"))]
+use wasmtimer::tokio::timeout;
 
 use crate::client::Session;
 use crate::error::Result;

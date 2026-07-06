@@ -9,9 +9,12 @@ const scope = self as unknown as {
   onmessage: ((event: MessageEvent<string>) => void) | null
 }
 
+// ?proxy=ws://... on the worker URL configures the WebSocket→TCP proxy
+const proxyUrl = new URL(import.meta.url).searchParams.get('proxy') ?? undefined
+
 const ready = (async () => {
   await initWasm()
-  return await init((message: string) => scope.postMessage(message))
+  return await init((message: string) => scope.postMessage(message), proxyUrl)
 })()
 
 scope.onmessage = async (event: MessageEvent<string>) => {

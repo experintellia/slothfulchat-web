@@ -125,6 +125,10 @@ features = [
 ]
 optional = true
 
+# wasm fix: real tokio's timers panic on wasm32-unknown-unknown; route IDLE timeout through wasmtimer.
+[target.'cfg(target_arch = "wasm32")'.dependencies.wasmtimer]
+version = "0.4"
+
 [dev-dependencies.async-std]
 version = "1.8.0"
 features = [

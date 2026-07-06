@@ -24,10 +24,20 @@ pub struct DeltaChat {
 ///
 /// `on_message` is called with every outgoing JSON-RPC message (responses and
 /// event notifications) as a string.
+///
+/// `ws_proxy_url` (optional, e.g. `ws://localhost:8641`) points at a
+/// WebSocket→TCP proxy for IMAP/SMTP/DNS; without it all networking errors.
 #[wasm_bindgen]
-pub async fn init(on_message: js_sys::Function) -> Result<DeltaChat, JsValue> {
+pub async fn init(
+    on_message: js_sys::Function,
+    ws_proxy_url: Option<String>,
+) -> Result<DeltaChat, JsValue> {
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Info);
+
+    if let Some(url) = ws_proxy_url {
+        deltachat::net::ws_tcp::set_ws_proxy_url(url);
+    }
 
     let accounts = Accounts::new(PathBuf::from("/accounts"), true)
         .await

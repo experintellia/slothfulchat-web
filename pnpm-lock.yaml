@@ -11,6 +11,9 @@ importers:
       playwright:
         specifier: ^1.61.1
         version: 1.61.1
+      ws:
+        specifier: ^8.21.0
+        version: 8.21.0
 
   packages/core-wasm:
     dependencies:

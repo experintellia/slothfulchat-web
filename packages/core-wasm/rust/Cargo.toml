@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # patched core worktree (apply-patches.sh must have run)
+deltachat = { path = "../../../build/core", default-features = false }
 deltachat-jsonrpc = { path = "../../../build/core/deltachat-jsonrpc", default-features = false }
 tokio = { package = "tokio-wasm-shim", path = "../../../crates/tokio-wasm-shim" }
 yerpc = "0.6"
@@ -24,6 +25,8 @@ log = "0.4"
 
 [patch.crates-io]
 async-imap = { path = "../../../vendor-crates/async-imap" }
+# vendored: routes SystemTime::now() through web-time on wasm32 (boundary + Date generation)
+mail-builder = { path = "../../../vendor-crates/mail-builder" }
 
 [profile.release]
 opt-level = "s"

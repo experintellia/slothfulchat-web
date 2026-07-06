@@ -28,7 +28,9 @@
     const status = document.getElementById('status')
     const output = document.getElementById('output')
     try {
-      const { transport, dc } = startCore()
+      // ?proxy=ws://localhost:8641 enables networking via the WS-TCP proxy
+      const wsProxyUrl = new URL(location.href).searchParams.get('proxy') ?? undefined
+      const { transport, dc } = startCore({ wsProxyUrl })
 
       // raw JSON-RPC access for console exploration
       window.rpc = {

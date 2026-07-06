@@ -1,0 +1,635 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Mon, 6 Jul 2026 22:34:43 +0000
+Subject: [PATCH 5/7] wasm: IMAP/SMTP through a WebSocket-TCP proxy
+
+Browsers cannot open TCP sockets, so on wasm32 connect_tcp_inner tunnels
+through a local WS proxy (src/net/ws_tcp.rs): ws_stream_wasm -> duplex
+bridge -> SessionStream. TLS still terminates inside wasm, the proxy only
+sees ciphertext. DNS resolves via the proxy's /dns/{host} endpoint.
+Adds wasm deps: ws_stream_wasm, tokio-util/compat, wasm-bindgen-futures,
+plus chrono wasmbind and pgp wasm feature (JS clock instead of
+SystemTime::now which panics on wasm32-unknown-unknown).
+---
+ Cargo.lock        | 153 ++++++++++++++++++++++++++++++++--------------
+ Cargo.toml        |   8 +++
+ src/net.rs        |  16 +++++
+ src/net/dns.rs    |  10 +++
+ src/net/ws_tcp.rs | 151 +++++++++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 292 insertions(+), 46 deletions(-)
+ create mode 100644 src/net/ws_tcp.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index a17aa1746..04697b571 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -272,8 +272,6 @@ dependencies = [
+ [[package]]
+ name = "async-imap"
+ version = "0.11.2"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "a78dceaba06f029d8f4d7df20addd4b7370a30206e3926267ecda2915b0f3f66"
+ dependencies = [
+  "async-channel 2.5.0",
+  "async-compression",
+@@ -1377,6 +1375,8 @@ dependencies = [
+  "format-flowed",
+  "futures",
+  "futures-lite",
++ "getrandom 0.2.16",
++ "getrandom 0.3.3",
+  "hex",
+  "http-body-util",
+  "humansize",
+@@ -1385,6 +1385,7 @@ dependencies = [
+  "image",
+  "iroh",
+  "iroh-gossip",
++ "js-sys",
+  "kamadak-exif",
+  "libc",
+  "log",
+@@ -1424,11 +1425,11 @@ dependencies = [
+  "testdir",
+  "textwrap",
+  "thiserror 2.0.18",
+- "tokio",
+  "tokio-io-timeout",
+  "tokio-rustls",
+  "tokio-stream",
+  "tokio-util",
++ "tokio-wasm-shim",
+  "toml",
+  "tracing",
+  "url",
+@@ -1473,7 +1474,7 @@ dependencies = [
+  "serde",
+  "serde_json",
+  "tempfile",
+- "tokio",
++ "tokio-wasm-shim",
+  "typescript-type-def",
+  "yerpc",
+ ]
+@@ -1514,6 +1515,9 @@ dependencies = [
+ [[package]]
+ name = "deltachat-time"
+ version = "1.0.0"
++dependencies = [
++ "js-sys",
++]
+ 
+ [[package]]
+ name = "deltachat_derive"
+@@ -2114,6 +2118,12 @@ version = "0.1.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+ 
++[[package]]
++name = "foldhash"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
++
+ [[package]]
+ name = "foreign-types"
+ version = "0.3.2"
+@@ -2426,16 +2436,34 @@ checksum = "5971ac85611da7067dbfcabef3c70ebb5606018acd9e2a3903a0da507521e0d5"
+ dependencies = [
+  "allocator-api2",
+  "equivalent",
+- "foldhash",
++ "foldhash 0.1.5",
++]
++
++[[package]]
++name = "hashbrown"
++version = "0.16.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
++dependencies = [
++ "foldhash 0.2.0",
++]
++
++[[package]]
++name = "hashbrown"
++version = "0.17.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
++dependencies = [
++ "foldhash 0.2.0",
+ ]
+ 
+ [[package]]
+ name = "hashlink"
+-version = "0.10.0"
++version = "0.12.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
++checksum = "a5081f264ed7adee96ea4b4778b6bb9da0a7228b084587aa3bd3ff05da7c5a3b"
+ dependencies = [
+- "hashbrown",
++ "hashbrown 0.17.1",
+ ]
+ 
+ [[package]]
+@@ -2969,7 +2997,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
+ dependencies = [
+  "equivalent",
+- "hashbrown",
++ "hashbrown 0.15.4",
+ ]
+ 
+ [[package]]
+@@ -3286,11 +3314,12 @@ dependencies = [
+ 
+ [[package]]
+ name = "js-sys"
+-version = "0.3.77"
++version = "0.3.103"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "1cfaf33c695fc6e08064efbc1f72ec937429614f25eef83af942d0e227c3a28f"
++checksum = "53b44bfcdb3f8d5837a46dae1ca9660a837176eee74a28b229bc626816589102"
+ dependencies = [
+- "once_cell",
++ "cfg-if",
++ "futures-util",
+  "wasm-bindgen",
+ ]
+ 
+@@ -3369,9 +3398,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "libsqlite3-sys"
+-version = "0.35.0"
++version = "0.38.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "133c182a6a2c87864fe97778797e46c7e999672690dc9fa3ee8e241aa4a9c13f"
++checksum = "f6c19a05435c21ac299d71b6a9c13db3e3f47c520517d58990a462a1397a61db"
+ dependencies = [
+  "cc",
+  "openssl-sys",
+@@ -3446,7 +3475,7 @@ version = "0.12.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
+ dependencies = [
+- "hashbrown",
++ "hashbrown 0.15.4",
+ ]
+ 
+ [[package]]
+@@ -5202,11 +5231,21 @@ dependencies = [
+  "zeroize",
+ ]
+ 
++[[package]]
++name = "rsqlite-vfs"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c51c9ae4df8a7fba42103df5c621fa3c37eccf3a3c650879e90fc48b11cc192c"
++dependencies = [
++ "hashbrown 0.16.1",
++ "thiserror 2.0.18",
++]
++
+ [[package]]
+ name = "rusqlite"
+-version = "0.37.0"
++version = "0.40.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "165ca6e57b20e1351573e3729b958bc62f0e48025386970b6e4d29e7a7e71f3f"
++checksum = "11438310b19e3109b6446c33d1ed5e889428cf2e278407bc7896bc4aaea43323"
+ dependencies = [
+  "bitflags 2.11.0",
+  "fallible-iterator",
+@@ -5214,6 +5253,7 @@ dependencies = [
+  "hashlink",
+  "libsqlite3-sys",
+  "smallvec",
++ "sqlite-wasm-rs",
+ ]
+ 
+ [[package]]
+@@ -5918,6 +5958,18 @@ dependencies = [
+  "der",
+ ]
+ 
++[[package]]
++name = "sqlite-wasm-rs"
++version = "0.5.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "dc3efc0da82635d7e1ced0053bbbfa8c7ab9645d0bf36ceb4f7127bb85315d75"
++dependencies = [
++ "cc",
++ "js-sys",
++ "rsqlite-vfs",
++ "wasm-bindgen",
++]
++
+ [[package]]
+ name = "stable_deref_trait"
+ version = "1.2.0"
+@@ -6394,6 +6446,17 @@ dependencies = [
+  "tokio",
+ ]
+ 
++[[package]]
++name = "tokio-wasm-shim"
++version = "1.0.0"
++dependencies = [
++ "futures",
++ "js-sys",
++ "tokio",
++ "wasm-bindgen-futures",
++ "wasmtimer",
++]
++
+ [[package]]
+ name = "tokio-websockets"
+ version = "0.11.4"
+@@ -6813,48 +6876,32 @@ checksum = "b8dad83b4f25e74f184f64c43b150b91efe7647395b42289f38e50566d82855b"
+ 
+ [[package]]
+ name = "wasm-bindgen"
+-version = "0.2.100"
++version = "0.2.126"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "1edc8929d7499fc4e8f0be2262a241556cfc54a0bea223790e71446f2aab1ef5"
++checksum = "4b067c0c11094aef6b7a801c1e34a26affafdf3d051dba08456b868789aaf9a4"
+ dependencies = [
+  "cfg-if",
+  "once_cell",
+  "rustversion",
+  "wasm-bindgen-macro",
+-]
+-
+-[[package]]
+-name = "wasm-bindgen-backend"
+-version = "0.2.100"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "2f0a0651a5c2bc21487bde11ee802ccaf4c51935d0d3d42a6101f98161700bc6"
+-dependencies = [
+- "bumpalo",
+- "log",
+- "proc-macro2",
+- "quote",
+- "syn 2.0.118",
+  "wasm-bindgen-shared",
+ ]
+ 
+ [[package]]
+ name = "wasm-bindgen-futures"
+-version = "0.4.50"
++version = "0.4.76"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "555d470ec0bc3bb57890405e5d4322cc9ea83cebb085523ced7be4144dac1e61"
++checksum = "c62df1340f32221cb9c54d6a27b030e3dba64361d4a95bed55f9aacb44da291d"
+ dependencies = [
+- "cfg-if",
+  "js-sys",
+- "once_cell",
+  "wasm-bindgen",
+- "web-sys",
+ ]
+ 
+ [[package]]
+ name = "wasm-bindgen-macro"
+-version = "0.2.100"
++version = "0.2.126"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "7fe63fc6d09ed3792bd0897b314f53de8e16568c2b3f7982f468c0bf9bd0b407"
++checksum = "167ce5e579f6bcf889c4f7175a8a5a585de84e8ff93976ce393efa5f2837aab1"
+ dependencies = [
+  "quote",
+  "wasm-bindgen-macro-support",
+@@ -6862,22 +6909,22 @@ dependencies = [
+ 
+ [[package]]
+ name = "wasm-bindgen-macro-support"
+-version = "0.2.100"
++version = "0.2.126"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "8ae87ea40c9f689fc23f209965b6fb8a99ad69aeeb0231408be24920604395de"
++checksum = "f3997c7839262f4ef12cf90b818d6340c18e80f263f1a94bf157d0ec4420380e"
+ dependencies = [
++ "bumpalo",
+  "proc-macro2",
+  "quote",
+  "syn 2.0.118",
+- "wasm-bindgen-backend",
+  "wasm-bindgen-shared",
+ ]
+ 
+ [[package]]
+ name = "wasm-bindgen-shared"
+-version = "0.2.100"
++version = "0.2.126"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "1a05d73b933a847d6cccdda8f838a22ff101ad9bf93e33684f39c1f5f0eece3d"
++checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
+ dependencies = [
+  "unicode-ident",
+ ]
+@@ -6895,11 +6942,25 @@ dependencies = [
+  "web-sys",
+ ]
+ 
++[[package]]
++name = "wasmtimer"
++version = "0.4.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1c598d6b99ea013e35844697fc4670d08339d5cda15588f193c6beedd12f644b"
++dependencies = [
++ "futures",
++ "js-sys",
++ "parking_lot",
++ "pin-utils",
++ "slab",
++ "wasm-bindgen",
++]
++
+ [[package]]
+ name = "web-sys"
+-version = "0.3.77"
++version = "0.3.103"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "33b6dd2ef9186f1f2072e409e99cd22a975331a6b3591b12c764e0e55c60d5d2"
++checksum = "8622dcb61c0bcc9fffa6938bed81210af2da9a7e4a1a834b2e37a59b6dfb6141"
+ dependencies = [
+  "js-sys",
+  "wasm-bindgen",
+diff --git a/Cargo.toml b/Cargo.toml
+index 0a752768c..75281633f 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -120,13 +120,21 @@ tokio-stream = { version = "0.1.17", features = ["fs"] }
+ 
+ [target.'cfg(target_arch = "wasm32")'.dependencies]
+ async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio"] }
++# chrono Utc::now()/Local::now() panic on wasm32-unknown-unknown without the JS clock
++chrono = { workspace = true, features = ["wasmbind"] }
+ tokio-rustls = { version = "0.26.2", default-features = false, features = ["ring", "tls12"] }
+ tokio-stream = { version = "0.1.17" }
+ # transitive getrandom needs its JS backend switched on for wasm
+ getrandom = { version = "0.3", features = ["wasm_js"] }
+ getrandom-old = { package = "getrandom", version = "0.2", features = ["js"] }
+ js-sys = "0.3"
++# rPGP's Timestamp::now() calls SystemTime::now() and panics on wasm32-unknown-unknown;
++# its "wasm" feature switches it to web-time (JS clock).
++pgp = { version = "0.20.0", default-features = false, features = ["wasm"] }
++tokio-util = { workspace = true, features = ["compat"] }
+ uuid = { version = "1", features = ["js"] }
++wasm-bindgen-futures = "0.4"
++ws_stream_wasm = "0.7"
+ 
+ [dev-dependencies]
+ anyhow = { workspace = true, features = ["backtrace"] } # Enable `backtrace` feature in tests.
+diff --git a/src/net.rs b/src/net.rs
+index 254a1ac68..93bf951a6 100644
+--- a/src/net.rs
++++ b/src/net.rs
+@@ -5,9 +5,11 @@
+ use std::time::Duration;
+ 
+ use anyhow::{Context as _, Result, format_err};
++#[cfg(not(target_arch = "wasm32"))]
+ use tokio::net::TcpStream;
+ use tokio::task::JoinSet;
+ use tokio::time::timeout;
++#[cfg(not(target_arch = "wasm32"))]
+ use tokio_io_timeout::TimeoutStream;
+ 
+ use crate::context::Context;
+@@ -29,6 +31,8 @@
+ pub(crate) mod proxy;
+ pub(crate) mod session;
+ pub(crate) mod tls;
++#[cfg(target_arch = "wasm32")]
++pub mod ws_tcp;
+ 
+ use dns::lookup_host_with_cache;
+ pub(crate) use http::read_url_with_tls;
+@@ -108,11 +112,22 @@ pub(crate) async fn load_connection_timestamp(
+     Ok(timestamp)
+ }
+ 
++/// Returns a TCP connection tunneled through the WebSocket proxy
++/// (browsers cannot open TCP sockets; see `ws_tcp`).
++#[cfg(target_arch = "wasm32")]
++pub(crate) async fn connect_tcp_inner(addr: SocketAddr) -> Result<ws_tcp::WsTcpStream> {
++    let stream = timeout(TIMEOUT, ws_tcp::connect_ws_tcp(addr))
++        .await
++        .with_context(|| format!("Connection to {addr} timed out"))??;
++    Ok(stream)
++}
++
+ /// Returns a TCP connection stream with read/write timeouts set
+ /// and Nagle's algorithm disabled with `TCP_NODELAY`.
+ ///
+ /// `TCP_NODELAY` ensures writing to the stream always results in immediate sending of the packet
+ /// to the network, which is important to reduce the latency of interactive protocols such as IMAP.
++#[cfg(not(target_arch = "wasm32"))]
+ pub(crate) async fn connect_tcp_inner(
+     addr: SocketAddr,
+ ) -> Result<Pin<Box<TimeoutStream<TcpStream>>>> {
+@@ -257,6 +272,7 @@ pub(crate) async fn run_connection_attempts<O, I, F>(mut futures: I) -> Result<O
+ /// for example using TLS.
+ /// If TLS is not used or invalid TLS certificates are allowed,
+ /// this option should be disabled.
++#[cfg(not(target_arch = "wasm32"))]
+ pub(crate) async fn connect_tcp(
+     context: &Context,
+     host: &str,
+diff --git a/src/net/dns.rs b/src/net/dns.rs
+index f4e6bec11..b6bf59cd0 100644
+--- a/src/net/dns.rs
++++ b/src/net/dns.rs
+@@ -45,6 +45,7 @@
+ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+ use std::str::FromStr;
+ use std::sync::LazyLock;
++#[cfg(not(target_arch = "wasm32"))]
+ use tokio::net::lookup_host;
+ use tokio::time::timeout;
+ 
+@@ -95,6 +96,7 @@ pub(crate) async fn prune_dns_cache(context: &Context) -> Result<()> {
+     LazyLock::new(Default::default);
+ 
+ /// Wrapper for `lookup_host` that returns IP addresses.
++#[cfg(not(target_arch = "wasm32"))]
+ async fn lookup_ips(host: impl tokio::net::ToSocketAddrs) -> Result<impl Iterator<Item = IpAddr>> {
+     Ok(lookup_host(host)
+         .await
+@@ -102,6 +104,14 @@ async fn lookup_ips(host: impl tokio::net::ToSocketAddrs) -> Result<impl Iterato
+         .map(|addr| addr.ip()))
+ }
+ 
++/// Resolves hostnames through the WebSocket proxy (no resolver in browsers).
++#[cfg(target_arch = "wasm32")]
++async fn lookup_ips<H: AsRef<str>>(host: (H, u16)) -> Result<impl Iterator<Item = IpAddr>> {
++    Ok(super::ws_tcp::ws_dns_lookup(host.0.as_ref())
++        .await?
++        .into_iter())
++}
++
+ async fn lookup_host_with_memory_cache(
+     context: &Context,
+     hostname: &str,
+diff --git a/src/net/ws_tcp.rs b/src/net/ws_tcp.rs
+new file mode 100644
+index 000000000..deee1db0f
+--- /dev/null
++++ b/src/net/ws_tcp.rs
+@@ -0,0 +1,151 @@
++//! wasm32 TCP transport: tunnels byte streams through a WebSocket proxy.
++//!
++//! Browsers cannot open TCP sockets. A trivial proxy (see the prototype's
++//! `scripts/ws-tcp-proxy.mjs`) exposes `/tcp/{ip}/{port}` as a raw byte
++//! tunnel and `/dns/{host}` for name resolution. TLS still terminates inside
++//! wasm against the real server — the proxy only ever relays ciphertext.
++//!
++//! JS WebSocket handles are `!Send`, but core requires `Send` streams and
++//! connection futures. The socket therefore lives in a `spawn_local` task
++//! bridged to a `tokio::io::duplex` pair, which is plain Rust and `Send`.
++
++use std::net::{IpAddr, SocketAddr};
++use std::pin::Pin;
++use std::str::FromStr;
++use std::sync::OnceLock;
++use std::task::{Context as TaskContext, Poll};
++use std::time::Duration;
++
++use anyhow::{Context as _, Result, format_err};
++use futures::StreamExt;
++use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
++use tokio_util::compat::FuturesAsyncReadCompatExt;
++
++use crate::net::session::SessionStream;
++
++static WS_PROXY_URL: OnceLock<String> = OnceLock::new();
++
++/// Configures the WebSocket proxy base URL (e.g. `ws://localhost:8641`).
++/// Must be called before any network operation; subsequent calls are ignored.
++pub fn set_ws_proxy_url(url: String) {
++    let _ = WS_PROXY_URL.set(url);
++}
++
++fn proxy_url(kind: &str, host: &str, port: Option<u16>) -> Result<String> {
++    let base = WS_PROXY_URL
++        .get()
++        .context("no WebSocket proxy configured — call set_ws_proxy_url() first")?;
++    let base = base.trim_end_matches('/');
++    Ok(match port {
++        Some(port) => format!("{base}/{kind}/{host}/{port}"),
++        None => format!("{base}/{kind}/{host}"),
++    })
++}
++
++/// A TCP connection tunneled through the WebSocket proxy.
++#[derive(Debug)]
++pub(crate) struct WsTcpStream {
++    inner: DuplexStream,
++    peer: SocketAddr,
++}
++
++impl AsyncRead for WsTcpStream {
++    fn poll_read(
++        mut self: Pin<&mut Self>,
++        cx: &mut TaskContext<'_>,
++        buf: &mut ReadBuf<'_>,
++    ) -> Poll<std::io::Result<()>> {
++        Pin::new(&mut self.inner).poll_read(cx, buf)
++    }
++}
++
++impl AsyncWrite for WsTcpStream {
++    fn poll_write(
++        mut self: Pin<&mut Self>,
++        cx: &mut TaskContext<'_>,
++        buf: &[u8],
++    ) -> Poll<std::io::Result<usize>> {
++        Pin::new(&mut self.inner).poll_write(cx, buf)
++    }
++
++    fn poll_flush(
++        mut self: Pin<&mut Self>,
++        cx: &mut TaskContext<'_>,
++    ) -> Poll<std::io::Result<()>> {
++        Pin::new(&mut self.inner).poll_flush(cx)
++    }
++
++    fn poll_shutdown(
++        mut self: Pin<&mut Self>,
++        cx: &mut TaskContext<'_>,
++    ) -> Poll<std::io::Result<()>> {
++        Pin::new(&mut self.inner).poll_shutdown(cx)
++    }
++}
++
++impl SessionStream for WsTcpStream {
++    fn set_read_timeout(&mut self, _timeout: Option<Duration>) {
++        // ponytail: no per-read timeouts on the tunneled stream; callers'
++        // tokio::time::timeout (wasmtimer on wasm) covers the hang case.
++    }
++
++    fn peer_addr(&self) -> Result<SocketAddr> {
++        Ok(self.peer)
++    }
++}
++
++/// Opens a tunneled TCP connection to `addr` via the proxy.
++///
++/// The returned future and stream are `Send`; the `!Send` JS socket lives in
++/// a local task.
++pub(crate) async fn connect_ws_tcp(addr: SocketAddr) -> Result<WsTcpStream> {
++    let url = proxy_url("tcp", &addr.ip().to_string(), Some(addr.port()))?;
++    let (tx, rx) = futures::channel::oneshot::channel();
++    wasm_bindgen_futures::spawn_local(async move {
++        let _ = tx.send(connect_inner(&url).await);
++    });
++    let inner = rx.await.context("ws connect task dropped")??;
++    Ok(WsTcpStream { inner, peer: addr })
++}
++
++async fn connect_inner(url: &str) -> Result<DuplexStream> {
++    let (_meta, ws) = ws_stream_wasm::WsMeta::connect(url, None)
++        .await
++        .map_err(|e| format_err!("WebSocket connect to {url} failed: {e}"))?;
++    let ws_io = ws.into_io();
++    let (client, server) = tokio::io::duplex(64 * 1024);
++    wasm_bindgen_futures::spawn_local(async move {
++        let mut ws_io = ws_io.compat();
++        let mut server = server;
++        // Runs until either side closes; dropping both ends tears down the
++        // WebSocket and signals EOF to core.
++        let _ = tokio::io::copy_bidirectional(&mut ws_io, &mut server).await;
++    });
++    Ok(client)
++}
++
++/// Resolves a hostname through the proxy's `/dns/{host}` endpoint.
++pub(crate) async fn ws_dns_lookup(host: &str) -> Result<Vec<IpAddr>> {
++    let url = proxy_url("dns", host, None)?;
++    let (tx, rx) = futures::channel::oneshot::channel();
++    wasm_bindgen_futures::spawn_local(async move {
++        let _ = tx.send(dns_inner(&url).await);
++    });
++    rx.await.context("ws dns task dropped")?
++}
++
++async fn dns_inner(url: &str) -> Result<Vec<IpAddr>> {
++    let (_meta, mut ws) = ws_stream_wasm::WsMeta::connect(url, None)
++        .await
++        .map_err(|e| format_err!("WebSocket connect to {url} failed: {e}"))?;
++    let message = ws.next().await.context("no DNS reply from proxy")?;
++    let text = match message {
++        ws_stream_wasm::WsMessage::Text(text) => text,
++        ws_stream_wasm::WsMessage::Binary(bytes) => String::from_utf8(bytes)?,
++    };
++    let ips: Vec<String> = serde_json::from_str(&text).context("bad DNS reply")?;
++    Ok(ips
++        .iter()
++        .filter_map(|ip| IpAddr::from_str(ip).ok())
++        .collect())
++}

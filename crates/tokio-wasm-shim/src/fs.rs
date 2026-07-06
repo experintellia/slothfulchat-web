@@ -50,6 +50,12 @@ fn is_dir_err() -> io::Error {
 }
 
 pub async fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
+    sync_read(path)
+}
+
+/// Synchronous read: `std::fs` is unsupported on wasm32-unknown-unknown,
+/// core's sync (`block_in_place`) I/O paths call these `sync_*` variants instead.
+pub fn sync_read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
     match FS.lock().unwrap().get(&normalize(path.as_ref())) {
         Some(Node::File { data, .. }) => Ok(data.clone()),
         Some(Node::Dir) => Err(is_dir_err()),
@@ -81,6 +87,11 @@ fn write_sync(path: &Path, contents: &[u8]) {
 }
 
 pub async fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
+    sync_write(path, contents)
+}
+
+/// Synchronous write (see [`sync_read`]).
+pub fn sync_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
     write_sync(path.as_ref(), contents.as_ref());
     Ok(())
 }
@@ -93,6 +104,11 @@ pub async fn create_dir(path: impl AsRef<Path>) -> io::Result<()> {
 }
 
 pub async fn create_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
+    sync_create_dir_all(path)
+}
+
+/// Synchronous create_dir_all (see [`sync_read`]).
+pub fn sync_create_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
     let path = normalize(path.as_ref());
     let mut fs = FS.lock().unwrap();
     let mut current = PathBuf::from("/");
@@ -132,6 +148,11 @@ pub async fn remove_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
 }
 
 pub async fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {
+    sync_rename(from, to)
+}
+
+/// Synchronous rename (see [`sync_read`]).
+pub fn sync_rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {
     let from = normalize(from.as_ref());
     let to = normalize(to.as_ref());
     let mut fs = FS.lock().unwrap();
@@ -152,9 +173,14 @@ pub async fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<
 }
 
 pub async fn copy(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<u64> {
-    let data = read(from).await?;
+    sync_copy(from, to)
+}
+
+/// Synchronous copy (see [`sync_read`]).
+pub fn sync_copy(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<u64> {
+    let data = sync_read(from)?;
     let len = data.len() as u64;
-    write(to, data).await?;
+    sync_write(to, data)?;
     Ok(len)
 }
 
@@ -176,6 +202,22 @@ pub async fn try_exists(path: impl AsRef<Path>) -> io::Result<bool> {
 /// this instead.
 pub fn sync_exists(path: impl AsRef<Path>) -> bool {
     FS.lock().unwrap().contains_key(&normalize(path.as_ref()))
+}
+
+/// Synchronous directory check (see [`sync_exists`]).
+pub fn sync_is_dir(path: impl AsRef<Path>) -> bool {
+    matches!(
+        FS.lock().unwrap().get(&normalize(path.as_ref())),
+        Some(Node::Dir)
+    )
+}
+
+/// Synchronous file check (see [`sync_exists`]).
+pub fn sync_is_file(path: impl AsRef<Path>) -> bool {
+    matches!(
+        FS.lock().unwrap().get(&normalize(path.as_ref())),
+        Some(Node::File { .. })
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
