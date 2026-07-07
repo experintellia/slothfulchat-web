@@ -55,11 +55,13 @@ jobs:
             build/core
             packages/core-wasm/rust
 
+      # NO registry-url here: it makes setup-node write an .npmrc with a
+      # placeholder NODE_AUTH_TOKEN, which npm then uses INSTEAD of the OIDC
+      # trusted-publishing exchange (unauthenticated PUT -> 404).
       - name: Setup Node 22 + pnpm (corepack)
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
       - name: Enable corepack (provides the pinned pnpm)
         run: corepack enable
 
