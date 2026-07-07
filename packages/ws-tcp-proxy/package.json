@@ -2,14 +2,15 @@
   "name": "@slothfulchat/ws-tcp-proxy",
   "version": "0.1.0",
   "description": "WebSocket→TCP bridge for slothfulchat-web: tunnels the browser wasm core's IMAP/SMTP (ciphertext only) and DNS. Optional chatmail-server whitelist.",
-  "license": "GPL-3.0-or-later",
+  "license": "Unlicense",
   "type": "module",
   "bin": {
     "ws-tcp-proxy": "./ws-tcp-proxy.mjs"
   },
   "files": [
     "ws-tcp-proxy.mjs",
-    "README.md"
+    "README.md",
+    "UNLICENSE"
   ],
   "dependencies": {
     "ws": "^8.21.0"

@@ -45,3 +45,9 @@ CHATMAIL_WHITELIST=nine.testrun.org,chatmail.example npx @slothfulchat/ws-tcp-pr
   allow-list.
 
 Empty/unset `CHATMAIL_WHITELIST` = allow all (local-dev default).
+
+## License
+
+[Unlicense](UNLICENSE) — public domain. Do whatever you want with it. (The rest
+of [slothfulchat-web](../../README.md) is GPL-3.0-or-later; this standalone
+bridge is deliberately unencumbered so anyone can reuse it.)

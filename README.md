@@ -23,3 +23,24 @@ pnpm update-patches                  # regenerate patches/ from build/ commits
 ```
 
 Requires: Node ≥ 22 + pnpm, Rust stable + `wasm32-unknown-unknown` target.
+
+## Licensing
+
+The project as a whole is **GPL-3.0-or-later** (see [LICENSE](LICENSE)) —
+required because the web app is a derivative of the GPL-3.0 deltachat-desktop
+frontend. Per component:
+
+| Part | License |
+|---|---|
+| `patches/core`, `patches/desktop` — our patches | GPL-3.0-or-later |
+| `packages/web-app` | GPL-3.0-or-later |
+| `packages/core-wasm` — the reusable WASM core wrapper | MPL-2.0 (matches upstream core; GPL-compatible) |
+| `packages/ws-tcp-proxy` — the standalone bridge | [Unlicense](packages/ws-tcp-proxy/UNLICENSE) (public domain) |
+
+The vendored upstreams keep their own licenses and notices: `vendor/core`
+(and the core files our patches modify) is **MPL-2.0**; `vendor/deltachat-desktop`
+(and the files our patches modify) is **GPL-3.0**. Because MPL-2.0 is
+GPL-compatible, the combined work is distributable under GPL-3.0-or-later.
+
+Not affiliated with Delta Chat. "Delta Chat" and its logos are trademarks of
+their owners; this project only reuses the code under the licenses above.
