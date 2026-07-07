@@ -2,7 +2,7 @@
 
 Feasibility prototype: a DeltaChat client running **fully in the browser** — chatmail core compiled to WASM, driving the deltachat-desktop frontend as a standalone PWA. Private patch-stack experiment, **no upstream contribution intended**. Not affiliated with Delta Chat.
 
-See [PLAN.md](PLAN.md) for the full plan, [DESCOPED.md](DESCOPED.md) for deliberate omissions, [FINDINGS.md](FINDINGS.md) for the feasibility log.
+See [SELFHOSTING.md](SELFHOSTING.md) to run your own instance, [PLAN.md](PLAN.md) for the full plan, [DESCOPED.md](DESCOPED.md) for deliberate omissions, [FINDINGS.md](FINDINGS.md) for the feasibility log.
 
 ## Layout
 
