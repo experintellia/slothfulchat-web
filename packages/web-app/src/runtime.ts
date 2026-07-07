@@ -117,8 +117,12 @@ let core: Core | null = null
 function getCore(): Core {
   if (!core) {
     const params = new URLSearchParams(location.search)
+    // priority: ?proxy= > saved > per-instance default (assemble.mjs) > localhost
     const wsProxyUrl =
-      params.get('proxy') ?? localStorage.getItem(PROXY_KEY) ?? 'ws://localhost:8641'
+      params.get('proxy') ||
+      localStorage.getItem(PROXY_KEY) ||
+      (window as any).__slothfulConfig?.defaultProxyUrl ||
+      'ws://localhost:8641'
     // OPFS persistence is on by default; ?persist=0 opts out (fresh-core tests)
     const persist = params.get('persist') !== '0'
     core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))

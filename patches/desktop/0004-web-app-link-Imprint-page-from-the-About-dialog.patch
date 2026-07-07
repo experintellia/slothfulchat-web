@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Tue, 7 Jul 2026 17:31:22 +0000
+Subject: [PATCH 4/4] web-app: link Imprint page from the About dialog
+
+---
+ packages/frontend/src/components/dialogs/About/index.tsx | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index 8abf6641e..2d3f0b075 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -83,6 +83,11 @@ export default function About({ onClose }: DialogProps) {
+                 {'github.com/experintellia/slothfulchat-web'}
+               </ClickableLink>
+             </div>
++            <div style={{ marginTop: 8 }}>
++              <ClickableLink href={new URL('imprint.html', document.baseURI).href}>
++                {'Imprint'}
++              </ClickableLink>
++            </div>
+           </div>
+         </DialogContent>
+       </DialogBody>

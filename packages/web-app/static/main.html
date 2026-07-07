@@ -39,6 +39,9 @@
       src="./browser-source-map-support.js"
     ></script>
     <script type="text/javascript" src="./fix-missing-vars.js"></script>
+    <!-- per-instance config (imprint, instance identity, default proxy) baked
+         in by assemble.mjs from env vars; replaced there, empty by default -->
+    <!--slothful-config-->
     <!-- OUR runtime.js (sets window.r); bundle.js is byte-identical upstream -->
     <script src="./runtime.js" type="module"></script>
     <script src="./bundle.js" type="module"></script>

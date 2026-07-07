@@ -81,3 +81,27 @@ To get a working client from the deployed site, run a `wss://` proxy
 somewhere reachable and point the app at it with `?proxy=wss://your-host` (or
 the `slothfulchat.proxyUrl` localStorage key). Without that, the deploy is a
 UI/PWA demo only.
+
+### Per-instance config (build-time env vars)
+
+`assemble.mjs` bakes optional per-instance values into `dist/` from
+environment variables, so the imprint text and instance identity live in CI
+config (repo **Settings → Secrets and variables → Actions → Variables**), not
+in source. All optional:
+
+| Env var | Effect |
+|---|---|
+| `SLOTHFUL_IMPRINT_NAME` | Responsible person/entity on the imprint page (legal notice). |
+| `SLOTHFUL_IMPRINT_ADDRESS` | Postal address on the imprint page (newlines allowed). |
+| `SLOTHFUL_IMPRINT_EMAIL` | Contact email on the imprint page. |
+| `SLOTHFUL_INSTANCE_NAME` | Instance name shown on the imprint page (e.g. `SlothfulChat`). |
+| `SLOTHFUL_INSTANCE_URL` | Canonical origin, e.g. `https://web.slothful.chat`. |
+| `SLOTHFUL_DEFAULT_PROXY` | Default `wss://` bridge the app uses when the user hasn't set one. Without it the app defaults to `ws://localhost:8641`. |
+
+The instance/proxy values surface at runtime as `window.__slothfulConfig`
+(injected before `runtime.js`); `runtime.ts` reads `defaultProxyUrl` from it.
+`imprint.html` is always emitted — with a placeholder when unconfigured, so the
+About link never dangles. Its scope/privacy/reporting text (imprint covers the
+site only; everything runs client-side and the operator never receives your
+data; how to handle problem users) is fixed in the template; only the operator
+name/address/email come from env.
