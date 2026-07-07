@@ -35,8 +35,11 @@ jobs:
           git config --global user.email "ci@github-actions"
           git config --global user.name "GitHub Actions"
 
+      # drop the runner's flaky preinstalled MS repos (see deploy-pages.yml)
       - name: Install clang (sqlite-wasm-rs builds C)
-        run: sudo apt-get update && sudo apt-get install -y clang
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure*
+          sudo apt-get update && sudo apt-get install -y clang
 
       - name: Install Rust stable + wasm32 target
         uses: dtolnay/rust-toolchain@stable

@@ -57,9 +57,10 @@ pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/exampl
 
 ## Current limits
 
-- In-wasm HTTP is stubbed: https-URL `DCACCOUNT:` QR codes, provider
-  autoconfig, OAuth2 and push don't work. Bare-domain `dcaccount:example.org`
-  and classic email+password login work.
+- Core's HTTP goes through the browser's `fetch()`, so requests are subject
+  to CORS: endpoints without permissive CORS headers fail (some provider
+  autoconfig/OAuth2 servers); ones with them work (e.g. the webxdc apps
+  list). Push notifications don't work.
 - One tab at a time: with persistence on, the core holds an exclusive lock on
   its OPFS storage, so a second tab of the same app fails to start its core
   until the first is closed.

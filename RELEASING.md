@@ -14,8 +14,8 @@ whose version already exists are skipped. So one shared tag releases whatever
 was bumped, and re-running is idempotent.
 
 1. Bump `version` in the package(s) you're releasing
-   (`packages/*/package.json`). Semver; no changelog file is kept — the git
-   log is the changelog.
+   (`packages/*/package.json`) and add an entry to that package's
+   `CHANGELOG.md` (npm always includes CHANGELOG.md in the tarball).
 2. Commit, then tag and push:
 
    ```sh
