@@ -9,8 +9,8 @@ See [PLAN.md](PLAN.md) for the full plan, [DESCOPED.md](DESCOPED.md) for deliber
 - `vendor/core`, `vendor/deltachat-desktop` — submodules pinned at upstream commits (never modified in place)
 - `patches/core`, `patches/desktop` — stacked `git format-patch` files, the only upstream modifications
 - `build/` — throwaway worktrees: pinned commit + patches applied (gitignored)
-- `packages/core-wasm` — deliverable 1: npm package, WASM core behind the standard `@deltachat/jsonrpc-client` TypeScript API
-- `packages/web-app` — deliverable 2: standalone browser frontend using core-wasm
+- [`packages/core-wasm`](packages/core-wasm/README.md) — deliverable 1: npm package, WASM core behind the standard `@deltachat/jsonrpc-client` TypeScript API
+- [`packages/web-app`](packages/web-app/README.md) — deliverable 2: standalone browser frontend using core-wasm
 
 ## Workflow
 
