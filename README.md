@@ -32,15 +32,19 @@ frontend. Per component:
 
 | Part | License |
 |---|---|
-| `patches/core`, `patches/desktop` — our patches | GPL-3.0-or-later |
+| `patches/core` — our patches to the MPL core | `MPL-2.0 OR GPL-3.0-or-later` (dual) |
+| `patches/desktop` — our patches to the GPL frontend | GPL-3.0-or-later |
 | `packages/web-app` | GPL-3.0-or-later |
 | `packages/core-wasm` — the reusable WASM core wrapper | MPL-2.0 (matches upstream core; GPL-compatible) |
 | `packages/ws-tcp-proxy` — the standalone bridge | [Unlicense](packages/ws-tcp-proxy/UNLICENSE) (public domain) |
 
-The vendored upstreams keep their own licenses and notices: `vendor/core`
-(and the core files our patches modify) is **MPL-2.0**; `vendor/deltachat-desktop`
-(and the files our patches modify) is **GPL-3.0**. Because MPL-2.0 is
-GPL-compatible, the combined work is distributable under GPL-3.0-or-later.
+Our `patches/core` changes are **dual-licensed `MPL-2.0 OR GPL-3.0-or-later`**:
+they modify MPL-2.0 files (so they stay available under MPL-2.0, as MPL
+requires) and are also offered under GPL-3.0-or-later so they compose into this
+GPL-3.0 work. The vendored upstreams keep their own licenses and notices:
+`vendor/core` is **MPL-2.0**; `vendor/deltachat-desktop` is **GPL-3.0**. Because
+MPL-2.0 is GPL-compatible, the combined work is distributable under
+GPL-3.0-or-later.
 
 Not affiliated with Delta Chat. "Delta Chat" and its logos are trademarks of
 their owners; this project only reuses the code under the licenses above.
