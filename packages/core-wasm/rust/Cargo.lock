@@ -1255,7 +1255,9 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "webpki-roots 0.26.11",
  "ws_stream_wasm",
 ]
