@@ -104,6 +104,10 @@ const mimeFromName = (name: string) =>
   MIME_BY_EXT[name.split('.').pop()?.toLowerCase() ?? ''] ??
   'application/octet-stream'
 
+/** Where backup exports land in the core memfs; the blobs SW serves
+ * GET /download-backup/:filename from here. */
+const EXPORTS_DIR = '/exports'
+
 let core: Core | null = null
 function getCore(): Core {
   if (!core) {
@@ -112,6 +116,20 @@ function getCore(): Core {
       localStorage.getItem(PROXY_KEY) ??
       'ws://localhost:8641'
     core = startCore({ wsProxyUrl }, new URL('/core/worker.js', location.href))
+    // The frontend passes the magic destination '<BROWSER>' to exportBackup on
+    // the browser target (upstream's node server rewrites it to a tmp dir).
+    // There is no server here, so rewrite it to a memfs dir before it reaches
+    // the core. bundle.js stays untouched.
+    const originalSend = core.transport._send.bind(core.transport)
+    core.transport._send = (message: any) => {
+      if (
+        message?.method === 'export_backup' &&
+        message.params?.[1] === '<BROWSER>'
+      ) {
+        message.params[1] = EXPORTS_DIR
+      }
+      originalSend(message)
+    }
     // debug/smoke marker: proves the wasm core booted and answers rpc
     core.transport
       .request('get_system_info', [])
@@ -135,8 +153,9 @@ function initBlobServiceWorker(log: Logger) {
       ((event.source as unknown as ServiceWorker) ??
         navigator.serviceWorker.controller)?.postMessage(payload, transfer)
     try {
+      // msg.path = absolute memfs path (backup downloads), otherwise a blob
       const data = await getCore().fsRead(
-        `/accounts/${msg.accountId}/dc.db-blobs/${msg.filename}`
+        msg.path ?? `/accounts/${msg.accountId}/dc.db-blobs/${msg.filename}`
       )
       reply(
         {

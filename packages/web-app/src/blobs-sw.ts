@@ -22,11 +22,25 @@ sw.addEventListener('message', (event: any) => {
 
 sw.addEventListener('fetch', (event: any) => {
   const url = new URL(event.request.url)
-  const match = url.pathname.match(/^\/blobs\/([^/]+)\/(.+)$/)
-  if (!match || event.request.method !== 'GET' || url.origin !== location.origin) {
+  if (event.request.method !== 'GET' || url.origin !== location.origin) {
     return // fall through to network
   }
-  const [, accountId, filename] = match
+  const blob = url.pathname.match(/^\/blobs\/([^/]+)\/(.+)$/)
+  const backup = url.pathname.match(/^\/download-backup\/([^/]+)$/)
+  if (!blob && !backup) {
+    return // fall through to network
+  }
+  const filename = decodeURIComponent(blob ? blob[2] : backup![1])
+  const accountId = blob?.[1]
+  // backup exports live in the memfs /exports dir (see runtime.ts EXPORTS_DIR)
+  // and are always served as an attachment
+  let path: string | undefined
+  let downloadName = url.searchParams.get('download_with_filename')
+  if (backup) {
+    if (filename.includes('/') || filename.includes('..')) return
+    path = `/exports/${filename}`
+    downloadName = filename
+  }
   event.respondWith(
     (async () => {
       const clients = await sw.clients.matchAll({ type: 'window' })
@@ -42,12 +56,7 @@ sw.addEventListener('fetch', (event: any) => {
         }, 15_000)
       })
       for (const client of clients) {
-        client.postMessage({
-          type: 'blob-request',
-          id,
-          accountId,
-          filename: decodeURIComponent(filename),
-        })
+        client.postMessage({ type: 'blob-request', id, accountId, filename, path })
       }
       const result = await response
       if (!result.data) {
@@ -56,7 +65,6 @@ sw.addEventListener('fetch', (event: any) => {
       const headers: Record<string, string> = {
         'content-type': result.mime ?? 'application/octet-stream',
       }
-      const downloadName = url.searchParams.get('download_with_filename')
       if (downloadName) {
         headers['content-disposition'] =
           `attachment; filename="${downloadName.replace(/["\\]/g, '')}"`

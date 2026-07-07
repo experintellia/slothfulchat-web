@@ -61,3 +61,23 @@ Full e2e in a headless browser (`node scripts/test-networking.mjs`): two fresh a
 - **Chatmail relays mandate E2EE**: a bare `createContact(addr)` can't send ("requires end-to-end encryption which is not setup yet") — the test does the real key exchange via `makeVcard(bob)` → `importVcardContents(alice)`.
 - Test-harness lesson: browser-side panics kill the worker and leave RPC promises pending forever — every in-page await needs an external watchdog (test has a 6-min one that also kills the proxy, or the output pipe stays open).
 - Known deferred: `MuteDuration::try_into_core_type` still calls `SystemTime::now()` (panics only if a chat is muted with an `Until` duration — not on the e2e path); in-wasm HTTP (`read_url` etc.) still stubbed.
+
+## M4 — standalone web app (2026-07-07)
+
+### M4 VERDICT: PASSED — with ZERO desktop patches
+The upstream deltachat-desktop browser-edition frontend (`bundle.js` byte-identical) runs on the wasm core. Three green playwright suites:
+- `scripts/smoke-web-app.mjs` — app boots, zero-account UI renders, core answers RPC
+- `scripts/test-web-app-e2e.mjs` — two accounts logged in through the real UI (manual email login), marker message sent via the composer, account switched via the sidebar (multiaccount ✓), message asserted in the recipient's DOM
+- `scripts/test-web-app-imex.mjs` — settings → Export Backup → real browser download (1MB tar); reload (fresh core); welcome → Restore from Backup → file upload → account + message restored (IMEX ✓)
+
+**Patch count: 8 core / 0 desktop.** The desktop needs none because of a lucky seam: `main.html` loads `runtime.js` (which sets `window.r`, the Runtime singleton) as a separate module before `bundle.js` — we ship our own `runtime.js` and reuse everything else as-is.
+
+### Porting log
+- `packages/web-app` = assemble script (copies upstream dist + locales, overlays our `main.html` copy with CSP loosened for wasm/workers + PWA manifest) + our Runtime (~fork of upstream's runtime-browser): transport → `WasmDeltaChat`, settings → localStorage, locales/themes → static fetches, temp files & file dialogs → core memfs via the fs side-channel, `/ws/backend` → no-op.
+- **Blob display**: `transformBlobURL` is sync and feeds `<img src>`, so `/blobs/…` must be fetchable — a service worker intercepts it and round-trips to the page, which `fsRead`s the core worker's memfs. Same SW serves `/download-backup/…`.
+- **Backup export**: the frontend passes destination `'<BROWSER>'` (upstream's node server rewrote it). Our runtime wraps the transport's `_send` and rewrites it to a memfs dir — 10 lines, bundle untouched.
+- **Core-side IMEX** (patch 0008): tar streaming works on wasm via a vendored astral-tokio-tar whose tokio is our facade (memfs-backed); `Sql::import` on wasm swaps DB bytes in the VFS instead of `sqlcipher_export()` (encrypted backups stay unsupported on wasm).
+- **Instant onboarding / QR account creation does NOT work** — it needs in-wasm HTTP (still stubbed). Classic addr+password login works. Also upstream quirk: `useInstantOnboarding` never resets after the first account, so the second add-account lands on the instant-onboarding screen.
+- Key import/export UI was removed upstream in v2.53 — nothing to wire.
+- PWA: manifest + service worker present (installable shape); no offline app-shell precache yet, Lighthouse not run.
+- jsonrpc API drift core 2.54.0-dev vs frontend's 2.53.0 expectations: one additive event, zero breakage.
