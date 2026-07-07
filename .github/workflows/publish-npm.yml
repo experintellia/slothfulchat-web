@@ -1,0 +1,112 @@
+# Publish @slothfulchat/ws-tcp-proxy and @slothfulchat/core-wasm to npm on
+# tag push. Auth is npm Trusted Publishing (OIDC, id-token: write) — no token
+# secret; each package's npmjs.com Settings -> Trusted Publisher must point at
+# this repo + this workflow filename.
+#
+# Versioning: one shared `v*` tag triggers the run; each package is published
+# only if its package.json version isn't on the registry yet. So: bump the
+# version(s) you want to release, commit, tag, push the tag. Re-running is
+# idempotent.
+#
+# The core-wasm build steps mirror deploy-pages.yml — same order traps apply
+# (jsonrpc-client must be generated before the root pnpm install).
+
+name: Publish packages to npm
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  id-token: write # npm trusted publishing + provenance
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure git identity (required by `git am` in apply-patches)
+        run: |
+          git config --global user.email "ci@github-actions"
+          git config --global user.name "GitHub Actions"
+
+      - name: Install clang (sqlite-wasm-rs builds C)
+        run: sudo apt-get update && sudo apt-get install -y clang
+
+      - name: Install Rust stable + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        env:
+          CACHE_ON_FAILURE: true
+        with:
+          workspaces: |
+            build/core
+            packages/core-wasm/rust
+
+      - name: Setup Node 22 + pnpm (corepack)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Enable corepack (provides the pinned pnpm)
+        run: corepack enable
+
+      # Trusted publishing needs npm >= 11.5.1; Node 22 ships an older one.
+      - name: Update npm (trusted publishing support)
+        run: sudo npm install -g npm@latest
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Apply patch stacks (creates build/core, build/desktop)
+        run: pnpm apply-patches
+
+      # ORDER TRAP: the workspace override points @deltachat/jsonrpc-client at
+      # this file: path, so it must be generated + built before `pnpm install`.
+      - name: Generate + build @deltachat/jsonrpc-client (before root install)
+        working-directory: build/core/deltachat-jsonrpc/typescript
+        run: |
+          printf 'allowBuilds:\n  esbuild: false\n' > pnpm-workspace.yaml
+          pnpm install
+          cargo test -p deltachat-jsonrpc
+          node scripts/generate-constants.js
+          ./node_modules/.bin/tsc
+          ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js
+
+      - name: Install workspace deps
+        run: pnpm install
+
+      - name: Build wasm core (release)
+        run: pnpm --filter @slothfulchat/core-wasm build:wasm
+
+      - name: Build core-wasm TS (worker + index)
+        run: pnpm --filter @slothfulchat/core-wasm build
+
+      - name: Publish packages whose version is new
+        run: |
+          for dir in packages/ws-tcp-proxy packages/core-wasm; do
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version already on the registry — skipping"
+            else
+              echo "publishing $name@$version"
+              (cd "$dir" && npm publish --access public)
+            fi
+          done
