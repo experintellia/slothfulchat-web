@@ -1,5 +1,10 @@
 packages:
   - packages/*
+# core-wasm's published package.json points at the npm release of the jsonrpc
+# client; dev builds against the freshly generated one so types match the
+# patched core.
+overrides:
+  "@deltachat/jsonrpc-client": file:build/core/deltachat-jsonrpc/typescript
 # pnpm 11 auto-runs `pnpm install` before any script (verifyDepsBeforeRun:
 # install); that install fails in CI before `apply-patches` has created
 # build/core, which the lockfile references as a file: dep.
