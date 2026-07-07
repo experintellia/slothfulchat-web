@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Tue, 7 Jul 2026 17:21:57 +0000
+Subject: [PATCH 3/3] web-app: welcome screen names SlothfulChat + experimental
+ note + source link
+
+---
+ .../screens/WelcomeScreen/OnboardingScreen.tsx    | 15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
+
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+index b44acb723..0b1c89b63 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+@@ -5,6 +5,7 @@ import Button from '../../Button'
+ import useDialog from '../../../hooks/dialog/useDialog'
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+ import { DialogBody, DialogContent, DialogHeader } from '../../Dialog'
++import { ClickableLink } from '../../helpers/ClickableLink'
+ 
+ import styles from './styles.module.scss'
+ 
+@@ -51,13 +52,15 @@ export default function OnboardingScreen(props: Props) {
+         <DialogContent>
+           <form onSubmit={onSubmit}>
+             <div className={styles.welcomeScreenSection}>
+-              <img
+-                className={styles.welcomeScreenImage}
+-                src='./images/intro1.png'
+-              />
+-              <p className={styles.welcomeScreenTitle}>
+-                {tx('welcome_chat_over_email')}
++              {/* slothfulchat: replaces the intro1.png logo */}
++              <p className={styles.welcomeScreenTitle}>SlothfulChat</p>
++              <p style={{ textAlign: 'center', margin: '10px 0 0' }}>
++                An experimental port of Delta Chat running fully in your
++                browser — unofficial, and it may be buggy.
+               </p>
++              <ClickableLink href='https://github.com/experintellia/slothfulchat-web'>
++                Source code
++              </ClickableLink>
+             </div>
+             <div className={styles.welcomeScreenButtonGroup}>
+               <Button

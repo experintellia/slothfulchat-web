@@ -149,3 +149,6 @@ e2e message roundtrip, whitelist self-check).
   which bridge is in use + a "Change…" button opening the bridge dialog, via a
   `window.__slothfulchatBridge` hook set by runtime.js (browser-target-gated,
   renders nothing elsewhere). Patch count: **9 core / 2 desktop.**
+- **Desktop patch 0003**: welcome screen replaces the Delta Chat logo with
+  "SlothfulChat", a one-sentence experimental/may-be-buggy disclaimer, and a
+  source-code link. Patch count: **9 core / 3 desktop.**
