@@ -86,11 +86,16 @@ const config = {
   imprintUrl: 'imprint.html',
 }
 
-// inject `window.__slothfulConfig` before runtime.js runs (main + index)
-const configScript = `<script>window.__slothfulConfig=${JSON.stringify(config)}</script>`
+// `window.__slothfulConfig` must load before runtime.js (main + index). A
+// separate file, not an inline script: the CSP is script-src 'self' and an
+// inline script would be silently blocked.
+await writeFile(
+  join(dist, 'config.js'),
+  `window.__slothfulConfig=${JSON.stringify(config)}\n`
+)
 const mainHtml = (await readFile(join(here, 'static/main.html'), 'utf-8')).replace(
   '<!--slothful-config-->',
-  configScript
+  '<script src="./config.js"></script>'
 )
 
 // our overlays. index.html is a copy of main.html so the bare site root
