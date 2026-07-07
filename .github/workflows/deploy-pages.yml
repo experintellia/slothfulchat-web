@@ -59,6 +59,10 @@ jobs:
       # that matters most.
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
+        env:
+          # Save the cache even when the job fails — otherwise a broken deploy
+          # rebuilds the ~10-min wasm step from scratch on every retry.
+          CACHE_ON_FAILURE: true
         with:
           workspaces: |
             build/core
