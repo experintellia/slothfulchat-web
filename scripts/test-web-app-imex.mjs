@@ -59,11 +59,14 @@ await page.addInitScript(() => {
 })
 
 // rpc bridge onto the wasm core (upstream devmode escape hatch)
-const rpc = (method, ...args) =>
-  page.evaluate(([m, a]) => window.exp.rpc[m](...a), [method, args])
+const rpcOn =
+  page =>
+  (method, ...args) =>
+    page.evaluate(([m, a]) => window.exp.rpc[m](...a), [method, args])
+const rpc = rpcOn(page)
 
-async function waitForBoot() {
-  await page.waitForFunction(() => window.__coreSystemInfo, null, {
+async function waitForBoot(p = page) {
+  await p.waitForFunction(() => window.__coreSystemInfo, null, {
     timeout: 120_000,
   })
 }
@@ -169,6 +172,62 @@ try {
     throw new Error(`marker not found after import (${msgIds.length} msgs)`)
   }
   console.log(`OK: restored ${addr}, marker found in self-chat`)
+
+  // 6. phase 2b: IMPORT again WITH persistence (OPFS/sahpool VFS) in a fresh
+  // browser context (fresh OPFS). Reproduces the "dc.db file already exists"
+  // sahpool import bug: sqlite pre-creates dc.db for the new account before
+  // the byte-level swap.
+  const ctx2 = await browser.newContext()
+  const page2 = await ctx2.newPage()
+  page2.on('console', m => {
+    const t = m.text()
+    consoleTail.push(t.slice(0, 500))
+    if (/panicked at/.test(t)) console.error('[page2 PANIC]', t)
+  })
+  page2.on('pageerror', e => console.error('[page2 pageerror]', e.message))
+  await page2.addInitScript(() => {
+    Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
+  })
+  await page2.goto(
+    `http://localhost:${APP_PORT}/main.html?proxy=ws://localhost:${PROXY_PORT}`
+  )
+  await waitForBoot(page2)
+  console.log('OK: persistent core booted (fresh OPFS)')
+  await page2
+    .getByTestId('have-account-button')
+    .waitFor({ state: 'visible', timeout: 90_000 })
+  await page2.getByTestId('have-account-button').click()
+  const fileChooserPromise2 = page2.waitForEvent('filechooser', {
+    timeout: 30_000,
+  })
+  await page2.getByTestId('import-backup-button').click()
+  const fileChooser2 = await fileChooserPromise2
+  await fileChooser2.setFiles(tarPath)
+  await page2
+    .locator('#new-chat-button')
+    .waitFor({ state: 'visible', timeout: 150_000 })
+  const rpc2 = rpcOn(page2)
+  const importedId2 = await page2.evaluate(() => window.__selectedAccountId)
+  const addr2 =
+    (await rpc2('getConfig', importedId2, 'configured_addr')) ??
+    (await rpc2('getConfig', importedId2, 'addr'))
+  if (addr2 !== alice.email) {
+    throw new Error(`persistent import addr mismatch: ${addr2} != ${alice.email}`)
+  }
+  const selfChat3 = await rpc2('createChatByContactId', importedId2, 1)
+  const msgIds2 = await rpc2('getMessageIds', importedId2, selfChat3, false, false)
+  let found2 = false
+  for (const msgId of msgIds2) {
+    const msg = await rpc2('getMessage', importedId2, msgId)
+    if (msg.text && msg.text.includes(marker)) found2 = true
+  }
+  if (!found2) {
+    throw new Error(
+      `marker not found after persistent import (${msgIds2.length} msgs)`
+    )
+  }
+  console.log(`OK: persistent (OPFS) import restored ${addr2}, marker found`)
+  await ctx2.close()
 
   console.log('OK: UI backup export+import roundtrip')
 } catch (err) {

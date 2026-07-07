@@ -240,6 +240,7 @@ async fn hydrate(root: &FileSystemDirectoryHandle) -> Result<(), JsValue> {
 pub fn sqlite_vfs_import(name: &str, bytes: &[u8]) -> Result<(), String> {
     SAHPOOL.with(|c| match c.borrow().as_ref() {
         Some(util) => {
+            let _ = util.delete_db(name); // overwrite: core pre-creates dc.db on account open
             let _ = util.delete_db(&format!("{name}-wal"));
             let _ = util.delete_db(&format!("{name}-journal"));
             util.import_db(name, bytes).map_err(|e| e.to_string())
