@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Tue, 7 Jul 2026 18:30:32 +0000
+Subject: [PATCH 5/5] web-app: link Imprint page from the welcome screen
+
+---
+ .../src/components/screens/WelcomeScreen/OnboardingScreen.tsx | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+index 0b1c89b63..780f5b3b1 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+@@ -61,6 +61,10 @@ export default function OnboardingScreen(props: Props) {
+               <ClickableLink href='https://github.com/experintellia/slothfulchat-web'>
+                 Source code
+               </ClickableLink>
++              {' · '}
++              <ClickableLink href={new URL('imprint.html', document.baseURI).href}>
++                Imprint
++              </ClickableLink>
+             </div>
+             <div className={styles.welcomeScreenButtonGroup}>
+               <Button
