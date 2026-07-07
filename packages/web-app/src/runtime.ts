@@ -108,6 +108,11 @@ const mimeFromName = (name: string) =>
  * GET /download-backup/:filename from here. */
 const EXPORTS_DIR = '/exports'
 
+/** Path the app is served under, e.g. "/" locally or "/slothfulchat-web/" on
+ * GitHub Pages project sites. Derived from the page URL so the same build works
+ * at any base without a build-time flag. Always ends in "/". */
+const BASE = new URL('.', location.href).pathname
+
 let core: Core | null = null
 function getCore(): Core {
   if (!core) {
@@ -116,7 +121,7 @@ function getCore(): Core {
       params.get('proxy') ?? localStorage.getItem(PROXY_KEY) ?? 'ws://localhost:8641'
     // OPFS persistence is on by default; ?persist=0 opts out (fresh-core tests)
     const persist = params.get('persist') !== '0'
-    core = startCore({ wsProxyUrl, persist }, new URL('/core/worker.js', location.href))
+    core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))
     // The frontend passes the magic destination '<BROWSER>' to exportBackup on
     // the browser target (upstream's node server rewrites it to a tmp dir).
     // There is no server here, so rewrite it to a memfs dir before it reaches
@@ -173,7 +178,7 @@ function initBlobServiceWorker(log: Logger) {
     }
   })
   navigator.serviceWorker
-    .register('/blobs-sw.js')
+    .register(BASE + 'blobs-sw.js', { scope: BASE })
     .catch(err => log.error('blobs-sw registration failed', err))
 }
 
@@ -250,9 +255,9 @@ class BrowserRuntime {
   }
 
   async getLocaleData(locale?: string): Promise<object> {
-    const messagesEnglish = await (await fetch('/locales/en.json')).json()
+    const messagesEnglish = await (await fetch(BASE + 'locales/en.json')).json()
     const untranslated = await (
-      await fetch('/locales/_untranslated_en.json')
+      await fetch(BASE + 'locales/_untranslated_en.json')
     ).json()
 
     if (!locale) {
@@ -265,14 +270,14 @@ class BrowserRuntime {
 
     let localeMessages: object
     try {
-      localeMessages = await (await fetch(`/locales/${locale}.json`)).json()
+      localeMessages = await (await fetch(`${BASE}locales/${locale}.json`)).json()
     } catch (error1) {
       // dialect fallback: de-CH -> de
       try {
         if (locale.indexOf('-') !== -1) {
           const base_locale = (locale = locale.split('-')[0])
           localeMessages = await (
-            await fetch(`/locales/${base_locale}.json`)
+            await fetch(`${BASE}locales/${base_locale}.json`)
           ).json()
         } else {
           throw new Error(
@@ -320,7 +325,7 @@ class BrowserRuntime {
   }
 
   async getAvailableThemes(): Promise<Theme[]> {
-    return (await fetch('/themes.json')).json()
+    return (await fetch(BASE + 'themes.json')).json()
   }
   async getActiveTheme(): Promise<{ theme: Theme; data: string } | null> {
     const address = (await this.getDesktopSettings()).activeTheme
@@ -334,7 +339,7 @@ class BrowserRuntime {
     if (location !== 'dc') {
       throw new Error('only dc themes are implemented in the wasm edition')
     }
-    const theme_file_request = await fetch(`/themes/${id}.css`)
+    const theme_file_request = await fetch(`${BASE}themes/${id}.css`)
     if (!theme_file_request.ok) {
       throw new Error('error loading theme: ' + theme_file_request.statusText)
     }
@@ -417,7 +422,7 @@ class BrowserRuntime {
     const { accountId, chatId, body, title, icon: notificationIcon, messageId } = data
     this.log.debug('showNotification', { accountId, chatId, messageId })
 
-    let icon = new URL('/images/deltachat.png', location.origin).toString()
+    let icon = new URL(BASE + 'images/deltachat.png', location.origin).toString()
     if (notificationIcon) {
       try {
         const response = await fetch(
@@ -615,7 +620,7 @@ class BrowserRuntime {
   transformBlobURL(blob_path: string): string {
     const matches = blob_path.match(/.*(:?\\|\/)(.+?)\1dc.db-blobs\1(.*)/)
     if (matches) {
-      return `/blobs/${matches[2]}/${matches[3]}`
+      return `${BASE}blobs/${matches[2]}/${matches[3]}`
     }
     if (blob_path !== '') {
       this.log.error('transformBlobURL wrong url format', blob_path)

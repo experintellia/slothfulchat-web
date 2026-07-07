@@ -2,13 +2,14 @@
   "name": "SlothfulChat",
   "short_name": "SlothfulChat",
   "description": "DeltaChat running fully in your browser (prototype, not affiliated with Delta Chat)",
-  "start_url": "/main.html",
+  "start_url": "./main.html",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#2c8a68",
   "icons": [
     {
-      "src": "/images/deltachat.png",
+      "src": "./images/deltachat.png",
       "sizes": "any",
       "type": "image/png"
     }

@@ -25,8 +25,9 @@ sw.addEventListener('fetch', (event: any) => {
   if (event.request.method !== 'GET' || url.origin !== location.origin) {
     return // fall through to network
   }
-  const blob = url.pathname.match(/^\/blobs\/([^/]+)\/(.+)$/)
-  const backup = url.pathname.match(/^\/download-backup\/([^/]+)$/)
+  // match the tail so the app works under any base path (e.g. /repo/ on Pages)
+  const blob = url.pathname.match(/\/blobs\/([^/]+)\/(.+)$/)
+  const backup = url.pathname.match(/\/download-backup\/([^/]+)$/)
   if (!blob && !backup) {
     return // fall through to network
   }

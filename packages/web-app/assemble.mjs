@@ -69,9 +69,13 @@ for (const file of await readdir(join(dist, 'themes'))) {
 }
 await writeFile(join(dist, 'themes.json'), JSON.stringify(themes, null, 2))
 
-// our overlays
+// our overlays. index.html is a copy of main.html so the bare site root
+// (e.g. https://user.github.io/repo/) loads without a redirect. .nojekyll
+// stops GitHub Pages' Jekyll from dropping _-prefixed files (locales).
 await cp(join(here, 'static/main.html'), join(dist, 'main.html'))
+await cp(join(here, 'static/main.html'), join(dist, 'index.html'))
 await cp(join(here, 'static/manifest.webmanifest'), join(dist, 'manifest.webmanifest'))
+await writeFile(join(dist, '.nojekyll'), '')
 
 // wasm core: worker at /core/worker.js imports ../wasm-dist/deltachat_wasm.js
 // -> /wasm-dist/ (same relative layout as in the core-wasm package)
