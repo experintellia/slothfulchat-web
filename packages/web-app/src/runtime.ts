@@ -820,7 +820,9 @@ class BrowserRuntime {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       this.log.error('askForMediaAccess failed: no mediaDevices')
       return Promise.resolve(false)
-    } else if (mediaType !== 'microphone') {
+      // ponytail: upstream inverted this test ('!== microphone'), which sent
+      // every real mic request to the "not implemented" branch below.
+    } else if (mediaType === 'microphone') {
       return navigator.mediaDevices.getUserMedia({ audio: true }).then(
         stream => {
           stream.getTracks().forEach(track => track.stop())
