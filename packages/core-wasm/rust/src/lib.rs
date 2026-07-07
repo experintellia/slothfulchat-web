@@ -27,16 +27,29 @@ pub struct DeltaChat {
 ///
 /// `ws_proxy_url` (optional, e.g. `ws://localhost:8641`) points at a
 /// WebSocket→TCP proxy for IMAP/SMTP/DNS; without it all networking errors.
+///
+/// `persist` enables OPFS persistence: sqlite databases via the opfs-sahpool
+/// VFS, everything else via an OPFS mirror of the in-memory fs (hydrated
+/// here, written through on every change). Off = fully ephemeral (tests).
 #[wasm_bindgen]
 pub async fn init(
     on_message: js_sys::Function,
     ws_proxy_url: Option<String>,
+    persist: bool,
 ) -> Result<DeltaChat, JsValue> {
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Info);
 
     if let Some(url) = ws_proxy_url {
         deltachat::net::ws_tcp::set_ws_proxy_url(url);
+    }
+
+    if persist {
+        // must run before Accounts::new: makes sahpool the default sqlite VFS
+        // and loads the persisted fs tree (accounts.toml, blobs) into memfs
+        tokio::fs::enable_persistence()
+            .await
+            .map_err(|e| JsValue::from_str(&format!("failed to enable persistence: {e}")))?;
     }
 
     let accounts = Accounts::new(PathBuf::from("/accounts"), true)

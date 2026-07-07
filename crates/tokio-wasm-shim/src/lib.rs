@@ -18,6 +18,8 @@ pub use tokio::{io, join, pin, select, sync, task_local, try_join};
 #[cfg(target_arch = "wasm32")]
 pub mod fs;
 #[cfg(target_arch = "wasm32")]
+mod opfs;
+#[cfg(target_arch = "wasm32")]
 pub mod net;
 #[cfg(target_arch = "wasm32")]
 pub mod runtime;

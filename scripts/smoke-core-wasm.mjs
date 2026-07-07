@@ -38,7 +38,7 @@ page.on('pageerror', (e) => console.error('[pageerror]', e.message));
 
 let failed = false;
 try {
-  await page.goto(`http://localhost:${port}/example/index.html`);
+  await page.goto(`http://localhost:${port}/example/index.html?persist=0`);
   await page.waitForFunction(() => window.__systemInfo, null, { timeout: 120_000 });
   const info = await page.evaluate(() => window.__systemInfo);
   if (!info || !info.deltachat_core_version) {

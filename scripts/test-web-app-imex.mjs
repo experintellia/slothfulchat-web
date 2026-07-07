@@ -90,8 +90,9 @@ async function loginViaUI({ email, password }) {
 
 let failed = false
 try {
+  // persist=0: this test needs reload-as-wipe (step 3), so run without OPFS
   await page.goto(
-    `http://localhost:${APP_PORT}/main.html?proxy=ws://localhost:${PROXY_PORT}`
+    `http://localhost:${APP_PORT}/main.html?persist=0&proxy=ws://localhost:${PROXY_PORT}`
   )
   await waitForBoot()
   console.log('OK: wasm core booted')
@@ -126,8 +127,8 @@ try {
   if (size < 100 * 1024) throw new Error(`backup too small: ${size} bytes`)
   console.log(`OK: UI export -> download ${name} (${size} bytes)`)
 
-  // 3. wipe: the core memfs is memory-only, a reload loses all accounts and
-  // lands on the welcome screen with a fresh unconfigured account
+  // 3. wipe: with persist=0 the core is memory-only, a reload loses all
+  // accounts and lands on the welcome screen with a fresh unconfigured account
   await page.reload()
   await waitForBoot()
   console.log('OK: reloaded — fresh core, no accounts')

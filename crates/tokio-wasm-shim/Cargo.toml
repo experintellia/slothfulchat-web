@@ -14,3 +14,22 @@ wasmtimer = "0.4"
 wasm-bindgen-futures = "0.4"
 futures = "0.3"
 js-sys = "0.3"
+wasm-bindgen = "0.2"
+# OPFS persistence (M5): memfs hydrate/write-through + sqlite sahpool VFS
+web-sys = { version = "0.3", features = [
+    "console",
+    "Blob",
+    "File",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemGetFileOptions",
+    "FileSystemRemoveOptions",
+    "FileSystemWritableFileStream",
+    "Navigator",
+    "StorageManager",
+    "WorkerGlobalScope",
+    "WorkerNavigator",
+] }
+sqlite-wasm-rs = { version = "0.5.5", default-features = false }
+sqlite-wasm-vfs = "0.2"

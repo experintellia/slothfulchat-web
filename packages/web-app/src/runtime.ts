@@ -111,11 +111,12 @@ const EXPORTS_DIR = '/exports'
 let core: Core | null = null
 function getCore(): Core {
   if (!core) {
+    const params = new URLSearchParams(location.search)
     const wsProxyUrl =
-      new URLSearchParams(location.search).get('proxy') ??
-      localStorage.getItem(PROXY_KEY) ??
-      'ws://localhost:8641'
-    core = startCore({ wsProxyUrl }, new URL('/core/worker.js', location.href))
+      params.get('proxy') ?? localStorage.getItem(PROXY_KEY) ?? 'ws://localhost:8641'
+    // OPFS persistence is on by default; ?persist=0 opts out (fresh-core tests)
+    const persist = params.get('persist') !== '0'
+    core = startCore({ wsProxyUrl, persist }, new URL('/core/worker.js', location.href))
     // The frontend passes the magic destination '<BROWSER>' to exportBackup on
     // the browser target (upstream's node server rewrites it to a tmp dir).
     // There is no server here, so rewrite it to a memfs dir before it reaches

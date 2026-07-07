@@ -31,11 +31,14 @@ const scope = self as unknown as {
 }
 
 // ?proxy=ws://... on the worker URL configures the WebSocket→TCP proxy
-const proxyUrl = new URL(import.meta.url).searchParams.get('proxy') ?? undefined
+const workerParams = new URL(import.meta.url).searchParams
+const proxyUrl = workerParams.get('proxy') ?? undefined
+// OPFS persistence is on by default; ?persist=0 opts out (fresh-core tests)
+const persist = workerParams.get('persist') !== '0'
 
 const ready = (async () => {
   await initWasm()
-  return await init((message: string) => scope.postMessage(message), proxyUrl)
+  return await init((message: string) => scope.postMessage(message), proxyUrl, persist)
 })()
 
 scope.onmessage = async (event: MessageEvent<string | FsRequest>) => {

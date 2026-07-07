@@ -56,14 +56,17 @@ export interface Core {
   fsExists(path: string): Promise<boolean>
 }
 
-/** Spawns the core worker and returns the typed client. */
+/** Spawns the core worker and returns the typed client.
+ * `persist` (default true) keeps accounts/messages/blobs in OPFS across
+ * page reloads; pass false for a fresh, fully in-memory core. */
 export function startCore(
-  options: { wsProxyUrl?: string } = {},
+  options: { wsProxyUrl?: string; persist?: boolean } = {},
   workerUrl: URL = new URL('./worker.js', import.meta.url),
 ): Core {
-  if (options.wsProxyUrl) {
+  if (options.wsProxyUrl || options.persist === false) {
     workerUrl = new URL(workerUrl)
-    workerUrl.searchParams.set('proxy', options.wsProxyUrl)
+    if (options.wsProxyUrl) workerUrl.searchParams.set('proxy', options.wsProxyUrl)
+    if (options.persist === false) workerUrl.searchParams.set('persist', '0')
   }
   const worker = new Worker(workerUrl, { type: 'module' })
   const transport = new WasmTransport(worker)

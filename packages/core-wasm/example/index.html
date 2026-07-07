@@ -29,8 +29,10 @@
     const output = document.getElementById('output')
     try {
       // ?proxy=ws://localhost:8641 enables networking via the WS-TCP proxy
-      const wsProxyUrl = new URL(location.href).searchParams.get('proxy') ?? undefined
-      const core = startCore({ wsProxyUrl })
+      // ?persist=0 disables OPFS persistence (fresh core, used by the tests)
+      const params = new URL(location.href).searchParams
+      const wsProxyUrl = params.get('proxy') ?? undefined
+      const core = startCore({ wsProxyUrl, persist: params.get('persist') !== '0' })
       const { transport, dc } = core
 
       // full core handle incl. fs side channel (fsRead/fsWrite/fsRemove/fsExists)

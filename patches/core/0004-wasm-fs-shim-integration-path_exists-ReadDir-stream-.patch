@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Mon, 6 Jul 2026 00:57:11 +0000
-Subject: [PATCH 4/8] =?UTF-8?q?wasm:=20fs=20shim=20integration=20=E2=80=94?=
+Subject: [PATCH 4/9] =?UTF-8?q?wasm:=20fs=20shim=20integration=20=E2=80=94?=
  =?UTF-8?q?=20path=5Fexists,=20ReadDir=20stream,=20no=20lockfile,=20tar=20?=
  =?UTF-8?q?stubs?=
 MIME-Version: 1.0

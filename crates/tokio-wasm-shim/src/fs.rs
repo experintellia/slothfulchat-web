@@ -1,7 +1,8 @@
 //! In-memory filesystem mirroring the subset of `tokio::fs` chatmail core uses.
 //!
-//! ponytail: memory-only — everything is lost on page reload; an OPFS-backed
-//! implementation behind this same API is the upgrade path (M5).
+//! M5: optionally persistent — [`crate::opfs::enable_persistence`] hydrates
+//! the tree from OPFS at startup and every mutation below calls
+//! `opfs::mark_dirty` to queue an asynchronous write-through.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -21,6 +22,48 @@ enum Node {
 }
 
 static FS: Mutex<BTreeMap<PathBuf, Node>> = Mutex::new(BTreeMap::new());
+
+use crate::opfs::mark_dirty;
+// re-exported here so the core can reach persistence entry points via `tokio::fs::*`
+pub use crate::opfs::{enable_persistence, sqlite_vfs_import, sqlite_vfs_take};
+
+/// Point-in-time state of one memfs path, for the OPFS write-through.
+pub(crate) enum Snapshot {
+    File(Vec<u8>),
+    Dir,
+    Missing,
+}
+
+pub(crate) fn snapshot(path: &Path) -> Snapshot {
+    match FS.lock().unwrap().get(&normalize(path)) {
+        Some(Node::File { data, .. }) => Snapshot::File(data.clone()),
+        Some(Node::Dir) => Snapshot::Dir,
+        None => Snapshot::Missing,
+    }
+}
+
+/// Inserts a file loaded from OPFS (with its parent dirs) WITHOUT marking it
+/// dirty — hydration must not echo back into the write-through queue.
+pub(crate) fn insert_hydrated_file(path: PathBuf, data: Vec<u8>) {
+    let path = normalize(&path);
+    let mut fs = FS.lock().unwrap();
+    let mut parent = path.clone();
+    while parent.pop() && parent != Path::new("/") {
+        fs.entry(parent.clone()).or_insert(Node::Dir);
+    }
+    fs.insert(
+        path,
+        Node::File {
+            data,
+            modified: now(),
+        },
+    );
+}
+
+/// Dir twin of [`insert_hydrated_file`].
+pub(crate) fn insert_hydrated_dir(path: PathBuf) {
+    FS.lock().unwrap().insert(normalize(&path), Node::Dir);
+}
 
 /// `SystemTime::now()` panics on wasm32-unknown-unknown; epoch + JS clock doesn't.
 fn now() -> SystemTime {
@@ -78,12 +121,14 @@ fn write_sync(path: &Path, contents: &[u8]) {
         fs.entry(parent.clone()).or_insert(Node::Dir);
     }
     fs.insert(
-        path,
+        path.clone(),
         Node::File {
             data: contents.to_vec(),
             modified: now(),
         },
     );
+    drop(fs);
+    mark_dirty(&path);
 }
 
 pub async fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
@@ -97,9 +142,9 @@ pub fn sync_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Res
 }
 
 pub async fn create_dir(path: impl AsRef<Path>) -> io::Result<()> {
-    FS.lock()
-        .unwrap()
-        .insert(normalize(path.as_ref()), Node::Dir);
+    let path = normalize(path.as_ref());
+    FS.lock().unwrap().insert(path.clone(), Node::Dir);
+    mark_dirty(&path);
     Ok(())
 }
 
@@ -116,6 +161,8 @@ pub fn sync_create_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
         current.push(component);
         fs.entry(current.clone()).or_insert(Node::Dir);
     }
+    drop(fs);
+    mark_dirty(&path);
     Ok(())
 }
 
@@ -134,12 +181,18 @@ pub fn sync_remove(path: impl AsRef<Path>) -> io::Result<()> {
     for key in keys {
         fs.remove(&key);
     }
+    drop(fs);
+    mark_dirty(&prefix);
     Ok(())
 }
 
 pub async fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
-    match FS.lock().unwrap().remove(&normalize(path.as_ref())) {
-        Some(_) => Ok(()),
+    let path = normalize(path.as_ref());
+    match FS.lock().unwrap().remove(&path) {
+        Some(_) => {
+            mark_dirty(&path);
+            Ok(())
+        }
         None => Err(not_found()),
     }
 }
@@ -162,6 +215,8 @@ pub async fn remove_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
     for key in keys {
         fs.remove(&key);
     }
+    drop(fs);
+    mark_dirty(&prefix);
     Ok(())
 }
 
@@ -182,10 +237,18 @@ pub fn sync_rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<(
     if keys.is_empty() {
         return Err(not_found());
     }
+    let mut moved = Vec::new();
     for key in keys {
         let node = fs.remove(&key).unwrap();
         let suffix = key.strip_prefix(&from).unwrap().to_path_buf();
-        fs.insert(to.join(suffix), node);
+        let target = to.join(suffix);
+        fs.insert(target.clone(), node);
+        moved.push(target);
+    }
+    drop(fs);
+    mark_dirty(&from); // deletes the whole old subtree in OPFS
+    for target in moved {
+        mark_dirty(&target);
     }
     Ok(())
 }
@@ -503,15 +566,18 @@ impl File {
     }
 
     pub async fn set_len(&self, size: u64) -> io::Result<()> {
-        let mut fs = FS.lock().unwrap();
-        match fs.get_mut(&self.path) {
-            Some(Node::File { data, modified }) => {
-                data.resize(size as usize, 0);
-                *modified = now();
-                Ok(())
+        {
+            let mut fs = FS.lock().unwrap();
+            match fs.get_mut(&self.path) {
+                Some(Node::File { data, modified }) => {
+                    data.resize(size as usize, 0);
+                    *modified = now();
+                }
+                _ => return Err(not_found()),
             }
-            _ => Err(not_found()),
         }
+        mark_dirty(&self.path);
+        Ok(())
     }
 
     pub async fn sync_all(&self) -> io::Result<()> {
@@ -564,6 +630,7 @@ impl AsyncWrite for File {
         data[pos..pos + buf.len()].copy_from_slice(buf);
         *modified = now();
         drop(fs);
+        mark_dirty(&self.path);
         self.pos += buf.len() as u64;
         Poll::Ready(Ok(buf.len()))
     }

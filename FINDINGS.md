@@ -81,3 +81,25 @@ The upstream deltachat-desktop browser-edition frontend (`bundle.js` byte-identi
 - Key import/export UI was removed upstream in v2.53 — nothing to wire.
 - PWA: manifest + service worker present (installable shape); no offline app-shell precache yet, Lighthouse not run.
 - jsonrpc API drift core 2.54.0-dev vs frontend's 2.53.0 expectations: one additive event, zero breakage.
+
+## M5 — persistent storage (2026-07-07)
+
+### M5 VERDICT: PASSED — all milestones complete
+`scripts/test-persistence.mjs`: UI login → message to self-chat → `page.reload()` → account and message still there with **no re-login**. All six earlier suites stay green (persistence is an init option, default ON in the web app, OFF for the fresh-core test harnesses).
+
+**Final patch count: 9 core / 0 desktop.**
+
+### Porting log
+- **SQLite → OPFS**: the sahpool VFS lives in the companion crate `sqlite-wasm-vfs` 0.2 (not sqlite-wasm-rs itself). Installed as the default VFS at core init (`OpfsSAHPoolCfgBuilder`, capacity 32); DB bytes land in opaque pool files under `.opfs-sahpool/` — synchronous-durable via sync access handles, dedicated-worker requirement already met, no COOP/COEP needed.
+- **Blob memfs → OPFS mirror** (shim `opfs.rs`): hydrate the memfs from OPFS `memfs/` at boot, then a dirty-path FIFO flusher write-through. No double storage: DB files never touch the memfs (rusqlite goes straight through the sahpool VFS).
+- **Gotcha (patch 0009)**: the M4 backup-import byte swap was hardwired to the memory VFS — with sahpool as default it silently targeted the wrong VFS; now dispatches to whichever VFS is default.
+- Limitations (prototype-acceptable): async blob flush can lose last-moment writes on tab close (DB itself is sync-durable); single tab only (sahpool handles are exclusive); removed accounts orphan their pool slot; fixed pool capacity 32.
+
+## Prototype complete — feasibility answer
+**YES.** A full DeltaChat client — networking, UI, multiaccount, backup IMEX, persistence — runs in a plain browser tab with:
+- **9 patches (~2500 lines) on core, 0 patches on desktop**
+- 1 reusable facade crate (tokio-wasm-shim: memfs + OPFS mirror, wasmtimer, spawn_local task shims)
+- 3 vendored dep forks (async-imap, mail-builder, astral-tokio-tar — each a few lines, all time/tokio-fs related)
+- 1 wasm wrapper crate + 1 runtime.js package (no upstream frontend changes thanks to the `window.r` seam)
+- Requires: a ~100-line WS→TCP proxy (the one irreducible server piece — browsers cannot open TCP), clang + wasm-pack at build time
+- Known holes for a hand-written redo to address: in-wasm HTTP stubbed (no instant onboarding/QR account creation, no HTTP-fallback transport), no sqlcipher, single tab, webxdc/iroh descoped (see DESCOPED.md).

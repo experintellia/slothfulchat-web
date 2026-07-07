@@ -59,7 +59,7 @@ let failed = false;
 const watchdog = setTimeout(() => { console.error('FAIL: global watchdog (6 min) — test hung'); proxy.kill(); process.exit(1); }, 360_000);
 try {
   await page.goto(
-    `http://localhost:${port}/example/index.html?proxy=${encodeURIComponent('ws://localhost:8641')}`,
+    `http://localhost:${port}/example/index.html?persist=0&proxy=${encodeURIComponent('ws://localhost:8641')}`,
   );
   await page.waitForFunction(() => window.__systemInfo, null, { timeout: 60_000 });
   console.log('core booted, configuring account…');
