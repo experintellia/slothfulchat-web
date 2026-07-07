@@ -91,12 +91,16 @@ jobs:
       # from the patched core at its pinned commit. `cargo test` generates the
       # TS bindings; then constants, tsc, esbuild bundle. This is a `file:` dep
       # of core-wasm, so it MUST exist before the root `pnpm install` below.
-      # (--ignore-workspace: build in isolation; esbuild's postinstall is a
-      # no-op here, its JS launcher is what we bundle with.)
+      # (local pnpm-workspace.yaml: builds in isolation from the root workspace
+      # AND carries allowBuilds — pnpm 11 hard-errors on esbuild's postinstall
+      # otherwise; --ignore-workspace can't work here since it makes pnpm skip
+      # the very file that holds the allowBuilds setting. esbuild's postinstall
+      # is unwanted anyway, its JS launcher is what we bundle with.)
       - name: Generate + build @deltachat/jsonrpc-client (before root install)
         working-directory: build/core/deltachat-jsonrpc/typescript
         run: |
-          pnpm install --ignore-workspace
+          printf 'allowBuilds:\n  esbuild: false\n' > pnpm-workspace.yaml
+          pnpm install
           cargo test -p deltachat-jsonrpc
           node scripts/generate-constants.js
           ./node_modules/.bin/tsc
