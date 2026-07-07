@@ -41,9 +41,23 @@ pnpm smoke                                        # headless verification
 pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/example/index.html
 ```
 
-## Current limits (prototype)
+## Networking & persistence
 
-- No networking yet (IMAP/SMTP/HTTP error at runtime) — M3 adds a WebSocket→TCP proxy.
-- Storage is in-memory: everything is lost on reload (OPFS is M5).
-- Backup import/export and blob-file writes are stubbed (M4).
+- IMAP/SMTP/DNS tunnel through a WebSocket→TCP bridge: run
+  [`@slothfulchat/ws-tcp-proxy`](https://www.npmjs.com/package/@slothfulchat/ws-tcp-proxy)
+  and pass `startCore({ wsProxyUrl: 'ws://localhost:8641' })`. TLS terminates
+  inside the wasm core — the bridge only ever relays ciphertext. Without a
+  bridge, networking errors at runtime (everything else works).
+- Storage (accounts, messages, blobs) persists in OPFS by default and survives
+  reloads; pass `persist: false` for a fresh in-memory core.
+
+## Current limits
+
+- In-wasm HTTP is stubbed: https-URL `DCACCOUNT:` QR codes, provider
+  autoconfig, OAuth2 and push don't work. Bare-domain `dcaccount:example.org`
+  and classic email+password login work.
+- One tab at a time: with persistence on, the core holds an exclusive lock on
+  its OPFS storage, so a second tab of the same app fails to start its core
+  until the first is closed.
+- No sqlcipher; webxdc and iroh are descoped.
 - Always use release wasm builds; dev-profile wasm crashes the tab.

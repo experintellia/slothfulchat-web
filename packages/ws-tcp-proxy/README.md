@@ -16,6 +16,7 @@ npx @slothfulchat/ws-tcp-proxy
 
 # or download the one file and run it yourself (for the sceptical):
 curl -O https://raw.githubusercontent.com/experintellia/slothfulchat-web/main/packages/ws-tcp-proxy/ws-tcp-proxy.mjs
+npm install ws   # the single dependency (Node has no built-in WebSocket *server*)
 node ws-tcp-proxy.mjs
 ```
 
