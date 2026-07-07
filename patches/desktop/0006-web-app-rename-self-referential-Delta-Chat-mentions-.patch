@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Tue, 7 Jul 2026 18:52:34 +0000
+Subject: [PATCH 6/6] web-app: rename self-referential Delta Chat mentions to
+ SlothfulChat
+
+Only strings where the app refers to itself (app_name, welcome, about,
+background/location rationales); credits, delta.chat links, donation/stats
+and multi-device instructions keep the Delta Chat name. en.json is
+regenerated from this via translations:convert.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ _locales/en.xml | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/_locales/en.xml b/_locales/en.xml
+index a52b7b6ca..f09c33ccc 100644
+--- a/_locales/en.xml
++++ b/_locales/en.xml
+@@ -1,7 +1,7 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+     <!-- common strings without special context -->
+-    <string name="app_name">Delta Chat</string>
++    <string name="app_name">SlothfulChat</string>
+     <string name="ok">OK</string>
+     <string name="cancel">Cancel</string>
+     <string name="clear_search">Clear Search</string>
+@@ -1095,7 +1095,7 @@
+ 
+     <!-- location streaming -->
+     <string name="location_streaming_notification_text">You are sharing your location</string>
+-    <string name="location_rationale">To share your live location with chat members, allow Delta Chat to use your location data.\n\nTo make live location work gaplessly, location data is used even when the app is closed or not in use.</string>
++    <string name="location_rationale">To share your live location with chat members, allow SlothfulChat to use your location data.\n\nTo make live location work gaplessly, location data is used even when the app is closed or not in use.</string>
+ 
+     <!-- permissions -->
+     <string name="perm_required_title">Permission required</string>
+@@ -1117,7 +1117,7 @@
+     <string name="ImageEditorHud_flip">Flip</string>
+     <string name="ImageEditorHud_rotate">Rotate</string>
+ 
+-    <string name="welcome_desktop">Welcome to Delta Chat</string>
++    <string name="welcome_desktop">Welcome to SlothfulChat</string>
+     <string name="global_menu_preferences_language_desktop">Language</string>
+     <string name="global_menu_file_desktop">File</string>
+     <string name="global_menu_file_quit_desktop">Quit</string>
+@@ -1135,7 +1135,7 @@
+     <string name="delta_chat_homepage">Delta Chat Homepage</string>
+     <string name="contribute">Contribute</string>
+     <string name="global_menu_help_report_desktop">Report an Issue</string>
+-    <string name="global_menu_help_about_desktop">About Delta Chat</string>
++    <string name="global_menu_help_about_desktop">About SlothfulChat</string>
+     <string name="global_menu_file_open_desktop">Open Delta Chat</string>
+     <string name="global_menu_minimize_to_tray">Minimize</string>
+     <string name="no_account_selected">Select a profile or create a new profile</string>
+@@ -1206,7 +1206,7 @@
+     <string name="import_device_contacts">Import device contacts</string>
+     <string name="import_device_contacts_hint">To chat with contacts from your device open Settings and enable \"Contacts\".</string>
+     <!-- iOS notification settings -->
+-    <string name="disabled_in_dc">Disabled in Delta Chat</string>
++    <string name="disabled_in_dc">Disabled in SlothfulChat</string>
+     <string name="disabled_in_system_settings">Disabled in system settings</string>
+     <string name="bg_app_refresh_disabled">\"Background App Refresh\" disabled in system settings</string>
+     <string name="notifications_avg_minutes">On average every %1$d minutes</string>
+@@ -1240,10 +1240,10 @@
+     <string name="pref_reliable_service">Force Background Connection</string>
+     <string name="pref_reliable_service_explain">Causes a permanent notification</string>
+ 
+-    <string name="pref_background_notifications_rationale">To maintain connection and receive messages in the background, ignore battery optimizations in the next step.\n\nDelta Chat uses few resources and takes care not to drain your battery.</string>
++    <string name="pref_background_notifications_rationale">To maintain connection and receive messages in the background, ignore battery optimizations in the next step.\n\nSlothfulChat uses few resources and takes care not to drain your battery.</string>
+     <!-- disabling "Reliable service" will hide a the maybe annoying permanent-notification with the drawback that new-message-notifications get potentially unreliable -->
+-    <string name="perm_enable_bg_reminder_title">Tap here to receive messages while Delta Chat is in the background.</string>
+-    <string name="perm_enable_bg_already_done">You already allowed Delta Chat to receive messages in the background.\n\nIf messages still do not arrive in background, please also check your system settings.</string>
++    <string name="perm_enable_bg_reminder_title">Tap here to receive messages while SlothfulChat is in the background.</string>
++    <string name="perm_enable_bg_already_done">You already allowed SlothfulChat to receive messages in the background.\n\nIf messages still do not arrive in background, please also check your system settings.</string>
+ 
+     <!-- device messages for updates -->
+     <string name="update_2_0">What\'s new?\n\n💯 End-to-end encryption is reliable and forever now. Padlocks 🔒 are gone!\n\n✉️ Classic email without end-to-end encryption is marked with a letter symbol\n\n😻 New enhanced profile screen for all your contacts\n\n🔲 New button for quick access to apps used in a chat\n\n❤️ Please donate to help us remain independent and continue to bring improvements: %1$s</string>
