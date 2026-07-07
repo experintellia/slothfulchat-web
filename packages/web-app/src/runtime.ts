@@ -163,17 +163,32 @@ function initBlobServiceWorker(log: Logger) {
       ((event.source as unknown as ServiceWorker) ??
         navigator.serviceWorker.controller)?.postMessage(payload, transfer)
     try {
-      // msg.path = absolute memfs path (backup downloads), otherwise a blob
-      const data = await getCore().fsRead(
-        msg.path ?? `/accounts/${msg.accountId}/dc.db-blobs/${msg.filename}`
-      )
+      let data: Uint8Array
+      let mime: string
+      if (msg.webxdcIcon) {
+        // icon lives inside the .xdc archive, not the memfs
+        const { accountId, msgId } = msg.webxdcIcon
+        const info = (await getCore().transport.request('get_webxdc_info', [
+          accountId,
+          msgId,
+        ])) as { icon: string }
+        const b64 = (await getCore().transport.request('get_webxdc_blob', [
+          accountId,
+          msgId,
+          info.icon,
+        ])) as string
+        data = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+        mime = mimeFromName(info.icon)
+      } else {
+        // msg.path = absolute memfs path (backup downloads, temp files),
+        // otherwise a blob
+        data = await getCore().fsRead(
+          msg.path ?? `/accounts/${msg.accountId}/dc.db-blobs/${msg.filename}`
+        )
+        mime = mimeFromName(msg.filename)
+      }
       reply(
-        {
-          type: 'blob-response',
-          id: msg.id,
-          data,
-          mime: mimeFromName(msg.filename),
-        },
+        { type: 'blob-response', id: msg.id, data, mime },
         [data.buffer as ArrayBuffer]
       )
     } catch (error) {
@@ -512,12 +527,13 @@ class BrowserRuntime {
     }
     return this.runtime_info
   }
-  getWebxdcIconURL(_accountId: number, _msgId: number): string {
-    this.log.critical('getWebxdcIconURL Method not implemented.')
-    return 'not-implemented'
+  getWebxdcIconURL(accountId: number, msgId: number): string {
+    // served by the blobs SW: it asks the page, which reads the icon out of
+    // the .xdc archive via get_webxdc_info + get_webxdc_blob
+    return `${BASE}webxdc-icon/${accountId}/${msgId}`
   }
   openWebxdc(): void {
-    throw new Error('Method not implemented.')
+    showWebxdcNotImplementedDialog()
   }
   async openPath(path: string): Promise<string> {
     if (path.includes('dc.db-blobs')) {
@@ -924,6 +940,78 @@ const el = <K extends keyof HTMLElementTagNameMap>(
   Object.assign(node.style, style)
   if (text != null) node.textContent = text
   return node
+}
+
+const WEBXDC_ISSUE_URL =
+  'https://github.com/experintellia/slothfulchat-web/issues/2'
+
+/** Webxdc apps can't run yet in the wasm edition (needs a separate-origin
+ * sandboxed host, see WEBXDC_ISSUE_URL). Native <dialog>+showModal() so it
+ * lands above the app's own top-layer modals (same trick as the bridge
+ * dialog). */
+function showWebxdcNotImplementedDialog() {
+  if (document.getElementById('sc-webxdc-dialog')) return
+  const overlay = el('dialog', {
+    position: 'fixed',
+    inset: '0',
+    width: '100%',
+    height: '100%',
+    maxWidth: 'none',
+    maxHeight: 'none',
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,.5)',
+  })
+  overlay.id = 'sc-webxdc-dialog'
+  overlay.onclose = () => overlay.remove()
+
+  const panel = el('div', {
+    width: 'min(400px, 92vw)',
+    padding: '20px',
+    borderRadius: '10px',
+    background: '#1e1e1e',
+    color: '#eee',
+    font: '14px/1.5 system-ui, sans-serif',
+    boxShadow: '0 8px 40px rgba(0,0,0,.5)',
+  })
+  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'Webxdc apps')
+  const body = el(
+    'p',
+    { margin: '0 0 12px', color: '#bbb' },
+    'Running webxdc apps is not implemented (yet) in this browser edition.'
+  )
+  const link = el('a', { color: '#4ea1ff', fontSize: '13px' }, 'Follow the GitHub issue →')
+  ;(link as HTMLAnchorElement).href = WEBXDC_ISSUE_URL
+  ;(link as HTMLAnchorElement).target = '_blank'
+  ;(link as HTMLAnchorElement).rel = 'noopener noreferrer'
+
+  const row = el('div', { display: 'flex', justifyContent: 'flex-end', marginTop: '16px' })
+  const closeBtn = el(
+    'button',
+    {
+      padding: '8px 14px',
+      borderRadius: '6px',
+      border: 'none',
+      cursor: 'pointer',
+      fontSize: '13px',
+      background: '#2d7dff',
+      color: '#fff',
+    },
+    'Close'
+  )
+  closeBtn.onclick = () => overlay.remove()
+  row.append(closeBtn)
+  panel.append(title, body, link, row)
+  overlay.append(panel)
+  overlay.onclick = e => {
+    if (e.target === overlay) overlay.remove()
+  }
+  document.body.appendChild(overlay)
+  overlay.showModal()
 }
 
 function hideBridgeToast() {

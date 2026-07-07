@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Tue, 7 Jul 2026 21:51:07 +0000
+Subject: [PATCH 7/7] web-app: connectivity view shows a loading state instead
+ of a blank iframe
+
+---
+ .../components/dialogs/ConnectivityDialog.tsx | 43 +++++++++++++------
+ 1 file changed, 31 insertions(+), 12 deletions(-)
+
+diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+index 8a3746d2b..aa1286215 100644
+--- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
++++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+@@ -24,6 +24,7 @@ export default function ConnectivityDialog({ onClose }: DialogProps) {
+ }
+ 
+ function ConnectivityDialogInner() {
++  const tx = useTranslationFunction()
+   const accountId = selectedAccountId()
+   const [connectivityHTML, setConnectivityHTML] = useState('')
+ 
+@@ -60,18 +61,36 @@ function ConnectivityDialogInner() {
+   return (
+     <DialogBody>
+       <DialogContent>
+-        <iframe
+-          style={{
+-            border: 0,
+-            height: '620px',
+-            width: '100%',
+-            maxHeight: '76vh',
+-            backgroundColor: bgColor,
+-            color: textColor,
+-          }}
+-          srcDoc={connectivityHTML}
+-          sandbox={''}
+-        />
++        {connectivityHTML === '' ? (
++          // getConnectivityHtml can take a while on a busy (single-threaded
++          // wasm) core; an empty srcDoc iframe renders as a blank white box,
++          // so show an explicit loading state instead
++          <div
++            style={{
++              height: '620px',
++              width: '100%',
++              maxHeight: '76vh',
++              display: 'flex',
++              alignItems: 'center',
++              justifyContent: 'center',
++            }}
++          >
++            {tx('loading')}
++          </div>
++        ) : (
++          <iframe
++            style={{
++              border: 0,
++              height: '620px',
++              width: '100%',
++              maxHeight: '76vh',
++              backgroundColor: bgColor,
++              color: textColor,
++            }}
++            srcDoc={connectivityHTML}
++            sandbox={''}
++          />
++        )}
+         <BrowserBridgeInfo />
+       </DialogContent>
+     </DialogBody>

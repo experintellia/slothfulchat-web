@@ -187,3 +187,19 @@ e2e message roundtrip, whitelist self-check).
   with an opaque "Could not find your mail server". Users must accept the
   prompt; headless tests need `--disable-features=LocalNetworkAccessChecks`.
   Worth mentioning in the bridge-down toast/dialog text eventually.
+
+## Webxdc surface + connectivity polish (2026-07-07)
+
+- **Webxdc icons render**: `getWebxdcIconURL` → `webxdc-icon/:acc/:msgId`,
+  served by the blobs SW via `get_webxdc_info` + `get_webxdc_blob` (icon
+  lives inside the .xdc archive, not the memfs). Verified e2e: maps.xdc sent
+  through the picker renders its 256px icon.
+- **Webxdc start = honest dialog**: `openWebxdc` opens a native
+  `<dialog>` ("not implemented (yet) in this browser edition") linking
+  issue #2 (separate-origin sandboxed host design). Running apps stays
+  descoped — the icon/dialog work is UI surface only.
+- **Desktop patch 0007**: connectivity view shows a centered "Loading…"
+  instead of a blank iframe while `getConnectivityHtml` is pending — on a
+  busy single-threaded wasm core the RPC can take a while, and an empty
+  srcDoc iframe paints as a white box (the reported "white connectivity
+  view"). Patch count: **9 core / 7 desktop.**

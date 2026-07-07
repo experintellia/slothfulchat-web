@@ -31,7 +31,10 @@ sw.addEventListener('fetch', (event: any) => {
   // /blob-path/<uri-encoded absolute memfs path>: temp files outside the
   // blobdir, e.g. /tmp/<uuid>/<file> (see runtime.ts transformBlobURL)
   const bypath = url.pathname.match(/\/blob-path\/([^/]+)$/)
-  if (!blob && !backup && !bypath) {
+  // /webxdc-icon/:accountId/:msgId — icon from inside a .xdc archive; the
+  // page resolves it via get_webxdc_info + get_webxdc_blob
+  const xdcIcon = url.pathname.match(/\/webxdc-icon\/(\d+)\/(\d+)$/)
+  if (!blob && !backup && !bypath && !xdcIcon) {
     return // fall through to network
   }
   let filename = decodeURIComponent(blob ? blob[2] : backup ? backup[1] : '')
@@ -51,6 +54,9 @@ sw.addEventListener('fetch', (event: any) => {
     path = decoded
     filename = decoded.split('/').pop()! // page side derives MIME from this
   }
+  const webxdcIcon = xdcIcon
+    ? { accountId: Number(xdcIcon[1]), msgId: Number(xdcIcon[2]) }
+    : undefined
   event.respondWith(
     (async () => {
       const clients = await sw.clients.matchAll({ type: 'window' })
@@ -66,7 +72,7 @@ sw.addEventListener('fetch', (event: any) => {
         }, 15_000)
       })
       for (const client of clients) {
-        client.postMessage({ type: 'blob-request', id, accountId, filename, path })
+        client.postMessage({ type: 'blob-request', id, accountId, filename, path, webxdcIcon })
       }
       const result = await response
       if (!result.data) {
