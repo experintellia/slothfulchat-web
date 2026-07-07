@@ -49,3 +49,24 @@ node scripts/test-web-app-e2e.mjs   # UI login, send, account switch, receive
 node scripts/test-web-app-imex.mjs  # backup export → download → restore
 node scripts/test-persistence.mjs   # account + message survive reload
 ```
+
+## Deployment (GitHub Pages)
+
+Pushes to the default branch auto-build and deploy `dist/` to GitHub Pages
+via [`.github/workflows/deploy-pages.yml`](../../.github/workflows/deploy-pages.yml).
+Enable it once under repo **Settings → Pages → Source = "GitHub Actions"**.
+The app derives its base path at runtime, so a project site
+(`https://<user>.github.io/<repo>/`) works with no build-time config.
+
+**The deployed site is a static PWA shell** — it boots, is installable, and
+renders the full UI, but it can only send/receive with a reachable WS→TCP
+proxy, and Pages provides none:
+
+- Pages is static, so it cannot host `scripts/ws-tcp-proxy.mjs`.
+- An `https://` origin cannot connect to a plain `ws://` proxy (mixed
+  content), and the bundled proxy speaks `ws` on localhost only.
+
+To get a working client from the deployed site, run a `wss://` proxy
+somewhere reachable and point the app at it with `?proxy=wss://your-host` (or
+the `slothfulchat.proxyUrl` localStorage key). Without that, the deploy is a
+UI/PWA demo only.
