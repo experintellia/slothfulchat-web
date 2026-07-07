@@ -40,8 +40,21 @@ pnpm --filter @slothfulchat/web-app build
 
 ## 2. Run the bridge
 
+**Just for yourself?** Run it locally with no config — it listens on
+`ws://localhost:8641` and the app talks to it directly:
+
 ```sh
-# behind TLS is required for an https:// site (see below)
+npx @slothfulchat/ws-tcp-proxy
+```
+
+**Hosting it publicly? You MUST restrict it to a whitelist**, or you're running
+an open relay: an unrestricted bridge will tunnel to *any* mail server's
+IMAP/SMTP ports for anyone on the internet — an abuse magnet (credential-stuffing
+against arbitrary servers, spam relaying). Set `CHATMAIL_WHITELIST` to only the
+chatmail/email servers you allow:
+
+```sh
+# behind TLS (see below); only these servers are reachable
 CHATMAIL_WHITELIST=nine.testrun.org,chatmail.example \
   npx @slothfulchat/ws-tcp-proxy
 ```
@@ -50,7 +63,7 @@ The bridge speaks plain **`ws://`** on `PORT` (default 8641). An `https://`
 site **cannot** connect to `ws://` (mixed content), so put a TLS-terminating
 reverse proxy (nginx, Caddy, …) in front to expose it as **`wss://`**, and
 point `SLOTHFUL_DEFAULT_PROXY` at that `wss://` URL. Full options (endpoints,
-the `CHATMAIL_WHITELIST` allow-list) are in the
+how the `CHATMAIL_WHITELIST` allow-list works) are in the
 [proxy README](packages/ws-tcp-proxy/README.md).
 
 ## The variables
