@@ -1,5 +1,9 @@
 packages:
   - packages/*
+# pnpm 11 auto-runs `pnpm install` before any script (verifyDepsBeforeRun:
+# install); that install fails in CI before `apply-patches` has created
+# build/core, which the lockfile references as a file: dep.
+verifyDepsBeforeRun: false
 # esbuild's postinstall swaps its JS bin launcher for the raw ELF, which
 # breaks pnpm's node-based .bin shim — keep it disabled, the JS launcher works.
 allowBuilds:
