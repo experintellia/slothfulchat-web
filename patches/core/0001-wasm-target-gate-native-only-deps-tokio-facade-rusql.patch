@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Mon, 6 Jul 2026 00:57:11 +0000
-Subject: [PATCH 1/7] wasm: target-gate native-only deps, tokio facade,
+Subject: [PATCH 1/8] wasm: target-gate native-only deps, tokio facade,
  rusqlite 0.40
 
 - tokio -> tokio-wasm-shim facade (real tokio on native, browser shims on

@@ -1,0 +1,432 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Tue, 7 Jul 2026 09:21:38 +0000
+Subject: [PATCH 8/8] wasm: file-based backup export/import
+
+- tar streaming via vendored astral-tokio-tar fork whose tokio dep is
+  the tokio-wasm-shim facade (memfs-backed fs on wasm)
+- Sql::import wasm variant: sqlite-wasm-rs has no sqlcipher_export, so
+  close the pool and swap the DB file bytes in the VFS instead
+  (encrypted backups stay unsupported on wasm)
+- scheduler stop: TaskTracker/timeout path cfg-gated for wasm
+- delete_file routes through the memfs shim
+---
+ Cargo.lock       |  14 ++++--
+ Cargo.toml       |   6 ++-
+ src/imex.rs      | 120 +++++++++++++++++++++++++++++++++--------------
+ src/scheduler.rs |  48 +++++++++++++------
+ src/sql.rs       |  42 +++++++++++++++++
+ src/tools.rs     |   4 ++
+ 6 files changed, 180 insertions(+), 54 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 04697b571..a5493caef 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -195,16 +195,14 @@ dependencies = [
+ [[package]]
+ name = "astral-tokio-tar"
+ version = "0.6.3"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "08648fef353ab39a9d26f909ad53fc4f071be4c91853b78523f5cc3d9e5ebffd"
+ dependencies = [
+  "futures-core",
+  "libc",
+  "portable-atomic",
+  "rustc-hash",
+  "rustix 0.38.44",
+- "tokio",
+  "tokio-stream",
++ "tokio-wasm-shim",
+ ]
+ 
+ [[package]]
+@@ -288,6 +286,7 @@ dependencies = [
+  "stop-token",
+  "thiserror 1.0.69",
+  "tokio",
++ "wasmtimer",
+ ]
+ 
+ [[package]]
+@@ -855,8 +854,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
+ dependencies = [
+  "iana-time-zone",
++ "js-sys",
+  "num-traits",
+  "serde",
++ "wasm-bindgen",
+  "windows-link",
+ ]
+ 
+@@ -1435,7 +1436,9 @@ dependencies = [
+  "url",
+  "uuid",
+  "walkdir",
++ "wasm-bindgen-futures",
+  "webpki-roots",
++ "ws_stream_wasm",
+ ]
+ 
+ [[package]]
+@@ -4335,6 +4338,7 @@ dependencies = [
+  "elliptic-curve",
+  "flate2",
+  "generic-array",
++ "getrandom 0.2.16",
+  "hex",
+  "hkdf",
+  "idea",
+@@ -4366,6 +4370,7 @@ dependencies = [
+  "snafu 0.9.1",
+  "subtle",
+  "twofish",
++ "web-time",
+  "x25519-dalek",
+  "zeroize",
+ ]
+@@ -5001,6 +5006,9 @@ dependencies = [
+ [[package]]
+ name = "ratelimit"
+ version = "1.0.0"
++dependencies = [
++ "deltachat-time",
++]
+ 
+ [[package]]
+ name = "rayon"
+diff --git a/Cargo.toml b/Cargo.toml
+index 75281633f..489250ad1 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -105,8 +105,10 @@ uuid = { version = "1", features = ["serde", "v4"] }
+ walkdir = "2.5.0"
+ webpki-roots = "0.26.8"
+ 
+-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
++# file-based backup IMEX works on wasm too via the vendored fork (see [patch.crates-io])
+ astral-tokio-tar = { version = "0.6.3", default-features = false }
++
++[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ async-native-tls = { version = "0.6", default-features = false, features = ["runtime-tokio"] }
+ async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio-fs"] }
+ fast-socks5 = "1"
+@@ -242,3 +244,5 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+ # fork that drops async-imap's unused tokio/net feature (breaks wasm32);
+ # path is relative to the build/ worktree in the slothfulchat-web repo
+ async-imap = { path = "../../vendor-crates/async-imap" }
++# fork that routes tokio through the tokio-wasm-shim facade so tar works on wasm32
++astral-tokio-tar = { path = "../../vendor-crates/astral-tokio-tar" }
+diff --git a/src/imex.rs b/src/imex.rs
+index 3e901edc2..7f44379ff 100644
+--- a/src/imex.rs
++++ b/src/imex.rs
+@@ -11,7 +11,6 @@
+ 
+ use tokio::fs::{self, File};
+ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+-#[cfg(not(target_arch = "wasm32"))]
+ use tokio_tar::Archive;
+ 
+ use crate::blob::BlobDirContents;
+@@ -24,8 +23,8 @@
+ use crate::qr::DCBACKUP_VERSION;
+ use crate::sql;
+ use crate::tools::{
+-    TempPathGuard, create_folder, delete_file, get_filesuffix_lc, path_exists, read_file, time,
+-    usize_to_u64, write_file,
++    TempPathGuard, create_folder, delete_file, get_filesuffix_lc, path_exists, path_is_file,
++    read_file, time, usize_to_u64, write_file,
+ };
+ 
+ mod transfer;
+@@ -309,22 +308,9 @@ fn poll_read(
+     }
+ }
+ 
+-// tar (astral-tokio-tar) requires tokio/fs, which does not exist on wasm.
+-// Porting backup import/export is deferred until file-based IMEX lands (M4).
+-#[cfg(target_arch = "wasm32")]
+-async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+-    _context: &Context,
+-    _backup_file: R,
+-    _file_size: u64,
+-    _passphrase: String,
+-) -> (Result<()>,) {
+-    (Err(format_err!("backup import is not supported on wasm yet")),)
+-}
+-
+ // This function returns a tuple (Result<()>,) rather than Result<()>
+ // so that we don't accidentally early-return with `?`
+ // and forget to cleanup.
+-#[cfg(not(target_arch = "wasm32"))]
+ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+     context: &Context,
+     backup_file: R,
+@@ -357,8 +343,9 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+             continue;
+         }
+         // async_tar unpacked to $BLOBDIR/BLOBS_BACKUP_NAME/, so we move the file afterwards.
++        // (`Path::is_file()` silently returns false on wasm, use `path_is_file`)
+         let from_path = context.get_blobdir().join(&path);
+-        if from_path.is_file() {
++        if path_is_file(&from_path) {
+             if let Some(name) = from_path.file_name() {
+                 let to_path = context.get_blobdir().join(name);
+                 if let Err(e) = fs::rename(&from_path, &to_path).await {
+@@ -481,10 +468,11 @@ async fn export_backup(context: &Context, dir: &Path, passphrase: String) -> Res
+     let file = File::create(&temp_path).await?;
+     let blobdir = BlobDirContents::new(context).await?;
+ 
++    // tokio::fs metadata rather than std Path::metadata so this works on wasm too
+     let mut file_size = 0;
+-    file_size += temp_db_path.metadata()?.len();
++    file_size += fs::metadata(&temp_db_path).await?.len();
+     for blob in blobdir.iter() {
+-        file_size += blob.to_abs_path().metadata()?.len()
++        file_size += fs::metadata(blob.to_abs_path()).await?.len()
+     }
+ 
+     export_backup_stream(context, &temp_db_path, blobdir, file, file_size)
+@@ -567,23 +555,7 @@ fn poll_shutdown(
+     }
+ }
+ 
+-/// Exports the database and blobs into a stream (unsupported on wasm, see above).
+-#[cfg(target_arch = "wasm32")]
+-pub(crate) async fn export_backup_stream<'a, W>(
+-    _context: &'a Context,
+-    _temp_db_path: &Path,
+-    _blobdir: BlobDirContents<'a>,
+-    _writer: W,
+-    _file_size: u64,
+-) -> Result<()>
+-where
+-    W: tokio::io::AsyncWrite + tokio::io::AsyncWriteExt + Unpin + Send + 'static,
+-{
+-    bail!("backup export is not supported on wasm yet")
+-}
+-
+ /// Exports the database and blobs into a stream.
+-#[cfg(not(target_arch = "wasm32"))]
+ pub(crate) async fn export_backup_stream<'a, W>(
+     context: &'a Context,
+     temp_db_path: &Path,
+@@ -767,6 +739,84 @@ async fn export_key_to_asc_file<T>(
+ /// overwritten.
+ ///
+ /// This also verifies that IO is not running during the export.
++///
++/// wasm variant: sqlite on wasm (sqlite-wasm-rs) has no `sqlcipher_export()`,
++/// so we `VACUUM INTO` sqlite's in-memory VFS and then copy the bytes over
++/// into the tokio memfs so the tar builder can read them.
++/// ponytail: encrypted export is unsupported on wasm (needs sqlcipher).
++#[cfg(target_arch = "wasm32")]
++async fn export_database(
++    context: &Context,
++    dest: &Path,
++    passphrase: String,
++    timestamp: i64,
++) -> Result<()> {
++    ensure!(
++        !context.scheduler.is_running().await,
++        "cannot export backup, IO is running"
++    );
++    ensure!(
++        passphrase.is_empty(),
++        "encrypted backup export is not supported on wasm"
++    );
++    let timestamp = timestamp.try_into().context("32-bit UNIX time overflow")?;
++    let dest_str = dest
++        .to_str()
++        .with_context(|| format!("path {} is not valid unicode", dest.display()))?
++        .to_string();
++
++    context.set_config(Config::BccSelf, Some("1")).await?;
++    context
++        .sql
++        .set_raw_config_int("backup_time", timestamp)
++        .await?;
++    context
++        .sql
++        .set_raw_config_int("backup_version", DCBACKUP_VERSION)
++        .await?;
++    sql::housekeeping(context).await.log_err(context).ok();
++    let vacuum_dest = dest_str.clone();
++    context
++        .sql
++        .call_write(move |conn| {
++            conn.execute("VACUUM INTO ?", (vacuum_dest,))
++                .context("failed to VACUUM INTO backup database")?;
++            Ok(())
++        })
++        .await?;
++
++    // Downgrade verified_one_on_one_chats in the backup, like the native version.
++    // Deprecated 2025-07. If verified_one_on_one_chats was not set, this errors, which we ignore.
++    if let Ok(conn) = rusqlite::Connection::open(&dest_str) {
++        conn.execute(
++            "UPDATE config SET value='0' WHERE keyname='verified_one_on_one_chats';",
++            [],
++        )
++        .ok();
++    }
++
++    // Move the bytes from sqlite's in-memory VFS into the tokio memfs.
++    // MemVfsUtil is not Send; keep it inside a sync helper so the future stays Send.
++    fn take_from_sqlite_vfs(name: &str) -> Result<Vec<u8>> {
++        let vfs = rusqlite::ffi::MemVfsUtil::<rusqlite::ffi::WasmOsCallback>::new();
++        let bytes = vfs
++            .export_db(name)
++            .map_err(|e| format_err!("failed to export database from sqlite VFS: {e}"))?;
++        vfs.delete_db(name);
++        Ok(bytes)
++    }
++    let bytes = take_from_sqlite_vfs(&dest_str)?;
++    fs::write(dest, bytes).await?;
++    Ok(())
++}
++
++/// Exports the database to *dest*, encrypted using *passphrase*.
++///
++/// The directory of *dest* must already exist, if *dest* itself exists it will be
++/// overwritten.
++///
++/// This also verifies that IO is not running during the export.
++#[cfg(not(target_arch = "wasm32"))]
+ async fn export_database(
+     context: &Context,
+     dest: &Path,
+diff --git a/src/scheduler.rs b/src/scheduler.rs
+index 4c81caa19..a2324ae9a 100644
+--- a/src/scheduler.rs
++++ b/src/scheduler.rs
+@@ -753,25 +753,43 @@ pub(crate) async fn stop(self, context: &Context) {
+         // Actually shutdown tasks.
+         let timeout_duration = std::time::Duration::from_secs(30);
+ 
+-        let tracker = TaskTracker::new();
+-        for b in self.inboxes {
+-            let context = context.clone();
+-            tracker.spawn(async move {
+-                tokio::time::timeout(timeout_duration, b.handle)
+-                    .await
+-                    .log_err(&context)
+-            });
++        #[cfg(not(target_arch = "wasm32"))]
++        {
++            let tracker = TaskTracker::new();
++            for b in self.inboxes {
++                let context = context.clone();
++                tracker.spawn(async move {
++                    tokio::time::timeout(timeout_duration, b.handle)
++                        .await
++                        .log_err(&context)
++                });
++            }
++            {
++                let context = context.clone();
++                tracker.spawn(async move {
++                    tokio::time::timeout(timeout_duration, self.smtp_handle)
++                        .await
++                        .log_err(&context)
++                });
++            }
++            tracker.close();
++            tracker.wait().await;
+         }
++        // tokio_util::TaskTracker::spawn needs a real tokio runtime (panics on
++        // wasm); await the handles sequentially on the JS event loop instead.
++        #[cfg(target_arch = "wasm32")]
+         {
+-            let context = context.clone();
+-            tracker.spawn(async move {
+-                tokio::time::timeout(timeout_duration, self.smtp_handle)
++            for b in self.inboxes {
++                tokio::time::timeout(timeout_duration, b.handle)
+                     .await
+-                    .log_err(&context)
+-            });
++                    .log_err(context)
++                    .ok();
++            }
++            tokio::time::timeout(timeout_duration, self.smtp_handle)
++                .await
++                .log_err(context)
++                .ok();
+         }
+-        tracker.close();
+-        tracker.wait().await;
+ 
+         // Abort tasks, then await them to ensure the `Future` is dropped.
+         // Just aborting the task may keep resources such as `Context` clone
+diff --git a/src/sql.rs b/src/sql.rs
+index 9dab4c708..1789da41c 100644
+--- a/src/sql.rs
++++ b/src/sql.rs
+@@ -123,6 +123,48 @@ pub(crate) async fn close(&self) {
+     }
+ 
+     /// Imports the database from a separate file with the given passphrase.
++    ///
++    /// wasm variant: sqlite on wasm (sqlite-wasm-rs) has no `sqlcipher_export()`,
++    /// so instead of copying table-by-table into the open database we close the
++    /// pool, swap the database file bytes inside sqlite's in-memory VFS and reopen.
++    /// ponytail: encrypted backups are unsupported on wasm (needs sqlcipher);
++    /// the main database on wasm is always unencrypted.
++    #[cfg(target_arch = "wasm32")]
++    pub(crate) async fn import(&self, path: &Path, passphrase: String) -> Result<()> {
++        anyhow::ensure!(
++            passphrase.is_empty(),
++            "encrypted backups are not supported on wasm"
++        );
++        let dbfile = self
++            .dbfile
++            .to_str()
++            .with_context(|| format!("path {:?} is not valid unicode", self.dbfile))?
++            .to_string();
++        let bytes = tokio::fs::read(path)
++            .await
++            .context("failed to read unpacked backup database")?;
++
++        // Keep `config_cache` locked all the time the db is imported so that nobody can use
++        // invalid values from there. And clear it immediately so as not to forget in case of errors.
++        let mut config_cache = self.config_cache.write().await;
++        config_cache.clear();
++
++        let mut pool = self.pool.write().await;
++        pool.take(); // dropping the pool closes all connections
++
++        let vfs = rusqlite::ffi::MemVfsUtil::<rusqlite::ffi::WasmOsCallback>::new();
++        vfs.delete_db(&dbfile);
++        vfs.delete_db(&format!("{dbfile}-wal"));
++        vfs.delete_db(&format!("{dbfile}-journal"));
++        vfs.import_db(&dbfile, &bytes)
++            .map_err(|e| anyhow::anyhow!("failed to import database into sqlite VFS: {e}"))?;
++
++        *pool = Some(Self::new_pool(&self.dbfile, passphrase)?);
++        Ok(())
++    }
++
++    /// Imports the database from a separate file with the given passphrase.
++    #[cfg(not(target_arch = "wasm32"))]
+     pub(crate) async fn import(&self, path: &Path, passphrase: String) -> Result<()> {
+         let path_str = path
+             .to_str()
+diff --git a/src/tools.rs b/src/tools.rs
+index 4640cefd3..f2984f784 100644
+--- a/src/tools.rs
++++ b/src/tools.rs
+@@ -425,7 +425,11 @@ pub(crate) fn new(path: PathBuf) -> Self {
+ impl Drop for TempPathGuard {
+     fn drop(&mut self) {
+         let path = self.path.clone();
++        #[cfg(not(target_arch = "wasm32"))]
+         std::fs::remove_file(path).ok();
++        // std::fs is a no-op on wasm32-unknown-unknown, remove via the memfs shim
++        #[cfg(target_arch = "wasm32")]
++        fs::sync_remove(path).ok();
+     }
+ }
+ 

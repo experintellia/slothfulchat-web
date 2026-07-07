@@ -27,6 +27,8 @@ log = "0.4"
 async-imap = { path = "../../../vendor-crates/async-imap" }
 # vendored: routes SystemTime::now() through web-time on wasm32 (boundary + Date generation)
 mail-builder = { path = "../../../vendor-crates/mail-builder" }
+# vendored: routes tokio through the tokio-wasm-shim facade so tar works on wasm32
+astral-tokio-tar = { path = "../../../vendor-crates/astral-tokio-tar" }
 
 [profile.release]
 opt-level = "s"

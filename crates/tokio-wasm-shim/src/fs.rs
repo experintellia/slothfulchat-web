@@ -320,6 +320,24 @@ pub async fn metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
     metadata_sync(path.as_ref())
 }
 
+/// ponytail: memfs has no symlinks, so this is plain `metadata`.
+pub async fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
+    metadata_sync(path.as_ref())
+}
+
+/// ponytail: memfs has no hard links; degrades to a byte copy.
+pub async fn hard_link(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> io::Result<()> {
+    copy(src, dst).await.map(|_| ())
+}
+
+/// ponytail: memfs has no symlinks; always errors.
+pub async fn read_link(_path: impl AsRef<Path>) -> io::Result<PathBuf> {
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "memfs: symlinks are not supported",
+    ))
+}
+
 #[derive(Debug)]
 pub struct DirEntry {
     path: PathBuf,
@@ -460,6 +478,7 @@ impl OpenOptions {
     }
 }
 
+#[derive(Debug)]
 pub struct File {
     path: PathBuf,
     pos: u64,
