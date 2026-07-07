@@ -920,14 +920,51 @@ function hideBridgeToast() {
   document.getElementById('sc-bridge-toast')?.remove()
 }
 
+function hideWelcomeHint() {
+  document.getElementById('sc-bridge-hint')?.remove()
+}
+
+/** The toast is inert under the welcome screen's modal dialog (clicks can't
+ * reach past a showModal), so also inject a clickable hint into the welcome
+ * screen itself — inside the modal it stays interactive. Re-injected by the
+ * poll if a React re-render wipes it. */
+function showWelcomeHint() {
+  if (document.getElementById('sc-bridge-hint')) return
+  const group = document.querySelector('[class*="welcomeScreenButtonGroup"]')
+  if (!group) return
+  const hint = el(
+    'button',
+    {
+      display: 'block',
+      width: '100%',
+      marginBottom: '8px',
+      padding: '10px 14px',
+      borderRadius: '8px',
+      border: 'none',
+      background: '#8a5a00',
+      color: '#fff',
+      font: '13px/1.4 system-ui, sans-serif',
+      textAlign: 'center',
+      cursor: 'pointer',
+    },
+    '⚠ Bridge not reachable — a connection is needed to create a profile. Click to fix.'
+  )
+  hint.id = 'sc-bridge-hint'
+  hint.onclick = () => showBridgeDialog()
+  group.prepend(hint)
+}
+
 function showBridgeToast() {
   if (document.getElementById('sc-bridge-toast')) return
   const toast = el(
     'div',
     {
       position: 'fixed',
+      inset: 'auto',
       bottom: '16px',
       right: '16px',
+      margin: '0',
+      border: 'none',
       zIndex: '2147483647',
       maxWidth: '320px',
       padding: '10px 14px',
@@ -943,20 +980,41 @@ function showBridgeToast() {
   toast.id = 'sc-bridge-toast'
   toast.onclick = () => showBridgeDialog()
   document.body.appendChild(toast)
+  // Upstream dialogs (welcome screen etc.) use showModal(), whose top layer
+  // paints over any z-index — join it so the toast stays visible. Note it's
+  // still inert while a modal is open; the welcome screen auto-opens the
+  // bridge dialog instead (see checkBridge).
+  if (toast.showPopover) {
+    toast.popover = 'manual'
+    toast.showPopover()
+  }
 }
 
 function showBridgeDialog() {
   if (document.getElementById('sc-bridge-dialog')) return
-  const overlay = el('div', {
+  // A native <dialog> + showModal(), not a div: upstream's dialogs (welcome
+  // screen etc.) are modal and live in the browser top layer, which paints
+  // over any z-index. Opening ours last puts it above them and keeps it
+  // interactive (topmost modal).
+  const overlay = el('dialog', {
     position: 'fixed',
     inset: '0',
-    zIndex: '2147483647',
+    width: '100%',
+    height: '100%',
+    maxWidth: 'none',
+    maxHeight: 'none',
+    margin: '0',
+    padding: '0',
+    border: 'none',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     background: 'rgba(0,0,0,.5)',
   })
   overlay.id = 'sc-bridge-dialog'
+  // Escape closes the dialog without removing it; display:flex would keep it
+  // visible, so drop it from the DOM entirely.
+  overlay.onclose = () => overlay.remove()
 
   const panel = el('div', {
     width: 'min(440px, 92vw)',
@@ -1074,23 +1132,46 @@ function showBridgeDialog() {
     if (e.target === overlay) close()
   }
   document.body.appendChild(overlay)
+  overlay.showModal()
 }
 
-async function checkBridge() {
+// On the welcome screen nothing works without a bridge (no account can be
+// created), so open the full dialog once instead of hoping the user spots the
+// toast — which is also inert there (under the welcome screen's modal).
+let bridgeDialogAutoOpened = false
+
+async function checkBridge(): Promise<boolean> {
   const ok = await probeBridge(resolveBridgeUrl())
-  if (ok) hideBridgeToast()
-  else showBridgeToast()
+  if (ok) {
+    hideBridgeToast()
+    hideWelcomeHint()
+  } else {
+    showBridgeToast()
+    showWelcomeHint()
+    if (
+      !bridgeDialogAutoOpened &&
+      document.querySelector('[class*="welcomeScreen"]')
+    ) {
+      bridgeDialogAutoOpened = true
+      showBridgeDialog()
+    }
+  }
+  return ok
 }
 
 // Probe on load, then re-probe periodically so a bridge that goes down mid-use
-// also surfaces the toast. ponytail: a 30s poll instead of wiring core
-// connectivity events — cheap (one WS open/close) and works before any account
-// exists (when no IO events fire yet); hook events later if the poll is noisy.
+// also surfaces the toast. Poll fast while down (catches the welcome screen
+// rendering after the first failed probe, and clears the toast quickly once
+// the user starts the bridge), slow once up. ponytail: a poll instead of
+// wiring core connectivity events — cheap (one WS open/close) and works
+// before any account exists (when no IO events fire yet).
 if (typeof window !== 'undefined') {
-  checkBridge()
-  setInterval(() => {
-    if (document.visibilityState === 'visible') checkBridge()
-  }, 30000)
+  let bridgeUp = false
+  const pollBridge = async () => {
+    if (document.visibilityState === 'visible') bridgeUp = await checkBridge()
+    setTimeout(pollBridge, bridgeUp ? 30000 : 3000)
+  }
+  pollBridge()
   // Hook for the (patched) ConnectivityDialog: show which bridge is in use and
   // open the edit dialog from inside the React app.
   ;(window as any).__slothfulchatBridge = {
