@@ -190,4 +190,14 @@ for (const file of ['deltachat_wasm.js', 'deltachat_wasm_bg.wasm']) {
   await cp(join(coreWasm, 'wasm-dist', file), join(dist, 'wasm-dist', file))
 }
 
+// core-wasm demo page at /demo/, reusing /core/worker.js and /wasm-dist/
+// (index.js resolves the worker as a sibling, so it lives in /core/ too)
+await cp(join(coreWasm, 'dist/index.js'), join(dist, 'core/index.js'))
+await mkdir(join(dist, 'demo'))
+const demoHtml = await readFile(join(coreWasm, 'example/index.html'), 'utf8')
+await writeFile(
+  join(dist, 'demo/index.html'),
+  demoHtml.replace("'../dist/index.js'", "'../core/index.js'")
+)
+
 console.log(`assembled ${dist} (${themes.length} themes)`)

@@ -13,7 +13,28 @@
 <body>
   <h1>chatmail core — WASM</h1>
   <p id="status">loading core in a worker…</p>
+  <p id="proxy-status"></p>
   <pre id="output"></pre>
+
+  <h2>Networking: the WS→TCP proxy</h2>
+  <p class="hint">
+    Browsers can't open raw TCP, so IMAP/SMTP/DNS tunnel through a tiny
+    WebSocket→TCP bridge. TLS terminates inside the wasm core — the bridge only
+    ever relays ciphertext. Without it the core runs fine, but networking errors.
+  </p>
+  <ol class="hint">
+    <li>Run <code>npx @slothfulchat/ws-tcp-proxy</code> (listens on
+      <code>ws://localhost:8641</code>, override with <code>PORT</code>)</li>
+    <li>Reload this page with <code>?proxy=ws://localhost:8641</code></li>
+  </ol>
+  <p class="hint">
+    <code>ws://localhost</code> works even from an https deployment (localhost is
+    exempt from mixed-content blocking); a remote bridge needs <code>wss://</code>.
+    Other params: <code>?persist=0</code> for a fresh in-memory core — persistence
+    holds an exclusive OPFS lock per origin, so on the deployed site this page and
+    the main app can't both run a persistent core at once.
+  </p>
+
   <p class="hint">
     Open the browser console and poke at core directly:
   </p>
@@ -21,17 +42,98 @@
     <li><code>await rpc.request('get_system_info')</code> — raw JSON-RPC, any method name</li>
     <li><code>await dc.rpc.getAllAccountIds()</code> — generated typed client</li>
     <li><code>await dc.rpc.addAccount()</code> then <code>await dc.rpc.getAccountInfo(1)</code></li>
+    <li>all methods: <a href="https://js.jsonrpc.delta.chat">js.jsonrpc.delta.chat</a></li>
   </ul>
+
+  <details>
+    <summary class="hint">Echo bot demo (paste into the console, needs a working proxy)</summary>
+    <button id="copy-bot">copy</button>
+    <pre><code id="bot-code">// === DC account bot (paste after page loads with ?proxy=...) ===
+const aid = (await dc.rpc.getAllAccountIds())[0] || await dc.rpc.addAccount()
+await dc.rpc.setConfig(aid, 'bot', '1')
+
+// Check if already configured
+if (!(await dc.rpc.isConfigured(aid))) {
+  await dc.rpc.addTransportFromQr(aid, 'dcaccount:nine.testrun.org')
+  console.log('Account configured via dcaccount QR')
+} else {
+  await dc.rpc.startIo(aid)
+}
+
+dc.getContextEvents(aid).on('IncomingMsg', async (ev) => {
+  const msg = await dc.rpc.getMessage(aid, ev.msgId)
+  const chat = await dc.rpc.getBasicChatInfo(aid, ev.chatId)
+  console.log(`[${chat.name}] ${msg.text}`)
+  // echo
+  await dc.rpc.sendMsg(aid, ev.chatId, {
+    text: `🤖 echo: ${msg.text ?? '(non-text)'} !`,
+    viewtype: 'Text', file: null, filename: null,
+    location: null, html: null, overrideSenderName: null,
+    quotedMessageId: null, quotedText: null,
+  })
+})
+
+await dc.rpc.getChatSecurejoinQrCode(aid)</code></pre>
+  </details>
+
   <script type="module">
     import { startCore } from '../dist/index.js'
 
     const status = document.getElementById('status')
     const output = document.getElementById('output')
+
+    // proxy reachability indicator: a WS to the bridge's /dns health endpoint
+    // must open (same probe as the web app's runtime.ts probeBridge)
+    function probeProxy(url, timeoutMs = 3000) {
+      return new Promise(resolve => {
+        let ws
+        try {
+          ws = new WebSocket(url.replace(/\/$/, '') + '/dns/localhost')
+        } catch {
+          resolve(false)
+          return
+        }
+        let done = false
+        const finish = ok => {
+          if (done) return
+          done = true
+          clearTimeout(timer)
+          try { ws.close() } catch { /* already closing */ }
+          resolve(ok)
+        }
+        const timer = setTimeout(() => finish(false), timeoutMs)
+        ws.onopen = () => finish(true)
+        ws.onmessage = () => finish(true)
+        ws.onerror = () => finish(false)
+        ws.onclose = () => finish(false)
+      })
+    }
+    function watchProxy(url) {
+      const el = document.getElementById('proxy-status')
+      if (!url) {
+        el.innerHTML =
+          '✖ no proxy set — networking disabled. <a href="?proxy=ws://localhost:8641">use local proxy</a>'
+        return
+      }
+      const update = async () => {
+        const ok = await probeProxy(url)
+        el.textContent = ok
+          ? `✔ proxy reachable at ${url}`
+          : `✖ proxy NOT reachable at ${url}`
+      }
+      update()
+      setInterval(update, 30000)
+    }
+
+    document.getElementById('copy-bot').onclick = () =>
+      navigator.clipboard.writeText(document.getElementById('bot-code').textContent)
+
     try {
       // ?proxy=ws://localhost:8641 enables networking via the WS-TCP proxy
       // ?persist=0 disables OPFS persistence (fresh core, used by the tests)
       const params = new URL(location.href).searchParams
       const wsProxyUrl = params.get('proxy') ?? undefined
+      watchProxy(wsProxyUrl)
       const core = startCore({ wsProxyUrl, persist: params.get('persist') !== '0' })
       const { transport, dc } = core
 

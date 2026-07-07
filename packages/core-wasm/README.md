@@ -15,6 +15,10 @@ await transport.request('get_system_info') // raw JSON-RPC
 dc.on('event', ({ contextId, event }) => ...) // core events
 ```
 
+Hosted demo: **<https://web.slothful.chat/demo/>** — the same page the
+`example` script below serves locally. Pass `?proxy=ws://localhost:8641` to
+enable networking (instructions on the page).
+
 `startCore()` also returns an fs side channel into core's in-memory
 filesystem (blob display, temp files, backup import/export):
 
