@@ -38,9 +38,19 @@ cd packages/web-app && pnpm start
 
 Open http://localhost:8642 — log in with a chatmail address + password
 (classic email login; see FINDINGS.md for what instant onboarding can and
-cannot do without in-wasm HTTP). Proxy URL defaults to `ws://localhost:8641`,
-override with `?proxy=` or localStorage key `slothfulchat.proxyUrl`.
-Persistence (OPFS) is on by default; `?persist=0` gives a throwaway session.
+cannot do without in-wasm HTTP). Bridge URL defaults to `ws://localhost:8641`;
+override with `?proxy=` (highest precedence, used by tests) or persistently via
+the bridge dialog (warning toast when the bridge is down, or Settings →
+Connectivity → "Change…"), which saves to the `slothfulchat.proxyUrl`
+localStorage key. Persistence (OPFS) is on by default; `?persist=0` gives a
+throwaway session.
+
+**Install as PWA:** browsers only offer install from a secure context —
+`http://localhost` (dev) or any `https://` host (e.g. the GitHub Pages deploy);
+a plain-http LAN IP won't get the prompt. The manifest ships 256/512px icons
+and `display: standalone`. Note an installed PWA launches from `start_url`
+without query params, so configure a non-default bridge via the dialog
+(localStorage), not `?proxy=`.
 
 ## Tests (from repo root)
 

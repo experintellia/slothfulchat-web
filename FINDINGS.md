@@ -134,3 +134,18 @@ above was true at M5 and is now historical:
 
 All suites re-verified green after the changes (smoke-web-app, test-networking
 e2e message roundtrip, whitelist self-check).
+
+## Post-M5 polish 2 (2026-07-07): PWA install + bridge configurability
+
+- **PWA installable**: manifest now declares real 256/512px icons (reused from
+  upstream's tauri icon set, copied by `assemble.mjs`). Install requires a
+  secure context — `http://localhost` or any `https://` host (GitHub Pages
+  works); plain-http LAN IPs don't get the prompt.
+- **Bridge URL is persistent**: the bridge dialog saves to the
+  `slothfulchat.proxyUrl` localStorage key (an installed PWA launches without
+  query params, so `?proxy=` alone wasn't enough); `?proxy=` still wins when
+  present (test harnesses). Empty input resets to the default.
+- **Desktop patch 0002**: Connectivity view (Settings → Connectivity) shows
+  which bridge is in use + a "Change…" button opening the bridge dialog, via a
+  `window.__slothfulchatBridge` hook set by runtime.js (browser-target-gated,
+  renders nothing elsewhere). Patch count: **9 core / 2 desktop.**

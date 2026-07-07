@@ -77,6 +77,11 @@ await cp(join(here, 'static/main.html'), join(dist, 'index.html'))
 await cp(join(here, 'static/manifest.webmanifest'), join(dist, 'manifest.webmanifest'))
 await writeFile(join(dist, '.nojekyll'), '')
 
+// PWA install icons (Chrome wants >=192 + 512): reuse upstream's tauri icons
+const tauriIcons = join(repo, 'build/desktop/packages/target-tauri/src-tauri/icons')
+await cp(join(tauriIcons, 'icon.png'), join(dist, 'images/icon-512.png'))
+await cp(join(tauriIcons, '128x128@2x.png'), join(dist, 'images/icon-256.png'))
+
 // wasm core: worker at /core/worker.js imports ../wasm-dist/deltachat_wasm.js
 // -> /wasm-dist/ (same relative layout as in the core-wasm package)
 await mkdir(join(dist, 'core'))

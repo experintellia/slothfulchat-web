@@ -1049,11 +1049,18 @@ function showBridgeDialog() {
   const useBtn = mkBtn('Use this bridge', true)
   useBtn.onclick = () => {
     const value = input.value.trim()
-    if (!value) return
-    // Save by appending ?proxy= to the URL, then reload so the core picks it up.
+    // Persist in localStorage (survives an installed-PWA launch, where a
+    // ?proxy= query param would not); empty input resets to the default.
+    // A ?proxy= param still takes precedence, so strip it before reloading.
+    if (value && value !== 'ws://localhost:8641') {
+      localStorage.setItem(PROXY_KEY, value)
+    } else {
+      localStorage.removeItem(PROXY_KEY)
+    }
     const u = new URL(location.href)
-    u.searchParams.set('proxy', value)
-    location.href = u.toString()
+    u.searchParams.delete('proxy')
+    if (u.toString() !== location.href) location.href = u.toString()
+    else location.reload()
   }
 
   row.append(closeBtn, retryBtn, useBtn)
@@ -1080,4 +1087,10 @@ if (typeof window !== 'undefined') {
   setInterval(() => {
     if (document.visibilityState === 'visible') checkBridge()
   }, 30000)
+  // Hook for the (patched) ConnectivityDialog: show which bridge is in use and
+  // open the edit dialog from inside the React app.
+  ;(window as any).__slothfulchatBridge = {
+    url: resolveBridgeUrl,
+    openDialog: showBridgeDialog,
+  }
 }

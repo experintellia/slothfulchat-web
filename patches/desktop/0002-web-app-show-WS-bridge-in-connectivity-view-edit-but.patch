@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Tue, 7 Jul 2026 16:54:50 +0000
+Subject: [PATCH 2/2] web-app: show WS bridge in connectivity view + edit
+ button
+
+---
+ .../components/dialogs/ConnectivityDialog.tsx   | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+index b1f29e74b..8a3746d2b 100644
+--- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
++++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+@@ -72,11 +72,28 @@ function ConnectivityDialogInner() {
+           srcDoc={connectivityHTML}
+           sandbox={''}
+         />
++        <BrowserBridgeInfo />
+       </DialogContent>
+     </DialogBody>
+   )
+ }
+ 
++/** slothfulchat: the browser edition tunnels IMAP/SMTP through a WS→TCP
++ * bridge (window.__slothfulchatBridge is set by its runtime.js). Show which
++ * bridge is in use and let the user open the edit dialog from here. */
++function BrowserBridgeInfo() {
++  const bridge = (window as any).__slothfulchatBridge
++  if (runtime.getRuntimeInfo().target !== 'browser' || !bridge) return null
++  return (
++    <div style={{ marginTop: '8px', fontSize: '13px' }}>
++      Bridge: <code>{bridge.url()}</code>{' '}
++      <button type='button' onClick={() => bridge.openDialog()}>
++        Change…
++      </button>
++    </div>
++  )
++}
++
+ async function getConnectivityHTML(
+   stylesToInject?: string | undefined
+ ): Promise<string> {
