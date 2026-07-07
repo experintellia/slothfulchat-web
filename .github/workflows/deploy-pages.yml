@@ -122,12 +122,15 @@ jobs:
       # assemble.mjs copies its dist/ output. esbuild builds fine in-tree here.
       # VERSION_INFO_GIT_REF: upstream's build stamps a `git describe` into the
       # bundle, which fails here (worktree has no tags) — pass the sha instead.
-      - name: Build upstream desktop browser frontend
+      # NODE_ENV=production: release frontend (minified React, debug features
+      # hidden) — only on the build, NOT on `pnpm install` (production install
+      # would skip the devDependencies the build needs). Local builds stay dev.
+      - name: Build upstream desktop browser frontend (release)
         working-directory: build/desktop
         run: |
           export VERSION_INFO_GIT_REF=$(git rev-parse --short HEAD)
           pnpm install --frozen-lockfile
-          pnpm build:browser
+          NODE_ENV=production pnpm build:browser
 
       # Release wasm (opt-level=s + LTO); dev builds crash the browser tab.
       # ~10 min uncached.
