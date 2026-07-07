@@ -1,5 +1,5 @@
-// Self-check for the CHATMAIL_WHITELIST guard in the WS→TCP proxy.
-//   allowed:  DNS for a whitelisted domain populates the IP allow-list, and a
+// Self-check for the CHATMAIL_ALLOWLIST guard in the WS→TCP proxy.
+//   allowed:  DNS for a allowlisted domain populates the IP allow-list, and a
 //             TCP tunnel to one of those IPs is accepted.
 //   blocked:  a TCP tunnel to an IP that was never resolved is refused (4003).
 // Needs network (resolves nine.testrun.org), like the other networking suites.
@@ -9,13 +9,13 @@ import assert from 'node:assert/strict';
 import WebSocket from 'ws';
 
 const PORT = 8651;
-const WHITELISTED = 'nine.testrun.org';
+const ALLOWLISTED = 'nine.testrun.org';
 const proxyPath = fileURLToPath(
   new URL('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs', import.meta.url)
 );
 
 const proxy = fork(proxyPath, [], {
-  env: { ...process.env, PORT: String(PORT), CHATMAIL_WHITELIST: WHITELISTED },
+  env: { ...process.env, PORT: String(PORT), CHATMAIL_ALLOWLIST: ALLOWLISTED },
   stdio: 'inherit',
 });
 const base = `ws://localhost:${PORT}`;
@@ -55,9 +55,9 @@ const waitReady = () =>
 try {
   await waitReady();
 
-  const ips = await dns(WHITELISTED);
-  assert.ok(ips.length > 0, `expected resolved IPs for ${WHITELISTED}`);
-  console.log(`resolved ${WHITELISTED} ->`, ips);
+  const ips = await dns(ALLOWLISTED);
+  assert.ok(ips.length > 0, `expected resolved IPs for ${ALLOWLISTED}`);
+  console.log(`resolved ${ALLOWLISTED} ->`, ips);
 
   const allowed = await tryTcp(ips[0]);
   assert.equal(allowed, 'allowed', `tunnel to resolved IP ${ips[0]} should be allowed`);
@@ -65,7 +65,7 @@ try {
   const blocked = await tryTcp('203.0.113.1'); // TEST-NET-3, never resolved
   assert.equal(blocked, 'blocked', 'tunnel to un-resolved IP should be blocked (4003)');
 
-  console.log('OK: whitelist allows resolved chatmail IPs, blocks the rest');
+  console.log('OK: allowlist allows resolved chatmail IPs, blocks the rest');
   process.exitCode = 0;
 } catch (err) {
   console.error('FAIL:', err.message);

@@ -5,14 +5,14 @@
 //                      browser wasm, the proxy only ever sees ciphertext)
 //   /dns/{host}      — one JSON message with resolved IPs, then close
 //
-// Optional whitelist (set CHATMAIL_WHITELIST to a comma-separated list of
+// Optional allowlist (set CHATMAIL_ALLOWLIST to a comma-separated list of
 // chatmail domains). When set, DNS still resolves any name, but a TCP tunnel
-// is only allowed to an IP that was just resolved for a whitelisted domain —
+// is only allowed to an IP that was just resolved for an allowlisted domain —
 // so a hosted bridge can only reach vetted chatmail servers. Empty = allow all.
 //
 // ponytail: still a single inspectable file — no auth, the port + optional
-// domain whitelist are the only guards. A hostile authoritative DNS server for
-// a whitelisted domain could point it at an internal IP (SSRF); acceptable for
+// domain allowlist are the only guards. A hostile authoritative DNS server for
+// an allowlisted domain could point it at an internal IP (SSRF); acceptable for
 // vetted servers. Upgrade path: pin known IPs instead of trusting the resolver.
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
@@ -22,17 +22,21 @@ import { WebSocketServer } from 'ws';
 const PORT = Number(process.env.PORT ?? 8641);
 const ALLOWED_TCP_PORTS = new Set([143, 465, 587, 993]);
 
-// Whitelist mode: empty env => allow-all (unchanged behavior).
-const WHITELIST = (process.env.CHATMAIL_WHITELIST ?? '')
+// Allowlist mode: empty env => allow-all (unchanged behavior).
+// CHATMAIL_WHITELIST is the deprecated pre-0.1.2 name; drop the fallback when
+// nothing warns about it anymore.
+if (process.env.CHATMAIL_WHITELIST && !process.env.CHATMAIL_ALLOWLIST)
+  console.warn('CHATMAIL_WHITELIST is deprecated, use CHATMAIL_ALLOWLIST');
+const ALLOWLIST = (process.env.CHATMAIL_ALLOWLIST ?? process.env.CHATMAIL_WHITELIST ?? '')
   .split(',')
   .map(s => s.trim().toLowerCase())
   .filter(Boolean);
 const ALLOW_TTL_MS = 10 * 60 * 1000; // temporary: resolved IPs expire after 10 min
 const allowedIps = new Map(); // ip -> expiresAt (ms)
 
-const isWhitelisted = host => {
+const isAllowlisted = host => {
   const h = host.toLowerCase();
-  return WHITELIST.some(d => h === d || h.endsWith('.' + d));
+  return ALLOWLIST.some(d => h === d || h.endsWith('.' + d));
 };
 const ipAllowed = ip => {
   const expires = allowedIps.get(ip);
@@ -53,9 +57,9 @@ wss.on('connection', async (ws, req) => {
     try {
       const [v4, v6] = await Promise.allSettled([resolve4(host), resolve6(host)]);
       const ips = [...(v4.value ?? []), ...(v6.value ?? [])];
-      // In whitelist mode, remember IPs resolved for a whitelisted domain so
+      // In allowlist mode, remember IPs resolved for an allowlisted domain so
       // the /tcp handler will let the core connect to them.
-      if (WHITELIST.length && isWhitelisted(host)) {
+      if (ALLOWLIST.length && isAllowlisted(host)) {
         const expires = Date.now() + ALLOW_TTL_MS;
         for (const ip of ips) allowedIps.set(ip, expires);
       }
@@ -70,8 +74,8 @@ wss.on('connection', async (ws, req) => {
     ws.close(4003, 'forbidden');
     return;
   }
-  if (WHITELIST.length && !ipAllowed(host)) {
-    console.warn(`tcp ${host}:${port} blocked (not on whitelist allow-list)`);
+  if (ALLOWLIST.length && !ipAllowed(host)) {
+    console.warn(`tcp ${host}:${port} blocked (not on the allowlist)`);
     ws.close(4003, 'forbidden');
     return;
   }
@@ -92,5 +96,5 @@ wss.on('connection', async (ws, req) => {
 
 server.listen(PORT, () => {
   console.log(`ws-tcp proxy on ws://localhost:${PORT}`);
-  if (WHITELIST.length) console.log(`whitelist: ${WHITELIST.join(', ')}`);
+  if (ALLOWLIST.length) console.log(`allowlist: ${ALLOWLIST.join(', ')}`);
 });

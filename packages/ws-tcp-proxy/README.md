@@ -30,22 +30,23 @@ localStorage key).
 - `GET /tcp/{ip}/{port}` — raw bidirectional byte tunnel to `ip:port`. Only ports
   143, 465, 587, 993 (IMAP/SMTP) are allowed.
 
-## Whitelist (for hosting a public bridge)
+## Allowlist (for hosting a public bridge)
 
-Set `CHATMAIL_WHITELIST` to a comma-separated list of chatmail domains to run a
+Set `CHATMAIL_ALLOWLIST` to a comma-separated list of chatmail domains to run a
 bridge that can only reach vetted servers:
 
 ```sh
-CHATMAIL_WHITELIST=nine.testrun.org,chatmail.example npx @slothfulchat/ws-tcp-proxy
+CHATMAIL_ALLOWLIST=nine.testrun.org,chatmail.example npx @slothfulchat/ws-tcp-proxy
 ```
 
 - DNS still resolves any name.
-- Only IPs resolved for a **whitelisted** domain are added to an in-memory
+- Only IPs resolved for an **allowlisted** domain are added to an in-memory
   allow-list (10-minute TTL).
 - TCP tunnels are refused (`4003 forbidden`) unless the target IP is on that
   allow-list.
 
-Empty/unset `CHATMAIL_WHITELIST` = allow all (local-dev default).
+Empty/unset `CHATMAIL_ALLOWLIST` = allow all (local-dev default).
+(`CHATMAIL_WHITELIST`, the pre-0.1.2 name, still works but warns.)
 
 ## License
 

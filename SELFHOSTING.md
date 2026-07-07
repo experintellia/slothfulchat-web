@@ -47,15 +47,15 @@ pnpm --filter @slothfulchat/web-app build
 npx @slothfulchat/ws-tcp-proxy
 ```
 
-**Hosting it publicly? You MUST restrict it to a whitelist**, or you're running
+**Hosting it publicly? You MUST restrict it to an allowlist**, or you're running
 an open relay: an unrestricted bridge will tunnel to *any* mail server's
 IMAP/SMTP ports for anyone on the internet — an abuse magnet (credential-stuffing
-against arbitrary servers, spam relaying). Set `CHATMAIL_WHITELIST` to only the
+against arbitrary servers, spam relaying). Set `CHATMAIL_ALLOWLIST` to only the
 chatmail/email servers you allow:
 
 ```sh
 # behind TLS (see below); only these servers are reachable
-CHATMAIL_WHITELIST=nine.testrun.org,chatmail.example \
+CHATMAIL_ALLOWLIST=nine.testrun.org,chatmail.example \
   npx @slothfulchat/ws-tcp-proxy
 ```
 
@@ -63,7 +63,7 @@ The bridge speaks plain **`ws://`** on `PORT` (default 8641). An `https://`
 site **cannot** connect to `ws://` (mixed content), so put a TLS-terminating
 reverse proxy (nginx, Caddy, …) in front to expose it as **`wss://`**, and
 point `SLOTHFUL_DEFAULT_PROXY` at that `wss://` URL. Full options (endpoints,
-how the `CHATMAIL_WHITELIST` allow-list works) are in the
+how the `CHATMAIL_ALLOWLIST` allow-list works) are in the
 [proxy README](packages/ws-tcp-proxy/README.md).
 
 ## The variables
@@ -93,4 +93,4 @@ Users can always override the bridge at runtime with `?proxy=wss://…` or the
 | Variable | What it does | Default |
 |---|---|---|
 | `PORT` | Port the bridge listens on (`ws://`). | `8641` |
-| `CHATMAIL_WHITELIST` | Comma-separated chatmail domains the bridge may reach. Empty = allow any server (fine for local dev; **set it for a public bridge**). | empty (allow all) |
+| `CHATMAIL_ALLOWLIST` | Comma-separated chatmail domains the bridge may reach. Empty = allow any server (fine for local dev; **set it for a public bridge**). | empty (allow all) |
