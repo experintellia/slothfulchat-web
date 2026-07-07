@@ -30,7 +30,11 @@
     try {
       // ?proxy=ws://localhost:8641 enables networking via the WS-TCP proxy
       const wsProxyUrl = new URL(location.href).searchParams.get('proxy') ?? undefined
-      const { transport, dc } = startCore({ wsProxyUrl })
+      const core = startCore({ wsProxyUrl })
+      const { transport, dc } = core
+
+      // full core handle incl. fs side channel (fsRead/fsWrite/fsRemove/fsExists)
+      window.core = core
 
       // raw JSON-RPC access for console exploration
       window.rpc = {

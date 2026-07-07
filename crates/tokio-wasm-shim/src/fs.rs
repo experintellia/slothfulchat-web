@@ -119,6 +119,24 @@ pub fn sync_create_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
     Ok(())
 }
 
+/// Synchronous remove of a file or directory tree (see [`sync_read`]).
+pub fn sync_remove(path: impl AsRef<Path>) -> io::Result<()> {
+    let prefix = normalize(path.as_ref());
+    let mut fs = FS.lock().unwrap();
+    let keys: Vec<PathBuf> = fs
+        .keys()
+        .filter(|k| *k == &prefix || k.starts_with(&prefix))
+        .cloned()
+        .collect();
+    if keys.is_empty() {
+        return Err(not_found());
+    }
+    for key in keys {
+        fs.remove(&key);
+    }
+    Ok(())
+}
+
 pub async fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
     match FS.lock().unwrap().remove(&normalize(path.as_ref())) {
         Some(_) => Ok(()),

@@ -8,10 +8,21 @@ where deltachat-desktop's browser edition uses a WebSocket.
 ```ts
 import { startCore } from '@slothfulchat/core-wasm'
 
-const { dc, transport } = startCore()
+const core = startCore()
+const { dc, transport } = core
 await dc.rpc.getSystemInfo()          // typed, generated from core
 await transport.request('get_system_info') // raw JSON-RPC
 dc.on('event', ({ contextId, event }) => ...) // core events
+```
+
+`startCore()` also returns an fs side channel into core's in-memory
+filesystem (blob display, temp files, backup import/export):
+
+```ts
+await core.fsWrite('/tmp/a/b.bin', new Uint8Array([1, 2, 3])) // creates parent dirs
+await core.fsExists('/tmp/a/b.bin') // -> true
+await core.fsRead('/tmp/a/b.bin')   // -> Uint8Array, rejects if missing
+await core.fsRemove('/tmp/a/b.bin') // file or directory tree
 ```
 
 ## Build (from repo root)

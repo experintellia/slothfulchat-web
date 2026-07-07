@@ -62,6 +62,10 @@ pub async fn init(
     Ok(DeltaChat { session })
 }
 
+fn fs_err(err: std::io::Error) -> JsValue {
+    JsValue::from_str(&err.to_string())
+}
+
 #[wasm_bindgen]
 impl DeltaChat {
     /// Feeds one incoming JSON-RPC message (request string) to core.
@@ -71,5 +75,31 @@ impl DeltaChat {
         wasm_bindgen_futures::spawn_local(async move {
             session.handle_incoming(&message).await;
         });
+    }
+
+    // fs side channel into the in-memory filesystem core runs on
+    // (blob display, temp files, backup import/export).
+
+    pub fn fs_read(&self, path: String) -> Result<js_sys::Uint8Array, JsValue> {
+        let data = tokio::fs::sync_read(&path).map_err(fs_err)?;
+        Ok(js_sys::Uint8Array::from(data.as_slice()))
+    }
+
+    /// Creates parent directories automatically.
+    pub fn fs_write(&self, path: String, data: &[u8]) -> Result<(), JsValue> {
+        tokio::fs::sync_write(&path, data).map_err(fs_err)
+    }
+
+    /// Removes a file or a directory tree.
+    pub fn fs_remove(&self, path: String) -> Result<(), JsValue> {
+        tokio::fs::sync_remove(&path).map_err(fs_err)
+    }
+
+    pub fn fs_exists(&self, path: String) -> bool {
+        tokio::fs::sync_exists(&path)
+    }
+
+    pub fn fs_mkdirp(&self, path: String) -> Result<(), JsValue> {
+        tokio::fs::sync_create_dir_all(&path).map_err(fs_err)
     }
 }

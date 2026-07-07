@@ -28,6 +28,19 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  packages/web-app:
+    dependencies:
+      '@slothfulchat/core-wasm':
+        specifier: workspace:*
+        version: link:../core-wasm
+    devDependencies:
+      esbuild:
+        specifier: ^0.25.5
+        version: 0.25.12
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
 packages:
 
   '@deltachat/jsonrpc-client@file:build/core/deltachat-jsonrpc/typescript':

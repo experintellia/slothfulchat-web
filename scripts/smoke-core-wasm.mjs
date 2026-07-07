@@ -56,6 +56,25 @@ try {
     } else {
       console.log(`OK: typed client works (getAllAccountIds -> [${ids}])`);
     }
+    // fs side channel roundtrip
+    const fsResult = await page.evaluate(async () => {
+      const path = '/t/x/hello.bin';
+      const bytes = new Uint8Array([104, 101, 108, 108, 111, 0, 255, 42]);
+      await window.core.fsWrite(path, bytes);
+      if (!(await window.core.fsExists(path))) return 'fsExists false after fsWrite';
+      const read = await window.core.fsRead(path);
+      if (read.length !== bytes.length || bytes.some((b, i) => read[i] !== b))
+        return `fsRead mismatch: [${read}]`;
+      await window.core.fsRemove(path);
+      if (await window.core.fsExists(path)) return 'fsExists true after fsRemove';
+      return 'ok';
+    });
+    if (fsResult !== 'ok') {
+      console.error('FAIL: fs roundtrip:', fsResult);
+      failed = true;
+    } else {
+      console.log('OK: fs side channel roundtrip (write/exists/read/remove)');
+    }
   }
 } catch (err) {
   console.error('FAIL:', err.message);

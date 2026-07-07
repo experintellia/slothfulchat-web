@@ -1,0 +1,22 @@
+{
+  "name": "@slothfulchat/web-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "deltachat-desktop's frontend running standalone in the browser on the wasm core.",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "assemble": "node assemble.mjs",
+    "build": "tsc --noEmit && esbuild --format=esm --bundle src/runtime.ts --outfile=dist/runtime.js && esbuild --format=esm --bundle src/blobs-sw.ts --outfile=dist/blobs-sw.js",
+    "serve": "node serve.mjs",
+    "start": "pnpm assemble && pnpm build && pnpm serve",
+    "test": "node ../../scripts/smoke-web-app.mjs"
+  },
+  "dependencies": {
+    "@slothfulchat/core-wasm": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.5",
+    "typescript": "^5.8.0"
+  }
+}
