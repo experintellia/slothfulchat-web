@@ -25,7 +25,7 @@ const bob = await newAccount();
 console.log(`created accounts ${alice.email} and ${bob.email} on the relay`);
 
 // -- ws-tcp proxy --
-const proxy = fork(fileURLToPath(new URL('./ws-tcp-proxy.mjs', import.meta.url)), [], {
+const proxy = fork(fileURLToPath(new URL('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs', import.meta.url)), [], {
   env: { ...process.env, PORT: '8641' },
   stdio: 'inherit',
 });

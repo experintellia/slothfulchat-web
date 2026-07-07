@@ -1,0 +1,149 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Tue, 7 Jul 2026 15:36:37 +0000
+Subject: [PATCH] web-app: about 'what this is' + hide unimplemented proxy UI
+
+---
+ .../src/components/Settings/Advanced.tsx      | 15 -------
+ .../src/components/dialogs/About/index.tsx    | 15 +++++++
+ .../WelcomeScreen/InstantOnboardingScreen.tsx | 42 -------------------
+ 3 files changed, 15 insertions(+), 57 deletions(-)
+
+diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
+index 96699ecdc..15e418e7e 100644
+--- a/packages/frontend/src/components/Settings/Advanced.tsx
++++ b/packages/frontend/src/components/Settings/Advanced.tsx
+@@ -11,7 +11,6 @@ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import CoreSettingsSwitch from './CoreSettingsSwitch'
+ import DesktopSettingsSwitch from './DesktopSettingsSwitch'
+ import { AutostartState } from '@deltachat-desktop/shared/shared-types'
+-import ProxyConfiguration from '../dialogs/ProxyConfiguration'
+ import { selectedAccountId } from '../../ScreenController'
+ import TransportsDialog from '../dialogs/Transports'
+ import { LogDialog } from '../dialogs/Log'
+@@ -27,12 +26,6 @@ const log = getLogger('renderer/settings/advanced')
+ export default function Advanced({ onClose }: Props) {
+   const tx = useTranslationFunction()
+   const { openDialog } = useDialog()
+-  const openProxySettings = () => {
+-    openDialog(ProxyConfiguration, {
+-      accountId: selectedAccountId(),
+-      configured: true,
+-    })
+-  }
+   const confirmDisableMultiDevice = async (
+     newValue: boolean // (true => multi-device enabled)
+   ): Promise<boolean> => {
+@@ -76,14 +69,6 @@ export default function Advanced({ onClose }: Props) {
+       >
+         {tx('transports')}
+       </SettingsButton>
+-      <SettingsButton
+-        onClick={() => {
+-          openProxySettings()
+-        }}
+-        dataTestid='open-proxy-settings'
+-      >
+-        {tx('proxy_settings')}
+-      </SettingsButton>
+       <CoreSettingsSwitch
+         label={tx('pref_multidevice')}
+         settingsKey='bcc_self'
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index fb81947da..8abf6641e 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -68,6 +68,21 @@ export default function About({ onClose }: DialogProps) {
+                 {'https://delta.chat'}
+               </ClickableLink>
+             </div>
++            <p style={{ marginTop: 16, textAlign: 'left', fontSize: 13 }}>
++              <b>slothfulchat-web</b> is an unofficial experiment. It runs Delta
++              Chat's chatmail core — the same core behind the Delta Chat
++              messenger — compiled to WebAssembly, running entirely in your
++              browser. The port to WASM was done with an AI coding agent. Not
++              affiliated with Delta Chat. A WS→TCP bridge is required to send
++              and receive.
++            </p>
++            <div>
++              <ClickableLink
++                href={'https://github.com/experintellia/slothfulchat-web'}
++              >
++                {'github.com/experintellia/slothfulchat-web'}
++              </ClickableLink>
++            </div>
+           </div>
+         </DialogContent>
+       </DialogBody>
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+index 030556968..58ab5d86d 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+@@ -18,36 +18,11 @@ import useDialog from '../../../hooks/dialog/useDialog'
+ import UseOtherServerDialog from './UseOtherServerDialog'
+ import { BackendRemote } from '../../../backend-com'
+ 
+-import { ContextMenuContext } from '../../../contexts/ContextMenuContext'
+-import { mouseEventToPosition } from '../../../utils/mouseEventToPosition'
+-import { OpenDialog } from '../../../contexts/DialogContext'
+-import ProxyConfiguration from '../../dialogs/ProxyConfiguration'
+-import { selectedAccountId } from '../../../ScreenController'
+-import { TranslationKey } from '@deltachat-desktop/shared/translationKeyType'
+-
+ type Props = {
+   onCancel: () => void
+   selectedAccountId: number
+ }
+ 
+-function buildContextMenu(
+-  openDialog: OpenDialog,
+-  tx: (key: TranslationKey) => string
+-) {
+-  return [
+-    {
+-      label: tx('proxy_use_proxy'),
+-      action: () => {
+-        openDialog(ProxyConfiguration, {
+-          accountId: selectedAccountId(),
+-          configured: false,
+-        })
+-      },
+-      dataTestid: 'proxy-context-menu-item',
+-    },
+-  ]
+-}
+-
+ /**
+  * Sub component of WelcomeScreen to set a Displayname to create an account
+  * or open a dialog with some options to use another server
+@@ -76,22 +51,6 @@ export default function InstantOnboardingScreen({
+   const [profilePicture, setProfilePicture] = useState<string | null>(null)
+   const [showMissingNameError, setShowMissingNameError] = useState(false)
+ 
+-  const { openContextMenu } = useContext(ContextMenuContext)
+-
+-  const showMenu = (
+-    event: React.MouseEvent<
+-      HTMLDivElement | HTMLAnchorElement | HTMLLIElement,
+-      MouseEvent
+-    >
+-  ) => {
+-    const items = buildContextMenu(openDialog, tx)
+-
+-    openContextMenu({
+-      ...mouseEventToPosition(event),
+-      items,
+-    })
+-  }
+-
+   useEffect(() => {
+     ;(async () => {
+       const { displayname, selfavatar } =
+@@ -185,7 +144,6 @@ export default function InstantOnboardingScreen({
+     <>
+       <DialogHeader
+         onClickBack={onClickBack}
+-        onContextMenuClick={showMenu}
+         title={tx('instant_onboarding_title')}
+       />
+       <DialogBody className={styles.welcomeScreenBody}>

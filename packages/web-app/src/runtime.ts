@@ -848,3 +848,236 @@ class BrowserRuntime {
 }
 
 ;(window as any).r = new BrowserRuntime()
+
+// --- WS→TCP bridge reachability notice -------------------------------------
+// The wasm core can only send/receive through a reachable WS→TCP bridge
+// (packages/ws-tcp-proxy). If it's down, IMAP/SMTP just fail with an opaque
+// error, which is baffling on first start. Surface it as a clickable warning
+// toast (vanilla DOM, so it stays out of the byte-identical bundle.js) that
+// opens a small dialog: how to start the bridge, or point at an alternative one
+// (saved by appending ?proxy= to the URL, as the app already reads on boot).
+//
+// ponytail: edit BRIDGE_HELP_URL to your repo if you fork this.
+const BRIDGE_HELP_URL =
+  'https://github.com/experintellia/slothfulchat-web/tree/main/packages/ws-tcp-proxy'
+
+function resolveBridgeUrl(): string {
+  const params = new URLSearchParams(location.search)
+  return (
+    params.get('proxy') ??
+    localStorage.getItem(PROXY_KEY) ??
+    'ws://localhost:8641'
+  )
+}
+
+/** Reachable = a WS to the bridge's /dns health endpoint opens (it replies with
+ * JSON then closes). Down = error/close before open, or timeout. */
+function probeBridge(url: string, timeoutMs = 3000): Promise<boolean> {
+  return new Promise(resolve => {
+    let ws: WebSocket
+    try {
+      ws = new WebSocket(url.replace(/\/$/, '') + '/dns/localhost')
+    } catch {
+      resolve(false)
+      return
+    }
+    let done = false
+    const finish = (ok: boolean) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      try {
+        ws.close()
+      } catch {
+        /* already closing */
+      }
+      resolve(ok)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    ws.onopen = () => finish(true)
+    ws.onmessage = () => finish(true)
+    ws.onerror = () => finish(false)
+    ws.onclose = () => finish(false)
+  })
+}
+
+const el = <K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  style: Partial<CSSStyleDeclaration>,
+  text?: string
+): HTMLElementTagNameMap[K] => {
+  const node = document.createElement(tag)
+  Object.assign(node.style, style)
+  if (text != null) node.textContent = text
+  return node
+}
+
+function hideBridgeToast() {
+  document.getElementById('sc-bridge-toast')?.remove()
+}
+
+function showBridgeToast() {
+  if (document.getElementById('sc-bridge-toast')) return
+  const toast = el(
+    'div',
+    {
+      position: 'fixed',
+      bottom: '16px',
+      right: '16px',
+      zIndex: '2147483647',
+      maxWidth: '320px',
+      padding: '10px 14px',
+      borderRadius: '8px',
+      background: '#8a5a00',
+      color: '#fff',
+      font: '13px/1.4 system-ui, sans-serif',
+      boxShadow: '0 2px 12px rgba(0,0,0,.35)',
+      cursor: 'pointer',
+    },
+    '⚠ Bridge not reachable — click to fix'
+  )
+  toast.id = 'sc-bridge-toast'
+  toast.onclick = () => showBridgeDialog()
+  document.body.appendChild(toast)
+}
+
+function showBridgeDialog() {
+  if (document.getElementById('sc-bridge-dialog')) return
+  const overlay = el('div', {
+    position: 'fixed',
+    inset: '0',
+    zIndex: '2147483647',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,.5)',
+  })
+  overlay.id = 'sc-bridge-dialog'
+
+  const panel = el('div', {
+    width: 'min(440px, 92vw)',
+    padding: '20px',
+    borderRadius: '10px',
+    background: '#1e1e1e',
+    color: '#eee',
+    font: '14px/1.5 system-ui, sans-serif',
+    boxShadow: '0 8px 40px rgba(0,0,0,.5)',
+  })
+
+  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'Bridge not reachable')
+  const body = el(
+    'p',
+    { margin: '0 0 12px', color: '#bbb' },
+    'This app needs a WS→TCP bridge to send and receive (browsers can’t open ' +
+      'raw TCP). Start it locally, then reload — or point at another bridge below.'
+  )
+
+  const startCmd = el(
+    'pre',
+    {
+      margin: '0 0 6px',
+      padding: '8px 10px',
+      borderRadius: '6px',
+      background: '#111',
+      color: '#9cdcfe',
+      whiteSpace: 'pre-wrap',
+      fontSize: '12px',
+    },
+    'npx @slothfulchat/ws-tcp-proxy'
+  )
+  const help = el('a', { color: '#4ea1ff', fontSize: '12px' }, 'Bridge setup & source →')
+  ;(help as HTMLAnchorElement).href = BRIDGE_HELP_URL
+  ;(help as HTMLAnchorElement).target = '_blank'
+  ;(help as HTMLAnchorElement).rel = 'noopener noreferrer'
+
+  const label = el(
+    'label',
+    { display: 'block', margin: '16px 0 6px', fontSize: '12px', color: '#bbb' },
+    'Alternative bridge URL'
+  )
+  const input = el('input', {
+    width: '100%',
+    boxSizing: 'border-box',
+    padding: '8px 10px',
+    borderRadius: '6px',
+    border: '1px solid #444',
+    background: '#111',
+    color: '#eee',
+    fontSize: '13px',
+  }) as HTMLInputElement
+  input.type = 'text'
+  input.value = resolveBridgeUrl()
+  input.placeholder = 'wss://your-host'
+
+  const row = el('div', {
+    display: 'flex',
+    gap: '8px',
+    justifyContent: 'flex-end',
+    marginTop: '16px',
+  })
+  const mkBtn = (text: string, primary: boolean) =>
+    el(
+      'button',
+      {
+        padding: '8px 14px',
+        borderRadius: '6px',
+        border: 'none',
+        cursor: 'pointer',
+        fontSize: '13px',
+        background: primary ? '#2d7dff' : '#333',
+        color: '#fff',
+      },
+      text
+    )
+
+  const close = () => overlay.remove()
+  const closeBtn = mkBtn('Close', false)
+  closeBtn.onclick = close
+
+  const retryBtn = mkBtn('Retry current', false)
+  retryBtn.onclick = async () => {
+    retryBtn.textContent = 'Checking…'
+    const ok = await probeBridge(resolveBridgeUrl())
+    if (ok) {
+      hideBridgeToast()
+      close()
+    } else {
+      retryBtn.textContent = 'Still down — retry'
+    }
+  }
+
+  const useBtn = mkBtn('Use this bridge', true)
+  useBtn.onclick = () => {
+    const value = input.value.trim()
+    if (!value) return
+    // Save by appending ?proxy= to the URL, then reload so the core picks it up.
+    const u = new URL(location.href)
+    u.searchParams.set('proxy', value)
+    location.href = u.toString()
+  }
+
+  row.append(closeBtn, retryBtn, useBtn)
+  panel.append(title, body, startCmd, help, label, input, row)
+  overlay.append(panel)
+  overlay.onclick = e => {
+    if (e.target === overlay) close()
+  }
+  document.body.appendChild(overlay)
+}
+
+async function checkBridge() {
+  const ok = await probeBridge(resolveBridgeUrl())
+  if (ok) hideBridgeToast()
+  else showBridgeToast()
+}
+
+// Probe on load, then re-probe periodically so a bridge that goes down mid-use
+// also surfaces the toast. ponytail: a 30s poll instead of wiring core
+// connectivity events — cheap (one WS open/close) and works before any account
+// exists (when no IO events fire yet); hook events later if the poll is noisy.
+if (typeof window !== 'undefined') {
+  checkBridge()
+  setInterval(() => {
+    if (document.visibilityState === 'visible') checkBridge()
+  }, 30000)
+}

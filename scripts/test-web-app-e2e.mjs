@@ -30,7 +30,7 @@ console.log(`created accounts alice=${alice.email} bob=${bob.email}`)
 // proxy stdout is piped so we can watch for the ":143 with zero accounts" mystery
 const proxyLines = []
 let loginStarted = false
-const proxy = spawn('node', [script('./ws-tcp-proxy.mjs')], {
+const proxy = spawn('node', [script('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs')], {
   env: { ...process.env, PORT: String(PROXY_PORT) },
   stdio: ['ignore', 'pipe', 'pipe'],
 })

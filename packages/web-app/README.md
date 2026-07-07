@@ -2,8 +2,9 @@
 
 deltachat-desktop's browser-edition frontend running **standalone in the
 browser** on [`@slothfulchat/core-wasm`](../core-wasm/) — no node backend, no
-Electron. The upstream `bundle.js` is served byte-identical; everything
-browser-specific lives in our own files:
+Electron. The upstream frontend is served almost unmodified (a small
+`patches/desktop` stack only adds an About blurb and hides the unimplemented
+proxy UI); everything browser-specific lives in our own files:
 
 - `src/runtime.ts` — our implementation of the desktop `Runtime` interface,
   shipped as `runtime.js` (the module upstream's `main.html` loads before the
@@ -29,7 +30,7 @@ upstream frontend built once (`cd build/desktop && pnpm install
 
 ```sh
 # terminal 1 — the WS→TCP proxy (browsers can't open TCP; IMAP/SMTP tunnel)
-node scripts/ws-tcp-proxy.mjs
+node ../ws-tcp-proxy/ws-tcp-proxy.mjs   # or: npx @slothfulchat/ws-tcp-proxy
 
 # terminal 2 — assemble + build + serve
 cd packages/web-app && pnpm start
@@ -62,7 +63,7 @@ The app derives its base path at runtime, so a project site
 renders the full UI, but it can only send/receive with a reachable WS→TCP
 proxy, and Pages provides none:
 
-- Pages is static, so it cannot host `scripts/ws-tcp-proxy.mjs`.
+- Pages is static, so it cannot host the [`@slothfulchat/ws-tcp-proxy`](../ws-tcp-proxy/) bridge.
 - An `https://` origin cannot connect to a plain `ws://` proxy (mixed
   content), and the bundled proxy speaks `ws` on localhost only.
 

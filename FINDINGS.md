@@ -103,3 +103,34 @@ The upstream deltachat-desktop browser-edition frontend (`bundle.js` byte-identi
 - 1 wasm wrapper crate + 1 runtime.js package (no upstream frontend changes thanks to the `window.r` seam)
 - Requires: a ~100-line WS→TCP proxy (the one irreducible server piece — browsers cannot open TCP), clang + wasm-pack at build time
 - Known holes for a hand-written redo to address: in-wasm HTTP stubbed — breaks the https-URL `DCACCOUNT:` form (real QR invites, the UI's "Create new profile" button), provider autoconfig, OAuth2, push, HTTP-fallback transport; bare-domain `dcaccount:example.org` and classic login work without HTTP. Cheap fix: route HTTP via `fetch()` or the existing WS proxy. Also: no sqlcipher, single tab, webxdc/iroh descoped (see DESCOPED.md).
+
+## Post-M5 polish (2026-07-07)
+
+User-facing cleanup after the feasibility verdict; the "0 desktop patches" count
+above was true at M5 and is now historical:
+
+- **First desktop patch** (`patches/desktop/0001`): About dialog gets a "what
+  this is" blurb (unofficial experiment, chatmail core in WASM, ported with an
+  AI coding agent, not affiliated with Delta Chat) and the **unimplemented
+  proxy UI is removed** (Settings → Advanced button, instant-onboarding 3-dot
+  menu) — DeltaChat's SOCKS5/Shadowsocks proxy feature is not wired in wasm, so
+  it was dead UI. `bundle.js` is no longer byte-identical upstream.
+  Patch count now: **9 core / 1 desktop.**
+- **Bridge-down notice** (`runtime.ts`, no patch): probes the WS bridge's
+  `/dns/` endpoint on load + every 30s; when unreachable shows a warning toast →
+  dialog with start instructions and an alternative-bridge input (saved by
+  reloading with `?proxy=`). Before this, a missing bridge surfaced only as
+  opaque IMAP connect errors.
+- **Bridge is now a package**: `scripts/ws-tcp-proxy.mjs` →
+  [`packages/ws-tcp-proxy`](packages/ws-tcp-proxy/README.md) (still one
+  inspectable file, now with a `bin` for `npx @slothfulchat/ws-tcp-proxy`).
+  New optional `CHATMAIL_WHITELIST` env for hosting a public bridge restricted
+  to vetted chatmail servers: DNS always resolves, but only IPs resolved for a
+  whitelisted domain enter a 10-min in-memory allow-list, and TCP tunnels to
+  any other IP are refused (4003). Empty env = allow-all (local-dev default).
+  Self-check: `scripts/test-ws-tcp-proxy-whitelist.mjs`. Known ceiling: trusts
+  the whitelisted domain's DNS answer (SSRF if its resolver lies); upgrade path
+  is pinning IPs.
+
+All suites re-verified green after the changes (smoke-web-app, test-networking
+e2e message roundtrip, whitelist self-check).

@@ -10,7 +10,7 @@ const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
 const APP_PORT = Number(process.env.APP_PORT ?? 8642)
 
 const procs = [
-  spawn('node', [script('./ws-tcp-proxy.mjs')], {
+  spawn('node', [script('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs')], {
     env: { ...process.env, PORT: String(PROXY_PORT) },
     stdio: 'inherit',
   }),

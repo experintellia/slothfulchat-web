@@ -25,7 +25,7 @@ const alice = await resp.json() // { email, password }
 console.log(`created account ${alice.email}`)
 
 // -- servers --
-const proxy = spawn('node', [script('./ws-tcp-proxy.mjs')], {
+const proxy = spawn('node', [script('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs')], {
   env: { ...process.env, PORT: String(PROXY_PORT) },
   stdio: 'inherit',
 })

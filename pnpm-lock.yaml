@@ -41,6 +41,12 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  packages/ws-tcp-proxy:
+    dependencies:
+      ws:
+        specifier: ^8.21.0
+        version: 8.21.0
+
 packages:
 
   '@deltachat/jsonrpc-client@file:build/core/deltachat-jsonrpc/typescript':

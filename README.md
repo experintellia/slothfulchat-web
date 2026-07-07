@@ -11,6 +11,7 @@ See [PLAN.md](PLAN.md) for the full plan, [DESCOPED.md](DESCOPED.md) for deliber
 - `build/` — throwaway worktrees: pinned commit + patches applied (gitignored)
 - [`packages/core-wasm`](packages/core-wasm/README.md) — deliverable 1: npm package, WASM core behind the standard `@deltachat/jsonrpc-client` TypeScript API
 - [`packages/web-app`](packages/web-app/README.md) — deliverable 2: standalone browser frontend using core-wasm
+- [`packages/ws-tcp-proxy`](packages/ws-tcp-proxy/README.md) — the WS→TCP bridge (the one server piece; npx-able, optional chatmail-server whitelist)
 
 ## Workflow
 
