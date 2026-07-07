@@ -626,6 +626,12 @@ class BrowserRuntime {
     if (matches) {
       return `${BASE}blobs/${matches[2]}/${matches[3]}`
     }
+    // absolute memfs path outside the blobdir (e.g. /tmp/<uuid>/<file> from
+    // tmpPath(): draft attachments, file-picker uploads) — the SW resolves it
+    // via the blob-request `path` field
+    if (blob_path.startsWith('/')) {
+      return `${BASE}blob-path/${encodeURIComponent(blob_path)}`
+    }
     if (blob_path !== '') {
       this.log.error('transformBlobURL wrong url format', blob_path)
     }
@@ -831,17 +837,21 @@ class BrowserRuntime {
       return Promise.resolve(false)
       // ponytail: upstream inverted this test ('!== microphone'), which sent
       // every real mic request to the "not implemented" branch below.
-    } else if (mediaType === 'microphone') {
-      return navigator.mediaDevices.getUserMedia({ audio: true }).then(
-        stream => {
-          stream.getTracks().forEach(track => track.stop())
-          return true
-        },
-        err => {
-          this.log.error('askForMediaAccess "microphone" failed', err)
-          return false
-        }
-      )
+    } else if (mediaType === 'microphone' || mediaType === 'camera') {
+      // request-then-stop just primes the permission; callers (voice message
+      // recorder, QR reader) open their own stream afterwards
+      return navigator.mediaDevices
+        .getUserMedia(mediaType === 'camera' ? { video: true } : { audio: true })
+        .then(
+          stream => {
+            stream.getTracks().forEach(track => track.stop())
+            return true
+          },
+          err => {
+            this.log.error(`askForMediaAccess "${mediaType}" failed`, err)
+            return false
+          }
+        )
     } else {
       this.log.error(
         `askForMediaAccess failed: mediaType "${mediaType}" not implemented`
@@ -1026,7 +1036,9 @@ function showBridgeDialog() {
     boxShadow: '0 8px 40px rgba(0,0,0,.5)',
   })
 
-  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'Bridge not reachable')
+  // neutral title: this dialog is opened both from the bridge-down toast and
+  // from the connectivity view's Change… button (bridge may be up)
+  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'WS→TCP bridge')
   const body = el(
     'p',
     { margin: '0 0 12px', color: '#bbb' },

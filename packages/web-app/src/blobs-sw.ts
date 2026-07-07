@@ -28,10 +28,13 @@ sw.addEventListener('fetch', (event: any) => {
   // match the tail so the app works under any base path (e.g. /repo/ on Pages)
   const blob = url.pathname.match(/\/blobs\/([^/]+)\/(.+)$/)
   const backup = url.pathname.match(/\/download-backup\/([^/]+)$/)
-  if (!blob && !backup) {
+  // /blob-path/<uri-encoded absolute memfs path>: temp files outside the
+  // blobdir, e.g. /tmp/<uuid>/<file> (see runtime.ts transformBlobURL)
+  const bypath = url.pathname.match(/\/blob-path\/([^/]+)$/)
+  if (!blob && !backup && !bypath) {
     return // fall through to network
   }
-  const filename = decodeURIComponent(blob ? blob[2] : backup![1])
+  let filename = decodeURIComponent(blob ? blob[2] : backup ? backup[1] : '')
   const accountId = blob?.[1]
   // backup exports live in the memfs /exports dir (see runtime.ts EXPORTS_DIR)
   // and are always served as an attachment
@@ -41,6 +44,12 @@ sw.addEventListener('fetch', (event: any) => {
     if (filename.includes('/') || filename.includes('..')) return
     path = `/exports/${filename}`
     downloadName = filename
+  }
+  if (bypath) {
+    const decoded = decodeURIComponent(bypath[1])
+    if (!decoded.startsWith('/') || decoded.includes('..')) return
+    path = decoded
+    filename = decoded.split('/').pop()! // page side derives MIME from this
   }
   event.respondWith(
     (async () => {

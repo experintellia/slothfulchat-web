@@ -152,3 +152,38 @@ e2e message roundtrip, whitelist self-check).
 - **Desktop patch 0003**: welcome screen replaces the Delta Chat logo with
   "SlothfulChat", a one-sentence experimental/may-be-buggy disclaimer, and a
   source-code link. Patch count: **9 core / 3 desktop.**
+
+## Live-site bug pass (2026-07-07): CSP, blobs, camera, connectivity
+
+- **CSP `manifest-src`**: `default-src 'none'` blocked `manifest.webmanifest`
+  (no explicit `manifest-src` → fallback). Added `manifest-src 'self'` to the
+  meta CSP in `packages/web-app/static/main.html` (GitHub Pages can't set
+  headers, so the meta tag is the single source of truth).
+- **Temp-file blobs render**: `transformBlobURL` only matched
+  `…/dc.db-blobs/…`; core memfs temp paths (`/tmp/<uuid>/<file>` from
+  `tmpPath()`: draft attachments, file-picker uploads) returned `''` → broken
+  previews. Now mapped to `blob-path/<uri-encoded path>`; the blobs SW decodes
+  it and reuses the existing `path` passthrough (page side unchanged). No new
+  read surface — same-origin JS could already `fsRead` any memfs path.
+- **Camera permission**: `askForMediaAccess('camera')` was "not implemented",
+  breaking the QR scanner; now primes `getUserMedia({video:true})` same as the
+  microphone branch.
+- **Connectivity "Change…" button dead on live**: reproduced — the click DID
+  open the bridge dialog, but the old div overlay painted under the
+  connectivity `<dialog>`'s top layer (invisible at any z-index). Already
+  fixed by the native `<dialog>`+`showModal()` rewrite, which was committed
+  but never pushed; shipping it in this deploy.
+- **White connectivity iframe**: NOT reproduced (core `getConnectivityHtml`
+  healthy in unconfigured/configured/io-running/bridge-down; CSP doesn't block
+  srcdoc iframes; renders fine on local and live with a fresh account).
+  Standing hypothesis: `get_connectivity_html` blocks on
+  `scheduler.inner.read().await` while `stop()`/`pause()` hold the write lock
+  across task-shutdown awaits — a wedged wasm network future would hang the
+  RPC forever → srcDoc stays `''` → white. Revisit with a repro; candidate
+  band-aid is a timeout+fallback in the patched ConnectivityDialog.
+- **Chrome Local Network Access (138+)**: an https page (the live site) needs
+  the LNA permission to reach `ws://localhost:8641`; denied/headless contexts
+  get `net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS` and configure fails
+  with an opaque "Could not find your mail server". Users must accept the
+  prompt; headless tests need `--disable-features=LocalNetworkAccessChecks`.
+  Worth mentioning in the bridge-down toast/dialog text eventually.
