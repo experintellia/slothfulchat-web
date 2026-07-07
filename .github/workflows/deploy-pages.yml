@@ -111,9 +111,12 @@ jobs:
 
       # Upstream deltachat-desktop browser bundle (its own workspace/lockfile).
       # assemble.mjs copies its dist/ output. esbuild builds fine in-tree here.
+      # VERSION_INFO_GIT_REF: upstream's build stamps a `git describe` into the
+      # bundle, which fails here (worktree has no tags) — pass the sha instead.
       - name: Build upstream desktop browser frontend
         working-directory: build/desktop
         run: |
+          export VERSION_INFO_GIT_REF=$(git rev-parse --short HEAD)
           pnpm install --frozen-lockfile
           pnpm build:browser
 
