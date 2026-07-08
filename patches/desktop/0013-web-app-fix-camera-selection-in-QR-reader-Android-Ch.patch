@@ -1,0 +1,122 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Wed, 8 Jul 2026 14:13:11 +0000
+Subject: [PATCH 13/13] web-app: fix camera selection in QR reader (Android
+ Chromium)
+
+Selecting a camera did nothing on multi-camera devices: the selected
+deviceId was passed as a soft constraint together with an always-on
+facingMode:'user', so on Android the two ideal constraints tied and
+Chromium kept the default (front) camera, then the settings re-sync
+snapped the checkmark back. Request an explicitly chosen camera with
+deviceId:{exact} and only use facingMode for the initial stream.
+
+Also re-enumerate devices after getUserMedia succeeds (pre-permission
+Chromium anonymizes the list: empty labels, one stub device per kind,
+so the camera menu stayed empty/blank on first run), drop the initial
+auto-select that read devices[0] of the unfiltered list (could seed a
+microphone id), and fall back to the default camera when a stored
+deviceId has gone stale (OverconstrainedError) instead of showing the
+camera-error screen.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ .../src/components/QrReader/index.tsx         | 54 +++++++++++--------
+ 1 file changed, 32 insertions(+), 22 deletions(-)
+
+diff --git a/packages/frontend/src/components/QrReader/index.tsx b/packages/frontend/src/components/QrReader/index.tsx
+index 3b175a7dd..53dec8aac 100644
+--- a/packages/frontend/src/components/QrReader/index.tsx
++++ b/packages/frontend/src/components/QrReader/index.tsx
+@@ -93,24 +93,22 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
+     }, [worker, workerClipBoard])
+ 
+     // Get all current video devices available to the user.
+-    useEffect(() => {
+-      const getAllCameras = async () => {
+-        const devices = await navigator.mediaDevices.enumerateDevices()
+-        setVideoDevices(
+-          devices.filter(device => {
+-            return device.kind === 'videoinput'
+-          })
+-        )
+-
+-        // Automatically select first available video device
+-        if (devices.length > 0) {
+-          setDeviceId(devices[0].deviceId)
+-        }
+-      }
+-
+-      getAllCameras()
++    // Before camera permission is granted Chromium anonymizes this list
++    // (empty labels, on Android only one stub device per kind), so it is
++    // refreshed again after each successful getUserMedia call.
++    const updateVideoDevices = useCallback(async () => {
++      const devices = await navigator.mediaDevices.enumerateDevices()
++      setVideoDevices(
++        devices.filter(device => {
++          return device.kind === 'videoinput'
++        })
++      )
+     }, [])
+ 
++    useEffect(() => {
++      updateVideoDevices()
++    }, [updateVideoDevices])
++
+     // General handler for errors which might occur during scanning.
+     const handleError = useCallback(
+       (error: any) => {
+@@ -325,10 +323,12 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
+       }
+ 
+       const startStream = async () => {
+-        const videoConstraints: MediaTrackConstraints = {
+-          deviceId,
+-          facingMode: 'user',
+-        }
++        // An explicitly selected camera must be requested with `exact`:
++        // as a soft constraint it ties with `facingMode` on multi-camera
++        // devices (Android) and the browser keeps the default camera.
++        const videoConstraints: MediaTrackConstraints = deviceId
++          ? { deviceId: { exact: deviceId } }
++          : { facingMode: 'user' }
+ 
+         try {
+           setReady(false)
+@@ -381,6 +381,10 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
+           video.srcObject = stream
+           activeStream = stream
+ 
++          // Permission is granted now, so re-enumerate to get the
++          // full, labelled camera list for the selection menu.
++          updateVideoDevices()
++
+           const settings = videoTracks[0].getSettings()
+           let isFacingUser = true
+           if (settings.facingMode !== undefined) {
+@@ -400,8 +404,14 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
+           }
+ 
+           setReady(true)
+-        } catch {
++        } catch (error) {
+           stopStream(activeStream)
++          if (deviceId && error instanceof OverconstrainedError) {
++            // Selected device id is stale (e.g. site data was cleared);
++            // fall back to the default camera instead of an error screen.
++            setDeviceId(undefined)
++            return
++          }
+           setCameraAccessError(true)
+         }
+       }
+@@ -420,7 +430,7 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
+         setReady(false)
+         setCameraAccessError(false)
+       }
+-    }, [deviceId])
++    }, [deviceId, updateVideoDevices])
+ 
+     // Frequently scan image data for QR code with "jsqr" library.
+     //
