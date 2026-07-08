@@ -130,6 +130,56 @@ try {
     .waitFor({ state: 'visible', timeout: 60_000 })
   console.log(`OK: self-chat shows "${marker}" after reload`)
 
+  // 7. corrupt accounts.toml in OPFS (the iOS incident: mirror returned ~1MB
+  // of garbage) → reload → the wasm self-heal must quarantine + rebuild it
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory()
+    const dir = await (
+      await root.getDirectoryHandle('memfs')
+    ).getDirectoryHandle('accounts')
+    const file = await dir.getFileHandle('accounts.toml')
+    const w = await file.createWritable()
+    await w.write(new Uint8Array(2 * 1024 * 1024).fill(0xff))
+    await w.close()
+  })
+  console.log('OK: overwrote OPFS accounts.toml with 2 MiB of 0xff')
+  await page.reload()
+  await page.waitForFunction(() => window.__coreSystemInfo, null, {
+    timeout: 120_000,
+  })
+  await page
+    .locator('#new-chat-button')
+    .waitFor({ state: 'visible', timeout: 120_000 })
+  const healedIds = await rpc('getAllAccountIds')
+  if (healedIds.length !== 1) {
+    throw new Error(`expected 1 healed account, got ${healedIds}`)
+  }
+  const healedInfo = await rpc('getAccountInfo', healedIds[0])
+  if (healedInfo.kind !== 'Configured' || healedInfo.addr !== alice.email) {
+    throw new Error(`account not healed: ${JSON.stringify(healedInfo)}`)
+  }
+  // quarantine file lands in OPFS via the async flusher — poll from node
+  // (waitForFunction never awaits async predicates)
+  const deadline = Date.now() + 15_000
+  let brokenKept = false
+  while (!brokenKept && Date.now() < deadline) {
+    brokenKept = await page.evaluate(async () => {
+      const root = await navigator.storage.getDirectory()
+      const dir = await (
+        await root.getDirectoryHandle('memfs')
+      ).getDirectoryHandle('accounts')
+      return dir
+        .getFileHandle('accounts.toml.broken')
+        .then(() => true)
+        .catch(() => false)
+    })
+    if (!brokenKept) await new Promise(r => setTimeout(r, 500))
+  }
+  if (!brokenKept) {
+    throw new Error('accounts.toml.broken missing in OPFS after self-heal')
+  }
+  console.log('OK: corrupt accounts.toml self-healed, quarantine file kept')
+
   console.log('OK: account + message survived reload')
 } catch (err) {
   console.error('FAIL:', err.message)

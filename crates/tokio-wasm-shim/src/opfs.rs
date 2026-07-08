@@ -31,8 +31,8 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
     FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemGetDirectoryOptions,
-    FileSystemGetFileOptions, FileSystemRemoveOptions, FileSystemWritableFileStream,
-    WorkerGlobalScope,
+    FileSystemGetFileOptions, FileSystemReadWriteOptions, FileSystemRemoveOptions,
+    FileSystemSyncAccessHandle, WorkerGlobalScope,
 };
 
 use crate::fs::{self, Snapshot};
@@ -117,11 +117,33 @@ async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), 
                 JsFuture::from(dir.get_file_handle_with_options(&name, &create))
                     .await?
                     .into();
-            let stream: FileSystemWritableFileStream =
-                JsFuture::from(handle.create_writable()).await?.into();
-            // create_writable() truncates on close by default (keepExistingData=false)
-            JsFuture::from(stream.write_with_u8_array(&data)?).await?;
-            JsFuture::from(stream.close()).await?;
+            // Sync access handle, NOT createWritable(): WebKit only shipped
+            // FileSystemWritableFileStream in Safari 18.4 and we saw it hand
+            // back ~1MB of garbage as accounts.toml on iOS. SAH is the older
+            // API the sahpool sqlite VFS already trusts on the same devices.
+            // Write first, truncate to the new length last — no empty-file
+            // window if the worker dies mid-reconcile.
+            let sah: FileSystemSyncAccessHandle =
+                JsFuture::from(handle.create_sync_access_handle())
+                    .await?
+                    .into();
+            let write = |data: &[u8]| -> Result<(), JsValue> {
+                let opts = FileSystemReadWriteOptions::new();
+                opts.set_at(0.0);
+                let written = sah.write_with_u8_array_and_options(data, &opts)?;
+                if written as usize != data.len() {
+                    return Err(JsValue::from_str(&format!(
+                        "opfs: partial write ({written} of {} bytes)",
+                        data.len()
+                    )));
+                }
+                sah.truncate_with_f64(data.len() as f64)?;
+                sah.flush()?;
+                Ok(())
+            };
+            let result = write(&data);
+            sah.close();
+            result?;
         }
         Snapshot::Dir => {
             ensure_dirs(root, path).await?;

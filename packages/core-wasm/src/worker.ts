@@ -81,6 +81,7 @@ async function waitForOpfsSyncHandles(): Promise<void> {
         // storage blocked by browser settings (e.g. Safari "Block All
         // Cookies"), not a lock — retrying can't help and the "another tab"
         // dialog would mislead. Tell the page and fail immediately.
+        fatalReported = true
         scope.postMessage({ type: 'fatal-storage-blocked' } as unknown as string)
         throw err
       }
@@ -91,9 +92,14 @@ async function waitForOpfsSyncHandles(): Promise<void> {
   // still locked after 15s: almost certainly another live tab. Tell the page
   // (it shows the "already running in another tab" dialog) and fail loudly —
   // proceeding into init would hang forever in the sahpool install.
+  fatalReported = true
   scope.postMessage({ type: 'fatal-opfs-locked' } as unknown as string)
   throw new Error('OPFS is locked — SlothfulChat seems to be running in another tab')
 }
+
+/** True once a specific fatal-* message went to the page, so the generic
+ * catch below doesn't stack a second dialog on top of it. */
+let fatalReported = false
 
 const ready = (async () => {
   const { proxyUrl, persist } = await config
@@ -101,6 +107,13 @@ const ready = (async () => {
   if (persist) await waitForOpfsSyncHandles()
   return await init((message: string) => scope.postMessage(message), proxyUrl, persist)
 })()
+// any other init failure (e.g. corrupted persisted state the self-heal could
+// not fix) must reach the page as a dialog, not die as an unhandled rejection
+// leaving the loading screen up forever
+ready.catch(err => {
+  if (fatalReported) return
+  scope.postMessage({ type: 'fatal-init-error', message: String(err) } as unknown as string)
+})
 
 scope.onmessage = async (event: MessageEvent<string | FsRequest | ConfigMessage>) => {
   const msg = event.data

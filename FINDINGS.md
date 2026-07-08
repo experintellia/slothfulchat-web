@@ -363,3 +363,35 @@ login form), the `webimapaccount:host[:port]` QR scheme (instant onboarding via
 - Multi-device caveat: `send_sync_transports` now carries the `webimap` field;
   an older core receiving the sync drops the unknown JSON field and would treat
   the transport as IMAP.
+
+## iOS storage-corruption incident (2026-07-08): corrupted accounts.toml bricked the app
+
+Field report from an iOS device with one account: the app never got past the
+loading screen, console showed `Unhandled Promise Rejection: failed to create
+accounts: invalid utf-8 sequence of 1 bytes from index 1031620` (worker.js).
+Traced to core's bare `std::str::from_utf8` on `/accounts/accounts.toml`
+(`vendor/core/src/accounts.rs:753`) — the OPFS mirror handed back **~1 MB of
+binary garbage** for a file that is normally <300 bytes. Core's own write is
+atomic (tmp + rename) and the mirror flusher is strictly sequential, so the
+prime suspect is WebKit's `FileSystemWritableFileStream` (`createWritable()`),
+which only shipped in Safari 18.4 (WebKit bug 283841) and was the one OPFS
+write API in our pipeline that sahpool does *not* also exercise. Three fixes:
+
+- **Self-heal** (`packages/core-wasm/rust/src/lib.rs`): if `Accounts::new`
+  fails and accounts.toml exists, dump the corrupt bytes to the console (size,
+  hex head, lossy 4 KiB preview), quarantine to `accounts.toml.broken` (kept
+  in OPFS for forensics) and rebuild the config from the account dirs — dir
+  name == account uuid, ids reassigned from 1; the sqlite DBs live in the
+  sahpool VFS and are untouched, so the account comes back fully intact.
+- **Mirror writes via sync access handles** (`tokio-wasm-shim/src/opfs.rs`):
+  `reconcile` now uses `FileSystemSyncAccessHandle` (write at 0 → truncate to
+  new length → flush → close; no empty-file window) instead of
+  `createWritable()` — the same API sahpool already trusts on these devices,
+  and supported since Safari 15.2 instead of 18.4.
+- **No more silent brick** (`worker.ts` + `runtime.ts`): any init failure now
+  posts `fatal-init-error` and shows the fatal dialog with the error text
+  instead of dying as an unhandled rejection behind the loading screen.
+
+e2e: `scripts/test-persistence.mjs` step 7 overwrites the OPFS accounts.toml
+with 2 MiB of `0xff`, reloads, and asserts the account is healed and the
+quarantine file exists.

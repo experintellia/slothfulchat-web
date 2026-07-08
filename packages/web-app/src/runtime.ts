@@ -147,6 +147,13 @@ function getCore(): Core {
             `${location.hostname} and reload — on iPhone/iPad, turn off ` +
             'Settings → Safari → Advanced → Block All Cookies.'
         )
+      } else if (type === 'fatal-init-error') {
+        showFatalDialog(
+          'sc-init-error-dialog',
+          'SlothfulChat could not start',
+          'The stored data could not be loaded. Details: ' +
+            ((event as MessageEvent).data?.message ?? 'unknown error')
+        )
       }
     })
     // The frontend passes the magic destination '<BROWSER>' to exportBackup on

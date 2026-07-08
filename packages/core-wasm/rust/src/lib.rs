@@ -52,9 +52,33 @@ pub async fn init(
             .map_err(|e| JsValue::from_str(&format!("failed to enable persistence: {e}")))?;
     }
 
-    let accounts = Accounts::new(PathBuf::from("/accounts"), true)
-        .await
-        .map_err(|e| JsValue::from_str(&format!("failed to create accounts: {e:#}")))?;
+    let accounts = match Accounts::new(PathBuf::from("/accounts"), true).await {
+        Ok(accounts) => accounts,
+        // A corrupted accounts.toml otherwise bricks the app forever (seen on
+        // iOS: the OPFS mirror handed back ~1MB of garbage for it). The sqlite
+        // DBs live in the sahpool VFS and are unaffected, so rebuilding the
+        // account list recovers everything.
+        Err(e) if persist && tokio::fs::sync_is_file(ACCOUNTS_CONFIG) => {
+            let orig = format!("{e:#}");
+            heal_accounts_config(&orig).await.map_err(|heal| {
+                JsValue::from_str(&format!(
+                    "failed to create accounts: {orig} (self-heal failed: {heal})"
+                ))
+            })?;
+            Accounts::new(PathBuf::from("/accounts"), true)
+                .await
+                .map_err(|e| {
+                    JsValue::from_str(&format!(
+                        "failed to create accounts even after accounts.toml self-heal: {e:#}"
+                    ))
+                })?
+        }
+        Err(e) => {
+            return Err(JsValue::from_str(&format!(
+                "failed to create accounts: {e:#}"
+            )))
+        }
+    };
     let accounts = Arc::new(RwLock::new(accounts));
     let state = CommandApi::from_arc(accounts).await;
 
@@ -73,6 +97,60 @@ pub async fn init(
     });
 
     Ok(DeltaChat { session })
+}
+
+const ACCOUNTS_CONFIG: &str = "/accounts/accounts.toml";
+
+/// Last-resort recovery for a corrupted accounts.toml: dump the contents to
+/// the console, quarantine the file to accounts.toml.broken (kept in OPFS for
+/// forensics) and rebuild it from the account directories — their names are
+/// the account uuids (`AccountConfig { id, dir, uuid }`, dir == uuid).
+async fn heal_accounts_config(cause: &str) -> Result<(), String> {
+    let io = |e: std::io::Error| e.to_string();
+    let bytes = tokio::fs::read(ACCOUNTS_CONFIG).await.map_err(io)?;
+    let hex: Vec<String> = bytes.iter().take(64).map(|b| format!("{b:02x}")).collect();
+    log::error!(
+        "accounts.toml is corrupt ({cause}); quarantining to accounts.toml.broken and rebuilding \
+         from the account dirs.\nsize: {} bytes\nfirst 64 bytes: {}\nfirst 4 KiB (lossy):\n{}",
+        bytes.len(),
+        hex.join(" "),
+        String::from_utf8_lossy(&bytes[..bytes.len().min(4096)])
+    );
+    tokio::fs::rename(ACCOUNTS_CONFIG, "/accounts/accounts.toml.broken")
+        .await
+        .map_err(io)?;
+
+    let mut entries = tokio::fs::read_dir("/accounts").await.map_err(io)?;
+    let mut uuids: Vec<String> = Vec::new();
+    while let Some(entry) = entries.next_entry().await.map_err(io)? {
+        if !entry.metadata().await.map_err(io)?.is_dir() {
+            continue;
+        }
+        match entry.path().file_name().and_then(|n| n.to_str()) {
+            Some(name) if uuid::Uuid::parse_str(name).is_ok() => uuids.push(name.to_owned()),
+            _ => {}
+        }
+    }
+    uuids.sort();
+
+    // InnerConfig schema (vendor/core/src/accounts.rs); accounts_order is
+    // #[serde(default)] and may be omitted. ids are reassigned from 1.
+    let mut toml = format!(
+        "selected_account = {}\nnext_id = {}\n",
+        if uuids.is_empty() { 0 } else { 1 },
+        uuids.len() + 1
+    );
+    for (i, uuid) in uuids.iter().enumerate() {
+        toml += &format!(
+            "\n[[accounts]]\nid = {}\ndir = \"{uuid}\"\nuuid = \"{uuid}\"\n",
+            i + 1
+        );
+    }
+    log::warn!(
+        "rebuilt accounts.toml with {} account(s):\n{toml}",
+        uuids.len()
+    );
+    tokio::fs::write(ACCOUNTS_CONFIG, toml).await.map_err(io)
 }
 
 fn fs_err(err: std::io::Error) -> JsValue {
