@@ -1,17 +1,24 @@
-# Releasing the npm packages
+# Releasing (npm packages + GitHub release)
 
-Two packages are published from this repo, with **independent versions**:
+Three packages are published from this repo, with **independent versions**:
 
 - `@slothfulchat/ws-tcp-proxy` — packages/ws-tcp-proxy, no build step
 - `@slothfulchat/core-wasm` — packages/core-wasm, built from the patched core
+- `@slothfulchat/customize` — packages/customize, esbuild-bundled from
+  packages/web-app/customize.mjs (`prepack` builds it automatically)
 
 ## The flow
 
-Publishing is automated by `.github/workflows/publish-npm.yml`, triggered by
-any `v*` tag. The workflow rebuilds from a clean checkout and publishes **each
-package whose package.json version is not on the registry yet** — packages
-whose version already exists are skipped. So one shared tag releases whatever
-was bumped, and re-running is idempotent.
+Everything is automated by `.github/workflows/publish-npm.yml`, triggered by
+any `v*` tag. The workflow rebuilds from a clean checkout and does two things:
+
+- **GitHub release**: builds a generic web-app dist (no `SLOTHFUL_*` vars) and
+  creates a release with `slothfulchat-web-<tag>.zip` + the standalone
+  `slothfulchat-customize.mjs` (see SELFHOSTING.md for how operators use them).
+- **npm**: publishes **each package whose package.json version is not on the
+  registry yet** — packages whose version already exists are skipped. So one
+  shared tag releases whatever was bumped, and re-running is idempotent
+  (release assets are re-uploaded with `--clobber`).
 
 1. Bump `version` in the package(s) you're releasing
    (`packages/*/package.json`) and add an entry to that package's
@@ -30,8 +37,13 @@ was bumped, and re-running is idempotent.
 ## Auth
 
 npm Trusted Publishing (OIDC) — no token secrets. Each package's npmjs.com
-Settings → Trusted Publisher points at this repo + `publish-npm.yml`. If the
-publish step fails auth, that config is the first thing to check.
+Settings → Trusted Publisher points at this repo + `publish-npm.yml` (never
+rename that file). If the publish step fails auth, that config is the first
+thing to check.
+
+**Brand-new packages can't be created via trusted publishing**: the first
+version must be published manually (see fallback below), then the Trusted
+Publisher can be configured on the now-existing package.
 
 Manual fallback (e.g. registry config broke): a granular access token with
 write on the `slothfulchat` org in `~/.npmrc`
