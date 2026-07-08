@@ -182,7 +182,13 @@ It does not concern the content of any messages or accounts.</p>
 <p>${esc(config.instanceName || 'This app')} runs entirely in your browser. Your accounts,
 messages, encryption keys and files are stored only on your device (in your
 browser's storage) and are exchanged end-to-end encrypted, directly with the
-mail servers, through a relay that only sees encrypted traffic. The operator of
+mail servers, through a relay that only sees encrypted traffic.
+${
+  config.defaultProxyUrl
+    ? `By default this instance uses the relay at <code>${esc(config.defaultProxyUrl)}</code>.`
+    : `This instance has no default relay configured — you provide the address of your own relay.`
+}
+The operator of
 this site never receives, stores, sees or processes your messages or account
 data, and has no way to know what you do in the app.</p>
 
@@ -191,7 +197,15 @@ data, and has no way to know what you do in the app.</p>
 them and cannot act on reports about other users. If someone harasses you or
 breaks the law: block them in the app, and report them directly to the relevant
 authorities if a law was broken. You can also report them to their email /
-chatmail provider — the operator of the relay behind their address.</p>
+chatmail provider — the operator of the relay behind their address. You can see
+which relays a contact uses by opening the contact, then the three-dot menu,
+then &ldquo;Encryption Info&rdquo;.</p>
+
+<h2>Links</h2>
+<p>This site and app contain links to external websites. The operator has no
+influence over their content and accepts no responsibility for it; at the time
+of linking, no malicious or illegal content was apparent. If a linked site no
+longer complies, please report it to the email address above.</p>
 
 <p class="meta">${esc(instanceLabel)}${
   config.instanceUrl
