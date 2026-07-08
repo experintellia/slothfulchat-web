@@ -37,6 +37,19 @@
     <link rel="stylesheet" href="./main.css" />
     <link rel="stylesheet" href="./bundle.css" />
     <link rel="stylesheet" href="./fallback-theme.css" />
+    <!-- main.css bundles window-scoped stylesheets whose bare body{} rules
+         leak onto the app (display:flex, overflow-y:auto). The app is a fixed
+         full-viewport layout: the root must never scroll, else the navbar
+         pans away when the on-screen keyboard opens. -->
+    <style>
+      html,
+      body {
+        overflow: hidden;
+      }
+      body {
+        display: block;
+      }
+    </style>
     <title>SlothfulChat</title>
     <style id="theme-vars"></style>
   </head>

@@ -2,6 +2,14 @@
 // interactive-widget=resizes-content in the viewport meta, which Safari
 // doesn't support (and iOS auto-zooms sub-16px inputs on focus on top).
 ;(function () {
+  // All platforms: the app is a fixed full-viewport layout, inner containers
+  // own all scrolling — but browser focus-reveal / scrollIntoView can still
+  // scroll the document (even past overflow:hidden) when the keyboard opens,
+  // panning the navbar off-screen. Snap back.
+  window.addEventListener('scroll', function () {
+    if (window.scrollY || window.scrollX) window.scrollTo(0, 0)
+  })
+
   var isIOS =
     /iPhone|iPad|iPod/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
