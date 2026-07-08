@@ -1,12 +1,18 @@
-# Publish @slothfulchat/ws-tcp-proxy and @slothfulchat/core-wasm to npm on
-# tag push. Auth is npm Trusted Publishing (OIDC, id-token: write) — no token
-# secret; each package's npmjs.com Settings -> Trusted Publisher must point at
-# this repo + this workflow filename.
+# On tag push: create the GitHub release (prebuilt web-app zip + the
+# standalone customize script) and publish @slothfulchat/ws-tcp-proxy,
+# @slothfulchat/core-wasm and @slothfulchat/customize to npm. Auth is npm
+# Trusted Publishing (OIDC, id-token: write) — no token secret; each package's
+# npmjs.com Settings -> Trusted Publisher must point at this repo + this
+# workflow FILENAME (so never rename publish-npm.yml).
 #
 # Versioning: one shared `v*` tag triggers the run; each package is published
 # only if its package.json version isn't on the registry yet. So: bump the
 # version(s) you want to release, commit, tag, push the tag. Re-running is
-# idempotent.
+# idempotent (release assets are re-uploaded with --clobber).
+#
+# The release zip is a GENERIC build: no SLOTHFUL_* vars, placeholder imprint.
+# Self-hosters bake their values in with the customize script — see
+# SELFHOSTING.md — so the zip works for everyone without rebuilding.
 #
 # The core-wasm build steps mirror deploy-pages.yml — same order traps apply
 # (jsonrpc-client must be generated before the root pnpm install).
@@ -20,7 +26,7 @@ on:
 
 permissions:
   id-token: write # npm trusted publishing + provenance
-  contents: read
+  contents: write # gh release create/upload
 
 jobs:
   publish:
@@ -106,9 +112,48 @@ jobs:
       - name: Build core-wasm TS (worker + index)
         run: pnpm --filter @slothfulchat/core-wasm build
 
+      # bundled single-file CLI: published to npm below AND attached to the
+      # GitHub release so self-hosters can run it without npm
+      - name: Build customize CLI bundle
+        run: pnpm --filter @slothfulchat/customize build
+
+      # ---- GitHub release: prebuilt web-app zip + customize script ----
+      # (tag pushes only; a plain workflow_dispatch just re-publishes npm)
+
+      # mirrors deploy-pages.yml — see the comments there for the env quirks
+      - name: Build upstream desktop browser frontend (release)
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: build/desktop
+        run: |
+          export VERSION_INFO_GIT_REF=$(git rev-parse --short HEAD)
+          pnpm install --frozen-lockfile
+          NODE_ENV=production pnpm build:browser
+
+      # ORDER TRAP #2 (see deploy-pages.yml): build must come after assemble.
+      # Deliberately NO SLOTHFUL_* vars — the zip stays generic (see header).
+      - name: Assemble + build web-app dist/ (generic release build)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          NODE_ENV: production
+        run: |
+          pnpm --filter @slothfulchat/web-app assemble
+          pnpm --filter @slothfulchat/web-app build
+
+      # release first, npm publish after: a publish hiccup (e.g. a package's
+      # trusted publisher not configured yet) must not block the release
+      - name: Create GitHub release (web-app zip + customize script)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd packages/web-app/dist && zip -qr "$GITHUB_WORKSPACE/slothfulchat-web-$GITHUB_REF_NAME.zip" .)
+          cp packages/customize/dist/cli.mjs slothfulchat-customize.mjs
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          gh release upload "$GITHUB_REF_NAME" --clobber "slothfulchat-web-$GITHUB_REF_NAME.zip" slothfulchat-customize.mjs
+
       - name: Publish packages whose version is new
         run: |
-          for dir in packages/ws-tcp-proxy packages/core-wasm; do
+          for dir in packages/ws-tcp-proxy packages/core-wasm packages/customize; do
             name=$(node -p "require('./$dir/package.json').name")
             version=$(node -p "require('./$dir/package.json').version")
             if npm view "$name@$version" version >/dev/null 2>&1; then

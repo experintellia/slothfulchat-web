@@ -31,6 +31,12 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  packages/customize:
+    devDependencies:
+      esbuild:
+        specifier: ^0.25.5
+        version: 0.25.12
+
   packages/web-app:
     dependencies:
       '@slothfulchat/core-wasm':
@@ -40,6 +46,9 @@ importers:
       esbuild:
         specifier: ^0.25.5
         version: 0.25.12
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.3
       sass:
         specifier: ^1.101.0
         version: 1.101.0
@@ -324,6 +333,9 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
+
   fsevents@2.3.2:
     resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
@@ -604,6 +616,8 @@ snapshots:
       '@esbuild/win32-arm64': 0.25.12
       '@esbuild/win32-ia32': 0.25.12
       '@esbuild/win32-x64': 0.25.12
+
+  fflate@0.8.3: {}
 
   fsevents@2.3.2:
     optional: true

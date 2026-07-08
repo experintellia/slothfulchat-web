@@ -108,7 +108,7 @@ in source. All optional:
 | `SLOTHFUL_IMPRINT_NAME` | Responsible person/entity on the imprint page (legal notice). |
 | `SLOTHFUL_IMPRINT_ADDRESS` | Postal address on the imprint page (newlines allowed). |
 | `SLOTHFUL_IMPRINT_EMAIL` | Contact email on the imprint page. |
-| `SLOTHFUL_INSTANCE_NAME` | Instance name shown on the imprint page (e.g. `SlothfulChat`). |
+| `SLOTHFUL_INSTANCE_NAME` | Instance display name: tab title, PWA install name, boot-error screens, imprint page (e.g. `SlothfulChat`). |
 | `SLOTHFUL_INSTANCE_URL` | Canonical origin, e.g. `https://web.slothful.chat`. |
 | `SLOTHFUL_DEFAULT_PROXY` | Default `wss://` bridge the app uses when the user hasn't set one. Without it the app defaults to `ws://localhost:8641`. |
 

@@ -13,20 +13,38 @@ You host **two things**:
 > bridge at all — if all your accounts are webimap, you only host the static
 > site.
 
-The app is configured entirely through **build-time environment variables** —
-nothing is baked into the source, so your instance name, imprint, and default
-bridge live in your CI/host config, not in the repo.
+The app is configured entirely through **environment variables** — set at
+build time, or baked into a prebuilt release zip by the customize script.
+Nothing lives in the source, so your instance name, imprint, and default
+bridge stay in your CI/host config, not in the repo.
 
 ## 1. Deploy the app
 
-**GitHub Pages (easiest):** the repo ships
+**Prebuilt release (any static host, no toolchain):**
+
+```sh
+npx @slothfulchat/customize
+```
+
+It downloads the latest release zip from the
+[releases page](https://github.com/experintellia/slothfulchat-web/releases) —
+a generic build of exactly what GitHub Pages serves — prompts for each
+variable below (Enter skips one; the `SLOTHFUL_*` env vars are honored too),
+and writes `slothfulchat-web-custom.zip` with your values baked in: the
+instance name lands in the web UI as well (tab title, PWA install name), and
+the service-worker precache manifest is recomputed so installed PWAs pick up
+the change. Unzip the output onto your host — done. Prefer no npm? Each
+release also ships the script standalone as `slothfulchat-customize.mjs`
+(`node slothfulchat-customize.mjs --in <downloaded zip>`).
+
+**GitHub Pages:** the repo ships
 [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml).
 Set the variables below under **Settings → Secrets and variables → Actions →
 Variables**, then enable **Settings → Pages → Source = "GitHub Actions"** and
 push. The app auto-detects its URL base, so a project site
 (`https://<you>.github.io/<repo>/`) or a custom domain both work.
 
-**Any other static host:** build locally and upload `packages/web-app/dist`:
+**Building it yourself:** build locally and upload `packages/web-app/dist`:
 
 ```sh
 git submodule update --init
@@ -73,11 +91,11 @@ how the `CHATMAIL_ALLOWLIST` allow-list works) are in the
 
 ## The variables
 
-### App (set at build time, baked into `dist/`)
+### App (baked into `dist/` at build time, or by the customize script)
 
 | Variable | What it does | Example |
 |---|---|---|
-| `SLOTHFUL_INSTANCE_NAME` | Display name of your instance (shown on the imprint page). | `SlothfulChat` |
+| `SLOTHFUL_INSTANCE_NAME` | Display name of your instance: tab title, PWA install name, imprint page. | `SlothfulChat` |
 | `SLOTHFUL_INSTANCE_URL` | Canonical origin of your instance. | `https://web.slothful.chat` |
 | `SLOTHFUL_DEFAULT_PROXY` | The `wss://` bridge the app uses when the user hasn't set one. **Without this, the app defaults to `ws://localhost:8641`** and can't connect on a hosted site. | `wss://web.slothful.chat/bridge` |
 | `SLOTHFUL_IMPRINT_NAME` | Responsible person/entity on the imprint (legal notice) page. | `Jane Doe` |

@@ -4,6 +4,9 @@
 // exactly the browsers whose parsers choke on the esnext bundles.
 (function () {
   'use strict'
+  // rewritten by instance-config.mjs patchBootError (assemble + customize);
+  // config.js may not have loaded yet when these screens render
+  var APP_NAME = 'SlothfulChat'
   var pre = null
 
   function describe(event) {
@@ -36,12 +39,16 @@
     if (root.firstElementChild) return false
     root.innerHTML =
       '<div style="font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1.25rem">' +
-      '<h1 style="font-size:1.3rem">SlothfulChat could not start</h1>' +
+      '<h1 style="font-size:1.3rem"></h1>' +
       '<p></p>' +
       '<p>Details for a bug report:</p>' +
       '<pre style="white-space:pre-wrap;word-break:break-word;background:#f4f4f4;padding:0.75rem;border-radius:4px;font-size:12px"></pre>' +
       '<button style="font:inherit;padding:0.4rem 1rem">Copy error details</button>' +
       '</div>'
+    // textNodes, not innerHTML: APP_NAME needs no HTML escaping this way
+    root.getElementsByTagName('h1')[0].appendChild(
+      document.createTextNode(APP_NAME + ' could not start')
+    )
     root.getElementsByTagName('p')[0].appendChild(document.createTextNode(lead))
     pre = root.getElementsByTagName('pre')[0]
     var btn = root.getElementsByTagName('button')[0]
@@ -94,7 +101,7 @@
     void localStorage.length
   } catch (e) {
     show(
-      'SlothfulChat needs to store data in your browser, but your browser ' +
+      APP_NAME + ' needs to store data in your browser, but your browser ' +
         'is blocking it. Please allow cookies/site data for ' +
         location.hostname +
         ' and reload — on iPhone/iPad, turn off Settings → Safari ' +

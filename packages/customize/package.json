@@ -1,0 +1,29 @@
+{
+  "name": "@slothfulchat/customize",
+  "version": "0.1.0",
+  "description": "Customize a prebuilt SlothfulChat release zip (instance name, imprint, default bridge) for self-hosting — no rebuild needed.",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/experintellia/slothfulchat-web.git",
+    "directory": "packages/customize"
+  },
+  "type": "module",
+  "bin": {
+    "slothfulchat-customize": "./dist/cli.mjs"
+  },
+  "files": [
+    "dist/cli.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "esbuild --bundle --platform=node --format=esm ../web-app/customize.mjs --outfile=dist/cli.mjs",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.5"
+  }
+}

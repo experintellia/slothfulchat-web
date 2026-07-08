@@ -113,6 +113,10 @@ const EXPORTS_DIR = '/exports'
  * at any base without a build-time flag. Always ends in "/". */
 const BASE = new URL('.', location.href).pathname
 
+/** Instance display name (config.js, baked by assemble.mjs / customize.mjs);
+ * used for the tab title and fatal dialogs. */
+const APP_NAME = (window as any).__slothfulConfig?.instanceName || 'SlothfulChat'
+
 let core: Core | null = null
 function getCore(): Core {
   if (!core) {
@@ -135,14 +139,14 @@ function getCore(): Core {
         showFatalDialog(
           'sc-already-running-dialog',
           'Already running in another tab',
-          'SlothfulChat is already open in another tab or window and can ' +
+          `${APP_NAME} is already open in another tab or window and can ` +
             'only run in one at a time. Close the other tab, then retry.'
         )
       } else if (type === 'fatal-storage-blocked') {
         showFatalDialog(
           'sc-storage-blocked-dialog',
           'Browser storage is blocked',
-          'SlothfulChat needs to store data in your browser, but your ' +
+          `${APP_NAME} needs to store data in your browser, but your ` +
             'browser is blocking it. Please allow cookies/site data for ' +
             `${location.hostname} and reload — on iPhone/iPad, turn off ` +
             'Settings → Safari → Advanced → Block All Cookies.'
@@ -150,7 +154,7 @@ function getCore(): Core {
       } else if (type === 'fatal-init-error') {
         showFatalDialog(
           'sc-init-error-dialog',
-          'SlothfulChat could not start',
+          `${APP_NAME} could not start`,
           'The stored data could not be loaded. Details: ' +
             ((event as MessageEvent).data?.message ?? 'unknown error')
         )
@@ -563,7 +567,7 @@ class BrowserRuntime {
   // #endregion
 
   setBadgeCounter(value: number): void {
-    document.title = `SlothfulChat${value ? `(${value})` : ''}`
+    document.title = `${APP_NAME}${value ? `(${value})` : ''}`
   }
   deleteWebxdcAccountData(_accountId: number): Promise<void> {
     this.log.warn('deleteWebxdcAccountData method does not exist in browser.')
