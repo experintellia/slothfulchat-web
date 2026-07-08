@@ -655,8 +655,9 @@ class BrowserRuntime {
     )
   }
   async getAppPath(_name: string): Promise<string> {
-    this.log.critical('Method not implemented.')
-    return 'not-implemented'
+    // only used as a file-dialog defaultPath, which showOpenFileDialog ignores
+    // in the browser — no real filesystem here. ponytail: '' is the no-op.
+    return ''
   }
   async downloadFile(pathToSource: string, filename: string): Promise<void> {
     if (!pathToSource.includes('dc.db-blobs')) {
@@ -781,7 +782,17 @@ class BrowserRuntime {
       if (options.properties.includes('multiSelections')) {
         input.multiple = true
       }
+      // iOS Safari only opens the picker for an input that is in the DOM; a
+      // detached input (fine on desktop) silently does nothing, so backup
+      // import never got a file. Attach it hidden and clean up after.
+      input.style.display = 'none'
+      document.body.append(input)
+      // onchange never fires when the user cancels, so also drop the node when
+      // focus returns to the page. ponytail: worst case is one empty hidden
+      // input if both miss — negligible.
+      window.addEventListener('focus', () => input.remove(), { once: true })
       input.onchange = async () => {
+        input.remove()
         if (input.files != null) {
           // upstream uploads to the backend; we write into the core memfs
           const uploads = [...input.files].map(async file => {

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Wed, 8 Jul 2026 00:52:07 +0000
-Subject: [PATCH 10/13] web-app: render message avatars for outgoing/1:1 as
+Subject: [PATCH 10/14] web-app: render message avatars for outgoing/1:1 as
  themeable .extra
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

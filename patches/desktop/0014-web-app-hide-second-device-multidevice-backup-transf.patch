@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Wed, 8 Jul 2026 19:44:33 +0000
+Subject: [PATCH 14/14] web-app: hide second-device (multidevice backup
+ transfer) UI
+
+iroh isn't included in the wasm build (doesn't work locally with
+browsers yet), so backup transfer via QR/second-device can't function.
+Hide the entry points: the welcome-screen 'add second device' button
+and the settings 'Add Second Device' item.
+---
+ .../frontend/src/components/Settings/Settings.tsx  | 10 ----------
+ .../WelcomeScreen/AlternativeSetupsDialog.tsx      | 14 --------------
+ 2 files changed, 24 deletions(-)
+
+diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
+index 749b5afe2..2c5908172 100644
+--- a/packages/frontend/src/components/Settings/Settings.tsx
++++ b/packages/frontend/src/components/Settings/Settings.tsx
+@@ -1,7 +1,6 @@
+ import React, { useEffect, useCallback } from 'react'
+ 
+ import { useSettingsStore } from '../../stores/settings'
+-import { SendBackupDialog } from '../dialogs/SetupMultiDevice'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import { donationUrl } from '@deltachat-desktop/shared/constants'
+ import SettingsIconButton from './SettingsIconButton'
+@@ -94,15 +93,6 @@ export default function Settings({ onClose }: DialogProps) {
+         >
+           {tx('pref_appearance')}
+         </SettingsIconButton>
+-        <SettingsIconButton
+-          icon='devices'
+-          onClick={() => {
+-            openDialog(SendBackupDialog)
+-            onClose()
+-          }}
+-        >
+-          {tx('multidevice_title')}
+-        </SettingsIconButton>
+         <ConnectivityButton />
+         <SettingsIconButton
+           icon='code-tags'
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
+index b00fbf226..8317b9d90 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
+@@ -16,7 +16,6 @@ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import styles from './styles.module.scss'
+ 
+ import type { DialogProps } from '../../../contexts/DialogContext'
+-import { ReceiveBackupDialog } from '../../dialogs/SetupMultiDevice'
+ import { BackendRemote } from '../../../backend-com'
+ 
+ interface Props {
+@@ -37,12 +36,6 @@ export default function AlternativeSetupsDialog({
+       displayname: null,
+     })
+ 
+-  const onClickSecondDevice = () => {
+-    resetAccount()
+-    openDialog(ReceiveBackupDialog)
+-    onClose()
+-  }
+-
+   async function onClickImportBackup() {
+     await resetAccount()
+ 
+@@ -74,13 +67,6 @@ export default function AlternativeSetupsDialog({
+       />
+       <DialogBody>
+         <DialogContent>
+-          <Button
+-            className={styles.welcomeScreenButton}
+-            onClick={onClickSecondDevice}
+-            data-testid='second-device-button'
+-          >
+-            {tx('multidevice_receiver_title')}
+-          </Button>
+           <Button
+             className={styles.welcomeScreenButton}
+             onClick={onClickImportBackup}
