@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Wed, 8 Jul 2026 00:52:07 +0000
+Subject: [PATCH 10/10] web-app: render message avatars for outgoing/1:1 as
+ themeable .extra
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Upstream shows .author-avatar only for incoming group messages. Render it
+unconditionally, tagging the previously-absent cases with an .extra class
+that base CSS hides — pixel-identical for every existing theme, but themes
+can opt in (display: block) to get real avatars on all messages,
+Rocket.Chat-style.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ packages/frontend/scss/message/_message.scss  |  5 ++++
+ .../src/components/message/Message.tsx        | 28 +++++++++++--------
+ 2 files changed, 22 insertions(+), 11 deletions(-)
+
+diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
+index 3ebe85f75..a5d349d02 100644
+--- a/packages/frontend/scss/message/_message.scss
++++ b/packages/frontend/scss/message/_message.scss
+@@ -30,6 +30,11 @@ $info-text-max-width: 400px;
+   & > .author-avatar {
+     @include mixins.button-reset;
+ 
++    // avatars for outgoing / 1:1 messages exist only for themes that opt in
++    &.extra {
++      display: none;
++    }
++
+     align-self: flex-end;
+     bottom: 0px;
+     position: static;
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index ae973e3ee..bd2464902 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -79,10 +79,14 @@ const Avatar = ({
+   contact,
+   onContactClick,
+   tabIndex,
++  extra,
+ }: {
+   contact: T.Contact
+   onContactClick: (contact: T.Contact) => void
+   tabIndex: -1 | 0
++  /** rendered where upstream previously rendered no avatar (outgoing, 1:1);
++   * hidden by default so themes can opt in (e.g. Rocket.Chat-like themes) */
++  extra?: boolean
+ }) => {
+   const { profileImage, color, displayName, address } = contact
+ 
+@@ -92,7 +96,7 @@ const Avatar = ({
+     return (
+       <button
+         type='button'
+-        className='author-avatar'
++        className={classNames('author-avatar', { extra })}
+         onClick={onClick}
+         tabIndex={tabIndex}
+       >
+@@ -104,7 +108,7 @@ const Avatar = ({
+     return (
+       <button
+         type='button'
+-        className='author-avatar default'
++        className={classNames('author-avatar', 'default', { extra })}
+         aria-label={displayName}
+         onClick={onClick}
+         tabIndex={tabIndex}
+@@ -993,15 +997,17 @@ export default function Message(props: {
+       }}
+       {...commonAttrs}
+     >
+-      {showAuthor && direction === 'incoming' && (
+-        <Avatar
+-          contact={message.sender}
+-          onContactClick={onContactClick}
+-          // The avatar doesn't need to be a tab stop, because
+-          // the author name is a tab stop and clicking on it does the same.
+-          tabIndex={-1}
+-        />
+-      )}
++      <Avatar
++        contact={message.sender}
++        onContactClick={onContactClick}
++        // The avatar doesn't need to be a tab stop, because
++        // the author name is a tab stop and clicking on it does the same.
++        tabIndex={-1}
++        // upstream only shows an avatar for incoming group messages; the
++        // other cases render hidden (`.extra`) so themes can opt in
++        extra={!(showAuthor && direction === 'incoming')}
++      />
++
+       <div
+         className='msg-container'
+         style={{ borderColor: message.sender.color }}
