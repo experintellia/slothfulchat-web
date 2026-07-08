@@ -4,7 +4,8 @@
  *
  * Besides JSON-RPC strings, object messages `{ type: 'fs', ... }` are a
  * side channel into core's in-memory filesystem (blob display, temp files,
- * backup import/export).
+ * backup import/export), and a one-shot `{ type: 'config', ... }` from
+ * startCore delivers proxy/persist settings before init.
  */
 import initWasm, { init } from '../wasm-dist/deltachat_wasm.js'
 
@@ -25,16 +26,27 @@ interface FsResponse {
   error?: string
 }
 
-const scope = self as unknown as {
-  postMessage(message: string | FsResponse): void
-  onmessage: ((event: MessageEvent<string | FsRequest>) => void) | null
+interface ConfigMessage {
+  type: 'config'
+  /** WebSocket→TCP proxy URL; networking is disabled without one. */
+  proxyUrl?: string
+  /** OPFS persistence; false = fresh in-memory core (tests). */
+  persist: boolean
 }
 
-// ?proxy=ws://... on the worker URL configures the WebSocket→TCP proxy
-const workerParams = new URL(import.meta.url).searchParams
-const proxyUrl = workerParams.get('proxy') ?? undefined
-// OPFS persistence is on by default; ?persist=0 opts out (fresh-core tests)
-const persist = workerParams.get('persist') !== '0'
+const scope = self as unknown as {
+  postMessage(message: string | FsResponse): void
+  onmessage: ((event: MessageEvent<string | FsRequest | ConfigMessage>) => void) | null
+}
+
+// Config arrives as the first postMessage from startCore, NOT as worker-URL
+// query params: the web-app's app-shell service worker serves the precached
+// worker.js, and a cached response's URL (which becomes import.meta.url)
+// carries no query string — URL params get silently dropped.
+let resolveConfig: (config: ConfigMessage) => void
+const config = new Promise<ConfigMessage>(resolve => {
+  resolveConfig = resolve
+})
 
 /** Reload race: the previous worker's OPFS sync access handles release only
  * once that worker is fully destroyed, and a fast reload (service-worker
@@ -77,14 +89,19 @@ async function waitForOpfsSyncHandles(): Promise<void> {
 }
 
 const ready = (async () => {
+  const { proxyUrl, persist } = await config
   await initWasm()
   if (persist) await waitForOpfsSyncHandles()
   return await init((message: string) => scope.postMessage(message), proxyUrl, persist)
 })()
 
-scope.onmessage = async (event: MessageEvent<string | FsRequest>) => {
-  const dc = await ready
+scope.onmessage = async (event: MessageEvent<string | FsRequest | ConfigMessage>) => {
   const msg = event.data
+  if (typeof msg !== 'string' && msg?.type === 'config') {
+    resolveConfig(msg)
+    return
+  }
+  const dc = await ready
   if (typeof msg === 'string') {
     dc.receive(msg)
     return

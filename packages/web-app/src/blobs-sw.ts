@@ -97,7 +97,10 @@ async function serveShell(event: any): Promise<Response> {
   )
   const cache = await caches.open(CACHE)
   // ignoreSearch: this is a pure static site, query params never change file
-  // content — but requests carry them (main.html?proxy=..., core/worker.js?proxy=...)
+  // content — but requests carry them (e.g. main.html?proxy=...). NB: a cached
+  // response's URL has no query string, and for scripts/workers it REPLACES
+  // the request URL (import.meta.url) — never pass config via script-URL
+  // params here; the core worker gets its config via postMessage (startCore).
   const cached = await cache.match(request, { ignoreSearch: true })
   if (cached && precached) {
     // content-versioned: never refetched at runtime, updates only arrive via a

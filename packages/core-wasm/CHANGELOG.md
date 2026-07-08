@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 — 2026-07-08
+
+- BREAKING (worker embedders only): the worker no longer reads `?proxy=` /
+  `?persist=` from its script URL; `startCore` now sends a one-shot
+  `{ type: 'config', proxyUrl, persist }` postMessage instead. Reason: a
+  service worker serving the script from cache strips the query string from
+  the response URL (= the worker's `import.meta.url`), which silently dropped
+  the proxy config ("no WebSocket proxy configured" on every connection).
+  Code using `startCore()` is unaffected.
+
 ## 0.1.1 — 2026-07-07
 
 - In-wasm HTTP implemented via the browser's `fetch()` (was a bail-stub):

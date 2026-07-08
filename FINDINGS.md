@@ -287,3 +287,29 @@ e2e message roundtrip, whitelist self-check).
   face (exact-string replace; no-ops if upstream changes the block). And
   `serve.mjs` sent no validators at all, making everything uncacheable
   locally — it now sends Last-Modified + `no-cache` and answers 304s.
+
+## SW regression (2026-07-08): cached responses strip worker query params
+
+- **Symptom**: with the offline app shell deployed, every connection attempt
+  spammed `no WebSocket proxy configured — call set_ws_proxy_url() first`
+  even with the bridge running — but only after a reload, and never in the
+  test suites.
+- **Root cause**: the core worker's config rode on its script URL
+  (`core/worker.js?proxy=…&persist=…`, read back via `import.meta.url`).
+  For module scripts/workers, `import.meta.url` is the **response** URL, and
+  a Cache-API response was stored under the bare path — no query string. So
+  once the app-shell SW controls the page and serves the precached worker
+  (via `cache.match(…, {ignoreSearch: true})`), the worker boots with no
+  params: no proxy, and `?persist=0` silently ignored too. Suites stayed
+  green because they start the core on a fresh profile before the SW's first
+  install finishes; real usage hits the SW path on every reload.
+- **Fix**: config now goes over `postMessage` — `startCore` sends a one-shot
+  `{type: 'config', proxyUrl, persist}` right after `new Worker(…)` (messages
+  queue until the worker module evaluates, so no race) and the worker awaits
+  it before `init`. core-wasm 0.2.0; never pass config via script-URL params
+  under a caching SW.
+- **Regression coverage**: `smoke-web-app.mjs` grew an SW-controlled-reload
+  phase: reload after `serviceWorker.ready`, then configure against a dead
+  host via `window.exp.rpc` — through a live proxy that fails with a DNS
+  error, on a config-less worker with the exact "no WebSocket proxy
+  configured" line (verified red on the broken build, green after the fix).

@@ -71,6 +71,45 @@ try {
   }))
   console.log('OK: frontend rendered #root:', JSON.stringify(snippet))
 
+  // -- regression: an SW-controlled reload must still deliver the proxy config
+  // to the core worker. The app-shell SW serves the precached worker.js whose
+  // response URL (= the worker's import.meta.url) has no query params, so the
+  // config rides a postMessage from startCore now — see core-wasm's index.ts.
+  await page.evaluate(() => navigator.serviceWorker.ready)
+  console.log('OK: service worker active')
+  consoleTail.length = 0
+  await page.reload()
+  // polling: interval — rAF polling can stall in headless after reload
+  await page.waitForFunction(() => window.__coreSystemInfo && window.exp?.rpc, null, {
+    timeout: 120_000,
+    polling: 250,
+  })
+  if (!(await page.evaluate(() => navigator.serviceWorker.controller !== null))) {
+    throw new Error('page not SW-controlled after reload — regression phase tests nothing')
+  }
+  // force a core network attempt: configure against a dead host. Through a
+  // configured proxy this fails with DNS/connect errors; a worker that lost
+  // its config fails with "no WebSocket proxy configured" instead.
+  const configureError = await page.evaluate(async () => {
+    const id = await window.exp.rpc.addAccount()
+    await window.exp.rpc.batchSetConfig(id, {
+      addr: 'smoke@sw-regression.invalid',
+      mail_pw: 'x',
+      mail_server: 'sw-regression.invalid',
+      send_server: 'sw-regression.invalid',
+    })
+    return await window.exp.rpc.configure(id).then(() => '', e => String(e?.message ?? e))
+  })
+  const spam = [configureError, ...consoleTail].filter(t =>
+    t.includes('no WebSocket proxy configured')
+  )
+  if (spam.length > 0) {
+    throw new Error(`worker lost its proxy config behind the SW: ${spam[0].slice(0, 200)}`)
+  }
+  console.log(
+    `OK: SW-served worker kept proxy config (dead-host configure failed with: ${configureError.slice(0, 120)})`
+  )
+
   if (pageErrors.length > 0) {
     console.error(`FAIL: ${pageErrors.length} uncaught page error(s)`)
     failed = true

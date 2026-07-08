@@ -63,12 +63,16 @@ export function startCore(
   options: { wsProxyUrl?: string; persist?: boolean } = {},
   workerUrl: URL = new URL('./worker.js', import.meta.url),
 ): Core {
-  if (options.wsProxyUrl || options.persist === false) {
-    workerUrl = new URL(workerUrl)
-    if (options.wsProxyUrl) workerUrl.searchParams.set('proxy', options.wsProxyUrl)
-    if (options.persist === false) workerUrl.searchParams.set('persist', '0')
-  }
   const worker = new Worker(workerUrl, { type: 'module' })
+  // Config goes via postMessage, not worker-URL query params: a service
+  // worker serving the script from cache strips the query string from the
+  // response URL (= the worker's import.meta.url), silently dropping params.
+  // Safe to send immediately — messages queue until the worker module runs.
+  worker.postMessage({
+    type: 'config',
+    proxyUrl: options.wsProxyUrl,
+    persist: options.persist !== false,
+  })
   const transport = new WasmTransport(worker)
   const dc = new WasmDeltaChat(transport)
 
