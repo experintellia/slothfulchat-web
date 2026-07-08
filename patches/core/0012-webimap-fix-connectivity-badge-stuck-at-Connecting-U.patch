@@ -1,0 +1,142 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Wed, 8 Jul 2026 20:09:36 +0000
+Subject: [PATCH 12/12] =?UTF-8?q?webimap:=20fix=20connectivity=20badge=20s?=
+ =?UTF-8?q?tuck=20at=20Connecting=E2=80=A6/Updating=E2=80=A6?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Two fixes for the status badge (basic connectivity) disagreeing with
+the connectivity view (HTML), which kept saying "Connected":
+
+- maybe_network(), fired by the UI on every window focus / online
+  event, flips the store from Idle to InterruptingIdle. The badge
+  renders that as "Updating…", the connectivity HTML as "Connected".
+  The IMAP inbox_loop leaves the state within seconds (the interrupt
+  wakes IDLE, it refetches and sets Idle again), but webimap_loop
+  never drains interrupts in the happy path and its signalled_idle
+  gate skipped set_idle() on empty polls — there to avoid emitting
+  ConnectivityChanged on every 60s poll — so the badge stayed at
+  "Updating…" until the next incoming message or error.
+  Now ConnectivityStore::set() ignores unchanged values (no event
+  or lock churn on repeats) and webimap_loop sets Idle
+  unconditionally after every successful poll.
+
+- After scheduler start, "Connecting…" only cleared when the first
+  long-poll returned, which on an empty inbox means the full
+  wait=60 seconds. The first poll — and the first one after an
+  error backoff — now uses wait=0, so Connected (or recovery from
+  an error) shows after a single round-trip.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/scheduler/connectivity.rs |  6 ++++-
+ src/webimap.rs                | 50 +++++++++++++++++++++--------------
+ 2 files changed, 35 insertions(+), 21 deletions(-)
+
+diff --git a/src/scheduler/connectivity.rs b/src/scheduler/connectivity.rs
+index 19086ac92..435cb3d17 100644
+--- a/src/scheduler/connectivity.rs
++++ b/src/scheduler/connectivity.rs
+@@ -152,7 +152,11 @@ fn all_work_done(&self) -> bool {
+ impl ConnectivityStore {
+     fn set(&self, context: &Context, v: DetailedConnectivity) {
+         {
+-            *self.0.lock() = v;
++            let mut lock = self.0.lock();
++            if *lock == v {
++                return;
++            }
++            *lock = v;
+         }
+         context.emit_event(EventType::ConnectivityChanged);
+     }
+diff --git a/src/webimap.rs b/src/webimap.rs
+index 3a96148f1..f3b44e873 100644
+--- a/src/webimap.rs
++++ b/src/webimap.rs
+@@ -130,8 +130,9 @@ pub(crate) async fn verify(&self, context: &Context) -> Result<()> {
+         Ok(())
+     }
+ 
+-    /// Long-polls the server for messages in INBOX.
+-    async fn list_messages(&self, context: &Context) -> Result<Vec<MessageMeta>> {
++    /// Polls the server for messages in INBOX,
++    /// asking it to hold the poll open for up to `wait` seconds.
++    async fn list_messages(&self, context: &Context, wait: u64) -> Result<Vec<MessageMeta>> {
+         // ponytail: always restart at since_uid=0 instead of persisting UIDs;
+         // processed messages are deleted from the server and receive_imf()
+         // dedups reruns by Message-ID anyway.
+@@ -139,11 +140,11 @@ async fn list_messages(&self, context: &Context) -> Result<Vec<MessageMeta>> {
+             .req(
+                 context,
+                 "GET",
+-                &format!("/webimap/messages?since_uid=0&wait={LONG_POLL_WAIT_SECS}"),
++                &format!("/webimap/messages?since_uid=0&wait={wait}"),
+                 None,
+                 // The server may hold the poll open for the full wait;
+                 // only give up well after that.
+-                Duration::from_secs(LONG_POLL_WAIT_SECS.saturating_add(30)),
++                Duration::from_secs(wait.saturating_add(30)),
+             )
+             .await?;
+         if !(200..300).contains(&status) {
+@@ -254,11 +255,14 @@ pub(crate) async fn smtp_send(
+ 
+ /// A single receive iteration: long-poll for messages, process and delete them.
+ ///
+-/// Returns whether the poll returned any messages. Empty polls are the
+-/// steady state and signal no working/idle transition, so connectivity
+-/// does not flap every [`LONG_POLL_WAIT_SECS`].
+-async fn fetch_idle(ctx: &Context, client: &WebimapClient, connection: &Imap) -> Result<bool> {
+-    let mut msgs = client.list_messages(ctx).await?;
++/// Returns whether the poll returned any messages.
++async fn fetch_idle(
++    ctx: &Context,
++    client: &WebimapClient,
++    connection: &Imap,
++    wait: u64,
++) -> Result<bool> {
++    let mut msgs = client.list_messages(ctx, wait).await?;
+     if msgs.is_empty() {
+         return Ok(false);
+     }
+@@ -322,20 +326,26 @@ pub(crate) async fn webimap_loop(
+         };
+ 
+         connection.connectivity.set_connecting(&ctx);
+-        // Whether connectivity is already signalled as Idle: transition
+-        // only after messages, errors or connects, not on every empty poll.
+-        let mut signalled_idle = false;
++        // The first poll returns immediately (wait=0) so "Connecting…"
++        // clears after one round-trip instead of a full long-poll.
++        // Later polls set Idle unconditionally: this recovers from the
++        // InterruptingIdle state that `maybe_network()` puts the store in
++        // (connectivity would otherwise stay at "Updating…" until the next
++        // message), and `ConnectivityStore::set()` dedups unchanged values
++        // so connectivity does not flap on every empty poll.
++        let mut wait = 0;
+         loop {
+-            match fetch_idle(&ctx, &client, &connection).await {
+-                Ok(had_messages) => {
+-                    if had_messages || !signalled_idle {
+-                        connection.connectivity.set_idle(&ctx);
+-                        ctx.emit_event(EventType::ImapInboxIdle);
+-                        signalled_idle = true;
+-                    }
++            match fetch_idle(&ctx, &client, &connection, wait).await {
++                Ok(_had_messages) => {
++                    wait = LONG_POLL_WAIT_SECS;
++                    connection.connectivity.set_idle(&ctx);
++                    ctx.emit_event(EventType::ImapInboxIdle);
+                 }
+                 Err(err) => {
+-                    signalled_idle = false;
++                    // Poll without waiting after the backoff so an
++                    // "error" connectivity clears after one round-trip
++                    // once the server is reachable again.
++                    wait = 0;
+                     warn!(
+                         ctx,
+                         "Transport {transport_id}: webimap fetch failed: {err:#}."
