@@ -231,6 +231,27 @@ function initBlobServiceWorker(log: Logger) {
     // sw-precache.js; the default ('imports') would let update checks read a
     // still-"fresh" old copy from the HTTP cache (Pages sends max-age=600)
     .register(BASE + 'blobs-sw.js', { scope: BASE, updateViaCache: 'none' })
+    .then(reg => {
+      if (navigator.serviceWorker.controller || !reg.active) {
+        // controlled, or first install (claim() will take over) — all good
+        try {
+          sessionStorage.removeItem('sw-force-reloaded')
+        } catch {}
+        return
+      }
+      // hard reload bypassed the active SW for this page's whole lifetime;
+      // blob urls can't load without it, so reload once (now controlled)
+      try {
+        if (sessionStorage.getItem('sw-force-reloaded')) {
+          log.warn('page still uncontrolled after reload, blob urls will not load')
+          return
+        }
+        sessionStorage.setItem('sw-force-reloaded', '1')
+      } catch {
+        return // no sessionStorage → can't guard against a reload loop
+      }
+      location.reload()
+    })
     .catch(err => log.error('blobs-sw registration failed', err))
 }
 
