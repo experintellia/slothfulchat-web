@@ -723,12 +723,15 @@ class BrowserRuntime {
     this.log = getLogger('runtime/wasm-browser')
 
     // no backend: rc_config / runtime_info are built locally,
-    // mirroring target-browser/src/rc-config.ts and backendApi.ts
+    // mirroring target-browser/src/rc-config.ts and backendApi.ts.
+    // devmode comes from config.js (assemble.mjs): false on release builds,
+    // defaulting to true for local dev.
+    const devmode = (window as any).__slothfulConfig?.devmode ?? true
     const config = (this.rc_config = {
-      'log-debug': true,
+      'log-debug': devmode,
       'log-to-console': true,
       'machine-readable-stacktrace': false,
-      devmode: true,
+      devmode,
       theme: undefined,
       'theme-watch': false,
       'translation-watch': false,

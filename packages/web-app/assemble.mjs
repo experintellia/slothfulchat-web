@@ -84,6 +84,9 @@ const config = {
   // imprint.html is always emitted (placeholder when unconfigured), so the
   // About link can point at it unconditionally
   imprintUrl: 'imprint.html',
+  // release builds (CI sets NODE_ENV=production) hide devmode features:
+  // window.exp access, debug log level, dev_ prototype themes
+  devmode: env.NODE_ENV !== 'production',
 }
 
 // `window.__slothfulConfig` must load before runtime.js (main + index). A

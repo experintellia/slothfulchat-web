@@ -149,6 +149,8 @@ jobs:
       - name: Assemble web-app dist/ (upstream bundle + wasm + overlays)
         run: pnpm --filter @slothfulchat/web-app assemble
         env:
+          # release: bakes devmode:false into config.js (runtime rc_config)
+          NODE_ENV: production
           SLOTHFUL_INSTANCE_NAME: ${{ vars.SLOTHFUL_INSTANCE_NAME }}
           SLOTHFUL_INSTANCE_URL: ${{ vars.SLOTHFUL_INSTANCE_URL }}
           SLOTHFUL_DEFAULT_PROXY: ${{ vars.SLOTHFUL_DEFAULT_PROXY }}
