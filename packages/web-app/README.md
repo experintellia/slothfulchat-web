@@ -21,6 +21,20 @@ proxy UI); everything browser-specific lives in our own files:
   core-wasm worker/wasm artifacts into `dist/`.
 - `serve.mjs` — static dev server (port 8642, `PORT` env to override).
 - `static/manifest.webmanifest` — PWA manifest (installable, standalone).
+- `themes/*.scss` — our own themes (e.g. `rocket.scss`, a Rocket.Chat-inspired
+  look). `assemble.mjs` compiles them against upstream's `_themebase.scss`
+  (from `build/desktop/packages/frontend/themes/`) into `dist/themes/`, where
+  the `themes.json` scan auto-registers them — adding or changing a theme
+  never touches `patches/`. Underscore-prefixed files are skipped, a `dev_`
+  filename prefix hides a theme from the picker (see upstream
+  `docs/THEMES.md`). One exception to "no patches": desktop patch 0010
+  renders hidden `.author-avatar.extra` elements on outgoing/1:1 messages
+  (behavior-neutral for stock themes) so the Rocket theme can opt into
+  Rocket.Chat-style avatars on every message. Iterate visually with
+  `node scripts/theme-shots.mjs dc:rocket` (from repo root): first run seeds
+  two throwaway accounts + a conversation into a persistent browser profile
+  under `.cache/`, later runs just recompile-reload; screenshots land in
+  `.cache/theme-shots/<theme>/`.
 
 ## Run
 

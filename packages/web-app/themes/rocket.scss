@@ -1,0 +1,395 @@
+// Rocket — a Rocket.Chat-inspired theme. Rebuilt from upstream's dev_rocket
+// prototype: classic Rocket.Chat palette, flat full-width messages with a
+// per-sender avatar + author line on every message, dark sidebar.
+//
+// Compiled by assemble.mjs against upstream's _themebase (see THEMES.md in
+// vendor/deltachat-desktop/docs). Iterate with scripts/theme-shots.mjs.
+// Rule of thumb: prefer theme params > :root vars > css overrides, and only
+// override what the theme system can't express.
+
+@use 'sass:color';
+@use './_themebase' with (
+  $themeDarkOrLight: light,
+  $accentColor: #1d74f5,
+  $colorPrimary: #1d74f5,
+  $colorDanger: #f5455c,
+  $colorNone: #9ea2a8,
+  $bgChatView: #ffffff,
+  $bgImage: none,
+  $bgMessageBubbleIncoming: #ffffff,
+  $bgMessageBubbleOutgoing: #ffffff,
+  $messageOutgoingStatusColor: #9ea2a8,
+  $bgNavBar: #ffffff,
+  $textNavBar: #2f343d,
+  $bgPrimary: #ffffff,
+  $bgSecondary: #f7f8fa,
+  /* classic RC selected-channel slate; upstream pairs it with white text, in
+     the sidebar AND in dialog chat lists, so it must be a strong color */
+  $chatListItemSelectedBg: #414852,
+  $newChatButtonBg: #1d74f5,
+  $keybindingSectionHeaderBackground: rgba(0, 0, 0, 0.05),
+  $keybindingActionBackground: rgba(0, 0, 0, 0.05),
+  $keybindingKeyBorder: gray,
+  $textPrimary: #2f343d,
+  $textSecondary: #6c727a,
+  $btnPrimaryText: #fff,
+  $btnDangerText: #fff,
+  $btnDangerBackground: #f5455c,
+  $scrollbarTransparency: 0.5
+);
+
+// Rocket.Chat classic palette
+$rc-blue: #1d74f5; // actions / accent
+$rc-sidebar: #2f343d; // dark sidebar
+$rc-sidebar-text: #9ea2a8;
+$rc-sidebar-hover: #363b45;
+$rc-text: #2f343d;
+$rc-muted: #9ea2a8; // secondary text, metadata
+$rc-border: #e1e5e8;
+$rc-hover: #f7f8fa;
+
+.theme-meta {
+  --name: 'Rocket';
+  --description: 'Flat, Rocket.Chat-inspired look: dark sidebar, white chat.';
+}
+
+/* overwrite themedata (only vars the params above can't produce) */
+:root {
+  --scrollbarThumb: #{rgba($rc-muted, 0.6)};
+  --scrollbarThumbHover: #{$rc-muted};
+
+  /* NOTE: the --chatListItem* state vars stay at their (light) themebase
+     defaults — upstream reuses them on white surfaces too (settings rows,
+     dialog chat lists). The dark sidebar states are scoped rules below. */
+  --chatListItemSelectedBgHover: #464d59;
+  --chat-list-item-summary-text: #{$rc-sidebar-text};
+
+  /* flat messages: neutral gray metadata in both directions */
+  --messageMetadataIncoming: #{$rc-muted};
+  --messageMetadataIconColorIncoming: #{$rc-muted};
+  --messageMetadataIconColorOutgoing: #{$rc-muted};
+  --messageStatusIcon: #{$rc-muted};
+
+  --composerSendButton: #{$rc-blue};
+
+  /* info messages / date dividers as quiet chips */
+  --infoMessageBubbleBg: #ffffff;
+  --infoMessageBubbleText: #{$rc-muted};
+
+  /* virtualized chatlist row heights (read by js) */
+  --SPECIAL-chatlist-item-chat-height: 44;
+  --SPECIAL-chatlist-item-contact-height: 50;
+  --SPECIAL-chatlist-item-message-height: 50;
+  --SPECIAL-chatlist-divider-height: 40;
+}
+
+/* ---------- chatlist column: Rocket.Chat dark sidebar ---------- */
+
+/* search header above the chatlist joins the dark sidebar (the extra
+   ancestor beats the css-module rule painting it --navBarBackground) */
+[class*='chatListAndHeader'] section[class*='chatListHeader'] {
+  background-color: $rc-sidebar;
+
+  input.search-input {
+    color: #fff;
+    &::placeholder {
+      color: $rc-sidebar-text;
+    }
+  }
+  /* icon buttons (QR scan etc.) are masks colored via background-color */
+  button [class*='Icon'],
+  [class*='searchInputButtonIcon'] {
+    background-color: $rc-sidebar-text;
+  }
+}
+
+/* the same .chat-list markup also appears inside dialogs (forward message,
+   select chat) on white — everything dark is scoped to the main screen */
+.main-screen .chat-list {
+  background-color: $rc-sidebar;
+  color: $rc-sidebar-text;
+  border-right: none;
+  box-shadow: none;
+  overflow-x: hidden;
+
+  .chat-list-item:not(.selected):hover,
+  .chat-list-item:not(.selected).context-menu-active {
+    background-color: $rc-sidebar-hover;
+  }
+  .chat-list-item.pinned:not(.selected) {
+    background-color: color.adjust($rc-sidebar, $lightness: 3%);
+    &:hover,
+    &.context-menu-active {
+      background-color: $rc-sidebar-hover;
+    }
+  }
+
+  .chat-list-item > .content > .header > .name,
+  .pseudo-chat-list-item > .content > .header > .name {
+    color: $rc-sidebar-text;
+  }
+  .chat-list-item.has-unread > .content > .header > .name,
+  .chat-list-item.selected > .content > .header > .name {
+    color: #fff;
+  }
+
+  .search-result-divider {
+    background: transparent;
+    border-bottom: unset;
+    color: $rc-sidebar-text;
+    &:not(:first-child) {
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+  }
+}
+
+.chat-list-item {
+  height: 44px;
+}
+
+.chat-list-item > .content > .header > .name,
+.pseudo-chat-list-item > .content > .header > .name {
+  font-size: 0.9rem;
+}
+
+.chat-list-item.has-unread > .content > .header > .name {
+  font-weight: bold;
+}
+
+/* Rocket.Chat sidebar shows names only: no preview line, no timestamp —
+   but keep the unread counter (as a right-aligned badge) and the
+   Request/Archived labels */
+.chat-list-item > .content > .chat-list-item-message > .text,
+.chat-list-item > .content > .chat-list-item-message > .status-icon,
+.pseudo-chat-list-item > .content > .chat-list-item-message {
+  display: none;
+}
+.chat-list-item > .content > .header > div > .timestamp,
+.pseudo-chat-list-item > .content > .header > div > .timestamp {
+  display: none;
+}
+
+.chat-list-item {
+  position: relative;
+}
+.chat-list-item .fresh-message-counter {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+}
+
+/* small rounded-square avatars, sidebar-sized */
+.chat-list-item .avatar {
+  --local-avatar-size: 1.5rem;
+  --local-avatar-font-size: 0.75rem;
+}
+
+.avatar div.content,
+.avatar img.content {
+  border-radius: 0.25rem;
+  color: white;
+}
+/* recently-online avatars are clipped by a circular svg mask (with a notch
+   for the online dot) that a border-radius override can't beat — drop the
+   mask; the dot is a separate ::after and survives, Rocket.Chat-style */
+.avatar.wasSeenRecently div.content,
+.avatar.wasSeenRecently img.content {
+  mask: none;
+  -webkit-mask: none;
+  border-radius: 0.25rem;
+}
+
+/* square avatars move the group-image edit pencil off its spot */
+div.group-image-wrapper div.group-image-edit-button {
+  left: -14px;
+  top: -4px;
+}
+
+/* ---------- navbar: white, bold channel name ---------- */
+
+.main-screen .navbar-chat-name {
+  font-weight: bold;
+}
+
+/* upstream hardcodes the small-screen back arrow to white */
+.main-screen .backButton .backButtonIcon {
+  background-color: $rc-text;
+}
+
+/* ---------- messages: flat, full width, avatar block + author line ---------- */
+
+.message {
+  width: 100%;
+  max-width: 100%;
+  position: relative;
+  padding: 2px 0;
+
+  &:hover {
+    background-color: $rc-hover;
+  }
+
+  &.outgoing {
+    float: none;
+    margin-left: 0;
+    flex-direction: row; // hover shortcuts at the end, like incoming
+  }
+}
+
+/* Rocket.Chat shows an avatar on every message. Our desktop patch 0010
+   renders the real .author-avatar (profile photo, or initial block in the
+   contact's color) on every message, tagging the cases upstream used to omit
+   (outgoing, 1:1) with `.extra` — hidden by base CSS, opted into here. */
+.message {
+  align-items: flex-start;
+}
+.message > .author-avatar {
+  flex: none;
+  align-self: flex-start; // base pins it to the bubble bottom; RC pins top
+  margin-inline-end: 0.625rem;
+
+  &.extra {
+    display: block;
+  }
+
+  /* rounded square like everywhere else, not a circle */
+  img,
+  &.default > .label {
+    border-radius: 0.25rem;
+  }
+}
+
+.message .msg-container {
+  position: static;
+  width: 100%;
+  padding: 0;
+  border-radius: 0;
+  background-color: unset !important;
+}
+
+/* author line on every message (upstream hides it for outgoing + 1:1) */
+.message .author-wrapper {
+  display: block !important;
+
+  .author {
+    /* inline style colors it per sender; Rocket.Chat uses plain dark names */
+    -webkit-text-fill-color: $rc-text;
+    font-weight: bold;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+}
+
+.message .msg-body > .text {
+  margin-right: 0;
+}
+
+/* timestamp + state: small, gray, top right of the message row */
+.message .msg-container .metadata {
+  position: absolute;
+  top: 4px;
+  right: 16px;
+  margin: 0;
+  float: none;
+  font-size: 0.75rem;
+}
+/* image-only messages: drop the pill overlay, metadata sits top right too */
+.metadata.with-image-no-caption {
+  border-radius: 0;
+  background-color: unset;
+  padding: unset;
+  font-weight: unset;
+}
+
+.message.forwarded .forwarded-indicator {
+  font-weight: 100;
+  color: $rc-muted;
+  opacity: 1;
+}
+
+/* media: flat corners, natural size and alignment */
+.message .msg-container .message-attachment-media {
+  border-radius: 0.25rem;
+  text-align: unset;
+  margin: 0;
+
+  & > .attachment-content {
+    object-fit: unset;
+    object-position: unset;
+  }
+}
+
+/* ---------- info messages / date dividers: hairline with centered chip ---------- */
+
+.info-message {
+  position: relative;
+
+  &::before {
+    content: '';
+    position: absolute;
+    left: 24px;
+    right: 24px;
+    top: 50%;
+    border-top: 1px solid $rc-border;
+  }
+
+  .bubble {
+    position: relative;
+    opacity: 1;
+    border: 1px solid $rc-border;
+    font-size: 0.75rem;
+    font-weight: bold;
+  }
+}
+
+/* ---------- composer: centered single-line input in a bordered box ---------- */
+
+.composer {
+  border-left: unset;
+  border-top: none;
+  padding: 12px 24px 16px;
+
+  .lower-bar {
+    border: 1px solid $rc-border;
+    border-radius: 0.25rem;
+    padding: 0.75rem 0;
+    // vertically center single-line text and the buttons
+    align-items: center;
+
+    textarea.create-or-edit-message-input {
+      margin-top: 0;
+      margin-bottom: 0;
+
+      &::placeholder {
+        color: $rc-muted;
+      }
+    }
+
+    .emoji-button {
+      min-height: 0;
+      height: 24px;
+      margin-top: 0;
+    }
+    .emoji-button span {
+      margin-top: calc(24px - 21px);
+      height: 21px;
+      width: 21px;
+      background-repeat: no-repeat;
+    }
+  }
+
+  /* upstream anchors it 50px up — clears the stock composer, not ours */
+  .emoji-sticker-picker {
+    bottom: 90px;
+  }
+}
+
+/* ---------- scrollbars: thin and quiet ---------- */
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
