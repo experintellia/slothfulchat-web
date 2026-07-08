@@ -1192,7 +1192,15 @@ function hideWelcomeHint() {
  * poll if a React re-render wipes it. */
 function showWelcomeHint() {
   if (document.getElementById('sc-bridge-hint')) return
-  const group = document.querySelector('[class*="welcomeScreenButtonGroup"]')
+  // Anchor on data-testid, NOT the CSS-module class name: production builds
+  // minify local class names (welcomeScreenButtonGroup → "xo"), so a
+  // [class*=...] selector silently matches nothing there. The testids come
+  // from upstream's OnboardingScreen (create-account-button) and
+  // InstantOnboardingScreen (login-button) button groups — re-check them on
+  // every vendor rebase.
+  const group = document.querySelector(
+    '[data-testid="create-account-button"], [data-testid="login-button"]'
+  )?.parentElement
   if (!group) return
   const hint = el(
     'button',
