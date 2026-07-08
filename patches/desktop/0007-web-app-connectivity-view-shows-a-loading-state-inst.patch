@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Tue, 7 Jul 2026 21:51:07 +0000
-Subject: [PATCH 7/9] web-app: connectivity view shows a loading state instead
- of a blank iframe
+Subject: [PATCH 07/10] web-app: connectivity view shows a loading state
+ instead of a blank iframe
 
 ---
  .../components/dialogs/ConnectivityDialog.tsx | 43 +++++++++++++------
