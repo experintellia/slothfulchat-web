@@ -183,6 +183,54 @@ function getCore(): Core {
   return core
 }
 
+// The frontend downloads a finished backup by window.open('/download-backup/
+// <name>') — the blobs SW then asks a window client (this page) for the bytes.
+// On an iOS installed PWA that new window is a separate browser context with no
+// wasm core, so the SW can never be served and nothing downloads. Intercept the
+// open here and save the bytes straight from this page instead: the share sheet
+// ("Save to Files") is the only reliable path on iOS standalone, a plain
+// download anchor is simpler everywhere else. Other window.open calls (external
+// links, /blobs attachment views) don't match and pass through untouched.
+const isIOS =
+  /iP(hone|ad|od)/.test(navigator.userAgent) ||
+  (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
+async function saveBackupExport(url: string): Promise<void> {
+  const name = decodeURIComponent(
+    new URL(url, location.href).pathname.split('/').pop() || 'backup.tar'
+  )
+  const data = await getCore().fsRead(`${EXPORTS_DIR}/${name}`)
+  const file = new File([data as BlobPart], name, {
+    type: 'application/octet-stream',
+  })
+  // fsRead is a fast worker round-trip, so navigator.share still runs inside the
+  // tap's transient activation window (~5s)
+  if (isIOS && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file] })
+      return
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') return // user closed the sheet
+      // otherwise fall through to the anchor download as a last resort
+    }
+  }
+  const objUrl = URL.createObjectURL(file)
+  const a = document.createElement('a')
+  a.href = objUrl
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(objUrl), 10_000)
+}
+const nativeOpen = window.open.bind(window)
+window.open = ((url?: string | URL, ...rest: any[]) => {
+  if (typeof url === 'string' && url.includes('/download-backup/')) {
+    saveBackupExport(url).catch(err =>
+      console.error('backup download failed', err)
+    )
+    return null
+  }
+  return nativeOpen(url as any, ...rest)
+}) as typeof window.open
+
 /** blob service worker: page side. The SW forwards GET /blobs/:acc/:file to
  * us, we read from the core memfs and post the bytes back. */
 function initBlobServiceWorker(log: Logger) {
