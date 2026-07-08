@@ -4,6 +4,7 @@
 import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as sass from 'sass'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 const repo = join(here, '..', '..')
@@ -32,6 +33,18 @@ for (const file of await readdir(locales)) {
   if (file.endsWith('.json')) {
     await cp(join(locales, file), join(dist, 'locales', file))
   }
+}
+
+// our themes: compile themes/*.scss against upstream's _themebase and drop
+// them into dist/themes/ — the themes.json scan below picks them up, so
+// adding/changing a theme never touches patches/.
+for (const file of await readdir(join(here, 'themes'))) {
+  if (!file.endsWith('.scss') || file.startsWith('_')) continue
+  const { css } = sass.compile(join(here, 'themes', file), {
+    loadPaths: [join(repo, 'build/desktop/packages/frontend/themes')],
+    style: 'compressed',
+  })
+  await writeFile(join(dist, 'themes', basename(file, '.scss') + '.css'), css)
 }
 
 // themes.json — mirrors target-browser/src/themes.ts readThemeDir

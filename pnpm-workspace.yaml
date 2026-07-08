@@ -11,5 +11,7 @@ overrides:
 verifyDepsBeforeRun: false
 # esbuild's postinstall swaps its JS bin launcher for the raw ELF, which
 # breaks pnpm's node-based .bin shim — keep it disabled, the JS launcher works.
+# @parcel/watcher's native build only matters for `sass --watch`, unused here.
 allowBuilds:
+  '@parcel/watcher': false
   esbuild: false
