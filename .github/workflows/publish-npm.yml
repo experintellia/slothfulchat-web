@@ -16,6 +16,7 @@ name: Publish packages to npm
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   id-token: write # npm trusted publishing + provenance
@@ -65,9 +66,11 @@ jobs:
       - name: Enable corepack (provides the pinned pnpm)
         run: corepack enable
 
-      # Trusted publishing needs npm >= 11.5.1; Node 22 ships an older one.
+      # Trusted publishing needs npm >= 11.5.1; Node 22 ships 10.x. No sudo:
+      # sudo's PATH hits the system npm, leaving the toolcache npm (the one
+      # this job actually runs) old — publish then dies with ENEEDAUTH.
       - name: Update npm (trusted publishing support)
-        run: sudo npm install -g npm@latest
+        run: npm install -g npm@latest && npm --version
 
       - name: Cache pnpm store
         uses: actions/cache@v4
