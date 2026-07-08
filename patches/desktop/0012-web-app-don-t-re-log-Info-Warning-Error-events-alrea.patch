@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Wed, 8 Jul 2026 13:28:30 +0000
+Subject: [PATCH 12/12] web-app: don't re-log Info/Warning/Error events already
+ printed by core-wasm
+
+The core-wasm console_log bridge already prints core Info/Warning/Error
+messages (with account_id) to the browser console, so the debug event
+logger duplicated every one of them.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ packages/frontend/src/App.tsx | 16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/packages/frontend/src/App.tsx b/packages/frontend/src/App.tsx
+index d04d54226..1ecb4c8e8 100644
+--- a/packages/frontend/src/App.tsx
++++ b/packages/frontend/src/App.tsx
+@@ -133,6 +133,14 @@ export function startBackendLogging() {
+   const rc = runtime.getRC_Config()
+   if (rc['log-debug']) {
+     BackendRemote.on('ALL', (accountId, event) => {
++      if (
++        event.kind == 'Info' ||
++        event.kind == 'Warning' ||
++        event.kind == 'Error'
++      ) {
++        // already printed to the console by core-wasm's console_log bridge
++        return
++      }
+       const isActiveAccount = window.__selectedAccountId == accountId
+       let data: any,
+         accountColor = 'rgba(125,125,125,0.25)'
+@@ -142,13 +150,7 @@ export function startBackendLogging() {
+         accountColor = 'rgba(0,125,0,0.25)'
+       }
+ 
+-      if (
+-        event.kind == 'Info' ||
+-        event.kind == 'Warning' ||
+-        event.kind == 'Error'
+-      ) {
+-        data = event.msg
+-      } else if (event.kind == 'ConnectivityChanged') {
++      if (event.kind == 'ConnectivityChanged') {
+         // has no arguments
+         data = ''
+       } else {
