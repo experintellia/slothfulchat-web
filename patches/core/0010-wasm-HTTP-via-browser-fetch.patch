@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Tue, 7 Jul 2026 22:52:15 +0000
-Subject: [PATCH 10/10] wasm: HTTP via browser fetch()
+Subject: [PATCH 10/11] wasm: HTTP via browser fetch()
 
 Replace the http_wasm.rs stubs with a fetch()-backed implementation.
 The browser owns TLS/redirects/caching; requests are subject to CORS

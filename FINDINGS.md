@@ -313,3 +313,53 @@ e2e message roundtrip, whitelist self-check).
   host via `window.exp.rpc` — through a live proxy that fails with a DNS
   error, on a config-less worker with the exact "no WebSocket proxy
   configured" line (verified red on the broken build, green after the fix).
+
+## webimap transport (2026-07-08): madmail HTTP mail access, first bridge-free transport
+
+Added [madmail](https://github.com/themadorg/madmail)'s
+[WebIMAP/WebSMTP](https://github.com/themadorg/madmail/blob/main/docs/TDD/10-webimap.md)
+as a transport variant next to IMAP/SMTP — the first transport that needs **no
+WS→TCP bridge**: mail flows over plain HTTPS `fetch()` from the worker
+(building on core patch 0010's fetch client, which landed independently).
+Activated by a `webimap: bool` on the login params (advanced toggle in the
+login form), the `webimapaccount:host[:port]` QR scheme (instant onboarding via
+`POST /new`), or the welcome-screen madmail dialog. Patch count: **11 core /
+11 desktop.**
+
+- **Core patch 0011** — the transport (`src/webimap.rs`). Receive is a REST
+  long-poll loop (`GET /webimap/messages?wait=60` *is* the idle — no WebSocket
+  in v1), each new uid fetched raw → `receive_imf` → `DELETE` (a failed DELETE
+  errors the round so the 30s backoff engages instead of hot-looping). Send
+  branches in `smtp_send` (single choke point: messages, MDNs, sync) to
+  `POST /webimap/send`. Configure skips the IMAP+SMTP connect verify in favor
+  of an authenticated `GET /webimap/mailboxes`. The scheduler reuses the whole
+  `ImapConnectionState`/SchedBox plumbing — the only branch is which loop gets
+  spawned — so interrupts, stop and the connectivity view work unchanged.
+  Extends patch 0010's `request()` with a timeout (native `tokio::time::timeout`,
+  wasm AbortController + wasmtimer race) and `follow_redirects` (webimap passes
+  RequestRedirect::Error so X-Email/X-Password never follow a redirect).
+- **QR host validation**: `webimapaccount:` payloads are parsed with `url::Url`
+  and reject userinfo/path/query/fragment (an attacker-suppliable scheme must
+  not allow `trusted.org@evil.com`); canonical `host[:port]` stored, bracketed
+  IPv6 supported.
+- **Ponytail shortcuts** (marked in code): no uid persistence — restart
+  re-polls from `since_uid=0` and `receive_imf`'s Message-ID dedup eats the
+  duplicates (server-side delete-after-fetch keeps INBOX small); plain-http is
+  allowed for localhost/`[::1]` only so the e2e mock needs no TLS.
+- **Gotcha found during design**: `send_msg_to_smtp` pre-connects SMTP *before*
+  `smtp_send` ever runs — branching only in `smtp_send` would have webimap
+  sends die on a TCP connect to a nonexistent SMTP server. Fixed at the choke
+  point: `Smtp::connect_configured()` early-returns for webimap, covering all
+  callers.
+- **Bridge notice is now account-aware** (runtime.ts): webimap-only account →
+  no probe/warning; mixed with webimap primary → silent probe, "⚠ not
+  reachable" shown in the Connectivity dialog instead of the toast (core sends
+  only via the primary transport, so a webimap primary keeps working);
+  bridge-primary or unconfigured → intrusive toast as before.
+- **e2e**: `scripts/test-webimap.mjs` — fully offline: an in-process mock
+  madmail server (long-poll, CORS preflights for the `X-Email`/`X-Password`
+  headers are load-bearing) + two wasm accounts exchanging encrypted mail with
+  **no bridge running**; asserts delete-after-receive.
+- Multi-device caveat: `send_sync_transports` now carries the `webimap` field;
+  an older core receiving the sync drops the unknown JSON field and would treat
+  the transport as IMAP.
