@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 8 Jul 2026 23:01:08 +0000
+Subject: [PATCH 15/16] web-app: default the QR reader to the rear
+ (environment) camera
+
+Front camera made no sense as the default: users scan someone else's
+QR code (an invite or verification code), so open the back camera
+first. Only applies before an explicit camera is selected via the QR
+reader's device menu.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ packages/frontend/src/components/QrReader/index.tsx | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/packages/frontend/src/components/QrReader/index.tsx b/packages/frontend/src/components/QrReader/index.tsx
+index 53dec8aac..ab622209e 100644
+--- a/packages/frontend/src/components/QrReader/index.tsx
++++ b/packages/frontend/src/components/QrReader/index.tsx
+@@ -326,9 +326,11 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
+         // An explicitly selected camera must be requested with `exact`:
+         // as a soft constraint it ties with `facingMode` on multi-camera
+         // devices (Android) and the browser keeps the default camera.
++        // Default to the rear ("environment") camera, since that's the one
++        // used to scan another device's QR code.
+         const videoConstraints: MediaTrackConstraints = deviceId
+           ? { deviceId: { exact: deviceId } }
+-          : { facingMode: 'user' }
++          : { facingMode: 'environment' }
+ 
+         try {
+           setReady(false)

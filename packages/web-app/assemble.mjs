@@ -4,11 +4,27 @@
 import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { execFileSync } from 'node:child_process'
 import * as sass from 'sass'
 import { buildConfig, configJs, imprintHtml, patchBootError, patchManifest, patchTitle } from './instance-config.mjs'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 const repo = join(here, '..', '..')
+
+// Source commit shown in the About dialog. Best-effort: shallow clones/CI
+// checkouts without .git history just leave the About dialog's commit line
+// blank instead of failing the build.
+function gitBuildMeta() {
+  try {
+    const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf-8' }).trim()
+    return {
+      commitHash: git('rev-parse', '--short', 'HEAD'),
+      commitMessage: git('log', '-1', '--pretty=%s'),
+    }
+  } catch {
+    return { commitHash: '', commitMessage: '' }
+  }
+}
 const upstreamDist = join(repo, 'build/desktop/packages/target-browser/dist')
 const locales = join(repo, 'build/desktop/_locales')
 const coreWasm = join(repo, 'packages/core-wasm')
@@ -98,7 +114,7 @@ await writeFile(join(dist, 'themes.json'), JSON.stringify(themes, null, 2))
 // the vars, config.js shape and imprint template live in instance-config.mjs,
 // shared with customize.mjs (which re-applies them to a prebuilt release zip).
 const env = process.env
-const config = buildConfig(env)
+const config = buildConfig(env, gitBuildMeta())
 
 // `window.__slothfulConfig` must load before runtime.js (main + index). A
 // separate file, not an inline script: the CSP is script-src 'self' and an

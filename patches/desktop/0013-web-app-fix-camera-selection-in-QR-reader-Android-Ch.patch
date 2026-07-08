@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Wed, 8 Jul 2026 14:13:11 +0000
-Subject: [PATCH 13/14] web-app: fix camera selection in QR reader (Android
+Subject: [PATCH 13/16] web-app: fix camera selection in QR reader (Android
  Chromium)
 
 Selecting a camera did nothing on multi-camera devices: the selected
