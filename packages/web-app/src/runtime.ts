@@ -183,27 +183,19 @@ function getCore(): Core {
   return core
 }
 
-// The frontend downloads a finished backup by window.open('/download-backup/
-// <name>') — the blobs SW then asks a window client (this page) for the bytes.
-// On an iOS installed PWA that new window is a separate browser context with no
-// wasm core, so the SW can never be served and nothing downloads. Intercept the
-// open here and save the bytes straight from this page instead: the share sheet
-// ("Save to Files") is the only reliable path on iOS standalone, a plain
-// download anchor is simpler everywhere else. Other window.open calls (external
-// links, /blobs attachment views) don't match and pass through untouched.
 const isIOS =
   /iP(hone|ad|od)/.test(navigator.userAgent) ||
   (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
-async function saveBackupExport(url: string): Promise<void> {
-  const name = decodeURIComponent(
-    new URL(url, location.href).pathname.split('/').pop() || 'backup.tar'
-  )
-  const data = await getCore().fsRead(`${EXPORTS_DIR}/${name}`)
-  const file = new File([data as BlobPart], name, {
-    type: 'application/octet-stream',
-  })
-  // fsRead is a fast worker round-trip, so navigator.share still runs inside the
-  // tap's transient activation window (~5s)
+
+/** Hand bytes to the user as a saved file, from this page's context. On an iOS
+ * installed PWA neither window.open nor <a download> can deliver a file to the
+ * Files app (the download opens a separate, core-less browser context), so use
+ * the share sheet ("Save to Files"); everywhere else a plain download anchor is
+ * simplest. Callers must invoke this within a user gesture — fsRead is a fast
+ * worker round-trip so navigator.share still runs inside the tap's transient
+ * activation window (~5s). */
+async function saveFile(data: Uint8Array, name: string): Promise<void> {
+  const file = new File([data as BlobPart], name, { type: mimeFromName(name) })
   if (isIOS && navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file] })
@@ -220,12 +212,24 @@ async function saveBackupExport(url: string): Promise<void> {
   a.click()
   setTimeout(() => URL.revokeObjectURL(objUrl), 10_000)
 }
+
+// The frontend downloads a finished backup by window.open('/download-backup/
+// <name>') — the blobs SW then asks a window client (this page) for the bytes.
+// On an iOS installed PWA that new window is a separate browser context with no
+// wasm core, so the SW can never be served and nothing downloads. Intercept the
+// open here and save the bytes straight from this page instead. Other
+// window.open calls (external links, /blobs attachment views) don't match and
+// pass through untouched.
 const nativeOpen = window.open.bind(window)
 window.open = ((url?: string | URL, ...rest: any[]) => {
   if (typeof url === 'string' && url.includes('/download-backup/')) {
-    saveBackupExport(url).catch(err =>
-      console.error('backup download failed', err)
+    const name = decodeURIComponent(
+      new URL(url, location.href).pathname.split('/').pop() || 'backup.tar'
     )
+    getCore()
+      .fsRead(`${EXPORTS_DIR}/${name}`)
+      .then(data => saveFile(data, name))
+      .catch(err => console.error('backup download failed', err))
     return null
   }
   return nativeOpen(url as any, ...rest)
@@ -655,20 +659,15 @@ class BrowserRuntime {
     return 'not-implemented'
   }
   async downloadFile(pathToSource: string, filename: string): Promise<void> {
-    if (pathToSource.includes('dc.db-blobs')) {
-      window
-        .open(
-          this.transformBlobURL(pathToSource) +
-            '?download_with_filename=' +
-            encodeURIComponent(filename),
-          '_blank'
-        )
-        ?.focus()
-    } else {
+    if (!pathToSource.includes('dc.db-blobs')) {
       throw new Error(
         'Browser does not support opening urls outside of blob directory'
       )
     }
+    // read the attachment from the core memfs and save it from this page, so it
+    // works on an iOS installed PWA (see saveFile) instead of window.open-ing a
+    // core-less browser context that the blobs SW can never serve
+    await saveFile(await getCore().fsRead(pathToSource), filename)
   }
 
   // #region clipboard — verbatim from upstream runtime-browser
