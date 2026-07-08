@@ -21,12 +21,15 @@ await new Promise(r => setTimeout(r, 500)) // let the server bind
 const browser = await chromium.launch()
 let failed = false
 
-async function expectFallback(label, needle) {
-  const page = await browser.newPage()
+async function expectFallback(label, needle, { init, checkCopy } = {}) {
+  const context = await browser.newContext()
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  const page = await context.newPage()
   // avoid-eval.js replaces window.eval, breaking waitForFunction (see smoke-web-app.mjs)
   await page.addInitScript(() => {
     Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
   })
+  if (init) await page.addInitScript(init)
   await page.goto(`http://localhost:${APP_PORT}/main.html`)
   try {
     await page.waitForFunction(
@@ -40,24 +43,48 @@ async function expectFallback(label, needle) {
     } else {
       console.log(`OK ${label}: fallback screen shown with "${needle}"`)
     }
-  } catch {
-    console.error(`FAIL ${label}: fallback screen never appeared`)
+    if (checkCopy) {
+      const btn = page.locator('#root button') // the only button on the screen
+      await btn.click()
+      const copied = await page.evaluate(() => navigator.clipboard.readText())
+      const flipped = (await btn.textContent()) === 'Copied'
+      if (flipped && copied.includes(needle)) {
+        console.log(`OK ${label}: copy button put error details on the clipboard`)
+      } else {
+        console.error(`FAIL ${label}: copy button (label flipped: ${flipped}, clipboard: "${copied.slice(0, 100)}")`)
+        failed = true
+      }
+    }
+  } catch (err) {
+    console.error(`FAIL ${label}: fallback screen never appeared (${err})`)
     failed = true
   }
-  await page.close()
+  await context.close()
 }
 
 // scenario 1: parse error in bundle.js (the "too-old browser" failure mode)
 await copyFile(`${dist}/bundle.js`, `${dist}/bundle.js.bak`)
 const bundle = await readFile(`${dist}/bundle.js`, 'utf8')
 await writeFile(`${dist}/bundle.js`, '];\n' + bundle)
-await expectFallback('parse-error', 'SyntaxError')
+await expectFallback('parse-error', 'SyntaxError', { checkCopy: true })
 await rename(`${dist}/bundle.js.bak`, `${dist}/bundle.js`)
 
 // scenario 2: runtime.js missing (script load failure)
 await rename(`${dist}/runtime.js`, `${dist}/runtime.js.bak`)
 await expectFallback('load-failure', 'failed to load')
 await rename(`${dist}/runtime.js.bak`, `${dist}/runtime.js`)
+
+// scenario 3: browser storage blocked (Safari "Block All Cookies", Firefox
+// cookie exceptions) — any localStorage access throws SecurityError
+await expectFallback('storage-blocked', 'blocking it', {
+  init: () => {
+    Object.defineProperty(window, 'localStorage', {
+      get() {
+        throw new DOMException('The operation is insecure.', 'SecurityError')
+      },
+    })
+  },
+})
 
 await browser.close()
 server.kill()

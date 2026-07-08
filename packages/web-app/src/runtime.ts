@@ -130,8 +130,23 @@ function getCore(): Core {
     // is (almost certainly) running in another tab. ponytail: no faster
     // web-lock detection — its release lags on reloads and false-positives
     core.worker.addEventListener('message', event => {
-      if ((event as MessageEvent).data?.type === 'fatal-opfs-locked') {
-        showAlreadyRunningDialog()
+      const type = (event as MessageEvent).data?.type
+      if (type === 'fatal-opfs-locked') {
+        showFatalDialog(
+          'sc-already-running-dialog',
+          'Already running in another tab',
+          'SlothfulChat is already open in another tab or window and can ' +
+            'only run in one at a time. Close the other tab, then retry.'
+        )
+      } else if (type === 'fatal-storage-blocked') {
+        showFatalDialog(
+          'sc-storage-blocked-dialog',
+          'Browser storage is blocked',
+          'SlothfulChat needs to store data in your browser, but your ' +
+            'browser is blocking it. Please allow cookies/site data for ' +
+            `${location.hostname} and reload — on iPhone/iPad, turn off ` +
+            'Settings → Safari → Advanced → Block All Cookies.'
+        )
       }
     })
     // The frontend passes the magic destination '<BROWSER>' to exportBackup on
@@ -956,11 +971,10 @@ const el = <K extends keyof HTMLElementTagNameMap>(
   return node
 }
 
-/** The core can only run once per origin (exclusive OPFS lock). Shown when
- * another tab holds the web lock or the core worker gave up waiting for the
- * OPFS handles. Not dismissable — nothing works in this state. */
-function showAlreadyRunningDialog() {
-  if (document.getElementById('sc-already-running-dialog')) return
+/** Blocking full-screen dialog for fatal core-worker states (nothing works,
+ * only reload can help). Not dismissable. */
+function showFatalDialog(id: string, titleText: string, bodyText: string) {
+  if (document.getElementById(id)) return
   const overlay = el('dialog', {
     position: 'fixed',
     inset: '0',
@@ -976,7 +990,7 @@ function showAlreadyRunningDialog() {
     justifyContent: 'center',
     background: 'rgba(0,0,0,.5)',
   })
-  overlay.id = 'sc-already-running-dialog'
+  overlay.id = id
   overlay.oncancel = e => e.preventDefault() // Esc must not reveal a dead app
 
   const panel = el('div', {
@@ -988,17 +1002,8 @@ function showAlreadyRunningDialog() {
     font: '14px/1.5 system-ui, sans-serif',
     boxShadow: '0 8px 40px rgba(0,0,0,.5)',
   })
-  const title = el(
-    'h2',
-    { margin: '0 0 8px', fontSize: '17px' },
-    'Already running in another tab'
-  )
-  const body = el(
-    'p',
-    { margin: '0 0 12px', color: '#bbb' },
-    'SlothfulChat is already open in another tab or window and can only run ' +
-      'in one at a time. Close the other tab, then retry.'
-  )
+  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, titleText)
+  const body = el('p', { margin: '0 0 12px', color: '#bbb' }, bodyText)
   const row = el('div', { display: 'flex', justifyContent: 'flex-end', marginTop: '16px' })
   const retryBtn = el(
     'button',

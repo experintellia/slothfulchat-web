@@ -77,6 +77,13 @@ async function waitForOpfsSyncHandles(): Promise<void> {
       return
     } catch (err) {
       if ((err as DOMException)?.name === 'NotFoundError') return
+      if ((err as DOMException)?.name === 'SecurityError') {
+        // storage blocked by browser settings (e.g. Safari "Block All
+        // Cookies"), not a lock — retrying can't help and the "another tab"
+        // dialog would mislead. Tell the page and fail immediately.
+        scope.postMessage({ type: 'fatal-storage-blocked' } as unknown as string)
+        throw err
+      }
       console.warn(`[core-wasm] OPFS locked (old worker still alive?), waiting ${attempt}/30`)
       await new Promise(r => setTimeout(r, 500))
     }
