@@ -132,6 +132,7 @@ await writeFile(join(dist, 'main.html'), mainHtml)
 await writeFile(join(dist, 'index.html'), mainHtml)
 await cp(join(here, 'static/manifest.webmanifest'), join(dist, 'manifest.webmanifest'))
 await cp(join(here, 'static/boot-error.js'), join(dist, 'boot-error.js'))
+await cp(join(here, 'static/viewport-keyboard.js'), join(dist, 'viewport-keyboard.js'))
 await writeFile(join(dist, '.nojekyll'), '')
 
 // imprint.html — standalone legal notice. The operator's name/address/email

@@ -2,7 +2,10 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
+    />
     <link rel="icon" type="image/x-icon" href="./images/deltachat.ico" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#2c8a68" />
@@ -42,6 +45,7 @@
     <!-- first: catches boot failures (e.g. bundle parse errors on old
          browsers) and shows an error screen instead of a blank page -->
     <script type="text/javascript" src="./boot-error.js"></script>
+    <script type="text/javascript" src="./viewport-keyboard.js"></script>
     <script type="text/javascript" src="./avoid-eval.js"></script>
     <script
       type="text/javascript"
