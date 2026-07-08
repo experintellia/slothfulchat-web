@@ -126,6 +126,14 @@ function getCore(): Core {
     // OPFS persistence is on by default; ?persist=0 opts out (fresh-core tests)
     const persist = params.get('persist') !== '0'
     core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))
+    // the worker reports when it gave up waiting for the OPFS lock — the core
+    // is (almost certainly) running in another tab. ponytail: no faster
+    // web-lock detection — its release lags on reloads and false-positives
+    core.worker.addEventListener('message', event => {
+      if ((event as MessageEvent).data?.type === 'fatal-opfs-locked') {
+        showAlreadyRunningDialog()
+      }
+    })
     // The frontend passes the magic destination '<BROWSER>' to exportBackup on
     // the browser target (upstream's node server rewrites it to a tmp dir).
     // There is no server here, so rewrite it to a memfs dir before it reaches
@@ -197,7 +205,10 @@ function initBlobServiceWorker(log: Logger) {
     }
   })
   navigator.serviceWorker
-    .register(BASE + 'blobs-sw.js', { scope: BASE })
+    // updateViaCache 'none': deploys announce themselves via a changed
+    // sw-precache.js; the default ('imports') would let update checks read a
+    // still-"fresh" old copy from the HTTP cache (Pages sends max-age=600)
+    .register(BASE + 'blobs-sw.js', { scope: BASE, updateViaCache: 'none' })
     .catch(err => log.error('blobs-sw registration failed', err))
 }
 
@@ -943,6 +954,71 @@ const el = <K extends keyof HTMLElementTagNameMap>(
   Object.assign(node.style, style)
   if (text != null) node.textContent = text
   return node
+}
+
+/** The core can only run once per origin (exclusive OPFS lock). Shown when
+ * another tab holds the web lock or the core worker gave up waiting for the
+ * OPFS handles. Not dismissable — nothing works in this state. */
+function showAlreadyRunningDialog() {
+  if (document.getElementById('sc-already-running-dialog')) return
+  const overlay = el('dialog', {
+    position: 'fixed',
+    inset: '0',
+    width: '100%',
+    height: '100%',
+    maxWidth: 'none',
+    maxHeight: 'none',
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,.5)',
+  })
+  overlay.id = 'sc-already-running-dialog'
+  overlay.oncancel = e => e.preventDefault() // Esc must not reveal a dead app
+
+  const panel = el('div', {
+    width: 'min(400px, 92vw)',
+    padding: '20px',
+    borderRadius: '10px',
+    background: '#1e1e1e',
+    color: '#eee',
+    font: '14px/1.5 system-ui, sans-serif',
+    boxShadow: '0 8px 40px rgba(0,0,0,.5)',
+  })
+  const title = el(
+    'h2',
+    { margin: '0 0 8px', fontSize: '17px' },
+    'Already running in another tab'
+  )
+  const body = el(
+    'p',
+    { margin: '0 0 12px', color: '#bbb' },
+    'SlothfulChat is already open in another tab or window and can only run ' +
+      'in one at a time. Close the other tab, then retry.'
+  )
+  const row = el('div', { display: 'flex', justifyContent: 'flex-end', marginTop: '16px' })
+  const retryBtn = el(
+    'button',
+    {
+      padding: '8px 14px',
+      borderRadius: '6px',
+      border: 'none',
+      cursor: 'pointer',
+      fontSize: '13px',
+      background: '#2d7dff',
+      color: '#fff',
+    },
+    'Retry'
+  )
+  retryBtn.onclick = () => location.reload()
+  row.append(retryBtn)
+  panel.append(title, body, row)
+  overlay.append(panel)
+  document.body.appendChild(overlay)
+  overlay.showModal()
 }
 
 const WEBXDC_ISSUE_URL =

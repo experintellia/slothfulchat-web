@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/x-icon" href="./images/deltachat.ico" />
     <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="theme-color" content="#2c8a68" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="apple-touch-icon" href="./images/icon-256.png" />
     <!--
       Copy of upstream target-browser main.html with CSP loosened for the
       wasm edition: 'wasm-unsafe-eval' (core wasm), worker-src 'self'
@@ -34,6 +39,9 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- first: catches boot failures (e.g. bundle parse errors on old
+         browsers) and shows an error screen instead of a blank page -->
+    <script type="text/javascript" src="./boot-error.js"></script>
     <script type="text/javascript" src="./avoid-eval.js"></script>
     <script
       type="text/javascript"
