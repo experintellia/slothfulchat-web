@@ -28,7 +28,7 @@ import { chromium } from 'playwright';
 // ---------------------------------------------------------------------------
 // users: email -> { password, nextUid, msgs: Map<uid, rawString>, waiters: [] }
 const users = new Map();
-const counters = { newCalls: 0, sendCalls: 0, deleteCalls: 0 };
+const counters = { newCalls: 0, sendCalls: 0, deleteCalls: 0, phantom404Gets: 0, delete404s: 0 };
 let userSeq = 0;
 
 const readBody = (req) =>
@@ -57,6 +57,10 @@ const meta = (uid, raw) => ({
 // respond to a /webimap/messages request with everything newer than sinceUid
 const respondMessages = (res, user, sinceUid) => {
   const out = [];
+  if (user.phantomOnce !== undefined) {
+    out.push(meta(user.phantomOnce, ''));
+    user.phantomOnce = undefined;
+  }
   for (const [uid, raw] of user.msgs) if (uid > sinceUid) out.push(meta(uid, raw));
   json(res, 200, out);
 };
@@ -80,7 +84,18 @@ const mock = createServer(async (req, res) => {
     counters.newCalls++;
     const email = `u${++userSeq}@webimap.example`;
     const password = randomBytes(9).toString('hex');
-    users.set(email, { password, nextUid: 1, msgs: new Map(), waiters: [] });
+    // 404-tolerance probes (core must skip these, not back off — see core
+    // patch "webimap: treat 404 on GET/DELETE as already-gone"):
+    // a phantom UID listed once but gone on GET, and one DELETE answered 404
+    // although the message IS deleted (late-landing-delete shape).
+    users.set(email, {
+      password,
+      nextUid: 2,
+      msgs: new Map(),
+      waiters: [],
+      phantomOnce: 1,
+      delete404Once: true,
+    });
     json(res, 200, { email, password, dclogin_url: '' });
     return;
   }
@@ -131,6 +146,7 @@ const mock = createServer(async (req, res) => {
       if (req.method === 'GET') {
         const raw = user.msgs.get(uid);
         if (raw === undefined) {
+          counters.phantom404Gets++;
           json(res, 404, { error: 'no such message' });
           return;
         }
@@ -140,6 +156,12 @@ const mock = createServer(async (req, res) => {
       if (req.method === 'DELETE') {
         counters.deleteCalls++;
         user.msgs.delete(uid);
+        if (user.delete404Once) {
+          user.delete404Once = false;
+          counters.delete404s++;
+          json(res, 404, { error: 'no such message' });
+          return;
+        }
         json(res, 200, { status: 'ok' });
         return;
       }
@@ -307,6 +329,10 @@ try {
     problems.push(`expected >=2 POST /webimap/send, saw ${counters.sendCalls}`);
   if (counters.deleteCalls < 1)
     problems.push(`expected >=1 DELETE (delete-after-receive), saw ${counters.deleteCalls}`);
+  if (counters.phantom404Gets < 2)
+    problems.push(`expected both accounts to hit the phantom 404 GET, saw ${counters.phantom404Gets}`);
+  if (counters.delete404s < 2)
+    problems.push(`expected both accounts to survive a 404 DELETE, saw ${counters.delete404s}`);
 
   if (problems.length) {
     console.error('FAIL:\n  - ' + problems.join('\n  - '));
@@ -317,7 +343,8 @@ try {
         `  accounts: ${result.aliceAddr} <-> ${result.bobAddr}\n` +
         `  alice->bob: "${result.toBob}" received by bob\n` +
         `  bob->alice: "${result.toAlice}" received by alice\n` +
-        `  mock saw: ${counters.newCalls} /new, ${counters.sendCalls} sends, ${counters.deleteCalls} deletes`,
+        `  mock saw: ${counters.newCalls} /new, ${counters.sendCalls} sends, ${counters.deleteCalls} deletes\n` +
+        `  404 tolerance: ${counters.phantom404Gets} phantom GETs skipped, ${counters.delete404s} 404-DELETEs survived`,
     );
   }
 } catch (err) {

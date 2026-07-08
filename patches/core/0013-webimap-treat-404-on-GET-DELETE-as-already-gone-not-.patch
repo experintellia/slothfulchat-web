@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <experintellia@users.noreply.github.com>
+Date: Wed, 8 Jul 2026 22:59:39 +0000
+Subject: [PATCH 13/13] webimap: treat 404 on GET/DELETE as already-gone, not
+ an error
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A UID that 404s is a message already consumed — usually our own DELETE
+from a previous round that timed out client-side (iOS suspends in-flight
+fetches) but landed server-side. Bailing put the loop into a spurious
+30s backoff with an error connectivity badge for a message that needs
+no action. Skip on GET 404 (without deleting: if the 404 was transient
+the next listing retries), succeed on DELETE 404, keep the warn logs as
+the trace that another consumer may exist.
+---
+ src/webimap.rs | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/src/webimap.rs b/src/webimap.rs
+index f3b44e873..a4a2d0258 100644
+--- a/src/webimap.rs
++++ b/src/webimap.rs
+@@ -164,6 +164,15 @@ async fn fetch_message(&self, context: &Context, uid: u32) -> Result<()> {
+                 REQUEST_TIMEOUT,
+             )
+             .await?;
++        if status == 404 {
++            // Deleted server-side between LIST and GET: usually our own
++            // DELETE from a previous round that timed out client-side but
++            // landed on the server (iOS suspends in-flight fetches a lot).
++            // Nothing left to fetch; failing here would only trigger the
++            // caller's 30s backoff for a message that is already gone.
++            warn!(context, "webimap: UID {uid} is gone from the server, skipping.");
++            return Ok(());
++        }
+         if !(200..300).contains(&status) {
+             bail!("webimap fetch of UID {uid} failed with status {status}");
+         }
+@@ -182,7 +191,12 @@ async fn fetch_message(&self, context: &Context, uid: u32) -> Result<()> {
+                 REQUEST_TIMEOUT,
+             )
+             .await?;
+-        if !(200..300).contains(&status) {
++        if status == 404 {
++            // Already deleted, e.g. by our own earlier DELETE whose
++            // response was lost to a client-side timeout. That is the
++            // desired end state, not a failure.
++            warn!(context, "webimap: UID {uid} was already deleted.");
++        } else if !(200..300).contains(&status) {
+             // Failing here makes the caller back off. The message was
+             // processed but stays on the server, so the next long-poll
+             // returns it again immediately; without the backoff that is
