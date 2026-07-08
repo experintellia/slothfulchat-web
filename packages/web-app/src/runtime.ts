@@ -495,7 +495,7 @@ class BrowserRuntime {
     const { accountId, chatId, body, title, icon: notificationIcon, messageId } = data
     this.log.debug('showNotification', { accountId, chatId, messageId })
 
-    let icon = new URL(BASE + 'images/deltachat.png', location.origin).toString()
+    let icon = new URL(BASE + 'images/icon-256.png', location.origin).toString()
     if (notificationIcon) {
       try {
         const response = await fetch(
