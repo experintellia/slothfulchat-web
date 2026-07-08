@@ -13,6 +13,40 @@ See [SELFHOSTING.md](SELFHOSTING.md) to run your own instance, [PLAN.md](PLAN.md
 - [`packages/web-app`](packages/web-app/README.md) — deliverable 2: standalone browser frontend using core-wasm
 - [`packages/ws-tcp-proxy`](packages/ws-tcp-proxy/README.md) — the WS→TCP bridge (the one server piece; npx-able, optional chatmail-server allowlist)
 
+## webimap transport (madmail, no bridge needed)
+
+Next to the normal IMAP/SMTP-over-bridge transport there is an **even more
+experimental** `webimap` transport that speaks
+[madmail](https://github.com/themadorg/madmail)'s
+[WebIMAP/WebSMTP](https://github.com/themadorg/madmail/blob/main/docs/TDD/10-webimap.md)
+protocol — mail over plain HTTPS REST from the browser, so it needs **no
+`ws-tcp-proxy` bridge at all**. It only works against madmail servers with the
+`__WEBIMAP_ENABLED__` and `__WEBSMTP_ENABLED__` service toggles switched on
+(both are off by default on madmail).
+
+Ways to activate it:
+
+- **Welcome screen** → "madmail server — no bridge needed, extra experimental"
+  → enter the instance's IP address or domain; an account is created on that
+  server and the normal onboarding flow continues.
+- **QR / invite code**: `webimapaccount:host` (host = IP or domain, optional
+  `:port`) — creates an account via `POST https://host/new` and configures the
+  transport. Works wherever invite codes are accepted.
+- **Manual login → Advanced**: the "Use webimap" toggle turns an ordinary
+  addr+password login into a webimap transport (server host defaults to the
+  address's domain, or set the inbox server field explicitly).
+
+Limitations (v1): receive is REST long-polling (`/webimap/messages?wait=…`, no
+WebSocket yet); INBOX only, message flags are not persisted (madmail maildir
+v1); connections are always `https://` — plain `http://` is allowed only for
+`localhost`/`127.0.0.1`/`[::1]` so the offline e2e test
+(`scripts/test-webimap.mjs`) can run a mock server without TLS; messages are
+deleted from the server after they are fetched, and deduplication relies on
+Message-IDs instead of persisted UIDs; multi-device sync of a webimap
+transport to an older core silently downgrades it to IMAP (unknown JSON
+field). Everything here is prototype quality — even more so than the rest of
+this repo.
+
 ## Workflow
 
 ```sh

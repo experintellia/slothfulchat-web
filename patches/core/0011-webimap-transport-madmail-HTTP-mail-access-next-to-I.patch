@@ -1,0 +1,1523 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Wed, 8 Jul 2026 12:17:27 +0000
+Subject: [PATCH 11/11] webimap transport: madmail HTTP mail access next to
+ IMAP/SMTP
+
+Adds a transport variant that speaks madmail's webimap/websmtp REST API
+(github.com/themadorg/madmail, TDD 10-webimap) instead of IMAP/SMTP.
+Browsers can talk to it directly over fetch() with CORS, so wasm builds
+need no WebSocket-TCP bridge for such accounts.
+
+- net/http: new portable request(context, method, url, headers, body,
+  timeout, follow_redirects) -> (status, Response) on both targets.
+  Native: hyper via get_http_sender wrapped in tokio::time::timeout
+  (hyper never follows redirects, so the flag is a no-op there). wasm:
+  the existing fetch() plumbing gains custom headers, an
+  AbortController-backed timeout and RequestRedirect::Error for
+  follow_redirects=false so credential headers are never re-sent to a
+  redirect target; the read_url*/post_* wrappers now route through it
+  with a 60s default timeout.
+- login_param/transport: new `webimap: bool` on EnteredLoginParam and
+  ConfiguredLoginParam(-Json), serde-defaulted so both JSON DB columns
+  and sync messages stay compatible without a migration.
+- src/webimap.rs: WebimapClient (X-Email/X-Password auth), verify() via
+  GET /webimap/mailboxes, smtp_send() via POST /webimap/send with the
+  same SendResult semantics as the SMTP path, and webimap_loop() which
+  long-polls GET /webimap/messages?since_uid=0&wait=60, feeds each
+  message through receive_imf and deletes it from the server. No UID
+  persistence: deletion after processing plus Message-ID dedup covers
+  restarts. Base URL is https://host[:port]; plain http only for
+  localhost as a mock-server test hatch.
+- scheduler: webimap transports spawn webimap_loop instead of
+  inbox_loop, reusing ImapConnectionState/-Handlers wholesale.
+- smtp: smtp_send() routes webimap transports to webimap::smtp_send()
+  (single choke point for messages, MDNs, sync, status updates);
+  connect_configured() is a no-op for webimap so the pre-connect in
+  send_msg_to_smtp does not dial a nonexistent SMTP server.
+- configure: webimap-shaped ConfiguredLoginParam is derived directly
+  from the entered params (host defaults to the addr domain) and
+  verified with one authenticated HTTP request; is_chatmail=1 since
+  madmail enforces PGP-only like chatmail.
+- qr: new `webimapaccount:host[:port]` scheme decoding into
+  Qr::Account { webimap: true }; account creation via POST /new reusing
+  CreateAccountSuccessResponse. dc_lot/jsonrpc mirrors updated
+  (QrObject::Account and EnteredLoginParam gain the webimap field).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ Cargo.toml                                    |   2 +-
+ deltachat-ffi/src/lot.rs                      |   2 +-
+ .../src/api/types/login_param.rs              |   7 +
+ deltachat-jsonrpc/src/api/types/qr.rs         |   5 +-
+ src/configure.rs                              | 160 +++++---
+ src/lib.rs                                    |   1 +
+ src/login_param.rs                            |   7 +
+ src/net/http.rs                               |  74 +++-
+ src/net/http_wasm.rs                          | 135 +++++--
+ src/qr.rs                                     |  98 +++++
+ src/qr/dclogin_scheme.rs                      |   1 +
+ src/qr/qr_tests.rs                            |  40 +-
+ src/scheduler.rs                              |  19 +-
+ src/smtp.rs                                   |  66 +++-
+ src/transport.rs                              |   9 +
+ src/transport/transport_tests.rs              |   5 +-
+ src/webimap.rs                                | 364 ++++++++++++++++++
+ 17 files changed, 886 insertions(+), 109 deletions(-)
+ create mode 100644 src/webimap.rs
+
+diff --git a/Cargo.toml b/Cargo.toml
+index adb8ad9fa..4106fde89 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -137,7 +137,7 @@ tokio-util = { workspace = true, features = ["compat"] }
+ uuid = { version = "1", features = ["js"] }
+ wasm-bindgen = "0.2"
+ wasm-bindgen-futures = "0.4"
+-web-sys = { version = "0.3", features = ["Headers", "RequestInit", "Response", "WorkerGlobalScope"] }
++web-sys = { version = "0.3", features = ["AbortController", "AbortSignal", "Headers", "RequestInit", "RequestRedirect", "Response", "WorkerGlobalScope"] }
+ ws_stream_wasm = "0.7"
+ 
+ [dev-dependencies]
+diff --git a/deltachat-ffi/src/lot.rs b/deltachat-ffi/src/lot.rs
+index 1c8c0af5b..f5440f65f 100644
+--- a/deltachat-ffi/src/lot.rs
++++ b/deltachat-ffi/src/lot.rs
+@@ -49,7 +49,7 @@ pub fn get_text1(&self) -> Option<Cow<'_, str>> {
+                 Qr::FprOk { .. } => None,
+                 Qr::FprMismatch { .. } => None,
+                 Qr::FprWithoutAddr { fingerprint, .. } => Some(Cow::Borrowed(fingerprint)),
+-                Qr::Account { domain } => Some(Cow::Borrowed(domain)),
++                Qr::Account { domain, .. } => Some(Cow::Borrowed(domain)),
+                 Qr::Backup2 { .. } => None,
+                 Qr::BackupTooNew { .. } => None,
+                 Qr::Proxy { host, port, .. } => Some(Cow::Owned(format!("{host}:{port}"))),
+diff --git a/deltachat-jsonrpc/src/api/types/login_param.rs b/deltachat-jsonrpc/src/api/types/login_param.rs
+index 1112e6a39..0bb67457b 100644
+--- a/deltachat-jsonrpc/src/api/types/login_param.rs
++++ b/deltachat-jsonrpc/src/api/types/login_param.rs
+@@ -70,6 +70,11 @@ pub struct EnteredLoginParam {
+     /// If true, login via OAUTH2 (not recommended anymore).
+     /// Default: false
+     pub oauth2: Option<bool>,
++
++    /// If true, mail access goes over madmail's webimap HTTP API
++    /// instead of IMAP/SMTP (experimental).
++    /// Default: false
++    pub webimap: Option<bool>,
+ }
+ 
+ impl From<dc::TransportListEntry> for TransportListEntry {
+@@ -101,6 +106,7 @@ fn from(param: dc::EnteredLoginParam) -> Self {
+             smtp_password: param.smtp.password.into_option(),
+             certificate_checks: certificate_checks.into_option(),
+             oauth2: param.oauth2.into_option(),
++            webimap: param.webimap.into_option(),
+         }
+     }
+ }
+@@ -128,6 +134,7 @@ fn try_from(param: EnteredLoginParam) -> Result<Self> {
+             },
+             certificate_checks: param.certificate_checks.unwrap_or_default().into(),
+             oauth2: param.oauth2.unwrap_or_default(),
++            webimap: param.webimap.unwrap_or_default(),
+         })
+     }
+ }
+diff --git a/deltachat-jsonrpc/src/api/types/qr.rs b/deltachat-jsonrpc/src/api/types/qr.rs
+index 4bf55f398..184fc88a3 100644
+--- a/deltachat-jsonrpc/src/api/types/qr.rs
++++ b/deltachat-jsonrpc/src/api/types/qr.rs
+@@ -82,6 +82,9 @@ pub enum QrObject {
+     Account {
+         /// Server domain name.
+         domain: String,
++        /// If true, the account is created and used via madmail's
++        /// webimap HTTP API instead of IMAP/SMTP.
++        webimap: bool,
+     },
+     /// Provides a backup that can be retrieved using iroh-net based backup transfer protocol.
+     Backup2 {
+@@ -301,7 +304,7 @@ fn from(qr: Qr) -> Self {
+                 QrObject::FprMismatch { contact_id }
+             }
+             Qr::FprWithoutAddr { fingerprint } => QrObject::FprWithoutAddr { fingerprint },
+-            Qr::Account { domain } => QrObject::Account { domain },
++            Qr::Account { domain, webimap } => QrObject::Account { domain, webimap },
+             Qr::Backup2 {
+                 ref node_addr,
+                 auth_token,
+diff --git a/src/configure.rs b/src/configure.rs
+index 54fc172b8..33da10d44 100644
+--- a/src/configure.rs
++++ b/src/configure.rs
+@@ -40,7 +40,7 @@
+ use crate::tools::time;
+ use crate::transport::{
+     ConfiguredCertificateChecks, ConfiguredLoginParam, ConfiguredServerLoginParam,
+-    ConnectionCandidate, send_sync_transports,
++    ConnectionCandidate, ConnectionSecurity, send_sync_transports,
+ };
+ use crate::{EventType, stock_str};
+ use crate::{chat, provider};
+@@ -418,6 +418,46 @@ async fn get_configured_param(
+         param.smtp.password.clone()
+     };
+ 
++    // webimap (madmail) transports need no autoconfig: the entered
++    // server is the HTTP host and sending goes over the same API.
++    if param.webimap {
++        let parsed = EmailAddress::new(&param.addr).context("Bad email-address")?;
++        let host = if param.imap.server.is_empty() {
++            parsed.domain
++        } else {
++            param.imap.server.clone()
++        };
++        let connection = ConnectionCandidate {
++            // ponytail: `host` may carry an embedded `host:port`; webimap
++            // builds its base URL from it verbatim and ignores `port`.
++            host,
++            port: param.imap.port,
++            security: ConnectionSecurity::Tls,
++        };
++        return Ok(ConfiguredLoginParam {
++            addr: param.addr.clone(),
++            imap: vec![ConfiguredServerLoginParam {
++                connection: connection.clone(),
++                user: param.addr.clone(),
++            }],
++            // webimap always authenticates with the address itself,
++            // don't persist a divergent entered user.
++            imap_user: param.addr.clone(),
++            imap_password: param.imap.password.clone(),
++            imap_folder: None,
++            smtp: vec![ConfiguredServerLoginParam {
++                connection,
++                user: param.addr.clone(),
++            }],
++            smtp_user: param.addr.clone(),
++            smtp_password,
++            provider: None,
++            certificate_checks: ConfiguredCertificateChecks::Strict,
++            oauth2: false,
++            webimap: true,
++        });
++    }
++
+     let mut addr = param.addr.clone();
+     if param.oauth2 {
+         // the used oauth2 addr may differ, check this.
+@@ -586,6 +626,7 @@ async fn get_configured_param(
+             }
+         },
+         oauth2: param.oauth2,
++        webimap: false,
+     };
+     Ok(configured_login_param)
+ }
+@@ -599,65 +640,84 @@ async fn configure(ctx: &Context, param: &EnteredLoginParam) -> Result<Option<&'
+ 
+     progress!(ctx, 550);
+ 
+-    // Spawn SMTP configuration task
+-    // to try SMTP while connecting to IMAP.
+-    let context_smtp = ctx.clone();
+-    let smtp_param = configured_param.smtp.clone();
+-    let smtp_password = configured_param.smtp_password.clone();
+-    let smtp_addr = configured_param.addr.clone();
+-
+-    let proxy_config2 = proxy_config.clone();
+-    let smtp_config_task = task::spawn(async move {
+-        let mut smtp = Smtp::new();
+-        smtp.connect(
+-            &context_smtp,
+-            &smtp_param,
+-            &smtp_password,
+-            &proxy_config2,
+-            &smtp_addr,
+-            strict_tls,
+-            configured_param.oauth2,
+-        )
+-        .await?;
++    if configured_param.webimap {
++        // webimap (madmail): a single authenticated HTTP request verifies
++        // the credentials for both receiving and sending.
++        if let Err(err) = crate::webimap::WebimapClient::new(&configured_param)?
++            .verify(ctx)
++            .await
++        {
++            bail!("{}", nicer_configuration_error(ctx, format!("{err:#}")));
++        }
+ 
+-        Ok::<(), anyhow::Error>(())
+-    });
++        progress!(ctx, 900);
+ 
+-    progress!(ctx, 600);
++        // madmail relays are PGP-only, like chatmail.
++        if !ctx.get_config_bool(Config::FixIsChatmail).await? {
++            ctx.sql.set_raw_config("is_chatmail", Some("1")).await?;
++        }
++    } else {
++        // Spawn SMTP configuration task
++        // to try SMTP while connecting to IMAP.
++        let context_smtp = ctx.clone();
++        let smtp_param = configured_param.smtp.clone();
++        let smtp_password = configured_param.smtp_password.clone();
++        let smtp_addr = configured_param.addr.clone();
++        let oauth2 = configured_param.oauth2;
++
++        let proxy_config2 = proxy_config.clone();
++        let smtp_config_task = task::spawn(async move {
++            let mut smtp = Smtp::new();
++            smtp.connect(
++                &context_smtp,
++                &smtp_param,
++                &smtp_password,
++                &proxy_config2,
++                &smtp_addr,
++                strict_tls,
++                oauth2,
++            )
++            .await?;
+ 
+-    // Configure IMAP
++            Ok::<(), anyhow::Error>(())
++        });
+ 
+-    let transport_id = 0;
+-    let (_s, r) = async_channel::bounded(1);
+-    let mut imap = Imap::new(ctx, transport_id, configured_param.clone(), r).await?;
+-    let configuring = true;
+-    let imap_session = match imap.connect(ctx, configuring).await {
+-        Ok(imap_session) => imap_session,
+-        Err(err) => {
+-            bail!("{}", nicer_configuration_error(ctx, format!("{err:#}")));
+-        }
+-    };
++        progress!(ctx, 600);
++
++        // Configure IMAP
+ 
+-    progress!(ctx, 850);
++        let transport_id = 0;
++        let (_s, r) = async_channel::bounded(1);
++        let mut imap = Imap::new(ctx, transport_id, configured_param.clone(), r).await?;
++        let configuring = true;
++        let imap_session = match imap.connect(ctx, configuring).await {
++            Ok(imap_session) => imap_session,
++            Err(err) => {
++                bail!("{}", nicer_configuration_error(ctx, format!("{err:#}")));
++            }
++        };
+ 
+-    // Wait for SMTP configuration
+-    smtp_config_task.await??;
++        progress!(ctx, 850);
+ 
+-    progress!(ctx, 900);
++        // Wait for SMTP configuration
++        smtp_config_task.await??;
+ 
+-    let is_configured = ctx.is_configured().await?;
+-    if !ctx.get_config_bool(Config::FixIsChatmail).await? {
+-        if imap_session.is_chatmail() {
+-            ctx.sql.set_raw_config("is_chatmail", Some("1")).await?;
+-        } else if !is_configured {
+-            // Reset the setting that may have been set
+-            // during failed configuration.
+-            ctx.sql.set_raw_config("is_chatmail", Some("0")).await?;
++        progress!(ctx, 900);
++
++        let is_configured = ctx.is_configured().await?;
++        if !ctx.get_config_bool(Config::FixIsChatmail).await? {
++            if imap_session.is_chatmail() {
++                ctx.sql.set_raw_config("is_chatmail", Some("1")).await?;
++            } else if !is_configured {
++                // Reset the setting that may have been set
++                // during failed configuration.
++                ctx.sql.set_raw_config("is_chatmail", Some("0")).await?;
++            }
+         }
+-    }
+ 
+-    drop(imap_session);
+-    drop(imap);
++        drop(imap_session);
++        drop(imap);
++    }
+ 
+     progress!(ctx, 910);
+ 
+diff --git a/src/lib.rs b/src/lib.rs
+index 8146ed573..f30aa4faa 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -97,6 +97,7 @@
+ mod token;
+ mod transport;
+ mod update_helper;
++mod webimap;
+ pub mod webxdc;
+ #[macro_use]
+ mod dehtml;
+diff --git a/src/login_param.rs b/src/login_param.rs
+index 1b80c3fe3..3306314bf 100644
+--- a/src/login_param.rs
++++ b/src/login_param.rs
+@@ -145,6 +145,11 @@ pub struct EnteredLoginParam {
+ 
+     /// If true, login via OAUTH2 (not recommended anymore)
+     pub oauth2: bool,
++
++    /// If true, mail access goes over madmail's webimap HTTP API
++    /// instead of IMAP/SMTP.
++    #[serde(default)]
++    pub webimap: bool,
+ }
+ 
+ impl EnteredLoginParam {
+@@ -247,6 +252,7 @@ pub(crate) async fn load_legacy(context: &Context) -> Result<Self> {
+             },
+             certificate_checks,
+             oauth2,
++            webimap: false,
+         })
+     }
+ 
+@@ -420,6 +426,7 @@ async fn test_save_entered_login_param() -> Result<()> {
+             },
+             certificate_checks: Default::default(),
+             oauth2: false,
++            webimap: false,
+         };
+         param.save_legacy(&t).await?;
+         assert_eq!(
+diff --git a/src/net/http.rs b/src/net/http.rs
+index 1922be7a3..c81498099 100644
+--- a/src/net/http.rs
++++ b/src/net/http.rs
+@@ -1,6 +1,8 @@
+ //! # HTTP module.
+ 
+-use anyhow::{Context as _, Result, anyhow, bail};
++use std::time::Duration;
++
++use anyhow::{Context as _, Result, anyhow, bail, format_err};
+ use bytes::Bytes;
+ use http_body_util::BodyExt;
+ use hyper_util::rt::TokioIo;
+@@ -120,6 +122,76 @@ async fn get_http_sender<B>(
+     Ok(sender)
+ }
+ 
++/// Performs a single HTTP request.
++///
++/// Unlike [`read_url_blob`], does not cache
++/// and returns the status code and the response body instead of failing
++/// on non-2xx responses.
++///
++/// Fails if no response arrived within `timeout` (covers connecting,
++/// sending and reading the response body).
++///
++/// hyper never follows redirects, so `_follow_redirects` has no effect here;
++/// it exists to keep the signature identical to the wasm (fetch) variant
++/// where the browser would follow redirects unless told not to.
++pub(crate) async fn request(
++    context: &Context,
++    method: &str,
++    url: &str,
++    headers: &[(&str, &str)],
++    body: Option<String>,
++    timeout: Duration,
++    _follow_redirects: bool,
++) -> Result<(u16, Response)> {
++    tokio::time::timeout(timeout, async {
++        let parsed_url = url
++            .parse::<hyper::Uri>()
++            .with_context(|| format!("Failed to parse URL {url:?}"))?;
++        let mut sender = get_http_sender(context, parsed_url.clone(), true).await?;
++        let authority = parsed_url
++            .authority()
++            .context("URL has no authority")?
++            .clone();
++
++        let mut req = hyper::Request::builder()
++            .method(hyper::Method::from_bytes(method.as_bytes())?)
++            .uri(parsed_url)
++            .header(hyper::header::HOST, authority.as_str());
++        for (name, value) in headers {
++            req = req.header(*name, *value);
++        }
++        let request = req.body(body.unwrap_or_default())?;
++
++        let response = sender.send_request(request).await?;
++        let status = response.status().as_u16();
++
++        let content_type = response
++            .headers()
++            .get("content-type")
++            .and_then(|value| value.to_str().ok())
++            .and_then(|value| value.parse::<Mime>().ok());
++        let mimetype = content_type
++            .as_ref()
++            .map(|mime| mime.essence_str().to_string());
++        let encoding = content_type.as_ref().and_then(|mime| {
++            mime.get_param(mime::CHARSET)
++                .map(|charset| charset.as_str().to_string())
++        });
++        let blob = response.collect().await?.to_bytes().to_vec();
++
++        Ok((
++            status,
++            Response {
++                blob,
++                mimetype,
++                encoding,
++            },
++        ))
++    })
++    .await
++    .map_err(|_| format_err!("HTTP {method} request to {url} timed out"))?
++}
++
+ /// Converts the URL to expiration and stale timestamps.
+ fn http_url_cache_timestamps(url: &str, mimetype: Option<&str>) -> (i64, i64) {
+     let now = time();
+diff --git a/src/net/http_wasm.rs b/src/net/http_wasm.rs
+index 24520a04b..0ceacc172 100644
+--- a/src/net/http_wasm.rs
++++ b/src/net/http_wasm.rs
+@@ -4,6 +4,8 @@
+ //! the connection: TLS, redirects and caching are handled by `fetch()`, and
+ //! requests are subject to CORS.
+ 
++use std::time::Duration;
++
+ use anyhow::{Context as _, Result, anyhow, bail};
+ use futures::channel::oneshot;
+ use mime::Mime;
+@@ -13,6 +15,9 @@
+ 
+ use crate::context::Context;
+ 
++/// Default timeout for the `read_url*`/`post_*` wrappers.
++const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
++
+ /// HTTP(S) GET response.
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub struct Response {
+@@ -43,37 +48,85 @@ fn js_str(v: JsValue) -> String {
+ /// JS handles are `!Send` but our futures must be Send (yerpc), so the JS
+ /// side runs in a `spawn_local` task and the result comes back over a
+ /// oneshot channel — same pattern as `ws_tcp`.
++///
++/// Fails if no response arrived within `timeout`; the fetch is aborted
++/// via an `AbortController` then (browser `fetch()` has no timeout of
++/// its own).
++///
++/// With `follow_redirects` the browser follows redirects transparently
++/// (its default); without it a redirect fails the request
++/// (`RequestRedirect::Error`), so request headers such as credentials
++/// are never re-sent to a redirect target.
+ async fn fetch(
+-    method: &'static str,
++    method: &str,
+     url: &str,
++    headers: &[(&str, &str)],
+     body: Option<String>,
+-    content_type: Option<&'static str>,
++    timeout: Duration,
++    follow_redirects: bool,
+ ) -> Result<FetchResponse> {
++    let method = method.to_string();
+     let url = url.to_string();
++    let headers: Vec<(String, String)> = headers
++        .iter()
++        .map(|(name, value)| (name.to_string(), value.to_string()))
++        .collect();
+     let (tx, rx) = oneshot::channel();
+     wasm_bindgen_futures::spawn_local(async move {
+-        let _ = tx.send(fetch_inner(method, &url, body, content_type).await);
++        let controller = web_sys::AbortController::new().ok();
++        let result = match tokio::time::timeout(
++            timeout,
++            fetch_inner(
++                &method,
++                &url,
++                &headers,
++                body,
++                follow_redirects,
++                controller.as_ref(),
++            ),
++        )
++        .await
++        {
++            Ok(result) => result,
++            Err(_elapsed) => {
++                if let Some(controller) = &controller {
++                    controller.abort();
++                }
++                Err("request timed out".to_string())
++            }
++        };
++        let _ = tx.send(result.map_err(|e| format!("{method} {e}")));
+     });
+     rx.await
+         .map_err(|_| anyhow!("fetch task dropped"))?
+-        .map_err(|e| anyhow!("fetch {method} {e}"))
++        .map_err(|e| anyhow!("fetch {e}"))
+ }
+ 
+ async fn fetch_inner(
+     method: &str,
+     url: &str,
++    headers: &[(String, String)],
+     body: Option<String>,
+-    content_type: Option<&str>,
++    follow_redirects: bool,
++    controller: Option<&web_sys::AbortController>,
+ ) -> std::result::Result<FetchResponse, String> {
+     let init = web_sys::RequestInit::new();
+     init.set_method(method);
++    if !follow_redirects {
++        init.set_redirect(web_sys::RequestRedirect::Error);
++    }
++    if let Some(controller) = controller {
++        init.set_signal(Some(&controller.signal()));
++    }
+     if let Some(body) = &body {
+         init.set_body(&JsValue::from_str(body));
+     }
+-    if let Some(ct) = content_type {
+-        let headers = web_sys::Headers::new().map_err(js_str)?;
+-        headers.append("content-type", ct).map_err(js_str)?;
+-        init.set_headers(&headers);
++    if !headers.is_empty() {
++        let js_headers = web_sys::Headers::new().map_err(js_str)?;
++        for (name, value) in headers {
++            js_headers.append(name, value).map_err(js_str)?;
++        }
++        init.set_headers(&js_headers);
+     }
+     // The core always runs in a Web Worker; there is no `window` global.
+     let scope: web_sys::WorkerGlobalScope = js_sys::global().unchecked_into();
+@@ -100,6 +153,37 @@ fn ensure_https(url: &str) -> Result<()> {
+     Ok(())
+ }
+ 
++/// Performs a single HTTP request via `fetch()`.
++///
++/// Returns the status code and the response body instead of failing
++/// on non-2xx responses. See [`fetch`] for `timeout` and
++/// `follow_redirects` semantics.
++pub(crate) async fn request(
++    _context: &Context,
++    method: &str,
++    url: &str,
++    headers: &[(&str, &str)],
++    body: Option<String>,
++    timeout: Duration,
++    follow_redirects: bool,
++) -> Result<(u16, Response)> {
++    let resp = fetch(method, url, headers, body, timeout, follow_redirects).await?;
++    let content_type = resp.content_type.and_then(|v| v.parse::<Mime>().ok());
++    let mimetype = content_type.as_ref().map(|m| m.essence_str().to_string());
++    let encoding = content_type
++        .as_ref()
++        .and_then(|m| m.get_param(mime::CHARSET))
++        .map(|c| c.as_str().to_string());
++    Ok((
++        resp.status,
++        Response {
++            blob: resp.body,
++            mimetype,
++            encoding,
++        },
++    ))
++}
++
+ /// Retrieves the text contents of URL using HTTP GET request.
+ pub async fn read_url(context: &Context, url: &str) -> Result<String> {
+     let response = read_url_blob(context, url).await?;
+@@ -123,25 +207,12 @@ pub(crate) async fn http_cache_cleanup(_context: &Context) -> Result<()> {
+ }
+ 
+ /// Retrieves the binary contents of URL using HTTP GET request.
+-pub async fn read_url_blob(_context: &Context, url: &str) -> Result<Response> {
+-    let resp = fetch("GET", url, None, None).await?;
+-    if !resp.ok {
+-        bail!(
+-            "The server returned a non-successful response code: {}",
+-            resp.status
+-        );
++pub async fn read_url_blob(context: &Context, url: &str) -> Result<Response> {
++    let (status, response) = request(context, "GET", url, &[], None, DEFAULT_TIMEOUT, true).await?;
++    if !(200..300).contains(&status) {
++        bail!("The server returned a non-successful response code: {status}");
+     }
+-    let content_type = resp.content_type.and_then(|v| v.parse::<Mime>().ok());
+-    let mimetype = content_type.as_ref().map(|m| m.essence_str().to_string());
+-    let encoding = content_type
+-        .as_ref()
+-        .and_then(|m| m.get_param(mime::CHARSET))
+-        .map(|c| c.as_str().to_string());
+-    Ok(Response {
+-        blob: resp.body,
+-        mimetype,
+-        encoding,
+-    })
++    Ok(response)
+ }
+ 
+ /// Retrieves the binary contents of URL using HTTP GET request.
+@@ -158,14 +229,16 @@ pub(crate) async fn read_url_blob_with_tls(
+ /// Returns response text and whether request was successful.
+ pub(crate) async fn post_empty(_context: &Context, url: &str) -> Result<(String, bool)> {
+     ensure_https(url)?;
+-    let resp = fetch("POST", url, None, None).await?;
++    let resp = fetch("POST", url, &[], None, DEFAULT_TIMEOUT, true).await?;
+     Ok((String::from_utf8_lossy(&resp.body).to_string(), resp.ok))
+ }
+ 
+ /// Sends a POST request with given string as body.
+ pub(crate) async fn post_string(_context: &Context, url: &str, body: String) -> Result<bool> {
+     ensure_https(url)?;
+-    Ok(fetch("POST", url, Some(body), None).await?.ok)
++    Ok(fetch("POST", url, &[], Some(body), DEFAULT_TIMEOUT, true)
++        .await?
++        .ok)
+ }
+ 
+ /// Posts the given form to the URL.
+@@ -179,8 +252,10 @@ pub(crate) async fn post_form<T: Serialize + ?Sized>(
+     let resp = fetch(
+         "POST",
+         url,
++        &[("content-type", "application/x-www-form-urlencoded")],
+         Some(body),
+-        Some("application/x-www-form-urlencoded"),
++        DEFAULT_TIMEOUT,
++        true,
+     )
+     .await?;
+     Ok(resp.body.into())
+diff --git a/src/qr.rs b/src/qr.rs
+index 981087c11..7f6188805 100644
+--- a/src/qr.rs
++++ b/src/qr.rs
+@@ -27,6 +27,7 @@
+ const IDELTACHAT_SCHEME: &str = "https://i.delta.chat/#";
+ const IDELTACHAT_NOSLASH_SCHEME: &str = "https://i.delta.chat#";
+ const DCACCOUNT_SCHEME: &str = "DCACCOUNT:";
++const WEBIMAPACCOUNT_SCHEME: &str = "webimapaccount:";
+ pub(super) const DCLOGIN_SCHEME: &str = "DCLOGIN:";
+ const TG_SOCKS_SCHEME: &str = "https://t.me/socks";
+ const MAILTO_SCHEME: &str = "mailto:";
+@@ -150,6 +151,10 @@ pub enum Qr {
+     Account {
+         /// Server domain name.
+         domain: String,
++
++        /// If true, the account is created and used via madmail's
++        /// webimap HTTP API instead of IMAP/SMTP.
++        webimap: bool,
+     },
+ 
+     /// Provides a backup that can be retrieved using iroh-net based backup transfer protocol.
+@@ -375,6 +380,8 @@ pub async fn check_qr(context: &Context, qr: &str) -> Result<Qr> {
+         decode_ideltachat(context, IDELTACHAT_NOSLASH_SCHEME, qr).await?
+     } else if starts_with_ignore_case(qr, DCACCOUNT_SCHEME) {
+         decode_account(qr)?
++    } else if starts_with_ignore_case(qr, WEBIMAPACCOUNT_SCHEME) {
++        decode_webimap_account(qr)?
+     } else if starts_with_ignore_case(qr, DCLOGIN_SCHEME) {
+         dclogin_scheme::decode_login(qr)?
+     } else if starts_with_ignore_case(qr, TG_SOCKS_SCHEME) {
+@@ -708,6 +715,7 @@ fn decode_account(qr: &str) -> Result<Qr> {
+                     .host_str()
+                     .context("can't extract account setup domain")?
+                     .to_string(),
++                webimap: false,
+             })
+         } else {
+             bail!("Bad scheme for account URL: {:?}.", url.scheme());
+@@ -721,10 +729,52 @@ fn decode_account(qr: &str) -> Result<Qr> {
+         }
+         Ok(Qr::Account {
+             domain: payload.to_string(),
++            webimap: false,
+         })
+     }
+ }
+ 
++/// Parses and validates the host of a `webimapaccount:` QR,
++/// returning it in canonical `host[:port]` form.
++///
++/// The payload is attacker-suppliable, so it must be a pure `host[:port]`:
++/// userinfo (`trusted.org@evil.com` would display trusted.org but connect
++/// to evil.com), path, query, fragment and whitespace are all rejected.
++fn decode_webimap_host(qr: &str) -> Result<String> {
++    let payload = qr
++        .get(WEBIMAPACCOUNT_SCHEME.len()..)
++        .context("Invalid webimapaccount payload")?
++        .trim();
++    let url = url::Url::parse(&format!("https://{payload}"))
++        .with_context(|| format!("Invalid webimapaccount host: {payload:?}"))?;
++    if !url.username().is_empty()
++        || url.password().is_some()
++        || url.path() != "/"
++        || url.query().is_some()
++        || url.fragment().is_some()
++    {
++        bail!("Invalid webimapaccount host: {payload:?}");
++    }
++    let host = url
++        .host_str()
++        .with_context(|| format!("Invalid webimapaccount host: {payload:?}"))?;
++    Ok(match url.port() {
++        Some(port) => format!("{host}:{port}"),
++        None => host.to_string(),
++    })
++}
++
++/// scheme: `webimapaccount:example.org` or `webimapaccount:1.2.3.4:8443`
++///
++/// Instant account creation on a madmail server
++/// speaking the webimap HTTP API.
++fn decode_webimap_account(qr: &str) -> Result<Qr> {
++    Ok(Qr::Account {
++        domain: decode_webimap_host(qr)?,
++        webimap: true,
++    })
++}
++
+ /// scheme: `https://t.me/socks?server=foo&port=123` or `https://t.me/socks?server=1.2.3.4&port=123`
+ fn decode_tg_socks_proxy(_context: &Context, qr: &str) -> Result<Qr> {
+     let url = url::Url::parse(qr).context("Invalid t.me/socks url")?;
+@@ -830,6 +880,10 @@ pub(crate) async fn login_param_from_account_qr(
+     context: &Context,
+     qr: &str,
+ ) -> Result<EnteredLoginParam> {
++    if starts_with_ignore_case(qr, WEBIMAPACCOUNT_SCHEME) {
++        return login_param_from_webimap_account_qr(context, qr).await;
++    }
++
+     let payload = qr
+         .get(DCACCOUNT_SCHEME.len()..)
+         .context("Invalid DCACCOUNT scheme")?;
+@@ -849,6 +903,7 @@ pub(crate) async fn login_param_from_account_qr(
+             smtp: Default::default(),
+             certificate_checks: EnteredCertificateChecks::Strict,
+             oauth2: false,
++            webimap: false,
+         };
+         return Ok(param);
+     }
+@@ -869,6 +924,7 @@ pub(crate) async fn login_param_from_account_qr(
+             smtp: Default::default(),
+             certificate_checks: EnteredCertificateChecks::Strict,
+             oauth2: false,
++            webimap: false,
+         };
+ 
+         Ok(param)
+@@ -886,6 +942,48 @@ pub(crate) async fn login_param_from_account_qr(
+     }
+ }
+ 
++/// Takes a QR with `webimapaccount:` scheme,
++/// creates an account on the madmail server via `POST /new`
++/// and returns the login parameters for the webimap transport.
++async fn login_param_from_webimap_account_qr(
++    context: &Context,
++    qr: &str,
++) -> Result<EnteredLoginParam> {
++    let host = decode_webimap_host(qr)?;
++    let url = format!("{}/new", crate::webimap::base_url(&host));
++    let (status, response) = crate::net::http::request(
++        context,
++        "POST",
++        &url,
++        &[],
++        None,
++        crate::webimap::REQUEST_TIMEOUT,
++        false,
++    )
++    .await?;
++    let response_text = String::from_utf8_lossy(&response.blob);
++    if !(200..300).contains(&status) {
++        bail!("Cannot create account on {host}, status {status}:\n{response_text:?}");
++    }
++    let CreateAccountSuccessResponse { password, email } = serde_json::from_str(&response_text)
++        .with_context(|| {
++            format!("Cannot create account, response is malformed:\n{response_text:?}")
++        })?;
++
++    Ok(EnteredLoginParam {
++        addr: email,
++        imap: EnteredImapLoginParam {
++            server: host.to_string(),
++            password,
++            ..Default::default()
++        },
++        smtp: Default::default(),
++        certificate_checks: EnteredCertificateChecks::Strict,
++        oauth2: false,
++        webimap: true,
++    })
++}
++
+ /// Sets configuration values from a QR code.
+ /// "DCACCOUNT:" and "DCLOGIN:" QR codes configure `context`, but I/O mustn't be started for such QR
+ /// codes, consider using [`Context::add_transport_from_qr`] which also restarts I/O.
+diff --git a/src/qr/dclogin_scheme.rs b/src/qr/dclogin_scheme.rs
+index 5e179513c..5e0296254 100644
+--- a/src/qr/dclogin_scheme.rs
++++ b/src/qr/dclogin_scheme.rs
+@@ -197,6 +197,7 @@ pub(crate) fn login_param_from_login_qr(
+                 },
+                 certificate_checks: certificate_checks.unwrap_or_default(),
+                 oauth2: false,
++                webimap: false,
+             };
+             Ok(param)
+         }
+diff --git a/src/qr/qr_tests.rs b/src/qr/qr_tests.rs
+index 71c631f90..883c01935 100644
+--- a/src/qr/qr_tests.rs
++++ b/src/qr/qr_tests.rs
+@@ -731,7 +731,8 @@ async fn test_decode_account() -> Result<()> {
+         assert_eq!(
+             qr,
+             Qr::Account {
+-                domain: "example.org".to_string()
++                domain: "example.org".to_string(),
++                webimap: false,
+             }
+         );
+     }
+@@ -739,6 +740,43 @@ async fn test_decode_account() -> Result<()> {
+     Ok(())
+ }
+ 
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_decode_webimap_account() -> Result<()> {
++    let ctx = TestContext::new().await;
++
++    for (text, host) in [
++        ("webimapaccount:example.org", "example.org"),
++        ("WEBIMAPACCOUNT:example.org", "example.org"),
++        ("webimapaccount:1.2.3.4:8443", "1.2.3.4:8443"),
++        ("webimapaccount:localhost:8080", "localhost:8080"),
++        ("webimapaccount:[::1]:8443", "[::1]:8443"),
++    ] {
++        let qr = check_qr(&ctx.ctx, text).await?;
++        assert_eq!(
++            qr,
++            Qr::Account {
++                domain: host.to_string(),
++                webimap: true,
++            }
++        );
++    }
++
++    for text in [
++        "webimapaccount:",
++        "webimapaccount:example.org/new",
++        // Userinfo would display trusted.org but connect to evil.com.
++        "webimapaccount:trusted.org@evil.com",
++        "webimapaccount:example.org?q",
++        "webimapaccount:example.org#f",
++        "webimapaccount:h ost",
++    ] {
++        let qr = check_qr(&ctx.ctx, text).await;
++        assert!(qr.is_err(), "Invalid {text:?} is parsed as webimapaccount");
++    }
++
++    Ok(())
++}
++
+ /// Tests that decoding empty `dcaccount://` URL results in an error.
+ /// We should not suggest trying to configure an account in this case.
+ /// Such links may be created by copy-paste error or because of incorrect parsing.
+diff --git a/src/scheduler.rs b/src/scheduler.rs
+index a2324ae9a..b9cee9912 100644
+--- a/src/scheduler.rs
++++ b/src/scheduler.rs
+@@ -641,7 +641,18 @@ pub async fn start(ctx: &Context) -> Result<Self> {
+             let (inbox_start_send, inbox_start_recv) = oneshot::channel();
+             let handle = {
+                 let ctx = ctx.clone();
+-                task::spawn(inbox_loop(ctx, inbox_start_send, inbox_handlers))
++                // webimap transports (madmail) receive over HTTP long-polling
++                // instead of IMAP.
++                if configured_login_param.webimap {
++                    task::spawn(crate::webimap::webimap_loop(
++                        ctx,
++                        inbox_start_send,
++                        inbox_handlers,
++                        configured_login_param.clone(),
++                    ))
++                } else {
++                    task::spawn(inbox_loop(ctx, inbox_start_send, inbox_handlers))
++                }
+             };
+             let addr = configured_login_param.addr.clone();
+             let folder = configured_login_param
+@@ -915,7 +926,7 @@ fn stop(&self) {
+ }
+ 
+ #[derive(Debug)]
+-struct ImapConnectionHandlers {
+-    connection: Imap,
+-    stop_token: CancellationToken,
++pub(crate) struct ImapConnectionHandlers {
++    pub(crate) connection: Imap,
++    pub(crate) stop_token: CancellationToken,
+ }
+diff --git a/src/smtp.rs b/src/smtp.rs
+index de53df70c..f88a9d298 100644
+--- a/src/smtp.rs
++++ b/src/smtp.rs
+@@ -92,6 +92,11 @@ pub async fn connect_configured(&mut self, context: &Context) -> Result<()> {
+         let (_transport_id, lp) = ConfiguredLoginParam::load(context)
+             .await?
+             .context("Not configured")?;
++        if lp.webimap {
++            // webimap transports (madmail) have no SMTP connection,
++            // sending goes over HTTP in `webimap::smtp_send()`.
++            return Ok(());
++        }
+         let proxy_config = ProxyConfig::load(context).await?;
+         self.connect(
+             context,
+@@ -193,6 +198,48 @@ pub(crate) async fn smtp_send(
+ 
+     smtp.connectivity.set_working(context);
+ 
++    // webimap transports (madmail) send over HTTP POST instead of SMTP.
++    // This is the single choke point for messages, MDNs, sync and status updates.
++    let status = match ConfiguredLoginParam::load(context).await {
++        Err(err) => {
++            smtp.last_send_error = Some(format!("{err:#}"));
++            return SendResult::Retry;
++        }
++        Ok(Some((_transport_id, lp))) if lp.webimap => {
++            crate::webimap::smtp_send(context, &lp, recipients, message, smtp).await
++        }
++        Ok(_) => smtp_send_over_smtp(context, recipients, message, smtp).await,
++    };
++
++    if let SendResult::Failure(err) = &status
++        && let Some(msg_id) = msg_id
++    {
++        // We couldn't send the message, so mark it as failed
++        match Message::load_from_db(context, msg_id).await {
++            Ok(mut msg) => {
++                if let Err(err) = message::set_msg_failed(context, &mut msg, &err.to_string()).await
++                {
++                    error!(context, "Failed to mark {msg_id} as failed: {err:#}.");
++                }
++            }
++            Err(err) => {
++                error!(
++                    context,
++                    "Failed to load {msg_id} to mark it as failed: {err:#}."
++                );
++            }
++        }
++    }
++    status
++}
++
++/// Tries to send a message over the SMTP protocol.
++async fn smtp_send_over_smtp(
++    context: &Context,
++    recipients: &[async_smtp::EmailAddress],
++    message: &str,
++    smtp: &mut Smtp,
++) -> SendResult {
+     if let Err(err) = smtp
+         .connect_configured(context)
+         .await
+@@ -310,25 +357,6 @@ pub(crate) async fn smtp_send(
+         Ok(()) => SendResult::Success,
+     };
+ 
+-    if let SendResult::Failure(err) = &status
+-        && let Some(msg_id) = msg_id
+-    {
+-        // We couldn't send the message, so mark it as failed
+-        match Message::load_from_db(context, msg_id).await {
+-            Ok(mut msg) => {
+-                if let Err(err) = message::set_msg_failed(context, &mut msg, &err.to_string()).await
+-                {
+-                    error!(context, "Failed to mark {msg_id} as failed: {err:#}.");
+-                }
+-            }
+-            Err(err) => {
+-                error!(
+-                    context,
+-                    "Failed to load {msg_id} to mark it as failed: {err:#}."
+-                );
+-            }
+-        }
+-    }
+     status
+ }
+ 
+diff --git a/src/transport.rs b/src/transport.rs
+index 97d5f5b02..1dccfcae0 100644
+--- a/src/transport.rs
++++ b/src/transport.rs
+@@ -202,6 +202,10 @@ pub(crate) struct ConfiguredLoginParam {
+ 
+     /// If true, login via OAUTH2 (not recommended anymore)
+     pub oauth2: bool,
++
++    /// If true, mail access goes over madmail's webimap HTTP API
++    /// instead of IMAP/SMTP.
++    pub webimap: bool,
+ }
+ 
+ /// JSON representation of ConfiguredLoginParam
+@@ -225,6 +229,8 @@ pub(crate) struct ConfiguredLoginParamJson {
+     pub provider_id: Option<String>,
+     pub certificate_checks: ConfiguredCertificateChecks,
+     pub oauth2: bool,
++    #[serde(default)]
++    pub webimap: bool,
+ }
+ 
+ impl fmt::Display for ConfiguredLoginParam {
+@@ -584,6 +590,7 @@ pub(crate) async fn load_legacy(context: &Context) -> Result<Option<Self>> {
+             certificate_checks,
+             provider,
+             oauth2,
++            webimap: false,
+         }))
+     }
+ 
+@@ -628,6 +635,7 @@ pub(crate) fn from_json(json: &str) -> Result<Self> {
+             provider,
+             certificate_checks: json.certificate_checks,
+             oauth2: json.oauth2,
++            webimap: json.webimap,
+         })
+     }
+ 
+@@ -664,6 +672,7 @@ fn from(configured_login_param: ConfiguredLoginParam) -> Self {
+             provider_id: configured_login_param.provider.map(|p| p.id.to_string()),
+             certificate_checks: configured_login_param.certificate_checks,
+             oauth2: configured_login_param.oauth2,
++            webimap: configured_login_param.webimap,
+         }
+     }
+ }
+diff --git a/src/transport/transport_tests.rs b/src/transport/transport_tests.rs
+index b06cea918..294a39e70 100644
+--- a/src/transport/transport_tests.rs
++++ b/src/transport/transport_tests.rs
+@@ -50,13 +50,14 @@ async fn test_save_load_login_param() -> Result<()> {
+         provider: None,
+         certificate_checks: ConfiguredCertificateChecks::Strict,
+         oauth2: false,
++        webimap: false,
+     };
+ 
+     param
+         .clone()
+         .save_to_transports_table(&t, &EnteredLoginParam::default(), time())
+         .await?;
+-    let expected_param = r#"{"addr":"alice@example.org","imap":[{"connection":{"host":"imap.example.com","port":123,"security":"Starttls"},"user":"alice"}],"imap_folder":"Folder","imap_user":"","imap_password":"foo","smtp":[{"connection":{"host":"smtp.example.com","port":456,"security":"Tls"},"user":"alice@example.org"}],"smtp_user":"","smtp_password":"bar","provider_id":null,"certificate_checks":"Strict","oauth2":false}"#;
++    let expected_param = r#"{"addr":"alice@example.org","imap":[{"connection":{"host":"imap.example.com","port":123,"security":"Starttls"},"user":"alice"}],"imap_folder":"Folder","imap_user":"","imap_password":"foo","smtp":[{"connection":{"host":"smtp.example.com","port":456,"security":"Tls"},"user":"alice@example.org"}],"smtp_user":"","smtp_password":"bar","provider_id":null,"certificate_checks":"Strict","oauth2":false,"webimap":false}"#;
+     assert_eq!(
+         t.sql
+             .query_get_value::<String>("SELECT configured_param FROM transports", ())
+@@ -175,6 +176,7 @@ async fn test_posteo_alias() -> Result<()> {
+         provider: get_provider_by_id("posteo"),
+         certificate_checks: ConfiguredCertificateChecks::Strict,
+         oauth2: false,
++        webimap: false,
+     };
+ 
+     let loaded = ConfiguredLoginParam::load_legacy(&t).await?.unwrap();
+@@ -294,6 +296,7 @@ fn dummy_configured_login_param(
+         provider,
+         certificate_checks: ConfiguredCertificateChecks::Automatic,
+         oauth2: false,
++        webimap: false,
+     }
+ }
+ 
+diff --git a/src/webimap.rs b/src/webimap.rs
+new file mode 100644
+index 000000000..3a96148f1
+--- /dev/null
++++ b/src/webimap.rs
+@@ -0,0 +1,364 @@
++//! # WebIMAP transport (madmail).
++//!
++//! Mail access over an HTTPS REST API instead of IMAP/SMTP,
++//! as implemented by madmail's webimap/websmtp
++//! (<https://github.com/themadorg/madmail>, TDD doc `10-webimap.md`).
++//! Browsers can speak it directly (CORS `*`), no TCP proxy needed:
++//!
++//! * `GET /webimap/messages?since_uid=N&wait=S` long-polls for messages,
++//! * `GET /webimap/message/{uid}` returns the raw RFC 5322 message,
++//! * `DELETE /webimap/message/{uid}` deletes it,
++//! * `POST /webimap/send` submits mail.
++//!
++//! Authentication is the `X-Email`/`X-Password` header pair.
++
++use std::time::Duration;
++
++use anyhow::{Context as _, Result, bail, format_err};
++use futures_lite::FutureExt;
++use serde::Deserialize;
++use tokio::sync::oneshot;
++
++use crate::context::Context;
++use crate::events::EventType;
++use crate::imap::Imap;
++use crate::log::warn;
++use crate::net::http::request;
++use crate::receive_imf::receive_imf_inner;
++use crate::scheduler::ImapConnectionHandlers;
++use crate::smtp::{SendResult, Smtp};
++use crate::transport::ConfiguredLoginParam;
++
++/// Seconds the server is asked to keep a message long-poll open.
++const LONG_POLL_WAIT_SECS: u64 = 60;
++
++/// Client-side timeout for ordinary webimap API requests;
++/// long polls use [`LONG_POLL_WAIT_SECS`] plus slack instead.
++pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
++
++/// Returns the HTTP base URL for a webimap instance at `host` (`host[:port]`).
++pub(crate) fn base_url(host: &str) -> String {
++    // ponytail: plain http is a test hatch so mock-server e2e tests can run
++    // without TLS plumbing; everything except localhost — spelled
++    // `localhost`, `127.0.0.1` or IPv6 `[::1]` — is always https.
++    let name = if let Some(rest) = host.strip_prefix('[') {
++        // Bracketed IPv6 literal, `[::1]` or `[::1]:8443`.
++        rest.split(']').next().unwrap_or(rest)
++    } else {
++        host.split(':').next().unwrap_or(host)
++    };
++    if name == "localhost" || name == "127.0.0.1" || name == "::1" {
++        format!("http://{host}")
++    } else {
++        format!("https://{host}")
++    }
++}
++
++/// Message metadata returned by `GET /webimap/messages`.
++#[derive(Debug, Deserialize)]
++struct MessageMeta {
++    uid: u32,
++}
++
++/// Message returned by `GET /webimap/message/{uid}`;
++/// `body` is the full raw RFC 5322 message.
++#[derive(Debug, Deserialize)]
++struct MessageBody {
++    body: String,
++}
++
++/// Authenticated client for one webimap account.
++pub(crate) struct WebimapClient {
++    base_url: String,
++    addr: String,
++    password: String,
++}
++
++impl WebimapClient {
++    /// Creates a client from configured login parameters.
++    pub(crate) fn new(lp: &ConfiguredLoginParam) -> Result<Self> {
++        let host = &lp
++            .imap
++            .first()
++            .context("webimap transport without host")?
++            .connection
++            .host;
++        Ok(Self {
++            base_url: base_url(host),
++            addr: lp.addr.clone(),
++            password: lp.imap_password.clone(),
++        })
++    }
++
++    /// Performs an authenticated request against the webimap API.
++    ///
++    /// Redirects are not followed: they would re-send the credential
++    /// headers to the redirect target.
++    async fn req(
++        &self,
++        context: &Context,
++        method: &str,
++        path: &str,
++        body: Option<String>,
++        timeout: Duration,
++    ) -> Result<(u16, Vec<u8>)> {
++        let url = format!("{}{}", self.base_url, path);
++        let mut headers = vec![
++            ("X-Email", self.addr.as_str()),
++            ("X-Password", self.password.as_str()),
++        ];
++        if body.is_some() {
++            headers.push(("Content-Type", "application/json"));
++        }
++        let (status, response) =
++            request(context, method, &url, &headers, body, timeout, false).await?;
++        Ok((status, response.blob))
++    }
++
++    /// Checks that the server is reachable and the credentials work.
++    pub(crate) async fn verify(&self, context: &Context) -> Result<()> {
++        let (status, body) = self
++            .req(context, "GET", "/webimap/mailboxes", None, REQUEST_TIMEOUT)
++            .await?;
++        if !(200..300).contains(&status) {
++            bail!(
++                "webimap login at {} failed with status {status}: {}",
++                self.base_url,
++                String::from_utf8_lossy(&body)
++            );
++        }
++        Ok(())
++    }
++
++    /// Long-polls the server for messages in INBOX.
++    async fn list_messages(&self, context: &Context) -> Result<Vec<MessageMeta>> {
++        // ponytail: always restart at since_uid=0 instead of persisting UIDs;
++        // processed messages are deleted from the server and receive_imf()
++        // dedups reruns by Message-ID anyway.
++        let (status, body) = self
++            .req(
++                context,
++                "GET",
++                &format!("/webimap/messages?since_uid=0&wait={LONG_POLL_WAIT_SECS}"),
++                None,
++                // The server may hold the poll open for the full wait;
++                // only give up well after that.
++                Duration::from_secs(LONG_POLL_WAIT_SECS.saturating_add(30)),
++            )
++            .await?;
++        if !(200..300).contains(&status) {
++            bail!("webimap message listing failed with status {status}");
++        }
++        serde_json::from_slice(&body).context("bad webimap message list")
++    }
++
++    /// Downloads a message, feeds it to receive_imf and deletes it on success.
++    async fn fetch_message(&self, context: &Context, uid: u32) -> Result<()> {
++        let (status, body) = self
++            .req(
++                context,
++                "GET",
++                &format!("/webimap/message/{uid}"),
++                None,
++                REQUEST_TIMEOUT,
++            )
++            .await?;
++        if !(200..300).contains(&status) {
++            bail!("webimap fetch of UID {uid} failed with status {status}");
++        }
++        let message: MessageBody = serde_json::from_slice(&body).context("bad webimap message")?;
++        let raw = message.body.as_bytes();
++        let mail = mailparse::parse_mail(raw).context("can't parse mail")?;
++        let rfc724_mid = crate::imap::prefetch_get_message_id(&mail.headers)
++            .unwrap_or_else(crate::imap::create_message_id);
++        receive_imf_inner(context, &rfc724_mid, raw, false).await?;
++        let (status, _body) = self
++            .req(
++                context,
++                "DELETE",
++                &format!("/webimap/message/{uid}"),
++                None,
++                REQUEST_TIMEOUT,
++            )
++            .await?;
++        if !(200..300).contains(&status) {
++            // Failing here makes the caller back off. The message was
++            // processed but stays on the server, so the next long-poll
++            // returns it again immediately; without the backoff that is
++            // a busy loop. receive_imf() dedups the reruns by Message-ID.
++            bail!("webimap delete of UID {uid} failed with status {status}");
++        }
++        Ok(())
++    }
++}
++
++/// Sends a message over the webimap HTTP API.
++///
++/// Reports like `crate::smtp::smtp_send()` does:
++/// updates `last_send_error` on `smtp` and returns the same
++/// [`SendResult`] retry/failure semantics.
++pub(crate) async fn smtp_send(
++    context: &Context,
++    lp: &ConfiguredLoginParam,
++    recipients: &[async_smtp::EmailAddress],
++    message: &str,
++    smtp: &mut Smtp,
++) -> SendResult {
++    let client = match WebimapClient::new(lp) {
++        Ok(client) => client,
++        Err(err) => {
++            smtp.last_send_error = Some(format!("{err:#}"));
++            return SendResult::Failure(err);
++        }
++    };
++    let to: Vec<String> = recipients.iter().map(|addr| addr.to_string()).collect();
++    let body = serde_json::json!({
++        "from": client.addr,
++        "to": to,
++        "body": message,
++    })
++    .to_string();
++    match client
++        .req(
++            context,
++            "POST",
++            "/webimap/send",
++            Some(body),
++            REQUEST_TIMEOUT,
++        )
++        .await
++    {
++        Err(err) => {
++            // Transport error, e.g. server unreachable: retry later.
++            warn!(context, "webimap send failed: {err:#}.");
++            smtp.last_send_error = Some(format!("{err:#}"));
++            SendResult::Retry
++        }
++        Ok((status, _response)) if (200..300).contains(&status) => {
++            smtp.last_send_error = None;
++            SendResult::Success
++        }
++        Ok((status, response)) => {
++            // ponytail: every non-2xx is treated as permanent so PGP-only
++            // rejections surface to the user; split out 5xx as Retry if
++            // madmail servers turn out to return transient errors.
++            let err = format_err!(
++                "webimap send failed with status {status}: {}",
++                String::from_utf8_lossy(&response)
++            );
++            smtp.last_send_error = Some(format!("{err:#}"));
++            SendResult::Failure(err)
++        }
++    }
++}
++
++/// A single receive iteration: long-poll for messages, process and delete them.
++///
++/// Returns whether the poll returned any messages. Empty polls are the
++/// steady state and signal no working/idle transition, so connectivity
++/// does not flap every [`LONG_POLL_WAIT_SECS`].
++async fn fetch_idle(ctx: &Context, client: &WebimapClient, connection: &Imap) -> Result<bool> {
++    let mut msgs = client.list_messages(ctx).await?;
++    if msgs.is_empty() {
++        return Ok(false);
++    }
++    connection.connectivity.set_working(ctx);
++
++    msgs.sort_by_key(|meta| meta.uid);
++    let mut failed = 0;
++    for meta in msgs {
++        // ponytail: a failed message is skipped and retried on the next
++        // round, it stays on the server until successfully processed.
++        if let Err(err) = client.fetch_message(ctx, meta.uid).await {
++            warn!(ctx, "webimap: failed to process UID {}: {err:#}.", meta.uid);
++            failed += 1;
++        }
++    }
++
++    // Erroring here makes the caller back off; without it a message that
++    // fails to process would turn the long-poll into a busy loop
++    // because it is returned again immediately.
++    if failed > 0 {
++        bail!("failed to process {failed} webimap message(s)");
++    }
++    Ok(true)
++}
++
++/// Receiving loop for a webimap transport,
++/// replaces `scheduler::inbox_loop()`.
++pub(crate) async fn webimap_loop(
++    ctx: Context,
++    started: oneshot::Sender<()>,
++    inbox_handlers: ImapConnectionHandlers,
++    lp: ConfiguredLoginParam,
++) {
++    use futures::future::FutureExt;
++
++    info!(ctx, "Starting webimap loop.");
++    let ImapConnectionHandlers {
++        connection,
++        stop_token,
++    } = inbox_handlers;
++
++    let transport_id = connection.transport_id();
++    let ctx1 = ctx.clone();
++    let fut = async move {
++        let ctx = ctx1;
++        if let Err(()) = started.send(()) {
++            warn!(ctx, "Webimap loop, missing started receiver.");
++            return;
++        };
++
++        let client = match WebimapClient::new(&lp) {
++            Ok(client) => client,
++            Err(err) => {
++                warn!(
++                    ctx,
++                    "Transport {transport_id}: invalid webimap configuration: {err:#}."
++                );
++                connection.connectivity.set_err(&ctx, format!("{err:#}"));
++                return;
++            }
++        };
++
++        connection.connectivity.set_connecting(&ctx);
++        // Whether connectivity is already signalled as Idle: transition
++        // only after messages, errors or connects, not on every empty poll.
++        let mut signalled_idle = false;
++        loop {
++            match fetch_idle(&ctx, &client, &connection).await {
++                Ok(had_messages) => {
++                    if had_messages || !signalled_idle {
++                        connection.connectivity.set_idle(&ctx);
++                        ctx.emit_event(EventType::ImapInboxIdle);
++                        signalled_idle = true;
++                    }
++                }
++                Err(err) => {
++                    signalled_idle = false;
++                    warn!(
++                        ctx,
++                        "Transport {transport_id}: webimap fetch failed: {err:#}."
++                    );
++                    connection.connectivity.set_err(&ctx, format!("{err:#}"));
++
++                    // Retry in 30 seconds or when interrupted,
++                    // e.g. because the network came back.
++                    tokio::time::timeout(Duration::from_secs(30), async {
++                        connection.idle_interrupt_receiver.recv().await.ok();
++                    })
++                    .await
++                    .ok();
++                }
++            }
++        }
++    };
++
++    stop_token
++        .cancelled()
++        .map(|_| {
++            info!(ctx, "Transport {transport_id}: Shutting down webimap loop.");
++        })
++        .race(fut)
++        .await;
++}

@@ -1,0 +1,298 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Tue, 7 Jul 2026 21:42:38 +0000
+Subject: [PATCH 11/11] web-app: webimap login toggle + madmail welcome-screen
+ entry
+
+Frontend surface for the madmail WebIMAP transport (HTTP mail access, no
+ws-tcp bridge). madmail-only, hardcoded English per the patch-stack
+convention.
+
+- DefaultCredentials.ts: seed `webimap: null` so LoginForm's key-guard
+  accepts the field. The published @deltachat/jsonrpc-client 2.53.0
+  EnteredLoginParam lacks it (the regenerated local bindings add it), so
+  Credentials is widened locally to keep tsc green.
+- LoginForm.tsx: advanced-collapse Switch after certificateChecks,
+  mirroring the enforce_e2ee row, toggling credentials.webimap.
+- UseWebimapServerDialog.tsx (new): instance-address input feeding the
+  stock instant-onboarding flow via `webimapaccount:<host>` +
+  checkQr/startInstantOnboardingFlow; links to the madmail repo + TDD doc.
+- OnboardingScreen.tsx: third welcome-screen button opening the dialog.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+(cherry picked from commit e93b78f76c5485cf9c70a238bc60d3e2577f6aca)
+---
+ .../frontend/src/components/LoginForm.tsx     |  17 +++
+ .../components/Settings/DefaultCredentials.ts |   5 +-
+ .../components/dialogs/ConnectivityDialog.tsx |   7 ++
+ .../WelcomeScreen/InstantOnboardingScreen.tsx |  12 ++
+ .../WelcomeScreen/OnboardingScreen.tsx        |  13 +++
+ .../WelcomeScreen/UseWebimapServerDialog.tsx  | 109 ++++++++++++++++++
+ .../screens/WelcomeScreen/UserAgreement.tsx   |   6 +
+ 7 files changed, 168 insertions(+), 1 deletion(-)
+ create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
+
+diff --git a/packages/frontend/src/components/LoginForm.tsx b/packages/frontend/src/components/LoginForm.tsx
+index 32c11202e..235e92c1f 100644
+--- a/packages/frontend/src/components/LoginForm.tsx
++++ b/packages/frontend/src/components/LoginForm.tsx
+@@ -298,6 +298,23 @@ export default function LoginForm({
+                 {tx('accept_invalid_certificates')}
+               </option>
+             </DeltaSelect>
++            <div className='delta-form-group delta-switch'>
++              <label>
++                <span>
++                  Use webimap (HTTP mail access — experimental, madmail servers
++                  only)
++                </span>
++                <Switch
++                  checked={credentials.webimap === true}
++                  onChange={() =>
++                    setCredentials({
++                      ...credentials,
++                      webimap: !credentials.webimap,
++                    })
++                  }
++                />
++              </label>
++            </div>
+             <div className='delta-form-group delta-switch'>
+               <label>
+                 <span>{tx('enforce_e2ee')}</span>
+diff --git a/packages/frontend/src/components/Settings/DefaultCredentials.ts b/packages/frontend/src/components/Settings/DefaultCredentials.ts
+index bd2016aae..6ab6dffcc 100644
+--- a/packages/frontend/src/components/Settings/DefaultCredentials.ts
++++ b/packages/frontend/src/components/Settings/DefaultCredentials.ts
+@@ -1,6 +1,8 @@
+ import { T } from '@deltachat/jsonrpc-client'
+ 
+-export type Credentials = T.EnteredLoginParam
++// `webimap` is added by the regenerated local jsonrpc bindings; the published
++// 2.53.0 package does not have it yet, so widen locally to keep tsc green.
++export type Credentials = T.EnteredLoginParam & { webimap?: boolean | null }
+ 
+ export type ProxySettings = {
+   proxyEnabled: boolean
+@@ -28,6 +30,7 @@ export function defaultCredentials(credentials?: Credentials): Credentials {
+     smtpPort: null,
+     smtpSecurity: null,
+     oauth2: null,
++    webimap: null,
+   }
+ 
+   return { ...defaultCredentials, ...credentials }
+diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+index aa1286215..3ec99b6f5 100644
+--- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
++++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+@@ -103,9 +103,16 @@ function ConnectivityDialogInner() {
+ function BrowserBridgeInfo() {
+   const bridge = (window as any).__slothfulchatBridge
+   if (runtime.getRuntimeInfo().target !== 'browser' || !bridge) return null
++  // reachable() is null until first probed, false when down. Show the "not
++  // reachable" note here for accounts that still work over a webimap transport
++  // (their intrusive toast is suppressed — see runtime.ts checkBridge).
++  const reachable: boolean | null = bridge.reachable ? bridge.reachable() : null
+   return (
+     <div style={{ marginTop: '8px', fontSize: '13px' }}>
+       Bridge: <code>{bridge.url()}</code>{' '}
++      {reachable === false && (
++        <span style={{ color: '#c0392b' }}>⚠ not reachable</span>
++      )}{' '}
+       <button type='button' onClick={() => bridge.openDialog()}>
+         Change…
+       </button>
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+index 58ab5d86d..dc53ee49e 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+@@ -95,6 +95,18 @@ export default function InstantOnboardingScreen({
+     }
+   }
+ 
++  // webimap accounts don't use the WS→TCP bridge, so tell the runtime to hide
++  // its "bridge not reachable" notice while onboarding one of them. (Standard
++  // chatmail onboarding still shows it — those accounts do need the bridge.)
++  const isWebimapOnboarding =
++    welcomeQr?.qr.kind === 'account' && (welcomeQr.qr as any).webimap === true
++  useEffect(() => {
++    ;(window as any).__slothfulchatSuppressBridgeWarning = isWebimapOnboarding
++    return () => {
++      ;(window as any).__slothfulchatSuppressBridgeWarning = false
++    }
++  }, [isWebimapOnboarding])
++
+   // do not do that inside of `onChangeDisplayName`,
+   // because that function is called on every keypress
+   const saveDisplayName = () =>
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+index 780f5b3b1..c39e833ac 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+@@ -1,6 +1,7 @@
+ import React from 'react'
+ 
+ import AlternativeSetupsDialog from './AlternativeSetupsDialog'
++import UseWebimapServerDialog from './UseWebimapServerDialog'
+ import Button from '../../Button'
+ import useDialog from '../../../hooks/dialog/useDialog'
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+@@ -33,6 +34,12 @@ export default function OnboardingScreen(props: Props) {
+     })
+   }
+ 
++  const onUseWebimapServer = () => {
++    openDialog(UseWebimapServerDialog, {
++      selectedAccountId: props.selectedAccountId,
++    })
++  }
++
+   const onSubmit = (event: React.FormEvent) => {
+     event.preventDefault()
+     props.onNextStep()
+@@ -82,6 +89,12 @@ export default function OnboardingScreen(props: Props) {
+               >
+                 {tx('onboarding_alternative_logins')}
+               </Button>
++              <Button
++                className={styles.welcomeScreenButton}
++                onClick={onUseWebimapServer}
++              >
++                madmail server — no bridge needed, extra experimental
++              </Button>
+             </div>
+             <br /> {/* space after buttons */}
+           </form>
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
+new file mode 100644
+index 000000000..33d3c6b6f
+--- /dev/null
++++ b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
+@@ -0,0 +1,109 @@
++import React, { useState } from 'react'
++
++import Button from '../../Button'
++import Dialog, { DialogBody, DialogContent, DialogHeader } from '../../Dialog'
++import { ClickableLink } from '../../helpers/ClickableLink'
++import { DeltaInput } from '../../Login-Styles'
++
++import useInstantOnboarding from '../../../hooks/useInstantOnboarding'
++import { BackendRemote } from '../../../backend-com'
++
++import styles from './styles.module.scss'
++
++import type { DialogProps } from '../../../contexts/DialogContext'
++
++type Props = {
++  selectedAccountId: number
++}
++
++export default function UseWebimapServerDialog({
++  onClose,
++  selectedAccountId,
++}: DialogProps & Props) {
++  const { startInstantOnboardingFlow } = useInstantOnboarding()
++
++  const [host, setHost] = useState('')
++  const [error, setError] = useState<string | null>(null)
++
++  const onSubmit = async (event: React.FormEvent) => {
++    event.preventDefault()
++
++    // Be forgiving about pasted URLs: strip a scheme prefix and trailing
++    // slashes — the QR payload wants a bare host[:port].
++    const trimmed = host
++      .trim()
++      .replace(/^https?:\/\//i, '')
++      .replace(/\/+$/, '')
++    if (trimmed === '') {
++      setError('This does not look like a valid server address.')
++      return
++    }
++
++    const url = `webimapaccount:${trimmed}`
++    let qr: any
++    try {
++      // checkQr throws (rather than returning another kind) when core rejects
++      // the host — without the catch that's an unhandled rejection and the
++      // dialog silently does nothing.
++      qr = await BackendRemote.rpc.checkQr(selectedAccountId, url)
++    } catch {
++      setError('This does not look like a valid server address.')
++      return
++    }
++    if (!qr || qr.kind !== 'account') {
++      setError('This does not look like a valid server address.')
++      return
++    }
++
++    onClose()
++    await startInstantOnboardingFlow({ qr, url } as any)
++  }
++
++  return (
++    <Dialog onClose={onClose}>
++      <DialogHeader title='Use a madmail webimap server' onClose={onClose} />
++      <DialogBody>
++        <DialogContent>
++          <p>
++            This is even more experimental than the rest of this prototype. It
++            needs NO proxy or bridge, and only works with madmail servers that
++            have webimap enabled.
++          </p>
++          <p>
++            <ClickableLink href='https://github.com/themadorg/madmail'>
++              github.com/themadorg/madmail
++            </ClickableLink>
++            <br />
++            <ClickableLink href='https://github.com/themadorg/madmail/blob/main/docs/TDD/10-webimap.md'>
++              webimap docs (TDD 10-webimap)
++            </ClickableLink>
++          </p>
++          <form onSubmit={onSubmit}>
++            <DeltaInput
++              key='webimapHost'
++              id='webimapHost'
++              placeholder='IP address or domain, e.g. 10.0.0.5 or mail.example.org'
++              value={host}
++              onChange={event => {
++                setHost(event.target.value)
++                if (error) {
++                  setError(null)
++                }
++              }}
++              autoFocus={true}
++            />
++            {error && <p className={styles.inputError}>{error}</p>}
++            <Button
++              type='submit'
++              className={styles.welcomeScreenButton}
++              styling='primary'
++            >
++              Use this server
++            </Button>
++          </form>
++          <br /> {/* space after buttons */}
++        </DialogContent>
++      </DialogBody>
++    </Dialog>
++  )
++}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
+index bbfe900af..6e40c33ae 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
+@@ -24,6 +24,12 @@ function extractLinkFromQrCode(qrWithUrl: QrWithUrl<AccountQr>) {
+     return origin
+   }
+ 
++  // webimap QR codes are `webimapaccount:host` (bare host, no scheme) — the
++  // server is always reached over https, so make the link a real URL.
++  if ((qrWithUrl.qr as any).webimap) {
++    return `https://${qrWithUrl.qr.domain}`
++  }
++
+   return qrWithUrl.qr.domain
+ }
+ 

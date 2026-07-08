@@ -1124,9 +1124,13 @@ function showWelcomeHint() {
       textAlign: 'center',
       cursor: 'pointer',
     },
-    '⚠ Bridge not reachable — a connection is needed to create a profile. Click to fix.'
+    '⚠ Bridge not reachable — needed for standard accounts, but not for madmail webimap servers. Click to fix.'
   )
   hint.id = 'sc-bridge-hint'
+  // The onboarding button group lives inside a <form>; a button with no type
+  // defaults to type="submit", so without this the hint would also submit the
+  // display-name form. It should only open the dialog.
+  hint.type = 'button'
   hint.onclick = () => showBridgeDialog()
   group.prepend(hint)
 }
@@ -1314,26 +1318,72 @@ function showBridgeDialog() {
   overlay.showModal()
 }
 
-// On the welcome screen nothing works without a bridge (no account can be
-// created), so open the full dialog once instead of hoping the user spots the
-// toast — which is also inert there (under the welcome screen's modal).
-let bridgeDialogAutoOpened = false
+// Last bridge probe result, surfaced to the (patched) ConnectivityDialog via
+// window.__slothfulchatBridge.reachable(). null = unknown / not probed.
+let bridgeReachable: boolean | null = null
+
+/** How the selected account relates to the WS→TCP bridge:
+ *  - 'none': webimap-only — never uses the bridge, don't probe or warn.
+ *  - 'required': sending needs the bridge (bridge-only account, or a mixed one
+ *    whose PRIMARY transport is IMAP/SMTP — core routes all sends through the
+ *    primary transport only), or no account / unconfigured yet. An intrusive
+ *    toast is warranted when the bridge is down.
+ *  - 'fallback': mixed account whose primary transport is webimap — sending
+ *    and primary receive work without the bridge; only the secondary IMAP
+ *    transport's receive stalls. Not worth blocking the UI: the connectivity
+ *    view reports the bridge state instead.
+ * Best-effort: on any error, assume 'required'. */
+async function bridgeNeed(): Promise<'none' | 'required' | 'fallback'> {
+  const accId = (window as any).__selectedAccountId as number | undefined
+  if (accId == null) return 'required'
+  try {
+    const rpc = getCore().dc.rpc
+    const transports = await rpc.listTransports(accId)
+    if (transports.length === 0) return 'required'
+    const hasBridge = transports.some(t => !(t as any).webimap)
+    if (!hasBridge) return 'none'
+    const primaryAddr = (
+      (await rpc.getConfig(accId, 'configured_addr')) ?? ''
+    ).toLowerCase()
+    const primary = transports.find(
+      t => (t.addr ?? '').toLowerCase() === primaryAddr
+    )
+    return (primary as any)?.webimap ? 'fallback' : 'required'
+  } catch {
+    return 'required'
+  }
+}
 
 async function checkBridge(): Promise<boolean> {
+  // The frontend sets this while onboarding a bridge-free account (madmail
+  // webimap) — suppress the notice so it doesn't wrongly nag on that flow.
+  if ((window as any).__slothfulchatSuppressBridgeWarning) {
+    hideBridgeToast()
+    hideWelcomeHint()
+    return true
+  }
+  const need = await bridgeNeed()
+  if (need === 'none') {
+    // webimap-only account: the bridge is irrelevant, don't even probe.
+    bridgeReachable = null
+    hideBridgeToast()
+    hideWelcomeHint()
+    return true
+  }
   const ok = await probeBridge(resolveBridgeUrl())
-  if (ok) {
+  bridgeReachable = ok
+  if (ok || need === 'fallback') {
+    // Up, or the account can still work over webimap — no intrusive toast.
+    // (For 'fallback' when down, the connectivity view shows the bridge state.)
     hideBridgeToast()
     hideWelcomeHint()
   } else {
     showBridgeToast()
     showWelcomeHint()
-    if (
-      !bridgeDialogAutoOpened &&
-      document.querySelector('[class*="welcomeScreen"]')
-    ) {
-      bridgeDialogAutoOpened = true
-      showBridgeDialog()
-    }
+    // ponytail: no longer auto-opens the modal over the welcome screen — that
+    // screen now offers a bridge-free path (madmail webimap), so blocking it
+    // wrongly implies every account needs the bridge. The toast + clickable
+    // hint stay for standard (IMAP/SMTP) accounts.
   }
   return ok
 }
@@ -1356,5 +1406,6 @@ if (typeof window !== 'undefined') {
   ;(window as any).__slothfulchatBridge = {
     url: resolveBridgeUrl,
     openDialog: showBridgeDialog,
+    reachable: () => bridgeReachable,
   }
 }

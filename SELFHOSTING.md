@@ -8,6 +8,11 @@ You host **two things**:
    TCP. See [`packages/ws-tcp-proxy`](packages/ws-tcp-proxy/README.md). TLS
    terminates inside the browser, so the bridge only ever relays ciphertext.
 
+> Exception: accounts on the experimental **webimap** transport (madmail
+> servers, see the README's webimap section) talk plain HTTPS and don't use the
+> bridge at all — if all your accounts are webimap, you only host the static
+> site.
+
 The app is configured entirely through **build-time environment variables** —
 nothing is baked into the source, so your instance name, imprint, and default
 bridge live in your CI/host config, not in the repo.
