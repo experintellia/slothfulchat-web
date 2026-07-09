@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Tue, 7 Jul 2026 21:42:38 +0000
-Subject: [PATCH 11/21] web-app: webimap login toggle + madmail welcome-screen
+Subject: [PATCH 11/24] web-app: webimap login toggle + madmail welcome-screen
  entry
 
 Frontend surface for the madmail WebIMAP transport (HTTP mail access, no

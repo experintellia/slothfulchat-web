@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Thu, 9 Jul 2026 14:59:39 +0000
-Subject: [PATCH 20/21] web-app: full-screen big dialogs on mobile viewports
+Subject: [PATCH 20/24] web-app: full-screen big dialogs on mobile viewports
 
 Add a fullscreenOnMobile prop to <Dialog>/<DialogWithHeader> that, below
 the $dialog-breakpoint (500px), expands the dialog to fill the viewport:
@@ -211,10 +211,10 @@ index 2c5908172..c3e736d6b 100644
          title={tx('menu_settings')}
          onClose={onClose}
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 1a6cbd8b6..19181fae9 100644
+index 614c2c3d8..592629ef0 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
-@@ -47,6 +47,7 @@ export default function About({ onClose }: DialogProps) {
+@@ -45,6 +45,7 @@ export default function About({ onClose }: DialogProps) {
        width={400}
        title={tx('global_menu_help_about_desktop')}
        onClose={onClose}

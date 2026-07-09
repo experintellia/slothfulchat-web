@@ -11,21 +11,23 @@ import { buildConfig, configJs, imprintHtml, patchBootError, patchManifest, patc
 const here = fileURLToPath(new URL('.', import.meta.url))
 const repo = join(here, '..', '..')
 
-// Source commit shown in the About dialog. Best-effort: shallow clones/CI
-// checkouts without .git history just leave the About dialog's commit line
-// blank instead of failing the build.
-function gitBuildMeta() {
+// Version + source commit shown in the About dialog/log. Best-effort:
+// shallow clones/CI checkouts without .git history just leave the commit
+// line blank instead of failing the build.
+async function gitBuildMeta() {
+  const { version } = JSON.parse(await readFile(join(here, 'package.json'), 'utf-8'))
   try {
     const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf-8' }).trim()
     // A build from a dirty tree gets attributed to the clean HEAD commit
     // otherwise — exactly the case where "which commit is this" misleads.
     const dirty = git('status', '--porcelain') !== ''
     return {
+      version,
       commitHash: git('rev-parse', '--short', 'HEAD') + (dirty ? '-dirty' : ''),
       commitMessage: git('log', '-1', '--pretty=%s'),
     }
   } catch {
-    return { commitHash: '', commitMessage: '' }
+    return { version, commitHash: '', commitMessage: '' }
   }
 }
 const upstreamDist = join(repo, 'build/desktop/packages/target-browser/dist')
@@ -117,7 +119,7 @@ await writeFile(join(dist, 'themes.json'), JSON.stringify(themes, null, 2))
 // the vars, config.js shape and imprint template live in instance-config.mjs,
 // shared with customize.mjs (which re-applies them to a prebuilt release zip).
 const env = process.env
-const config = buildConfig(env, gitBuildMeta())
+const config = buildConfig(env, await gitBuildMeta())
 
 // `window.__slothfulConfig` must load before runtime.js (main + index). A
 // separate file, not an inline script: the CSP is script-src 'self' and an
