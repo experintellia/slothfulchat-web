@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Thu, 9 Jul 2026 14:59:39 +0000
-Subject: [PATCH 20/20] web-app: full-screen big dialogs on mobile viewports
+Subject: [PATCH 20/21] web-app: full-screen big dialogs on mobile viewports
 
 Add a fullscreenOnMobile prop to <Dialog>/<DialogWithHeader> that, below
 the $dialog-breakpoint (500px), expands the dialog to fill the viewport:
