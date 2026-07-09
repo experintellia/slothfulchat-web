@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Thu, 9 Jul 2026 13:49:59 +0000
+Subject: [PATCH 19/19] web-app: buttonify About dialog links with
+ settings-style buttons
+
+Replace the plain text links in the About dialog (Delta Chat website,
+GitHub, Imprint) with SettingsIconButton rows, matching the Settings
+view. External web links carry an open_in_new indicator to signal they
+leave the app; Imprint (a local page) does not. Adds buttons for the
+SlothfulChat GitHub repo and the published changelog (GitHub releases).
+---
+ .../src/components/dialogs/About/index.tsx    | 59 +++++++++++++------
+ 1 file changed, 41 insertions(+), 18 deletions(-)
+
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index f6bf017c7..0d0deaa19 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -12,11 +12,17 @@ import {
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+ import useDialog from '../../../hooks/dialog/useDialog'
+ import { LogDialog } from '../Log'
++import SettingsIconButton from '../../Settings/SettingsIconButton'
++import SettingsSeparator from '../../Settings/SettingsSeparator'
+ 
+ import styles from './styles.module.scss'
+ 
+ import type { DialogProps } from '../../../contexts/DialogContext'
+-import { ClickableLink } from '../../helpers/ClickableLink'
++
++const GITHUB_URL = 'https://github.com/experintellia/slothfulchat-web'
++const CHANGELOG_URL =
++  'https://github.com/experintellia/slothfulchat-web/releases'
++const DELTA_CHAT_URL = 'https://delta.chat'
+ 
+ export default function About({ onClose }: DialogProps) {
+   const tx = useTranslationFunction()
+@@ -75,11 +81,6 @@ export default function About({ onClose }: DialogProps) {
+                 </>
+               )}
+             </div>
+-            <div>
+-              <ClickableLink href={'https://delta.chat'}>
+-                {'https://delta.chat'}
+-              </ClickableLink>
+-            </div>
+             <p style={{ marginTop: 16, textAlign: 'left', fontSize: 13 }}>
+               <b>slothfulchat-web</b> is an unofficial experiment. It runs Delta
+               Chat's chatmail core — the same core behind the Delta Chat
+@@ -88,20 +89,42 @@ export default function About({ onClose }: DialogProps) {
+               affiliated with Delta Chat. A WS→TCP bridge is required to send
+               and receive.
+             </p>
+-            <div>
+-              <ClickableLink
+-                href={'https://github.com/experintellia/slothfulchat-web'}
+-              >
+-                {'github.com/experintellia/slothfulchat-web'}
+-              </ClickableLink>
+-            </div>
+-            <div style={{ marginTop: 8 }}>
+-              <ClickableLink href={new URL('imprint.html', document.baseURI).href}>
+-                {'Imprint'}
+-              </ClickableLink>
+-            </div>
+           </div>
+         </DialogContent>
++        <SettingsSeparator />
++        <SettingsIconButton
++          icon='code-tags'
++          isLink
++          onClick={() => runtime.openLink(GITHUB_URL)}
++          dataTestid='about-github'
++        >
++          {'SlothfulChat on GitHub'}
++        </SettingsIconButton>
++        <SettingsIconButton
++          icon='sell'
++          isLink
++          onClick={() => runtime.openLink(CHANGELOG_URL)}
++          dataTestid='about-changelog'
++        >
++          {'Changelog'}
++        </SettingsIconButton>
++        <SettingsIconButton
++          icon='chat_bubble'
++          isLink
++          onClick={() => runtime.openLink(DELTA_CHAT_URL)}
++          dataTestid='about-delta-chat'
++        >
++          {'Delta Chat website'}
++        </SettingsIconButton>
++        <SettingsIconButton
++          icon='info'
++          onClick={() =>
++            runtime.openLink(new URL('imprint.html', document.baseURI).href)
++          }
++          dataTestid='about-imprint'
++        >
++          {'Imprint'}
++        </SettingsIconButton>
+       </DialogBody>
+       <DialogFooter>
+         <FooterActions align='spaceBetween'>
