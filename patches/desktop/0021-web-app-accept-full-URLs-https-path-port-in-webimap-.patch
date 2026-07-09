@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 9 Jul 2026 20:55:05 +0000
+Subject: [PATCH 21/21] web-app: accept full URLs (https, path, port) in
+ webimap host input
+
+Parse the pasted value as a URL and take only its host[:port] before
+building the webimapaccount: QR payload, instead of a naive scheme-strip
+that left paths/query strings behind. Falls back to the raw trimmed input
+if it isn't URL-parseable so bad input still surfaces the normal
+checkQr error.
+---
+ .../WelcomeScreen/UseWebimapServerDialog.tsx  | 29 ++++++++++++++-----
+ 1 file changed, 21 insertions(+), 8 deletions(-)
+
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
+index 33d3c6b6f..65caf9bbc 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
+@@ -16,6 +16,24 @@ type Props = {
+   selectedAccountId: number
+ }
+ 
++// Accepts a bare host[:port], or a full URL pasted along with its scheme,
++// path, query, fragment, etc., and returns just the host[:port] the
++// webimapaccount QR payload wants. Falls back to the trimmed input as-is if
++// it isn't URL-parseable, so it still hits the normal "invalid server
++// address" error from checkQr instead of failing silently here.
++function parseWebimapHost(input: string): string {
++  const trimmed = input.trim()
++  if (trimmed === '') {
++    return ''
++  }
++  try {
++    const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
++    return new URL(hasScheme ? trimmed : `https://${trimmed}`).host
++  } catch {
++    return trimmed
++  }
++}
++
+ export default function UseWebimapServerDialog({
+   onClose,
+   selectedAccountId,
+@@ -28,18 +46,13 @@ export default function UseWebimapServerDialog({
+   const onSubmit = async (event: React.FormEvent) => {
+     event.preventDefault()
+ 
+-    // Be forgiving about pasted URLs: strip a scheme prefix and trailing
+-    // slashes — the QR payload wants a bare host[:port].
+-    const trimmed = host
+-      .trim()
+-      .replace(/^https?:\/\//i, '')
+-      .replace(/\/+$/, '')
+-    if (trimmed === '') {
++    const parsedHost = parseWebimapHost(host)
++    if (parsedHost === '') {
+       setError('This does not look like a valid server address.')
+       return
+     }
+ 
+-    const url = `webimapaccount:${trimmed}`
++    const url = `webimapaccount:${parsedHost}`
+     let qr: any
+     try {
+       // checkQr throws (rather than returning another kind) when core rejects
