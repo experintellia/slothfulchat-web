@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <experintellia@users.noreply.github.com>
+Date: Wed, 8 Jul 2026 21:55:46 +0000
+Subject: [PATCH 18/18] web-app: debounce Add-account button, spinner while
+ creating
+
+Creating + selecting an account isn't instant (new SQLite db + schema
+migrations run in the wasm core), and the "+" button gave no feedback,
+so impatient double-clicks each spawned a separate account.
+
+Coalesce concurrent addAndSelectAccount() calls onto a single in-flight
+promise, and disable the button with a spinner while creation is in
+flight so the click reads as responsive.
+---
+ packages/frontend/src/ScreenController.tsx    | 27 ++++++++++++++-----
+ .../AccountListSidebar/AccountListSidebar.tsx | 24 ++++++++++++++---
+ 2 files changed, 42 insertions(+), 9 deletions(-)
+
+diff --git a/packages/frontend/src/ScreenController.tsx b/packages/frontend/src/ScreenController.tsx
+index bdcf338a8..9157df1e0 100644
+--- a/packages/frontend/src/ScreenController.tsx
++++ b/packages/frontend/src/ScreenController.tsx
+@@ -56,6 +56,7 @@ export default class ScreenController extends Component {
+   }
+   selectedAccountId: number | undefined
+   lastAccountBeforeAddingNewAccount: number | null = null
++  addAccountInFlight: Promise<number> | null = null
+   unselectChatRef = createRef<UnselectChat>()
+ 
+   constructor(public props: {}) {
+@@ -198,13 +199,27 @@ export default class ScreenController extends Component {
+   }
+ 
+   async addAndSelectAccount(): Promise<number> {
+-    if (this.selectedAccountId) {
+-      this.lastAccountBeforeAddingNewAccount = this.selectedAccountId
++    // Guard against double-submission: creating + selecting an account takes a
++    // noticeable moment (new SQLite db + migrations in the wasm core), and the
++    // "+" button gives no feedback, so fast repeated clicks would otherwise each
++    // create a separate account. Coalesce concurrent calls onto one promise.
++    if (this.addAccountInFlight) {
++      return this.addAccountInFlight
++    }
++    this.addAccountInFlight = (async () => {
++      if (this.selectedAccountId) {
++        this.lastAccountBeforeAddingNewAccount = this.selectedAccountId
++      }
++      const accountId = await BackendRemote.rpc.addAccount()
++      updateDeviceChat(accountId, true) // skip changelog
++      await this.selectAccount(accountId)
++      return accountId
++    })()
++    try {
++      return await this.addAccountInFlight
++    } finally {
++      this.addAccountInFlight = null
+     }
+-    const accountId = await BackendRemote.rpc.addAccount()
+-    updateDeviceChat(accountId, true) // skip changelog
+-    await this.selectAccount(accountId)
+-    return accountId
+   }
+ 
+   async onExitWelcomeScreen(): Promise<void> {
+diff --git a/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx b/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
+index 9570a74a5..d9acfd6f5 100644
+--- a/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
++++ b/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
+@@ -10,6 +10,7 @@ import { throttle } from '@deltachat-desktop/shared/util'
+ import AccountHoverInfo from './AccountHoverInfo'
+ import AccountItem from './AccountItem'
+ import Icon from '../Icon'
++import Spinner from '../Spinner'
+ import Settings from '../Settings'
+ import useDialog from '../../hooks/dialog/useDialog'
+ import { BackendRemote } from '../../backend-com'
+@@ -312,7 +313,7 @@ export default function AccountListSidebar({
+   )
+ }
+ 
+-function AddAccountButton(props: { onClick: () => void }) {
++function AddAccountButton(props: { onClick: () => Promise<unknown> }) {
+   const tx = useTranslationFunction()
+ 
+   const ref = useRef<HTMLButtonElement>(null)
+@@ -320,6 +321,22 @@ function AddAccountButton(props: { onClick: () => void }) {
+   // This is why this button is a separate component.
+   const rovingTabindex = useRovingTabindex(ref)
+ 
++  // Creating an account isn't instant (new db + migrations in the wasm core),
++  // so show a spinner and disable the button while it's in flight. This gives
++  // immediate feedback and prevents impatient double-clicks from stacking up.
++  const [pending, setPending] = useState(false)
++  // Not memoized: this handler goes to a plain DOM button with no memoized
++  // consumer, so useCallback would be dead weight (and `[props]` never memoizes
++  // anyway — fresh identity each render).
++  const onClick = async () => {
++    setPending(true)
++    try {
++      await props.onClick()
++    } finally {
++      setPending(false)
++    }
++  }
++
+   return (
+     <button
+       type='button'
+@@ -330,9 +347,10 @@ function AddAccountButton(props: { onClick: () => void }) {
+       data-testid='add-account-button'
+       onKeyDown={rovingTabindex.onKeydown}
+       onFocus={rovingTabindex.setAsActiveElement}
+-      {...props}
++      onClick={onClick}
++      disabled={pending}
+     >
+-      +
++      {pending ? <Spinner size={20} /> : '+'}
+     </button>
+   )
+ }
