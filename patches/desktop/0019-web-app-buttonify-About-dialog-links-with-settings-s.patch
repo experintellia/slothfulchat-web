@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Thu, 9 Jul 2026 13:49:59 +0000
-Subject: [PATCH 19/21] web-app: buttonify About dialog links with
+Subject: [PATCH 19/22] web-app: buttonify About dialog links with
  settings-style buttons
 
 Replace the plain text links and footer actions in the About dialog with
@@ -21,7 +21,7 @@ index f6bf017c7..614c2c3d8 100644
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
 @@ -1,22 +1,19 @@
  import React, { useEffect } from 'react'
-
+ 
  import { runtime } from '@deltachat-desktop/runtime-interface'
 -import {
 -  DialogBody,
@@ -37,15 +37,15 @@ index f6bf017c7..614c2c3d8 100644
  import { LogDialog } from '../Log'
 +import SettingsIconButton from '../../Settings/SettingsIconButton'
 +import SettingsSeparator from '../../Settings/SettingsSeparator'
-
+ 
  import styles from './styles.module.scss'
-
+ 
  import type { DialogProps } from '../../../contexts/DialogContext'
 -import { ClickableLink } from '../../helpers/ClickableLink'
 +
 +const GITHUB_URL = 'https://github.com/experintellia/slothfulchat-web'
 +const DELTA_CHAT_URL = 'https://delta.chat'
-
+ 
  export default function About({ onClose }: DialogProps) {
    const tx = useTranslationFunction()
 @@ -75,11 +72,6 @@ export default function About({ onClose }: DialogProps) {
@@ -142,6 +142,3 @@ index f6bf017c7..614c2c3d8 100644
      </DialogWithHeader>
    )
  }
---
-2.43.0
-

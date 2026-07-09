@@ -1,0 +1,189 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <claude@example.com>
+Date: Thu, 9 Jul 2026 16:17:40 +0000
+Subject: [PATCH 22/22] web-app: use the SlothfulChat icon in the About dialog
+ and welcome screen
+
+Replaces the upstream Delta Chat intro1.png logo with our own app icon
+(packages/web-app/static/images/icon-512.png, already bundled into
+dist/images/ by assemble.mjs) in both the About dialog and the welcome
+screen, with a slight border-radius so it reads as an app icon.
+
+Also drops the About dialog's redundant "Delta Chat Browser Edition"
+heading (the dialog title above it already says "About SlothfulChat"),
+and clarifies in the body text that it's a fork of Delta Chat Desktop's
+browser edition web UI, in addition to the chatmail core.
+
+Moves the welcome screen's Source code/Imprint links out of the
+onboarding form and into a DialogFooter, since inline they wrapped
+awkwardly next to the buttons.
+---
+ .../src/components/dialogs/About/index.tsx    | 17 ++++++------
+ .../dialogs/About/styles.module.scss          | 13 +++++----
+ .../WelcomeScreen/OnboardingScreen.tsx        | 27 ++++++++++++-------
+ .../screens/WelcomeScreen/styles.module.scss  | 15 +++++++++++
+ 4 files changed, 49 insertions(+), 23 deletions(-)
+
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index 592629ef0..68825833b 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -35,11 +35,6 @@ export default function About({ onClose }: DialogProps) {
+   const runtimeInfo = runtime.getRuntimeInfo()
+   const { VERSION, GIT_REF } = runtimeInfo.buildInfo
+ 
+-  let edition = '' // electron is default, so don't show it
+-  if (runtime.constructor.name !== 'ElectronRuntime') {
+-    edition = `${runtime.constructor.name.replace('Runtime', '')} Edition`
+-  }
+-
+   return (
+     <DialogWithHeader
+       width={400}
+@@ -50,9 +45,12 @@ export default function About({ onClose }: DialogProps) {
+       <DialogBody>
+         <DialogContent>
+           <div className={styles.aboutContent}>
+-            <img src='./images/intro1.png' />
+-            <h1 className={styles.appName}>Delta Chat {edition}</h1>
+-            <div>
++            <img
++              className={styles.appIcon}
++              src='./images/icon-512.png'
++              alt='SlothfulChat'
++            />
++            <div className={styles.appVersion}>
+               v{VERSION}
+               {runtime.getRC_Config().devmode && (
+                 <>
+@@ -76,7 +74,8 @@ export default function About({ onClose }: DialogProps) {
+             <p style={{ marginTop: 16, textAlign: 'left', fontSize: 13 }}>
+               <b>slothfulchat-web</b> is an unofficial experiment. It runs Delta
+               Chat's chatmail core — the same core behind the Delta Chat
+-              messenger — compiled to WebAssembly, running entirely in your
++              messenger — compiled to WebAssembly, and a fork of Delta Chat
++              Desktop's browser edition web UI, running entirely in your
+               browser. The port to WASM was done with an AI coding agent. Not
+               affiliated with Delta Chat. A WS→TCP bridge is required to send
+               and receive.
+diff --git a/packages/frontend/src/components/dialogs/About/styles.module.scss b/packages/frontend/src/components/dialogs/About/styles.module.scss
+index 2052cfe8b..f3bd3a89c 100644
+--- a/packages/frontend/src/components/dialogs/About/styles.module.scss
++++ b/packages/frontend/src/components/dialogs/About/styles.module.scss
+@@ -5,11 +5,14 @@
+   align-items: center;
+   margin-bottom: 20px;
+ 
+-  img {
+-    width: 40%;
++  .appIcon {
++    width: 96px;
++    height: 96px;
++    border-radius: 22%;
++    margin-bottom: 15px;
+   }
+-}
+ 
+-.appName {
+-  margin-bottom: 15px;
++  .appVersion {
++    margin-bottom: 15px;
++  }
+ }
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+index c39e833ac..ce5a87504 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+@@ -5,7 +5,7 @@ import UseWebimapServerDialog from './UseWebimapServerDialog'
+ import Button from '../../Button'
+ import useDialog from '../../../hooks/dialog/useDialog'
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+-import { DialogBody, DialogContent, DialogHeader } from '../../Dialog'
++import { DialogBody, DialogContent, DialogFooter, DialogHeader } from '../../Dialog'
+ import { ClickableLink } from '../../helpers/ClickableLink'
+ 
+ import styles from './styles.module.scss'
+@@ -59,19 +59,17 @@ export default function OnboardingScreen(props: Props) {
+         <DialogContent>
+           <form onSubmit={onSubmit}>
+             <div className={styles.welcomeScreenSection}>
+-              {/* slothfulchat: replaces the intro1.png logo */}
++              {/* slothfulchat: our app icon, replaces the upstream intro1.png logo */}
++              <img
++                className={styles.welcomeScreenIcon}
++                src='./images/icon-512.png'
++                alt='SlothfulChat'
++              />
+               <p className={styles.welcomeScreenTitle}>SlothfulChat</p>
+               <p style={{ textAlign: 'center', margin: '10px 0 0' }}>
+                 An experimental port of Delta Chat running fully in your
+                 browser — unofficial, and it may be buggy.
+               </p>
+-              <ClickableLink href='https://github.com/experintellia/slothfulchat-web'>
+-                Source code
+-              </ClickableLink>
+-              {' · '}
+-              <ClickableLink href={new URL('imprint.html', document.baseURI).href}>
+-                Imprint
+-              </ClickableLink>
+             </div>
+             <div className={styles.welcomeScreenButtonGroup}>
+               <Button
+@@ -100,6 +98,17 @@ export default function OnboardingScreen(props: Props) {
+           </form>
+         </DialogContent>
+       </DialogBody>
++      <DialogFooter>
++        <div className={styles.welcomeScreenFooterLinks}>
++          <ClickableLink href='https://github.com/experintellia/slothfulchat-web'>
++            Source code
++          </ClickableLink>
++          {' · '}
++          <ClickableLink href={new URL('imprint.html', document.baseURI).href}>
++            Imprint
++          </ClickableLink>
++        </div>
++      </DialogFooter>
+     </>
+   )
+ }
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
+index 58bc062a7..438b76adc 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
++++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
+@@ -16,6 +16,12 @@
+     width: 100%;
+   }
+ 
++  .welcomeScreenIcon {
++    width: 96px;
++    height: 96px;
++    border-radius: 22%;
++  }
++
+   .welcomeScreenTitle {
+     color: var(--colorNone);
+     font-size: x-large;
+@@ -29,6 +35,10 @@
+     .welcomeScreenImage {
+       width: 30vh;
+     }
++    .welcomeScreenIcon {
++      width: 72px;
++      height: 72px;
++    }
+     .welcomeScreenTitle {
+       margin-top: 8px;
+     }
+@@ -52,6 +62,11 @@
+   width: 100%;
+ }
+ 
++.welcomeScreenFooterLinks {
++  text-align: center;
++  width: 100%;
++}
++
+ .instantOnboardingAgreement {
+   display: flex;
+   justify-content: flex-start;
