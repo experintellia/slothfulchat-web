@@ -123,7 +123,22 @@ for (const f of ['config.js', 'index.html', 'main.html', 'manifest.webmanifest',
 // --- apply the instance config (same templates as assemble.mjs) ---
 const enc = s => new TextEncoder().encode(s)
 const dec = b => new TextDecoder().decode(b)
-const config = buildConfig(env)
+
+// Carry the source commit shown in the About dialog through unchanged: this
+// script has no working tree to read it from, only the zip's existing bake.
+// Sliced from the first '{' (rather than an exact configJs() prefix match)
+// so it survives minor format drift, e.g. a trailing ';'.
+let existingBuild = {}
+try {
+  const raw = dec(files['config.js'])
+  const existingConfig = JSON.parse(raw.slice(raw.indexOf('{')).replace(/;?\s*$/, ''))
+  existingBuild = { commitHash: existingConfig.commitHash, commitMessage: existingConfig.commitMessage }
+} catch {
+  // leave existingBuild empty — config.js was checked to exist above, but
+  // tolerate an unexpected shape rather than fail the whole customize run
+}
+
+const config = buildConfig(env, existingBuild)
 files['config.js'] = enc(configJs(config))
 files['imprint.html'] = enc(imprintHtml(config, env))
 for (const f of ['main.html', 'index.html']) {
