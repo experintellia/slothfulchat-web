@@ -1,15 +1,24 @@
 # Releasing (npm packages + GitHub release)
 
-Three packages are published from this repo. **Packages changed since the
-last release get the new tag's version number** (tag `vX.Y.Z` publishes the
-bumped packages at `X.Y.Z`); unchanged packages keep their last version and
-the workflow skips them. So gaps in a package's version history are normal,
-and every published version maps back to the tag it shipped with:
+Three packages are published from this repo, plus the (private) web app. They
+move as **one synced release train**: a tag `vX.Y.Z` means *every* package is
+at `X.Y.Z` — one version number describes the whole release, matching the git
+tags. Bump them all in lockstep even when a package didn't change; the numbers
+stay aligned, so a version's changelog may simply have no entry for a package
+that was untouched that release (gaps in a package's *changelog* are expected;
+gaps in its *version number* no longer happen).
 
 - `@slothfulchat/ws-tcp-proxy` — packages/ws-tcp-proxy, no build step
 - `@slothfulchat/core-wasm` — packages/core-wasm, built from the patched core
 - `@slothfulchat/customize` — packages/customize, esbuild-bundled from
   packages/web-app/customize.mjs (`prepack` builds it automatically)
+- `@slothfulchat/web-app` — private (not published to npm), shipped as the
+  release zip; it still carries the synced version.
+
+The version lives in each `packages/*/package.json` (the source of truth) —
+`node scripts/set-release-version.mjs X.Y.Z` (or `pnpm set-version X.Y.Z`)
+sets all of them at once. `publish-npm.yml` verifies on the tag that they all
+match `vX.Y.Z` and fails the run otherwise, so a half-bumped set never ships.
 
 ## The flow
 
@@ -20,18 +29,27 @@ any `v*` tag. The workflow rebuilds from a clean checkout and does two things:
   creates a release with `slothfulchat-web-<tag>.zip` + the standalone
   `slothfulchat-customize.mjs` (see SELFHOSTING.md for how operators use them).
 - **npm**: publishes **each package whose package.json version is not on the
-  registry yet** — packages whose version already exists are skipped. So one
-  shared tag releases whatever was bumped, and re-running is idempotent
-  (release assets are re-uploaded with `--clobber`).
+  registry yet** — versions already on the registry are skipped. Since every
+  release bumps all three to a fresh number, they normally all publish; the
+  skip only makes re-running the same tag idempotent (release assets re-upload
+  with `--clobber`).
 
-1. Pick the next tag version, and set `version` to it in each package that
-   changed (`packages/*/package.json`); add an entry to those packages'
-   `CHANGELOG.md` (npm always includes CHANGELOG.md in the tarball).
-2. Commit, then tag and push:
+1. Pick the next tag version (strictly greater than the last — the whole train
+   moves up together) and set it everywhere at once:
 
    ```sh
-   git tag v0.3.0          # same number the bumped packages carry;
-   git push origin v0.3.0  # unchanged packages are skipped
+   pnpm set-version 0.3.0   # -> node scripts/set-release-version.mjs 0.3.0
+   ```
+
+   Then add a `## 0.3.0 — <date>` entry to the `CHANGELOG.md` of each package
+   that actually changed (npm always includes CHANGELOG.md in the tarball);
+   packages that didn't change just carry the bumped version with no new entry.
+2. Commit, then tag and push (the tag must match the version you just set —
+   `publish-npm.yml` rejects a tag whose packages drifted):
+
+   ```sh
+   git tag v0.3.0
+   git push origin v0.3.0
    ```
 
 3. Watch the Actions run (`gh run watch`). The core-wasm wasm build takes
