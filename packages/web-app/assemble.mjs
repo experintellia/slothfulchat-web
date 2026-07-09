@@ -17,8 +17,11 @@ const repo = join(here, '..', '..')
 function gitBuildMeta() {
   try {
     const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf-8' }).trim()
+    // A build from a dirty tree gets attributed to the clean HEAD commit
+    // otherwise — exactly the case where "which commit is this" misleads.
+    const dirty = git('status', '--porcelain') !== ''
     return {
-      commitHash: git('rev-parse', '--short', 'HEAD'),
+      commitHash: git('rev-parse', '--short', 'HEAD') + (dirty ? '-dirty' : ''),
       commitMessage: git('log', '-1', '--pretty=%s'),
     }
   } catch {
