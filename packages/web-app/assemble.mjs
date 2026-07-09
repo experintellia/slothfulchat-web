@@ -180,14 +180,15 @@ await writeFile(
 )
 
 // changelog viewer at /changelog/ (web.slothful.chat/changelog): the vendored
-// single-page viewer + markdown-it, plus each published package's CHANGELOG.md
-// copied in beside it as <name>.md. The page fetches those with relative URLs,
-// so it shows the versions current at build time (no live network, no CDN).
+// single-page viewer + markdown-it, plus the web app's and each published
+// package's CHANGELOG.md copied in beside it as <name>.md. The page fetches
+// those with relative URLs, so it shows the versions current at build time
+// (no live network, no CDN).
 await mkdir(join(dist, 'changelog'))
 for (const file of ['index.html', 'markdown-it.min.js']) {
   await cp(join(here, 'changelog', file), join(dist, 'changelog', file))
 }
-for (const pkg of ['core-wasm', 'ws-tcp-proxy', 'customize']) {
+for (const pkg of ['web-app', 'core-wasm', 'ws-tcp-proxy', 'customize']) {
   await cp(join(repo, 'packages', pkg, 'CHANGELOG.md'), join(dist, 'changelog', pkg + '.md'))
 }
 
