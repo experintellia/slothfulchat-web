@@ -55,6 +55,17 @@ const waitReady = () =>
 try {
   await waitReady();
 
+  // localhost is answered from a hardcoded loopback reply so the web app's
+  // bridge-reachability health check works even under an allowlist.
+  const local = await dns('localhost');
+  assert.deepEqual(local, ['127.0.0.1', '::1'], 'localhost should get a hardcoded loopback reply');
+  console.log('resolved localhost ->', local);
+
+  // ...but that hardcoded reply must NOT open the allowlist: a tunnel to
+  // loopback stays blocked because it was never resolved for an allowed domain.
+  const localBlocked = await tryTcp('127.0.0.1');
+  assert.equal(localBlocked, 'blocked', 'tunnel to localhost must stay blocked under the allowlist');
+
   const ips = await dns(ALLOWLISTED);
   assert.ok(ips.length > 0, `expected resolved IPs for ${ALLOWLISTED}`);
   console.log(`resolved ${ALLOWLISTED} ->`, ips);

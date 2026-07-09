@@ -27,6 +27,9 @@ localStorage key).
 ## Endpoints
 
 - `GET /dns/{host}` — resolves the name, replies with one JSON array of IPs, closes.
+  `/dns/localhost` is always answered with the loopback IPs without hitting the
+  resolver (and regardless of the allowlist), so the web app can use it as a
+  bridge-reachability health check.
 - `GET /tcp/{ip}/{port}` — raw bidirectional byte tunnel to `ip:port`. Only ports
   143, 465, 587, 993 (IMAP/SMTP) are allowed.
 
