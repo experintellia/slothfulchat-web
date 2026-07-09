@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <claude@example.com>
+Date: Thu, 9 Jul 2026 22:22:17 +0000
+Subject: [PATCH 24/24] web-app: hide unknown git ref, add hover hint for
+ commit message
+
+The DC Desktop "git: unknown" line was always unknown for this fork's
+build (gatherBuildInfo can't read GIT_REF outside a normal checkout) and
+is redundant with the slothfulchat-web line below it anyway; drop it.
+
+Replace the commit message previously packed onto the slothfulchat-web
+line with a small (i) hint next to the version/commit hash, shown via a
+native title tooltip on hover, instead of always displaying it inline.
+---
+ .../src/components/dialogs/About/index.tsx    | 25 ++++++++++---------
+ .../dialogs/About/styles.module.scss          |  5 ++++
+ 2 files changed, 18 insertions(+), 12 deletions(-)
+
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index 5188813fa..790307731 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -33,7 +33,8 @@ export default function About({ onClose }: DialogProps) {
+   }
+ 
+   const runtimeInfo = runtime.getRuntimeInfo()
+-  const { VERSION, GIT_REF } = runtimeInfo.buildInfo
++  const { VERSION } = runtimeInfo.buildInfo
++  const slothfulConfig = (window as any).__slothfulConfig
+ 
+   return (
+     <DialogWithHeader
+@@ -52,21 +53,21 @@ export default function About({ onClose }: DialogProps) {
+             />
+             <div className={styles.appVersion}>
+               v{VERSION}
+-              {runtime.getRC_Config().devmode && (
+-                <>
+-                  <br />
+-                  <small>git: {GIT_REF}</small>
+-                </>
+-              )}
+-              {(window as any).__slothfulConfig?.commitHash && (
++              {slothfulConfig?.commitHash && (
+                 <>
+                   <br />
+                   <small>
+                     slothfulchat-web
+-                    {(window as any).__slothfulConfig.version
+-                      ? ` v${(window as any).__slothfulConfig.version}`
+-                      : ''}{' '}
+-                    ({(window as any).__slothfulConfig.commitHash})
++                    {slothfulConfig.version ? ` v${slothfulConfig.version}` : ''}
++                    {' '}({slothfulConfig.commitHash})
++                    {slothfulConfig.commitMessage && (
++                      <span
++                        className={styles.commitMessageHint}
++                        title={slothfulConfig.commitMessage}
++                      >
++                        {' '}ⓘ
++                      </span>
++                    )}
+                   </small>
+                 </>
+               )}
+diff --git a/packages/frontend/src/components/dialogs/About/styles.module.scss b/packages/frontend/src/components/dialogs/About/styles.module.scss
+index f3bd3a89c..df20489d1 100644
+--- a/packages/frontend/src/components/dialogs/About/styles.module.scss
++++ b/packages/frontend/src/components/dialogs/About/styles.module.scss
+@@ -14,5 +14,10 @@
+ 
+   .appVersion {
+     margin-bottom: 15px;
++
++    .commitMessageHint {
++      cursor: help;
++      opacity: 0.7;
++    }
+   }
+ }
