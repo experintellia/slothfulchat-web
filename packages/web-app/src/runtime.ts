@@ -759,11 +759,16 @@ class BrowserRuntime {
     }
     return ''
   }
-  transformStickerURL(_sticker_path: string): string {
-    throw new Error('sticker picker is not implemented yet for browser')
+  transformStickerURL(sticker_path: string): string {
+    // stickers live in <accounts>/<id>/stickers/<pack>/<file>, a sibling of
+    // dc.db-blobs — an absolute memfs path, so transformBlobURL routes it
+    // through /blob-path/ (the dc.db-blobs branch never matches) and the SW
+    // serves it exactly like any other blob.
+    return this.transformBlobURL(sticker_path)
   }
-  async deleteSticker(_stickerPath: string): Promise<void> {
-    throw new Error('sticker picker is not implemented yet for browser')
+  async deleteSticker(stickerPath: string): Promise<void> {
+    // the frontend passes the pack directory; fs_remove deletes a tree
+    await getCore().fsRemove(stickerPath)
   }
 
   async showOpenFileDialog(options: {
