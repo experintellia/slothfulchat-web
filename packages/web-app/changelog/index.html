@@ -98,8 +98,8 @@
 <body>
 <header>
   <div>
-    <h1 id="title">SlothfulChat Changelogs <span class="tag">· the published npm packages</span></h1>
-    <p id="subtitle">Release notes for the three packages this project publishes to npm.
+    <h1 id="title">SlothfulChat Changelogs <span class="tag">· the app &amp; its packages</span></h1>
+    <p id="subtitle">Release notes for the SlothfulChat web app and the three packages it publishes to npm.
       Bundled with the app on each deploy, so they match the version you are running.</p>
   </div>
   <div class="actions">
@@ -122,14 +122,18 @@
 
 <script src="markdown-it.min.js"></script>
 <script>
-// The three packages SlothfulChat publishes to npm. Each changelog is a plain
-// markdown file copied next to this page at deploy time (see web-app/assemble.mjs),
-// so the page always shows the versions that were current when the site was built.
+// The SlothfulChat web app and the three packages it publishes to npm. Each
+// changelog is a plain markdown file copied next to this page at deploy time
+// (see web-app/assemble.mjs), so the page always shows the versions that were
+// current when the site was built.
 const REPO = "https://github.com/experintellia/slothfulchat-web";
 const LOGO = "../images/icon-256.png";
 const npm = name => "https://www.npmjs.com/package/@slothfulchat/" + name;
 const src = name => REPO + "/tree/main/packages/" + name;
 const PROJECTS = [
+  // the web app itself — not published to npm, so no npm link
+  { id:"web-app", label:"Web app", logo:LOGO,
+    src:src("web-app"), url:"web-app.md" },
   { id:"core-wasm", label:"core-wasm", logo:LOGO,
     npm:npm("core-wasm"), src:src("core-wasm"), url:"core-wasm.md" },
   { id:"ws-tcp-proxy", label:"ws-tcp-proxy", logo:LOGO,

@@ -1,0 +1,55 @@
+# Changelog
+
+## 0.3.0 — 2026-07-09
+
+- **Sticker picker** (fixes a crash on open).
+- QR reader defaults to the rear camera; the About dialog shows the source
+  commit it was built from.
+- Hide the second-device / add-as-companion options — iroh-based device sync
+  isn't supported in the browser.
+
+## 0.2.0 — 2026-07-08
+
+- **webimap transport**: madmail's WebIMAP/WebSMTP over plain HTTPS as a
+  bridge-free alternative to the WS→TCP bridge (needs no `ws-tcp-proxy`).
+- **Installable offline PWA**: a content-hashed precache app shell served by
+  `blobs-sw.ts`, so the app boots offline, plus a boot-error screen; the
+  project's own sloth app icon instead of the upstream Delta Chat icons.
+- **iOS PWA robustness**: backup export and attachment downloads happen in-page
+  (installed iOS PWAs block the usual download path); the on-screen keyboard no
+  longer hides the layout or navbar; reload-once recovery after a hard reload so
+  blob URLs resolve.
+- **Storage resilience**: a corrupted `accounts.toml` / OPFS mirror self-heals
+  (sync access handles) instead of bricking boot; an accurate error with a copy
+  button when the browser blocks storage.
+- **Theming**: patch-free SCSS themes compiled against upstream's theme base,
+  including a Rocket.Chat-inspired `dc:rocket` theme with per-message avatars.
+- Imprint page names the default relay and adds a links disclaimer and an
+  encryption-info hint; release builds hide dev-only features.
+
+## 0.1.0 — 2026-07-07
+
+First prototype of the standalone web UI: deltachat-desktop's browser frontend
+running fully in the browser on `@slothfulchat/core-wasm` — no node backend, no
+Electron. The upstream frontend is served almost unmodified; everything
+browser-specific lives in our own runtime and service worker.
+
+- **Standalone browser client**: `runtime.ts` implements the desktop `Runtime`
+  interface against the wasm core in a worker — transport, settings
+  (localStorage), locales/themes (static fetches), temp files and file dialogs
+  (the core's in-browser filesystem), and backup-export destination rewrite.
+- **Bridge transport**: connects through the `@slothfulchat/ws-tcp-proxy` WS→TCP
+  bridge (browsers can't open raw TCP); the bridge URL is configurable via
+  `?proxy=`, a bridge dialog, or the `SLOTHFUL_DEFAULT_PROXY` build var, and a
+  bridge overlay/warning sits above modal dialogs and surfaces on the welcome
+  screen when the bridge is down.
+- **Per-instance config**: imprint (legal notice) page, instance name (tab
+  title, PWA name, boot-error screens) and default proxy baked in from
+  `SLOTHFUL_*` build vars via a `config.js` loaded before the app (CSP is
+  `script-src 'self'`, so no inline config script).
+- **UI**: webxdc icons and start dialog, connectivity loading state, temp-file
+  blob previews, camera-permission handling, and a manifest CSP fix.
+- **Deploy**: `assemble.mjs` builds a static `dist/` deployed to GitHub Pages;
+  the app derives its base path at runtime, so a project site works with no
+  build-time config. The deployed site is a UI/PWA shell — sending and
+  receiving still need a reachable `wss://` proxy.
