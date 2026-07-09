@@ -99,12 +99,14 @@ jobs:
       # Trusted publishing needs npm >= 11.5.1; Node 22 ships 10.x. No sudo:
       # sudo's PATH hits the system npm, leaving the toolcache npm (the one
       # this job actually runs) old — publish then dies with ENEEDAUTH.
-      # Pinned to major 11, NOT @latest: npm 12.0.0 (2026-07-08) crashes on
-      # provenance publish ("Cannot find module 'sigstore'" from
-      # libnpmpublish/provenance.js — broke the v0.3.0 run). Re-evaluate the
-      # pin once a fixed npm 12.x is out.
+      # Pinned to an EXACT version, not @11 or @latest: npm 12.0.0 (2026-07-08)
+      # crashes on provenance publish ("Cannot find module 'sigstore'" from
+      # libnpmpublish/provenance.js — broke the v0.3.0 run), and even a `@11`
+      # floating pin can drift onto a bad patch. 11.18.0 is the version that
+      # published v0.2.0 cleanly. Bump this deliberately after testing a newer
+      # npm; re-evaluate once a fixed npm 12.x is out.
       - name: Update npm (trusted publishing support)
-        run: npm install -g npm@11 && npm --version
+        run: npm install -g npm@11.18.0 && npm --version
 
       - name: Cache pnpm store
         uses: actions/cache@v4
