@@ -60,9 +60,16 @@ wss.on('connection', async (ws, req) => {
     // localhost is answered from a hardcoded reply, never the resolver: the
     // webapp probes /dns/localhost to check the bridge is reachable, so this
     // health check must succeed even when the resolver can't answer 'localhost'
-    // (it lives in /etc/hosts, not DNS) and regardless of any allowlist.
+    // (it lives in /etc/hosts, not DNS) and regardless of any allowlist. Only
+    // when 'localhost' is *explicitly* allowlisted do we let the loopback IPs
+    // through to /tcp — otherwise the health check never opens a tunnel.
     if (host.toLowerCase() === 'localhost') {
-      ws.send(JSON.stringify(['127.0.0.1', '::1']));
+      const loopback = ['127.0.0.1', '::1'];
+      if (ALLOWLIST.length && isAllowlisted(host)) {
+        const expires = Date.now() + ALLOW_TTL_MS;
+        for (const ip of loopback) allowedIps.set(ip, expires);
+      }
+      ws.send(JSON.stringify(loopback));
       ws.close();
       return;
     }

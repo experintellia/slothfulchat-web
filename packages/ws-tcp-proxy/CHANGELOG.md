@@ -5,7 +5,8 @@
 - `/dns/localhost` is now answered with a hardcoded loopback reply
   (`127.0.0.1`, `::1`) without querying the resolver and regardless of any
   allowlist, so the web app's bridge-reachability health check works
-  everywhere (`localhost` lives in `/etc/hosts`, not DNS).
+  everywhere (`localhost` lives in `/etc/hosts`, not DNS). The loopback IPs
+  only reach `/tcp` when `localhost` is explicitly on `CHATMAIL_ALLOWLIST`.
 
 ## 0.1.2 — 2026-07-07
 
