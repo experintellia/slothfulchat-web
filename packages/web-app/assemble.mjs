@@ -179,6 +179,18 @@ await writeFile(
   demoHtml.replace("'../dist/index.js'", "'../core/index.js'")
 )
 
+// changelog viewer at /changelog/ (web.slothful.chat/changelog): the vendored
+// single-page viewer + markdown-it, plus each published package's CHANGELOG.md
+// copied in beside it as <name>.md. The page fetches those with relative URLs,
+// so it shows the versions current at build time (no live network, no CDN).
+await mkdir(join(dist, 'changelog'))
+for (const file of ['index.html', 'markdown-it.min.js']) {
+  await cp(join(here, 'changelog', file), join(dist, 'changelog', file))
+}
+for (const pkg of ['core-wasm', 'ws-tcp-proxy', 'customize']) {
+  await cp(join(repo, 'packages', pkg, 'CHANGELOG.md'), join(dist, 'changelog', pkg + '.md'))
+}
+
 // The offline app-shell precache manifest (dist/sw-precache.js) is emitted by
 // sw-manifest.mjs at the END of `pnpm build`: it content-hashes every file,
 // so it must run after esbuild adds runtime.js/blobs-sw.js to dist/.

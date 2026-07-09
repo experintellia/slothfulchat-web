@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SlothfulChat Changelogs</title>
+<style>
+  :root { --bg:#15171b; --panel:#1d2026; --line:#2c313a; --fg:#e6e8eb; --muted:#9aa3af; --accent:#3793ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.55 system-ui,sans-serif; background:var(--bg); color:var(--fg);
+         height:100vh; height:100dvh; display:flex; flex-direction:column; overflow:hidden; }
+  header { flex:none; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:flex-start;
+           gap:10px 16px; padding:10px 16px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0 0 3px; font-size:16px; font-weight:600; }
+  header h1 .tag { color:var(--muted); font-weight:400; }
+  header p { margin:0; max-width:820px; color:var(--muted); font-size:12.5px; line-height:1.45; }
+  .actions { display:flex; gap:8px; flex:none; }
+  .actions a { color:var(--muted); text-decoration:none; font-size:12px; cursor:pointer;
+               border:1px solid var(--line); padding:4px 9px; border-radius:7px; white-space:nowrap; }
+  .actions a:hover { color:var(--fg); border-color:var(--accent); }
+  nav { flex:none; display:flex; gap:6px; flex-wrap:wrap; padding:10px 16px; border-bottom:1px solid var(--line); }
+  .tab { display:flex; align-items:center; gap:7px; padding:6px 11px; border:1px solid var(--line);
+         border-radius:8px; background:var(--panel); color:var(--fg); cursor:pointer; font-size:13px;
+         text-decoration:none; }
+  .tab img { width:18px; height:18px; border-radius:4px; object-fit:contain; }
+  .tab.active { border-color:var(--accent); color:#fff; }
+  .layout { display:flex; flex:1; min-height:0; }
+  aside { width:230px; flex:none; overflow:auto; border-right:1px solid var(--line); padding:10px; }
+  .side-head { display:flex; align-items:center; justify-content:space-between; margin:2px 4px 8px; }
+  .side-head span { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  .toggle { background:none; border:1px solid var(--line); color:var(--muted); border-radius:6px;
+            font-size:11px; padding:2px 7px; cursor:pointer; }
+  .toggle.on { color:var(--accent); border-color:var(--accent); }
+  #search { width:100%; padding:5px 8px; margin-bottom:6px; background:var(--panel);
+            border:1px solid var(--line); border-radius:6px; color:var(--fg); font-size:13px; }
+  .yr { font-size:11px; font-weight:700; color:var(--muted); margin:11px 6px 3px; letter-spacing:.04em; }
+  aside a { display:flex; justify-content:space-between; gap:8px; align-items:baseline;
+            padding:3px 6px; color:var(--muted); text-decoration:none; border-radius:5px;
+            border-left:2px solid transparent; }
+  aside a:hover { background:var(--panel); color:var(--fg); }
+  aside a.active { background:var(--panel); color:#fff; border-left-color:var(--accent); }
+  aside a .ver { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  aside a .date { color:var(--muted); font-size:11px; white-space:nowrap; flex:none; }
+  main { flex:1; overflow:auto; padding:8px 26px 60px; }
+  #linkbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 2px 8px;
+             border-bottom:1px solid var(--line); }
+  #linkbar:empty { display:none; }
+  #linkbar a { color:var(--muted); text-decoration:none; font-size:13px; }
+  #linkbar a:hover { color:var(--fg); }
+  #linkbar .dot { color:var(--line); }
+  /* Off-screen versions skip layout/paint until scrolled near — stops the first
+     paint of a multi-year changelog from blocking the main thread on mobile. */
+  main section { content-visibility:auto; contain-intrinsic-size:auto 600px; }
+  main h1 { font-size:22px; }
+  main h2 { font-size:18px; margin-top:1.6em; padding-top:8px; border-top:1px solid var(--line); scroll-margin-top:12px; }
+  main h3 { font-size:14px; color:var(--muted); }
+  main a { color:var(--accent); }
+  main code { background:var(--panel); padding:1px 4px; border-radius:4px; font-size:.9em; }
+  main pre { background:var(--panel); padding:10px; border-radius:8px; overflow:auto; }
+  .status { color:var(--muted); padding:20px 2px; }
+  .status.err { color:#ff6b6b; }
+  .loader { padding:26px 4px; max-width:440px; }
+  .loader h3 { margin:0 0 14px; font-size:15px; color:var(--fg); }
+  .loader .stage { display:flex; align-items:center; gap:10px; padding:6px 0; color:var(--muted); font-size:13px; }
+  .loader .stage .ic { width:14px; height:14px; border-radius:50%; border:2px solid var(--line); flex:none; }
+  .loader .stage.active { color:var(--accent); }
+  .loader .stage.active .ic { border-color:var(--accent); border-top-color:transparent; animation:spin .6s linear infinite; }
+  .loader .stage.done { color:var(--fg); }
+  .loader .stage.done .ic { border-color:var(--accent); background:var(--accent); }
+  .loader .stage .ms { margin-left:auto; color:var(--muted); font-size:12px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .timings { margin-top:32px; padding-top:10px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+
+  /* --- mobile (<=720px): TOC becomes a drawer, tabs scroll, header collapses on scroll --- */
+  #backdrop, #fab { display:none; }
+  #fab { position:fixed; left:16px; bottom:calc(16px + env(safe-area-inset-bottom, 0px)); z-index:55;
+         align-items:center; gap:6px; background:var(--accent); color:#fff; border:none; border-radius:22px;
+         padding:10px 15px; font-size:14px; font-weight:600; box-shadow:0 3px 12px rgba(0,0,0,.45); cursor:pointer; }
+  @media (max-width:720px) {
+    header h1 { font-size:15px; }
+    header { transition:max-height .2s ease, padding .2s ease, opacity .15s ease; overflow:hidden; max-height:240px; }
+    body.scrolled header { max-height:0; padding-top:0; padding-bottom:0; opacity:0; border-bottom:0; }
+    nav { flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    nav .tab { flex:none; }
+    main { padding:8px 14px 40px; }
+    aside { position:fixed; top:0; left:0; bottom:0; width:min(84vw,300px); z-index:50; padding:12px;
+            background:var(--bg); transform:translateX(-100%); transition:transform .2s ease; }
+    aside a { padding:8px; }
+    body.drawer-open aside { transform:translateX(0); }
+    #backdrop { display:block; position:fixed; inset:0; z-index:45; background:rgba(0,0,0,.5);
+                opacity:0; pointer-events:none; transition:opacity .2s ease; }
+    body.drawer-open #backdrop { opacity:1; pointer-events:auto; }
+    #fab { display:flex; }
+    body.drawer-open #fab { display:none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 id="title">SlothfulChat Changelogs <span class="tag">· the published npm packages</span></h1>
+    <p id="subtitle">Release notes for the three packages this project publishes to npm.
+      Bundled with the app on each deploy, so they match the version you are running.</p>
+  </div>
+  <div class="actions">
+    <a href="https://github.com/experintellia/slothfulchat-web" target="_blank" rel="noopener"
+       title="SlothfulChat repository">Repository ↗</a>
+  </div>
+</header>
+<nav id="tabs"></nav>
+<div class="layout">
+  <aside>
+    <div class="side-head"><span>Versions</span>
+      <button id="reltoggle" class="toggle" title="Toggle relative dates">rel date</button></div>
+    <input id="search" type="search" placeholder="filter versions…" autocomplete="off">
+    <div id="toc"></div>
+  </aside>
+  <main><div id="linkbar"></div><div id="content" class="status">Loading…</div></main>
+</div>
+<div id="backdrop"></div>
+<button id="fab" aria-label="Show versions">☰ Versions</button>
+
+<script src="markdown-it.min.js"></script>
+<script>
+// The three packages SlothfulChat publishes to npm. Each changelog is a plain
+// markdown file copied next to this page at deploy time (see web-app/assemble.mjs),
+// so the page always shows the versions that were current when the site was built.
+const REPO = "https://github.com/experintellia/slothfulchat-web";
+const LOGO = "../images/icon-256.png";
+const npm = name => "https://www.npmjs.com/package/@slothfulchat/" + name;
+const src = name => REPO + "/tree/main/packages/" + name;
+const PROJECTS = [
+  { id:"core-wasm", label:"core-wasm", logo:LOGO,
+    npm:npm("core-wasm"), src:src("core-wasm"), url:"core-wasm.md" },
+  { id:"ws-tcp-proxy", label:"ws-tcp-proxy", logo:LOGO,
+    npm:npm("ws-tcp-proxy"), src:src("ws-tcp-proxy"), url:"ws-tcp-proxy.md" },
+  { id:"customize", label:"customize", logo:LOGO,
+    npm:npm("customize"), src:src("customize"), url:"customize.md" },
+];
+
+const byId = id => PROJECTS.find(p => p.id === id);
+
+// markdown-it instead of marked: marked v15's regexes hit catastrophic backtracking in
+// iOS Safari/JSC (9s on the desktop changelog) though they're fine in V8. html:true keeps
+// the raw <a id> anchors and matches marked's old passthrough behaviour.
+const md = markdownit({ html: true });
+const cache = {};
+let entries = [];      // [{i, ver, date, raw}]
+let relative = false;
+let activeId = null;
+let spy = null;
+let curId = PROJECTS[0].id;
+
+const tabsEl = document.getElementById("tabs");
+const tocEl = document.getElementById("toc");
+const contentEl = document.getElementById("content");
+const linkbarEl = document.getElementById("linkbar");
+const mainEl = document.querySelector("main");
+const searchEl = document.getElementById("search");
+const relBtn = document.getElementById("reltoggle");
+
+// --- tabs as real links: native modifier-click (new tab/window) just works ---
+function go(id) { // normal in-page navigation to a tab
+  return e => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; // let browser open new tab/window
+    e.preventDefault();
+    history.pushState({}, "", "?p=" + id);
+    show(id);
+  };
+}
+function mkTab(p) {
+  const a = document.createElement("a");
+  a.className = "tab"; a.id = "tab-" + p.id; a.href = "?p=" + p.id;
+  a.innerHTML = `<img alt="" src="${p.logo}" onerror="this.remove()"><span>${p.label}</span>`;
+  a.onclick = go(p.id);
+  return a;
+}
+function renderTabs() {
+  tabsEl.innerHTML = "";
+  PROJECTS.forEach(p => tabsEl.appendChild(mkTab(p)));
+}
+
+window.onpopstate = () => show(currentId());
+searchEl.oninput = renderSidebar;
+relBtn.onclick = () => {
+  relative = !relative;
+  relBtn.classList.toggle("on", relative);
+  relBtn.textContent = relative ? "abs date" : "rel date";
+  renderSidebar();
+};
+
+// mobile: TOC drawer + collapse the header once the content is scrolled
+const setDrawer = open => document.body.classList.toggle("drawer-open", open);
+document.getElementById("fab").onclick = () => setDrawer(true);
+document.getElementById("backdrop").onclick = () => setDrawer(false);
+let scrolled = false;
+mainEl.addEventListener("scroll", () => {
+  const s = mainEl.scrollTop > 8;
+  if (s !== scrolled) { scrolled = s; document.body.classList.toggle("scrolled", s); }
+}, { passive: true });
+
+function currentId() {
+  const id = new URLSearchParams(location.search).get("p");
+  return byId(id) ? id : PROJECTS[0].id;
+}
+
+// A) extract version + date from a heading. Our changelogs use `## <ver> — <date>`.
+const DATE_RE = /\d{4}-\d{2}(?:-\d{2})?/;
+function parseHeading(text) {
+  const ver = (text.match(/\d+\.\d+(?:\.\d+)?/) || [])[0] || text.trim();
+  const date = (text.match(DATE_RE) || [])[0] || null;
+  return { ver, date, raw: text.trim() };
+}
+
+function fmtDate(d) {
+  const full = d.length === 10;
+  const dt = new Date((full ? d : d + "-01") + "T00:00:00");
+  if (relative) {
+    const days = Math.round((Date.now() - dt) / 864e5);
+    if (days <= 0) return "today";
+    if (days < 30) return days + "d ago";
+    if (days < 365) return Math.round(days / 30) + "mo ago";
+    return Math.round(days / 365) + "y ago";
+  }
+  // F) year lives in the sidebar sub-header, so drop it here: long month (+ day if known).
+  return dt.toLocaleDateString(undefined, full ? { month: "long", day: "numeric" } : { month: "long" });
+}
+
+// Per-project link bar above the changelog: npm · source (each optional).
+function renderLinkbar(p) {
+  const link = (href, text) =>
+    `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
+  const parts = [];
+  if (p.npm) parts.push(link(p.npm, "npm ↗"));
+  if (p.src) parts.push(link(p.src, "Source ↗"));
+  linkbarEl.innerHTML = parts.join('<span class="dot">·</span>');
+}
+
+// Group each version (h2 → next h2) into a <section> so content-visibility can skip
+// off-screen ones. Nodes before the first h2 stay at top level. The h2 keeps its id,
+// so scroll-spy and #v-i scroll targets are unaffected.
+function wrapSections() {
+  let sec = null;
+  for (const n of [...contentEl.childNodes]) {
+    if (n.nodeType === 1 && n.tagName === "H2") {
+      sec = document.createElement("section");
+      contentEl.insertBefore(sec, n);
+    }
+    if (sec) sec.appendChild(n);
+  }
+}
+
+// yield until the browser has actually painted, so the loader/tab-switch shows
+// before a heavy synchronous stage blocks the main thread.
+const nextFrame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+function renderLoader(p, stages) {
+  contentEl.className = "loader";
+  contentEl.innerHTML = `<h3>Loading ${p.label}…</h3>` + stages.map(s =>
+    `<div class="stage ${s.state}"><span class="ic"></span><span>${s.label}</span>` +
+    `<span class="ms">${s.ms != null ? s.ms + " ms" : ""}</span></div>`).join("");
+}
+
+async function show(id) {
+  const p = byId(id);
+  curId = id;
+  renderTabs();
+  document.getElementById("tab-" + id).classList.add("active");
+  renderLinkbar(p);
+  searchEl.value = "";
+  activeId = null;
+  tocEl.innerHTML = "";
+
+  // Staged loader, shown only on a fresh (network) load — that's the reliably-slow path.
+  // A cached re-render is ~150-250ms of blocked parse; showing a loader there would just
+  // flicker, so we skip it and keep the previous content on screen until the swap. The
+  // nextFrame() before each heavy stage still runs in both cases, so the tab-switch paints
+  // before the parse blocks. Times are collected and printed at the end either way.
+  const fresh = !cache[id];
+  const stages = [];
+  if (fresh) stages.push({ key: "fetch", label: "Fetching changelog" });
+  stages.push({ key: "parse", label: "Parsing markdown" }, { key: "render", label: "Rendering page" });
+  stages.forEach(s => (s.state = "pending"));
+  const ms = {};
+  const start = k => { stages.find(s => s.key === k).state = "active"; if (fresh) renderLoader(p, stages); return performance.now(); };
+  const done = (k, t0) => { const s = stages.find(s => s.key === k); s.ms = ms[k] = Math.round(performance.now() - t0); s.state = "done"; };
+
+  try {
+    if (fresh) {
+      const t0 = start("fetch"); await nextFrame();
+      const res = await fetch(p.url);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      cache[id] = await res.text();
+      done("fetch", t0);
+    }
+
+    let t0 = start("parse"); await nextFrame();
+    const html = md.render(cache[id]);
+    done("parse", t0);
+
+    t0 = start("render"); await nextFrame(); // loader paints "Rendering…", then we replace it with the real content
+    contentEl.className = "";
+    contentEl.innerHTML = html;
+    done("render", t0);
+
+    t0 = performance.now();
+    entries = [...contentEl.querySelectorAll("h2")].map((h, i) => {
+      h.id = "v-" + i;
+      const e = parseHeading(h.textContent);
+      return { i, ...e };
+    });
+    wrapSections();
+    ms.index = Math.round(performance.now() - t0);
+
+    t0 = performance.now();
+    renderSidebar();
+    setupSpy();
+    ms.sidebar = Math.round(performance.now() - t0);
+
+    const order = [["fetch", "Fetch"], ["parse", "Parse"], ["render", "Render"], ["index", "Index"], ["sidebar", "Sidebar"]];
+    const total = Object.values(ms).reduce((a, b) => a + b, 0);
+    const foot = document.createElement("div");
+    foot.className = "timings";
+    foot.textContent = `Loaded in ${total} ms — ` +
+      order.filter(([k]) => ms[k] != null).map(([k, l]) => `${l} ${ms[k]} ms`).join(" · ");
+    contentEl.appendChild(foot);
+
+    if (location.hash) { const t = contentEl.querySelector(location.hash); if (t) t.scrollIntoView(); }
+    else mainEl.scrollTop = 0; // new project starts at top → header re-expands on mobile
+  } catch (e) {
+    contentEl.className = "status err";
+    contentEl.textContent = "Failed to load " + p.label + ": " + e.message;
+  }
+}
+
+// C) filter + F) year groups, built from the parsed entries.
+function renderSidebar() {
+  const q = searchEl.value.toLowerCase().trim();
+  tocEl.innerHTML = "";
+  let curYear = null;
+  for (const en of entries) {
+    if (q && !(en.ver + " " + (en.date || "") + " " + en.raw).toLowerCase().includes(q)) continue;
+    const year = en.date ? en.date.slice(0, 4) : null;
+    if (year && year !== curYear) {
+      curYear = year;
+      const h = document.createElement("div"); h.className = "yr"; h.textContent = year;
+      tocEl.appendChild(h);
+    }
+    const a = document.createElement("a");
+    a.href = `?p=${curId}#v-${en.i}`;
+    a.dataset.id = "v-" + en.i;
+    a.onclick = e => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; // let browser open new tab/window
+      e.preventDefault();
+      // Update the URL without setting location.hash — a real fragment nav flips :target and
+      // forces a full-document style recalc (~250ms on large changelogs). pushState skips that.
+      history.pushState({}, "", a.getAttribute("href"));
+      contentEl.querySelector("#v-" + en.i)?.scrollIntoView();
+      document.body.classList.remove("drawer-open"); // close the mobile drawer on select
+    };
+    a.innerHTML = `<span class="ver"></span>` + (en.date ? `<span class="date"></span>` : "");
+    a.querySelector(".ver").textContent = en.ver;
+    if (en.date) a.querySelector(".date").textContent = fmtDate(en.date);
+    tocEl.appendChild(a);
+  }
+  if (activeId) setActive(activeId);
+}
+
+// D) scroll-spy: highlight the version currently near the top of the content.
+function setupSpy() {
+  if (spy) spy.disconnect();
+  const hs = [...contentEl.querySelectorAll("h2")];
+  spy = new IntersectionObserver(es => {
+    es.forEach(e => e.target._vis = e.isIntersecting);
+    const cur = hs.find(h => h._vis);
+    if (cur) setActive(cur.id);
+  }, { root: mainEl, rootMargin: "0px 0px -75% 0px", threshold: 0 });
+  hs.forEach(h => spy.observe(h));
+}
+
+function setActive(id) {
+  activeId = id;
+  let cur = null;
+  tocEl.querySelectorAll("a").forEach(a => {
+    const on = a.dataset.id === id;
+    a.classList.toggle("active", on);
+    if (on) cur = a;
+  });
+  if (cur) cur.scrollIntoView({ block: "nearest" });
+}
+
+show(currentId());
+</script>
+</body>
+</html>

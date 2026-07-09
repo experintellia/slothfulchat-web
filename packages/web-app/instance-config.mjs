@@ -154,6 +154,7 @@ longer complies, please report it to the email address above.</p>
 export const precacheSkip = f =>
   f.endsWith('.map') ||
   f.startsWith('demo/') ||
+  f.startsWith('changelog/') ||
   ['.nojekyll', 'sw-precache.js', 'blobs-sw.js'].includes(f)
 
 /** Content-hashes [path, bytes] entries into the sw-precache.js source.
