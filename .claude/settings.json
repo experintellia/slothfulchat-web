@@ -1,0 +1,11 @@
+{
+  "extraKnownMarketplaces": [
+    {
+      "source": "github",
+      "repo": "DietrichGebert/ponytail"
+    }
+  ],
+  "enabledPlugins": [
+    "ponytail@ponytail"
+  ]
+}
