@@ -8,12 +8,14 @@
     pre { background: #f4f4f4; padding: 1rem; overflow-x: auto; }
     .hint { color: #555; }
     code { background: #f4f4f4; padding: 0 0.2em; }
+    .fatal-hint { color: #a00; border-left: 3px solid #a00; padding-left: 0.75rem; }
   </style>
 </head>
 <body>
   <h1>chatmail core — WASM</h1>
   <p id="status">loading core in a worker…</p>
   <p id="proxy-status"></p>
+  <p id="fatal-hint" class="fatal-hint" style="display: none;"></p>
   <pre id="output"></pre>
 
   <h2>Networking: the WS→TCP proxy</h2>
@@ -139,6 +141,45 @@ await dc.rpc.getChatSecurejoinQrCode(aid)</code></pre>
 
       // full core handle incl. fs side channel (fsRead/fsWrite/fsRemove/fsExists)
       window.core = core
+
+      // The worker gives up waiting for the OPFS lock (persistence is
+      // exclusive per origin) when the core is already running in another
+      // tab, and reports a couple of other unrecoverable states. Without
+      // this, "loading core in a worker…" just sits there forever — same
+      // fatal messages the main app turns into a blocking dialog
+      // (see packages/web-app/src/runtime.ts).
+      const fatalHint = document.getElementById('fatal-hint')
+      const FATAL_MESSAGES = {
+        'fatal-opfs-locked':
+          'This demo is already running in another tab or window. Persistence ' +
+          'holds an exclusive OPFS lock per origin, so only one tab can run a ' +
+          'persistent core at a time. Close the other tab, then reload — or ' +
+          'reload with <code>?persist=0</code> for a fresh in-memory core that ' +
+          'skips the lock entirely.',
+        'fatal-storage-blocked':
+          'This page needs to store data in your browser, but your browser is ' +
+          'blocking it. Allow cookies/site data for this origin and reload.',
+        'fatal-init-error':
+          'The stored core data could not be loaded. Reload with ' +
+          '<code>?persist=0</code> to start a fresh in-memory core.',
+      }
+      core.worker.addEventListener('message', event => {
+        const type = event.data?.type
+        const message = FATAL_MESSAGES[type]
+        if (!message) return
+        status.textContent = 'core failed to start ✖'
+        fatalHint.innerHTML = message
+        // fatal-init-error carries the actual error as free text (worker.ts
+        // `String(err)`) — not safe for innerHTML, so it gets its own
+        // textContent-only node.
+        if (type === 'fatal-init-error' && event.data.message) {
+          const detail = document.createElement('div')
+          detail.style.marginTop = '0.5rem'
+          detail.textContent = 'Details: ' + event.data.message
+          fatalHint.appendChild(detail)
+        }
+        fatalHint.style.display = 'block'
+      })
 
       // raw JSON-RPC access for console exploration
       window.rpc = {
