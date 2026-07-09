@@ -1,0 +1,187 @@
+# CI: run the project's tests on pull requests (and pushes to main).
+#
+# Two jobs:
+#   lint   — fast, no submodules, no wasm build: syntax-checks every .mjs and
+#            type/compile-checks the standalone Rust shim crate. Gives quick
+#            feedback on obvious breakage in seconds.
+#   smoke  — the real test suite. Builds the whole app exactly like
+#            deploy-pages.yml (patched core + upstream desktop bundle + release
+#            wasm), then runs the headless Playwright smoke suites that assert
+#            the wasm core boots and the frontend renders on top of it.
+#
+# The build half of `smoke` is a faithful copy of deploy-pages.yml — the same
+# two ordering traps apply (jsonrpc-client generated before the root install;
+# assemble before build). Keep the two in sync when either changes.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs for the same ref (a new push to a PR obsoletes the old).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---- fast checks: no submodules, no wasm, no network ----
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (no submodules — nothing here needs them)
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # `pnpm install` can't run here (the jsonrpc-client file: dep doesn't
+      # exist until apply-patches), but `node --check` needs no deps — it just
+      # parses. Catches syntax errors in the scripts + package sources.
+      - name: Syntax-check all .mjs sources
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r f; do
+            node --check "$f" || { echo "SYNTAX FAIL: $f"; fail=1; }
+          done < <(find scripts packages -name '*.mjs' \
+                     -not -path '*/node_modules/*' -not -path '*/dist/*')
+          exit $fail
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/tokio-wasm-shim
+
+      # The shim crate has no submodule deps and builds natively in seconds
+      # (native target just re-exports real tokio). clippy catches regressions
+      # in the native code paths; the wasm paths are exercised by the full
+      # build in `smoke`.
+      - name: Check + clippy the tokio-wasm-shim crate (native)
+        working-directory: crates/tokio-wasm-shim
+        run: |
+          cargo check --all-targets
+          cargo clippy --all-targets
+
+  # ---- real test suite: full build + headless smoke tests ----
+  # Mirrors deploy-pages.yml's build; see that file for the detailed rationale
+  # behind each step (apt/microsoft-repo removal, order traps, env quirks).
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure git identity (required by `git am` in apply-patches)
+        run: |
+          git config --global user.email "ci@github-actions"
+          git config --global user.name "GitHub Actions"
+
+      - name: Install clang (sqlite-wasm-rs builds C)
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure*
+          sudo apt-get update && sudo apt-get install -y clang
+
+      - name: Install Rust stable + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        env:
+          CACHE_ON_FAILURE: true
+        with:
+          workspaces: |
+            build/core
+            packages/core-wasm/rust
+
+      - name: Setup Node 22 + pnpm (corepack)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable corepack (provides the pinned pnpm)
+        run: corepack enable
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Apply patch stacks (creates build/core, build/desktop)
+        run: pnpm apply-patches
+
+      # ORDER TRAP #1 (see deploy-pages.yml): the workspace override points
+      # @deltachat/jsonrpc-client at this file: path, so it must be generated +
+      # built before the root `pnpm install` can resolve it.
+      - name: Generate + build @deltachat/jsonrpc-client (before root install)
+        working-directory: build/core/deltachat-jsonrpc/typescript
+        run: |
+          printf 'allowBuilds:\n  esbuild: false\n' > pnpm-workspace.yaml
+          pnpm install
+          cargo test -p deltachat-jsonrpc
+          node scripts/generate-constants.js
+          ./node_modules/.bin/tsc
+          ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js
+
+      - name: Install workspace deps
+        run: pnpm install
+
+      # Playwright chromium for the headless smoke suites (--with-deps pulls the
+      # runner's shared libs). Uses the pinned playwright from the lockfile.
+      - name: Install Playwright chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Upstream desktop browser bundle — assemble.mjs copies its dist/ into the
+      # web-app. See deploy-pages.yml for the VERSION_INFO_GIT_REF / NODE_ENV
+      # notes. Dev build here (no NODE_ENV=production) is fine for smoke.
+      - name: Build upstream desktop browser frontend
+        working-directory: build/desktop
+        run: |
+          export VERSION_INFO_GIT_REF=$(git rev-parse --short HEAD)
+          pnpm install --frozen-lockfile
+          pnpm build:browser
+
+      - name: Build wasm core (release)
+        run: pnpm --filter @slothfulchat/core-wasm build:wasm
+
+      - name: Build core-wasm TS (worker + index)
+        run: pnpm --filter @slothfulchat/core-wasm build
+
+      # core-wasm smoke: serves the example page, asserts get_system_info +
+      # typed client + fs side channel answer from inside the browser.
+      - name: Smoke test — core-wasm boots in the browser
+        run: pnpm --filter @slothfulchat/core-wasm test
+
+      # ORDER TRAP #2 (see deploy-pages.yml): assemble wipes+repopulates dist/,
+      # build emits runtime.js + blobs-sw.js into it — build must come after.
+      - name: Assemble web-app dist/ (upstream bundle + wasm + overlays)
+        run: pnpm --filter @slothfulchat/web-app assemble
+      - name: Build web-app runtime + service worker (into dist/)
+        run: pnpm --filter @slothfulchat/web-app build
+
+      # web-app smoke: boots the proxy + static server, asserts the frontend
+      # renders on the wasm core and keeps its proxy config across an
+      # SW-controlled reload.
+      - name: Smoke test — frontend boots on the wasm core
+        run: pnpm --filter @slothfulchat/web-app test
