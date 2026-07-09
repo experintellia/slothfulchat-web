@@ -15,7 +15,7 @@ On mobile the QR scanner also grows to fill the available height (instead
 of a fixed 375px box pinned to the top) so the camera view is large and
 centred. Onboarding dialogs are intentionally left unchanged for now.
 ---
- packages/frontend/scss/dialogs/_qr-code.scss  | 11 ++++++++
+ packages/frontend/scss/dialogs/_qr-code.scss  | 17 ++++++++++++
  .../frontend/src/components/Dialog/Dialog.tsx |  8 ++++++
  .../components/Dialog/DialogWithHeader.tsx    |  2 ++
  .../src/components/Dialog/styles.module.scss  | 27 +++++++++++++++++++
@@ -28,10 +28,10 @@ centred. Onboarding dialogs are intentionally left unchanged for now.
  .../src/components/dialogs/QrCodeScanner.tsx  |  1 +
  .../components/dialogs/ViewGroup/index.tsx    |  1 +
  .../components/dialogs/ViewProfile/index.tsx  |  1 +
- 13 files changed, 111 insertions(+), 8 deletions(-)
+ 13 files changed, 117 insertions(+), 8 deletions(-)
 
 diff --git a/packages/frontend/scss/dialogs/_qr-code.scss b/packages/frontend/scss/dialogs/_qr-code.scss
-index 604d2dfea..ba1ac6b0d 100644
+index 604d2dfea..eaa0427e1 100644
 --- a/packages/frontend/scss/dialogs/_qr-code.scss
 +++ b/packages/frontend/scss/dialogs/_qr-code.scss
 @@ -1,4 +1,5 @@
@@ -40,10 +40,18 @@ index 604d2dfea..ba1ac6b0d 100644
  
  .qr-code-switch {
    display: flex;
-@@ -45,6 +46,16 @@
+@@ -43,6 +44,22 @@
+   img.show-qr-dialog-qr-image {
+     min-height: 0;
    }
- }
- 
++
++  // On mobile the QR dialog is full-screen: centre the code vertically in
++  // the available space instead of leaving it pinned to the top.
++  @media (max-width: variables.$dialog-breakpoint) {
++    justify-content: center;
++  }
++}
++
 +// On mobile the QR dialog is full-screen, so let the scanner fill the
 +// available height instead of sitting as a small box pinned to the top.
 +.scan-qr-dialog-body {
@@ -52,11 +60,9 @@ index 604d2dfea..ba1ac6b0d 100644
 +    flex-direction: column;
 +    justify-content: center;
 +  }
-+}
-+
+ }
+ 
  .copy-link-icon {
-   width: 20px;
-   height: 20px;
 diff --git a/packages/frontend/src/components/Dialog/Dialog.tsx b/packages/frontend/src/components/Dialog/Dialog.tsx
 index d89b22a19..8de3ce420 100644
 --- a/packages/frontend/src/components/Dialog/Dialog.tsx
@@ -149,7 +155,7 @@ index 3eeed1a83..5761fa48c 100644
    width: 100%;
    align-items: center;
 diff --git a/packages/frontend/src/components/QrReader/styles.module.scss b/packages/frontend/src/components/QrReader/styles.module.scss
-index c423a781c..759923380 100644
+index c423a781c..d43ad0b19 100644
 --- a/packages/frontend/src/components/QrReader/styles.module.scss
 +++ b/packages/frontend/src/components/QrReader/styles.module.scss
 @@ -1,7 +1,19 @@
@@ -166,8 +172,8 @@ index c423a781c..759923380 100644
 +  @media (max-width: variables.$dialog-breakpoint) {
 +    height: auto;
 +    min-height: 375px;
++    // keep the 20px bottom margin so the scanner doesn't touch the footer
 +    flex: 1 1 auto;
-+    margin-bottom: 0;
 +  }
  }
  
