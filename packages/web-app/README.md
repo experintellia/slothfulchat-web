@@ -18,7 +18,11 @@ proxy UI); everything browser-specific lives in our own files:
 - `assemble.mjs` — copies the built upstream frontend from
   `build/desktop/packages/target-browser/dist/` + locales, overlays our
   `static/main.html` (CSP loosened for wasm/workers, PWA manifest) and the
-  core-wasm worker/wasm artifacts into `dist/`.
+  core-wasm worker/wasm artifacts into `dist/`. Also drops in the two
+  auxiliary static pages: the core-wasm `/demo/` and the `/changelog/` viewer
+  (see [`changelog/`](changelog/README.md)), copying each published package's
+  `CHANGELOG.md` in beside the latter.
+- `changelog/` — vendored static changelog viewer served at `/changelog/`.
 - `serve.mjs` — static dev server (port 8642, `PORT` env to override).
 - `static/manifest.webmanifest` — PWA manifest (installable, standalone).
 - `themes/*.scss` — our own themes (e.g. `rocket.scss`, a Rocket.Chat-inspired
