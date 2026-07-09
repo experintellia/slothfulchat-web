@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Tue, 7 Jul 2026 18:30:32 +0000
-Subject: [PATCH 05/17] web-app: link Imprint page from the welcome screen
+Subject: [PATCH 05/18] web-app: link Imprint page from the welcome screen
 
 ---
  .../src/components/screens/WelcomeScreen/OnboardingScreen.tsx | 4 ++++
