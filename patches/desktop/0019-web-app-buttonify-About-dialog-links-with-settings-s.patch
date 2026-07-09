@@ -4,20 +4,33 @@ Date: Thu, 9 Jul 2026 13:49:59 +0000
 Subject: [PATCH 19/19] web-app: buttonify About dialog links with
  settings-style buttons
 
-Replace the plain text links in the About dialog (Delta Chat website,
-GitHub, Imprint) with SettingsIconButton rows, matching the Settings
-view. External web links carry an open_in_new indicator to signal they
-leave the app; Imprint (a local page) does not. Adds buttons for the
-SlothfulChat GitHub repo and the published changelog (GitHub releases).
+Replace the plain text links and footer actions in the About dialog with
+SettingsIconButton rows, matching the Settings view. The links group
+(SlothfulChat on GitHub, Changelog, Delta Chat website) carries an
+open_in_new indicator to signal they leave the app; Imprint (a local
+page), Help and View Log do not. Adds buttons for the SlothfulChat GitHub
+repo and the published changelog (GitHub releases).
 ---
- .../src/components/dialogs/About/index.tsx    | 59 +++++++++++++------
- 1 file changed, 41 insertions(+), 18 deletions(-)
+ .../src/components/dialogs/About/index.tsx    | 93 ++++++++++++-------
+ 1 file changed, 57 insertions(+), 36 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index f6bf017c7..0d0deaa19 100644
+index f6bf017c7..1a6cbd8b6 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
-@@ -12,11 +12,17 @@ import {
+@@ -1,22 +1,21 @@
+ import React, { useEffect } from 'react'
+ 
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+-import {
+-  DialogBody,
+-  DialogContent,
+-  DialogFooter,
+-  DialogWithHeader,
+-  FooterActionButton,
+-  FooterActions,
+-} from '../../Dialog'
++import { DialogBody, DialogContent, DialogWithHeader } from '../../Dialog'
  import useTranslationFunction from '../../../hooks/useTranslationFunction'
  import useDialog from '../../../hooks/dialog/useDialog'
  import { LogDialog } from '../Log'
@@ -36,7 +49,7 @@ index f6bf017c7..0d0deaa19 100644
  
  export default function About({ onClose }: DialogProps) {
    const tx = useTranslationFunction()
-@@ -75,11 +81,6 @@ export default function About({ onClose }: DialogProps) {
+@@ -75,11 +74,6 @@ export default function About({ onClose }: DialogProps) {
                  </>
                )}
              </div>
@@ -48,7 +61,7 @@ index f6bf017c7..0d0deaa19 100644
              <p style={{ marginTop: 16, textAlign: 'left', fontSize: 13 }}>
                <b>slothfulchat-web</b> is an unofficial experiment. It runs Delta
                Chat's chatmail core — the same core behind the Delta Chat
-@@ -88,20 +89,42 @@ export default function About({ onClose }: DialogProps) {
+@@ -88,31 +82,58 @@ export default function About({ onClose }: DialogProps) {
                affiliated with Delta Chat. A WS→TCP bridge is required to send
                and receive.
              </p>
@@ -100,6 +113,32 @@ index f6bf017c7..0d0deaa19 100644
 +        >
 +          {'Imprint'}
 +        </SettingsIconButton>
++        <SettingsSeparator />
++        <SettingsIconButton
++          icon='question_mark'
++          onClick={() => runtime.openHelpWindow()}
++          dataTestid='about-help'
++        >
++          {tx('menu_help')}
++        </SettingsIconButton>
++        <SettingsIconButton
++          icon='visibility'
++          onClick={viewLog}
++          dataTestid='about-view-log'
++        >
++          {tx('pref_view_log')}
++        </SettingsIconButton>
        </DialogBody>
-       <DialogFooter>
-         <FooterActions align='spaceBetween'>
+-      <DialogFooter>
+-        <FooterActions align='spaceBetween'>
+-          <FooterActionButton onClick={() => runtime.openHelpWindow()}>
+-            {tx('menu_help')}
+-          </FooterActionButton>
+-          <FooterActionButton onClick={viewLog}>
+-            {tx('pref_view_log')}
+-          </FooterActionButton>
+-        </FooterActions>
+-      </DialogFooter>
+     </DialogWithHeader>
+   )
+ }
