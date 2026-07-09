@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 — 2026-07-09
+
+- webimap: connectivity badge no longer sticks at "Connecting…"/"Updating…"
+  (core patch 0012). `ConnectivityStore::set()` dedups unchanged values, the
+  receive loop sets Idle after every successful poll (not only on
+  transitions), and the first poll — including the first after an error
+  backoff — uses `wait=0` so "Connecting…" clears after one round-trip
+  instead of a full 60s long-poll on an empty inbox.
+- webimap: a 404 on `GET`/`DELETE /webimap/message/{uid}` is treated as
+  already-gone, not an error (core patch 0013). Previously every stale UID —
+  routine on iOS, where Safari suspends in-flight fetches and DELETE
+  responses get lost while still landing server-side — bought a spurious 30s
+  backoff and an error connectivity badge. GET 404 skips (a transient 404 is
+  retried via the next listing), DELETE 404 counts as success; a server that
+  keeps listing UIDs it cannot serve is throttled after three such rounds in
+  a row. The warn logs remain as the trace that another consumer may exist.
+- example page: the worker's fatal states (`fatal-opfs-locked` /
+  `fatal-storage-blocked` / `fatal-init-error`, incl. the underlying error
+  detail) are now surfaced as an inline hint instead of the page sitting on
+  "loading core in a worker…" forever, e.g. when the demo is already open in
+  another tab.
+- Version note: 0.2.1 skipped — package versions now track the release tag
+  (see RELEASING.md).
+
 ## 0.2.0 — 2026-07-08
 
 - **webimap transport** (core patch 0011): madmail's WebIMAP/WebSMTP as a

@@ -1,6 +1,10 @@
 # Releasing (npm packages + GitHub release)
 
-Three packages are published from this repo, with **independent versions**:
+Three packages are published from this repo. **Packages changed since the
+last release get the new tag's version number** (tag `vX.Y.Z` publishes the
+bumped packages at `X.Y.Z`); unchanged packages keep their last version and
+the workflow skips them. So gaps in a package's version history are normal,
+and every published version maps back to the tag it shipped with:
 
 - `@slothfulchat/ws-tcp-proxy` — packages/ws-tcp-proxy, no build step
 - `@slothfulchat/core-wasm` — packages/core-wasm, built from the patched core
@@ -20,14 +24,14 @@ any `v*` tag. The workflow rebuilds from a clean checkout and does two things:
   shared tag releases whatever was bumped, and re-running is idempotent
   (release assets are re-uploaded with `--clobber`).
 
-1. Bump `version` in the package(s) you're releasing
-   (`packages/*/package.json`) and add an entry to that package's
+1. Pick the next tag version, and set `version` to it in each package that
+   changed (`packages/*/package.json`); add an entry to those packages'
    `CHANGELOG.md` (npm always includes CHANGELOG.md in the tarball).
 2. Commit, then tag and push:
 
    ```sh
-   git tag v0.2.0        # tag name is just the trigger; only bumped
-   git push origin v0.2.0  # package versions matter
+   git tag v0.3.0          # same number the bumped packages carry;
+   git push origin v0.3.0  # unchanged packages are skipped
    ```
 
 3. Watch the Actions run (`gh run watch`). The core-wasm wasm build takes
