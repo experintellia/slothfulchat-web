@@ -66,11 +66,16 @@ jobs:
           git config --global user.email "ci@github-actions"
           git config --global user.name "GitHub Actions"
 
-      # drop the runner's flaky preinstalled MS repos (see deploy-pages.yml)
+      # drop the runner's flaky preinstalled third-party repos + retry
+      # (see deploy-pages.yml): any bad repo makes `apt-get update` exit 100.
       - name: Install clang (sqlite-wasm-rs builds C)
         run: |
-          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure*
-          sudo apt-get update && sudo apt-get install -y clang
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* \
+                     /etc/apt/sources.list.d/*azure* \
+                     /etc/apt/sources.list.d/*google* \
+                     /etc/apt/sources.list.d/*chrome*
+          for i in 1 2 3; do sudo apt-get update && break || sleep $((i*5)); done
+          sudo apt-get install -y clang
 
       - name: Install Rust stable + wasm32 target
         uses: dtolnay/rust-toolchain@stable

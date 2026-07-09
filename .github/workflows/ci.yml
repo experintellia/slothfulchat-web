@@ -94,8 +94,16 @@ jobs:
 
       - name: Install clang (sqlite-wasm-rs builds C)
         run: |
-          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure*
-          sudo apt-get update && sudo apt-get install -y clang
+          # Drop preinstalled third-party apt repos (microsoft/azure/google-chrome):
+          # unused here, and a mid-sync one makes `apt-get update` exit 100 (any
+          # failing repo fails the whole update) and kills the job. We only need
+          # clang from the base ubuntu archive. Retry to ride out transient hiccups.
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* \
+                     /etc/apt/sources.list.d/*azure* \
+                     /etc/apt/sources.list.d/*google* \
+                     /etc/apt/sources.list.d/*chrome*
+          for i in 1 2 3; do sudo apt-get update && break || sleep $((i*5)); done
+          sudo apt-get install -y clang
 
       - name: Install Rust stable + wasm32 target
         uses: dtolnay/rust-toolchain@stable
