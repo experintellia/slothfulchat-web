@@ -13,15 +13,15 @@ Onboarding dialogs are intentionally left unchanged for now.
 ---
  .../frontend/src/components/Dialog/Dialog.tsx |  8 ++++++
  .../components/Dialog/DialogWithHeader.tsx    |  2 ++
- .../src/components/Dialog/styles.module.scss  | 25 ++++++++++++++++++
+ .../src/components/Dialog/styles.module.scss  | 27 +++++++++++++++++++
  .../src/components/Settings/Settings.tsx      |  8 +++++-
  .../src/components/dialogs/About/index.tsx    |  1 +
- .../components/dialogs/CreateChat/index.tsx   | 26 ++++++++++++++++---
+ .../components/dialogs/CreateChat/index.tsx   | 26 +++++++++++++++---
  .../components/dialogs/MediaView/index.tsx    |  6 ++++-
  .../src/components/dialogs/QrCodeScanner.tsx  |  1 +
  .../components/dialogs/ViewGroup/index.tsx    |  1 +
  .../components/dialogs/ViewProfile/index.tsx  |  1 +
- 10 files changed, 73 insertions(+), 6 deletions(-)
+ 10 files changed, 75 insertions(+), 6 deletions(-)
 
 diff --git a/packages/frontend/src/components/Dialog/Dialog.tsx b/packages/frontend/src/components/Dialog/Dialog.tsx
 index d89b22a19..8de3ce420 100644
@@ -77,10 +77,10 @@ index c04b41f2f..6c49ab147 100644
        <DialogHeader
          onClose={props.onClose}
 diff --git a/packages/frontend/src/components/Dialog/styles.module.scss b/packages/frontend/src/components/Dialog/styles.module.scss
-index 3eeed1a83..dbbf3a6c2 100644
+index 3eeed1a83..5761fa48c 100644
 --- a/packages/frontend/src/components/Dialog/styles.module.scss
 +++ b/packages/frontend/src/components/Dialog/styles.module.scss
-@@ -45,6 +45,31 @@ $paddingVertical: 20px;
+@@ -45,6 +45,33 @@ $paddingVertical: 20px;
    }
  }
  
@@ -100,7 +100,9 @@ index 3eeed1a83..dbbf3a6c2 100644
 +    max-height: 100dvh;
 +
 +    &:not(.noTopPadding) {
-+      padding-top: 0;
++      /* keep some breathing room above the header, and clear the device
++         status bar / notch on mobile */
++      padding-top: calc(#{$paddingVertical} + env(safe-area-inset-top, 0px));
 +    }
 +
 +    .dialogBody {
