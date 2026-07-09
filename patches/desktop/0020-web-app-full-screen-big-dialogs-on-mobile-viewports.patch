@@ -5,24 +5,58 @@ Subject: [PATCH 20/20] web-app: full-screen big dialogs on mobile viewports
 
 Add a fullscreenOnMobile prop to <Dialog>/<DialogWithHeader> that, below
 the $dialog-breakpoint (500px), expands the dialog to fill the viewport:
-no rounded corners, margin, shadow or top padding, so it goes edge to
-edge on phones. Opt the big dialogs into it: settings, about, gallery
-(media view), contact and group profiles, the new-chat family (create
-chat, clone, create group, create broadcast) and the QR scanner.
-Onboarding dialogs are intentionally left unchanged for now.
+no rounded corners, margin, shadow, and only enough top padding to clear
+the status bar / notch, so it goes edge to edge on phones. Opt the big
+dialogs into it: settings, about, gallery (media view), contact and group
+profiles, the new-chat family (create chat, clone, create group, create
+broadcast), the QR scanner and the show/scan QR dialog.
+
+On mobile the QR scanner also grows to fill the available height (instead
+of a fixed 375px box pinned to the top) so the camera view is large and
+centred. Onboarding dialogs are intentionally left unchanged for now.
 ---
+ packages/frontend/scss/dialogs/_qr-code.scss  | 11 ++++++++
  .../frontend/src/components/Dialog/Dialog.tsx |  8 ++++++
  .../components/Dialog/DialogWithHeader.tsx    |  2 ++
  .../src/components/Dialog/styles.module.scss  | 27 +++++++++++++++++++
+ .../components/QrReader/styles.module.scss    | 18 +++++++++++++
  .../src/components/Settings/Settings.tsx      |  8 +++++-
  .../src/components/dialogs/About/index.tsx    |  1 +
  .../components/dialogs/CreateChat/index.tsx   | 26 +++++++++++++++---
  .../components/dialogs/MediaView/index.tsx    |  6 ++++-
+ .../src/components/dialogs/QrCode.tsx         |  9 +++++--
  .../src/components/dialogs/QrCodeScanner.tsx  |  1 +
  .../components/dialogs/ViewGroup/index.tsx    |  1 +
  .../components/dialogs/ViewProfile/index.tsx  |  1 +
- 10 files changed, 75 insertions(+), 6 deletions(-)
+ 13 files changed, 111 insertions(+), 8 deletions(-)
 
+diff --git a/packages/frontend/scss/dialogs/_qr-code.scss b/packages/frontend/scss/dialogs/_qr-code.scss
+index 604d2dfea..ba1ac6b0d 100644
+--- a/packages/frontend/scss/dialogs/_qr-code.scss
++++ b/packages/frontend/scss/dialogs/_qr-code.scss
+@@ -1,4 +1,5 @@
+ @use '../mixins';
++@use '../variables';
+ 
+ .qr-code-switch {
+   display: flex;
+@@ -45,6 +46,16 @@
+   }
+ }
+ 
++// On mobile the QR dialog is full-screen, so let the scanner fill the
++// available height instead of sitting as a small box pinned to the top.
++.scan-qr-dialog-body {
++  @media (max-width: variables.$dialog-breakpoint) {
++    display: flex;
++    flex-direction: column;
++    justify-content: center;
++  }
++}
++
+ .copy-link-icon {
+   width: 20px;
+   height: 20px;
 diff --git a/packages/frontend/src/components/Dialog/Dialog.tsx b/packages/frontend/src/components/Dialog/Dialog.tsx
 index d89b22a19..8de3ce420 100644
 --- a/packages/frontend/src/components/Dialog/Dialog.tsx
@@ -114,6 +148,43 @@ index 3eeed1a83..5761fa48c 100644
  .dialogHeader {
    width: 100%;
    align-items: center;
+diff --git a/packages/frontend/src/components/QrReader/styles.module.scss b/packages/frontend/src/components/QrReader/styles.module.scss
+index c423a781c..759923380 100644
+--- a/packages/frontend/src/components/QrReader/styles.module.scss
++++ b/packages/frontend/src/components/QrReader/styles.module.scss
+@@ -1,7 +1,19 @@
++@use '../../../scss/variables.scss';
++
+ .qrReader {
+   position: relative;
+   height: 375px;
+   margin-bottom: 20px;
++
++  // On small/mobile viewports the QR dialog is full-screen: grow the scanner
++  // to fill the available height (and let the video/status fill it too)
++  // instead of leaving it a small box at the top.
++  @media (max-width: variables.$dialog-breakpoint) {
++    height: auto;
++    min-height: 375px;
++    flex: 1 1 auto;
++    margin-bottom: 0;
++  }
+ }
+ 
+ .qrReaderVideo {
+@@ -58,6 +70,12 @@
+   text-align: center;
+   top: 0;
+ 
++  @media (max-width: variables.$dialog-breakpoint) {
++    // fill the grown scanner area rather than staying a fixed 375px box
++    height: auto;
++    bottom: 0;
++  }
++
+   &.info {
+     background-color: gray;
+   }
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
 index 2c5908172..c3e736d6b 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
@@ -220,6 +291,33 @@ index 2c17308e7..d5609d1db 100644
        <DialogHeader title={headerString} onClose={onClose} />
        <DialogBody className={styles.mediaViewDialogBody}>
          <Gallery chatId={chatId} />
+diff --git a/packages/frontend/src/components/dialogs/QrCode.tsx b/packages/frontend/src/components/dialogs/QrCode.tsx
+index 2a278f1e0..6f4bbb0f0 100644
+--- a/packages/frontend/src/components/dialogs/QrCode.tsx
++++ b/packages/frontend/src/components/dialogs/QrCode.tsx
+@@ -66,7 +66,12 @@ export default function QrCode({
+   const addr = addrFetch?.result?.ok ? (addrFetch.result.value ?? '') : ''
+ 
+   return (
+-    <Dialog onClose={onClose} dataTestid='qr-dialog' noTopPadding>
++    <Dialog
++      onClose={onClose}
++      dataTestid='qr-dialog'
++      noTopPadding
++      fullscreenOnMobile
++    >
+       <div className='qr-code-switch'>
+         <button
+           type='button'
+@@ -292,7 +297,7 @@ export function QrCodeScanQrInner({
+ 
+   return (
+     <>
+-      <DialogBody>
++      <DialogBody className='scan-qr-dialog-body'>
+         <QrReader
+           onScanSuccess={handleScan}
+           onError={handleError}
 diff --git a/packages/frontend/src/components/dialogs/QrCodeScanner.tsx b/packages/frontend/src/components/dialogs/QrCodeScanner.tsx
 index 53394fe99..d09be4a79 100644
 --- a/packages/frontend/src/components/dialogs/QrCodeScanner.tsx
