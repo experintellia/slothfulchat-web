@@ -45,13 +45,19 @@ jobs:
           git config --global user.name "GitHub Actions"
 
       # sqlite-wasm-rs compiles SQLite's C sources with clang.
-      # The runner's preinstalled packages.microsoft.com repos (azure-cli etc.)
-      # intermittently fail clearsign validation and abort apt-get update —
-      # we don't use them, so drop them first.
+      # The runner's preinstalled third-party repos (packages.microsoft.com,
+      # google-chrome) intermittently fail clearsign validation or serve a
+      # mid-sync index, and ANY failing repo makes `apt-get update` exit 100 and
+      # aborts the job. We don't use them, so drop them first; retry to ride out
+      # transient hiccups on the base ubuntu archive too.
       - name: Install clang (sqlite-wasm-rs builds C)
         run: |
-          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure*
-          sudo apt-get update && sudo apt-get install -y clang
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* \
+                     /etc/apt/sources.list.d/*azure* \
+                     /etc/apt/sources.list.d/*google* \
+                     /etc/apt/sources.list.d/*chrome*
+          for i in 1 2 3; do sudo apt-get update && break || sleep $((i*5)); done
+          sudo apt-get install -y clang
 
       - name: Install Rust stable + wasm32 target
         uses: dtolnay/rust-toolchain@stable
