@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 8 Jul 2026 23:09:20 +0000
+Subject: [PATCH 17/17] web-app: rename self-referential Delta Chat mentions to
+ SlothfulChat in all locales
+
+Extends the en.xml-only rename (0006) to every locale: the conversion
+script now substitutes the literal "Delta Chat" string for SlothfulChat
+within the same 8 self-referential keys, for every language, so it keeps
+working after future translations:pull. Languages that transliterate the
+name into their own script instead of using the Latin string aren't
+covered by this and still need a real translation.
+---
+ bin/build-shared-convert-translations.mjs | 32 +++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/bin/build-shared-convert-translations.mjs b/bin/build-shared-convert-translations.mjs
+index bdf12c3b4..8f0e4b595 100755
+--- a/bin/build-shared-convert-translations.mjs
++++ b/bin/build-shared-convert-translations.mjs
+@@ -15,6 +15,37 @@ function removeJunk(input) {
+     .replace(new RegExp('\\\\', 'g'), '')
+ }
+ 
++// Keys where "Delta Chat" refers to this app itself (name, welcome, about,
++// background/location permission rationales) rather than upstream credits,
++// delta.chat links, or donation/stats text — kept in sync with en.xml's
++// SlothfulChat renames. Transifex only has English source strings edited, so
++// every other locale still ships "Delta Chat" here; this substitutes it at
++// conversion time so it applies to all ~50 locales (and any future ones)
++// without hand-patching each translated .xml. This is a literal match, so it
++// misses two shapes: languages that transliterate the name into their own
++// script (e.g. fa, ckb, my), and any translation that spells "Delta Chat"
++// with different spacing (e.g. a non-breaking space) — both still read
++// "Delta Chat" and need an actual translator, not a substitution rule.
++const SELF_REFERENTIAL_KEYS = new Set([
++  'app_name',
++  'welcome_desktop',
++  'global_menu_help_about_desktop',
++  'disabled_in_dc',
++  'location_rationale',
++  'pref_background_notifications_rationale',
++  'perm_enable_bg_reminder_title',
++  'perm_enable_bg_already_done',
++])
++
++/**
++ * @param {string} name
++ * @param {string} text
++ */
++function renameSelfReferences(name, text) {
++  if (!SELF_REFERENTIAL_KEYS.has(name)) return text
++  return text.split('Delta Chat').join('SlothfulChat')
++}
++
+ async function xmlToJson(filename) {
+   const xml = (await readFile(filename, 'utf-8')).toString()
+ 
+@@ -47,6 +78,7 @@ async function xmlToJson(filename) {
+     let text = string._text
+     if (typeof text === 'string') {
+       text = removeJunk(text)
++      text = renameSelfReferences(name, text)
+     }
+     res[name] = {
+       message: text,
