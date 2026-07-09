@@ -164,10 +164,20 @@ await dc.rpc.getChatSecurejoinQrCode(aid)</code></pre>
           '<code>?persist=0</code> to start a fresh in-memory core.',
       }
       core.worker.addEventListener('message', event => {
-        const message = FATAL_MESSAGES[event.data?.type]
+        const type = event.data?.type
+        const message = FATAL_MESSAGES[type]
         if (!message) return
         status.textContent = 'core failed to start ✖'
         fatalHint.innerHTML = message
+        // fatal-init-error carries the actual error as free text (worker.ts
+        // `String(err)`) — not safe for innerHTML, so it gets its own
+        // textContent-only node.
+        if (type === 'fatal-init-error' && event.data.message) {
+          const detail = document.createElement('div')
+          detail.style.marginTop = '0.5rem'
+          detail.textContent = 'Details: ' + event.data.message
+          fatalHint.appendChild(detail)
+        }
         fatalHint.style.display = 'block'
       })
 
