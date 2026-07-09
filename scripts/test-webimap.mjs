@@ -121,7 +121,8 @@ const mock = createServer(async (req, res) => {
     if (req.method === 'GET' && path === '/webimap/messages') {
       const sinceUid = Number(url.searchParams.get('since_uid') ?? '0') || 0;
       const wait = Math.min(Number(url.searchParams.get('wait') ?? '0') || 0, 120);
-      const hasNew = [...user.msgs.keys()].some((uid) => uid > sinceUid);
+      const hasNew =
+        user.phantomOnce !== undefined || [...user.msgs.keys()].some((uid) => uid > sinceUid);
       if (hasNew || wait <= 0) {
         respondMessages(res, user, sinceUid);
         return;

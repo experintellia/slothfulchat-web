@@ -14,15 +14,33 @@ fetches) but landed server-side. Bailing put the loop into a spurious
 no action. Skip on GET 404 (without deleting: if the 404 was transient
 the next listing retries), succeed on DELETE 404, keep the warn logs as
 the trace that another consumer may exist.
+
+Guard against the pathological server that keeps listing UIDs it cannot
+serve: a round whose listing held only 404ing UIDs makes no progress,
+and after three such rounds in a row the loop falls into the error arm
+whose 30s backoff throttles it — a non-empty listing is answered
+immediately even when we ask for a long poll, so nothing else would.
 ---
- src/webimap.rs | 16 +++++++++++++++-
- 1 file changed, 15 insertions(+), 1 deletion(-)
+ src/webimap.rs | 73 ++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 62 insertions(+), 11 deletions(-)
 
 diff --git a/src/webimap.rs b/src/webimap.rs
-index f3b44e873..a4a2d0258 100644
+index f3b44e873..ced1beb59 100644
 --- a/src/webimap.rs
 +++ b/src/webimap.rs
-@@ -164,6 +164,15 @@ async fn fetch_message(&self, context: &Context, uid: u32) -> Result<()> {
+@@ -154,7 +154,10 @@ async fn list_messages(&self, context: &Context, wait: u64) -> Result<Vec<Messag
+     }
+ 
+     /// Downloads a message, feeds it to receive_imf and deletes it on success.
+-    async fn fetch_message(&self, context: &Context, uid: u32) -> Result<()> {
++    ///
++    /// Returns `false` when the message was already gone from the server
++    /// (GET answered 404) and there was nothing to do.
++    async fn fetch_message(&self, context: &Context, uid: u32) -> Result<bool> {
+         let (status, body) = self
+             .req(
+                 context,
+@@ -164,6 +167,15 @@ async fn fetch_message(&self, context: &Context, uid: u32) -> Result<()> {
                  REQUEST_TIMEOUT,
              )
              .await?;
@@ -33,12 +51,12 @@ index f3b44e873..a4a2d0258 100644
 +            // Nothing left to fetch; failing here would only trigger the
 +            // caller's 30s backoff for a message that is already gone.
 +            warn!(context, "webimap: UID {uid} is gone from the server, skipping.");
-+            return Ok(());
++            return Ok(false);
 +        }
          if !(200..300).contains(&status) {
              bail!("webimap fetch of UID {uid} failed with status {status}");
          }
-@@ -182,7 +191,12 @@ async fn fetch_message(&self, context: &Context, uid: u32) -> Result<()> {
+@@ -182,14 +194,19 @@ async fn fetch_message(&self, context: &Context, uid: u32) -> Result<()> {
                  REQUEST_TIMEOUT,
              )
              .await?;
@@ -52,3 +70,98 @@ index f3b44e873..a4a2d0258 100644
              // Failing here makes the caller back off. The message was
              // processed but stays on the server, so the next long-poll
              // returns it again immediately; without the backoff that is
+             // a busy loop. receive_imf() dedups the reruns by Message-ID.
+             bail!("webimap delete of UID {uid} failed with status {status}");
+         }
+-        Ok(())
++        Ok(true)
+     }
+ }
+ 
+@@ -255,7 +272,9 @@ pub(crate) async fn smtp_send(
+ 
+ /// A single receive iteration: long-poll for messages, process and delete them.
+ ///
+-/// Returns whether the poll returned any messages.
++/// Returns `false` for a round that listed only messages that turned out
++/// to be already gone (404 on fetch) — no progress was made and the same
++/// listing may come straight back.
+ async fn fetch_idle(
+     ctx: &Context,
+     client: &WebimapClient,
+@@ -264,18 +283,23 @@ async fn fetch_idle(
+ ) -> Result<bool> {
+     let mut msgs = client.list_messages(ctx, wait).await?;
+     if msgs.is_empty() {
+-        return Ok(false);
++        return Ok(true);
+     }
+     connection.connectivity.set_working(ctx);
+ 
+     msgs.sort_by_key(|meta| meta.uid);
+     let mut failed = 0;
++    let mut fetched = 0;
+     for meta in msgs {
+         // ponytail: a failed message is skipped and retried on the next
+         // round, it stays on the server until successfully processed.
+-        if let Err(err) = client.fetch_message(ctx, meta.uid).await {
+-            warn!(ctx, "webimap: failed to process UID {}: {err:#}.", meta.uid);
+-            failed += 1;
++        match client.fetch_message(ctx, meta.uid).await {
++            Ok(true) => fetched += 1,
++            Ok(false) => {}
++            Err(err) => {
++                warn!(ctx, "webimap: failed to process UID {}: {err:#}.", meta.uid);
++                failed += 1;
++            }
+         }
+     }
+ 
+@@ -285,7 +309,7 @@ async fn fetch_idle(
+     if failed > 0 {
+         bail!("failed to process {failed} webimap message(s)");
+     }
+-    Ok(true)
++    Ok(fetched > 0)
+ }
+ 
+ /// Receiving loop for a webimap transport,
+@@ -334,9 +358,36 @@ pub(crate) async fn webimap_loop(
+         // message), and `ConnectivityStore::set()` dedups unchanged values
+         // so connectivity does not flap on every empty poll.
+         let mut wait = 0;
++        // Rounds in a row whose listing held only UIDs that 404 on fetch.
++        // A healthy server delists consumed messages, so such a round
++        // resolves by the next one; several in a row mean the server keeps
++        // listing UIDs it cannot serve, and because a non-empty listing is
++        // answered immediately even when we ask for a long poll, only the
++        // error arm's backoff can keep that from spinning hot.
++        let mut stale_rounds = 0;
+         loop {
+-            match fetch_idle(&ctx, &client, &connection, wait).await {
+-                Ok(_had_messages) => {
++            let round = match fetch_idle(&ctx, &client, &connection, wait).await {
++                Ok(true) => {
++                    stale_rounds = 0;
++                    Ok(())
++                }
++                Ok(false) => {
++                    stale_rounds += 1;
++                    if stale_rounds >= 3 {
++                        Err(format_err!(
++                            "{stale_rounds} rounds of listings with only unfetchable (404) UIDs"
++                        ))
++                    } else {
++                        Ok(())
++                    }
++                }
++                Err(err) => {
++                    stale_rounds = 0;
++                    Err(err)
++                }
++            };
++            match round {
++                Ok(()) => {
+                     wait = LONG_POLL_WAIT_SECS;
+                     connection.connectivity.set_idle(&ctx);
+                     ctx.emit_event(EventType::ImapInboxIdle);
