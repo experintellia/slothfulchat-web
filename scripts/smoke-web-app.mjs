@@ -79,9 +79,15 @@ try {
   console.log('OK: service worker active')
   consoleTail.length = 0
   await page.reload()
-  // polling: interval — rAF polling can stall in headless after reload
+  // polling: interval — rAF polling can stall in headless after reload.
+  // timeout: generous. After reload the new worker can't take the OPFS lock
+  // until the *previous* worker is fully torn down; core-wasm's
+  // waitForOpfsSyncHandles retries 30× with a 2s probe timeout each (worker.ts),
+  // so the lock handoff alone can burn ~75s on a loaded/headless CI runner
+  // before wasm re-init + core re-boot even start. 120s was right at the edge
+  // and flaked in CI; give the slow-but-correct handoff room to finish.
   await page.waitForFunction(() => window.__coreSystemInfo && window.exp?.rpc, null, {
-    timeout: 120_000,
+    timeout: 240_000,
     polling: 250,
   })
   if (!(await page.evaluate(() => navigator.serviceWorker.controller !== null))) {
