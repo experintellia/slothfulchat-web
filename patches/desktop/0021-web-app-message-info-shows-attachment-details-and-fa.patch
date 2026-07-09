@@ -1,0 +1,239 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Thu, 9 Jul 2026 16:33:17 +0000
+Subject: [PATCH 21/21] web-app: message info shows attachment details and
+ failure reason
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Extend the Message Info dialog (BasicMessageInfo) with an attachment
+section — file name, MIME type, size, image/video dimensions and
+audio/video duration — shown only for messages that carry a file.
+
+Also surface delivery failures directly in this dialog: a prominent
+error banner is rendered when the message is in the OUT_FAILED state (or
+carries an error string). The failed-status icon in the message bubble
+now opens the Message Info dialog instead of a bare alert, so the
+failure reason has a clear, consistent home alongside the other
+delivery metadata.
+
+Adds the untranslated labels Type/Size/Resolution/Duration.
+---
+ _locales/_untranslated_en.json                |  9 ++
+ .../MessageDetail/BasicMessageInfo.tsx        | 94 ++++++++++++++++++-
+ .../dialogs/MessageDetail/styles.module.scss  | 25 +++++
+ .../src/components/message/Message.tsx        | 12 +--
+ 4 files changed, 128 insertions(+), 12 deletions(-)
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 4cbd935bf..8d24c02ef 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -1,4 +1,13 @@
+ {
++  "message_info_file_type": {
++    "message": "Type"
++  },
++  "message_info_resolution": {
++    "message": "Resolution"
++  },
++  "message_info_duration": {
++    "message": "Duration"
++  },
+   "command_palette_tab_to_search": {
+     "message": "Tab to search"
+   },
+diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
+index ff0ec1325..5d3432a69 100644
+--- a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
++++ b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
+@@ -1,6 +1,7 @@
+ import React, { useEffect, useState } from 'react'
++import { filesize } from 'filesize'
+ import { BackendRemote, onDCEvent } from '../../../backend-com'
+-import { T } from '@deltachat/jsonrpc-client'
++import { C, T } from '@deltachat/jsonrpc-client'
+ import { selectedAccountId } from '../../../ScreenController'
+ 
+ import styles from './styles.module.scss'
+@@ -9,6 +10,19 @@ import moment from 'moment'
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+ import { useRpcFetch } from '../../../hooks/useFetch'
+ import useOpenViewProfileDialog from '../../../hooks/dialog/useOpenViewProfileDialog'
++import { isImage } from '../../attachment/Attachment'
++
++/** Format a millisecond duration as `m:ss` (or `h:mm:ss`). */
++function formatDuration(ms: number): string {
++  const totalSeconds = Math.round(ms / 1000)
++  const seconds = totalSeconds % 60
++  const minutes = Math.floor(totalSeconds / 60) % 60
++  const hours = Math.floor(totalSeconds / 3600)
++  const pad = (n: number) => n.toString().padStart(2, '0')
++  return hours > 0
++    ? `${hours}:${pad(minutes)}:${pad(seconds)}`
++    : `${minutes}:${pad(seconds)}`
++}
+ 
+ function useMessageReadReceipts(messageId: number) {
+   const accountId = selectedAccountId()
+@@ -59,8 +73,35 @@ export function BasicMessageInfo(props: BasicMessageInfoProps) {
+     ? receivedTimestamp.format('lll')
+     : null
+ 
++  // A message counts as failed once the core marks it OUT_FAILED. We show the
++  // error text prominently since this dialog is where the failed-status icon
++  // in the message bubble now sends the user.
++  const failed = message.state === C.DC_STATE_OUT_FAILED
++  const errorText = message.error ?? undefined
++
++  // Attachment metadata. `file` is the blob path; the rest is only meaningful
++  // when there is an attachment, so we gate the whole section on it.
++  const hasAttachment = Boolean(message.file)
++  const hasDimensions =
++    message.dimensionsWidth > 0 && message.dimensionsHeight > 0
++  const showDimensions =
++    hasDimensions && (isImage(message.viewType) || message.viewType === 'Video')
++  const showDuration =
++    message.duration > 0 &&
++    (message.viewType === 'Audio' ||
++      message.viewType === 'Voice' ||
++      message.viewType === 'Video')
++
+   return (
+     <div className={styles.formattedMessageInfo}>
++      {(failed || errorText) && (
++        <div className={styles.errorRow} role='status'>
++          <span className={styles.errorIcon} aria-hidden='true' />
++          <span className={styles.errorText}>
++            {errorText ? tx('error_x', errorText) : tx('error')}
++          </span>
++        </div>
++      )}
+       <div className={styles.infoRow}>
+         <span className={styles.infoLabel}>
+           {tx('message_detail_sent_desktop')}
+@@ -99,6 +140,57 @@ export function BasicMessageInfo(props: BasicMessageInfoProps) {
+             ))}
+         </>
+       )}
++      {hasAttachment && (
++        <>
++          <div className={styles.infoRow}>
++            <div className={styles.readByHeader}>
++              <strong>{tx('attachment')}</strong>
++            </div>
++          </div>
++          {message.fileName && (
++            <div className={styles.infoRow}>
++              <span className={styles.infoLabel}>{tx('file')}</span>
++              <span className={styles.infoValue}>{message.fileName}</span>
++            </div>
++          )}
++          {message.fileMime && (
++            <div className={styles.infoRow}>
++              <span className={styles.infoLabel}>
++                {tx('message_info_file_type')}
++              </span>
++              <span className={styles.infoValue}>{message.fileMime}</span>
++            </div>
++          )}
++          {message.fileBytes > 0 && (
++            <div className={styles.infoRow}>
++              <span className={styles.infoLabel}>{tx('app_size')}</span>
++              <span className={styles.infoValue}>
++                {filesize(message.fileBytes)}
++              </span>
++            </div>
++          )}
++          {showDimensions && (
++            <div className={styles.infoRow}>
++              <span className={styles.infoLabel}>
++                {tx('message_info_resolution')}
++              </span>
++              <span className={styles.infoValue}>
++                {message.dimensionsWidth} × {message.dimensionsHeight} px
++              </span>
++            </div>
++          )}
++          {showDuration && (
++            <div className={styles.infoRow}>
++              <span className={styles.infoLabel}>
++                {tx('message_info_duration')}
++              </span>
++              <span className={styles.infoValue}>
++                {formatDuration(message.duration)}
++              </span>
++            </div>
++          )}
++        </>
++      )}
+     </div>
+   )
+ }
+diff --git a/packages/frontend/src/components/dialogs/MessageDetail/styles.module.scss b/packages/frontend/src/components/dialogs/MessageDetail/styles.module.scss
+index c6b31462f..b7f85baa1 100644
+--- a/packages/frontend/src/components/dialogs/MessageDetail/styles.module.scss
++++ b/packages/frontend/src/components/dialogs/MessageDetail/styles.module.scss
+@@ -17,6 +17,31 @@
+   padding: 5px 0px;
+ }
+ 
++// Prominent banner shown when a message failed to send. This dialog is where
++// the failed-status icon in the message bubble now takes the user, so the
++// error needs to read clearly at the top.
++.errorRow {
++  display: flex;
++  align-items: baseline;
++  gap: 8px;
++  margin: 0 10px 14px;
++  padding: 10px 14px;
++  border-radius: 8px;
++  background-color: color-mix(in srgb, var(--errorColor) 12%, transparent);
++  color: var(--errorColor);
++}
++
++// Leading warning glyph (⚠) — avoids a build-time SVG asset dependency.
++.errorIcon::before {
++  content: '\26A0';
++  font-weight: 700;
++}
++
++.errorText {
++  font-weight: 500;
++  word-break: break-word;
++}
++
+ .infoRow {
+   display: flex;
+   justify-content: space-between;
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index bd2464902..65171d5ea 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -67,7 +67,6 @@ import { useRpcFetch } from '../../hooks/useFetch'
+ import ForwardMessage from '../dialogs/ForwardMessage'
+ import MessageDetail from '../dialogs/MessageDetail/MessageDetail'
+ import ConfirmDeleteMessageDialog from '../dialogs/ConfirmDeleteMessage'
+-import AlertDialog from '../dialogs/AlertDialog'
+ 
+ const log = getLogger('Message')
+ 
+@@ -1102,16 +1101,7 @@ export default function Message(props: {
+               timestamp={message.timestamp * 1000}
+               encrypted={message.showPadlock}
+               isSavedMessage={isOrHasSavedMessage}
+-              onClickError={() =>
+-                openDialog(AlertDialog, {
+-                  message: message.error
+-                    ? tx('error_x', message.error)
+-                    : tx('ok'),
+-                  dialogComponentProps: {
+-                    width: 600,
+-                  },
+-                })
+-              }
++              onClickError={() => openDialog(MessageDetail, { id: message.id })}
+               viewType={message.viewType}
+               chatType={chat.chatType}
+               tabindexForInteractiveContents={tabindexForInteractiveContents}
