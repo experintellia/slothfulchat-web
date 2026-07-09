@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <claude@example.com>
+Date: Thu, 9 Jul 2026 22:08:57 +0000
+Subject: [PATCH 23/23] web-app: show slothfulchat-web version+commit in About,
+ real browser-log hint
+
+The About dialog showed the full commit subject alongside the hash, which
+made that line wrap awkwardly; show just the slothfulchat-web version and
+short commit hash there instead, and move the fuller commit info (version,
+hash, message) into the Log dialog's dumped text so it's still available
+for debugging/support.
+
+The Log dialog's [Log] section also always failed silently in the browser
+build: readCurrentLog()/getCurrentLogLocation() fetch a /log/current route
+this fork's static server never implements. Replace that with a hint to
+open the browser's dev console (or a remote-debugging session on
+iOS/Android) instead of a confusing fetch failure, until in-app log
+viewing is implemented for the browser build.
+---
+ .../src/components/dialogs/About/index.tsx    | 10 +++----
+ .../src/components/dialogs/Log/index.tsx      | 30 ++++++++++++++++---
+ 2 files changed, 31 insertions(+), 9 deletions(-)
+
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index 68825833b..5188813fa 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -62,11 +62,11 @@ export default function About({ onClose }: DialogProps) {
+                 <>
+                   <br />
+                   <small>
+-                    slothfulchat-web:{' '}
+-                    {(window as any).__slothfulConfig.commitHash}
+-                    {(window as any).__slothfulConfig.commitMessage
+-                      ? ` — ${(window as any).__slothfulConfig.commitMessage}`
+-                      : ''}
++                    slothfulchat-web
++                    {(window as any).__slothfulConfig.version
++                      ? ` v${(window as any).__slothfulConfig.version}`
++                      : ''}{' '}
++                    ({(window as any).__slothfulConfig.commitHash})
+                   </small>
+                 </>
+               )}
+diff --git a/packages/frontend/src/components/dialogs/Log/index.tsx b/packages/frontend/src/components/dialogs/Log/index.tsx
+index fab649eb7..df6e38b2b 100644
+--- a/packages/frontend/src/components/dialogs/Log/index.tsx
++++ b/packages/frontend/src/components/dialogs/Log/index.tsx
+@@ -75,12 +75,28 @@ async function getLog(): Promise<string> {
+   /** runtime info, but flattened to string and only showing keys that are not already shown elsewhere */
+   const visibleRuntimeInfo = infoObjectToString(visibleRuntimeInfoObject)
+ 
++  const isBrowser = runtime.constructor.name !== 'ElectronRuntime'
++  const slothfulConfig = (window as any).__slothfulConfig
++
+   let log = ''
+-  try {
+-    log = await runtime.readCurrentLog()
+-  } catch (error: any) {
+-    log = `failed to read log at ${runtime.getCurrentLogLocation()}
++  if (isBrowser) {
++    // slothfulchat: readCurrentLog()/getCurrentLogLocation() fetch a
++    // /log/current route this fork's static web server doesn't implement —
++    // there is no persistent log file to read in the browser build yet.
++    log = `To view the log, open your browser's developer console (usually
++F12, or Cmd+Option+I on macOS). On iOS/Android, connect the device to a
++computer and use Safari's or Chrome's remote developer tools (enable
++Developer/USB debugging in your device's settings first).
++
++Showing the log here directly isn't implemented yet for the browser build —
++stay tuned.`
++  } else {
++    try {
++      log = await runtime.readCurrentLog()
++    } catch (error: any) {
++      log = `failed to read log at ${runtime.getCurrentLogLocation()}
+ Error: ${error?.message || error}`
++    }
+   }
+ 
+   return `** This log may contain sensitive information. If you want to post it publicly, you may examine and edit it beforehand. **
+@@ -88,6 +104,12 @@ Error: ${error?.message || error}`
+ DC Desktop Version: ${VERSION} (git: ${GIT_REF})
+ Core Version: ${systemInfo['deltachat_core_version']}
+ Runtime: ${runtime.constructor.name}
++${
++  slothfulConfig?.commitHash
++    ? `slothfulchat-web: v${slothfulConfig.version || '?'} (${slothfulConfig.commitHash}) — ${slothfulConfig.commitMessage || ''}
++`
++    : ''
++}
+ 
+ [Versions]
+ ${versionInfoSection}

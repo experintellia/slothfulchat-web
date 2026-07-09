@@ -124,15 +124,20 @@ for (const f of ['config.js', 'index.html', 'main.html', 'manifest.webmanifest',
 const enc = s => new TextEncoder().encode(s)
 const dec = b => new TextDecoder().decode(b)
 
-// Carry the source commit shown in the About dialog through unchanged: this
-// script has no working tree to read it from, only the zip's existing bake.
+// Carry the version + source commit shown in the About dialog/log through
+// unchanged: this script has no working tree or package.json to read them
+// from, only the zip's existing bake.
 // Sliced from the first '{' (rather than an exact configJs() prefix match)
 // so it survives minor format drift, e.g. a trailing ';'.
 let existingBuild = {}
 try {
   const raw = dec(files['config.js'])
   const existingConfig = JSON.parse(raw.slice(raw.indexOf('{')).replace(/;?\s*$/, ''))
-  existingBuild = { commitHash: existingConfig.commitHash, commitMessage: existingConfig.commitMessage }
+  existingBuild = {
+    version: existingConfig.version,
+    commitHash: existingConfig.commitHash,
+    commitMessage: existingConfig.commitMessage,
+  }
 } catch {
   // leave existingBuild empty — config.js was checked to exist above, but
   // tolerate an unexpected shape rather than fail the whole customize run

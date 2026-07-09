@@ -10,10 +10,11 @@ import { createHash } from 'node:crypto'
 //   SLOTHFUL_IMPRINT_NAME    responsible person/entity (legal imprint)
 //   SLOTHFUL_IMPRINT_ADDRESS postal address (newlines allowed)
 //   SLOTHFUL_IMPRINT_EMAIL   contact email
-// `build` carries the source commit shown in the About dialog (see
-// gitBuildMeta() in assemble.mjs). customize.mjs re-applying config to a
-// prebuilt zip has no working tree to read commit info from, so it passes
-// through whatever was already baked into that zip's config.js instead.
+// `build` carries the slothfulchat-web version + source commit shown in the
+// About dialog/log (see gitBuildMeta() in assemble.mjs). customize.mjs
+// re-applying config to a prebuilt zip has no working tree to read this from,
+// so it passes through whatever was already baked into that zip's config.js
+// instead.
 export function buildConfig(env, build = {}) {
   return {
     instanceName: env.SLOTHFUL_INSTANCE_NAME || '',
@@ -25,6 +26,7 @@ export function buildConfig(env, build = {}) {
     // release builds (CI sets NODE_ENV=production) hide devmode features:
     // window.exp access, debug log level, dev_ prototype themes
     devmode: env.NODE_ENV !== 'production',
+    version: build.version || '',
     commitHash: build.commitHash || '',
     commitMessage: build.commitMessage || '',
   }
