@@ -5,10 +5,11 @@
 # npmjs.com Settings -> Trusted Publisher must point at this repo + this
 # workflow FILENAME (so never rename publish-npm.yml).
 #
-# Versioning: one shared `v*` tag triggers the run; each package is published
-# only if its package.json version isn't on the registry yet. So: bump the
-# version(s) you want to release, commit, tag, push the tag. Re-running is
-# idempotent (release assets are re-uploaded with --clobber).
+# Versioning: synced release train — a `v*` tag means EVERY package is at that
+# version. Bump them all in lockstep first (node scripts/set-release-version.mjs
+# X.Y.Z), commit, tag, push; a guard step rejects a tag whose packages drifted.
+# Each package is still published only if its version isn't on the registry yet,
+# so re-running a tag is idempotent (release assets re-upload with --clobber).
 #
 # The release zip is a GENERIC build: no SLOTHFUL_* vars, placeholder imprint.
 # Self-hosters bake their values in with the customize script — see
@@ -36,6 +37,29 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # Synced release train: a tag vX.Y.Z means EVERY package is at X.Y.Z
+      # (see RELEASING.md). Fail fast — before the ~10-min wasm build — if any
+      # package drifted from the tag, so a half-bumped set never publishes.
+      # grep/sed only: runs before Node is even set up. web-app is private (not
+      # published) but must still match, so the running version is one number.
+      - name: Verify all package versions match the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          fail=0
+          for dir in packages/ws-tcp-proxy packages/core-wasm packages/customize packages/web-app; do
+            v=$(grep -m1 '"version"' "$dir/package.json" | sed -E 's/.*"version":[[:space:]]*"([^"]+)".*/\1/')
+            if [ "$v" != "$tag" ]; then
+              echo "::error::$dir is at $v but the tag is v$tag"
+              fail=1
+            fi
+          done
+          if [ "$fail" != 0 ]; then
+            echo "Version drift — bump every package to $tag before tagging: node scripts/set-release-version.mjs $tag"
+            exit 1
+          fi
+          echo "all packages at $tag"
 
       - name: Configure git identity (required by `git am` in apply-patches)
         run: |
