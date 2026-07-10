@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 15:04:22 +0000
-Subject: [PATCH 34/40] web-app: hover popovers with avatars for read-by status
+Subject: [PATCH 34/41] web-app: hover popovers with avatars for read-by status
  and reactions
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -28,18 +28,24 @@ it for the compact popover rows. The popover nudges itself back into the
 viewport when it would overflow an edge (e.g. the "+N" pill of a
 right-aligned message). Adds the untranslated label "Reacted with %1$s".
 
+Popover rows are `<div role="listitem">` inside a `<div role="list">`,
+not real `<ul>`/`<li>` elements: this card can render anywhere in the
+app — including inside the message list's own `<ol>` — and upstream's
+`ol li` styling (margins, min-width, a clearfix) would otherwise bleed
+onto genuine `<li>`s no matter how specifically we scope our own class.
+
 Both share a new PeopleHoverInfo component (the hover trigger, the card
 shell, a lazy contacts-by-id fetch and a relative-time helper).
 ---
  _locales/_untranslated_en.json                |   3 +
  packages/frontend/scss/misc/_avatar.scss      |   7 +
  .../frontend/src/components/Avatar/index.tsx  |   5 +-
- .../src/components/PeopleHoverInfo/index.tsx  | 176 ++++++++++++++++++
- .../PeopleHoverInfo/styles.module.scss        | 109 +++++++++++
+ .../src/components/PeopleHoverInfo/index.tsx  | 185 ++++++++++++++++++
+ .../PeopleHoverInfo/styles.module.scss        |  95 +++++++++
  .../src/components/Reactions/index.tsx        | 113 ++++++++++-
  .../components/Reactions/styles.module.scss   |  22 ++-
- .../components/message/MessageMetaData.tsx    | 125 ++++++++++---
- 8 files changed, 523 insertions(+), 37 deletions(-)
+ .../components/message/MessageMetaData.tsx    | 125 +++++++++---
+ 8 files changed, 518 insertions(+), 37 deletions(-)
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/index.tsx
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 
@@ -107,10 +113,10 @@ index a452c04ee..f6110be3c 100644
        onClick={onClick}
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/index.tsx b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
 new file mode 100644
-index 000000000..2230da77c
+index 000000000..1091ee5c0
 --- /dev/null
 +++ b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,185 @@
 +import React, { useLayoutEffect, useMemo, useRef, useState } from 'react'
 +import classNames from 'classnames'
 +import moment from 'moment'
@@ -156,9 +162,18 @@ index 000000000..2230da77c
 +    <div className={styles.peopleHoverCard} role='tooltip'>
 +      {title != null && <div className={styles.peopleHoverTitle}>{title}</div>}
 +      {rows.length > 0 ? (
-+        <ul className={styles.peopleHoverList}>
++        // Plain `<div>`s with list/listitem roles instead of real `<ul>`/`<li>`
++        // elements: this card can render anywhere in the app — including
++        // inside the message list's own `<ol>` — and upstream's `ol li`
++        // styling (margins, min-width, a clearfix) would otherwise bleed onto
++        // genuine `<li>`s no matter how we scope our own class.
++        <div className={styles.peopleHoverList} role='list'>
 +          {rows.map(row => (
-+            <li key={row.key} className={styles.peopleHoverRow}>
++            <div
++              key={row.key}
++              className={styles.peopleHoverRow}
++              role='listitem'
++            >
 +              <Avatar
 +                xSmall
 +                displayName={row.contact.displayName}
@@ -178,9 +193,9 @@ index 000000000..2230da77c
 +                  {row.detail}
 +                </span>
 +              )}
-+            </li>
++            </div>
 +          ))}
-+        </ul>
++        </div>
 +      ) : loading || emptyLabel != null ? (
 +        <div className={styles.peopleHoverEmpty}>
 +          {loading ? '…' : emptyLabel}
@@ -289,10 +304,10 @@ index 000000000..2230da77c
 +}
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 new file mode 100644
-index 000000000..c9f52965e
+index 000000000..d95e0c580
 --- /dev/null
 +++ b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,95 @@
 +.hoverInfoTrigger {
 +  position: relative;
 +  display: inline-flex;
@@ -349,9 +364,6 @@ index 000000000..c9f52965e
 +}
 +
 +.peopleHoverList {
-+  list-style: none;
-+  margin: 0;
-+  padding: 0;
 +  display: flex;
 +  flex-direction: column;
 +}
@@ -362,17 +374,6 @@ index 000000000..c9f52965e
 +  gap: 7px;
 +  padding: 3px 6px;
 +  border-radius: 5px;
-+  // The popover renders inside the message list's `<ol>`, whose global
-+  // `ol li` rule forces a `margin-bottom`, a `min-width: 200px` and a
-+  // clearfix `::after` onto every `<li>` — including ours. Neutralise them so
-+  // the rows aren't stretched or spaced apart (this is what put extra space
-+  // below the last row).
-+  margin: 0;
-+  min-width: 0;
-+
-+  &::after {
-+    content: none;
-+  }
 +
 +  // Keep the shared Avatar (`.avatar.x-small`, 24px) from being squeezed when
 +  // the name is long.
