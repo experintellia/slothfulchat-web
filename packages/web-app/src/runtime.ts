@@ -1363,13 +1363,31 @@ function showBridgeDialog() {
   const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'Bridge')
   const body = el(
     'p',
-    { margin: '0 0 12px', color: '#bbb' },
+    { margin: '0 0 8px', color: '#bbb' },
     'Browsers can’t open direct connections to mail servers, so this app ' +
       'sends its traffic through a small bridge. That traffic is encrypted ' +
       'by default before it reaches the bridge — the bridge only passes it ' +
       'along and can’t read your messages. The most private option is a ' +
       'bridge running on your own device.'
   )
+
+  // the one honest exception to "can't read it", kept out of the main copy
+  // so the paragraph stays short — expandable for those who care
+  const previewNote = el('details', { margin: '0 0 12px', fontSize: '12px', color: '#bbb' })
+  const previewSummary = el(
+    'summary',
+    { cursor: 'pointer' },
+    'One exception: link previews (opt-in)'
+  )
+  const previewBody = el(
+    'p',
+    { margin: '6px 0 0' },
+    'If you turn on link previews, the bridge fetches the linked web page ' +
+      'for you (most sites don’t let the browser fetch them directly), so ' +
+      'it can see which pages you preview. This is only about link ' +
+      'previews — your messages stay unreadable to the bridge.'
+  )
+  previewNote.append(previewSummary, previewBody)
 
   const list = el('div', { display: 'flex', flexDirection: 'column', gap: '8px' })
   const radios: HTMLInputElement[] = []
@@ -1442,19 +1460,53 @@ function showBridgeDialog() {
     }
     if (opt.url === DEFAULT_LOCAL_BRIDGE) {
       // "run it on your own device" made actionable, on the localhost option
+      const NPX_CMD = 'npx @slothfulchat/ws-tcp-proxy'
       const startCmd = el(
         'pre',
         {
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px',
           margin: '8px 0 6px',
-          padding: '8px 10px',
+          padding: '6px 6px 6px 10px',
           borderRadius: '6px',
           background: '#161616',
           color: '#9cdcfe',
           whiteSpace: 'pre-wrap',
           fontSize: '12px',
         },
-        'npx @slothfulchat/ws-tcp-proxy'
+        NPX_CMD
       )
+      const copyBtn = el(
+        'button',
+        {
+          flexShrink: '0',
+          padding: '3px 8px',
+          borderRadius: '4px',
+          border: '1px solid #444',
+          background: '#2a2a2a',
+          color: '#ccc',
+          cursor: 'pointer',
+          font: '11px system-ui, sans-serif',
+        },
+        'Copy'
+      )
+      // inside the option's <label>: type=button so it doesn't submit, and
+      // clicks on it (an interactive element) don't toggle the radio
+      copyBtn.type = 'button'
+      copyBtn.onclick = () => {
+        navigator.clipboard
+          ?.writeText(NPX_CMD)
+          .then(() => {
+            copyBtn.textContent = 'Copied ✓'
+            setTimeout(() => (copyBtn.textContent = 'Copy'), 1500)
+          })
+          .catch(() => {
+            copyBtn.textContent = 'Copy failed'
+          })
+      }
+      startCmd.append(copyBtn)
       const help = el('a', { color: '#4ea1ff', fontSize: '12px' }, 'Bridge setup & source →')
       ;(help as HTMLAnchorElement).href = BRIDGE_HELP_URL
       ;(help as HTMLAnchorElement).target = '_blank'
@@ -1583,13 +1635,17 @@ function showBridgeDialog() {
   }
 
   row.append(closeBtn, testBtn, useBtn)
-  panel.append(title, body, list, row)
+  panel.append(title, body, previewNote, list, row)
   overlay.append(panel)
   overlay.onclick = e => {
     if (e.target === overlay) close()
   }
   document.body.appendChild(overlay)
   overlay.showModal()
+  // showModal focuses the first focusable element — the details summary,
+  // which paints a stray focus ring. The checked radio is the better start
+  // (arrow keys then move the selection).
+  radios.find(r => r.checked)?.focus()
 }
 
 // Last bridge probe result, surfaced to the (patched) ConnectivityDialog via

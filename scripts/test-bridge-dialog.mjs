@@ -127,6 +127,7 @@ try {
     'Custom…',
     'npx @slothfulchat/ws-tcp-proxy',
     'encrypted by default',
+    'One exception: link previews',
   ]) {
     if (!state.text.includes(want)) {
       throw new Error(`dialog text missing ${JSON.stringify(want)}`)
