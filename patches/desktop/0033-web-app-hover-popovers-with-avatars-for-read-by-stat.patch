@@ -36,12 +36,12 @@ untranslated labels Sending…/Delivered/Failed to send and "Reacted with
  _locales/_untranslated_en.json                |  12 ++
  packages/frontend/scss/misc/_avatar.scss      |   7 +
  .../frontend/src/components/Avatar/index.tsx  |   5 +-
- .../src/components/PeopleHoverInfo/index.tsx  | 171 ++++++++++++++++++
+ .../src/components/PeopleHoverInfo/index.tsx  | 176 ++++++++++++++++++
  .../PeopleHoverInfo/styles.module.scss        |  97 ++++++++++
- .../src/components/Reactions/index.tsx        | 113 +++++++++++-
+ .../src/components/Reactions/index.tsx        | 113 ++++++++++-
  .../components/Reactions/styles.module.scss   |  22 ++-
  .../components/message/MessageMetaData.tsx    | 150 ++++++++++++---
- 8 files changed, 540 insertions(+), 37 deletions(-)
+ 8 files changed, 545 insertions(+), 37 deletions(-)
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/index.tsx
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 
@@ -118,10 +118,10 @@ index a452c04ee..f6110be3c 100644
        onClick={onClick}
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/index.tsx b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
 new file mode 100644
-index 000000000..b96d21940
+index 000000000..2230da77c
 --- /dev/null
 +++ b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,176 @@
 +import React, { useLayoutEffect, useMemo, useRef, useState } from 'react'
 +import classNames from 'classnames'
 +import moment from 'moment'
@@ -192,11 +192,11 @@ index 000000000..b96d21940
 +            </li>
 +          ))}
 +        </ul>
-+      ) : (
++      ) : loading || emptyLabel != null ? (
 +        <div className={styles.peopleHoverEmpty}>
 +          {loading ? '…' : emptyLabel}
 +        </div>
-+      )}
++      ) : null}
 +    </div>
 +  )
 +}
@@ -218,27 +218,33 @@ index 000000000..b96d21940
 +  const [open, setOpen] = useState(false)
 +  const { align = 'end' } = props
 +  const anchorRef = useRef<HTMLSpanElement>(null)
-+  const [shiftX, setShiftX] = useState(0)
 +
 +  // Nudge the popover back into the viewport when it would overflow the left or
 +  // right edge — e.g. the "+N" reactions pill of a right-aligned outgoing
-+  // message, whose start-aligned popover would otherwise run off-screen.
++  // message, whose start-aligned popover would otherwise run off-screen. Done
++  // imperatively (measuring in untransformed space) and re-run via a
++  // ResizeObserver so it stays correct as the card grows when contacts load.
 +  useLayoutEffect(() => {
-+    if (!open || !anchorRef.current) {
++    const el = anchorRef.current
++    if (!open || !el) {
 +      return
 +    }
-+    setShiftX(0)
-+    const rect = anchorRef.current.getBoundingClientRect()
-+    const margin = 8
-+    let shift = 0
-+    if (rect.right > window.innerWidth - margin) {
-+      shift = window.innerWidth - margin - rect.right
-+    } else if (rect.left < margin) {
-+      shift = margin - rect.left
++    const clamp = () => {
++      el.style.transform = 'none'
++      const rect = el.getBoundingClientRect()
++      const margin = 8
++      let shift = 0
++      if (rect.right > window.innerWidth - margin) {
++        shift = window.innerWidth - margin - rect.right
++      } else if (rect.left < margin) {
++        shift = margin - rect.left
++      }
++      el.style.transform = shift !== 0 ? `translateX(${shift}px)` : ''
 +    }
-+    if (shift !== 0) {
-+      setShiftX(shift)
-+    }
++    clamp()
++    const observer = new ResizeObserver(clamp)
++    observer.observe(el)
++    return () => observer.disconnect()
 +  }, [open])
 +
 +  return (
@@ -258,7 +264,6 @@ index 000000000..b96d21940
 +            [styles.anchorStart]: align === 'start',
 +            [styles.anchorEnd]: align === 'end',
 +          })}
-+          style={shiftX ? { transform: `translateX(${shiftX}px)` } : undefined}
 +        >
 +          {props.card}
 +        </span>
