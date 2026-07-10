@@ -1371,10 +1371,25 @@ function showBridgeDialog() {
       'bridge running on your own device.'
   )
 
-  const list = el('div', { margin: '0' })
+  const list = el('div', { display: 'flex', flexDirection: 'column', gap: '8px' })
   const radios: HTMLInputElement[] = []
+  const rows: HTMLElement[] = []
+  // selected card gets the accent border/tint; inline styles (no stylesheet),
+  // so hover/selection are restyled from JS
+  const restyleRows = () => {
+    rows.forEach((r, i) => {
+      r.style.borderColor = radios[i].checked ? '#2d7dff' : '#3a3a3a'
+      r.style.background = radios[i].checked ? 'rgba(45,125,255,.12)' : '#262626'
+    })
+  }
   const mkRadio = (): HTMLInputElement => {
-    const radio = el('input', { margin: '3px 8px 0 0', flexShrink: '0' }) as HTMLInputElement
+    const radio = el('input', {
+      margin: '2px 10px 0 0',
+      flexShrink: '0',
+      width: '16px',
+      height: '16px',
+      accentColor: '#2d7dff',
+    }) as HTMLInputElement
     radio.type = 'radio'
     radio.name = 'sc-bridge'
     radios.push(radio)
@@ -1384,11 +1399,20 @@ function showBridgeDialog() {
     const label = el('label', {
       display: 'flex',
       alignItems: 'flex-start',
-      margin: '0 0 10px',
+      padding: '10px 12px',
+      borderRadius: '8px',
+      border: '1px solid #3a3a3a',
+      background: '#262626',
       cursor: 'pointer',
+      transition: 'border-color .15s, background-color .15s',
     })
+    label.onmouseenter = () => {
+      if (!radio.checked) label.style.borderColor = '#5a5a5a'
+    }
+    label.onmouseleave = restyleRows
     label.append(radio, column)
     list.append(label)
+    rows.push(label)
     return label
   }
 
@@ -1402,22 +1426,29 @@ function showBridgeDialog() {
     column.append(
       el(
         'div',
-        { fontFamily: 'ui-monospace, monospace', fontSize: '13px', wordBreak: 'break-all' },
+        {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '13px',
+          wordBreak: 'break-all',
+          color: '#e8e8e8',
+        },
         opt.url
       )
     )
     if (opt.description) {
-      column.append(el('div', { fontSize: '12px', color: '#bbb' }, opt.description))
+      column.append(
+        el('div', { fontSize: '12px', color: '#a8a8a8', marginTop: '2px' }, opt.description)
+      )
     }
     if (opt.url === DEFAULT_LOCAL_BRIDGE) {
       // "run it on your own device" made actionable, on the localhost option
       const startCmd = el(
         'pre',
         {
-          margin: '6px 0 4px',
+          margin: '8px 0 6px',
           padding: '8px 10px',
           borderRadius: '6px',
-          background: '#111',
+          background: '#161616',
           color: '#9cdcfe',
           whiteSpace: 'pre-wrap',
           fontSize: '12px',
@@ -1435,15 +1466,15 @@ function showBridgeDialog() {
 
   const customRadio = mkRadio()
   const customColumn = el('div', { flex: '1', minWidth: '0' })
-  customColumn.append(el('div', { fontSize: '13px' }, 'Custom…'))
+  customColumn.append(el('div', { fontSize: '13px', color: '#e8e8e8' }, 'Custom…'))
   const input = el('input', {
     width: '100%',
     boxSizing: 'border-box',
-    marginTop: '4px',
+    marginTop: '6px',
     padding: '8px 10px',
     borderRadius: '6px',
     border: '1px solid #444',
-    background: '#111',
+    background: '#161616',
     color: '#eee',
     fontSize: '13px',
   }) as HTMLInputElement
@@ -1457,6 +1488,7 @@ function showBridgeDialog() {
     customRadio.checked = true
     input.value = resolveBridgeUrl()
   }
+  restyleRows()
 
   const row = el('div', {
     display: 'flex',
@@ -1485,6 +1517,7 @@ function showBridgeDialog() {
 
   const testBtn = mkBtn('Test selected', false)
   const onSelectionChange = () => {
+    restyleRows()
     testBtn.textContent = 'Test selected'
     input.style.borderColor = '#444'
     if (customRadio.checked) input.focus()
