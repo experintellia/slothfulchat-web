@@ -1,0 +1,215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Fri, 10 Jul 2026 17:50:53 +0000
+Subject: [PATCH 37/37] web-app: chat export viewer shows who reacted (hover
+ title + click dialog)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The exported viewer showed the reaction emoji clusters but gave no way
+to see who reacted — the app has the reactions dialog / hover popovers
+for that, and reactionsByContact only carries contact ids, whose names
+were not part of the export at all.
+
+The exporter now resolves the reacting contacts via getContactsByIds,
+bundles their avatars into media/ and embeds them as reactionContacts
+in the chat data. In the viewer, each reactions cluster gets a title
+attribute listing 'name: emojis' per reactor — that hover affordance
+survives into the script-free single-file snapshot — and clicking the
+cluster opens a small dialog (avatar, name, emojis per reactor),
+mirroring the app's reactions dialog.
+---
+ .../components/dialogs/ExportChatToHtml.tsx   | 123 +++++++++++++++++-
+ 1 file changed, 120 insertions(+), 3 deletions(-)
+
+diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+index 788888f51..2210714c6 100644
+--- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
++++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+@@ -359,6 +359,8 @@ body.html-export::before {
+   color: var(--textPrimary, black);
+   border-radius: 8px;
+   max-width: 420px;
++  max-height: 80vh;
++  overflow-y: auto;
+   padding: 20px;
+   font-size: 14px;
+   line-height: 1.45;
+@@ -373,6 +375,32 @@ body.html-export::before {
+   gap: 8px;
+   margin-top: 16px;
+ }
++[data-reactions-msg] { cursor: pointer; }
++.html-export-reactions-row {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  padding: 6px 0;
++  min-width: 240px;
++}
++.html-export-reactions-row .author-avatar img,
++.html-export-reactions-row .author-avatar .label {
++  display: block;
++  width: 32px;
++  height: 32px;
++  border-radius: 50%;
++  object-fit: cover;
++}
++.html-export-reactions-row .author-avatar .label {
++  color: var(--avatarLabelColor, white);
++  background-color: var(--local-avatar-color);
++  font-size: 18px;
++  line-height: 32px;
++  text-align: center;
++  user-select: none;
++}
++.html-export-reactions-name { flex-grow: 1; }
++.html-export-reactions-emoji { font-size: 20px; }
+ `
+ 
+ /**
+@@ -573,7 +601,21 @@ function chatExportViewer() {
+     )
+   }
+ 
+-  const reactionsHtml = (reactions: any) => {
++  const reactionContact = (contactId: any) =>
++    (data.reactionContacts || {})[contactId] || {
++      displayName: '#' + contactId,
++      address: '',
++      color: '#888888',
++    }
++  /** "name: emojis" per reactor — the no-JS affordance (title attribute) and
++   * the source for the click dialog */
++  const reactorLines = (reactions: any) =>
++    Object.entries(reactions.reactionsByContact || {}).map(
++      ([contactId, emojis]) =>
++        `${reactionContact(contactId).displayName}: ${(emojis as string[]).join(' ')}`
++    )
++  const reactionsHtml = (msg: any) => {
++    const reactions = msg.reactions
+     if (!reactions || !reactions.reactions.length) {
+       return ''
+     }
+@@ -584,7 +626,7 @@ function chatExportViewer() {
+         return `<span class="${cls([s.emoji, r.isFromSelf && s.isFromSelf])}">${esc(r.emoji)}${count}</span>`
+       })
+       .join('')
+-    return `<div><div class="${s.reactions}">${spans}</div></div>`
++    return `<div><div class="${s.reactions}" data-reactions-msg="${msg.id}" title="${esc(reactorLines(reactions).join('\n'))}">${spans}</div></div>`
+   }
+ 
+   const metadataHtml = (msg: any, direction: string) => {
+@@ -655,7 +697,7 @@ function chatExportViewer() {
+     const footer =
+       `<footer class="${cls([s.messageFooter, isWithoutText && s.onlyMedia])}">` +
+       metadataHtml(msg, direction) +
+-      reactionsHtml(msg.reactions) +
++      reactionsHtml(msg) +
+       `</footer>`
+     const messageClass = cls([
+       'message',
+@@ -722,6 +764,54 @@ function chatExportViewer() {
+       .join('\n')
+   }
+ 
++  // --- click on a reactions cluster: who reacted with what (like the app's
++  // reactions dialog); the title attribute above covers the static snapshot ---
++  if (list) {
++    list.addEventListener('click', event => {
++      const cluster = (event.target as Element).closest?.(
++        '[data-reactions-msg]'
++      )
++      if (!cluster) {
++        return
++      }
++      const msg =
++        data.messages[cluster.getAttribute('data-reactions-msg') as any]
++      if (!msg || !msg.reactions) {
++        return
++      }
++      const rows = Object.entries(msg.reactions.reactionsByContact || {})
++        .map(([contactId, emojis]) => {
++          const contact = reactionContact(contactId)
++          return (
++            `<div class="html-export-reactions-row">` +
++            avatarHtml(contact, false) +
++            `<span class="html-export-reactions-name">${esc(contact.displayName)}</span>` +
++            `<span class="html-export-reactions-emoji">${esc((emojis as string[]).join(' '))}</span></div>`
++          )
++        })
++        .join('')
++      const backdrop = document.createElement('div')
++      backdrop.className = 'html-export-dialog-backdrop html-export-ui'
++      backdrop.innerHTML =
++        '<div class="html-export-dialog" role="dialog" aria-modal="true">' +
++        '<h2>Reactions</h2>' +
++        rows +
++        '<div class="html-export-dialog-actions">' +
++        '<button type="button" class="html-export-save-button" data-action="close">Close</button>' +
++        '</div></div>'
++      document.body.appendChild(backdrop)
++      const close = () => backdrop.remove()
++      ;(
++        backdrop.querySelector('[data-action="close"]') as HTMLButtonElement
++      ).addEventListener('click', close)
++      backdrop.addEventListener('click', e => {
++        if (e.target === backdrop) {
++          close()
++        }
++      })
++    })
++  }
++
+   // --- toolbar: transcript download + single-file snapshot with dialog ---
+   const deliverFile = (name: string, contents: BlobPart, type: string) => {
+     const file = new File([contents], name, { type })
+@@ -1128,6 +1218,29 @@ async function exportChatToZip(
+   }
+   onProgress(300)
+ 
++  // contacts behind reactions (reactionsByContact only carries ids) — the
++  // viewer's who-reacted dialog needs their names/avatars
++  const reactionContactIds = new Set<number>()
++  for (const id of msgIds) {
++    const reactions = messages[id]?.reactions
++    if (reactions) {
++      for (const contactId of Object.keys(reactions.reactionsByContact)) {
++        reactionContactIds.add(Number(contactId))
++      }
++    }
++  }
++  let reactionContacts: { [id: number]: T.Contact } = {}
++  if (reactionContactIds.size) {
++    try {
++      reactionContacts = await BackendRemote.rpc.getContactsByIds(accountId, [
++        ...reactionContactIds,
++      ])
++    } catch (error) {
++      // degrade gracefully — the viewer falls back to '#<contactId>' labels
++      log.warn('could not resolve reaction contacts:', error)
++    }
++  }
++
+   // collect all referenced media into the zip's media/ directory
+   const media = new MediaCollector()
+   const files: { [memfsPath: string]: string } = {}
+@@ -1140,6 +1253,9 @@ async function exportChatToZip(
+     }
+   }
+   await collect(chat.profileImage)
++  for (const contact of Object.values(reactionContacts)) {
++    await collect(contact.profileImage)
++  }
+   let processed = 0
+   for (const id of msgIds) {
+     const msg = messages[id]
+@@ -1169,6 +1285,7 @@ async function exportChatToZip(
+     items,
+     messages,
+     files,
++    reactionContacts,
+     // hashed css-module class names the viewer needs
+     styles: {
+       message: messageStyles.message,
