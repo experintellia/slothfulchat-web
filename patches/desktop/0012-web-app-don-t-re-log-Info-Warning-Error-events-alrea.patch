@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Wed, 8 Jul 2026 13:28:30 +0000
-Subject: [PATCH 12/41] web-app: don't re-log Info/Warning/Error events already
+Subject: [PATCH 12/40] web-app: don't re-log Info/Warning/Error events already
  printed by core-wasm
 
 The core-wasm console_log bridge already prints core Info/Warning/Error

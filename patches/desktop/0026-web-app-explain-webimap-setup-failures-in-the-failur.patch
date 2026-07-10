@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Fri, 10 Jul 2026 22:57:40 +0000
+Subject: [PATCH 26/40] web-app: explain webimap setup failures in the failure
+ alert, not up front
+
+Replaces the pre-flight reachability/CORS probe in the madmail-server
+dialog. The probe tried to disambiguate a failed cross-origin fetch
+(dead host vs. missing CORS headers) before onboarding, but every
+heuristic variant misdiagnosed working servers: probing / hit a page
+madmail serves without CORS headers, probing /webimap/mailboxes still
+read slow or webimap-only-CORS servers as unreachable. A warning that
+cries wolf on working servers is worse than none.
+
+Instead, when webimap account creation actually fails, append the
+troubleshooting info to the real error alert in the instant-onboarding
+flow: check the address / server is online, webimap+websmtp enabled,
+and CORS (Access-Control-Allow-Origin) configured, pointing at the
+madmail webimap docs. AlertDialog renders with white-space:
+break-spaces, so the multi-line checklist displays as written. No
+network guessing, no false warnings, and the hints appear exactly when
+the opaque NetworkError does.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .../src/hooks/useInstantOnboarding.ts         | 22 ++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
+index 15785bbc7..e8e5b8700 100644
+--- a/packages/frontend/src/hooks/useInstantOnboarding.ts
++++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
+@@ -138,7 +138,27 @@ export default function useInstantOnboarding(): InstantOnboarding {
+             }
+           },
+           onFail: error => {
+-            openDialog(AlertDialog, { message: error })
++            let message = error
++            // webimap account creation runs over the browser's own fetch
++            // (POST <server>/new, then the login check), and a failed
++            // cross-origin fetch surfaces as an opaque "NetworkError" that
++            // can mean anything from a typo'd host to a server without CORS
++            // headers — the browser hides the cause on purpose. Append what
++            // is actually worth checking. (An earlier up-front reachability/
++            // CORS probe was removed: every heuristic variant misdiagnosed
++            // working servers, e.g. slow servers read as unreachable.)
++            if (/^webimapaccount:/i.test(configurationQR)) {
++              const host = configurationQR.replace(/^webimapaccount:/i, '')
++              message +=
++                `\n\nCould not set up an account on the madmail server ` +
++                `"${host}". Please check that:\n` +
++                `— the address is correct and the server is online\n` +
++                `— the server has webimap and websmtp enabled\n` +
++                `— the server permits browser apps (CORS): it must answer ` +
++                `with Access-Control-Allow-Origin headers, see the madmail ` +
++                `webimap docs (TDD 10-webimap)`
++            }
++            openDialog(AlertDialog, { message })
+           },
+         })
+       })

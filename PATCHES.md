@@ -44,13 +44,13 @@ exists:
 - **webimap transport (madmail)** — a second mail transport speaking
   [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at
-  all. Includes the login toggle, the welcome-screen "madmail server" entry,
-  and a pre-flight check that tells the user when a server is unreachable or
-  missing CORS instead of failing with an opaque core error (the probe
-  targets `GET /webimap/mailboxes` — madmail sends CORS headers only on
-  `/new` and the webimap/websmtp API routes, so probing `/` misreported
-  every server as CORS-blocked). `core/0011`, `desktop/0011`,
-  `desktop/0021`, `desktop/0026`, `desktop/0039`
+  all. Includes the login toggle and the welcome-screen "madmail server"
+  entry. When account setup fails, the error alert appends a webimap
+  troubleshooting checklist (address/server online, webimap+websmtp enabled,
+  CORS headers) — a cross-origin fetch failure is deliberately opaque in the
+  browser, and an earlier up-front reachability/CORS probe misdiagnosed
+  working servers, so the hints ride on the real error instead. `core/0011`,
+  `desktop/0011`, `desktop/0021`, `desktop/0026`
 - **Attachment details & failure reason in Message Info** — file name, MIME
   type, size, image/video dimensions, audio/video duration; delivery failures
   show as an error banner, and clicking a message's failed-status icon opens
