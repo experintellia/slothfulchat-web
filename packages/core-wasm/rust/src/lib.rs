@@ -134,12 +134,18 @@ async fn heal_accounts_config(cause: &str) -> Result<(), String> {
     uuids.sort();
 
     // InnerConfig schema (vendor/core/src/accounts.rs); accounts_order is
-    // #[serde(default)] and may be omitted. ids are reassigned from 1.
+    // #[serde(default)] and may be omitted, but `accounts` is required — with
+    // no [[accounts]] tables below it must be written as an explicit empty
+    // array or the rebuilt file itself fails to parse. ids are reassigned
+    // from 1.
     let mut toml = format!(
         "selected_account = {}\nnext_id = {}\n",
         if uuids.is_empty() { 0 } else { 1 },
         uuids.len() + 1
     );
+    if uuids.is_empty() {
+        toml += "accounts = []\n";
+    }
     for (i, uuid) in uuids.iter().enumerate() {
         toml += &format!(
             "\n[[accounts]]\nid = {}\ndir = \"{uuid}\"\nuuid = \"{uuid}\"\n",
