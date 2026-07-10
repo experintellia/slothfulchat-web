@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Prompts for (and honors the `SLOTHFUL_DEFAULT_CHATMAIL` env var of) a new
+  default chatmail relay, baked into `window.__slothfulConfig` so the "create
+  new account" onboarding flow signs up on the operator's own relay.
+
 ## 0.4.0 — 2026-07-10
 
 - Also carries the `version` field of `window.__slothfulConfig` through
