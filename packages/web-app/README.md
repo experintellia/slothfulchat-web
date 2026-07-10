@@ -26,21 +26,27 @@ proxy UI); everything browser-specific lives in our own files:
 - `serve.mjs` — static dev server (port 8642, `PORT` env to override).
 - `static/manifest.webmanifest` — PWA manifest (installable, standalone). Also
   registers the app as an OS handler for three kinds of launch, all wired in
-  `runtime.ts` (see `extractBootShareAction` + the launchQueue consumer), which
-  buffers the launch until the frontend registers the matching callback:
+  `runtime.ts` (see `parseShareAction` + the launchQueue consumer). Each launch
+  is captured immediately but held until `emitUIFullyReady()` (the frontend has
+  selected an account and re-registered its callbacks — the same gate electron
+  uses via `frontendReady`; delivering earlier throws "accountId is not set"):
   - **`openpgp4fpr:` protocol handler** — that scheme is on the browser
     safelist, so an installed instance opens Delta Chat verify/invite/login
     deep links → frontend `onOpenQrUrl`.
   - **share target** — lets a `https://i.delta.chat/…` invite (or any shared
     text/link) reach the app from another app's share sheet, no upstream/domain
-    registration needed. A recognized invite goes to `onOpenQrUrl`; anything
-    else is forwarded as a message via `onWebxdcSendToChat(null, text)`, which
+    registration needed. A field that is exactly a recognized invite goes to
+    `onOpenQrUrl`; anything else (including prose that merely mentions a link) is
+    forwarded whole as a message via `onWebxdcSendToChat(null, text)`, which
     opens the "send to which chat?" picker with the text as a draft.
   - **`.xdc` file handler** — an opened webxdc archive is read via `launchQueue`
     and forwarded into a chat with `onWebxdcSendToChat({file_name, file_content})`
     (base64 → `writeTempFileFromBase64`, the same contract electron/tauri use).
     Running webxdc isn't supported in this edition, but sending one to a
     recipient whose client can run it is.
+  - `launch_handler: focus-existing` keeps the single-instance app from opening
+    a second window (which would lose the OPFS lock); a warm launch arrives via
+    the launchQueue consumer's `targetURL` instead of a navigation.
 - `themes/*.scss` — our own themes (e.g. `rocket.scss`, a Rocket.Chat-inspired
   look). `assemble.mjs` compiles them against upstream's `_themebase.scss`
   (from `build/desktop/packages/frontend/themes/`) into `dist/themes/`, where

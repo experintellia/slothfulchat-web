@@ -47,5 +47,8 @@
         "application/octet-stream": [".xdc"]
       }
     }
-  ]
+  ],
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  }
 }

@@ -163,12 +163,12 @@ try {
   )
 
   // -- Launch handlers: the manifest registers the `openpgp4fpr:` protocol
-  // handler (safelisted scheme), a share target, and a `.xdc` file handler, so
-  // an OS/browser can route an invite, a shared message, or an opened webxdc
-  // archive to the installed PWA. runtime.js sniffs the launch out of the URL
-  // (or launchQueue) and buffers it until the frontend registers the matching
-  // callback, then flushes it. Verify the manifest wiring and the buffer→flush
-  // delivery for the two URL-driven launches.
+  // handler (safelisted scheme), a share target, a `.xdc` file handler, and
+  // launch_handler:focus-existing, so an OS/browser can route an invite, a
+  // shared message, or an opened webxdc archive to the installed PWA. runtime.js
+  // sniffs the launch out of the URL (or launchQueue), buffers it, and does NOT
+  // deliver it until the frontend signals emitUIFullyReady() (an account is
+  // selected). Verify the manifest wiring and that gated buffer→flush.
   const manifest = await page.evaluate(async appPort =>
     (await fetch(`http://localhost:${appPort}/manifest.webmanifest`)).json()
   , APP_PORT)
@@ -185,17 +185,26 @@ try {
   if (!xdcHandler) {
     throw new Error('manifest missing .xdc file_handler')
   }
+  if (manifest.launch_handler?.client_mode !== 'focus-existing') {
+    throw new Error('manifest missing launch_handler focus-existing')
+  }
   console.log(
-    'OK: manifest advertises openpgp4fpr protocol handler + share target + .xdc file handler'
+    'OK: manifest advertises openpgp4fpr handler + share target + .xdc file handler + focus-existing'
   )
 
-  // Launch the app under a query and capture which frontend callback the runtime
-  // flushed to. We claim the callbacks the instant runtime.js publishes window.r
-  // — before the real frontend — so the assertion is deterministic (no boot
-  // race). Returns { qr, sendToChat, url } observed after boot.
+  // Launch the app under a query and observe the runtime's gated delivery. We
+  // register our own recorders through the runtime's real setters the instant
+  // window.r is published (so the runtime's buffering/gate logic stays in
+  // charge), assert nothing is delivered while the gate is closed, then drive
+  // emitUIFullyReady() ourselves — exactly what the frontend's startup() does
+  // once an account is selected — and observe the flush. This runs long before
+  // the real frontend finishes booting its wasm core and re-registers, so it's
+  // deterministic. Returns { beforeGate, qr, sendToChat, url }.
   const launchAndCapture = async query => {
     const p = await browser.newPage()
     await p.addInitScript(() => {
+      // freeze the real eval before avoid-eval.js stubs it, else playwright's
+      // evaluate()/waitForFunction() break (see the boot page setup above)
       Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
     })
     await p.addInitScript(() => {
@@ -223,33 +232,44 @@ try {
       `http://localhost:${APP_PORT}/main.html?${query}` +
         `&proxy=ws://localhost:${PROXY_PORT}&persist=0`
     )
+    await p.waitForFunction(() => !!window.r, null, { timeout: 30_000 })
+    // gate is still closed (emitUIFullyReady not called yet): nothing delivered
+    const beforeGate = await p.evaluate(() => ({ ...window.__captured }))
+    // open the gate exactly as the frontend does after selecting an account
+    await p.evaluate(() => window.r.emitUIFullyReady())
     await p.waitForFunction(
       () => window.__captured.qr !== null || window.__captured.sendToChat !== null,
       null,
-      { timeout: 30_000 }
+      { timeout: 10_000 }
     )
     const captured = await p.evaluate(() => window.__captured)
     const url = p.url()
     await p.close()
-    return { ...captured, url }
+    return { beforeGate, ...captured, url }
   }
 
-  // (1) openpgp4fpr invite → onOpenQrUrl, ?qr= scrubbed afterward.
+  // (1) openpgp4fpr invite → onOpenQrUrl, held until the gate opens, ?qr= scrubbed.
   const INVITE =
     'openpgp4fpr:5E4A2B1C0D9F8E7A6B5C4D3E2F1A0B9C8D7E6F5A#a=alice%40example.org&n=Alice&i=abc123&s=deadbeef'
   const inviteRun = await launchAndCapture(`qr=${encodeURIComponent(INVITE)}`)
+  if (inviteRun.beforeGate.qr !== null) {
+    throw new Error('invite delivered before emitUIFullyReady (gate leaked)')
+  }
   if (inviteRun.qr !== INVITE) {
     throw new Error(`onOpenQrUrl got ${JSON.stringify(inviteRun.qr)}, want the invite URI`)
   }
   if (/[?&]qr=/.test(inviteRun.url)) {
     throw new Error(`?qr= not stripped after delivery: ${inviteRun.url}`)
   }
-  console.log('OK: openpgp4fpr invite flushed to onOpenQrUrl, URL scrubbed')
+  console.log('OK: openpgp4fpr invite gated until UI-ready, flushed to onOpenQrUrl, URL scrubbed')
 
   // (2) plain shared text/link (not an invite) → onWebxdcSendToChat(null, text)
   // which opens the "send to which chat?" picker with the text as a draft.
   const SHARED = 'check this out https://example.org/article'
   const textRun = await launchAndCapture(`text=${encodeURIComponent(SHARED)}`)
+  if (textRun.beforeGate.sendToChat !== null) {
+    throw new Error('shared text delivered before emitUIFullyReady (gate leaked)')
+  }
   if (textRun.qr !== null) {
     throw new Error(`shared text wrongly routed to onOpenQrUrl: ${textRun.qr}`)
   }
@@ -261,7 +281,7 @@ try {
   if (/[?&]text=/.test(textRun.url)) {
     throw new Error(`?text= not stripped after delivery: ${textRun.url}`)
   }
-  console.log('OK: shared text flushed to onWebxdcSendToChat(null, text), URL scrubbed')
+  console.log('OK: shared text gated until UI-ready, flushed to onWebxdcSendToChat(null, text), URL scrubbed')
 
   // (3) the primitive the .xdc file handler relies on: writeTempFileFromBase64
   // must round-trip base64 bytes onto the wasm memfs (WebxdcSaveToChatDialog
