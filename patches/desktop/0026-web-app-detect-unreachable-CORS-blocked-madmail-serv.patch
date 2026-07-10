@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Thu, 9 Jul 2026 22:28:15 +0000
-Subject: [PATCH 26/35] web-app: detect unreachable / CORS-blocked madmail
+Subject: [PATCH 26/36] web-app: detect unreachable / CORS-blocked madmail
  server in webimap setup
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,67 +1,56 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 15:04:22 +0000
-Subject: [PATCH 34/35] web-app: hover popovers with avatars for read-by status
+Subject: [PATCH 34/36] web-app: hover popovers with avatars for read-by status
  and reactions
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-Reveal a small popover when hovering the delivery-status icon or a
+Reveal a small popover when hovering the "read" delivery-status icon or a
 message's reactions, so the "who read this / who reacted" information is
 available without opening the Message Info or Reactions dialog.
 
-- Read-by: hovering the outgoing delivery-status icon shows the contacts
-  who have read the message, each with their avatar, name and a relative
-  timestamp ("2 minutes ago"); the absolute time is on the row's title.
-  When there are no read receipts yet it falls back to a short status
-  label (Sending… / Delivered / Read / Failed to send). Data comes from
-  getMessageReadReceipts and refreshes on the MsgRead event, and is only
-  fetched once the popover is first opened.
+- Read-by: hovering the delivery-status icon of a read outgoing message
+  shows the contacts who have read it, each with their avatar, name and a
+  relative timestamp ("2 minutes ago"); the absolute time is on the row's
+  title. Only the "read" state gets the popover — other delivery states
+  keep the plain icon. Data comes from getMessageReadReceipts and
+  refreshes on the MsgRead event, and is only fetched once the popover is
+  first opened.
 - Reactions: each reaction pill is its own hover target — hovering one
   emoji lists just the people who reacted with it, while the "+N"
   overflow pill lists the remaining (mixed) reactions with each reactor's
   emoji. Clicking still opens the full ReactionsDialog.
 
 Adds an `xSmall` (24px) variant to the shared Avatar component and uses
-it for the compact popover rows, instead of ad-hoc CSS overrides. The
-popover nudges itself back into the viewport when it would overflow an
-edge (e.g. the "+N" pill of a right-aligned message).
+it for the compact popover rows. The popover nudges itself back into the
+viewport when it would overflow an edge (e.g. the "+N" pill of a
+right-aligned message). Adds the untranslated label "Reacted with %1$s".
 
 Both share a new PeopleHoverInfo component (the hover trigger, the card
-shell, a lazy contacts-by-id fetch and a relative-time helper). Adds the
-untranslated labels Sending…/Delivered/Failed to send and "Reacted with
-%1$s".
+shell, a lazy contacts-by-id fetch and a relative-time helper).
 ---
- _locales/_untranslated_en.json                |  12 ++
+ _locales/_untranslated_en.json                |   3 +
  packages/frontend/scss/misc/_avatar.scss      |   7 +
  .../frontend/src/components/Avatar/index.tsx  |   5 +-
  .../src/components/PeopleHoverInfo/index.tsx  | 176 ++++++++++++++++++
- .../PeopleHoverInfo/styles.module.scss        |  97 ++++++++++
+ .../PeopleHoverInfo/styles.module.scss        |  98 ++++++++++
  .../src/components/Reactions/index.tsx        | 113 ++++++++++-
  .../components/Reactions/styles.module.scss   |  22 ++-
- .../components/message/MessageMetaData.tsx    | 150 ++++++++++++---
- 8 files changed, 545 insertions(+), 37 deletions(-)
+ .../components/message/MessageMetaData.tsx    | 125 ++++++++++---
+ 8 files changed, 512 insertions(+), 37 deletions(-)
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/index.tsx
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 64a2fb654..d754f12b2 100644
+index 64a2fb654..4ab7816b3 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
-@@ -14,6 +14,18 @@
+@@ -14,6 +14,9 @@
    "message_info_duration": {
      "message": "Duration"
    },
-+  "msg_status_hover_sending": {
-+    "message": "Sending…"
-+  },
-+  "msg_status_hover_delivered": {
-+    "message": "Delivered"
-+  },
-+  "msg_status_hover_error": {
-+    "message": "Failed to send"
-+  },
 +  "reacted_with": {
 +    "message": "Reacted with %1$s"
 +  },
@@ -300,10 +289,10 @@ index 000000000..2230da77c
 +}
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 new file mode 100644
-index 000000000..3c95e8eaf
+index 000000000..9de950b73
 --- /dev/null
 +++ b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,98 @@
 +.hoverInfoTrigger {
 +  position: relative;
 +  display: inline-flex;
@@ -336,25 +325,27 @@ index 000000000..3c95e8eaf
 +  background-color: var(--contextMenuBg, rgb(30, 30, 30));
 +  color: var(--contextMenuText, white);
 +  border: 1px solid var(--contextMenuBorder, rgba(120, 120, 120, 0.3));
-+  border-radius: 8px;
-+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-+  padding: 8px;
-+  min-width: 160px;
-+  max-width: 280px;
++  border-radius: 7px;
++  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3);
++  // Uniform padding so the popover is evenly inset on every side; rows/title
++  // add their own consistent inner spacing on top of this.
++  padding: 4px;
++  max-width: 260px;
 +  width: max-content;
 +  text-align: start;
 +  cursor: default;
 +  // Restore a sensible font size — the trigger lives inside the tiny metadata
 +  // row, and we don't want to inherit its shrunken size.
-+  font-size: 13px;
-+  line-height: 1.3;
++  font-size: 12.5px;
++  line-height: 1.2;
 +}
 +
 +.peopleHoverTitle {
 +  font-weight: 600;
-+  font-size: 12px;
-+  opacity: 0.75;
-+  padding: 2px 4px 6px;
++  font-size: 11px;
++  opacity: 0.7;
++  // Match the rows' horizontal inset; keep top/bottom even with a row.
++  padding: 3px 6px 4px;
 +}
 +
 +.peopleHoverList {
@@ -363,15 +354,14 @@ index 000000000..3c95e8eaf
 +  padding: 0;
 +  display: flex;
 +  flex-direction: column;
-+  gap: 2px;
 +}
 +
 +.peopleHoverRow {
 +  display: flex;
 +  align-items: center;
-+  gap: 8px;
-+  padding: 3px 4px;
-+  border-radius: 6px;
++  gap: 7px;
++  padding: 3px 6px;
++  border-radius: 5px;
 +
 +  // Keep the shared Avatar (`.avatar.x-small`, 24px) from being squeezed when
 +  // the name is long.
@@ -392,14 +382,14 @@ index 000000000..3c95e8eaf
 +.peopleHoverDetail {
 +  flex-shrink: 0;
 +  opacity: 0.65;
-+  font-size: 12px;
++  font-size: 11.5px;
 +  white-space: nowrap;
 +}
 +
 +.peopleHoverEmpty {
-+  padding: 2px 4px;
++  padding: 3px 6px;
 +  opacity: 0.7;
-+  font-size: 12px;
++  font-size: 11.5px;
 +}
 diff --git a/packages/frontend/src/components/Reactions/index.tsx b/packages/frontend/src/components/Reactions/index.tsx
 index ddc10364b..1c9bc983b 100644
@@ -586,7 +576,7 @@ index 6d5f26360..52d2acff2 100644
      background-color: var(--messageOutgoingBg);
    }
 diff --git a/packages/frontend/src/components/message/MessageMetaData.tsx b/packages/frontend/src/components/message/MessageMetaData.tsx
-index 2627443c5..74b78ad9d 100644
+index 2627443c5..4c86c98ff 100644
 --- a/packages/frontend/src/components/message/MessageMetaData.tsx
 +++ b/packages/frontend/src/components/message/MessageMetaData.tsx
 @@ -1,5 +1,6 @@
@@ -634,7 +624,7 @@ index 2627443c5..74b78ad9d 100644
 -                        '' | 'in_fresh' | 'in_seen' | 'in_noticed'
 -                      >)
 -                }`
-+          <ReadByHoverInfo messageId={messageId} status={status} error={error}>
++          <ReadByHoverInfo messageId={messageId} enabled={status === 'read'}>
 +            <div
 +              role='status'
 +              className={classNames(
@@ -664,42 +654,34 @@ index 2627443c5..74b78ad9d 100644
            {error !== null && (
              <button
                type='button'
-@@ -157,6 +167,102 @@ export default function MessageMetaData(props: Props) {
+@@ -157,6 +167,77 @@ export default function MessageMetaData(props: Props) {
    )
  }
  
 +/**
 + * Wraps the delivery-status icon so that hovering it reveals a popover with the
-+ * people who have read the message (avatar + name + relative timestamp), or a
-+ * short status label when there's no read-receipt info to show.
++ * people who have read the message (avatar + name + relative timestamp). Only
++ * active for the "read" state — other delivery states get the plain icon.
 + */
 +function ReadByHoverInfo(props: {
 +  messageId: number
-+  status: msgStatus
-+  error: string | null
++  enabled: boolean
 +  children: React.ReactNode
 +}) {
++  if (!props.enabled) {
++    return <>{props.children}</>
++  }
 +  return (
 +    <HoverInfoTrigger
 +      align='end'
-+      card={
-+        <ReadByHoverCard
-+          messageId={props.messageId}
-+          status={props.status}
-+          error={props.error}
-+        />
-+      }
++      card={<ReadByHoverCard messageId={props.messageId} />}
 +    >
 +      {props.children}
 +    </HoverInfoTrigger>
 +  )
 +}
 +
-+function ReadByHoverCard(props: {
-+  messageId: number
-+  status: msgStatus
-+  error: string | null
-+}) {
++function ReadByHoverCard(props: { messageId: number }) {
 +  const tx = useTranslationFunction()
 +  const accountId = selectedAccountId()
 +
@@ -742,26 +724,9 @@ index 2627443c5..74b78ad9d 100644
 +    })
 +    .filter((row): row is PersonRow => row !== null)
 +
-+  // When there are no read receipts we still show a short status label instead
-+  // of an empty popover.
-+  const statusLabel =
-+    props.error !== null
-+      ? tx('msg_status_hover_error')
-+      : props.status === 'sending'
-+        ? tx('msg_status_hover_sending')
-+        : props.status === 'read'
-+          ? tx('read_by')
-+          : tx('msg_status_hover_delivered')
-+
 +  const loading = receiptsFetch.loading && receiptsFetch.lingeringResult == null
 +
-+  return (
-+    <PeopleHoverCard
-+      title={rows.length > 0 ? tx('read_by') : statusLabel}
-+      rows={rows}
-+      loading={loading}
-+    />
-+  )
++  return <PeopleHoverCard title={tx('read_by')} rows={rows} loading={loading} />
 +}
 +
  function ViewCount(props: { messageId: number }) {
