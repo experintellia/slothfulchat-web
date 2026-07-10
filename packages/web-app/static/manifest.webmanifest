@@ -24,5 +24,20 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "protocol_handlers": [
+    {
+      "protocol": "openpgp4fpr",
+      "url": "./main.html?qr=%s"
+    }
+  ],
+  "share_target": {
+    "action": "./main.html",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
 }

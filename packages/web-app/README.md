@@ -24,7 +24,14 @@ proxy UI); everything browser-specific lives in our own files:
   `CHANGELOG.md` in beside the latter.
 - `changelog/` — vendored static changelog viewer served at `/changelog/`.
 - `serve.mjs` — static dev server (port 8642, `PORT` env to override).
-- `static/manifest.webmanifest` — PWA manifest (installable, standalone).
+- `static/manifest.webmanifest` — PWA manifest (installable, standalone). Also
+  registers an `openpgp4fpr:` **protocol handler** (that scheme is on the
+  browser safelist, so an installed instance can open Delta Chat
+  verify/invite/login deep links) and a **share target**, which lets a
+  `https://i.delta.chat/…` invite shared from another app reach the installed
+  app without any upstream/domain registration. `runtime.ts` sniffs the invite
+  out of the launch URL and hands it to the frontend's `onOpenQrUrl`
+  (buffering it until that handler is registered) — see `extractDeepLinkQr`.
 - `themes/*.scss` — our own themes (e.g. `rocket.scss`, a Rocket.Chat-inspired
   look). `assemble.mjs` compiles them against upstream's `_themebase.scss`
   (from `build/desktop/packages/frontend/themes/`) into `dist/themes/`, where

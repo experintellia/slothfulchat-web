@@ -119,6 +119,70 @@ const BASE = new URL('.', location.href).pathname
  * used for the tab title and fatal dialogs. */
 const APP_NAME = (window as any).__slothfulConfig?.instanceName || 'SlothfulChat'
 
+/** Prefixes the Delta Chat core's checkQr understands as an invite / login /
+ * verification payload. Used to sniff a deep-linked QR out of the page URL so
+ * we can hand it to the frontend's onOpenQrUrl. Matched case-insensitively. */
+const QR_URL_PREFIXES = [
+  'openpgp4fpr:', // verified-contact / group invite (QR + `openpgp4fpr:` scheme)
+  'https://i.delta.chat/', // same invite, https fallback form ("invite link")
+  'dcaccount:', // scan-to-configure a chatmail account
+  'dclogin:', // scan-to-login
+]
+
+/** Pulls a deep-linked QR/invite payload out of the page URL (if any) and
+ * strips the consumed params so a reload doesn't reopen the join dialog.
+ *
+ * Two manifest entries route links here, both landing in the query string:
+ *  - `protocol_handlers`: the `openpgp4fpr:` scheme is on the browser's
+ *    registerProtocolHandler safelist, so the OS/browser can send an
+ *    `openpgp4fpr:…` URI straight to the installed PWA — it arrives in `?qr=`
+ *    (the handler's `%s` slot).
+ *  - `share_target`: a cross-origin `https://i.delta.chat/…` invite link can't
+ *    be a protocol handler (it's not our origin and needs no upstream
+ *    registration), but the PWA can register as a share target, so a link
+ *    shared from another app lands in `?url=` / `?text=` / `?title=`.
+ *
+ * The extracted string is handed verbatim to the frontend, which runs it
+ * through the core's checkQr — so we only sniff for a recognized prefix here
+ * and leave the actual parsing to the core. */
+function extractDeepLinkQr(): string | null {
+  const params = new URLSearchParams(location.search)
+  const looksLikeQr = (s: string | null | undefined): s is string =>
+    !!s && QR_URL_PREFIXES.some(p => s.toLowerCase().startsWith(p))
+
+  let hit: string | null = null
+  const qr = params.get('qr')?.trim()
+  if (looksLikeQr(qr)) {
+    hit = qr
+  } else {
+    // share sheets send free text ("look: <link>") or a bare url — scan the
+    // most-likely fields for the first token that is itself a known invite.
+    for (const key of ['url', 'text', 'title']) {
+      const token = params
+        .get(key)
+        ?.split(/\s+/)
+        .map(t => t.trim())
+        .find(looksLikeQr)
+      if (token) {
+        hit = token
+        break
+      }
+    }
+  }
+  if (!hit) return null
+
+  // scrub only the params we consumed; keep the rest (e.g. ?proxy=).
+  for (const key of ['qr', 'url', 'text', 'title']) params.delete(key)
+  try {
+    const clean = new URL(location.href)
+    clean.search = params.toString()
+    history.replaceState(history.state, '', clean.toString())
+  } catch {
+    /* replaceState can throw in exotic sandboxes; the dialog still opens */
+  }
+  return hit
+}
+
 let core: Core | null = null
 function getCore(): Core {
   if (!core) {
@@ -328,9 +392,35 @@ class BrowserRuntime {
   onChooseLanguage: ((locale: string) => Promise<void>) | undefined
   onShowDialog: Function | undefined
   onResumeFromSleep: (() => void) | undefined
-  onOpenQrUrl: ((url: string) => void) | undefined
   onToggleNotifications: (() => void) | undefined
   // #endregion
+
+  // The frontend assigns onOpenQrUrl once its screen is wired up and ready to
+  // process a scanned or deep-linked QR. A deep link captured at boot (see
+  // extractDeepLinkQr — openpgp4fpr: protocol handler, or a shared i.delta.chat
+  // invite) is buffered here and flushed the moment that handler registers, so
+  // the join dialog opens whether the link arrives before or after the app is
+  // ready.
+  private _onOpenQrUrl: ((url: string) => void) | undefined
+  private pendingQrUrl: string | null = extractDeepLinkQr()
+  get onOpenQrUrl(): ((url: string) => void) | undefined {
+    return this._onOpenQrUrl
+  }
+  set onOpenQrUrl(cb: ((url: string) => void) | undefined) {
+    this._onOpenQrUrl = cb
+    if (!cb || !this.pendingQrUrl) return
+    const url = this.pendingQrUrl
+    this.pendingQrUrl = null
+    // defer: let the frontend finish wiring its screen (and the assignment
+    // expression complete) before the join dialog pops.
+    setTimeout(() => {
+      try {
+        cb(url)
+      } catch (err) {
+        this.log.error('onOpenQrUrl deep-link delivery failed', err)
+      }
+    }, 0)
+  }
 
   openMapsWebxdc(_accountId: number, _chatId?: number): void {
     throw new Error('Method not implemented.')

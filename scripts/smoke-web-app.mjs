@@ -162,6 +162,72 @@ try {
     `OK: sticker picker backend works on wasm (folder=${stickerBackend.folder}, packs=${stickerBackend.packCount})`
   )
 
+  // -- QR deep-link handler: the manifest registers the `openpgp4fpr:` protocol
+  // handler (safelisted scheme) and a share target so an OS/browser can route
+  // an invite to the installed PWA. The manifest lands it in the query string;
+  // runtime.js sniffs it out and buffers it until the frontend registers
+  // onOpenQrUrl, then flushes it. Verify both the manifest wiring and the
+  // buffer→flush delivery.
+  const manifest = await page.evaluate(async appPort =>
+    (await fetch(`http://localhost:${appPort}/manifest.webmanifest`)).json()
+  , APP_PORT)
+  const proto = manifest.protocol_handlers?.find(h => h.protocol === 'openpgp4fpr')
+  if (!proto || !/%s/.test(proto.url ?? '')) {
+    throw new Error('manifest missing openpgp4fpr protocol_handler with %s slot')
+  }
+  if (manifest.share_target?.method !== 'GET' || !manifest.share_target?.params) {
+    throw new Error('manifest missing GET share_target')
+  }
+  console.log(
+    `OK: manifest advertises openpgp4fpr protocol handler (${proto.url}) + share target`
+  )
+
+  // A representative openpgp4fpr invite URI (the same shape a QR/deep link
+  // carries). Delivered whether it arrives before or after the app is ready.
+  const INVITE =
+    'openpgp4fpr:5E4A2B1C0D9F8E7A6B5C4D3E2F1A0B9C8D7E6F5A#a=alice%40example.org&n=Alice&i=abc123&s=deadbeef'
+  const deepPage = await browser.newPage()
+  await deepPage.addInitScript(() => {
+    Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
+  })
+  // Claim onOpenQrUrl the instant runtime.js publishes window.r, so we — not the
+  // frontend — receive the buffered deep link (deterministic; no boot race).
+  await deepPage.addInitScript(() => {
+    window.__qrDelivered = null
+    let _r
+    Object.defineProperty(window, 'r', {
+      configurable: true,
+      get: () => _r,
+      set(v) {
+        _r = v
+        try {
+          v.onOpenQrUrl = url => {
+            window.__qrDelivered = url
+          }
+        } catch {
+          /* not our runtime */
+        }
+      },
+    })
+  })
+  await deepPage.goto(
+    `http://localhost:${APP_PORT}/main.html?qr=${encodeURIComponent(INVITE)}` +
+      `&proxy=ws://localhost:${PROXY_PORT}&persist=0`
+  )
+  await deepPage.waitForFunction(() => window.__qrDelivered !== null, null, {
+    timeout: 30_000,
+  })
+  const delivered = await deepPage.evaluate(() => window.__qrDelivered)
+  if (delivered !== INVITE) {
+    throw new Error(`onOpenQrUrl got ${JSON.stringify(delivered)}, want the invite URI`)
+  }
+  // the consumed ?qr= must be scrubbed so a reload doesn't reopen the dialog
+  if (/[?&]qr=/.test(deepPage.url())) {
+    throw new Error(`?qr= not stripped from the URL after delivery: ${deepPage.url()}`)
+  }
+  console.log('OK: openpgp4fpr deep link buffered and flushed to onOpenQrUrl, URL scrubbed')
+  await deepPage.close()
+
   if (cspViolations.length > 0) {
     console.error(`FAIL: ${cspViolations.length} CSP violation(s): ${cspViolations[0]}`)
     failed = true
