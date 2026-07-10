@@ -30,9 +30,9 @@ await mkdir(OUT, { recursive: true })
 const APP_PORT = 8672
 
 // --- tiny png (from theme-shots.mjs) so avatars/images are real; the seed
-// varies the colors, otherwise the core dedupes identical blobs by hash ---
-function tinyPngBase64(seed = 0) {
-  const w = 48
+// varies the colors (the core dedupes identical blobs by hash), w/h the
+// dimensions so image-sizing rules in the export can be asserted ---
+function tinyPngBase64(seed = 0, w = 48, h = w) {
   const crcTable = Array.from({ length: 256 }, (_, n) => {
     let c = n
     for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
@@ -53,14 +53,14 @@ function tinyPngBase64(seed = 0) {
   }
   const ihdr = Buffer.alloc(13)
   ihdr.writeUInt32BE(w, 0)
-  ihdr.writeUInt32BE(w, 4)
+  ihdr.writeUInt32BE(h, 4)
   ihdr[8] = 8
   ihdr[9] = 2
-  const raw = Buffer.alloc(w * (w * 3 + 1))
-  for (let y = 0; y < w; y++)
+  const raw = Buffer.alloc(h * (w * 3 + 1))
+  for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const i = y * (w * 3 + 1) + 1 + x * 3
-      const on = (x < w / 2) !== (y < w / 2)
+      const on = (x < w / 2) !== (y < h / 2)
       raw[i] = on ? (0x1d + seed * 90) & 0xff : 0xff
       raw[i + 1] = on ? 0x74 : (0xd0 - seed * 70) & 0xff
       raw[i + 2] = on ? 0xf5 : 0x2a
@@ -290,7 +290,7 @@ try {
   // alice sends an image attachment
   const imgPath = await page.evaluate(
     (b64) => window.exp.runtime.writeTempFileFromBase64('mockup.png', b64),
-    tinyPngBase64(1)
+    tinyPngBase64(1, 800, 600)
   )
   await rpc('sendMsg', aliceId, dm, {
     text: 'mockup attached',
@@ -306,6 +306,17 @@ try {
     text: 'Agreed on the contrast point!',
     quotedMessageId: aliceIncomingId,
     viewtype: 'Text',
+  })
+
+  // alice sends a sticker (sizing in the export must cap it at 200px)
+  const stickerPath = await page.evaluate(
+    (b64) => window.exp.runtime.writeTempFileFromBase64('epic.png', b64),
+    tinyPngBase64(2, 512, 512)
+  )
+  await rpc('sendMsg', aliceId, dm, {
+    file: stickerPath,
+    filename: 'epic.png',
+    viewtype: 'Sticker',
   })
 
   // alice reacts to bob's message
@@ -389,6 +400,10 @@ try {
     quotes: document.querySelectorAll('.quote').length,
     links: document.querySelectorAll('.text a').length,
     title: document.title,
+    stickerWidth: document.querySelector('.type-sticker img.attachment-content')?.clientWidth ?? null,
+    imageHeight: document.querySelector('.message:not(.type-sticker) img.attachment-content')?.clientHeight ?? null,
+    headerAvatarWidth: document.querySelector('.html-export-header .author-avatar img')?.clientWidth ?? null,
+    headerAvatarRadius: getComputedStyle(document.querySelector('.html-export-header .author-avatar img')).borderRadius,
     hasAppCss: !!document.head.textContent.includes('--messageIncomingBg'),
     bodyBg: getComputedStyle(document.querySelector('.message-list-and-composer')).backgroundColor,
     incomingBubbleBg: getComputedStyle(document.querySelector('.message.incoming .msg-container')).backgroundColor,
@@ -406,12 +421,35 @@ try {
   if (stats.links < 1) problems.push('link not rendered as <a>')
   if (!stats.hasAppCss) problems.push('app css missing')
   if (stats.daymarkers < 1) problems.push('day marker missing')
+  // sizing: upstream caps stickers at 200px and computes image display height
+  // from the dimensions (800x600 -> min(600, 450/800*600) = 338)
+  if (stats.stickerWidth !== 200) problems.push(`sticker width ${stats.stickerWidth}, expected 200`)
+  if (!stats.imageHeight || stats.imageHeight < 300 || stats.imageHeight > 380)
+    problems.push(`image height ${stats.imageHeight}, expected ~338`)
+  if (stats.headerAvatarWidth !== 40) problems.push(`header avatar width ${stats.headerAvatarWidth}, expected 40`)
+  if (!stats.headerAvatarRadius || stats.headerAvatarRadius === '0px')
+    problems.push('header avatar not rounded')
   if (problems.length) throw new Error('export verification problems:\n  ' + problems.join('\n  '))
 
-  // --- "Save single-file HTML" button emits a script-free static snapshot ---
-  const staticDownloadP = exportPage.waitForEvent('download', { timeout: 30_000 })
+  // --- "Save transcript (.txt)" button downloads the plain-text log ---
+  const txtDownloadP = exportPage.waitForEvent('download', { timeout: 30_000 })
+  await exportPage.locator('#save-txt-button').click()
+  const txtDownload = await txtDownloadP
+  const txtPath = extracted + txtDownload.suggestedFilename()
+  await txtDownload.saveAs(txtPath)
+  const txtSaved = await readFile(txtPath, 'utf8')
+  if (!txtDownload.suggestedFilename().endsWith('.txt') || !txtSaved.includes('design draft'))
+    throw new Error('transcript download missing or missing expected content')
+  console.log('OK: transcript (.txt) downloaded from the viewer')
+
+  // --- "Save single-file HTML" opens the explainer dialog, then snapshots ---
   await exportPage.locator('#save-static-button').click()
+  const dialog = exportPage.locator('.html-export-dialog')
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 })
+  const staticDownloadP = exportPage.waitForEvent('download', { timeout: 30_000 })
+  await dialog.locator('[data-action="save"]').click()
   const staticDownload = await staticDownloadP
+  await exportPage.locator('.html-export-dialog-status').filter({ hasText: /Saved/ }).waitFor({ timeout: 15_000 })
   const staticPath = extracted + staticDownload.suggestedFilename()
   await staticDownload.saveAs(staticPath)
   const staticPage = await browser.newPage({ viewport: { width: 1280, height: 900 } })
@@ -419,7 +457,7 @@ try {
   const staticStats = await staticPage.evaluate(() => ({
     messages: document.querySelectorAll('.message').length,
     scripts: document.querySelectorAll('script').length,
-    saveButtons: document.querySelectorAll('#save-static-button').length,
+    saveButtons: document.querySelectorAll('#save-static-button, .html-export-ui').length,
     brokenImgs: [...document.querySelectorAll('img')].filter((i) => !i.complete || i.naturalWidth === 0).length,
   }))
   console.log('static snapshot stats:', JSON.stringify(staticStats))
