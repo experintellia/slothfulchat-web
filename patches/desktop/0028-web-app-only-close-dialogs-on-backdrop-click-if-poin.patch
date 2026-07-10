@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 10 Jul 2026 01:41:15 +0000
+Subject: [PATCH] web-app: only close dialogs on backdrop click if pointerdown
+ started there
+
+The outside-click-to-close check ran on click, which fires wherever the
+pointer is released: starting a text selection inside a dialog input and
+releasing over the backdrop closed the dialog (click lands on <dialog>
+with coordinates outside its rect). Track on pointerdown whether the
+gesture started on ::backdrop and only close when both pointerdown and
+click land there, matching how native dialogs behave.
+---
+ .../frontend/src/components/Dialog/Dialog.tsx | 33 ++++++++++++++-----
+ 1 file changed, 25 insertions(+), 8 deletions(-)
+
+diff --git a/packages/frontend/src/components/Dialog/Dialog.tsx b/packages/frontend/src/components/Dialog/Dialog.tsx
+index 8de3ce420..3e1bdf98d 100644
+--- a/packages/frontend/src/components/Dialog/Dialog.tsx
++++ b/packages/frontend/src/components/Dialog/Dialog.tsx
+@@ -60,6 +60,29 @@ const Dialog = React.memo<Props>(
+     ...props
+   }) => {
+     const dialog = useRef<HTMLDialogElement>(null)
++    // whether the last pointerdown landed on dialog::backdrop —
++    // a click only counts as an outside click when the whole gesture
++    // started there, otherwise dragging a text selection out of an
++    // input and releasing over the backdrop would close the dialog
++    const pointerDownOnBackdrop = useRef(false)
++
++    // that is the way to check if we clicked on dialog::backdrop
++    const isOnBackdrop = (ev: { clientX: number; clientY: number }) => {
++      if (!dialog.current) {
++        return false
++      }
++      const rect = dialog.current.getBoundingClientRect()
++      const isInDialog =
++        rect.top <= ev.clientY &&
++        ev.clientY <= rect.top + rect.height &&
++        rect.left <= ev.clientX &&
++        ev.clientX <= rect.left + rect.width
++      return !isInDialog
++    }
++
++    const onPointerDown = (ev: React.PointerEvent<HTMLDialogElement>) => {
++      pointerDownOnBackdrop.current = isOnBackdrop(ev)
++    }
+ 
+     const onClick = canOutsideClickClose
+       ? (ev: React.MouseEvent<HTMLDialogElement>) => {
+@@ -73,14 +96,7 @@ const Dialog = React.memo<Props>(
+             return
+           }
+           ev.stopPropagation()
+-          // that is the way to check if we clicked on dialog::backdrop
+-          const rect = dialog.current.getBoundingClientRect()
+-          const isInDialog =
+-            rect.top <= ev.clientY &&
+-            ev.clientY <= rect.top + rect.height &&
+-            rect.left <= ev.clientX &&
+-            ev.clientX <= rect.left + rect.width
+-          if (!isInDialog) {
++          if (pointerDownOnBackdrop.current && isOnBackdrop(ev)) {
+             const cancelEvent = new Event('cancel')
+             dialog.current.dispatchEvent(cancelEvent)
+             // cancel event doesn't trigger dialog close
+@@ -137,6 +153,7 @@ const Dialog = React.memo<Props>(
+     }
+     return (
+       <dialog
++        onPointerDown={onPointerDown}
+         onClick={onClick}
+         onClose={onClose}
+         onCancel={onCancel}
