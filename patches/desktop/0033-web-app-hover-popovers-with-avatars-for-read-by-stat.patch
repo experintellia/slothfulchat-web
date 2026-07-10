@@ -397,7 +397,7 @@ index 000000000..3c95e8eaf
 +  font-size: 12px;
 +}
 diff --git a/packages/frontend/src/components/Reactions/index.tsx b/packages/frontend/src/components/Reactions/index.tsx
-index ddc10364b..934817754 100644
+index ddc10364b..1c9bc983b 100644
 --- a/packages/frontend/src/components/Reactions/index.tsx
 +++ b/packages/frontend/src/components/Reactions/index.tsx
 @@ -3,6 +3,12 @@ import classNames from 'classnames'
@@ -413,7 +413,7 @@ index ddc10364b..934817754 100644
  
  import styles from './styles.module.scss'
  
-@@ -58,25 +64,56 @@ export default function Reactions(props: Props) {
+@@ -58,25 +64,55 @@ export default function Reactions(props: Props) {
      })
    }
  
@@ -437,7 +437,6 @@ index ddc10364b..934817754 100644
 +              <ReactorsHoverCard
 +                reactionsByContact={reactionsByContact}
 +                emojis={[emoji]}
-+                title={<span className={styles.hoverEmoji}>{emoji}</span>}
 +                showEmoji={false}
 +              />
 +            }
@@ -480,7 +479,7 @@ index ddc10364b..934817754 100644
        )}
        <button
          type='button'
-@@ -88,3 +125,59 @@ export default function Reactions(props: Props) {
+@@ -88,3 +124,60 @@ export default function Reactions(props: Props) {
      </div>
    )
  }
@@ -488,14 +487,15 @@ index ddc10364b..934817754 100644
 +/**
 + * Popover contents for a single reaction (or the "+N" overflow pill): the
 + * people who reacted with any of `emojis`, each with their avatar and name.
-+ * When hovering one emoji we omit the per-row emoji (it's redundant with the
-+ * title); the overflow pill mixes several emojis, so it shows each one.
-+ * Reactors follow the core's most-used-first ordering.
++ * When hovering one emoji we show neither a title nor a per-row emoji — the
++ * user already knows which emoji they're pointing at. The overflow pill mixes
++ * several emojis, so it gets a "Reactions" title and shows each reactor's
++ * emoji. Reactors follow the core's most-used-first ordering.
 + */
 +function ReactorsHoverCard(props: {
 +  reactionsByContact: T.Reactions['reactionsByContact']
 +  emojis: string[]
-+  title: React.ReactNode
++  title?: React.ReactNode
 +  showEmoji: boolean
 +}) {
 +  const tx = useTranslationFunction()
