@@ -2,6 +2,7 @@
 // load main.html headless, assert the frontend renders past a blank screen
 // and the wasm core answers rpc. Modeled on scripts/smoke-core-wasm.mjs.
 import { spawn } from 'node:child_process'
+import { writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
@@ -161,6 +162,149 @@ try {
   console.log(
     `OK: sticker picker backend works on wasm (folder=${stickerBackend.folder}, packs=${stickerBackend.packCount})`
   )
+
+  // -- Launch handlers: the manifest registers the `openpgp4fpr:` protocol
+  // handler (safelisted scheme), a share target, a `.xdc` file handler, and
+  // launch_handler:focus-existing, so an OS/browser can route an invite, a
+  // shared message, or an opened webxdc archive to the installed PWA. runtime.js
+  // sniffs the launch out of the URL (or launchQueue), buffers it, and does NOT
+  // deliver it until the frontend signals emitUIFullyReady() (an account is
+  // selected). Verify the manifest wiring and that gated buffer→flush.
+  const manifest = await page.evaluate(async appPort =>
+    (await fetch(`http://localhost:${appPort}/manifest.webmanifest`)).json()
+  , APP_PORT)
+  const proto = manifest.protocol_handlers?.find(h => h.protocol === 'openpgp4fpr')
+  if (!proto || !/%s/.test(proto.url ?? '')) {
+    throw new Error('manifest missing openpgp4fpr protocol_handler with %s slot')
+  }
+  if (manifest.share_target?.method !== 'GET' || !manifest.share_target?.params) {
+    throw new Error('manifest missing GET share_target')
+  }
+  const xdcHandler = manifest.file_handlers?.find(h =>
+    Object.values(h.accept ?? {}).flat().includes('.xdc')
+  )
+  if (!xdcHandler) {
+    throw new Error('manifest missing .xdc file_handler')
+  }
+  if (manifest.launch_handler?.client_mode !== 'focus-existing') {
+    throw new Error('manifest missing launch_handler focus-existing')
+  }
+  console.log(
+    'OK: manifest advertises openpgp4fpr handler + share target + .xdc file handler + focus-existing'
+  )
+
+  // A minimal fixture that loads ONLY runtime.js — not bundle.js, so no second
+  // wasm core boots. The launch handlers live entirely in runtime.js (URL →
+  // window.r's buffered pendings, gated on emitUIFullyReady), so this exercises
+  // the real code without a second core fighting the main page over OPFS (that
+  // contention flaked CI when we booted the full app in extra pages).
+  const FIXTURE = script('../packages/web-app/dist/__launch-fixture.html')
+  writeFileSync(
+    FIXTURE,
+    '<!doctype html><meta charset="utf-8"><title>launch fixture</title>' +
+      '<body><div id="root"></div>' +
+      '<script src="./runtime.js" type="module"></script>'
+  )
+
+  // Launch the runtime under a query and observe its gated delivery. Each run
+  // uses an isolated context (no shared SW/OPFS with the main page). We register
+  // recorders through the runtime's real setters the instant window.r is
+  // published (so its buffering/gate logic stays in charge), assert nothing is
+  // delivered while the gate is closed, then drive emitUIFullyReady() ourselves
+  // — exactly what the frontend's startup() does once an account is selected —
+  // and observe the flush. Returns { beforeGate, qr, sendToChat, url }.
+  const launchAndCapture = async query => {
+    const ctx = await browser.newContext()
+    await ctx.addInitScript(() => {
+      // freeze the real eval before avoid-eval.js stubs it, else playwright's
+      // evaluate()/waitForFunction() break (see the boot page setup above)
+      Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
+    })
+    await ctx.addInitScript(() => {
+      window.__captured = { qr: null, sendToChat: null }
+      let _r
+      Object.defineProperty(window, 'r', {
+        configurable: true,
+        get: () => _r,
+        set(v) {
+          _r = v
+          try {
+            v.onOpenQrUrl = url => {
+              window.__captured.qr = url
+            }
+            v.onWebxdcSendToChat = (file, text) => {
+              window.__captured.sendToChat = { file, text }
+            }
+          } catch {
+            /* not our runtime */
+          }
+        },
+      })
+    })
+    const p = await ctx.newPage()
+    await p.goto(`http://localhost:${APP_PORT}/__launch-fixture.html?${query}`)
+    await p.waitForFunction(() => !!window.r, null, { timeout: 15_000 })
+    // gate is still closed (emitUIFullyReady not called yet): nothing delivered
+    const beforeGate = await p.evaluate(() => ({ ...window.__captured }))
+    // open the gate exactly as the frontend does after selecting an account
+    await p.evaluate(() => window.r.emitUIFullyReady())
+    await p.waitForFunction(
+      () => window.__captured.qr !== null || window.__captured.sendToChat !== null,
+      null,
+      { timeout: 10_000 }
+    )
+    const captured = await p.evaluate(() => window.__captured)
+    const url = p.url()
+    await ctx.close()
+    return { beforeGate, ...captured, url }
+  }
+
+  // (1) openpgp4fpr invite → onOpenQrUrl, held until the gate opens, ?qr= scrubbed.
+  const INVITE =
+    'openpgp4fpr:5E4A2B1C0D9F8E7A6B5C4D3E2F1A0B9C8D7E6F5A#a=alice%40example.org&n=Alice&i=abc123&s=deadbeef'
+  const inviteRun = await launchAndCapture(`qr=${encodeURIComponent(INVITE)}`)
+  if (inviteRun.beforeGate.qr !== null) {
+    throw new Error('invite delivered before emitUIFullyReady (gate leaked)')
+  }
+  if (inviteRun.qr !== INVITE) {
+    throw new Error(`onOpenQrUrl got ${JSON.stringify(inviteRun.qr)}, want the invite URI`)
+  }
+  if (/[?&]qr=/.test(inviteRun.url)) {
+    throw new Error(`?qr= not stripped after delivery: ${inviteRun.url}`)
+  }
+  console.log('OK: openpgp4fpr invite gated until UI-ready, flushed to onOpenQrUrl, URL scrubbed')
+
+  // (2) plain shared text/link (not an invite) → onWebxdcSendToChat(null, text)
+  // which opens the "send to which chat?" picker with the text as a draft.
+  const SHARED = 'check this out https://example.org/article'
+  const textRun = await launchAndCapture(`text=${encodeURIComponent(SHARED)}`)
+  if (textRun.beforeGate.sendToChat !== null) {
+    throw new Error('shared text delivered before emitUIFullyReady (gate leaked)')
+  }
+  if (textRun.qr !== null) {
+    throw new Error(`shared text wrongly routed to onOpenQrUrl: ${textRun.qr}`)
+  }
+  if (!textRun.sendToChat || textRun.sendToChat.file !== null || textRun.sendToChat.text !== SHARED) {
+    throw new Error(
+      `onWebxdcSendToChat got ${JSON.stringify(textRun.sendToChat)}, want {file:null,text:${JSON.stringify(SHARED)}}`
+    )
+  }
+  if (/[?&]text=/.test(textRun.url)) {
+    throw new Error(`?text= not stripped after delivery: ${textRun.url}`)
+  }
+  console.log('OK: shared text gated until UI-ready, flushed to onWebxdcSendToChat(null, text), URL scrubbed')
+
+  try {
+    unlinkSync(FIXTURE)
+  } catch {
+    /* best-effort cleanup; dist is ephemeral anyway */
+  }
+
+  // (Note: the .xdc launchQueue path can't be exercised headlessly — it needs a
+  // real OS file-handler launch. Its send-to-chat delivery reuses the exact
+  // onWebxdcSendToChat mechanism the passing text-share case above covers, and
+  // its writeTempFileFromBase64 staging is exercised by the upstream
+  // WebxdcSaveToChatDialog itself.)
 
   if (cspViolations.length > 0) {
     console.error(`FAIL: ${cspViolations.length} CSP violation(s): ${cspViolations[0]}`)
