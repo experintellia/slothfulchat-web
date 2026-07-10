@@ -26,13 +26,13 @@ window.__slothfulConfig.hidePublicSuggestions, baked in via the
 SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS build/customize variable.
 ---
  .../src/components/Settings/ChatsAndMedia.tsx |  10 +
- .../components/dialogs/CreateChat/index.tsx   |  48 +++
+ .../components/dialogs/CreateChat/index.tsx   |  52 ++-
  .../components/dialogs/PublicBots/index.tsx   | 319 ++++++++++++++++++
  .../dialogs/PublicBots/styles.module.scss     | 102 ++++++
  .../dialogs/PublicChannels/index.tsx          | 112 ++++++
  packages/shared/shared-types.d.ts             |  11 +
  packages/shared/state.ts                      |   2 +
- 7 files changed, 604 insertions(+)
+ 7 files changed, 607 insertions(+), 1 deletion(-)
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/index.tsx
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/styles.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/PublicChannels/index.tsx
@@ -59,9 +59,18 @@ index 4e131b723..8d39cd4d0 100644
        <DownloadOnDemand settings={settingsStore.settings} />
  
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index 99af66cbe..b5011615e 100644
+index 99af66cbe..f64544436 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
+@@ -21,7 +21,7 @@ import {
+ } from '../../helpers/PseudoListItem'
+ import GroupImage from '../../GroupImage'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+-import { QRAvatar } from '../../Avatar'
++import { Avatar, QRAvatar } from '../../Avatar'
+ import { AddMemberDialog } from '../AddMember/AddMemberDialog'
+ import { ContactListItem } from '../../contact/ContactListItem'
+ import { useSettingsStore } from '../../../stores/settings'
 @@ -59,6 +59,8 @@ import ImageCropper from '../../ImageCropper'
  import { RovingTabindexProvider } from '../../../contexts/RovingTabindex'
  import ViewProfile from '../ViewProfile'
@@ -108,7 +117,7 @@ index 99af66cbe..b5011615e 100644
        showPseudoListItemAddContactFromInviteLink,
      ]
    )
-@@ -510,6 +528,34 @@ function CreateChatMainRow({
+@@ -510,6 +528,36 @@ function CreateChatMainRow({
            </PseudoListItem>
          )
        }
@@ -116,34 +125,36 @@ index 99af66cbe..b5011615e 100644
 +        return (
 +          <PseudoListItem
 +            id='publicbots'
-+            cutoff='🤖'
 +            text='Public Bots'
 +            subText='community-made bot directory'
 +            onClick={() => {
 +              openDialog(PublicBotsDialog)
 +              onClose()
 +            }}
-+          />
++          >
++            <Avatar displayName='🤖' color='hsl(196, 60%, 42%)' aria-hidden />
++          </PseudoListItem>
 +        )
 +      }
 +      case CreateChatExtraItemType.PUBLIC_CHANNELS: {
 +        return (
 +          <PseudoListItem
 +            id='publicchannels'
-+            cutoff='📣'
 +            text='Public Channels'
 +            subText='community channel directories'
 +            onClick={() => {
 +              openDialog(PublicChannelsDialog)
 +              onClose()
 +            }}
-+          />
++          >
++            <Avatar displayName='📣' color='hsl(266, 54%, 48%)' aria-hidden />
++          </PseudoListItem>
 +        )
 +      }
        case CreateChatExtraItemType.ADD_CONTACT: {
          return (
            <PseudoListItemAddContact
-@@ -564,6 +610,8 @@ const enum CreateChatExtraItemType {
+@@ -564,6 +612,8 @@ const enum CreateChatExtraItemType {
    NEW_EMAIL,
    ADD_CONTACT,
    INVITE_LINK,
@@ -587,7 +598,7 @@ index 000000000..50f10fee7
 +}
 diff --git a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 new file mode 100644
-index 000000000..278f46b14
+index 000000000..039662fa1
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 @@ -0,0 +1,112 @@
@@ -619,8 +630,8 @@ index 000000000..278f46b14
 +    url: 'https://fedimeteo.com/',
 +    urlLabel: 'fedimeteo.com',
 +    description:
-+      'Weather channels from the Fediverse — many cities already have ' +
-+      'their own weather channel there',
++      'Weather forecasts over Delta Chat — FediMeteo already offers a ' +
++      'channel for many cities, just pick yours',
 +    emoji: '🌦️',
 +    color: 'hsl(207, 54%, 46%)',
 +  },
