@@ -95,6 +95,9 @@ contribution intended.
 - Big dialogs (settings, about, profiles, media view, new-chat, QR scanner)
   go edge-to-edge on phone-sized viewports, and the QR camera view fills the
   available height. `desktop/0020`
+- The settings sub-pages (chats & media, notifications, appearance, advanced,
+  connectivity, profile editor) go edge-to-edge on phones too, matching the
+  settings root; small pickers and alerts stay popups. `desktop/0029`
 - The QR reader defaults to the rear camera — you scan someone else's code,
   not your own face. `desktop/0015`
 - The connectivity view shows a loading state instead of a blank iframe while
