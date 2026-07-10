@@ -175,9 +175,12 @@ contribution intended.
 - **Imprint links** on the About dialog and welcome screen — a hosted web app
   needs a legal-notice page. `desktop/0004`, `desktop/0005`
 - **Hidden upstream UI that can't work in this build** — proxy settings
-  (unimplemented on wasm) and the second-device / multi-device backup
-  transfer flow (iroh doesn't run in browsers yet). `desktop/0001`,
-  `desktop/0014`
+  (unimplemented on wasm), the second-device / multi-device backup
+  transfer flow (iroh doesn't run in browsers yet), and the experimental
+  "Enable Webxdc Devtools" switch (it only toggles Electron's DevTools on a
+  webxdc iframe — a browser's built-in dev tools can't be gated by the app,
+  and webxdc apps don't run in this build anyway). `desktop/0001`,
+  `desktop/0014`, `desktop/0041`
 - **Logging** — core Info/Warning/Error events are printed once by the
   core-wasm console bridge instead of twice, and the Log dialog points to the
   browser dev console instead of fetching a `/log` route this build never
