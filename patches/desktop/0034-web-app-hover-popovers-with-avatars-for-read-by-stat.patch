@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 15:04:22 +0000
-Subject: [PATCH 34/39] web-app: hover popovers with avatars for read-by status
+Subject: [PATCH 34/40] web-app: hover popovers with avatars for read-by status
  and reactions
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -35,11 +35,11 @@ shell, a lazy contacts-by-id fetch and a relative-time helper).
  packages/frontend/scss/misc/_avatar.scss      |   7 +
  .../frontend/src/components/Avatar/index.tsx  |   5 +-
  .../src/components/PeopleHoverInfo/index.tsx  | 176 ++++++++++++++++++
- .../PeopleHoverInfo/styles.module.scss        |  98 ++++++++++
+ .../PeopleHoverInfo/styles.module.scss        | 109 +++++++++++
  .../src/components/Reactions/index.tsx        | 113 ++++++++++-
  .../components/Reactions/styles.module.scss   |  22 ++-
  .../components/message/MessageMetaData.tsx    | 125 ++++++++++---
- 8 files changed, 512 insertions(+), 37 deletions(-)
+ 8 files changed, 523 insertions(+), 37 deletions(-)
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/index.tsx
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 
@@ -289,10 +289,10 @@ index 000000000..2230da77c
 +}
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 new file mode 100644
-index 000000000..9de950b73
+index 000000000..c9f52965e
 --- /dev/null
 +++ b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,109 @@
 +.hoverInfoTrigger {
 +  position: relative;
 +  display: inline-flex;
@@ -362,6 +362,17 @@ index 000000000..9de950b73
 +  gap: 7px;
 +  padding: 3px 6px;
 +  border-radius: 5px;
++  // The popover renders inside the message list's `<ol>`, whose global
++  // `ol li` rule forces a `margin-bottom`, a `min-width: 200px` and a
++  // clearfix `::after` onto every `<li>` — including ours. Neutralise them so
++  // the rows aren't stretched or spaced apart (this is what put extra space
++  // below the last row).
++  margin: 0;
++  min-width: 0;
++
++  &::after {
++    content: none;
++  }
 +
 +  // Keep the shared Avatar (`.avatar.x-small`, 24px) from being squeezed when
 +  // the name is long.
