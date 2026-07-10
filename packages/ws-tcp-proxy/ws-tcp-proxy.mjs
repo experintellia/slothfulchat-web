@@ -3,7 +3,10 @@
 //
 //   /tcp/{ip}/{port} — raw byte tunnel to ip:port (TLS terminates in the
 //                      browser wasm, the proxy only ever sees ciphertext)
-//   /dns/{host}      — one JSON message with resolved IPs, then close
+//   /dns/{host}      — one JSON message with resolved IPs, then close.
+//                      /dns/localhost is always answered with the loopback IPs
+//                      (never the resolver) so the webapp's bridge-reachability
+//                      health check works everywhere, allowlist or not.
 //
 // Optional allowlist (set CHATMAIL_ALLOWLIST to a comma-separated list of
 // chatmail domains). When set, DNS still resolves any name, but a TCP tunnel
@@ -54,6 +57,22 @@ const wss = new WebSocketServer({ server });
 wss.on('connection', async (ws, req) => {
   const [, kind, host, port] = req.url.split('/');
   if (kind === 'dns') {
+    // localhost is answered from a hardcoded reply, never the resolver: the
+    // webapp probes /dns/localhost to check the bridge is reachable, so this
+    // health check must succeed even when the resolver can't answer 'localhost'
+    // (it lives in /etc/hosts, not DNS) and regardless of any allowlist. Only
+    // when 'localhost' is *explicitly* allowlisted do we let the loopback IPs
+    // through to /tcp — otherwise the health check never opens a tunnel.
+    if (host && host.toLowerCase() === 'localhost') {
+      const loopback = ['127.0.0.1', '::1'];
+      if (ALLOWLIST.length && isAllowlisted(host)) {
+        const expires = Date.now() + ALLOW_TTL_MS;
+        for (const ip of loopback) allowedIps.set(ip, expires);
+      }
+      ws.send(JSON.stringify(loopback));
+      ws.close();
+      return;
+    }
     try {
       const [v4, v6] = await Promise.allSettled([resolve4(host), resolve6(host)]);
       const ips = [...(v4.value ?? []), ...(v6.value ?? [])];
