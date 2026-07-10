@@ -66,6 +66,19 @@ exists:
   gzip-bomb size cap) in both messages and the composer sticker picker (which
   now lists `.tgs` too). Mirrors ArcaneChat's animated-sticker support.
   `core/0014`, `core/0015`, `desktop/0027`, `desktop/0028`
+- **Public Bots & Public Channels suggestions in the New Chat dialog** — two
+  pseudo entries below "New Group"/"New Channel": "Public Bots" opens a
+  searchable directory of community-made bots (name, admin, description,
+  language) pulled from
+  [deltachat-bot/public-bots](https://github.com/deltachat-bot/public-bots);
+  the first open asks for consent to load from that third-party site and
+  explains that the bots are community-made, not endorsed by us, and problems
+  should be reported in that repo's GitHub issues. "Public Channels" opens a
+  small dialog linking channel directories (arcanechat.me/channels, and
+  fedimeteo.com under "More channels"). A settings toggle ("Chats and Media")
+  hides both entries per user; the `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS`
+  build/customize variable hides them instance-wide including the toggle.
+  `desktop/0029`
 
 ## Bugfixes
 

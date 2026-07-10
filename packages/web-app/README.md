@@ -115,6 +115,7 @@ in source. All optional:
 | `SLOTHFUL_INSTANCE_NAME` | Instance display name: tab title, PWA install name, boot-error screens, imprint page (e.g. `SlothfulChat`). |
 | `SLOTHFUL_INSTANCE_URL` | Canonical origin, e.g. `https://web.slothful.chat`. |
 | `SLOTHFUL_DEFAULT_PROXY` | Default `wss://` bridge the app uses when the user hasn't set one. Without it the app defaults to `ws://localhost:8641`. |
+| `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the "Public Bots" / "Public Channels" community suggestions in the New Chat dialog instance-wide (also hides the per-user settings toggle). |
 
 The instance/proxy values surface at runtime as `window.__slothfulConfig`
 (injected before `runtime.js`); `runtime.ts` reads `defaultProxyUrl` from it.

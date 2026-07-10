@@ -60,6 +60,8 @@ function getDefaultSettings() {
     autostart: true,
     autostartElectron: false,
     appStoreBaseUrl: undefined,
+    hideNewChatSuggestions: false,
+    publicBotsRemoteLoadConsent: false,
   }
 }
 

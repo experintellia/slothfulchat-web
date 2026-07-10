@@ -10,6 +10,11 @@ import { createHash } from 'node:crypto'
 //   SLOTHFUL_IMPRINT_NAME    responsible person/entity (legal imprint)
 //   SLOTHFUL_IMPRINT_ADDRESS postal address (newlines allowed)
 //   SLOTHFUL_IMPRINT_EMAIL   contact email
+//   SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS
+//                            "1"/"true": hide the community suggestions
+//                            ("Public Bots", "Public Channels") in the New
+//                            Chat dialog for the whole instance, including
+//                            the per-user settings toggle
 // `build` carries the slothfulchat-web version + source commit shown in the
 // About dialog/log (see gitBuildMeta() in assemble.mjs). customize.mjs
 // re-applying config to a prebuilt zip has no working tree to read this from,
@@ -23,6 +28,11 @@ export function buildConfig(env, build = {}) {
     // imprint.html is always emitted (placeholder when unconfigured), so the
     // About link can point at it unconditionally
     imprintUrl: 'imprint.html',
+    // instance-wide opt-out of the New Chat community suggestions
+    // (Public Bots / Public Channels); also hides the per-user toggle
+    hidePublicSuggestions: ['1', 'true', 'yes'].includes(
+      (env.SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS || '').toLowerCase()
+    ),
     // release builds (CI sets NODE_ENV=production) hide devmode features:
     // window.exp access, debug log level, dev_ prototype themes
     devmode: env.NODE_ENV !== 'production',
