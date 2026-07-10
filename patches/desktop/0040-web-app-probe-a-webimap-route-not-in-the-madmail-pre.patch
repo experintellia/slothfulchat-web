@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 20:39:56 +0000
-Subject: [PATCH 39/39] web-app: probe a webimap route, not /, in the madmail
+Subject: [PATCH 40/40] web-app: probe a webimap route, not /, in the madmail
  pre-flight
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
