@@ -25,13 +25,22 @@ proxy UI); everything browser-specific lives in our own files:
 - `changelog/` — vendored static changelog viewer served at `/changelog/`.
 - `serve.mjs` — static dev server (port 8642, `PORT` env to override).
 - `static/manifest.webmanifest` — PWA manifest (installable, standalone). Also
-  registers an `openpgp4fpr:` **protocol handler** (that scheme is on the
-  browser safelist, so an installed instance can open Delta Chat
-  verify/invite/login deep links) and a **share target**, which lets a
-  `https://i.delta.chat/…` invite shared from another app reach the installed
-  app without any upstream/domain registration. `runtime.ts` sniffs the invite
-  out of the launch URL and hands it to the frontend's `onOpenQrUrl`
-  (buffering it until that handler is registered) — see `extractDeepLinkQr`.
+  registers the app as an OS handler for three kinds of launch, all wired in
+  `runtime.ts` (see `extractBootShareAction` + the launchQueue consumer), which
+  buffers the launch until the frontend registers the matching callback:
+  - **`openpgp4fpr:` protocol handler** — that scheme is on the browser
+    safelist, so an installed instance opens Delta Chat verify/invite/login
+    deep links → frontend `onOpenQrUrl`.
+  - **share target** — lets a `https://i.delta.chat/…` invite (or any shared
+    text/link) reach the app from another app's share sheet, no upstream/domain
+    registration needed. A recognized invite goes to `onOpenQrUrl`; anything
+    else is forwarded as a message via `onWebxdcSendToChat(null, text)`, which
+    opens the "send to which chat?" picker with the text as a draft.
+  - **`.xdc` file handler** — an opened webxdc archive is read via `launchQueue`
+    and forwarded into a chat with `onWebxdcSendToChat({file_name, file_content})`
+    (base64 → `writeTempFileFromBase64`, the same contract electron/tauri use).
+    Running webxdc isn't supported in this edition, but sending one to a
+    recipient whose client can run it is.
 - `themes/*.scss` — our own themes (e.g. `rocket.scss`, a Rocket.Chat-inspired
   look). `assemble.mjs` compiles them against upstream's `_themebase.scss`
   (from `build/desktop/packages/frontend/themes/`) into `dist/themes/`, where

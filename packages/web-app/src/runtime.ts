@@ -129,10 +129,19 @@ const QR_URL_PREFIXES = [
   'dclogin:', // scan-to-login
 ]
 
-/** Pulls a deep-linked QR/invite payload out of the page URL (if any) and
- * strips the consumed params so a reload doesn't reopen the join dialog.
+/** What the app was launched to do, sniffed out of the page URL at boot:
+ *  - `qr`: an invite / login / verification payload → frontend `onOpenQrUrl`.
+ *  - `text`: arbitrary shared text/link → frontend `onWebxdcSendToChat` as a
+ *    plain message (opens the "send to which chat?" picker, drafts the text). */
+type BootShareAction =
+  | { kind: 'qr'; url: string }
+  | { kind: 'text'; text: string }
+  | null
+
+/** Reads what the app was launched with out of the page URL (if anything) and
+ * strips the consumed params so a reload doesn't replay the action.
  *
- * Two manifest entries route links here, both landing in the query string:
+ * Three manifest entries route launches here, all landing in the query string:
  *  - `protocol_handlers`: the `openpgp4fpr:` scheme is on the browser's
  *    registerProtocolHandler safelist, so the OS/browser can send an
  *    `openpgp4fpr:…` URI straight to the installed PWA — it arrives in `?qr=`
@@ -140,20 +149,25 @@ const QR_URL_PREFIXES = [
  *  - `share_target`: a cross-origin `https://i.delta.chat/…` invite link can't
  *    be a protocol handler (it's not our origin and needs no upstream
  *    registration), but the PWA can register as a share target, so a link
- *    shared from another app lands in `?url=` / `?text=` / `?title=`.
+ *    shared from another app lands in `?url=` / `?text=` / `?title=`. If what
+ *    was shared is a recognized invite we treat it as a QR; otherwise it's just
+ *    a message to forward into a chat.
+ *  - `.xdc` file opens go through `file_handlers` + launchQueue instead (not the
+ *    URL), see the launchQueue consumer in `initialize`.
  *
- * The extracted string is handed verbatim to the frontend, which runs it
- * through the core's checkQr — so we only sniff for a recognized prefix here
- * and leave the actual parsing to the core. */
-function extractDeepLinkQr(): string | null {
+ * A `qr` payload is handed verbatim to the frontend, which runs it through the
+ * core's checkQr — so we only sniff for a recognized prefix here and leave the
+ * actual parsing to the core. */
+function extractBootShareAction(): BootShareAction {
   const params = new URLSearchParams(location.search)
   const looksLikeQr = (s: string | null | undefined): s is string =>
     !!s && QR_URL_PREFIXES.some(p => s.toLowerCase().startsWith(p))
 
-  let hit: string | null = null
+  // 1. an invite: ?qr= (protocol handler), or an invite token inside a share.
+  let inviteUrl: string | null = null
   const qr = params.get('qr')?.trim()
   if (looksLikeQr(qr)) {
-    hit = qr
+    inviteUrl = qr
   } else {
     // share sheets send free text ("look: <link>") or a bare url — scan the
     // most-likely fields for the first token that is itself a known invite.
@@ -164,12 +178,28 @@ function extractDeepLinkQr(): string | null {
         .map(t => t.trim())
         .find(looksLikeQr)
       if (token) {
-        hit = token
+        inviteUrl = token
         break
       }
     }
   }
-  if (!hit) return null
+
+  // 2. otherwise, a plain shared message: join the non-empty, distinct fields.
+  let sharedText: string | null = null
+  if (!inviteUrl) {
+    const seen = new Set<string>()
+    const parts: string[] = []
+    for (const key of ['title', 'text', 'url']) {
+      const v = params.get(key)?.trim()
+      if (v && !seen.has(v)) {
+        seen.add(v)
+        parts.push(v)
+      }
+    }
+    if (parts.length) sharedText = parts.join('\n')
+  }
+
+  if (!inviteUrl && !sharedText) return null
 
   // scrub only the params we consumed; keep the rest (e.g. ?proxy=).
   for (const key of ['qr', 'url', 'text', 'title']) params.delete(key)
@@ -178,9 +208,31 @@ function extractDeepLinkQr(): string | null {
     clean.search = params.toString()
     history.replaceState(history.state, '', clean.toString())
   } catch {
-    /* replaceState can throw in exotic sandboxes; the dialog still opens */
+    /* replaceState can throw in exotic sandboxes; the action still fires */
   }
-  return hit
+
+  return inviteUrl ? { kind: 'qr', url: inviteUrl } : { kind: 'text', text: sharedText! }
+}
+
+/** Computed once at module load (before `new BrowserRuntime()`), so the very
+ * first thing the runtime knows is whether it was launched to open an invite or
+ * forward a shared message. */
+const BOOT_SHARE = extractBootShareAction()
+
+/** base64 (no data-URL prefix) of a Blob's bytes, via FileReader so large
+ * archives don't blow the call stack the way `btoa(String.fromCharCode(...))`
+ * would. Used to hand a launched `.xdc` to the frontend's send-to-chat dialog,
+ * which expects base64 `file_content` (same contract electron/tauri use). */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      resolve(result.slice(result.indexOf(',') + 1))
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
+  })
 }
 
 let core: Core | null = null
@@ -387,7 +439,6 @@ class BrowserRuntime {
   }
 
   // #region event callbacks set by the frontend (browser: mostly unused)
-  onWebxdcSendToChat: Function | undefined
   onThemeUpdate: (() => void) | undefined
   onChooseLanguage: ((locale: string) => Promise<void>) | undefined
   onShowDialog: Function | undefined
@@ -397,12 +448,13 @@ class BrowserRuntime {
 
   // The frontend assigns onOpenQrUrl once its screen is wired up and ready to
   // process a scanned or deep-linked QR. A deep link captured at boot (see
-  // extractDeepLinkQr — openpgp4fpr: protocol handler, or a shared i.delta.chat
-  // invite) is buffered here and flushed the moment that handler registers, so
-  // the join dialog opens whether the link arrives before or after the app is
-  // ready.
+  // extractBootShareAction — openpgp4fpr: protocol handler, or a shared
+  // i.delta.chat invite) is buffered here and flushed the moment that handler
+  // registers, so the join dialog opens whether the link arrives before or
+  // after the app is ready.
   private _onOpenQrUrl: ((url: string) => void) | undefined
-  private pendingQrUrl: string | null = extractDeepLinkQr()
+  private pendingQrUrl: string | null =
+    BOOT_SHARE?.kind === 'qr' ? BOOT_SHARE.url : null
   get onOpenQrUrl(): ((url: string) => void) | undefined {
     return this._onOpenQrUrl
   }
@@ -418,6 +470,43 @@ class BrowserRuntime {
         cb(url)
       } catch (err) {
         this.log.error('onOpenQrUrl deep-link delivery failed', err)
+      }
+    }, 0)
+  }
+
+  // onWebxdcSendToChat is the frontend's target-agnostic "send this into a chat"
+  // entry point: it opens a chat picker and drafts a message with the given text
+  // and/or file (electron/tauri call it to route an opened .xdc into a chat; the
+  // dialog also accepts file=null for a plain text share). We drive it from two
+  // launch sources — shared text (extractBootShareAction) and an opened .xdc
+  // file (launchQueue) — buffering until the frontend registers the handler.
+  private _onWebxdcSendToChat: Function | undefined
+  private pendingSendToChat:
+    | { file: { file_name: string; file_content: string } | null; text: string | null }
+    | null = BOOT_SHARE?.kind === 'text' ? { file: null, text: BOOT_SHARE.text } : null
+  get onWebxdcSendToChat(): Function | undefined {
+    return this._onWebxdcSendToChat
+  }
+  set onWebxdcSendToChat(cb: Function | undefined) {
+    this._onWebxdcSendToChat = cb
+    this.flushPendingSendToChat()
+  }
+  /** Queue a message/file to forward into a chat; delivered now if the frontend
+   * handler is registered, otherwise when it registers. */
+  private enqueueSendToChat(payload: BrowserRuntime['pendingSendToChat']) {
+    this.pendingSendToChat = payload
+    this.flushPendingSendToChat()
+  }
+  private flushPendingSendToChat() {
+    const cb = this._onWebxdcSendToChat
+    if (!cb || !this.pendingSendToChat) return
+    const { file, text } = this.pendingSendToChat
+    this.pendingSendToChat = null
+    setTimeout(() => {
+      try {
+        cb(file, text, undefined)
+      } catch (err) {
+        this.log.error('onWebxdcSendToChat delivery failed', err)
       }
     }, 0)
   }
@@ -1006,6 +1095,31 @@ class BrowserRuntime {
       }
       this.onDrop.handler(paths)
     })
+
+    // File Handling API: an installed PWA registered for `.xdc` (manifest
+    // file_handlers) is launched with the opened file(s) delivered here.
+    // Running webxdc isn't supported in this edition, but we can still forward
+    // the archive into a chat (the recipient's client runs it) — reuse the
+    // frontend's send-to-chat picker via onWebxdcSendToChat, exactly as the
+    // electron/tauri targets do. Chromium-desktop only; a no-op elsewhere.
+    const launchQueue = (window as any).launchQueue
+    if (launchQueue && typeof launchQueue.setConsumer === 'function') {
+      launchQueue.setConsumer(async (launchParams: any) => {
+        for (const handle of launchParams?.files ?? []) {
+          try {
+            const blob: File = await handle.getFile()
+            if (!/\.xdc$/i.test(blob.name)) continue
+            const file_content = await blobToBase64(blob)
+            this.enqueueSendToChat({
+              file: { file_name: blob.name, file_content },
+              text: null,
+            })
+          } catch (err) {
+            this.log.error('failed to read launched .xdc file', err)
+          }
+        }
+      })
+    }
   }
 
   async askBrowserForNotificationPermission() {

@@ -39,5 +39,13 @@
       "text": "text",
       "url": "url"
     }
-  }
+  },
+  "file_handlers": [
+    {
+      "action": "./main.html",
+      "accept": {
+        "application/octet-stream": [".xdc"]
+      }
+    }
+  ]
 }
