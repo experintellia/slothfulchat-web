@@ -77,6 +77,10 @@ contribution intended.
   Chromium devices, and the camera menu was blank before permissions were
   granted; stale stored camera ids no longer show the error screen.
   `desktop/0013`
+- Dialogs no longer close when a drag that started inside them (e.g.
+  selecting text in an input) is released over the backdrop — an outside
+  click only closes a dialog when the press also started on the backdrop.
+  `desktop/0028`
 - Cancelling account creation crashed the welcome screen: a link component
   resolved the (now unselected) account at render time instead of click time.
   `desktop/0008`
@@ -103,6 +107,9 @@ contribution intended.
 - About dialog links are restyled as settings-style buttons, including
   entries for the source repo and the bundled changelog viewer.
   `desktop/0019`
+- Prompt dialogs with a single text input (profile display name, contact
+  name, account tag) confirm on Enter like a native `prompt()` would.
+  `desktop/0027`
 
 ## Different decisions than upstream
 

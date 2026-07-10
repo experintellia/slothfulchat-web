@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 10 Jul 2026 01:41:15 +0000
+Subject: [PATCH] web-app: submit single-input prompt dialogs with Enter
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Prompt-style dialogs with one text input (edit profile display name,
+edit contact name, account private tag) did nothing on Enter — the OK
+button had to be clicked. Wrap their bodies in a form with the footer
+OK button as the submit button (the same pattern EditGroupNameDialog
+already uses), so Enter in the input confirms the dialog like a native
+prompt() does. Enter in the profile status textarea still inserts a
+newline (implicit form submission only fires from inputs).
+---
+ .../EditPrivateTagDialog.tsx                  | 38 +++++++++---------
+ .../dialogs/EditProfileDialog/index.tsx       | 10 ++---
+ .../components/dialogs/ViewProfile/menu.tsx   | 40 ++++++++++---------
+ 3 files changed, 44 insertions(+), 44 deletions(-)
+
+diff --git a/packages/frontend/src/components/AccountListSidebar/EditPrivateTagDialog.tsx b/packages/frontend/src/components/AccountListSidebar/EditPrivateTagDialog.tsx
+index bcb05045c..a402064ae 100644
+--- a/packages/frontend/src/components/AccountListSidebar/EditPrivateTagDialog.tsx
++++ b/packages/frontend/src/components/AccountListSidebar/EditPrivateTagDialog.tsx
+@@ -31,24 +31,26 @@ export function EditPrivateTagDialog({
+   return (
+     <Dialog onClose={onClose} canOutsideClickClose={true}>
+       <DialogHeader title={tx('profile_tag')} />
+-      <DialogBody>
+-        <DialogContent>
+-          <p>{tx('profile_tag_explain')}</p>
+-          <DeltaInput
+-            id='profile_tag'
+-            // label={tx('profile_tag')}
+-            placeholder={tx('profile_tag_hint')}
+-            value={tag}
+-            onChange={(
+-              event: React.FormEvent<HTMLElement> &
+-                React.ChangeEvent<HTMLInputElement>
+-            ) => {
+-              setTag(event.target.value)
+-            }}
+-          />
+-        </DialogContent>
+-      </DialogBody>
+-      <OkCancelFooterAction onCancel={onClose} onOk={onOk} />
++      <form action={onOk}>
++        <DialogBody>
++          <DialogContent>
++            <p>{tx('profile_tag_explain')}</p>
++            <DeltaInput
++              id='profile_tag'
++              // label={tx('profile_tag')}
++              placeholder={tx('profile_tag_hint')}
++              value={tag}
++              onChange={(
++                event: React.FormEvent<HTMLElement> &
++                  React.ChangeEvent<HTMLInputElement>
++              ) => {
++                setTag(event.target.value)
++              }}
++            />
++          </DialogContent>
++        </DialogBody>
++        <OkCancelFooterAction onCancel={onClose} onOk='submit' />
++      </form>
+     </Dialog>
+   )
+ }
+diff --git a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
+index 31e8b4a67..9835fd5fb 100644
+--- a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
++++ b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
+@@ -83,7 +83,7 @@ function EditProfileDialogInner({
+   }
+ 
+   return (
+-    <>
++    <form action={onConfirm}>
+       <DialogBody>
+         <DialogContent>
+           <div className={styles.editProfileDialog}>
+@@ -138,15 +138,11 @@ function EditProfileDialogInner({
+               {tx('cancel')}
+             </FooterActionButton>
+           )}
+-          <FooterActionButton
+-            styling='primary'
+-            onClick={onConfirm}
+-            data-testid='ok'
+-          >
++          <FooterActionButton styling='primary' type='submit' data-testid='ok'>
+             {tx('ok')}
+           </FooterActionButton>
+         </FooterActions>
+       </DialogFooter>
+-    </>
++    </form>
+   )
+ }
+diff --git a/packages/frontend/src/components/dialogs/ViewProfile/menu.tsx b/packages/frontend/src/components/dialogs/ViewProfile/menu.tsx
+index 630942def..50a446256 100644
+--- a/packages/frontend/src/components/dialogs/ViewProfile/menu.tsx
++++ b/packages/frontend/src/components/dialogs/ViewProfile/menu.tsx
+@@ -174,25 +174,27 @@ function EditContactNameDialog({
+   return (
+     <Dialog canOutsideClickClose={!haveUnsavedChanges} fixed onClose={onClose}>
+       <DialogHeader title={tx('menu_edit_name')} />
+-      <DialogBody>
+-        <DialogContent>
+-          <p>{tx('edit_name_explain', originalName)}</p>
+-          <DeltaInput
+-            key='contactname'
+-            id='contactname'
+-            placeholder={tx('edit_name_placeholder', originalName)}
+-            value={contactName}
+-            onChange={(
+-              event: React.FormEvent<HTMLElement> &
+-                React.ChangeEvent<HTMLInputElement>
+-            ) => {
+-              setContactName(event.target.value)
+-            }}
+-            dataTestId='edit-contact-name-input'
+-          />
+-        </DialogContent>
+-      </DialogBody>
+-      <OkCancelFooterAction onCancel={onClickCancel} onOk={onClickOk} />
++      <form action={onClickOk}>
++        <DialogBody>
++          <DialogContent>
++            <p>{tx('edit_name_explain', originalName)}</p>
++            <DeltaInput
++              key='contactname'
++              id='contactname'
++              placeholder={tx('edit_name_placeholder', originalName)}
++              value={contactName}
++              onChange={(
++                event: React.FormEvent<HTMLElement> &
++                  React.ChangeEvent<HTMLInputElement>
++              ) => {
++                setContactName(event.target.value)
++              }}
++              dataTestId='edit-contact-name-input'
++            />
++          </DialogContent>
++        </DialogBody>
++        <OkCancelFooterAction onCancel={onClickCancel} onOk='submit' />
++      </form>
+     </Dialog>
+   )
+ }
