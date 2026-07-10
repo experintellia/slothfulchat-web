@@ -405,7 +405,10 @@ try {
     headerAvatarWidth: document.querySelector('.html-export-header .author-avatar img')?.clientWidth ?? null,
     headerAvatarRadius: getComputedStyle(document.querySelector('.html-export-header .author-avatar img')).borderRadius,
     hasAppCss: !!document.head.textContent.includes('--messageIncomingBg'),
-    bodyBg: getComputedStyle(document.querySelector('.message-list-and-composer')).backgroundColor,
+    // chat background is a fixed viewport-sized layer, not the growing chat container
+    bgLayerPosition: getComputedStyle(document.body, '::before').position,
+    bgLayerColor: getComputedStyle(document.body, '::before').backgroundColor,
+    containerBgImage: getComputedStyle(document.querySelector('.message-list-and-composer')).backgroundImage,
     incomingBubbleBg: getComputedStyle(document.querySelector('.message.incoming .msg-container')).backgroundColor,
   }))
   console.log('viewer stats:', JSON.stringify(stats, null, 2))
@@ -429,6 +432,12 @@ try {
   if (stats.headerAvatarWidth !== 40) problems.push(`header avatar width ${stats.headerAvatarWidth}, expected 40`)
   if (!stats.headerAvatarRadius || stats.headerAvatarRadius === '0px')
     problems.push('header avatar not rounded')
+  if (stats.bgLayerPosition !== 'fixed')
+    problems.push(`chat background layer position ${stats.bgLayerPosition}, expected fixed`)
+  if (!stats.bgLayerColor || stats.bgLayerColor === 'rgba(0, 0, 0, 0)')
+    problems.push('chat background layer has no color')
+  if (stats.containerBgImage !== 'none')
+    problems.push('chat container still paints the background image (it would stretch to full chat height)')
   if (problems.length) throw new Error('export verification problems:\n  ' + problems.join('\n  '))
 
   // --- "Save transcript (.txt)" button downloads the plain-text log ---

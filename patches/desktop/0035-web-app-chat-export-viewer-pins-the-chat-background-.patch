@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Fri, 10 Jul 2026 16:32:03 +0000
+Subject: [PATCH 35/35] web-app: chat export viewer pins the chat background to
+ the viewport
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The app paints the chat background pattern on
+.message-list-and-composer, which is viewport-sized in the app — but in
+the exported viewer that element grows with the whole message list, so
+background-size: cover scaled the pattern up to the full chat height
+(comically large for long chats). The export now paints color + image
+on a position:fixed, viewport-sized ::before layer (mobile browsers
+handle that reliably, unlike background-attachment: fixed) and clears
+the background from the growing container, so the pattern renders at
+its normal density and stays static while scrolling — in the viewer
+and in the single-file snapshot alike.
+---
+ .../components/dialogs/ExportChatToHtml.tsx   | 22 ++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+index 2e0c42572..788888f51 100644
+--- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
++++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+@@ -264,7 +264,27 @@ async function collectCss(): Promise<string> {
+  * document is one long scrollable page with a sticky chat header */
+ const EXPORT_CSS = `
+ body { margin: 0; }
+-.html-export .message-list-and-composer { min-height: 100vh; box-sizing: border-box; }
++/* the app paints the chat background on .message-list-and-composer, which is
++ * viewport-sized there — in the export that element grows with the whole
++ * chat, so background-size: cover would blow the pattern up to the full
++ * document height. Paint it on a fixed viewport-sized layer instead (a
++ * position:fixed pseudo-element; background-attachment: fixed is unreliable
++ * on mobile), so it stays put while scrolling. */
++body.html-export::before {
++  content: '';
++  position: fixed;
++  inset: 0;
++  z-index: -1;
++  background-color: var(--chatViewBg);
++  background-image: var(--chatViewBgImgPath);
++  background-size: cover;
++}
++.html-export .message-list-and-composer {
++  min-height: 100vh;
++  box-sizing: border-box;
++  background-color: transparent;
++  background-image: none;
++}
+ .html-export #message-list {
+   position: static;
+   overflow-y: visible;

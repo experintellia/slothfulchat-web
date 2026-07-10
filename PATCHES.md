@@ -58,7 +58,7 @@ exists:
   receipts yet; hovering the reactions cluster lists everyone who reacted with
   the emoji they picked. Both surface the info already in the Message Info /
   Reactions dialogs without a click, sharing a new `PeopleHoverInfo`
-  component. `desktop/0033`
+  component. `desktop/0034`
 - **Themeable avatars on all messages** — upstream renders avatars only for
   incoming group messages; we render them everywhere but hide the new cases
   by default, so themes can opt in to Rocket.Chat-style avatars on every
@@ -79,7 +79,7 @@ exists:
   self-contained renderer, "Save single-file HTML" snapshot button),
   `messages.txt`, the raw jsonrpc data as `messages.json`, and the media
   files next to it; a `manifest.toml` makes the zip double as a webxdc
-  viewer app when renamed to `.xdc`. `desktop/0032`
+  viewer app when renamed to `.xdc`. `desktop/0032`, `desktop/0035`
 - **Public Bots & Public Channels suggestions in the New Chat dialog** — two
   pseudo entries below "New Group"/"New Channel": "Public Bots" opens a
   searchable directory of community-made bots (name, admin, description,
