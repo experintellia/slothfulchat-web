@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <dev@slothfulchat.local>
+Date: Fri, 10 Jul 2026 01:07:09 +0000
+Subject: [PATCH 15/15] sticker picker: list animated .tgs stickers
+
+misc_get_stickers only listed .png/.webp/.gif, so a saved Telegram animated
+sticker (.tgs, now classified as Viewtype::Sticker) never appeared in the
+composer sticker picker. Add .tgs to the accepted extensions.
+---
+ deltachat-jsonrpc/src/api.rs | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
+index bf1b29ced..3b3de507e 100644
+--- a/deltachat-jsonrpc/src/api.rs
++++ b/deltachat-jsonrpc/src/api.rs
+@@ -2612,6 +2612,7 @@ async fn misc_get_stickers(&self, account_id: u32) -> Result<HashMap<String, Vec
+                 if sticker_name.ends_with(".png")
+                     || sticker_name.ends_with(".webp")
+                     || sticker_name.ends_with(".gif")
++                    || sticker_name.ends_with(".tgs")
+                 {
+                     sticker_paths.push(
+                         sticker_entry

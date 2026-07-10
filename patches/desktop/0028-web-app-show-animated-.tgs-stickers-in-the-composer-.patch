@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <dev@slothfulchat.local>
+Date: Fri, 10 Jul 2026 01:07:28 +0000
+Subject: [PATCH 28/28] web-app: show animated .tgs stickers in the composer
+ sticker picker
+
+The picker rendered every saved sticker with a plain <img>, which can't play a
+gzipped .tgs. Reuse the LottieSticker player for .tgs picker thumbnails; static
+stickers keep the <img> path. Skip the 'copy image to clipboard' context item
+for .tgs (a Lottie can't be rasterized). Saved animated stickers now preview
+and send from the picker.
+---
+ .../composer/EmojiAndStickerPicker.tsx        | 34 ++++++++++++++-----
+ 1 file changed, 26 insertions(+), 8 deletions(-)
+
+diff --git a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
+index fe3aa6760..9564e8eae 100644
+--- a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
++++ b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
+@@ -13,6 +13,7 @@ import { BackendRemote } from '../../backend-com'
+ import { selectedAccountId } from '../../ScreenController'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import EmojiPicker from '../EmojiPicker'
++import LottieSticker from '../attachment/LottieSticker'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import { ContextMenuContext } from '../../contexts/ContextMenuContext'
+ import useConfirmationDialog from '../../hooks/dialog/useConfirmationDialog'
+@@ -87,17 +88,24 @@ function StickersListItem(props: {
+ 
+   const onContextMenu = (ev: React.MouseEvent) => {
+     ev.preventDefault()
++    // A gzipped .tgs Lottie can't be rasterized to a clipboard image, so skip
++    // that item (and its separator) for animated stickers.
++    const isLottie = /\.tgs$/i.test(filePath)
+     openContextMenu({
+       x: ev.clientX,
+       y: ev.clientY,
+       items: [
+-        {
+-          label: tx('menu_copy_image_to_clipboard'),
+-          action: () => {
+-            runtime.writeClipboardImage(filePath)
+-          },
+-        },
+-        { type: 'separator' },
++        ...(isLottie
++          ? []
++          : [
++              {
++                label: tx('menu_copy_image_to_clipboard'),
++                action: () => {
++                  runtime.writeClipboardImage(filePath)
++                },
++              },
++              { type: 'separator' as const },
++            ]),
+         {
+           label: tx('delete'),
+           danger: true,
+@@ -129,7 +137,17 @@ function StickersListItem(props: {
+       onKeyDown={rovingTabindex.onKeydown}
+       onFocus={rovingTabindex.setAsActiveElement}
+     >
+-      <img src={runtime.transformStickerURL(filePath)} />
++      {/\.tgs$/i.test(filePath) ? (
++        // Animated Lottie sticker — an <img> can't play a gzipped .tgs.
++        <LottieSticker
++          key={filePath}
++          src={runtime.transformStickerURL(filePath)}
++          size={127}
++          className='sticker-lottie-thumb'
++        />
++      ) : (
++        <img src={runtime.transformStickerURL(filePath)} />
++      )}
+     </button>
+   )
+ }
