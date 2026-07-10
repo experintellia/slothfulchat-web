@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Tue, 7 Jul 2026 23:58:49 +0000
-Subject: [PATCH 08/32] web-app: don't crash ClickableLink render when no
+Subject: [PATCH 08/33] web-app: don't crash ClickableLink render when no
  account is selected
 
 selectedAccountId() throws when window.__selectedAccountId is undefined.

@@ -52,6 +52,13 @@ exists:
   type, size, image/video dimensions, audio/video duration; delivery failures
   show as an error banner, and clicking a message's failed-status icon opens
   Message Info instead of a bare alert. `desktop/0022`
+- **Hover popovers for read-by and reactions** — hovering an outgoing
+  message's delivery-status icon shows who has read it (avatar, name and a
+  relative timestamp), falling back to a short status label when there are no
+  receipts yet; hovering the reactions cluster lists everyone who reacted with
+  the emoji they picked. Both surface the info already in the Message Info /
+  Reactions dialogs without a click, sharing a new `PeopleHoverInfo`
+  component. `desktop/0033`
 - **Themeable avatars on all messages** — upstream renders avatars only for
   incoming group messages; we render them everywhere but hide the new cases
   by default, so themes can opt in to Rocket.Chat-style avatars on every

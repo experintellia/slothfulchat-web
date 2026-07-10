@@ -1,0 +1,769 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Fri, 10 Jul 2026 15:04:22 +0000
+Subject: [PATCH 33/33] web-app: hover popovers with avatars for read-by status
+ and reactions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reveal a small popover when hovering the delivery-status icon or a
+message's reactions, so the "who read this / who reacted" information is
+available without opening the Message Info or Reactions dialog.
+
+- Read-by: hovering the outgoing delivery-status icon shows the contacts
+  who have read the message, each with their avatar, name and a relative
+  timestamp ("2 minutes ago"); the absolute time is on the row's title.
+  When there are no read receipts yet it falls back to a short status
+  label (Sending… / Delivered / Read / Failed to send). Data comes from
+  getMessageReadReceipts and refreshes on the MsgRead event, and is only
+  fetched once the popover is first opened.
+- Reactions: each reaction pill is its own hover target — hovering one
+  emoji lists just the people who reacted with it, while the "+N"
+  overflow pill lists the remaining (mixed) reactions with each reactor's
+  emoji. Clicking still opens the full ReactionsDialog.
+
+Adds an `xSmall` (24px) variant to the shared Avatar component and uses
+it for the compact popover rows, instead of ad-hoc CSS overrides. The
+popover nudges itself back into the viewport when it would overflow an
+edge (e.g. the "+N" pill of a right-aligned message).
+
+Both share a new PeopleHoverInfo component (the hover trigger, the card
+shell, a lazy contacts-by-id fetch and a relative-time helper). Adds the
+untranslated labels Sending…/Delivered/Failed to send and "Reacted with
+%1$s".
+---
+ _locales/_untranslated_en.json                |  12 ++
+ packages/frontend/scss/misc/_avatar.scss      |   7 +
+ .../frontend/src/components/Avatar/index.tsx  |   5 +-
+ .../src/components/PeopleHoverInfo/index.tsx  | 176 ++++++++++++++++++
+ .../PeopleHoverInfo/styles.module.scss        |  97 ++++++++++
+ .../src/components/Reactions/index.tsx        | 113 ++++++++++-
+ .../components/Reactions/styles.module.scss   |  22 ++-
+ .../components/message/MessageMetaData.tsx    | 150 ++++++++++++---
+ 8 files changed, 545 insertions(+), 37 deletions(-)
+ create mode 100644 packages/frontend/src/components/PeopleHoverInfo/index.tsx
+ create mode 100644 packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 64a2fb654..d754f12b2 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -14,6 +14,18 @@
+   "message_info_duration": {
+     "message": "Duration"
+   },
++  "msg_status_hover_sending": {
++    "message": "Sending…"
++  },
++  "msg_status_hover_delivered": {
++    "message": "Delivered"
++  },
++  "msg_status_hover_error": {
++    "message": "Failed to send"
++  },
++  "reacted_with": {
++    "message": "Reacted with %1$s"
++  },
+   "command_palette_tab_to_search": {
+     "message": "Tab to search"
+   },
+diff --git a/packages/frontend/scss/misc/_avatar.scss b/packages/frontend/scss/misc/_avatar.scss
+index a8ad9fd17..948ff4e7c 100644
+--- a/packages/frontend/scss/misc/_avatar.scss
++++ b/packages/frontend/scss/misc/_avatar.scss
+@@ -103,6 +103,13 @@
+   --local-avatar-vertical-margin: 0;
+ }
+ 
++// compact inline lists, e.g. the read-by / reactions hover popovers
++.avatar.x-small {
++  --local-avatar-size: 24px;
++  --local-avatar-font-size: 12px;
++  --local-avatar-vertical-margin: 0;
++}
++
+ // contact list, search results etc.
+ .avatar.large {
+   --local-avatar-size: 64px;
+diff --git a/packages/frontend/src/components/Avatar/index.tsx b/packages/frontend/src/components/Avatar/index.tsx
+index a452c04ee..f6110be3c 100644
+--- a/packages/frontend/src/components/Avatar/index.tsx
++++ b/packages/frontend/src/components/Avatar/index.tsx
+@@ -38,6 +38,8 @@ export function Avatar(props: {
+   addr?: string
+   large?: boolean
+   small?: boolean
++  /** 24px variant, e.g. for compact inline lists like hover popovers. */
++  xSmall?: boolean
+   wasSeenRecently?: boolean
+   style?: htmlDivProps['style']
+   onClick?: () => void
+@@ -57,6 +59,7 @@ export function Avatar(props: {
+     addr,
+     large,
+     small,
++    xSmall,
+     wasSeenRecently,
+     onClick,
+     tabIndex,
+@@ -87,7 +90,7 @@ export function Avatar(props: {
+         // If at some point we make `wasSeenRecently` accessible,
+         // we should only apply `aria-hidden` to the avatar / initial itself
+         // (and perhaps rename the prop).
+-        { large, small, wasSeenRecently },
++        { large, small, 'x-small': xSmall, wasSeenRecently },
+         className
+       )}
+       onClick={onClick}
+diff --git a/packages/frontend/src/components/PeopleHoverInfo/index.tsx b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
+new file mode 100644
+index 000000000..2230da77c
+--- /dev/null
++++ b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
+@@ -0,0 +1,176 @@
++import React, { useLayoutEffect, useMemo, useRef, useState } from 'react'
++import classNames from 'classnames'
++import moment from 'moment'
++
++import { Avatar } from '../Avatar'
++import { BackendRemote } from '../../backend-com'
++import { selectedAccountId } from '../../ScreenController'
++import { useRpcFetch } from '../../hooks/useFetch'
++
++import styles from './styles.module.scss'
++
++import type { T } from '@deltachat/jsonrpc-client'
++
++/** A minimal contact shape — everything the {@link Avatar} and the name need. */
++type ContactLike = Pick<
++  T.Contact,
++  'displayName' | 'profileImage' | 'address' | 'color'
++>
++
++export type PersonRow = {
++  key: React.Key
++  contact: ContactLike
++  /** Trailing detail, e.g. a relative timestamp or a reaction emoji. */
++  detail?: React.ReactNode
++  /** `title` attribute for the detail (e.g. the absolute timestamp). */
++  detailTitle?: string
++}
++
++/**
++ * The floating card shown on hover: an optional title and a list of people,
++ * each with their avatar, name and an optional trailing detail.
++ */
++export function PeopleHoverCard(props: {
++  title?: React.ReactNode
++  rows: PersonRow[]
++  /** Shown instead of the list when there are no rows (and we're not loading). */
++  emptyLabel?: React.ReactNode
++  loading?: boolean
++}) {
++  const { title, rows, emptyLabel, loading } = props
++
++  return (
++    <div className={styles.peopleHoverCard} role='tooltip'>
++      {title != null && <div className={styles.peopleHoverTitle}>{title}</div>}
++      {rows.length > 0 ? (
++        <ul className={styles.peopleHoverList}>
++          {rows.map(row => (
++            <li key={row.key} className={styles.peopleHoverRow}>
++              <Avatar
++                xSmall
++                displayName={row.contact.displayName}
++                avatarPath={row.contact.profileImage}
++                addr={row.contact.address}
++                color={row.contact.color}
++                aria-hidden={true}
++              />
++              <span className={styles.peopleHoverName}>
++                {row.contact.displayName}
++              </span>
++              {row.detail != null && (
++                <span
++                  className={styles.peopleHoverDetail}
++                  title={row.detailTitle}
++                >
++                  {row.detail}
++                </span>
++              )}
++            </li>
++          ))}
++        </ul>
++      ) : loading || emptyLabel != null ? (
++        <div className={styles.peopleHoverEmpty}>
++          {loading ? '…' : emptyLabel}
++        </div>
++      ) : null}
++    </div>
++  )
++}
++
++/**
++ * Wraps a trigger element and reveals `card` in a popover while the pointer
++ * hovers it (or it holds keyboard focus). `card` is only mounted while open,
++ * so any data fetching inside it happens lazily on first hover.
++ */
++export function HoverInfoTrigger(props: {
++  children: React.ReactNode
++  card: React.ReactNode
++  className?: string
++  /** Horizontal edge the popover aligns to. Defaults to `end` (right in LTR). */
++  align?: 'start' | 'end'
++  /** Optional click handler forwarded to the trigger wrapper. */
++  onClick?: () => void
++}) {
++  const [open, setOpen] = useState(false)
++  const { align = 'end' } = props
++  const anchorRef = useRef<HTMLSpanElement>(null)
++
++  // Nudge the popover back into the viewport when it would overflow the left or
++  // right edge — e.g. the "+N" reactions pill of a right-aligned outgoing
++  // message, whose start-aligned popover would otherwise run off-screen. Done
++  // imperatively (measuring in untransformed space) and re-run via a
++  // ResizeObserver so it stays correct as the card grows when contacts load.
++  useLayoutEffect(() => {
++    const el = anchorRef.current
++    if (!open || !el) {
++      return
++    }
++    const clamp = () => {
++      el.style.transform = 'none'
++      const rect = el.getBoundingClientRect()
++      const margin = 8
++      let shift = 0
++      if (rect.right > window.innerWidth - margin) {
++        shift = window.innerWidth - margin - rect.right
++      } else if (rect.left < margin) {
++        shift = margin - rect.left
++      }
++      el.style.transform = shift !== 0 ? `translateX(${shift}px)` : ''
++    }
++    clamp()
++    const observer = new ResizeObserver(clamp)
++    observer.observe(el)
++    return () => observer.disconnect()
++  }, [open])
++
++  return (
++    <span
++      className={classNames(styles.hoverInfoTrigger, props.className)}
++      onMouseEnter={() => setOpen(true)}
++      onMouseLeave={() => setOpen(false)}
++      onFocus={() => setOpen(true)}
++      onBlur={() => setOpen(false)}
++      onClick={props.onClick}
++    >
++      {props.children}
++      {open && (
++        <span
++          ref={anchorRef}
++          className={classNames(styles.hoverInfoAnchor, {
++            [styles.anchorStart]: align === 'start',
++            [styles.anchorEnd]: align === 'end',
++          })}
++        >
++          {props.card}
++        </span>
++      )}
++    </span>
++  )
++}
++
++/**
++ * Fetches the given contacts by id, keyed by id. Returns `{}` while loading or
++ * when `contactIds` is empty. Memoises on the id list so a fresh array on every
++ * render doesn't retrigger the fetch.
++ */
++export function useContactsById(
++  contactIds: number[]
++): Record<number, T.Contact> {
++  const accountId = selectedAccountId()
++  const idsKey = contactIds.join(',')
++  // Stabilise the array reference so `useRpcFetch` only refetches when the
++  // actual set of ids changes, not on every render.
++  const stableIds = useMemo(() => contactIds, [idsKey]) // eslint-disable-line react-hooks/exhaustive-deps
++
++  const fetch = useRpcFetch(
++    BackendRemote.rpc.getContactsByIds,
++    stableIds.length > 0 ? [accountId, stableIds] : null
++  )
++
++  return fetch?.lingeringResult?.ok ? fetch.lingeringResult.value : {}
++}
++
++/** Renders a relative timestamp like "5 minutes ago" from a unix-seconds value. */
++export function RelativeTime(props: { timestamp: number }) {
++  return <>{moment(props.timestamp * 1000).fromNow()}</>
++}
+diff --git a/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
+new file mode 100644
+index 000000000..3c95e8eaf
+--- /dev/null
++++ b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
+@@ -0,0 +1,97 @@
++.hoverInfoTrigger {
++  position: relative;
++  display: inline-flex;
++  align-items: center;
++}
++
++// Anchors the popover to the trigger without taking up layout space. The card
++// itself opens upward (bottom: 100%) so it doesn't get clipped by content
++// below the message footer.
++.hoverInfoAnchor {
++  position: absolute;
++  bottom: calc(100% + 6px);
++  z-index: 200;
++  // Let the pointer travel from the trigger onto the card without the small
++  // gap counting as a mouse-leave.
++  padding-bottom: 6px;
++  margin-bottom: -6px;
++  pointer-events: auto;
++}
++
++.anchorEnd {
++  inset-inline-end: 0;
++}
++
++.anchorStart {
++  inset-inline-start: 0;
++}
++
++.peopleHoverCard {
++  background-color: var(--contextMenuBg, rgb(30, 30, 30));
++  color: var(--contextMenuText, white);
++  border: 1px solid var(--contextMenuBorder, rgba(120, 120, 120, 0.3));
++  border-radius: 8px;
++  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
++  padding: 8px;
++  min-width: 160px;
++  max-width: 280px;
++  width: max-content;
++  text-align: start;
++  cursor: default;
++  // Restore a sensible font size — the trigger lives inside the tiny metadata
++  // row, and we don't want to inherit its shrunken size.
++  font-size: 13px;
++  line-height: 1.3;
++}
++
++.peopleHoverTitle {
++  font-weight: 600;
++  font-size: 12px;
++  opacity: 0.75;
++  padding: 2px 4px 6px;
++}
++
++.peopleHoverList {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++}
++
++.peopleHoverRow {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  padding: 3px 4px;
++  border-radius: 6px;
++
++  // Keep the shared Avatar (`.avatar.x-small`, 24px) from being squeezed when
++  // the name is long.
++  :global(.avatar) {
++    flex-shrink: 0;
++  }
++}
++
++.peopleHoverName {
++  flex: 1 1 auto;
++  min-width: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++  font-weight: 500;
++}
++
++.peopleHoverDetail {
++  flex-shrink: 0;
++  opacity: 0.65;
++  font-size: 12px;
++  white-space: nowrap;
++}
++
++.peopleHoverEmpty {
++  padding: 2px 4px;
++  opacity: 0.7;
++  font-size: 12px;
++}
+diff --git a/packages/frontend/src/components/Reactions/index.tsx b/packages/frontend/src/components/Reactions/index.tsx
+index ddc10364b..1c9bc983b 100644
+--- a/packages/frontend/src/components/Reactions/index.tsx
++++ b/packages/frontend/src/components/Reactions/index.tsx
+@@ -3,6 +3,12 @@ import classNames from 'classnames'
+ 
+ import useDialog from '../../hooks/dialog/useDialog'
+ import ReactionsDialog from '../dialogs/ReactionsDialog'
++import {
++  HoverInfoTrigger,
++  PeopleHoverCard,
++  useContactsById,
++  type PersonRow,
++} from '../PeopleHoverInfo'
+ 
+ import styles from './styles.module.scss'
+ 
+@@ -58,25 +64,55 @@ export default function Reactions(props: Props) {
+     })
+   }
+ 
++  // Emojis that don't fit and are collapsed into the "+N" pill.
++  const hiddenEmojis = reactions.slice(visibleEmojis).map(r => r.emoji)
++
+   return (
+     <div className={styles.reactions}>
+       {reactions.slice(0, visibleEmojis).map(({ emoji, isFromSelf, count }) => {
+         return (
+-          <span
+-            className={classNames(styles.emoji, {
+-              [styles.isFromSelf]: isFromSelf,
+-            })}
++          <HoverInfoTrigger
+             key={emoji}
++            align='start'
++            className={styles.emojiTrigger}
++            onClick={handleClick}
++            card={
++              <ReactorsHoverCard
++                reactionsByContact={reactionsByContact}
++                emojis={[emoji]}
++                showEmoji={false}
++              />
++            }
+           >
+-            {emoji}
+-            {count > 1 && <span className={styles.emojiCount}>{count}</span>}
+-          </span>
++            <span
++              className={classNames(styles.emoji, {
++                [styles.isFromSelf]: isFromSelf,
++              })}
++            >
++              {emoji}
++              {count > 1 && <span className={styles.emojiCount}>{count}</span>}
++            </span>
++          </HoverInfoTrigger>
+         )
+       })}
+       {reactions.length > visibleEmojis && (
+-        <span className={classNames(styles.emoji, styles.emojiCount)}>
+-          +{hiddenReactionsCount}
+-        </span>
++        <HoverInfoTrigger
++          align='start'
++          className={styles.emojiTrigger}
++          onClick={handleClick}
++          card={
++            <ReactorsHoverCard
++              reactionsByContact={reactionsByContact}
++              emojis={hiddenEmojis}
++              title={tx('reactions')}
++              showEmoji={true}
++            />
++          }
++        >
++          <span className={classNames(styles.emoji, styles.emojiCount)}>
++            +{hiddenReactionsCount}
++          </span>
++        </HoverInfoTrigger>
+       )}
+       <button
+         type='button'
+@@ -88,3 +124,60 @@ export default function Reactions(props: Props) {
+     </div>
+   )
+ }
++
++/**
++ * Popover contents for a single reaction (or the "+N" overflow pill): the
++ * people who reacted with any of `emojis`, each with their avatar and name.
++ * When hovering one emoji we show neither a title nor a per-row emoji — the
++ * user already knows which emoji they're pointing at. The overflow pill mixes
++ * several emojis, so it gets a "Reactions" title and shows each reactor's
++ * emoji. Reactors follow the core's most-used-first ordering.
++ */
++function ReactorsHoverCard(props: {
++  reactionsByContact: T.Reactions['reactionsByContact']
++  emojis: string[]
++  title?: React.ReactNode
++  showEmoji: boolean
++}) {
++  const tx = useTranslationFunction()
++  const { reactionsByContact, emojis, showEmoji } = props
++
++  const reactors = useMemo(() => {
++    const entries: { contactId: number; emoji: string }[] = []
++    for (const emoji of emojis) {
++      for (const [contactId, contactEmojis] of Object.entries(
++        reactionsByContact
++      )) {
++        // The dialog and the bubble only ever show a contact's first reaction,
++        // so we mirror that here.
++        if (contactEmojis[0] === emoji) {
++          entries.push({ contactId: Number(contactId), emoji })
++        }
++      }
++    }
++    return entries
++  }, [emojis, reactionsByContact])
++
++  const contacts = useContactsById(reactors.map(r => r.contactId))
++
++  const rows: PersonRow[] = reactors
++    .map(({ contactId, emoji }): PersonRow | null => {
++      const contact = contacts[contactId]
++      if (!contact) {
++        return null
++      }
++      return {
++        key: contactId,
++        contact,
++        detail: showEmoji ? (
++          <span className={styles.hoverEmoji}>{emoji}</span>
++        ) : undefined,
++        detailTitle: showEmoji ? tx('reacted_with', emoji) : undefined,
++      }
++    })
++    .filter((row): row is PersonRow => row !== null)
++
++  const loading = rows.length === 0 && reactors.length > 0
++
++  return <PeopleHoverCard title={props.title} rows={rows} loading={loading} />
++}
+diff --git a/packages/frontend/src/components/Reactions/styles.module.scss b/packages/frontend/src/components/Reactions/styles.module.scss
+index 6d5f26360..52d2acff2 100644
+--- a/packages/frontend/src/components/Reactions/styles.module.scss
++++ b/packages/frontend/src/components/Reactions/styles.module.scss
+@@ -6,6 +6,24 @@
+   top: 16px;
+ }
+ 
++// The emoji shown next to each reactor's name in the hover popover.
++.hoverEmoji {
++  font-size: 15px;
++}
++
++// Each pill is wrapped in a hover trigger. Raise it above the
++// (absolutely-positioned) "open dialog" button so it can receive hover, while
++// clicks still fall through to open the full ReactionsDialog.
++.emojiTrigger {
++  position: relative;
++  z-index: 1;
++  cursor: pointer;
++
++  & ~ & {
++    margin-inline-start: 2px;
++  }
++}
++
+ .emoji {
+   background-color: var(--messageIncomingBg);
+   border-radius: 24px;
+@@ -13,10 +31,6 @@
+   font-size: 16px;
+   padding: 2px 6px;
+ 
+-  & ~ & {
+-    margin-inline-start: 2px;
+-  }
+-
+   &.isFromSelf {
+     background-color: var(--messageOutgoingBg);
+   }
+diff --git a/packages/frontend/src/components/message/MessageMetaData.tsx b/packages/frontend/src/components/message/MessageMetaData.tsx
+index 2627443c5..74b78ad9d 100644
+--- a/packages/frontend/src/components/message/MessageMetaData.tsx
++++ b/packages/frontend/src/components/message/MessageMetaData.tsx
+@@ -1,5 +1,6 @@
+ import React, { useEffect, useEffectEvent, useMemo } from 'react'
+ import classNames from 'classnames'
++import moment from 'moment'
+ import { T } from '@deltachat/jsonrpc-client'
+ 
+ import Timestamp from '../conversations/Timestamp'
+@@ -11,6 +12,13 @@ import { BackendRemote, onDCEvent } from '../../backend-com'
+ import { selectedAccountId } from '../../ScreenController'
+ import asyncThrottle from '@jcoreio/async-throttle'
+ import { shouldHideDeliveryStatus } from './messageFunctions'
++import {
++  HoverInfoTrigger,
++  PeopleHoverCard,
++  RelativeTime,
++  useContactsById,
++  type PersonRow,
++} from '../PeopleHoverInfo'
+ 
+ type Props = {
+   messageId: T.Message['id']
+@@ -116,29 +124,31 @@ export default function MessageMetaData(props: Props) {
+           and not just the last one. */}
+           {/* TODO a11y: we should probably apply `aria-label='Delivery status'`
+           and change the contents to `Delivered` (or `Error` or whatever). */}
+-          <div
+-            role='status'
+-            className={classNames(
+-              'status-icon',
+-              error !== null ? 'error' : status
+-            )}
+-          >
+-            <span className='visually-hidden'>
+-              {tx(
+-                `a11y_delivery_status_${
+-                  error !== null
+-                    ? 'error'
+-                    : (status as Exclude<
+-                        typeof status,
+-                        // '' is not supposed to happen.
+-                        // The others are not supposed to happen
+-                        // as long as direction is outgoing.
+-                        '' | 'in_fresh' | 'in_seen' | 'in_noticed'
+-                      >)
+-                }`
++          <ReadByHoverInfo messageId={messageId} status={status} error={error}>
++            <div
++              role='status'
++              className={classNames(
++                'status-icon',
++                error !== null ? 'error' : status
+               )}
+-            </span>
+-          </div>
++            >
++              <span className='visually-hidden'>
++                {tx(
++                  `a11y_delivery_status_${
++                    error !== null
++                      ? 'error'
++                      : (status as Exclude<
++                          typeof status,
++                          // '' is not supposed to happen.
++                          // The others are not supposed to happen
++                          // as long as direction is outgoing.
++                          '' | 'in_fresh' | 'in_seen' | 'in_noticed'
++                        >)
++                  }`
++                )}
++              </span>
++            </div>
++          </ReadByHoverInfo>
+           {error !== null && (
+             <button
+               type='button'
+@@ -157,6 +167,102 @@ export default function MessageMetaData(props: Props) {
+   )
+ }
+ 
++/**
++ * Wraps the delivery-status icon so that hovering it reveals a popover with the
++ * people who have read the message (avatar + name + relative timestamp), or a
++ * short status label when there's no read-receipt info to show.
++ */
++function ReadByHoverInfo(props: {
++  messageId: number
++  status: msgStatus
++  error: string | null
++  children: React.ReactNode
++}) {
++  return (
++    <HoverInfoTrigger
++      align='end'
++      card={
++        <ReadByHoverCard
++          messageId={props.messageId}
++          status={props.status}
++          error={props.error}
++        />
++      }
++    >
++      {props.children}
++    </HoverInfoTrigger>
++  )
++}
++
++function ReadByHoverCard(props: {
++  messageId: number
++  status: msgStatus
++  error: string | null
++}) {
++  const tx = useTranslationFunction()
++  const accountId = selectedAccountId()
++
++  const receiptsFetch = useRpcFetch(BackendRemote.rpc.getMessageReadReceipts, [
++    accountId,
++    props.messageId,
++  ])
++  const refresh = receiptsFetch.refresh
++  useEffect(
++    () =>
++      onDCEvent(accountId, 'MsgRead', ({ msgId }) => {
++        if (msgId === props.messageId) {
++          refresh()
++        }
++      }),
++    [accountId, props.messageId, refresh]
++  )
++
++  const receipts = (
++    receiptsFetch.lingeringResult?.ok ? receiptsFetch.lingeringResult.value : []
++  )
++    .filter(receipt => receipt.timestamp != null)
++    // Most recently read first.
++    .sort((a, b) => b.timestamp - a.timestamp)
++
++  const contacts = useContactsById(receipts.map(r => r.contactId))
++
++  const rows: PersonRow[] = receipts
++    .map((receipt): PersonRow | null => {
++      const contact = contacts[receipt.contactId]
++      if (!contact) {
++        return null
++      }
++      return {
++        key: receipt.contactId,
++        contact,
++        detail: <RelativeTime timestamp={receipt.timestamp} />,
++        detailTitle: moment(receipt.timestamp * 1000).format('LLLL'),
++      }
++    })
++    .filter((row): row is PersonRow => row !== null)
++
++  // When there are no read receipts we still show a short status label instead
++  // of an empty popover.
++  const statusLabel =
++    props.error !== null
++      ? tx('msg_status_hover_error')
++      : props.status === 'sending'
++        ? tx('msg_status_hover_sending')
++        : props.status === 'read'
++          ? tx('read_by')
++          : tx('msg_status_hover_delivered')
++
++  const loading = receiptsFetch.loading && receiptsFetch.lingeringResult == null
++
++  return (
++    <PeopleHoverCard
++      title={rows.length > 0 ? tx('read_by') : statusLabel}
++      rows={rows}
++      loading={loading}
++    />
++  )
++}
++
+ function ViewCount(props: { messageId: number }) {
+   const viewCountFetch = useRpcFetch(
+     useMemo(
