@@ -1,0 +1,1097 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Fri, 10 Jul 2026 01:05:26 +0000
+Subject: [PATCH 32/32] web-app: export a chat as a zip (html viewer + txt +
+ json + media) from the three-dot menu
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Telegram-style chat export: an 'Export Chat' entry in the main-view
+three-dot menu downloads the open chat as one zip containing
+
+- index.html — a standalone viewer that renders the chat exactly like
+  the desktop message list. Fidelity comes from reusing the app's own
+  presentation: main.css/bundle.css/fallback-theme.css are embedded
+  (css url() assets inlined as data: URIs; deliberately no theme vars —
+  exports use the default theme) and the viewer emits the same DOM the
+  message list renders (message bubbles, author/avatar, quotes,
+  attachments, metadata footer, reactions, day markers). The message
+  data is embedded as JSON and rendered by a small self-contained
+  script (shipped via Function.toString of chatExportViewer), so the
+  html also works when the json sits next to it. A
+  'Save single-file HTML' button snapshots the rendered DOM with media
+  inlined as data: URIs (or via webxdc.sendToChat when running as a
+  webxdc app).
+- messages.json — the raw jsonrpc data (chat, message-list items,
+  getMessages results, media file map): groundwork for doing this
+  export in core later.
+- messages.txt — a plain-text transcript.
+- media/ — attachments, avatars and quote images (50 MB per file /
+  300 MB total budget; larger files render as the generic file tile).
+- manifest.toml + icon — rename the zip to .xdc and it becomes a
+  webxdc viewer app that can be sent into a chat.
+
+The zip is assembled in the frontend (minimal store-only writer, the
+bulk of the payload is already-compressed media), staged via
+writeTempFileFromBase64 and handed to the user through
+runtime.downloadFile; a progress dialog with cancel covers big chats.
+Message text is escaped + linkified (no message-parser markdown, no
+jumbomoji). New strings live in _untranslated_en.json.
+---
+ _locales/_untranslated_en.json                |   6 +
+ .../src/components/chat/ChatContextMenu.tsx   |  11 +
+ .../components/dialogs/ExportChatToHtml.tsx   | 993 ++++++++++++++++++
+ 3 files changed, 1010 insertions(+)
+ create mode 100644 packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 8d24c02ef..64a2fb654 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -1,4 +1,10 @@
+ {
++  "menu_export_chat": {
++    "message": "Export Chat"
++  },
++  "chat_exported_as_x": {
++    "message": "Chat exported as %1$s"
++  },
+   "message_info_file_type": {
+     "message": "Type"
+   },
+diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+index ec54fd200..60d6f4352 100644
+--- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
++++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+@@ -15,6 +15,7 @@ import useOpenViewGroupDialog from '../../hooks/dialog/useOpenViewGroupDialog'
+ import useOpenViewProfileDialog from '../../hooks/dialog/useOpenViewProfileDialog'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import DisappearingMessages from '../dialogs/DisappearingMessages'
++import ExportChatToHtml from '../dialogs/ExportChatToHtml'
+ import type { UnselectChat } from '../../contexts/ChatContext'
+ import { mouseEventToPosition } from '../../utils/mouseEventToPosition'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+@@ -413,6 +414,12 @@ export function useChatContextMenu(): {
+       })
+     }
+ 
++    const onExportChatToHtml = () => {
++      if (relatedChat) {
++        openDialog(ExportChatToHtml, { chat: relatedChat })
++      }
++    }
++
+     const onSearchInChat = () => {
+       window.__chatlistSetSearch?.('', activeChatId)
+       setTimeout(
+@@ -476,6 +483,10 @@ export function useChatContextMenu(): {
+         label: tx('search_in_chat'),
+         action: onSearchInChat,
+       },
++      isMainView && {
++        label: tx('menu_export_chat'),
++        action: onExportChatToHtml,
++      },
+       !isMainView && pin,
+       !isMainView &&
+         (chatListItems.some(c => c.freshMessageCounter > 0)
+diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+new file mode 100644
+index 000000000..2be9ce2f5
+--- /dev/null
++++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+@@ -0,0 +1,993 @@
++import React, { useEffect, useRef, useState } from 'react'
++import moment from 'moment'
++import { T } from '@deltachat/jsonrpc-client'
++
++import { runtime } from '@deltachat-desktop/runtime-interface'
++import { getLogger } from '@deltachat-desktop/shared/logger'
++import { BackendRemote } from '../../backend-com'
++import { selectedAccountId } from '../../ScreenController'
++import Dialog, {
++  DialogBody,
++  DialogContent,
++  DialogFooter,
++  DialogHeader,
++  FooterActionButton,
++  FooterActions,
++} from '../Dialog'
++import { DeltaProgressBar } from '../Login-Styles'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
++import { getAuthorName } from '../message/Message'
++
++import messageStyles from '../message/styles.module.scss'
++import reactionsStyles from '../Reactions/styles.module.scss'
++
++import type { DialogProps } from '../../contexts/DialogContext'
++
++const log = getLogger('renderer/dialogs/ExportChatToHtml')
++
++/** media larger than this stays out of the zip (a file tile is shown instead) */
++const MAX_MEDIA_FILE_BYTES = 50 * 1024 * 1024
++/** overall media budget for one export (the zip is assembled in memory) */
++const MAX_TOTAL_MEDIA_BYTES = 300 * 1024 * 1024
++/** css url() assets (icons, default background) above this are left as-is */
++const MAX_CSS_ASSET_BYTES = 5 * 1024 * 1024
++/** getMessages batch size */
++const CHUNK_SIZE = 100
++
++class ExportCancelledError extends Error {}
++
++type Props = {
++  chat: T.FullChat
++} & DialogProps
++
++/**
++ * Progress dialog that exports the given chat to a Telegram-style zip
++ * download. The zip contains a standalone `index.html` viewer that renders
++ * the chat exactly like the desktop message list (the app's own stylesheets
++ * and markup, media referenced from the bundled `media/` directory), the raw
++ * message data as `messages.json`, a plain-text transcript `messages.txt`,
++ * and a `manifest.toml` so the archive doubles as a webxdc app (rename to
++ * `.xdc` and send it into a chat to view an export in-app). The viewer has a
++ * "save single-file HTML" button that snapshots the rendered DOM with media
++ * inlined as data: URIs.
++ */
++export default function ExportChatToHtml({ chat, onClose }: Props) {
++  const tx = useTranslationFunction()
++  const accountId = selectedAccountId()
++  const [progress, setProgress] = useState(0)
++  const cancelled = useRef(false)
++  const started = useRef(false)
++
++  useEffect(() => {
++    if (started.current) {
++      return
++    }
++    started.current = true
++    exportChatToZip(accountId, chat, setProgress, () => cancelled.current)
++      .then(filename => {
++        window.__userFeedback?.({
++          type: 'success',
++          text: tx('chat_exported_as_x', filename),
++        })
++      })
++      .catch(error => {
++        if (error instanceof ExportCancelledError) {
++          return
++        }
++        log.error('chat export failed:', error)
++        window.__userFeedback?.({
++          type: 'error',
++          text: 'Chat export failed: ' + (error?.message || String(error)),
++        })
++      })
++      .finally(onClose)
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [])
++
++  return (
++    <Dialog onClose={() => {}} canOutsideClickClose={false}>
++      <DialogHeader title={tx('menu_export_chat')} />
++      <DialogBody>
++        <DialogContent>
++          <DeltaProgressBar progress={progress} />
++        </DialogContent>
++        <DialogFooter>
++          <FooterActions align='end'>
++            <FooterActionButton
++              onClick={() => {
++                cancelled.current = true
++              }}
++            >
++              {tx('cancel')}
++            </FooterActionButton>
++          </FooterActions>
++        </DialogFooter>
++      </DialogBody>
++    </Dialog>
++  )
++}
++
++function escapeHtml(raw: string): string {
++  return raw.replace(
++    /[&<>"']/g,
++    char =>
++      ({
++        '&': '&amp;',
++        '<': '&lt;',
++        '>': '&gt;',
++        '"': '&quot;',
++        "'": '&#39;',
++      })[char] as string
++  )
++}
++
++/** collects referenced blobdir files (attachments, avatars, quote images)
++ * once each for the zip's media/ directory */
++class MediaCollector {
++  /** memfs path -> zip entry name (without the media/ prefix) */
++  entries = new Map<string, { name: string; data: Uint8Array }>()
++  private usedNames = new Set<string>()
++  private totalBytes = 0
++
++  /** returns the zip-relative path ('media/<name>') or null (missing/too big) */
++  async add(path: string | null | undefined): Promise<string | null> {
++    if (!path) {
++      return null
++    }
++    const existing = this.entries.get(path)
++    if (existing) {
++      return 'media/' + existing.name
++    }
++    try {
++      const response = await fetch(runtime.transformBlobURL(path))
++      if (!response.ok) {
++        return null
++      }
++      const data = new Uint8Array(await response.arrayBuffer())
++      if (
++        data.byteLength > MAX_MEDIA_FILE_BYTES ||
++        this.totalBytes + data.byteLength > MAX_TOTAL_MEDIA_BYTES
++      ) {
++        log.warn(`not bundling ${path}: too large (${data.byteLength} bytes)`)
++        return null
++      }
++      this.totalBytes += data.byteLength
++      const name = this.uniqueName(path)
++      this.entries.set(path, { name, data })
++      return 'media/' + name
++    } catch (error) {
++      log.warn(`failed to bundle ${path}:`, error)
++      return null
++    }
++  }
++
++  private uniqueName(path: string): string {
++    const base =
++      (path.split('/').pop() || 'file').replace(/[^\w.-]+/g, '_').slice(-80) ||
++      'file'
++    let name = base
++    for (let i = 1; this.usedNames.has(name); i++) {
++      name = `${i}-${base}`
++    }
++    this.usedNames.add(name)
++    return name
++  }
++}
++
++/** the app's stylesheets, in the order main.html loads them; the theme-vars
++ * block is deliberately not included — exports use the default (fallback)
++ * theme */
++const STYLESHEETS = ['./main.css', './bundle.css', './fallback-theme.css']
++
++async function fetchAsDataUrl(href: string): Promise<string | null> {
++  try {
++    const response = await fetch(new URL(href, document.baseURI))
++    if (!response.ok) {
++      return null
++    }
++    const blob = await response.blob()
++    if (blob.size > MAX_CSS_ASSET_BYTES) {
++      return null
++    }
++    return await new Promise<string>((resolve, reject) => {
++      const reader = new FileReader()
++      reader.onload = () => resolve(reader.result as string)
++      reader.onerror = () => reject(reader.error)
++      reader.readAsDataURL(blob)
++    })
++  } catch (error) {
++    log.warn(`failed to inline css asset ${href}:`, error)
++    return null
++  }
++}
++
++/** inline `url(...)` references (icons, default chat background) so the css
++ * works in a standalone file; unresolvable ones are left untouched */
++async function inlineCssUrls(css: string): Promise<string> {
++  const urlRegex = /url\(\s*(['"]?)([^)'"]+)\1\s*\)/g
++  const refs = new Set<string>()
++  for (const match of css.matchAll(urlRegex)) {
++    const ref = match[2]
++    if (!/^(data:|https?:|#)/.test(ref)) {
++      refs.add(ref)
++    }
++  }
++  const resolved = new Map<string, string>()
++  await Promise.all(
++    [...refs].map(async ref => {
++      const dataUrl = await fetchAsDataUrl(ref)
++      if (dataUrl) {
++        resolved.set(ref, dataUrl)
++      }
++    })
++  )
++  return css.replace(urlRegex, (original, _quote, ref) => {
++    const dataUrl = resolved.get(ref)
++    return dataUrl ? `url(${dataUrl})` : original
++  })
++}
++
++async function collectCss(): Promise<string> {
++  const parts: string[] = []
++  for (const href of STYLESHEETS) {
++    try {
++      const response = await fetch(new URL(href, document.baseURI))
++      if (!response.ok) {
++        throw new Error(`http ${response.status}`)
++      }
++      parts.push(
++        (await response.text()).replace(
++          /\/\*#\s*sourceMappingURL=[^*]*\*\//g,
++          ''
++        )
++      )
++    } catch (error) {
++      log.warn(`could not fetch stylesheet ${href}:`, error)
++    }
++  }
++  return inlineCssUrls(parts.join('\n'))
++}
++
++/** export-only layout: undo the app's fixed/scrolling message list so the
++ * document is one long scrollable page with a sticky chat header */
++const EXPORT_CSS = `
++body { margin: 0; }
++.html-export .message-list-and-composer { min-height: 100vh; box-sizing: border-box; }
++.html-export #message-list {
++  position: static;
++  overflow-y: visible;
++  max-height: none;
++  max-width: 850px;
++  margin: 0 auto;
++}
++.html-export-header {
++  position: sticky;
++  top: 0;
++  z-index: 10;
++  display: flex;
++  align-items: center;
++  gap: 12px;
++  padding: 8px 16px;
++  background-color: var(--navBarBackground);
++  color: var(--navBarText);
++}
++.html-export-header .author-avatar { display: inline-block; }
++.html-export-header-name {
++  font-size: 18px;
++  font-weight: bold;
++  margin: 0;
++}
++.html-export-header-subtitle {
++  font-size: 12px;
++  opacity: 0.8;
++}
++.html-export-save-button {
++  margin-inline-start: auto;
++  background-color: var(--colorPrimary);
++  color: white;
++  border: none;
++  border-radius: 4px;
++  padding: 8px 12px;
++  font: inherit;
++  cursor: pointer;
++}
++.html-export-save-button:disabled { opacity: 0.5; }
++`
++
++/**
++ * The whole viewer, embedded into the exported index.html as
++ * `(chatExportViewer.toString())()`. It must stay fully self-contained
++ * (browser globals only, no imports, no outer-scope references) — it runs in
++ * the exported file, not in the app. It renders the embedded `#chat-data`
++ * JSON (chat + message list items + raw jsonrpc messages + file map) into
++ * the same DOM the desktop message list produces, and wires the
++ * "save single-file HTML" button, which snapshots the rendered DOM with
++ * media inlined as data: URIs (where fetchable — file:// blocks fetch, then
++ * the relative media/ references are kept).
++ */
++function chatExportViewer() {
++  const dataEl = document.getElementById('chat-data')
++  if (!dataEl) {
++    return
++  }
++  const data = JSON.parse(dataEl.textContent || '{}') as any
++  const s = data.styles || {}
++  const esc = (raw: any) =>
++    String(raw ?? '').replace(
++      /[&<>"']/g,
++      c =>
++        (
++          ({
++            '&': '&amp;',
++            '<': '&lt;',
++            '>': '&gt;',
++            '"': '&quot;',
++            "'": '&#39;',
++          }) as any
++        )[c]
++    )
++  const cls = (arr: any[]) => arr.filter(Boolean).join(' ')
++  const fileHref = (path: any) => {
++    const rel = path && data.files[path]
++    return rel ? encodeURI(rel) : null
++  }
++  const fmtTime = (ts: number) =>
++    new Date(ts * 1000).toLocaleTimeString([], {
++      hour: '2-digit',
++      minute: '2-digit',
++    })
++  const fmtFull = (ts: number) => new Date(ts * 1000).toLocaleString()
++  const fmtDay = (ts: number) =>
++    new Date(ts * 1000).toLocaleDateString([], {
++      year: 'numeric',
++      month: 'long',
++      day: 'numeric',
++    })
++  const fmtSize = (bytes: number) => {
++    let n = bytes || 0
++    const units = ['B', 'kB', 'MB', 'GB']
++    let i = 0
++    while (n >= 1024 && i < units.length - 1) {
++      n /= 1024
++      i++
++    }
++    return (i ? n.toFixed(1) : String(n)) + ' ' + units[i]
++  }
++  // DC_STATE_* -> status class (see MapMsgStatus.ts)
++  const STATUS: any = {
++    24: 'error',
++    20: 'sending',
++    19: 'draft',
++    26: 'delivered',
++    28: 'read',
++  }
++  const authorName = (displayName: string, overrideSenderName: any) =>
++    overrideSenderName ? `~${overrideSenderName}` : displayName
++  const renderText = (text: string) =>
++    text
++      .split(/(https?:\/\/[^\s<>"']+)/g)
++      .map((part, i) =>
++        i % 2
++          ? `<a href="${esc(part)}" target="_blank" rel="noopener noreferrer">${esc(part)}</a>`
++          : esc(part).replace(/\n/g, '<br>')
++      )
++      .join('')
++  const isImageLike = (viewType: string) =>
++    viewType === 'Image' || viewType === 'Gif' || viewType === 'Video'
++
++  const avatarHtml = (contact: any, extra: boolean) => {
++    const src = fileHref(contact.profileImage)
++    if (src) {
++      return `<span class="${cls(['author-avatar', extra && 'extra'])}"><img alt="${esc(contact.displayName)}" src="${src}"></span>`
++    }
++    const initial = (
++      Array.from(String(contact.displayName || contact.address || '#'))[0] ||
++      '#'
++    ).toUpperCase()
++    return (
++      `<span class="${cls(['author-avatar', 'default', extra && 'extra'])}" aria-label="${esc(contact.displayName)}">` +
++      `<div class="label" style="--local-avatar-color: ${esc(contact.color)};">${esc(initial)}</div></span>`
++    )
++  }
++
++  const attachmentHtml = (msg: any, withCaption: boolean) => {
++    if (!msg.file || msg.viewType === 'Webxdc' || msg.viewType === 'Vcard') {
++      return ''
++    }
++    const src = fileHref(msg.file)
++    const isImage = msg.viewType === 'Image' || msg.viewType === 'Gif'
++    if (src && (isImage || msg.viewType === 'Sticker')) {
++      const imgClass = cls([
++        'attachment-content',
++        msg.dimensionsHeight > msg.dimensionsWidth && 'portrait',
++        msg.viewType === 'Sticker' && 'sticker',
++      ])
++      return (
++        `<figure class="${cls(['message-attachment-media', withCaption && 'content-below'])}">` +
++        `<img class="${imgClass}" src="${src}"></figure>`
++      )
++    }
++    if (src && msg.viewType === 'Video') {
++      return (
++        `<div class="${cls(['message-attachment-media', 'video', withCaption && 'content-below'])}">` +
++        `<video class="attachment-content video-content" src="${src}" controls></video></div>`
++      )
++    }
++    if (src && (msg.viewType === 'Audio' || msg.viewType === 'Voice')) {
++      return (
++        `<div class="${cls(['message-attachment-audio', withCaption && 'content-below'])}">` +
++        `<audio src="${src}" controls></audio></div>`
++      )
++    }
++    // everything else (and media over the size cap): the generic file tile
++    const name = msg.fileName || ''
++    const dot = name.lastIndexOf('.')
++    const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
++    return (
++      `<div class="${cls(['message-attachment-generic', withCaption && 'content-below'])}">` +
++      `<div class="file-icon" title="${esc(msg.fileMime || '')}">` +
++      (ext ? `<div class="file-extension">${esc(ext)}</div>` : '') +
++      `</div><div class="text-part">` +
++      `<div class="name">${esc(name)}</div>` +
++      `<div class="size">${esc(fmtSize(msg.fileBytes))}</div>` +
++      `</div></div>`
++    )
++  }
++
++  const quoteHtml = (quote: any) => {
++    const hasMessage = quote.kind === 'WithMessage'
++    const borderStyle =
++      hasMessage && !quote.isForwarded
++        ? ` style="border-left-color: ${esc(quote.authorDisplayColor)};"`
++        : ''
++    const author = hasMessage
++      ? `<div class="quote-author" style="color: ${esc(quote.authorDisplayColor)};">${esc(
++          authorName(quote.authorDisplayName, quote.overrideSenderName)
++        )}</div>`
++      : ''
++    const text = quote.text
++      ? `<div class="quoted-text">${renderText(String(quote.text).slice(0, 3000))}</div>`
++      : ''
++    const imgSrc = hasMessage ? fileHref(quote.image) : null
++    const image = imgSrc ? `<img class="quoted-image" src="${imgSrc}">` : ''
++    return (
++      `<div class="quote-background"><div class="${cls(['quote', hasMessage && 'has-message'])}"${borderStyle}>` +
++      `<div class="quote-text">${author}${text}</div>${image}</div></div>`
++    )
++  }
++
++  const reactionsHtml = (reactions: any) => {
++    if (!reactions || !reactions.reactions.length) {
++      return ''
++    }
++    const spans = reactions.reactions
++      .map((r: any) => {
++        const count =
++          r.count > 1 ? `<span class="${s.emojiCount}">${r.count}</span>` : ''
++        return `<span class="${cls([s.emoji, r.isFromSelf && s.isFromSelf])}">${esc(r.emoji)}${count}</span>`
++      })
++      .join('')
++    return `<div><div class="${s.reactions}">${spans}</div></div>`
++  }
++
++  const metadataHtml = (msg: any, direction: string) => {
++    const hasText = msg.text !== null && msg.text !== ''
++    const withImageNoCaption =
++      (!hasText && isImageLike(msg.viewType)) || msg.viewType === 'Sticker'
++    const status = STATUS[msg.state] || ''
++    const parts = []
++    if (!msg.showPadlock && msg.downloadState === 'Done') {
++      parts.push('<div class="email-icon"></div>')
++    }
++    if (msg.savedMessageId || msg.originalMsgId) {
++      parts.push('<div class="saved-message-icon"></div>')
++    }
++    if (msg.isEdited) {
++      parts.push('<span class="edited">edited</span>')
++    }
++    parts.push(
++      `<span class="date date--${direction}" title="${esc(fmtFull(msg.timestamp))}">${esc(fmtTime(msg.timestamp))}</span>`
++    )
++    parts.push('<span class="spacer"></span>')
++    const hideStatus =
++      data.chat.chatType === 'OutBroadcast' &&
++      (status === 'delivered' || status === 'read')
++    if (direction === 'outgoing' && status && !hideStatus) {
++      parts.push(
++        `<div class="delivery-status-wrapper"><div class="status-icon ${esc(status)}"></div></div>`
++      )
++    }
++    return `<div class="${cls(['metadata', withImageNoCaption && 'with-image-no-caption'])}">${parts.join('')}</div>`
++  }
++
++  const messageHtml = (msg: any) => {
++    const direction = msg.fromId === 1 ? 'outgoing' : 'incoming'
++    if (msg.isInfo) {
++      return (
++        `<li class="message-wrapper"><div class="info-message" id="${msg.id}">` +
++        `<div class="bubble">${esc(msg.text || '')}</div></div></li>`
++      )
++    }
++    const showAuthor = Boolean(
++      data.chat.chatType !== 'Single' ||
++      msg.overrideSenderName ||
++      msg.originalMsgId ||
++      data.chat.isSelfTalk
++    )
++    const hasText = msg.text !== null && msg.text !== ''
++    const avatar = avatarHtml(
++      msg.sender,
++      // same rule as upstream <Message />: visible only for incoming messages
++      // with an author; otherwise a hidden `.extra` avatar themes can opt into
++      !(showAuthor && direction === 'incoming')
++    )
++    let authorOrForwarded
++    if (msg.isForwarded) {
++      authorOrForwarded = `<div class="forwarded-indicator"><span class="forwarded-indicator-button">Forwarded Message</span></div>`
++    } else {
++      const canHide =
++        (!msg.overrideSenderName && direction === 'outgoing') || !showAuthor
++      authorOrForwarded =
++        `<div class="${cls(['author-wrapper', canHide && 'can-hide'])}">` +
++        `<span class="author" style="color: ${esc(msg.sender.color)};">${esc(
++          authorName(msg.sender.displayName, msg.overrideSenderName)
++        )}</span></div>`
++    }
++    const isWithoutText =
++      (!hasText && isImageLike(msg.viewType)) || msg.viewType === 'Sticker'
++    const footer =
++      `<footer class="${cls([s.messageFooter, isWithoutText && s.onlyMedia])}">` +
++      metadataHtml(msg, direction) +
++      reactionsHtml(msg.reactions) +
++      `</footer>`
++    const messageClass = cls([
++      'message',
++      direction,
++      s.message,
++      msg.viewType === 'Sticker' && 'type-sticker',
++      STATUS[msg.state] === 'error' && 'error',
++      msg.isForwarded && 'forwarded',
++    ])
++    return (
++      `<li class="message-wrapper"><div class="${messageClass}" id="${msg.id}">` +
++      avatar +
++      `<div class="msg-container" style="border-color: ${esc(msg.sender.color)};">` +
++      authorOrForwarded +
++      `<div class="msg-body">` +
++      (msg.quote ? quoteHtml(msg.quote) : '') +
++      attachmentHtml(msg, hasText) +
++      (hasText
++        ? `<div dir="auto" class="text">${renderText(msg.text)}</div>`
++        : '') +
++      footer +
++      `</div></div></li>`
++    )
++  }
++
++  const dayMarkerHtml = (ts: number) =>
++    `<li class="info-message daymarker"><div class="bubble" style="text-transform: capitalize;">${esc(fmtDay(ts))}</div></li>`
++
++  // --- render ---
++  document.title = data.chat.name
++  const headerAvatar = document.getElementById('header-avatar')
++  if (headerAvatar) {
++    headerAvatar.outerHTML = avatarHtml(
++      {
++        profileImage: data.chat.profileImage,
++        color: data.chat.color,
++        displayName: data.chat.name,
++        address: '',
++      },
++      false
++    )
++  }
++  const nameEl = document.getElementById('header-name')
++  if (nameEl) {
++    nameEl.textContent = data.chat.name
++  }
++  const subtitleEl = document.getElementById('header-subtitle')
++  const messageCount = data.items.filter(
++    (item: any) => item.kind === 'message'
++  ).length
++  if (subtitleEl) {
++    subtitleEl.textContent = `${messageCount} messages · exported ${new Date(data.exportedAt).toLocaleString()}`
++  }
++  const list = document.getElementById('export-message-list')
++  if (list) {
++    list.innerHTML = data.items
++      .map((item: any) => {
++        if (item.kind === 'dayMarker') {
++          return dayMarkerHtml(item.timestamp)
++        }
++        const msg = data.messages[item.msg_id]
++        return msg ? messageHtml(msg) : ''
++      })
++      .join('\n')
++  }
++
++  // --- "save single-file HTML": snapshot the rendered DOM, media as data: ---
++  const inlineMedia = (el: Element) => {
++    const src = el.getAttribute('src')
++    if (!src || /^(data:|https?:)/.test(src)) {
++      return Promise.resolve()
++    }
++    return (
++      fetch(src)
++        .then(r =>
++          r.ok ? r.blob() : Promise.reject(new Error('http ' + r.status))
++        )
++        .then(
++          blob =>
++            new Promise((resolve, reject) => {
++              const reader = new FileReader()
++              reader.onload = () => resolve(reader.result)
++              reader.onerror = () => reject(reader.error)
++              reader.readAsDataURL(blob)
++            })
++        )
++        .then(dataUrl => el.setAttribute('src', dataUrl as string))
++        // keep the relative media/ reference (e.g. on file://, where fetch is
++        // blocked — the snapshot then still works next to the media directory)
++        .catch(() => {})
++    )
++  }
++  const button = document.getElementById(
++    'save-static-button'
++  ) as HTMLButtonElement | null
++  if (button) {
++    button.addEventListener('click', () => {
++      button.disabled = true
++      const root = document.documentElement.cloneNode(true) as HTMLElement
++      root
++        .querySelectorAll('script, #save-static-button')
++        .forEach(el => el.remove())
++      Promise.all(
++        Array.from(
++          root.querySelectorAll('img[src], audio[src], video[src]')
++        ).map(inlineMedia)
++      )
++        .then(() => {
++          const html = '<!doctype html>\n' + root.outerHTML
++          const name = (document.title || 'chat') + '.html'
++          const file = new File([html], name, { type: 'text/html' })
++          const webxdc = (window as any).webxdc
++          if (webxdc && webxdc.sendToChat) {
++            // inside a webxdc viewer: hand the snapshot back into a chat
++            webxdc.sendToChat({ file: { name, blob: file } }).catch(() => {})
++          } else {
++            const url = URL.createObjectURL(file)
++            const a = document.createElement('a')
++            a.href = url
++            a.download = name
++            a.click()
++            setTimeout(() => URL.revokeObjectURL(url), 10_000)
++          }
++        })
++        .finally(() => {
++          button.disabled = false
++        })
++    })
++  }
++}
++
++function buildIndexHtml(
++  chatName: string,
++  css: string,
++  dataJson: string,
++  viewerSource: string
++): string {
++  return (
++    `<!doctype html>\n<html>\n<head>\n<meta charset="utf-8">\n` +
++    `<meta name="viewport" content="width=device-width, initial-scale=1">\n` +
++    `<title>${escapeHtml(chatName)}</title>\n` +
++    `<style>\n${css}\n</style>\n<style>\n${EXPORT_CSS}\n</style>\n</head>\n` +
++    `<body class="html-export">\n` +
++    `<header class="html-export-header"><span id="header-avatar"></span><div>` +
++    `<h1 class="html-export-header-name" id="header-name"></h1>` +
++    `<div class="html-export-header-subtitle" id="header-subtitle"></div>` +
++    `</div><button type="button" id="save-static-button" class="html-export-save-button">Save single-file HTML</button></header>\n` +
++    `<div class="message-list-and-composer"><div class="message-list-and-composer__message-list">` +
++    `<div id="message-list"><ol id="export-message-list" aria-label="Messages"></ol></div>` +
++    `</div></div>\n` +
++    `<script id="chat-data" type="application/json">${dataJson}</script>\n` +
++    `<script>\n;(${viewerSource})()\n</script>\n` +
++    `</body>\n</html>\n`
++  )
++}
++
++function buildMessagesTxt(
++  chat: T.FullChat,
++  items: T.MessageListItem[],
++  messages: { [id: number]: T.Message },
++  exportedAt: moment.Moment
++): string {
++  const lines: string[] = [chat.name, `exported ${exportedAt.format('llll')}`]
++  for (const item of items) {
++    if (item.kind === 'dayMarker') {
++      lines.push('', `── ${moment.unix(item.timestamp).format('LL')} ──`, '')
++      continue
++    }
++    const msg = messages[item.msg_id]
++    if (!msg) {
++      continue
++    }
++    if (msg.isInfo) {
++      lines.push(`* ${msg.text || ''}`)
++      continue
++    }
++    const time = moment.unix(msg.timestamp).format('YYYY-MM-DD HH:mm')
++    const author = getAuthorName(msg.sender.displayName, msg.overrideSenderName)
++    const filePart = msg.file ? `[${msg.fileName || 'attachment'}] ` : ''
++    lines.push(`[${time}] ${author}: ${filePart}${msg.text || ''}`)
++  }
++  return lines.join('\n') + '\n'
++}
++
++// #region minimal store-only zip writer
++
++let crcTable: Uint32Array | null = null
++function crc32(data: Uint8Array): number {
++  if (!crcTable) {
++    crcTable = new Uint32Array(256)
++    for (let n = 0; n < 256; n++) {
++      let c = n
++      for (let k = 0; k < 8; k++) {
++        c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
++      }
++      crcTable[n] = c >>> 0
++    }
++  }
++  let c = 0xffffffff
++  for (let i = 0; i < data.length; i++) {
++    c = crcTable[(c ^ data[i]) & 0xff] ^ (c >>> 8)
++  }
++  return (c ^ 0xffffffff) >>> 0
++}
++
++/** builds an uncompressed (STORE) zip — the bulk of the content is media
++ * that is already compressed anyway */
++function buildZip(entries: { name: string; data: Uint8Array }[]): Uint8Array {
++  const encoder = new TextEncoder()
++  const now = new Date()
++  const dosTime =
++    (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1)
++  const dosDate =
++    ((now.getFullYear() - 1980) << 9) |
++    ((now.getMonth() + 1) << 5) |
++    now.getDate()
++
++  const localParts: Uint8Array[] = []
++  const centralParts: Uint8Array[] = []
++  let offset = 0
++
++  for (const entry of entries) {
++    const nameBytes = encoder.encode(entry.name)
++    const crc = crc32(entry.data)
++    const size = entry.data.length
++
++    const local = new Uint8Array(30 + nameBytes.length)
++    const lv = new DataView(local.buffer)
++    lv.setUint32(0, 0x04034b50, true)
++    lv.setUint16(4, 20, true) // version needed
++    lv.setUint16(6, 0x0800, true) // utf-8 names
++    lv.setUint16(8, 0, true) // method: store
++    lv.setUint16(10, dosTime, true)
++    lv.setUint16(12, dosDate, true)
++    lv.setUint32(14, crc, true)
++    lv.setUint32(18, size, true)
++    lv.setUint32(22, size, true)
++    lv.setUint16(26, nameBytes.length, true)
++    lv.setUint16(28, 0, true)
++    local.set(nameBytes, 30)
++    localParts.push(local, entry.data)
++
++    const central = new Uint8Array(46 + nameBytes.length)
++    const cv = new DataView(central.buffer)
++    cv.setUint32(0, 0x02014b50, true)
++    cv.setUint16(4, 20, true) // version made by
++    cv.setUint16(6, 20, true) // version needed
++    cv.setUint16(8, 0x0800, true)
++    cv.setUint16(10, 0, true)
++    cv.setUint16(12, dosTime, true)
++    cv.setUint16(14, dosDate, true)
++    cv.setUint32(16, crc, true)
++    cv.setUint32(20, size, true)
++    cv.setUint32(24, size, true)
++    cv.setUint16(28, nameBytes.length, true)
++    cv.setUint32(42, offset, true) // local header offset
++    central.set(nameBytes, 46)
++    centralParts.push(central)
++
++    offset += local.length + size
++  }
++
++  const centralSize = centralParts.reduce((sum, p) => sum + p.length, 0)
++  const end = new Uint8Array(22)
++  const ev = new DataView(end.buffer)
++  ev.setUint32(0, 0x06054b50, true)
++  ev.setUint16(8, entries.length, true)
++  ev.setUint16(10, entries.length, true)
++  ev.setUint32(12, centralSize, true)
++  ev.setUint32(16, offset, true)
++
++  const out = new Uint8Array(offset + centralSize + end.length)
++  let pos = 0
++  for (const part of [...localParts, ...centralParts, end]) {
++    out.set(part, pos)
++    pos += part.length
++  }
++  return out
++}
++
++// #endregion
++
++function toBase64(data: Uint8Array): string {
++  let binary = ''
++  const CHUNK = 0x8000
++  for (let i = 0; i < data.length; i += CHUNK) {
++    binary += String.fromCharCode(...data.subarray(i, i + CHUNK))
++  }
++  return btoa(binary)
++}
++
++function sanitizeFilename(name: string): string {
++  return (
++    name
++      .replace(/[\\/:*?"<>|]/g, '_')
++      .replace(/\s+/g, '_')
++      .trim()
++      .slice(0, 100) || 'chat'
++  )
++}
++
++/**
++ * Exports the chat as a zip download (viewer html + txt + json + media,
++ * webxdc-compatible). Returns the filename.
++ */
++async function exportChatToZip(
++  accountId: number,
++  chat: T.FullChat,
++  onProgress: (progress: number) => void, // 0..1000
++  isCancelled: () => boolean
++): Promise<string> {
++  const checkCancelled = () => {
++    if (isCancelled()) {
++      throw new ExportCancelledError()
++    }
++  }
++
++  const items = await BackendRemote.rpc.getMessageListItems(
++    accountId,
++    chat.id,
++    false,
++    true
++  )
++  onProgress(50)
++  checkCancelled()
++
++  const msgIds = items
++    .filter(item => item.kind === 'message')
++    .map(item => (item as { kind: 'message'; msg_id: number }).msg_id)
++
++  const messages: { [id: number]: T.Message } = {}
++  for (let i = 0; i < msgIds.length; i += CHUNK_SIZE) {
++    const batch = await BackendRemote.rpc.getMessages(
++      accountId,
++      msgIds.slice(i, i + CHUNK_SIZE)
++    )
++    for (const [id, result] of Object.entries(batch)) {
++      if (result.kind === 'message') {
++        messages[Number(id)] = result
++      }
++    }
++    onProgress(50 + Math.round((250 * i) / Math.max(msgIds.length, 1)))
++    checkCancelled()
++  }
++  onProgress(300)
++
++  // collect all referenced media into the zip's media/ directory
++  const media = new MediaCollector()
++  const files: { [memfsPath: string]: string } = {}
++  const collect = async (path: string | null | undefined) => {
++    if (path && !(path in files)) {
++      const rel = await media.add(path)
++      if (rel) {
++        files[path] = rel
++      }
++    }
++  }
++  await collect(chat.profileImage)
++  let processed = 0
++  for (const id of msgIds) {
++    const msg = messages[id]
++    if (msg) {
++      await collect(msg.file)
++      await collect(msg.sender.profileImage)
++      if (msg.quote?.kind === 'WithMessage') {
++        await collect(msg.quote.image)
++      }
++    }
++    processed++
++    if (processed % 10 === 0) {
++      onProgress(300 + Math.round((450 * processed) / msgIds.length))
++      checkCancelled()
++    }
++  }
++  onProgress(750)
++
++  const css = await collectCss()
++  checkCancelled()
++  onProgress(850)
++
++  const exportedAt = moment()
++  const data = {
++    exportedAt: exportedAt.toISOString(),
++    chat,
++    items,
++    messages,
++    files,
++    // hashed css-module class names the viewer needs
++    styles: {
++      message: messageStyles.message,
++      messageFooter: messageStyles.messageFooter,
++      onlyMedia: messageStyles.onlyMedia,
++      reactions: reactionsStyles.reactions,
++      emoji: reactionsStyles.emoji,
++      emojiCount: reactionsStyles.emojiCount,
++      isFromSelf: reactionsStyles.isFromSelf,
++    },
++  }
++  // <-escape so no string inside the JSON can terminate the script tag
++  const dataJson = JSON.stringify(data).replace(/</g, '\\u003c')
++  const viewerSource = chatExportViewer
++    .toString()
++    .replace(/<\/script/gi, '<\\/script')
++  const indexHtml = buildIndexHtml(chat.name, css, dataJson, viewerSource)
++  const messagesTxt = buildMessagesTxt(chat, items, messages, exportedAt)
++
++  const encoder = new TextEncoder()
++  const zipEntries: { name: string; data: Uint8Array }[] = [
++    { name: 'index.html', data: encoder.encode(indexHtml) },
++    { name: 'messages.txt', data: encoder.encode(messagesTxt) },
++    {
++      name: 'messages.json',
++      data: encoder.encode(JSON.stringify(data, null, 1)),
++    },
++    // webxdc manifest: rename the zip to .xdc and it becomes a viewer app
++    // that can be sent into a chat
++    {
++      name: 'manifest.toml',
++      data: encoder.encode(`name = "${chat.name.replace(/[\\"]/g, '\\$&')}"\n`),
++    },
++  ]
++  // the chat avatar doubles as the webxdc icon (spec wants icon.png/icon.jpg)
++  const avatarEntry = chat.profileImage
++    ? media.entries.get(chat.profileImage)
++    : undefined
++  if (avatarEntry) {
++    const ext = avatarEntry.name.toLowerCase().endsWith('.png') ? 'png' : 'jpg'
++    zipEntries.push({ name: `icon.${ext}`, data: avatarEntry.data })
++  }
++  for (const { name, data: bytes } of media.entries.values()) {
++    zipEntries.push({ name: `media/${name}`, data: bytes })
++  }
++
++  const zip = buildZip(zipEntries)
++  onProgress(950)
++  checkCancelled()
++
++  const filename = `${sanitizeFilename(chat.name)} - ${exportedAt.format('YYYY-MM-DD')}.zip`
++  const tempPath = await runtime.writeTempFileFromBase64(
++    filename,
++    toBase64(zip)
++  )
++  try {
++    await runtime.downloadFile(tempPath, filename)
++  } finally {
++    runtime.removeTempFile(tempPath).catch(error => {
++      log.warn('could not remove temp file:', error)
++    })
++  }
++  onProgress(1000)
++  return filename
++}
