@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothfulchat.local>
 Date: Fri, 10 Jul 2026 11:48:16 +0000
-Subject: [PATCH] web-app: full-screen sub settings pages on mobile viewports
+Subject: [PATCH 31/32] web-app: full-screen sub settings pages on mobile
+ viewports
 
 The big-dialogs-fullscreen patch made the settings root dialog go edge to
 edge on phones, but every page it opens on top still rendered as a small
@@ -43,7 +44,7 @@ index 3ec99b6f5..7a6e51588 100644
        <ConnectivityDialogInner />
      </Dialog>
 diff --git a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
-index 31e8b4a67..0db210f82 100644
+index 9835fd5fb..b6f7e49dc 100644
 --- a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 +++ b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 @@ -32,7 +32,7 @@ export default function EditProfileDialog({ onClose, ...props }: Props) {

@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Export Chat** (three-dot menu): Telegram-style export of the open chat as
+  a zip — `index.html` (a standalone viewer that looks like the message list,
+  reusing the app's own stylesheets and markup, with a "Save single-file
+  HTML" snapshot button), `messages.txt` (plain transcript), `messages.json`
+  (the raw jsonrpc data, groundwork for a core-side export later), and
+  `media/` with attachments/avatars next to it (50 MB per file / 300 MB
+  total, larger attachments become file tiles). The zip carries a
+  `manifest.toml`, so renamed to `.xdc` it doubles as a webxdc viewer app
+  that can be sent into a chat. Offline e2e coverage in
+  `scripts/test-export-chat-html.mjs`.
+
 ## 0.4.0 — 2026-07-10
 
 - **Animated stickers**: Telegram `.tgs` (gzipped Lottie) stickers play in
