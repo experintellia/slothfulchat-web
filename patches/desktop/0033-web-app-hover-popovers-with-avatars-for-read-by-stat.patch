@@ -7,10 +7,9 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-Reveal a small popover when hovering the delivery-status icon or the
-reactions cluster of a message, so the "who read this / who reacted"
-information is available without opening the Message Info or Reactions
-dialog.
+Reveal a small popover when hovering the delivery-status icon or a
+message's reactions, so the "who read this / who reacted" information is
+available without opening the Message Info or Reactions dialog.
 
 - Read-by: hovering the outgoing delivery-status icon shows the contacts
   who have read the message, each with their avatar, name and a relative
@@ -19,10 +18,15 @@ dialog.
   label (Sending… / Delivered / Read / Failed to send). Data comes from
   getMessageReadReceipts and refreshes on the MsgRead event, and is only
   fetched once the popover is first opened.
-- Reactions: hovering the reactions cluster lists everyone who reacted
-  with their avatar, name and the emoji they picked, grouped by the
-  core's most-used-first ordering. Clicking still opens the full
-  ReactionsDialog.
+- Reactions: each reaction pill is its own hover target — hovering one
+  emoji lists just the people who reacted with it, while the "+N"
+  overflow pill lists the remaining (mixed) reactions with each reactor's
+  emoji. Clicking still opens the full ReactionsDialog.
+
+Adds an `xSmall` (24px) variant to the shared Avatar component and uses
+it for the compact popover rows, instead of ad-hoc CSS overrides. The
+popover nudges itself back into the viewport when it would overflow an
+edge (e.g. the "+N" pill of a right-aligned message).
 
 Both share a new PeopleHoverInfo component (the hover trigger, the card
 shell, a lazy contacts-by-id fetch and a relative-time helper). Adds the
@@ -30,12 +34,14 @@ untranslated labels Sending…/Delivered/Failed to send and "Reacted with
 %1$s".
 ---
  _locales/_untranslated_en.json                |  12 ++
- .../src/components/PeopleHoverInfo/index.tsx  | 143 +++++++++++++++++
- .../PeopleHoverInfo/styles.module.scss        | 105 ++++++++++++
- .../src/components/Reactions/index.tsx        | 114 ++++++++++---
- .../components/Reactions/styles.module.scss   |   5 +
- .../components/message/MessageMetaData.tsx    | 150 +++++++++++++++---
- 6 files changed, 481 insertions(+), 48 deletions(-)
+ packages/frontend/scss/misc/_avatar.scss      |   7 +
+ .../frontend/src/components/Avatar/index.tsx  |   5 +-
+ .../src/components/PeopleHoverInfo/index.tsx  | 171 ++++++++++++++++++
+ .../PeopleHoverInfo/styles.module.scss        |  97 ++++++++++
+ .../src/components/Reactions/index.tsx        | 113 +++++++++++-
+ .../components/Reactions/styles.module.scss   |  22 ++-
+ .../components/message/MessageMetaData.tsx    | 150 ++++++++++++---
+ 8 files changed, 540 insertions(+), 37 deletions(-)
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/index.tsx
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 
@@ -62,13 +68,61 @@ index 64a2fb654..d754f12b2 100644
    "command_palette_tab_to_search": {
      "message": "Tab to search"
    },
+diff --git a/packages/frontend/scss/misc/_avatar.scss b/packages/frontend/scss/misc/_avatar.scss
+index a8ad9fd17..948ff4e7c 100644
+--- a/packages/frontend/scss/misc/_avatar.scss
++++ b/packages/frontend/scss/misc/_avatar.scss
+@@ -103,6 +103,13 @@
+   --local-avatar-vertical-margin: 0;
+ }
+ 
++// compact inline lists, e.g. the read-by / reactions hover popovers
++.avatar.x-small {
++  --local-avatar-size: 24px;
++  --local-avatar-font-size: 12px;
++  --local-avatar-vertical-margin: 0;
++}
++
+ // contact list, search results etc.
+ .avatar.large {
+   --local-avatar-size: 64px;
+diff --git a/packages/frontend/src/components/Avatar/index.tsx b/packages/frontend/src/components/Avatar/index.tsx
+index a452c04ee..f6110be3c 100644
+--- a/packages/frontend/src/components/Avatar/index.tsx
++++ b/packages/frontend/src/components/Avatar/index.tsx
+@@ -38,6 +38,8 @@ export function Avatar(props: {
+   addr?: string
+   large?: boolean
+   small?: boolean
++  /** 24px variant, e.g. for compact inline lists like hover popovers. */
++  xSmall?: boolean
+   wasSeenRecently?: boolean
+   style?: htmlDivProps['style']
+   onClick?: () => void
+@@ -57,6 +59,7 @@ export function Avatar(props: {
+     addr,
+     large,
+     small,
++    xSmall,
+     wasSeenRecently,
+     onClick,
+     tabIndex,
+@@ -87,7 +90,7 @@ export function Avatar(props: {
+         // If at some point we make `wasSeenRecently` accessible,
+         // we should only apply `aria-hidden` to the avatar / initial itself
+         // (and perhaps rename the prop).
+-        { large, small, wasSeenRecently },
++        { large, small, 'x-small': xSmall, wasSeenRecently },
+         className
+       )}
+       onClick={onClick}
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/index.tsx b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
 new file mode 100644
-index 000000000..ada1280df
+index 000000000..b96d21940
 --- /dev/null
 +++ b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
-@@ -0,0 +1,143 @@
-+import React, { useMemo, useState } from 'react'
+@@ -0,0 +1,171 @@
++import React, { useLayoutEffect, useMemo, useRef, useState } from 'react'
 +import classNames from 'classnames'
 +import moment from 'moment'
 +
@@ -117,7 +171,7 @@ index 000000000..ada1280df
 +          {rows.map(row => (
 +            <li key={row.key} className={styles.peopleHoverRow}>
 +              <Avatar
-+                small
++                xSmall
 +                displayName={row.contact.displayName}
 +                avatarPath={row.contact.profileImage}
 +                addr={row.contact.address}
@@ -158,9 +212,34 @@ index 000000000..ada1280df
 +  className?: string
 +  /** Horizontal edge the popover aligns to. Defaults to `end` (right in LTR). */
 +  align?: 'start' | 'end'
++  /** Optional click handler forwarded to the trigger wrapper. */
++  onClick?: () => void
 +}) {
 +  const [open, setOpen] = useState(false)
 +  const { align = 'end' } = props
++  const anchorRef = useRef<HTMLSpanElement>(null)
++  const [shiftX, setShiftX] = useState(0)
++
++  // Nudge the popover back into the viewport when it would overflow the left or
++  // right edge — e.g. the "+N" reactions pill of a right-aligned outgoing
++  // message, whose start-aligned popover would otherwise run off-screen.
++  useLayoutEffect(() => {
++    if (!open || !anchorRef.current) {
++      return
++    }
++    setShiftX(0)
++    const rect = anchorRef.current.getBoundingClientRect()
++    const margin = 8
++    let shift = 0
++    if (rect.right > window.innerWidth - margin) {
++      shift = window.innerWidth - margin - rect.right
++    } else if (rect.left < margin) {
++      shift = margin - rect.left
++    }
++    if (shift !== 0) {
++      setShiftX(shift)
++    }
++  }, [open])
 +
 +  return (
 +    <span
@@ -169,14 +248,17 @@ index 000000000..ada1280df
 +      onMouseLeave={() => setOpen(false)}
 +      onFocus={() => setOpen(true)}
 +      onBlur={() => setOpen(false)}
++      onClick={props.onClick}
 +    >
 +      {props.children}
 +      {open && (
 +        <span
++          ref={anchorRef}
 +          className={classNames(styles.hoverInfoAnchor, {
 +            [styles.anchorStart]: align === 'start',
 +            [styles.anchorEnd]: align === 'end',
 +          })}
++          style={shiftX ? { transform: `translateX(${shiftX}px)` } : undefined}
 +        >
 +          {props.card}
 +        </span>
@@ -213,10 +295,10 @@ index 000000000..ada1280df
 +}
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 new file mode 100644
-index 000000000..4615dfdf1
+index 000000000..3c95e8eaf
 --- /dev/null
 +++ b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,97 @@
 +.hoverInfoTrigger {
 +  position: relative;
 +  display: inline-flex;
@@ -286,18 +368,10 @@ index 000000000..4615dfdf1
 +  padding: 3px 4px;
 +  border-radius: 6px;
 +
-+  // The shared Avatar component ships as `.avatar.small` at 32px; shrink it a
-+  // touch so the row stays compact.
-+  :global(.avatar.small) {
-+    width: 24px;
-+    height: 24px;
-+    min-width: 24px;
-+    line-height: 24px;
++  // Keep the shared Avatar (`.avatar.x-small`, 24px) from being squeezed when
++  // the name is long.
++  :global(.avatar) {
 +    flex-shrink: 0;
-+  }
-+
-+  :global(.avatar.small .content) {
-+    font-size: 12px;
 +  }
 +}
 +
@@ -323,7 +397,7 @@ index 000000000..4615dfdf1
 +  font-size: 12px;
 +}
 diff --git a/packages/frontend/src/components/Reactions/index.tsx b/packages/frontend/src/components/Reactions/index.tsx
-index ddc10364b..0b9232cce 100644
+index ddc10364b..934817754 100644
 --- a/packages/frontend/src/components/Reactions/index.tsx
 +++ b/packages/frontend/src/components/Reactions/index.tsx
 @@ -3,6 +3,12 @@ import classNames from 'classnames'
@@ -339,97 +413,109 @@ index ddc10364b..0b9232cce 100644
  
  import styles from './styles.module.scss'
  
-@@ -59,32 +65,88 @@ export default function Reactions(props: Props) {
+@@ -58,25 +64,56 @@ export default function Reactions(props: Props) {
+     })
    }
  
++  // Emojis that don't fit and are collapsed into the "+N" pill.
++  const hiddenEmojis = reactions.slice(visibleEmojis).map(r => r.emoji)
++
    return (
--    <div className={styles.reactions}>
--      {reactions.slice(0, visibleEmojis).map(({ emoji, isFromSelf, count }) => {
--        return (
+     <div className={styles.reactions}>
+       {reactions.slice(0, visibleEmojis).map(({ emoji, isFromSelf, count }) => {
+         return (
 -          <span
 -            className={classNames(styles.emoji, {
 -              [styles.isFromSelf]: isFromSelf,
 -            })}
--            key={emoji}
--          >
++          <HoverInfoTrigger
+             key={emoji}
++            align='start'
++            className={styles.emojiTrigger}
++            onClick={handleClick}
++            card={
++              <ReactorsHoverCard
++                reactionsByContact={reactionsByContact}
++                emojis={[emoji]}
++                title={<span className={styles.hoverEmoji}>{emoji}</span>}
++                showEmoji={false}
++              />
++            }
+           >
 -            {emoji}
 -            {count > 1 && <span className={styles.emojiCount}>{count}</span>}
-+    <HoverInfoTrigger
-+      align='start'
-+      card={<ReactionsHoverCard reactionsData={props.reactions} />}
-+    >
-+      <div className={styles.reactions}>
-+        {reactions
-+          .slice(0, visibleEmojis)
-+          .map(({ emoji, isFromSelf, count }) => {
-+            return (
-+              <span
-+                className={classNames(styles.emoji, {
-+                  [styles.isFromSelf]: isFromSelf,
-+                })}
-+                key={emoji}
-+              >
-+                {emoji}
-+                {count > 1 && (
-+                  <span className={styles.emojiCount}>{count}</span>
-+                )}
-+              </span>
-+            )
-+          })}
-+        {reactions.length > visibleEmojis && (
-+          <span className={classNames(styles.emoji, styles.emojiCount)}>
-+            +{hiddenReactionsCount}
-           </span>
--        )
--      })}
--      {reactions.length > visibleEmojis && (
+-          </span>
++            <span
++              className={classNames(styles.emoji, {
++                [styles.isFromSelf]: isFromSelf,
++              })}
++            >
++              {emoji}
++              {count > 1 && <span className={styles.emojiCount}>{count}</span>}
++            </span>
++          </HoverInfoTrigger>
+         )
+       })}
+       {reactions.length > visibleEmojis && (
 -        <span className={classNames(styles.emoji, styles.emojiCount)}>
 -          +{hiddenReactionsCount}
 -        </span>
--      )}
--      <button
--        type='button'
--        className={styles.openReactionsListDialogButton}
--        aria-label={tx('more_info_desktop')}
--        onClick={handleClick}
--        tabIndex={props.tabindexForInteractiveContents}
--      ></button>
--    </div>
-+        )}
-+        <button
-+          type='button'
-+          className={styles.openReactionsListDialogButton}
-+          aria-label={tx('more_info_desktop')}
++        <HoverInfoTrigger
++          align='start'
++          className={styles.emojiTrigger}
 +          onClick={handleClick}
-+          tabIndex={props.tabindexForInteractiveContents}
-+        ></button>
-+      </div>
-+    </HoverInfoTrigger>
-+  )
-+}
++          card={
++            <ReactorsHoverCard
++              reactionsByContact={reactionsByContact}
++              emojis={hiddenEmojis}
++              title={tx('reactions')}
++              showEmoji={true}
++            />
++          }
++        >
++          <span className={classNames(styles.emoji, styles.emojiCount)}>
++            +{hiddenReactionsCount}
++          </span>
++        </HoverInfoTrigger>
+       )}
+       <button
+         type='button'
+@@ -88,3 +125,59 @@ export default function Reactions(props: Props) {
+     </div>
+   )
+ }
 +
 +/**
-+ * Popover contents for the reactions cluster: everyone who reacted, each with
-+ * their avatar, name and the emoji they picked. Reactors are grouped by emoji
-+ * following the core's most-used-first ordering.
++ * Popover contents for a single reaction (or the "+N" overflow pill): the
++ * people who reacted with any of `emojis`, each with their avatar and name.
++ * When hovering one emoji we omit the per-row emoji (it's redundant with the
++ * title); the overflow pill mixes several emojis, so it shows each one.
++ * Reactors follow the core's most-used-first ordering.
 + */
-+function ReactionsHoverCard(props: { reactionsData: T.Reactions }) {
++function ReactorsHoverCard(props: {
++  reactionsByContact: T.Reactions['reactionsByContact']
++  emojis: string[]
++  title: React.ReactNode
++  showEmoji: boolean
++}) {
 +  const tx = useTranslationFunction()
-+  const { reactions, reactionsByContact } = props.reactionsData
++  const { reactionsByContact, emojis, showEmoji } = props
 +
 +  const reactors = useMemo(() => {
 +    const entries: { contactId: number; emoji: string }[] = []
-+    for (const { emoji } of reactions) {
-+      for (const [contactId, emojis] of Object.entries(reactionsByContact)) {
++    for (const emoji of emojis) {
++      for (const [contactId, contactEmojis] of Object.entries(
++        reactionsByContact
++      )) {
 +        // The dialog and the bubble only ever show a contact's first reaction,
 +        // so we mirror that here.
-+        if (emojis[0] === emoji) {
++        if (contactEmojis[0] === emoji) {
 +          entries.push({ contactId: Number(contactId), emoji })
 +        }
 +      }
 +    }
 +    return entries
-+  }, [reactions, reactionsByContact])
++  }, [emojis, reactionsByContact])
 +
 +  const contacts = useContactsById(reactors.map(r => r.contactId))
 +
@@ -442,23 +528,23 @@ index ddc10364b..0b9232cce 100644
 +      return {
 +        key: contactId,
 +        contact,
-+        detail: <span className={styles.hoverEmoji}>{emoji}</span>,
-+        detailTitle: tx('reacted_with', emoji),
++        detail: showEmoji ? (
++          <span className={styles.hoverEmoji}>{emoji}</span>
++        ) : undefined,
++        detailTitle: showEmoji ? tx('reacted_with', emoji) : undefined,
 +      }
 +    })
 +    .filter((row): row is PersonRow => row !== null)
 +
 +  const loading = rows.length === 0 && reactors.length > 0
 +
-+  return (
-+    <PeopleHoverCard title={tx('reactions')} rows={rows} loading={loading} />
-   )
- }
++  return <PeopleHoverCard title={props.title} rows={rows} loading={loading} />
++}
 diff --git a/packages/frontend/src/components/Reactions/styles.module.scss b/packages/frontend/src/components/Reactions/styles.module.scss
-index 6d5f26360..f2910212e 100644
+index 6d5f26360..52d2acff2 100644
 --- a/packages/frontend/src/components/Reactions/styles.module.scss
 +++ b/packages/frontend/src/components/Reactions/styles.module.scss
-@@ -6,6 +6,11 @@
+@@ -6,6 +6,24 @@
    top: 16px;
  }
  
@@ -467,9 +553,33 @@ index 6d5f26360..f2910212e 100644
 +  font-size: 15px;
 +}
 +
++// Each pill is wrapped in a hover trigger. Raise it above the
++// (absolutely-positioned) "open dialog" button so it can receive hover, while
++// clicks still fall through to open the full ReactionsDialog.
++.emojiTrigger {
++  position: relative;
++  z-index: 1;
++  cursor: pointer;
++
++  & ~ & {
++    margin-inline-start: 2px;
++  }
++}
++
  .emoji {
    background-color: var(--messageIncomingBg);
    border-radius: 24px;
+@@ -13,10 +31,6 @@
+   font-size: 16px;
+   padding: 2px 6px;
+ 
+-  & ~ & {
+-    margin-inline-start: 2px;
+-  }
+-
+   &.isFromSelf {
+     background-color: var(--messageOutgoingBg);
+   }
 diff --git a/packages/frontend/src/components/message/MessageMetaData.tsx b/packages/frontend/src/components/message/MessageMetaData.tsx
 index 2627443c5..74b78ad9d 100644
 --- a/packages/frontend/src/components/message/MessageMetaData.tsx
