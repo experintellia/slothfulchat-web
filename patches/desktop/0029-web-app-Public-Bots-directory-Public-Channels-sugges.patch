@@ -25,41 +25,96 @@ everyone (including the settings toggle) by setting
 window.__slothfulConfig.hidePublicSuggestions, baked in via the
 SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS build/customize variable.
 ---
- .../src/components/Settings/ChatsAndMedia.tsx |  10 +
- .../components/dialogs/CreateChat/index.tsx   |  52 ++-
- .../components/dialogs/PublicBots/index.tsx   | 319 ++++++++++++++++++
- .../dialogs/PublicBots/styles.module.scss     | 102 ++++++
- .../dialogs/PublicChannels/index.tsx          | 115 +++++++
+ .../src/components/AppPicker/index.tsx        |  17 +-
+ .../src/components/Settings/ChatsAndMedia.tsx |  18 +
+ .../components/dialogs/CreateChat/index.tsx   |  55 ++-
+ .../components/dialogs/PublicBots/index.tsx   | 375 ++++++++++++++++++
+ .../dialogs/PublicBots/styles.module.scss     |  93 +++++
+ .../dialogs/PublicChannels/index.tsx          | 107 +++++
+ .../frontend/src/utils/getJsonFromBase64.ts   |  23 ++
+ .../src/utils/slothfulInstanceConfig.ts       |  14 +
  packages/shared/shared-types.d.ts             |  11 +
  packages/shared/state.ts                      |   2 +
- 7 files changed, 610 insertions(+), 1 deletion(-)
+ 10 files changed, 698 insertions(+), 17 deletions(-)
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/index.tsx
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/styles.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/PublicChannels/index.tsx
+ create mode 100644 packages/frontend/src/utils/getJsonFromBase64.ts
+ create mode 100644 packages/frontend/src/utils/slothfulInstanceConfig.ts
 
+diff --git a/packages/frontend/src/components/AppPicker/index.tsx b/packages/frontend/src/components/AppPicker/index.tsx
+index 2af48537b..730f70fd2 100644
+--- a/packages/frontend/src/components/AppPicker/index.tsx
++++ b/packages/frontend/src/components/AppPicker/index.tsx
+@@ -24,6 +24,7 @@ import {
+ import SearchInputButton from '../SearchInput/SearchInputButton'
+ import { ClickableLink } from '../helpers/ClickableLink'
+ import { useFetch, useRpcFetch } from '../../hooks/useFetch'
++import { getJsonFromBase64 } from '../../utils/getJsonFromBase64'
+ import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
+ 
+ const log = getLogger('renderer/components/AppPicker')
+@@ -50,22 +51,6 @@ const enum AppCategoryEnum {
+   game = 'game',
+ }
+ 
+-const getJsonFromBase64 = (base64: string): any => {
+-  try {
+-    const text = atob(base64)
+-    const length = text.length
+-    const bytes = new Uint8Array(length)
+-    for (let i = 0; i < length; i++) {
+-      bytes[i] = text.charCodeAt(i)
+-    }
+-    const decoder = new TextDecoder()
+-    return JSON.parse(decoder.decode(bytes))
+-  } catch (_error) {
+-    log.critical('String could not de decoded or parsed')
+-    return null
+-  }
+-}
+-
+ type Props = {
+   onAppSelected: (app: AppInfo, downloadUrl: string) => Promise<void>
+ }
 diff --git a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
-index 4e131b723..8d39cd4d0 100644
+index 4e131b723..934ab9c4a 100644
 --- a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
 +++ b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
-@@ -37,6 +37,16 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
+@@ -13,6 +13,7 @@ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import useDialog from '../../hooks/dialog/useDialog'
+ import UnblockContacts from '../dialogs/UnblockContacts'
+ import SettingsButton from './SettingsButton'
++import { instanceHidesPublicSuggestions } from '../../utils/slothfulInstanceConfig'
+ 
+ type Props = {
+   settingsStore: SettingsStoreState
+@@ -37,6 +38,23 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
          label={tx('pref_enter_sends')}
          description={tx('pref_enter_sends_explain')}
        />
 +      {/* When the whole instance hides the suggestions
-+      (SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS), the per-user toggle is moot —
-+      hide it too. */}
-+      {(window as any).__slothfulConfig?.hidePublicSuggestions !== true && (
-+        <DesktopSettingsSwitch
-+          settingsKey='hideNewChatSuggestions'
-+          label='Hide community suggestions'
-+          description='Hides the "Public Bots" and "Public Channels" entries in the "New Chat" dialog'
-+        />
++      (SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS), these toggles are moot —
++      hide them too. */}
++      {!instanceHidesPublicSuggestions() && (
++        <>
++          <DesktopSettingsSwitch
++            settingsKey='hideNewChatSuggestions'
++            label='Hide community suggestions'
++            description='Hides the "Public Bots" and "Public Channels" entries in the "New Chat" dialog'
++          />
++          <DesktopSettingsSwitch
++            settingsKey='publicBotsRemoteLoadConsent'
++            label='Load the public bots list without asking'
++            description='When off, "Public Bots" shows its disclaimer again and asks before fetching the list from GitHub'
++          />
++        </>
 +      )}
        <OutgoingMediaQuality settings={settingsStore.settings} />
        <DownloadOnDemand settings={settingsStore.settings} />
  
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index 99af66cbe..f64544436 100644
+index 99af66cbe..180a7125a 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 @@ -21,7 +21,7 @@ import {
@@ -71,32 +126,35 @@ index 99af66cbe..f64544436 100644
  import { AddMemberDialog } from '../AddMember/AddMemberDialog'
  import { ContactListItem } from '../../contact/ContactListItem'
  import { useSettingsStore } from '../../../stores/settings'
-@@ -59,6 +59,8 @@ import ImageCropper from '../../ImageCropper'
+@@ -59,6 +59,9 @@ import ImageCropper from '../../ImageCropper'
  import { RovingTabindexProvider } from '../../../contexts/RovingTabindex'
  import ViewProfile from '../ViewProfile'
  import { isInviteLink } from '@deltachat-desktop/shared/util'
 +import PublicBotsDialog from '../PublicBots'
 +import PublicChannelsDialog from '../PublicChannels'
++import { instanceHidesPublicSuggestions } from '../../../utils/slothfulInstanceConfig'
  import { copyToBlobDir } from '../../../utils/copyToBlobDir'
  import { DeltaTextarea } from '../../Login-Styles'
  import { useRpcFetch } from '../../../hooks/useFetch'
-@@ -184,6 +186,15 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -184,6 +187,17 @@ function CreateChatMain(props: CreateChatMainProps) {
    const showAddBroadcastList = queryStr.length === 0
    const showAddContactQRScan = queryStr.length === 0
  
 +  // Suggestions pointing at community resources (public bots directory,
 +  // public channel sites); can be hidden per user via "Settings → Chats and
 +  // Media", or for the whole instance via the SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS
-+  // build/customize variable (window.__slothfulConfig).
++  // build/customize variable. `settingsStore != null` keeps them hidden while
++  // the store still loads, so an opted-out user never sees them flash in.
 +  const showPublicSuggestions =
 +    queryStr.length === 0 &&
-+    (window as any).__slothfulConfig?.hidePublicSuggestions !== true &&
-+    settingsStore?.desktopSettings.hideNewChatSuggestions !== true
++    settingsStore != null &&
++    settingsStore.desktopSettings.hideNewChatSuggestions !== true &&
++    !instanceHidesPublicSuggestions()
 +
    // Don't offer the classic email / add-contact options if
    // forceEncryption is set (default)
  
-@@ -211,6 +222,12 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -211,6 +225,12 @@ function CreateChatMain(props: CreateChatMainProps) {
          ? [CreateChatExtraItemType.ADD_BROADCAST_LIST]
          : []),
        ...(showNewEmail ? [CreateChatExtraItemType.NEW_EMAIL] : []),
@@ -109,7 +167,7 @@ index 99af66cbe..f64544436 100644
        ...contactIds,
        ...(showAddContact ? [CreateChatExtraItemType.ADD_CONTACT] : []),
      ],
-@@ -221,6 +238,7 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -221,6 +241,7 @@ function CreateChatMain(props: CreateChatMainProps) {
        showAddContactQRScan,
        showAddGroup,
        showNewEmail,
@@ -117,7 +175,7 @@ index 99af66cbe..f64544436 100644
        showPseudoListItemAddContactFromInviteLink,
      ]
    )
-@@ -510,6 +528,36 @@ function CreateChatMainRow({
+@@ -510,6 +531,36 @@ function CreateChatMainRow({
            </PseudoListItem>
          )
        }
@@ -154,7 +212,7 @@ index 99af66cbe..f64544436 100644
        case CreateChatExtraItemType.ADD_CONTACT: {
          return (
            <PseudoListItemAddContact
-@@ -564,6 +612,8 @@ const enum CreateChatExtraItemType {
+@@ -564,6 +615,8 @@ const enum CreateChatExtraItemType {
    NEW_EMAIL,
    ADD_CONTACT,
    INVITE_LINK,
@@ -165,10 +223,10 @@ index 99af66cbe..f64544436 100644
  type CreateGroupProps = {
 diff --git a/packages/frontend/src/components/dialogs/PublicBots/index.tsx b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
 new file mode 100644
-index 000000000..657774e56
+index 000000000..4b7dd033d
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,375 @@
 +import React, { useCallback, useMemo, useState } from 'react'
 +
 +import Dialog, {
@@ -181,6 +239,7 @@ index 000000000..657774e56
 +} from '../../Dialog'
 +import { Avatar } from '../../Avatar'
 +import { ClickableNonMailtoLink } from '../../helpers/ClickableLink'
++import { PseudoListItemNoSearchResults } from '../../helpers/PseudoListItem'
 +import { BackendRemote } from '../../../backend-com'
 +import { selectedAccountId } from '../../../ScreenController'
 +import SettingsStoreInstance, {
@@ -189,6 +248,8 @@ index 000000000..657774e56
 +import useProcessQR, { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
 +import { useFetchGeneric } from '../../../hooks/useFetch'
 +import useTranslationFunction from '../../../hooks/useTranslationFunction'
++import { getJsonFromBase64 } from '../../../utils/getJsonFromBase64'
++import { instanceHidesPublicSuggestions } from '../../../utils/slothfulInstanceConfig'
 +import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
 +import { getLogger } from '@deltachat-desktop/shared/logger'
 +
@@ -198,17 +259,21 @@ index 000000000..657774e56
 +
 +const log = getLogger('renderer/dialogs/PublicBots')
 +
-+export const PUBLIC_BOTS_REPO_URL =
-+  'https://github.com/deltachat-bot/public-bots'
-+export const PUBLIC_BOTS_ISSUES_URL =
++const PUBLIC_BOTS_REPO_URL = 'https://github.com/deltachat-bot/public-bots'
++const PUBLIC_BOTS_ISSUES_URL =
 +  'https://github.com/deltachat-bot/public-bots/issues'
 +const PUBLIC_BOTS_DATA_URL =
 +  'https://raw.githubusercontent.com/deltachat-bot/public-bots/main/frontend/data.json'
 +
 +type PublicBotsJson = {
-+  bots: { description: string; lang: string; admin: string; url: string }[]
++  bots: {
++    description?: unknown
++    lang?: unknown
++    admin?: unknown
++    url?: unknown
++  }[]
 +  /** language code -> human readable name, e.g. `{ en: 'English' }` */
-+  langs?: { [key: string]: string }
++  langs?: { [key: string]: unknown }
 +}
 +
 +interface BotEntry {
@@ -218,7 +283,6 @@ index 000000000..657774e56
 +  lang: string
 +  description: string
 +  url: string
-+  color: string
 +}
 +
 +/**
@@ -237,35 +301,52 @@ index 000000000..657774e56
 +  bots: BotEntry[]
 +  langs: { [key: string]: string }
 +} {
-+  const text = atob(base64)
-+  const bytes = new Uint8Array(text.length)
-+  for (let i = 0; i < text.length; i++) {
-+    bytes[i] = text.charCodeAt(i)
-+  }
-+  const data = JSON.parse(
-+    new TextDecoder().decode(bytes)
-+  ) as null | PublicBotsJson
++  const data = getJsonFromBase64(base64) as null | PublicBotsJson
 +  if (data == null || !Array.isArray(data.bots)) {
 +    throw new Error(`unexpected data format from ${PUBLIC_BOTS_DATA_URL}`)
 +  }
-+  const bots = data.bots.map(bot => {
-+    // The invite link carries the bot's name and address in its
-+    // URL fragment, e.g. https://i.delta.chat/#FINGERPRINT&a=bot%40host&n=Bot
-+    let name = ''
-+    let addr = ''
-+    try {
-+      const params = new URLSearchParams(new URL(bot.url).hash.slice(1))
-+      addr = params.get('a') ?? ''
-+      name = params.get('n') ?? ''
-+    } catch (error) {
-+      log.warn('failed to parse bot invite link', bot.url, error)
++  const bots = data.bots
++    // tolerate single malformed entries instead of failing the whole list
++    .filter(bot => typeof bot === 'object' && bot != null)
++    .map(bot => {
++      const url = typeof bot.url === 'string' ? bot.url : ''
++      const description =
++        typeof bot.description === 'string' ? bot.description : ''
++      const admin = typeof bot.admin === 'string' ? bot.admin : ''
++      const lang = typeof bot.lang === 'string' ? bot.lang : ''
++      // The invite link carries the bot's name and address in its
++      // URL fragment, e.g. https://i.delta.chat/#FINGERPRINT&a=bot%40host&n=Bot
++      let name = ''
++      let addr = ''
++      try {
++        const params = new URLSearchParams(new URL(url).hash.slice(1))
++        addr = params.get('a') ?? ''
++        name = params.get('n') ?? ''
++      } catch (error) {
++        log.warn('failed to parse bot invite link', url, error)
++      }
++      // core marks a truncated name with a trailing '_' and renders it as
++      // '…' (see decode_name in core's qr.rs) — mirror that so the list and
++      // the confirmation dialog show the same name
++      if (name.endsWith('_')) {
++        name = name.slice(0, -1) + '…'
++      }
++      if (name === '') {
++        name = addr !== '' ? addr : admin
++      }
++      return { url, description, admin, lang, name, addr }
++    })
++    .filter(bot => bot.url !== '' && bot.name !== '')
++
++  const langs: { [key: string]: string } = {}
++  if (typeof data.langs === 'object' && data.langs != null) {
++    for (const [code, langName] of Object.entries(data.langs)) {
++      if (typeof langName === 'string') {
++        langs[code] = langName
++      }
 +    }
-+    if (name === '') {
-+      name = addr !== '' ? addr : bot.admin
-+    }
-+    return { ...bot, name, addr, color: colorFromString(name + addr) }
-+  })
-+  return { bots, langs: data.langs ?? {} }
++  }
++  return { bots, langs }
 +}
 +
 +/**
@@ -276,8 +357,13 @@ index 000000000..657774e56
 +export default function PublicBotsDialog(props: DialogProps) {
 +  const { onClose } = props
 +  const settingsStore = useSettingsStore()[0]
-+  const consented =
-+    settingsStore?.desktopSettings.publicBotsRemoteLoadConsent === true
++
++  if (instanceHidesPublicSuggestions()) {
++    // Nothing should open this dialog when the operator hid the community
++    // suggestions instance-wide, but if something does: no consent screen,
++    // no fetch.
++    return null
++  }
 +
 +  return (
 +    <Dialog
@@ -287,7 +373,12 @@ index 000000000..657774e56
 +      dataTestid='public-bots-dialog'
 +      fullscreenOnMobile
 +    >
-+      {consented ? (
++      {settingsStore == null ? (
++        // Wait for the settings store: the consent state is unknown, and
++        // accepting couldn't be stored yet anyway (the store's reducer
++        // no-ops while its state is null).
++        <DialogHeader title='Public Bots' onClose={onClose} />
++      ) : settingsStore.desktopSettings.publicBotsRemoteLoadConsent === true ? (
 +        <PublicBotsList onClose={onClose} />
 +      ) : (
 +        <PublicBotsConsent onClose={onClose} />
@@ -315,10 +406,10 @@ index 000000000..657774e56
 +        <DialogContent>
 +          <div className={styles.consentText}>
 +            <p>
-+              This is a <b>community-made</b> directory of public bots. The
-+              bots are run by volunteers — they are <b>not</b> checked,
-+              endorsed or operated by us, and we are not responsible for them
-+              or their content. Talk to them at your own discretion.
++              This is a <b>community-made</b> directory of public bots. The bots
++              are run by volunteers — they are <b>not</b> checked, endorsed or
++              operated by us, and we are not responsible for them or their
++              content. Talk to them at your own discretion.
 +            </p>
 +            <p>
 +              The list is loaded from a third-party site:{' '}
@@ -373,30 +464,6 @@ index 000000000..657774e56
 +  }, [accountId])
 +  const botsFetch = useFetchGeneric(fetchBots)
 +
-+  const fetched = botsFetch.result?.ok ? botsFetch.result.value : null
-+
-+  const filteredBots = useMemo(() => {
-+    if (fetched == null) {
-+      return null
-+    }
-+    const query = queryStr.trim().toLowerCase()
-+    if (query === '') {
-+      return fetched.bots
-+    }
-+    return fetched.bots.filter(bot =>
-+      [
-+        bot.name,
-+        bot.admin,
-+        bot.description,
-+        bot.addr,
-+        fetched.langs[bot.lang] ?? bot.lang,
-+      ]
-+        .join('\n')
-+        .toLowerCase()
-+        .includes(query)
-+    )
-+  }, [fetched, queryStr])
-+
 +  const onBotClick = (bot: BotEntry) => {
 +    // Hand the invite link to the regular QR / invite-link machinery:
 +    // it asks for confirmation and then sets up the chat.
@@ -423,52 +490,24 @@ index 000000000..657774e56
 +          <div className={styles.listStatus}>{tx('loading')}</div>
 +        ) : botsFetch.result.ok !== true ? (
 +          <div className={styles.listStatus}>
-+            {tx(
-+              'error_x',
-+              `Failed to fetch the bot list\n(from ${PUBLIC_BOTS_DATA_URL})\n` +
-+                unknownErrorToString(botsFetch.result.err)
-+            )}
-+          </div>
-+        ) : filteredBots!.length === 0 ? (
-+          <div className={styles.listStatus}>
-+            {tx('search_no_result_for_x', queryStr)}
++            <p>
++              {tx(
++                'error_x',
++                `Failed to fetch the bot list\n(from ${PUBLIC_BOTS_DATA_URL})\n` +
++                  unknownErrorToString(botsFetch.result.err)
++              )}
++            </p>
++            <FooterActionButton onClick={botsFetch.refresh}>
++              Try again
++            </FooterActionButton>
 +          </div>
 +        ) : (
-+          <ol className={styles.botList}>
-+            {filteredBots!.map(bot => (
-+              <li key={bot.url}>
-+                <button
-+                  type='button'
-+                  className={styles.botListItem}
-+                  onClick={() => onBotClick(bot)}
-+                >
-+                  <Avatar
-+                    displayName={bot.name}
-+                    addr={bot.addr}
-+                    color={bot.color}
-+                    aria-hidden
-+                  />
-+                  <div className={styles.botInfo}>
-+                    <div className={styles.botHeadline}>
-+                      <span className={styles.botName}>{bot.name}</span>
-+                      {bot.lang !== '' && (
-+                        <span className={styles.botLang}>
-+                          {fetched!.langs[bot.lang] ?? bot.lang}
-+                        </span>
-+                      )}
-+                    </div>
-+                    <div className={styles.botAdmin}>
-+                      {bot.addr}
-+                      {bot.admin !== '' && ` · by ${bot.admin}`}
-+                    </div>
-+                    <div className={styles.botDescription}>
-+                      {bot.description}
-+                    </div>
-+                  </div>
-+                </button>
-+              </li>
-+            ))}
-+          </ol>
++          <BotList
++            bots={botsFetch.result.value.bots}
++            langs={botsFetch.result.value.langs}
++            queryStr={queryStr}
++            onBotClick={onBotClick}
++          />
 +        )}
 +      </DialogBody>
 +      <DialogFooter>
@@ -488,12 +527,87 @@ index 000000000..657774e56
 +    </>
 +  )
 +}
++
++function BotList({
++  bots,
++  langs,
++  queryStr,
++  onBotClick,
++}: {
++  bots: BotEntry[]
++  langs: { [key: string]: string }
++  queryStr: string
++  onBotClick: (bot: BotEntry) => void
++}) {
++  const filteredBots = useMemo(() => {
++    const query = queryStr.trim().toLowerCase()
++    if (query === '') {
++      return bots
++    }
++    return bots.filter(bot =>
++      [
++        bot.name,
++        bot.admin,
++        bot.description,
++        bot.addr,
++        langs[bot.lang] ?? bot.lang,
++      ]
++        .join('\n')
++        .toLowerCase()
++        .includes(query)
++    )
++  }, [bots, langs, queryStr])
++
++  if (bots.length === 0) {
++    return (
++      <div className={styles.listStatus}>The directory is currently empty.</div>
++    )
++  }
++  if (filteredBots.length === 0) {
++    return <PseudoListItemNoSearchResults queryStr={queryStr} />
++  }
++  return (
++    <ol className={styles.botList}>
++      {filteredBots.map(bot => (
++        <li key={bot.url} className='contact-list-item'>
++          <button
++            type='button'
++            className={'contact-list-item-button ' + styles.botListItem}
++            onClick={() => onBotClick(bot)}
++          >
++            <Avatar
++              displayName={bot.name}
++              addr={bot.addr}
++              color={colorFromString(bot.name + bot.addr)}
++              aria-hidden
++            />
++            <div className={styles.botInfo}>
++              <div className={styles.botHeadline}>
++                <span className={styles.botName}>{bot.name}</span>
++                {bot.lang !== '' && (
++                  <span className={styles.botLang}>
++                    {langs[bot.lang] ?? bot.lang}
++                  </span>
++                )}
++              </div>
++              <div className={styles.botAdmin}>
++                {bot.addr}
++                {bot.admin !== '' && ` · by ${bot.admin}`}
++              </div>
++              <div className={styles.botDescription}>{bot.description}</div>
++            </div>
++          </button>
++        </li>
++      ))}
++    </ol>
++  )
++}
 diff --git a/packages/frontend/src/components/dialogs/PublicBots/styles.module.scss b/packages/frontend/src/components/dialogs/PublicBots/styles.module.scss
 new file mode 100644
-index 000000000..50f10fee7
+index 000000000..e2c490fda
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicBots/styles.module.scss
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,93 @@
 +.publicBotsBody {
 +  // Fill the fixed-height dialog so only the list scrolls,
 +  // same idea as the CreateChat dialog body.
@@ -513,28 +627,14 @@ index 000000000..50f10fee7
 +  padding: 0;
 +}
 +
++// Rows reuse the global .contact-list-item / .contact-list-item-button
++// classes (hover, focus, button reset, start padding); this only adds the
++// multi-line layout the bot rows need on top.
 +.botListItem {
-+  // Row design borrowed from .contact-list-item, plus a description line.
-+  appearance: none;
-+  border: none;
-+  background: transparent;
-+  color: inherit;
-+  font: inherit;
-+  text-align: start;
-+  cursor: pointer;
-+
 +  display: flex;
 +  align-items: center;
 +  width: 100%;
-+  padding: 8px 20px;
-+
-+  &:hover {
-+    background-color: var(--contactListItemBgHover);
-+  }
-+
-+  &:focus-visible {
-+    background-color: var(--contactListItemBgFocus);
-+  }
++  text-align: start;
 +}
 +
 +.botInfo {
@@ -542,6 +642,11 @@ index 000000000..50f10fee7
 +  width: 0;
 +  flex-grow: 1;
 +  margin-inline-start: 10px;
++  // Row padding lives here: the global `.contact-list-item
++  // .contact-list-item-button { padding: 0 }` reset outranks a single
++  // module class on the button itself.
++  padding-block: 8px;
++  padding-inline-end: 20px;
 +}
 +
 +.botHeadline {
@@ -598,21 +703,27 @@ index 000000000..50f10fee7
 +}
 diff --git a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 new file mode 100644
-index 000000000..afa52524c
+index 000000000..4420fa53e
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,107 @@
 +import React from 'react'
 +
 +import Dialog, { DialogBody, DialogHeader } from '../../Dialog'
 +import { Avatar } from '../../Avatar'
 +import { runtime } from '@deltachat-desktop/runtime-interface'
++import { instanceHidesPublicSuggestions } from '../../../utils/slothfulInstanceConfig'
 +
 +import type { DialogProps } from '../../../contexts/DialogContext'
 +
 +// Same row design as the Public Bots list.
 +import styles from '../PublicBots/styles.module.scss'
 +
++// One flat list for now. A 'More channels' separator
++// (<div className='group-separator'>More channels</div>) used to sit before
++// FediMeteo — it was meant to divide an inline channel list (fetched from
++// arcanechat.me) from these external links, but ArcaneChat's channel list
++// has no API to fetch from yet. Restore it when channels render inline.
 +const CHANNEL_SOURCES = [
 +  {
 +    name: 'ArcaneChat Channels',
@@ -622,9 +733,6 @@ index 000000000..afa52524c
 +    emoji: '📣',
 +    color: 'hsl(266, 54%, 46%)',
 +  },
-+]
-+
-+const MORE_CHANNEL_SOURCES = [
 +  {
 +    name: 'FediMeteo',
 +    url: 'https://fedimeteo.com/',
@@ -645,20 +753,16 @@ index 000000000..afa52524c
 +  onClose: () => void
 +}) {
 +  return (
-+    <li>
++    <li className='contact-list-item'>
 +      <button
 +        type='button'
-+        className={styles.botListItem}
++        className={'contact-list-item-button ' + styles.botListItem}
 +        onClick={() => {
 +          runtime.openLink(source.url)
 +          onClose()
 +        }}
 +      >
-+        <Avatar
-+          displayName={source.emoji}
-+          color={source.color}
-+          aria-hidden
-+        />
++        <Avatar displayName={source.emoji} color={source.color} aria-hidden />
 +        <div className={styles.botInfo}>
 +          <div className={styles.botHeadline}>
 +            <span className={styles.botName}>{source.name}</span>
@@ -678,6 +782,12 @@ index 000000000..afa52524c
 +export default function PublicChannelsDialog(props: DialogProps) {
 +  const { onClose } = props
 +
++  if (instanceHidesPublicSuggestions()) {
++    // Nothing should open this dialog when the operator hid the community
++    // suggestions instance-wide, but if something does: show nothing.
++    return null
++  }
++
 +  return (
 +    <Dialog
 +      width={400}
@@ -696,19 +806,6 @@ index 000000000..afa52524c
 +            />
 +          ))}
 +        </ol>
-+        {/* The separator was meant to divide an inline channel list (fetched
-+        from arcanechat.me) from these external links, but ArcaneChat's
-+        channel list has no API yet — restore it when channels render inline:
-+        <div className='group-separator'>More channels</div> */}
-+        <ol className={styles.botList}>
-+          {MORE_CHANNEL_SOURCES.map(source => (
-+            <ChannelSourceItem
-+              key={source.url}
-+              source={source}
-+              onClose={onClose}
-+            />
-+          ))}
-+        </ol>
 +        <div className={styles.footerNote}>
 +          These are external, community-run websites — their channels are not
 +          checked or endorsed by us.
@@ -716,6 +813,55 @@ index 000000000..afa52524c
 +      </DialogBody>
 +    </Dialog>
 +  )
++}
+diff --git a/packages/frontend/src/utils/getJsonFromBase64.ts b/packages/frontend/src/utils/getJsonFromBase64.ts
+new file mode 100644
+index 000000000..018aaed36
+--- /dev/null
++++ b/packages/frontend/src/utils/getJsonFromBase64.ts
+@@ -0,0 +1,23 @@
++import { getLogger } from '@deltachat-desktop/shared/logger'
++
++const log = getLogger('renderer/utils/getJsonFromBase64')
++
++/**
++ * Decode a base64 payload (e.g. `BackendRemote.rpc.getHttpResponse(...).blob`)
++ * as UTF-8 JSON. Returns `null` when it can't be decoded or parsed.
++ */
++export const getJsonFromBase64 = (base64: string): any => {
++  try {
++    const text = atob(base64)
++    const length = text.length
++    const bytes = new Uint8Array(length)
++    for (let i = 0; i < length; i++) {
++      bytes[i] = text.charCodeAt(i)
++    }
++    const decoder = new TextDecoder()
++    return JSON.parse(decoder.decode(bytes))
++  } catch (_error) {
++    log.critical('String could not de decoded or parsed')
++    return null
++  }
++}
+diff --git a/packages/frontend/src/utils/slothfulInstanceConfig.ts b/packages/frontend/src/utils/slothfulInstanceConfig.ts
+new file mode 100644
+index 000000000..c519d5a38
+--- /dev/null
++++ b/packages/frontend/src/utils/slothfulInstanceConfig.ts
+@@ -0,0 +1,14 @@
++/**
++ * Instance-level config baked in by slothfulchat-web builds as
++ * `window.__slothfulConfig` (see packages/web-app/instance-config.mjs in the
++ * slothfulchat-web repo). Absent on upstream Electron/Tauri runtimes.
++ */
++
++/**
++ * `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS`: the operator hid the community
++ * suggestions ("Public Bots", "Public Channels") for the whole instance —
++ * the New Chat entries, both dialogs, and their settings toggles.
++ */
++export function instanceHidesPublicSuggestions(): boolean {
++  return (window as any).__slothfulConfig?.hidePublicSuggestions === true
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
 index a131321a2..9310b6de8 100644

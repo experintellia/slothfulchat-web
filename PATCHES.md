@@ -73,11 +73,12 @@ exists:
   [deltachat-bot/public-bots](https://github.com/deltachat-bot/public-bots);
   the first open asks for consent to load from that third-party site and
   explains that the bots are community-made, not endorsed by us, and problems
-  should be reported in that repo's GitHub issues. "Public Channels" opens a
-  small dialog linking channel directories (arcanechat.me/channels, and
-  fedimeteo.com under "More channels"). A settings toggle ("Chats and Media")
-  hides both entries per user; the `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS`
-  build/customize variable hides them instance-wide including the toggle.
+  should be reported in that repo's GitHub issues; a second visit fetches
+  without asking (revocable via a settings switch). "Public Channels" opens a
+  small dialog linking channel directories (arcanechat.me/channels and
+  fedimeteo.com's per-city weather channels). Settings → Chats and Media can
+  hide both entries per user; the `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS`
+  build/customize variable hides them instance-wide including the toggles.
   `desktop/0029`
 
 ## Bugfixes
