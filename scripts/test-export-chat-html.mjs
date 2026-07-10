@@ -319,6 +319,30 @@ try {
     viewtype: 'Sticker',
   })
 
+  // alice sends a plain file (export must render a download-link tile)
+  const filePath = await page.evaluate(
+    (b64) => window.exp.runtime.writeTempFileFromBase64('notes.bin', b64),
+    Buffer.from('not really binary, but binary enough').toString('base64')
+  )
+  await rpc('sendMsg', aliceId, dm, {
+    text: 'raw notes attached',
+    file: filePath,
+    filename: 'notes.bin',
+    viewtype: 'File',
+  })
+
+  // alice shares bob's contact as a vcard (export renders a contact tile)
+  const vcardText = await rpc('makeVcard', aliceId, [bobContact])
+  const vcardPath = await page.evaluate(
+    (text) => window.exp.runtime.writeTempFile('bob.vcf', text),
+    vcardText
+  )
+  await rpc('sendMsg', aliceId, dm, {
+    file: vcardPath,
+    filename: 'bob.vcf',
+    viewtype: 'Vcard',
+  })
+
   // alice reacts to bob's message
   await rpc('sendReaction', aliceId, aliceIncomingId, ['👍'])
   await new Promise((r) => setTimeout(r, 1500))
@@ -345,12 +369,20 @@ try {
   await page.screenshot({ path: OUT + 'app-chat.png', fullPage: false })
   console.log('OK: chat open in UI, screenshot taken')
 
-  // three-dot menu -> Export Chat
+  // three-dot menu -> Export Chat -> confirm dialog (notes + date range)
   await page.locator('#three-dot-menu-button').click()
   const item = page.getByText('Export Chat', { exact: true })
   await item.waitFor({ state: 'visible', timeout: 10_000 })
-  const downloadP = page.waitForEvent('download', { timeout: 60_000 })
   await item.click()
+  const confirmText = await page
+    .locator('.dialog-content-padding, dialog')
+    .filter({ hasText: 'Read receipts' })
+    .first()
+    .textContent({ timeout: 10_000 })
+  if (!/read receipts/i.test(confirmText) || !/webxdc/i.test(confirmText))
+    throw new Error('export confirm dialog does not mention the exclusions')
+  const downloadP = page.waitForEvent('download', { timeout: 60_000 })
+  await page.getByTestId('export-chat-start').click()
   const download = await downloadP
   const exportPath = OUT + download.suggestedFilename()
   await download.saveAs(exportPath)
@@ -404,6 +436,11 @@ try {
     imageHeight: document.querySelector('.message:not(.type-sticker) img.attachment-content')?.clientHeight ?? null,
     headerAvatarWidth: document.querySelector('.html-export-header .author-avatar img')?.clientWidth ?? null,
     headerAvatarRadius: getComputedStyle(document.querySelector('.html-export-header .author-avatar img')).borderRadius,
+    fileLinks: document.querySelectorAll('a.message-attachment-generic[download]').length,
+    imageLinks: document.querySelectorAll('a.html-export-media-link img.attachment-content').length,
+    quoteAnchors: document.querySelectorAll('a.html-export-quote-jump[href^="#"]').length,
+    vcardTiles: document.querySelectorAll('.html-export-vcard').length,
+    vcardName: document.querySelector('.html-export-vcard-name')?.textContent ?? null,
     hasAppCss: !!document.head.textContent.includes('--messageIncomingBg'),
     // chat background is a fixed viewport-sized layer, not the growing chat container
     bgLayerPosition: getComputedStyle(document.body, '::before').position,
@@ -438,6 +475,12 @@ try {
     problems.push('chat background layer has no color')
   if (stats.containerBgImage !== 'none')
     problems.push('chat container still paints the background image (it would stretch to full chat height)')
+  if (stats.fileLinks < 1) problems.push('file tile is not a download link')
+  if (stats.imageLinks < 1) problems.push('image not linked to full-size original')
+  if (stats.quoteAnchors !== 1) problems.push(`expected exactly 1 quote jump anchor, got ${stats.quoteAnchors}`)
+  if (stats.vcardTiles < 1) problems.push('vcard message has no contact tile')
+  if (stats.vcardTiles >= 1 && !stats.vcardName?.includes('Bob'))
+    problems.push(`vcard tile name wrong: ${stats.vcardName}`)
   if (problems.length) throw new Error('export verification problems:\n  ' + problems.join('\n  '))
 
   // --- reactions: hover title names the reactors; click opens the dialog ---
@@ -491,6 +534,25 @@ try {
     throw new Error('static snapshot still contains scripts or the save button')
   if (staticStats.brokenImgs > 0) throw new Error(`${staticStats.brokenImgs} broken images in static snapshot`)
   await staticPage.screenshot({ path: OUT + 'static-snapshot.png', fullPage: false })
+
+  // --- second export with a future start date: range filter yields nothing ---
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
+  await page.locator('#three-dot-menu-button').click()
+  await page.getByText('Export Chat', { exact: true }).click()
+  await page.getByTestId('export-chat-start-date').fill(tomorrow)
+  const emptyDownloadP = page.waitForEvent('download', { timeout: 60_000 })
+  await page.getByTestId('export-chat-start').click()
+  const emptyDownload = await emptyDownloadP
+  const emptyPath = OUT + 'empty-' + emptyDownload.suggestedFilename()
+  await emptyDownload.saveAs(emptyPath)
+  const emptyZip = fflate.unzipSync(new Uint8Array(await readFile(emptyPath)))
+  const emptyData = JSON.parse(Buffer.from(emptyZip['messages.json']).toString('utf8'))
+  if (Object.keys(emptyData.messages).length !== 0 || emptyData.items.length !== 0)
+    throw new Error(
+      `future-dated export should be empty, got ${Object.keys(emptyData.messages).length} messages / ${emptyData.items.length} items`
+    )
+  console.log('OK: date-range filter (future start date -> empty export)')
+
   console.log('OK: export verified — zip contents, viewer rendering, static snapshot all good')
 } catch (err) {
   await page.screenshot({ path: OUT + 'fail.png' }).catch(() => {})
