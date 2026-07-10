@@ -29,6 +29,7 @@ type Logger = {
 
 const SETTINGS_KEY = 'slothfulchat.desktopSettings'
 const PROXY_KEY = 'slothfulchat.proxyUrl'
+const DEFAULT_LOCAL_BRIDGE = 'ws://localhost:8641'
 
 // mirrors @deltachat-desktop/shared/state.ts getDefaultState(),
 // with minimizeToTray:false like upstream target-browser
@@ -239,12 +240,7 @@ let core: Core | null = null
 function getCore(): Core {
   if (!core) {
     const params = new URLSearchParams(location.search)
-    // priority: ?proxy= > saved > per-instance default (assemble.mjs) > localhost
-    const wsProxyUrl =
-      params.get('proxy') ||
-      localStorage.getItem(PROXY_KEY) ||
-      (window as any).__slothfulConfig?.defaultProxyUrl ||
-      'ws://localhost:8641'
+    const wsProxyUrl = resolveBridgeUrl()
     // OPFS persistence is on by default; ?persist=0 opts out (fresh-core tests)
     const persist = params.get('persist') !== '0'
     core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))
@@ -1274,13 +1270,50 @@ class BrowserRuntime {
 const BRIDGE_HELP_URL =
   'https://github.com/experintellia/slothfulchat-web/tree/main/packages/ws-tcp-proxy'
 
+// priority: ?proxy= > saved > per-instance default (assemble.mjs) > localhost.
+// The one resolver for both the actual connection (getCore) and the
+// probe/toast/picker UI below — they must agree on the URL in use.
 function resolveBridgeUrl(): string {
   const params = new URLSearchParams(location.search)
   return (
-    params.get('proxy') ??
-    localStorage.getItem(PROXY_KEY) ??
-    'ws://localhost:8641'
+    params.get('proxy') ||
+    localStorage.getItem(PROXY_KEY) ||
+    (window as any).__slothfulConfig?.defaultProxyUrl ||
+    DEFAULT_LOCAL_BRIDGE
   )
+}
+
+// for option dedupe/matching only — the raw URL is what gets stored/connected
+const normBridgeUrl = (u: string): string => u.trim().replace(/\/+$/, '')
+
+/** Options offered in the bridge picker: localhost always first, then the
+ * instance default (unless the operator's public list already covers it — the
+ * operator's description wins then), then the public bridges baked into
+ * config.js (SLOTHFUL_PUBLIC_BRIDGES). Deduped by normalized URL. */
+function bridgeOptions(): { url: string; description: string }[] {
+  const options = [
+    {
+      url: DEFAULT_LOCAL_BRIDGE,
+      description: 'Local bridge on this device — most private and secure',
+    },
+  ]
+  const cfg = (window as any).__slothfulConfig ?? {}
+  const seen = new Set(options.map(o => normBridgeUrl(o.url)))
+  const publicBridges: { url?: string; description?: string }[] =
+    Array.isArray(cfg.publicBridges) ? cfg.publicBridges : []
+  for (const bridge of publicBridges) {
+    // defensive: config.js may be hand-edited in a customized release zip
+    if (!bridge?.url || seen.has(normBridgeUrl(bridge.url))) continue
+    seen.add(normBridgeUrl(bridge.url))
+    options.push({ url: bridge.url, description: bridge.description || '' })
+  }
+  if (cfg.defaultProxyUrl && !seen.has(normBridgeUrl(cfg.defaultProxyUrl))) {
+    options.splice(1, 0, {
+      url: cfg.defaultProxyUrl,
+      description: 'Default bridge of this instance',
+    })
+  }
+  return options
 }
 
 /** Reachable = a WS to the bridge's /dns health endpoint opens (it replies with
@@ -1565,7 +1598,10 @@ function showBridgeDialog() {
   overlay.onclose = () => overlay.remove()
 
   const panel = el('div', {
-    width: 'min(440px, 92vw)',
+    width: 'min(460px, 92vw)',
+    maxHeight: '90vh',
+    overflowY: 'auto',
+    boxSizing: 'border-box',
     padding: '20px',
     borderRadius: '10px',
     background: '#1e1e1e',
@@ -1576,50 +1612,187 @@ function showBridgeDialog() {
 
   // neutral title: this dialog is opened both from the bridge-down toast and
   // from the connectivity view's Change… button (bridge may be up)
-  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'WS→TCP bridge')
+  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'Bridge')
   const body = el(
     'p',
-    { margin: '0 0 12px', color: '#bbb' },
-    'This app needs a WS→TCP bridge to send and receive (browsers can’t open ' +
-      'raw TCP). Start it locally, then reload — or point at another bridge below.'
+    { margin: '0 0 8px', color: '#bbb' },
+    'Browsers can’t open direct connections to mail servers, so this app ' +
+      'sends its traffic through a small bridge. That traffic is encrypted ' +
+      'by default before it reaches the bridge — the bridge only passes it ' +
+      'along and can’t read your messages. The most private option is a ' +
+      'bridge running on your own device.'
   )
 
-  const startCmd = el(
-    'pre',
-    {
-      margin: '0 0 6px',
-      padding: '8px 10px',
-      borderRadius: '6px',
-      background: '#111',
-      color: '#9cdcfe',
-      whiteSpace: 'pre-wrap',
-      fontSize: '12px',
-    },
-    'npx @slothfulchat/ws-tcp-proxy'
+  // the one honest exception to "can't read it", kept out of the main copy
+  // so the paragraph stays short — expandable for those who care
+  const previewNote = el('details', { margin: '0 0 12px', fontSize: '12px', color: '#bbb' })
+  const previewSummary = el(
+    'summary',
+    { cursor: 'pointer' },
+    'One exception: link previews (opt-in)'
   )
-  const help = el('a', { color: '#4ea1ff', fontSize: '12px' }, 'Bridge setup & source →')
-  ;(help as HTMLAnchorElement).href = BRIDGE_HELP_URL
-  ;(help as HTMLAnchorElement).target = '_blank'
-  ;(help as HTMLAnchorElement).rel = 'noopener noreferrer'
+  const previewBody = el(
+    'p',
+    { margin: '6px 0 0' },
+    'If you turn on link previews, the bridge fetches the linked web page ' +
+      'for you (most sites don’t let the browser fetch them directly), so ' +
+      'it can see which pages you preview. This is only about link ' +
+      'previews — your messages stay unreadable to the bridge.'
+  )
+  previewNote.append(previewSummary, previewBody)
 
-  const label = el(
-    'label',
-    { display: 'block', margin: '16px 0 6px', fontSize: '12px', color: '#bbb' },
-    'Alternative bridge URL'
-  )
+  const list = el('div', { display: 'flex', flexDirection: 'column', gap: '8px' })
+  const radios: HTMLInputElement[] = []
+  const rows: HTMLElement[] = []
+  // selected card gets the accent border/tint; inline styles (no stylesheet),
+  // so hover/selection are restyled from JS
+  const restyleRows = () => {
+    rows.forEach((r, i) => {
+      r.style.borderColor = radios[i].checked ? '#2d7dff' : '#3a3a3a'
+      r.style.background = radios[i].checked ? 'rgba(45,125,255,.12)' : '#262626'
+    })
+  }
+  const mkRadio = (): HTMLInputElement => {
+    const radio = el('input', {
+      margin: '2px 10px 0 0',
+      flexShrink: '0',
+      width: '16px',
+      height: '16px',
+      accentColor: '#2d7dff',
+    }) as HTMLInputElement
+    radio.type = 'radio'
+    radio.name = 'sc-bridge'
+    radios.push(radio)
+    return radio
+  }
+  const mkRow = (radio: HTMLInputElement, column: HTMLElement) => {
+    const label = el('label', {
+      display: 'flex',
+      alignItems: 'flex-start',
+      padding: '10px 12px',
+      borderRadius: '8px',
+      border: '1px solid #3a3a3a',
+      background: '#262626',
+      cursor: 'pointer',
+      transition: 'border-color .15s, background-color .15s',
+    })
+    label.onmouseenter = () => {
+      if (!radio.checked) label.style.borderColor = '#5a5a5a'
+    }
+    label.onmouseleave = restyleRows
+    label.append(radio, column)
+    list.append(label)
+    rows.push(label)
+    return label
+  }
+
+  const options = bridgeOptions()
+  const current = normBridgeUrl(resolveBridgeUrl())
+  for (const opt of options) {
+    const radio = mkRadio()
+    radio.value = opt.url
+    if (normBridgeUrl(opt.url) === current) radio.checked = true
+    const column = el('div', { flex: '1', minWidth: '0' })
+    column.append(
+      el(
+        'div',
+        {
+          fontFamily: 'ui-monospace, monospace',
+          fontSize: '13px',
+          wordBreak: 'break-all',
+          color: '#e8e8e8',
+        },
+        opt.url
+      )
+    )
+    if (opt.description) {
+      column.append(
+        el('div', { fontSize: '12px', color: '#a8a8a8', marginTop: '2px' }, opt.description)
+      )
+    }
+    if (opt.url === DEFAULT_LOCAL_BRIDGE) {
+      // "run it on your own device" made actionable, on the localhost option
+      const NPX_CMD = 'npx @slothfulchat/ws-tcp-proxy'
+      const startCmd = el(
+        'pre',
+        {
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px',
+          margin: '8px 0 6px',
+          padding: '6px 6px 6px 10px',
+          borderRadius: '6px',
+          background: '#161616',
+          color: '#9cdcfe',
+          whiteSpace: 'pre-wrap',
+          fontSize: '12px',
+        },
+        NPX_CMD
+      )
+      const copyBtn = el(
+        'button',
+        {
+          flexShrink: '0',
+          padding: '3px 8px',
+          borderRadius: '4px',
+          border: '1px solid #444',
+          background: '#2a2a2a',
+          color: '#ccc',
+          cursor: 'pointer',
+          font: '11px system-ui, sans-serif',
+        },
+        'Copy'
+      )
+      // inside the option's <label>: type=button so it doesn't submit, and
+      // clicks on it (an interactive element) don't toggle the radio
+      copyBtn.type = 'button'
+      copyBtn.onclick = () => {
+        navigator.clipboard
+          ?.writeText(NPX_CMD)
+          .then(() => {
+            copyBtn.textContent = 'Copied ✓'
+            setTimeout(() => (copyBtn.textContent = 'Copy'), 1500)
+          })
+          .catch(() => {
+            copyBtn.textContent = 'Copy failed'
+          })
+      }
+      startCmd.append(copyBtn)
+      const help = el('a', { color: '#4ea1ff', fontSize: '12px' }, 'Bridge setup & source →')
+      ;(help as HTMLAnchorElement).href = BRIDGE_HELP_URL
+      ;(help as HTMLAnchorElement).target = '_blank'
+      ;(help as HTMLAnchorElement).rel = 'noopener noreferrer'
+      column.append(startCmd, help)
+    }
+    mkRow(radio, column)
+  }
+
+  const customRadio = mkRadio()
+  const customColumn = el('div', { flex: '1', minWidth: '0' })
+  customColumn.append(el('div', { fontSize: '13px', color: '#e8e8e8' }, 'Custom…'))
   const input = el('input', {
     width: '100%',
     boxSizing: 'border-box',
+    marginTop: '6px',
     padding: '8px 10px',
     borderRadius: '6px',
     border: '1px solid #444',
-    background: '#111',
+    background: '#161616',
     color: '#eee',
     fontSize: '13px',
   }) as HTMLInputElement
   input.type = 'text'
-  input.value = resolveBridgeUrl()
   input.placeholder = 'wss://your-host'
+  customColumn.append(input)
+  mkRow(customRadio, customColumn)
+
+  // preselect the option matching the URL in use; unknown URL = Custom
+  if (!radios.some(r => r.checked)) {
+    customRadio.checked = true
+    input.value = resolveBridgeUrl()
+  }
+  restyleRows()
 
   const row = el('div', {
     display: 'flex',
@@ -1646,28 +1819,66 @@ function showBridgeDialog() {
   const closeBtn = mkBtn('Close', false)
   closeBtn.onclick = close
 
-  const retryBtn = mkBtn('Retry current', false)
-  retryBtn.onclick = async () => {
-    retryBtn.textContent = 'Checking…'
-    const ok = await probeBridge(resolveBridgeUrl())
-    if (ok) {
+  const testBtn = mkBtn('Test selected', false)
+  const onSelectionChange = () => {
+    restyleRows()
+    testBtn.textContent = 'Test selected'
+    input.style.borderColor = '#444'
+    if (customRadio.checked) input.focus()
+  }
+  for (const radio of radios) radio.onchange = onSelectionChange
+  // typing into the custom field selects Custom (the input is inside the
+  // custom row's <label>, but only pick it once the user actually engages)
+  input.onfocus = () => {
+    if (!customRadio.checked) {
+      customRadio.checked = true
+      onSelectionChange()
+    }
+  }
+
+  /** Checked option's URL; empty string = Custom with a blank input. */
+  const selectedUrl = (): string =>
+    customRadio.checked
+      ? input.value.trim()
+      : radios.find(r => r.checked)?.value || input.value.trim()
+
+  testBtn.onclick = async () => {
+    const url = selectedUrl()
+    if (!url) {
+      input.style.borderColor = '#e33'
+      input.focus()
+      return
+    }
+    testBtn.textContent = 'Checking…'
+    const ok = await probeBridge(url)
+    testBtn.textContent = ok ? '✓ Reachable' : '✗ Not reachable — test again'
+    // clear the down-toast if the bridge already in use just tested fine
+    if (ok && normBridgeUrl(url) === normBridgeUrl(resolveBridgeUrl())) {
       hideBridgeToast()
-      close()
-    } else {
-      retryBtn.textContent = 'Still down — retry'
     }
   }
 
   const useBtn = mkBtn('Use this bridge', true)
   useBtn.onclick = () => {
-    const value = input.value.trim()
+    const value = selectedUrl()
+    if (!value) {
+      input.style.borderColor = '#e33'
+      input.focus()
+      return
+    }
     // Persist in localStorage (survives an installed-PWA launch, where a
-    // ?proxy= query param would not); empty input resets to the default.
-    // A ?proxy= param still takes precedence, so strip it before reloading.
-    if (value && value !== 'ws://localhost:8641') {
-      localStorage.setItem(PROXY_KEY, value)
-    } else {
+    // ?proxy= query param would not). Picking what the app would use anyway
+    // (the instance default, or localhost when there is none) clears the key
+    // instead, so a later instance-default change still propagates; an
+    // explicit localhost pick on an instance WITH a default is stored like
+    // any other override. A ?proxy= param still takes precedence over the
+    // stored value, so strip it before reloading.
+    const appDefault =
+      (window as any).__slothfulConfig?.defaultProxyUrl || DEFAULT_LOCAL_BRIDGE
+    if (normBridgeUrl(value) === normBridgeUrl(appDefault)) {
       localStorage.removeItem(PROXY_KEY)
+    } else {
+      localStorage.setItem(PROXY_KEY, value)
     }
     const u = new URL(location.href)
     u.searchParams.delete('proxy')
@@ -1675,14 +1886,18 @@ function showBridgeDialog() {
     else location.reload()
   }
 
-  row.append(closeBtn, retryBtn, useBtn)
-  panel.append(title, body, startCmd, help, label, input, row)
+  row.append(closeBtn, testBtn, useBtn)
+  panel.append(title, body, previewNote, list, row)
   overlay.append(panel)
   overlay.onclick = e => {
     if (e.target === overlay) close()
   }
   document.body.appendChild(overlay)
   overlay.showModal()
+  // showModal focuses the first focusable element — the details summary,
+  // which paints a stray focus ring. The checked radio is the better start
+  // (arrow keys then move the selection).
+  radios.find(r => r.checked)?.focus()
 }
 
 // Last bridge probe result, surfaced to the (patched) ConnectivityDialog via

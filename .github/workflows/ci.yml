@@ -55,6 +55,10 @@ jobs:
                      -not -path '*/node_modules/*' -not -path '*/dist/*')
           exit $fail
 
+      # dependency-free node:test suite for the pure config templating
+      - name: Unit-test instance-config (parsePublicBridges etc.)
+        run: node --test packages/web-app/instance-config.test.mjs
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -193,6 +197,11 @@ jobs:
       # SW-controlled reload.
       - name: Smoke test — frontend boots on the wasm core
         run: pnpm --filter @slothfulchat/web-app test
+
+      # bridge picker e2e (no proxy, no core boot): option list from an
+      # injected instance config, preselection, localStorage save semantics
+      - name: E2E test — bridge picker dialog
+        run: node scripts/test-bridge-dialog.mjs
 
       # chat export e2e (fully offline, mock madmail): drives the three-dot
       # "Export Chat" flow, unpacks the zip, renders the extracted index.html

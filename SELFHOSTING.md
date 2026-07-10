@@ -99,6 +99,7 @@ how the `CHATMAIL_ALLOWLIST` allow-list works) are in the
 | `SLOTHFUL_INSTANCE_NAME` | Display name of your instance: tab title, PWA install name, imprint page. | `SlothfulChat` |
 | `SLOTHFUL_INSTANCE_URL` | Canonical origin of your instance. | `https://web.slothful.chat` |
 | `SLOTHFUL_DEFAULT_PROXY` | The `wss://` bridge the app uses when the user hasn't set one. **Without this, the app defaults to `ws://localhost:8641`** and can't connect on a hosted site. | `wss://web.slothful.chat/bridge` |
+| `SLOTHFUL_PUBLIC_BRIDGES` | Public bridges offered as options in the app's bridge picker dialog, each with a super-short description. Format: `;`-separated `URL description` entries — the URL runs to the first space, the rest of the entry is the description (so descriptions can't contain `;`). Entries without a `ws://`/`wss://` URL are ignored. A local bridge and a custom-URL field are always offered too, and the `SLOTHFUL_DEFAULT_PROXY` bridge shows up automatically (deduped, your description wins if you list it here). | `wss://a.example/bridge Community bridge, for testing; wss://b.example/bridge Backup bridge` |
 | `SLOTHFUL_DEFAULT_CHATMAIL` | The chatmail relay the "create new account" onboarding flow signs up on when a user just taps the button. Point it at your own chatmail server so new sign-ups land there. Accepts a bare host, a URL, or a `dcaccount:` QR. Unset = the upstream default relay. Users scanning a `dcaccount:`/`dclogin:` QR still override it. | `chat.example.chat` |
 | `SLOTHFUL_IMPRINT_NAME` | Responsible person/entity on the imprint (legal notice) page. | `Jane Doe` |
 | `SLOTHFUL_IMPRINT_ADDRESS` | Postal address on the imprint page (newlines allowed). | `Example Str. 1\n12345 Town` |
@@ -111,8 +112,10 @@ them. The imprint's scope/privacy/reporting wording is fixed in the template —
 only the name/address/email come from these vars. **The imprint is not legal
 advice; have it reviewed if you operate under Impressum/DDG rules.**
 
-Users can always override the bridge at runtime with `?proxy=wss://…` or the
-`slothfulchat.proxyUrl` localStorage key.
+Users can always override the bridge at runtime in the app's bridge picker
+dialog (which offers a local bridge, your `SLOTHFUL_PUBLIC_BRIDGES` options
+and a custom URL; stored in the `slothfulchat.proxyUrl` localStorage key), or
+with `?proxy=wss://…` in the URL.
 
 ### Bridge (set where you run the proxy)
 

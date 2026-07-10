@@ -32,6 +32,7 @@ const VARS = [
   ['SLOTHFUL_INSTANCE_NAME', 'Instance name — app title, PWA name, imprint (e.g. "SlothfulChat")'],
   ['SLOTHFUL_INSTANCE_URL', 'Canonical URL of your instance (e.g. "https://web.example.chat")'],
   ['SLOTHFUL_DEFAULT_PROXY', 'Default WS-TCP bridge, wss:// (unset = ws://localhost:8641)'],
+  ['SLOTHFUL_PUBLIC_BRIDGES', 'Public bridge options in the bridge picker: "URL description; URL description" (unset = only localhost + custom)'],
   ['SLOTHFUL_DEFAULT_CHATMAIL', 'Default chatmail relay for new accounts, host/URL (unset = upstream default)'],
   ['SLOTHFUL_IMPRINT_NAME', 'Imprint: responsible person/entity'],
   ['SLOTHFUL_IMPRINT_ADDRESS', 'Imprint: postal address (type \\n for line breaks)'],
