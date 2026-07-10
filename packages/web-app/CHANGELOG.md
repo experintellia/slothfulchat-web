@@ -2,11 +2,6 @@
 
 ## Unreleased
 
-- **webimap setup fix**: the up-front server check now probes the actual
-  webimap endpoint (`GET /webimap/mailboxes`) instead of the server's index
-  page. madmail sends CORS headers only on its API routes, so the old probe
-  wrongly reported every madmail server — including correctly configured
-  ones — as "reachable but refusing browser requests (CORS)".
 - **Self-hosting**: a new `SLOTHFUL_DEFAULT_CHATMAIL` build/customize variable
   points the "create new account" onboarding flow at your own chatmail relay
   (accepts a bare host, a URL, or a `dcaccount:` QR). The welcome-screen
@@ -40,8 +35,9 @@
   image/video dimensions, audio/video duration) and the delivery-failure
   reason; clicking a failed message's status icon opens Message Info.
 - **webimap setup**: pasting a full `https://…` URL into the madmail server
-  field works, and an unreachable or CORS-blocked server is detected up front
-  with a clear message instead of an opaque login error.
+  field works, and a failed madmail account setup appends a troubleshooting
+  checklist (server online? webimap enabled? CORS configured?) to the error
+  alert instead of leaving only an opaque NetworkError.
 - **About dialog**: SlothfulChat's own icon on the About dialog and welcome
   screen, links restyled as buttons, and a Changelog button that opens the
   bundled changelog viewer (also reachable at `/changelog`).
