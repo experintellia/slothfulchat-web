@@ -58,7 +58,7 @@ exists:
   receipts yet; hovering the reactions cluster lists everyone who reacted with
   the emoji they picked. Both surface the info already in the Message Info /
   Reactions dialogs without a click, sharing a new `PeopleHoverInfo`
-  component. `desktop/0033`
+  component. `desktop/0034`
 - **Themeable avatars on all messages** — upstream renders avatars only for
   incoming group messages; we render them everywhere but hide the new cases
   by default, so themes can opt in to Rocket.Chat-style avatars on every
@@ -121,6 +121,11 @@ contribution intended.
   "Updating…", and a message that 404s on fetch/delete is treated as
   already-consumed instead of putting the poll loop into an error backoff.
   `core/0012`, `core/0013`
+- Right-clicking a chat in the chat list showed the browser's own context
+  menu on top of the app's: the chat-list handler awaited `getFullChatById`
+  before calling `preventDefault`, so it fired too late for the web build
+  (Electron has no native menu, so upstream never saw it). `preventDefault`
+  now runs synchronously before the await. `desktop/0035`
 
 ## UI & mobile polish
 

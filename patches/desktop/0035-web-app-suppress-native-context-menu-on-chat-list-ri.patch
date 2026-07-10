@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: claude <claude@anthropic.com>
+Date: Fri, 10 Jul 2026 16:38:13 +0000
+Subject: [PATCH 35/35] web-app: suppress native context menu on chat-list
+ right-click
+
+The chat-list context menu opened via a right-click awaits
+getFullChatById before reaching event.preventDefault(), so on the web
+build the browser's own context menu had already appeared. Call
+preventDefault synchronously at the start of the handler, before the
+await.
+---
+ packages/frontend/src/components/chat/ChatContextMenu.tsx | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+index 60d6f4352..5a93f1c7d 100644
+--- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
++++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+@@ -326,6 +326,14 @@ export function useChatContextMenu(): {
+     chatListItems: ChatListItem[],
+     activeChatId: number | null
+   ) => {
++    // Suppress the browser's native context menu synchronously, before the
++    // `await` below. `openContextMenuInternalHandler` also calls
++    // `preventDefault`, but that runs after this async function yields on the
++    // `getFullChatById` await, which is too late for the browser: the default
++    // action has already been taken and the native menu shows on top of ours.
++    // (On desktop Electron there is no native context menu, so this only bites
++    // the web build.)
++    event.preventDefault()
+     // only if chatListItems contains a single chat, we need the full chat
+     const selectedChat =
+       chatListItems.length === 1
