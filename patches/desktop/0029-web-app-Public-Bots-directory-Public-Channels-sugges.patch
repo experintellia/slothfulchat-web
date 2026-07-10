@@ -29,10 +29,10 @@ SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS build/customize variable.
  .../components/dialogs/CreateChat/index.tsx   |  52 ++-
  .../components/dialogs/PublicBots/index.tsx   | 319 ++++++++++++++++++
  .../dialogs/PublicBots/styles.module.scss     | 102 ++++++
- .../dialogs/PublicChannels/index.tsx          | 112 ++++++
+ .../dialogs/PublicChannels/index.tsx          | 115 +++++++
  packages/shared/shared-types.d.ts             |  11 +
  packages/shared/state.ts                      |   2 +
- 7 files changed, 607 insertions(+), 1 deletion(-)
+ 7 files changed, 610 insertions(+), 1 deletion(-)
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/index.tsx
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/styles.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/PublicChannels/index.tsx
@@ -598,10 +598,10 @@ index 000000000..50f10fee7
 +}
 diff --git a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 new file mode 100644
-index 000000000..039662fa1
+index 000000000..afa52524c
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,115 @@
 +import React from 'react'
 +
 +import Dialog, { DialogBody, DialogHeader } from '../../Dialog'
@@ -696,7 +696,10 @@ index 000000000..039662fa1
 +            />
 +          ))}
 +        </ol>
-+        <div className='group-separator'>More channels</div>
++        {/* The separator was meant to divide an inline channel list (fetched
++        from arcanechat.me) from these external links, but ArcaneChat's
++        channel list has no API yet — restore it when channels render inline:
++        <div className='group-separator'>More channels</div> */}
 +        <ol className={styles.botList}>
 +          {MORE_CHANNEL_SOURCES.map(source => (
 +            <ChannelSourceItem
