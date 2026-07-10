@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.3.1 — 2026-07-09
+## 0.4.0 — 2026-07-10
+
+<!-- originally written as 0.3.1 on 2026-07-09, but never tagged or published
+     under that number; renumbered to ride the v0.4.0 release train -->
 
 - `/dns/localhost` is now answered with a hardcoded loopback reply
   (`127.0.0.1`, `::1`) without querying the resolver and regardless of any

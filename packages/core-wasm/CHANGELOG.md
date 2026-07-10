@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 — 2026-07-10
+
+- Animated sticker support in the bundled core (core patches 0014, 0015):
+  `.tgs` files are classified as `Viewtype::Sticker` (previously `File`), the
+  `Chat-Content: sticker` header is honored for any file-bearing part (not
+  just `Image`/`Gif` — and never for `Text`/`Webxdc`/`Voice`, so it can't
+  hijack those), and `misc_get_stickers` lists `.tgs` alongside
+  `.png`/`.webp`/`.gif`.
+- accounts.toml self-heal: the last-resort rebuild wrote a file without the
+  required `accounts` key when no account dirs existed, so core rejected its
+  own rebuilt config with "missing field `accounts`" forever — a transient
+  corruption (e.g. the OPFS-lock race reading the file as 0 bytes on
+  service-worker reload) became a permanent boot failure. The zero-account
+  rebuild now writes an explicit `accounts = []`.
+
 ## 0.3.0 — 2026-07-09
 
 - webimap: connectivity badge no longer sticks at "Connecting…"/"Updating…"
