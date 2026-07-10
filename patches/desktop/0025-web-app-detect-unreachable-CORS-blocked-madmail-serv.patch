@@ -1,0 +1,229 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Thu, 9 Jul 2026 22:28:15 +0000
+Subject: [PATCH] web-app: detect unreachable / CORS-blocked madmail server in
+ webimap setup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The webimap setup dialog handed off to onboarding as soon as the host
+parsed, so a server that is down or (more commonly) a madmail server
+without CORS enabled failed later inside the wasm core with an opaque
+`fetch POST JsValue(TypeError: NetworkError when attempting to fetch
+resource.)` alert — nothing the user could act on.
+
+Pre-flight the parsed host before onboarding and disambiguate the two
+causes a failed cross-origin fetch can't tell apart on its own: a normal
+(cors) GET to <base>/ resolves only when the server sends an allowed
+Access-Control-Allow-Origin; if that throws, a no-cors GET still resolves
+whenever the server is merely reachable. cors-ok -> proceed; cors fails
+but no-cors succeeds -> reachable but CORS-blocked; both fail ->
+unreachable. Each case shows an actionable message instead of the opaque
+core error, and the submit button shows a checking state.
+
+The probe mirrors the core's base_url() scheme rule (http only for the
+localhost/127.0.0.1/[::1] test hatch, https otherwise) so it targets the
+same URL the account is created over, uses cache: 'no-store', and is only
+a warning — submitting the same host again skips the probe and proceeds,
+so a heuristic false positive is never a dead end.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .../WelcomeScreen/UseWebimapServerDialog.tsx  | 152 ++++++++++++++++--
+ 1 file changed, 135 insertions(+), 17 deletions(-)
+
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
+index 65caf9bbc..8dc33fec9 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
+@@ -1,4 +1,4 @@
+-import React, { useState } from 'react'
++import React, { useRef, useState } from 'react'
+ 
+ import Button from '../../Button'
+ import Dialog, { DialogBody, DialogContent, DialogHeader } from '../../Dialog'
+@@ -34,6 +34,80 @@ function parseWebimapHost(input: string): string {
+   }
+ }
+ 
++/**
++ * Base URL the core's webimap transport will use for `host`. Mirrors the
++ * core's `base_url()` (patches/core/0011): everything is https, except the
++ * `localhost` / `127.0.0.1` / `[::1]` test hatch which is plain http — so the
++ * probe below hits the same scheme the account will actually be created over.
++ */
++function webimapBaseUrl(host: string): string {
++  const name = host.startsWith('[')
++    ? host.slice(1).split(']')[0] // bracketed IPv6, `[::1]` or `[::1]:8443`
++    : host.split(':')[0]
++  const scheme =
++    name === 'localhost' || name === '127.0.0.1' || name === '::1'
++      ? 'http'
++      : 'https'
++  return `${scheme}://${host}`
++}
++
++/**
++ * Tell "server unreachable" apart from "server reachable but blocking the
++ * browser (CORS)" before we hand off to onboarding. Account creation is done
++ * by the core with `POST <base>/new`; if the madmail server is down or isn't
++ * sending CORS headers, that fails deep inside the wasm core with an opaque
++ * `fetch POST JsValue(TypeError: NetworkError…)` alert that gives the user
++ * nothing to act on.
++ *
++ * A cross-origin `fetch` that fails throws the same opaque TypeError whether
++ * the cause is CORS or a dead host — the browser hides the difference on
++ * purpose. So we probe twice:
++ *   - a normal (`cors`) GET to `<base>/` resolves (for any HTTP status) only if
++ *     the server sent an Access-Control-Allow-Origin the app's origin is
++ *     allowed by;
++ *   - if that throws, a `no-cors` GET resolves (as an opaque response) as long
++ *     as the server is reachable at all, CORS headers or not.
++ * cors-ok → 'ok'; cors-throws + no-cors-ok → 'cors'; both throw →
++ * 'unreachable'.
++ *
++ * This is a best-effort heuristic, not a guarantee — the caller only warns on
++ * it (the user can proceed anyway). Caveats: it probes `/` (side-effect-free,
++ * unlike POST /new which would provision an account), assuming madmail serves
++ * CORS headers on `/` too; and a plain GET is a CORS "simple request", so an
++ * 'ok' here does not prove the later preflighted requests (the auth-header
++ * `GET /webimap/*` calls) will pass. On its own errors it returns 'ok' so a
++ * flaky probe never blocks a server that would in fact work.
++ */
++async function diagnoseWebimapServer(
++  host: string
++): Promise<'ok' | 'cors' | 'unreachable'> {
++  const base = `${webimapBaseUrl(host)}/`
++  const reaches = async (mode: RequestMode): Promise<boolean> => {
++    const controller = new AbortController()
++    const timer = setTimeout(() => controller.abort(), 6000)
++    try {
++      await fetch(base, {
++        method: 'GET',
++        mode,
++        cache: 'no-store',
++        signal: controller.signal,
++      })
++      return true
++    } catch {
++      return false
++    } finally {
++      clearTimeout(timer)
++    }
++  }
++  try {
++    if (await reaches('cors')) return 'ok'
++    if (await reaches('no-cors')) return 'cors'
++    return 'unreachable'
++  } catch {
++    return 'ok'
++  }
++}
++
+ export default function UseWebimapServerDialog({
+   onClose,
+   selectedAccountId,
+@@ -42,9 +116,17 @@ export default function UseWebimapServerDialog({
+ 
+   const [host, setHost] = useState('')
+   const [error, setError] = useState<string | null>(null)
++  const [checking, setChecking] = useState(false)
++  // Host we already warned about (down / CORS). The probe is a heuristic, so a
++  // second submit of the same host skips it and proceeds anyway — the warning
++  // is never a dead end.
++  const warnedHost = useRef<string | null>(null)
+ 
+   const onSubmit = async (event: React.FormEvent) => {
+     event.preventDefault()
++    if (checking) {
++      return
++    }
+ 
+     const parsedHost = parseWebimapHost(host)
+     if (parsedHost === '') {
+@@ -53,23 +135,58 @@ export default function UseWebimapServerDialog({
+     }
+ 
+     const url = `webimapaccount:${parsedHost}`
+-    let qr: any
++    const base = webimapBaseUrl(parsedHost)
++    setChecking(true)
++    setError(null)
+     try {
+-      // checkQr throws (rather than returning another kind) when core rejects
+-      // the host — without the catch that's an unhandled rejection and the
+-      // dialog silently does nothing.
+-      qr = await BackendRemote.rpc.checkQr(selectedAccountId, url)
+-    } catch {
+-      setError('This does not look like a valid server address.')
+-      return
+-    }
+-    if (!qr || qr.kind !== 'account') {
+-      setError('This does not look like a valid server address.')
+-      return
+-    }
++      let qr: any
++      try {
++        // checkQr throws (rather than returning another kind) when core rejects
++        // the host — without the catch that's an unhandled rejection and the
++        // dialog silently does nothing.
++        qr = await BackendRemote.rpc.checkQr(selectedAccountId, url)
++      } catch {
++        setError('This does not look like a valid server address.')
++        return
++      }
++      if (!qr || qr.kind !== 'account') {
++        setError('This does not look like a valid server address.')
++        return
++      }
+ 
+-    onClose()
+-    await startInstantOnboardingFlow({ qr, url } as any)
++      // Pre-flight the server so a down host or a missing-CORS madmail server
++      // surfaces here as an actionable message, instead of failing later with
++      // the opaque `fetch POST … NetworkError` alert from the core. Skip it if
++      // the user already saw the warning for this host and submitted again.
++      if (warnedHost.current !== parsedHost) {
++        const diagnosis = await diagnoseWebimapServer(parsedHost)
++        if (diagnosis === 'unreachable') {
++          warnedHost.current = parsedHost
++          setError(
++            `Could not reach ${base}. Check that the address is correct, the ` +
++              'server is online, and it is reachable. Submit again to try ' +
++              'connecting anyway.'
++          )
++          return
++        }
++        if (diagnosis === 'cors') {
++          warnedHost.current = parsedHost
++          setError(
++            `${base} is reachable but is refusing browser requests (CORS). A ` +
++              'madmail server must have webimap/websmtp enabled and send ' +
++              'Access-Control-Allow-Origin headers for this browser app to ' +
++              'use it — see the webimap docs above. Submit again to try ' +
++              'anyway.'
++          )
++          return
++        }
++      }
++
++      onClose()
++      await startInstantOnboardingFlow({ qr, url } as any)
++    } finally {
++      setChecking(false)
++    }
+   }
+ 
+   return (
+@@ -110,8 +227,9 @@ export default function UseWebimapServerDialog({
+               type='submit'
+               className={styles.welcomeScreenButton}
+               styling='primary'
++              disabled={checking}
+             >
+-              Use this server
++              {checking ? 'Checking server…' : 'Use this server'}
+             </Button>
+           </form>
+           <br /> {/* space after buttons */}
