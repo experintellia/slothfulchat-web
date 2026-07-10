@@ -95,6 +95,16 @@ exists:
   hide both entries per user; the `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS`
   build/customize variable hides them instance-wide including the toggles.
   `desktop/0033`
+- **Configurable default chatmail relay** — the welcome-screen "create new
+  account" flow (instant onboarding, no scanned QR) creates addresses on the
+  chatmail relay named by the `SLOTHFUL_DEFAULT_CHATMAIL` build/customize
+  variable (baked into `window.__slothfulConfig.defaultChatmailInstance`), so
+  self-hosters can send new sign-ups to their own server. The value may be a
+  bare host, a URL, or a `dcaccount:` QR. The welcome-screen consent link
+  points at the configured relay and its `/privacy.html` (not upstream's
+  default) whenever the account is actually created on it. Unset falls back to
+  upstream's default instance; scanned `dcaccount:`/`dclogin:` QR codes still
+  override it. `desktop/0038`
 
 ## Bugfixes
 

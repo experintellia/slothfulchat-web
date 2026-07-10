@@ -7,6 +7,10 @@ import { createHash } from 'node:crypto'
 //   SLOTHFUL_INSTANCE_NAME   human name, e.g. "SlothfulChat"
 //   SLOTHFUL_INSTANCE_URL    canonical origin, e.g. "https://web.slothful.chat"
 //   SLOTHFUL_DEFAULT_PROXY   wss:// WS-TCP bridge the app uses by default
+//   SLOTHFUL_DEFAULT_CHATMAIL
+//                            chatmail relay the "create new account" instant
+//                            onboarding flow signs up on (host, URL or a
+//                            dcaccount: QR); unset = upstream's default relay
 //   SLOTHFUL_IMPRINT_NAME    responsible person/entity (legal imprint)
 //   SLOTHFUL_IMPRINT_ADDRESS postal address (newlines allowed)
 //   SLOTHFUL_IMPRINT_EMAIL   contact email
@@ -25,6 +29,11 @@ export function buildConfig(env, build = {}) {
     instanceName: env.SLOTHFUL_INSTANCE_NAME || '',
     instanceUrl: env.SLOTHFUL_INSTANCE_URL || '',
     defaultProxyUrl: env.SLOTHFUL_DEFAULT_PROXY || '',
+    // chatmail relay the instant-onboarding "create new account" flow signs up
+    // on when the user taps the button (no scanned QR). Empty = the frontend
+    // keeps upstream's default instance. Read by the patched useInstantOnboarding
+    // (see patches/desktop, slothfulInstanceConfig.instanceDefaultChatmailQr).
+    defaultChatmailInstance: env.SLOTHFUL_DEFAULT_CHATMAIL || '',
     // imprint.html is always emitted (placeholder when unconfigured), so the
     // About link can point at it unconditionally
     imprintUrl: 'imprint.html',
