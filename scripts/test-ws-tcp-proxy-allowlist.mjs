@@ -39,16 +39,24 @@ const tryTcp = (base, ip, port = 993) =>
   new Promise((resolve, reject) => {
     const ws = new WebSocket(`${base}/tcp/${ip}/${port}`);
     let opened = false;
+    let timer;
     ws.on('open', () => {
       opened = true;
-      setTimeout(() => {
+      // The WS upgrade completes before the proxy dials the backend, so 'open'
+      // fires either way. If nothing closes it within 500ms the tunnel is live.
+      timer = setTimeout(() => {
         resolve('allowed');
         ws.close();
       }, 500);
     });
     ws.on('close', code => {
+      clearTimeout(timer);
+      // 4003 = allowlist guard refused it. Any other close after 'open' means it
+      // got past the guard but the backend connection itself failed (e.g. 4004
+      // ECONNREFUSED with no local listener).
       if (code === 4003) resolve('blocked');
-      else if (!opened) resolve('passed-guard');
+      else if (opened) resolve('passed-guard');
+      else reject(new Error(`proxy unreachable: close ${code}`));
     });
     ws.on('error', () => {}); // close event carries the verdict
   });

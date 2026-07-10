@@ -63,7 +63,7 @@ wss.on('connection', async (ws, req) => {
     // (it lives in /etc/hosts, not DNS) and regardless of any allowlist. Only
     // when 'localhost' is *explicitly* allowlisted do we let the loopback IPs
     // through to /tcp — otherwise the health check never opens a tunnel.
-    if (host.toLowerCase() === 'localhost') {
+    if (host && host.toLowerCase() === 'localhost') {
       const loopback = ['127.0.0.1', '::1'];
       if (ALLOWLIST.length && isAllowlisted(host)) {
         const expires = Date.now() + ALLOW_TTL_MS;
