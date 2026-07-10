@@ -662,7 +662,12 @@ class BrowserRuntime {
     return ''
   }
   async downloadFile(pathToSource: string, filename: string): Promise<void> {
-    if (!pathToSource.includes('dc.db-blobs')) {
+    // blobdir attachments plus our own temp files (e.g. the chat HTML export,
+    // which the frontend stages via writeTempFile before downloading)
+    if (
+      !pathToSource.includes('dc.db-blobs') &&
+      !pathToSource.startsWith('/tmp/')
+    ) {
       throw new Error(
         'Browser does not support opening urls outside of blob directory'
       )

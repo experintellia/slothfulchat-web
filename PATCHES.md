@@ -65,7 +65,14 @@ exists:
   the frontend plays `.tgs` with lottie-web's eval-free player (CSP-safe, with a
   gzip-bomb size cap) in both messages and the composer sticker picker (which
   now lists `.tgs` too). Mirrors ArcaneChat's animated-sticker support.
-  `core/0014`, `core/0015`, `desktop/0027`, `desktop/0028`
+  `core/0014`, `core/0015`, `desktop/0027`, `desktop/0030`
+- **Export Chat** — the three-dot menu exports the open chat as a
+  Telegram-style zip: a standalone `index.html` viewer that renders the chat
+  with the app's own stylesheets and message markup (embedded JSON data +
+  self-contained renderer, "Save single-file HTML" snapshot button),
+  `messages.txt`, the raw jsonrpc data as `messages.json`, and the media
+  files next to it; a `manifest.toml` makes the zip double as a webxdc
+  viewer app when renamed to `.xdc`. `desktop/0032`
 - **Public Bots & Public Channels suggestions in the New Chat dialog** — two
   pseudo entries below "New Group"/"New Channel": "Public Bots" opens a
   searchable directory of community-made bots (name, admin, description,
@@ -79,7 +86,7 @@ exists:
   fedimeteo.com's per-city weather channels). Settings → Chats and Media can
   hide both entries per user; the `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS`
   build/customize variable hides them instance-wide including the toggles.
-  `desktop/0029`
+  `desktop/0033`
 
 ## Bugfixes
 
@@ -94,7 +101,7 @@ contribution intended.
 - Dialogs no longer close when a drag that started inside them (e.g.
   selecting text in an input) is released over the backdrop — an outside
   click only closes a dialog when the press also started on the backdrop.
-  `desktop/0028`
+  `desktop/0029`
 - Cancelling account creation crashed the welcome screen: a link component
   resolved the (now unselected) account at render time instead of click time.
   `desktop/0008`
@@ -113,6 +120,9 @@ contribution intended.
 - Big dialogs (settings, about, profiles, media view, new-chat, QR scanner)
   go edge-to-edge on phone-sized viewports, and the QR camera view fills the
   available height. `desktop/0020`
+- The settings sub-pages (chats & media, notifications, appearance, advanced,
+  connectivity, profile editor) go edge-to-edge on phones too, matching the
+  settings root; small pickers and alerts stay popups. `desktop/0031`
 - The QR reader defaults to the rear camera — you scan someone else's code,
   not your own face. `desktop/0015`
 - The connectivity view shows a loading state instead of a blank iframe while
@@ -123,7 +133,7 @@ contribution intended.
   `desktop/0019`
 - Prompt dialogs with a single text input (profile display name, contact
   name, account tag) confirm on Enter like a native `prompt()` would.
-  `desktop/0027`
+  `desktop/0028`
 
 ## Different decisions than upstream
 
