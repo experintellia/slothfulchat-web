@@ -193,3 +193,9 @@ jobs:
       # SW-controlled reload.
       - name: Smoke test — frontend boots on the wasm core
         run: pnpm --filter @slothfulchat/web-app test
+
+      # chat export e2e (fully offline, mock madmail): drives the three-dot
+      # "Export Chat" flow, unpacks the zip, renders the extracted index.html
+      # viewer over file:// and exercises the "Save single-file HTML" button.
+      - name: E2E test — chat export to zip
+        run: node scripts/test-export-chat-html.mjs

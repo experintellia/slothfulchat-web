@@ -39,10 +39,10 @@ runtime.downloadFile; a progress dialog with cancel covers big chats.
 Message text is escaped + linkified (no message-parser markdown, no
 jumbomoji). New strings live in _untranslated_en.json.
 ---
- _locales/_untranslated_en.json                |   6 +
- .../src/components/chat/ChatContextMenu.tsx   |  11 +
- .../components/dialogs/ExportChatToHtml.tsx   | 993 ++++++++++++++++++
- 3 files changed, 1010 insertions(+)
+ _locales/_untranslated_en.json                |    6 +
+ .../src/components/chat/ChatContextMenu.tsx   |   11 +
+ .../components/dialogs/ExportChatToHtml.tsx   | 1019 +++++++++++++++++
+ 3 files changed, 1036 insertions(+)
  create mode 100644 packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
@@ -98,10 +98,10 @@ index ec54fd200..60d6f4352 100644
          (chatListItems.some(c => c.freshMessageCounter > 0)
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 new file mode 100644
-index 000000000..2be9ce2f5
+index 000000000..2e72996a7
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-@@ -0,0 +1,993 @@
+@@ -0,0 +1,1019 @@
 +import React, { useEffect, useRef, useState } from 'react'
 +import moment from 'moment'
 +import { T } from '@deltachat/jsonrpc-client'
@@ -189,7 +189,11 @@ index 000000000..2be9ce2f5
 +  }, [])
 +
 +  return (
-+    <Dialog onClose={() => {}} canOutsideClickClose={false}>
++    <Dialog
++      onClose={() => {}}
++      canOutsideClickClose={false}
++      canEscapeKeyClose={false}
++    >
 +      <DialogHeader title={tx('menu_export_chat')} />
 +      <DialogBody>
 +        <DialogContent>
@@ -230,6 +234,8 @@ index 000000000..2be9ce2f5
 +class MediaCollector {
 +  /** memfs path -> zip entry name (without the media/ prefix) */
 +  entries = new Map<string, { name: string; data: Uint8Array }>()
++  /** paths that failed or exceeded the budget — don't re-fetch per message */
++  private rejected = new Set<string>()
 +  private usedNames = new Set<string>()
 +  private totalBytes = 0
 +
@@ -242,6 +248,9 @@ index 000000000..2be9ce2f5
 +    if (existing) {
 +      return 'media/' + existing.name
 +    }
++    if (this.rejected.has(path)) {
++      return null
++    }
 +    try {
 +      const response = await fetch(runtime.transformBlobURL(path))
 +      if (!response.ok) {
@@ -253,6 +262,7 @@ index 000000000..2be9ce2f5
 +        this.totalBytes + data.byteLength > MAX_TOTAL_MEDIA_BYTES
 +      ) {
 +        log.warn(`not bundling ${path}: too large (${data.byteLength} bytes)`)
++        this.rejected.add(path)
 +        return null
 +      }
 +      this.totalBytes += data.byteLength
@@ -261,6 +271,7 @@ index 000000000..2be9ce2f5
 +      return 'media/' + name
 +    } catch (error) {
 +      log.warn(`failed to bundle ${path}:`, error)
++      this.rejected.add(path)
 +      return null
 +    }
 +  }
@@ -1061,7 +1072,14 @@ index 000000000..2be9ce2f5
 +    // that can be sent into a chat
 +    {
 +      name: 'manifest.toml',
-+      data: encoder.encode(`name = "${chat.name.replace(/[\\"]/g, '\\$&')}"\n`),
++      data: encoder.encode(
++        // strip control chars (raw newlines would break the TOML string),
++        // then escape backslash + quote
++        `name = "${Array.from(chat.name)
++          .filter(c => c.charCodeAt(0) >= 0x20)
++          .join('')
++          .replace(/[\\"]/g, '\\$&')}"\n`
++      ),
 +    },
 +  ]
 +  // the chat avatar doubles as the webxdc icon (spec wants icon.png/icon.jpg)
@@ -1069,8 +1087,16 @@ index 000000000..2be9ce2f5
 +    ? media.entries.get(chat.profileImage)
 +    : undefined
 +  if (avatarEntry) {
-+    const ext = avatarEntry.name.toLowerCase().endsWith('.png') ? 'png' : 'jpg'
-+    zipEntries.push({ name: `icon.${ext}`, data: avatarEntry.data })
++    // the webxdc spec only knows icon.png / icon.jpg — skip other formats
++    const lower = avatarEntry.name.toLowerCase()
++    const ext = lower.endsWith('.png')
++      ? 'png'
++      : lower.endsWith('.jpg') || lower.endsWith('.jpeg')
++        ? 'jpg'
++        : null
++    if (ext) {
++      zipEntries.push({ name: `icon.${ext}`, data: avatarEntry.data })
++    }
 +  }
 +  for (const { name, data: bytes } of media.entries.values()) {
 +    zipEntries.push({ name: `media/${name}`, data: bytes })
