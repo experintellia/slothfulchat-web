@@ -73,6 +73,20 @@ exists:
   `messages.txt`, the raw jsonrpc data as `messages.json`, and the media
   files next to it; a `manifest.toml` makes the zip double as a webxdc
   viewer app when renamed to `.xdc`. `desktop/0032`
+- **Public Bots & Public Channels suggestions in the New Chat dialog** — two
+  pseudo entries below "New Group"/"New Channel": "Public Bots" opens a
+  searchable directory of community-made bots (name, admin, description,
+  language) pulled from
+  [deltachat-bot/public-bots](https://github.com/deltachat-bot/public-bots);
+  the first open asks for consent to load from that third-party site and
+  explains that the bots are community-made, not endorsed by us, and problems
+  should be reported in that repo's GitHub issues; a second visit fetches
+  without asking (revocable via a settings switch). "Public Channels" opens a
+  small dialog linking channel directories (arcanechat.me/channels and
+  fedimeteo.com's per-city weather channels). Settings → Chats and Media can
+  hide both entries per user; the `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS`
+  build/customize variable hides them instance-wide including the toggles.
+  `desktop/0033`
 
 ## Bugfixes
 
