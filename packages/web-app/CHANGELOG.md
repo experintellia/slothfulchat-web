@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Self-hosting**: a new `SLOTHFUL_DEFAULT_CHATMAIL` build/customize variable
+  points the "create new account" onboarding flow at your own chatmail relay
+  (accepts a bare host, a URL, or a `dcaccount:` QR). Unset keeps upstream's
+  default relay; users scanning a `dcaccount:`/`dclogin:` QR still override it.
 - **Export Chat** (three-dot menu): Telegram-style export of the open chat as
   a zip — `index.html` (a standalone viewer that looks like the message list,
   reusing the app's own stylesheets and markup, with a "Save single-file

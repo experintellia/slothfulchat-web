@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Fri, 10 Jul 2026 19:30:00 +0000
+Subject: [PATCH 38/38] web-app: configurable default chatmail relay for instant
+ onboarding
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The welcome-screen "create new account" flow (instant onboarding, no
+scanned QR) hardcoded upstream's default chatmail instance
+(dcaccount:nine.testrun.org). Self-hosters running their own chatmail
+relay had no way to send new sign-ups to it.
+
+Add instanceDefaultChatmailQr() to the slothfulInstanceConfig helper,
+reading window.__slothfulConfig.defaultChatmailInstance (baked in via
+the SLOTHFUL_DEFAULT_CHATMAIL build/customize variable). When set,
+useInstantOnboarding uses it as the default configuration QR; when
+unset it falls back to upstream's DEFAULT_CHATMAIL_HOSTNAME. The value
+may be a bare host, a URL, or a dcaccount: QR — all normalise to the
+bare-host form upstream ships. Scanned DCACCOUNT/DCLOGIN QR codes still
+override it exactly as before.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .../src/hooks/useInstantOnboarding.ts         |  9 +++++++-
+ .../src/utils/slothfulInstanceConfig.ts       | 23 +++++++++++++++++++
+ 2 files changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
+index 15785bb..8b93e1e 100644
+--- a/packages/frontend/src/hooks/useInstantOnboarding.ts
++++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
+@@ -5,6 +5,7 @@ import useSecureJoin from './useSecureJoin'
+ import { ConfigureProgressDialog } from '../components/dialogs/ConfigureProgressDialog'
+ import { DEFAULT_CHATMAIL_HOSTNAME } from '../components/screens/WelcomeScreen/chatmailInstances'
+ import { InstantOnboardingContext } from '../contexts/InstantOnboardingContext'
++import { instanceDefaultChatmailQr } from '../utils/slothfulInstanceConfig'
+ 
+ import type { T } from '@deltachat/jsonrpc-client'
+ import type { WelcomeQrWithUrl } from '../contexts/InstantOnboardingContext'
+@@ -76,7 +77,13 @@ export default function useInstantOnboarding(): InstantOnboarding {
+       // DCACCOUNT is the default QR code which is used if the user
+       // didn't scan a code but just clicked the button to create a
+       // new account on the welcome screen.
+-      let configurationQR = `dcaccount:${DEFAULT_CHATMAIL_HOSTNAME}`
++      //
++      // slothfulchat-web: self-hosters can point the "create new account"
++      // flow at their own chatmail relay via SLOTHFUL_DEFAULT_CHATMAIL
++      // (baked into window.__slothfulConfig.defaultChatmailInstance). When
++      // that isn't set we keep upstream's default instance.
++      let configurationQR =
++        instanceDefaultChatmailQr() ?? `dcaccount:${DEFAULT_CHATMAIL_HOSTNAME}`
+ 
+       if (welcomeQr) {
+         if (welcomeQr.qr.kind === 'account') {
+diff --git a/packages/frontend/src/utils/slothfulInstanceConfig.ts b/packages/frontend/src/utils/slothfulInstanceConfig.ts
+index c519d5a..6035b2b 100644
+--- a/packages/frontend/src/utils/slothfulInstanceConfig.ts
++++ b/packages/frontend/src/utils/slothfulInstanceConfig.ts
+@@ -12,3 +12,26 @@
+ export function instanceHidesPublicSuggestions(): boolean {
+   return (window as any).__slothfulConfig?.hidePublicSuggestions === true
+ }
++
++/**
++ * `SLOTHFUL_DEFAULT_CHATMAIL`: the chatmail relay the "create new account"
++ * instant-onboarding flow creates addresses on when the user just taps the
++ * button (no scanned QR code). Lets self-hosters send new sign-ups to their
++ * own chatmail server instead of the upstream default.
++ *
++ * Returns a ready `dcaccount:` QR string, or `undefined` when unset so the
++ * caller falls back to upstream's default instance. The configured value may
++ * be a bare host (`chat.example.org`), a URL, or an already-formed
++ * `dcaccount:` QR — all normalise to the bare-host form upstream ships.
++ */
++export function instanceDefaultChatmailQr(): string | undefined {
++  const value = (window as any).__slothfulConfig?.defaultChatmailInstance
++  if (typeof value !== 'string' || value.trim() === '') {
++    return undefined
++  }
++  const trimmed = value.trim()
++  if (/^dcaccount:/i.test(trimmed)) {
++    return trimmed
++  }
++  return `dcaccount:${trimmed.replace(/^https?:\/\//i, '').replace(/\/+$/, '')}`
++}
+-- 
+2.43.0
+

@@ -53,6 +53,7 @@ pnpm apply-patches
 SLOTHFUL_INSTANCE_NAME="SlothfulChat" \
 SLOTHFUL_INSTANCE_URL="https://web.example.chat" \
 SLOTHFUL_DEFAULT_PROXY="wss://web.example.chat/bridge" \
+SLOTHFUL_DEFAULT_CHATMAIL="chat.example.chat" \
 SLOTHFUL_IMPRINT_NAME="Jane Doe" \
 SLOTHFUL_IMPRINT_ADDRESS=$'Example Str. 1\n12345 Town\nCountry' \
 SLOTHFUL_IMPRINT_EMAIL="hello@example.chat" \
@@ -98,6 +99,7 @@ how the `CHATMAIL_ALLOWLIST` allow-list works) are in the
 | `SLOTHFUL_INSTANCE_NAME` | Display name of your instance: tab title, PWA install name, imprint page. | `SlothfulChat` |
 | `SLOTHFUL_INSTANCE_URL` | Canonical origin of your instance. | `https://web.slothful.chat` |
 | `SLOTHFUL_DEFAULT_PROXY` | The `wss://` bridge the app uses when the user hasn't set one. **Without this, the app defaults to `ws://localhost:8641`** and can't connect on a hosted site. | `wss://web.slothful.chat/bridge` |
+| `SLOTHFUL_DEFAULT_CHATMAIL` | The chatmail relay the "create new account" onboarding flow signs up on when a user just taps the button. Point it at your own chatmail server so new sign-ups land there. Accepts a bare host, a URL, or a `dcaccount:` QR. Unset = the upstream default relay. Users scanning a `dcaccount:`/`dclogin:` QR still override it. | `chat.example.chat` |
 | `SLOTHFUL_IMPRINT_NAME` | Responsible person/entity on the imprint (legal notice) page. | `Jane Doe` |
 | `SLOTHFUL_IMPRINT_ADDRESS` | Postal address on the imprint page (newlines allowed). | `Example Str. 1\n12345 Town` |
 | `SLOTHFUL_IMPRINT_EMAIL` | Contact email on the imprint page. | `hello@example.chat` |
