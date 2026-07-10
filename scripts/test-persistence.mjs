@@ -130,9 +130,30 @@ try {
     .waitFor({ state: 'visible', timeout: 60_000 })
   console.log(`OK: self-chat shows "${marker}" after reload`)
 
+  // steps 7+8 corrupt OPFS out from under the app. The worker holds permanent
+  // sync-access locks on accounts.toml/.bak, so corruption must be injected
+  // from a page that does NOT run the app: navigate to a 404 (same origin, so
+  // OPFS is reachable; the SW passes 404s through when the network is up) and
+  // retry until the old worker's teardown releases the locks.
+  const appUrl = `http://localhost:${APP_PORT}/main.html?proxy=ws://localhost:${PROXY_PORT}`
+  const injectOpfsCorruption = async fn => {
+    await page.goto(`http://localhost:${APP_PORT}/__no_app__`)
+    const deadline = Date.now() + 15_000
+    for (;;) {
+      try {
+        await page.evaluate(fn)
+        return
+      } catch (err) {
+        if (Date.now() > deadline) throw err
+        await new Promise(r => setTimeout(r, 500)) // old worker still tearing down
+      }
+    }
+  }
+
   // 7. corrupt accounts.toml in OPFS (the iOS incident: mirror returned ~1MB
-  // of garbage) → reload → the wasm self-heal must quarantine + rebuild it
-  await page.evaluate(async () => {
+  // of garbage) → boot again → the wasm self-heal must quarantine it and
+  // restore the last-good backup
+  await injectOpfsCorruption(async () => {
     const root = await navigator.storage.getDirectory()
     const dir = await (
       await root.getDirectoryHandle('memfs')
@@ -143,7 +164,7 @@ try {
     await w.close()
   })
   console.log('OK: overwrote OPFS accounts.toml with 2 MiB of 0xff')
-  await page.reload()
+  await page.goto(appUrl)
   await page.waitForFunction(() => window.__coreSystemInfo, null, {
     timeout: 120_000,
   })
@@ -179,6 +200,35 @@ try {
     throw new Error('accounts.toml.broken missing in OPFS after self-heal')
   }
   console.log('OK: corrupt accounts.toml self-healed, quarantine file kept')
+
+  // 8. the CI flake shape: 0-byte accounts.toml AND no account dirs → the
+  // heal must skip the (now stale) backup, rebuild a parseable config with
+  // `accounts = []` (a rebuild without the key boot-loops on `missing field
+  // accounts`) and boot empty
+  await injectOpfsCorruption(async () => {
+    const root = await navigator.storage.getDirectory()
+    const dir = await (
+      await root.getDirectoryHandle('memfs')
+    ).getDirectoryHandle('accounts')
+    for await (const [name, handle] of dir.entries()) {
+      if (handle.kind === 'directory') {
+        await dir.removeEntry(name, { recursive: true })
+      }
+    }
+    const file = await dir.getFileHandle('accounts.toml')
+    const w = await file.createWritable()
+    await w.close() // truncates to 0 bytes
+  })
+  console.log('OK: truncated OPFS accounts.toml to 0 bytes, removed account dirs')
+  await page.goto(appUrl)
+  await page.waitForFunction(() => window.__coreSystemInfo, null, {
+    timeout: 120_000,
+  })
+  const emptyIds = await rpc('getAllAccountIds')
+  if (emptyIds.length !== 0) {
+    throw new Error(`expected 0 accounts after empty-file heal, got ${emptyIds}`)
+  }
+  console.log('OK: empty accounts.toml healed to a bootable zero-account config')
 
   console.log('OK: account + message survived reload')
 } catch (err) {

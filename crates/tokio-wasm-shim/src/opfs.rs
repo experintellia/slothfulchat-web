@@ -45,9 +45,25 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 /// Paths queued for flushing; dedupes queue entries (last state wins anyway).
 static PENDING: Mutex<Option<(UnboundedSender<PathBuf>, HashSet<PathBuf>)>> = Mutex::new(None);
 
+/// memfs path of core's account registry. Too important for the async
+/// mirror: a reload can kill the worker between `get_file_handle(create)`
+/// (which materializes an EMPTY file in OPFS) and the first SAH write,
+/// leaving a permanently 0-byte accounts.toml. It is mirrored synchronously
+/// instead, through sync access handles held for the worker's lifetime
+/// (`CONFIG_SAHS`), the same way sahpool protects the sqlite files.
+const ACCOUNTS_TOML: &str = "/accounts/accounts.toml";
+/// Last-good copy, refreshed from the previous content before every
+/// accounts.toml overwrite; the wasm self-heal restores from it.
+const ACCOUNTS_TOML_BAK: &str = "accounts.toml.bak";
+
 thread_local! {
     /// sahpool management handle; `Some` = persistence is on (util is not Send).
     static SAHPOOL: RefCell<Option<OpfsSAHPoolUtil>> = const { RefCell::new(None) };
+    /// Permanently-open sync access handles for (accounts.toml, .bak). Their
+    /// exclusive locks also serialize reload races: the next worker waits in
+    /// waitForOpfsSyncHandles until this worker is destroyed.
+    static CONFIG_SAHS: RefCell<Option<(FileSystemSyncAccessHandle, FileSystemSyncAccessHandle)>> =
+        const { RefCell::new(None) };
 }
 
 fn js_err(err: JsValue) -> String {
@@ -69,6 +85,21 @@ pub async fn enable_persistence() -> Result<(), String> {
     let root = mirror_root().await.map_err(js_err)?;
     hydrate(&root).await.map_err(|e| format!("opfs hydrate failed: {}", js_err(e)))?;
 
+    // lock accounts.toml (+ .bak) for the worker's lifetime; all writes to it
+    // become synchronous (see ACCOUNTS_TOML). On a fresh origin this creates
+    // the files empty — harmless: core overwrites accounts.toml milliseconds
+    // later, and a worker killed inside that gap self-heals on the next boot.
+    let accounts_dir = ensure_dirs(&root, Path::new("/accounts"))
+        .await
+        .map_err(|e| format!("opfs: failed to create accounts dir: {}", js_err(e)))?;
+    let main = open_sah(&accounts_dir, "accounts.toml")
+        .await
+        .map_err(|e| format!("opfs: failed to lock accounts.toml: {}", js_err(e)))?;
+    let bak = open_sah(&accounts_dir, ACCOUNTS_TOML_BAK)
+        .await
+        .map_err(|e| format!("opfs: failed to lock accounts.toml.bak: {}", js_err(e)))?;
+    CONFIG_SAHS.with(|c| *c.borrow_mut() = Some((main, bak)));
+
     let (tx, rx) = unbounded();
     *PENDING.lock().unwrap() = Some((tx, HashSet::new()));
     ENABLED.store(true, Ordering::Relaxed);
@@ -77,9 +108,13 @@ pub async fn enable_persistence() -> Result<(), String> {
 }
 
 /// Queues `path` (normalized, absolute) for asynchronous OPFS reconciliation.
-/// No-op unless persistence is enabled.
+/// accounts.toml never queues: it is written through synchronously via the
+/// held sync access handles instead. No-op unless persistence is enabled.
 pub(crate) fn mark_dirty(path: &Path) {
     if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    if path == Path::new(ACCOUNTS_TOML) && reconcile_config_sync() {
         return;
     }
     let mut guard = PENDING.lock().unwrap();
@@ -88,6 +123,82 @@ pub(crate) fn mark_dirty(path: &Path) {
             let _ = tx.unbounded_send(path.to_path_buf());
         }
     }
+}
+
+/// Synchronous accounts.toml write-through: preserves the previous content as
+/// accounts.toml.bak (the self-heal's restore source), then writes the current
+/// memfs state — write first, truncate last, all in one JS task, so a worker
+/// teardown can never leave a half-written file. Returns false when the
+/// handles are not held (setup failed half-way) → caller uses the async queue.
+fn reconcile_config_sync() -> bool {
+    CONFIG_SAHS.with(|c| {
+        let borrow = c.borrow();
+        let Some((main, bak)) = borrow.as_ref() else {
+            return false;
+        };
+        let at0 = || {
+            let opts = FileSystemReadWriteOptions::new();
+            opts.set_at(0.0);
+            opts
+        };
+        let result = (|| -> Result<(), JsValue> {
+            match fs::snapshot(Path::new(ACCOUNTS_TOML)) {
+                Snapshot::File(data) => {
+                    let old_len = main.get_size()? as usize;
+                    if old_len > 0 {
+                        let mut old = vec![0u8; old_len];
+                        let read = main.read_with_u8_array_and_options(&mut old, &at0())? as usize;
+                        old.truncate(read);
+                        let written = bak.write_with_u8_array_and_options(&old, &at0())? as usize;
+                        if written == old.len() {
+                            bak.truncate_with_f64(old.len() as f64)?;
+                            bak.flush()?;
+                        }
+                    }
+                    let written = main.write_with_u8_array_and_options(&data, &at0())? as usize;
+                    if written != data.len() {
+                        return Err(JsValue::from_str(&format!(
+                            "opfs: partial config write ({written} of {} bytes)",
+                            data.len()
+                        )));
+                    }
+                    main.truncate_with_f64(data.len() as f64)?;
+                    main.flush()?;
+                }
+                // removed from memfs (quarantine rename): the file itself
+                // cannot be deleted while its SAH is held — empty = gone
+                Snapshot::Missing => {
+                    main.truncate_with_f64(0.0)?;
+                    main.flush()?;
+                }
+                Snapshot::Dir => {}
+            }
+            Ok(())
+        })();
+        if let Err(err) = result {
+            web_sys::console::warn_2(
+                &JsValue::from_str("opfs sync write-through failed for accounts.toml"),
+                &err,
+            );
+        }
+        true
+    })
+}
+
+/// Opens (creating if needed) a permanent sync access handle for `name` in `dir`.
+async fn open_sah(
+    dir: &FileSystemDirectoryHandle,
+    name: &str,
+) -> Result<FileSystemSyncAccessHandle, JsValue> {
+    let create = FileSystemGetFileOptions::new();
+    create.set_create(true);
+    let handle: FileSystemFileHandle =
+        JsFuture::from(dir.get_file_handle_with_options(name, &create))
+            .await?
+            .into();
+    Ok(JsFuture::from(handle.create_sync_access_handle())
+        .await?
+        .into())
 }
 
 async fn flusher(root: FileSystemDirectoryHandle, mut rx: UnboundedReceiver<PathBuf>) {
