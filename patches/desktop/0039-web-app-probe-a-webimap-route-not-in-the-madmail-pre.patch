@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Fri, 10 Jul 2026 20:39:56 +0000
+Subject: [PATCH 39/39] web-app: probe a webimap route, not /, in the madmail
+ pre-flight
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The CORS pre-flight added in the previous webimap-setup patch probed
+GET <base>/, assuming madmail serves CORS headers on the index page too.
+It does not: madmail applies Access-Control-Allow-Origin only to /new
+and the /webimap/* / /websmtp/* API routes (chatmail-www's router wires
+the CORS snapshot into those handlers only), so the probe threw for
+every madmail server — including correctly configured ones — and the
+dialog showed the 'reachable but CORS-blocked' false negative on each
+first submit.
+
+Probe GET <base>/webimap/mailboxes instead. Without auth headers it is
+just a 401, side-effect-free, and the response goes through the same
+CORS policy (including the webimap-enabled gate) that answers the
+core's later requests — so cors-mode fetch resolving really does mean
+the server is usable from the browser, and failing still means webimap
+is disabled or CORS is not set up.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .../WelcomeScreen/UseWebimapServerDialog.tsx  | 30 ++++++++++++-------
+ 1 file changed, 19 insertions(+), 11 deletions(-)
+
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
+index 8dc33fec9..100b98a0a 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
+@@ -62,31 +62,39 @@ function webimapBaseUrl(host: string): string {
+  * A cross-origin `fetch` that fails throws the same opaque TypeError whether
+  * the cause is CORS or a dead host — the browser hides the difference on
+  * purpose. So we probe twice:
+- *   - a normal (`cors`) GET to `<base>/` resolves (for any HTTP status) only if
+- *     the server sent an Access-Control-Allow-Origin the app's origin is
+- *     allowed by;
++ *   - a normal (`cors`) GET to `<base>/webimap/mailboxes` resolves (for any
++ *     HTTP status — without auth headers it's just a 401) only if the server
++ *     sent an Access-Control-Allow-Origin the app's origin is allowed by;
+  *   - if that throws, a `no-cors` GET resolves (as an opaque response) as long
+  *     as the server is reachable at all, CORS headers or not.
+  * cors-ok → 'ok'; cors-throws + no-cors-ok → 'cors'; both throw →
+  * 'unreachable'.
+  *
++ * The probe must target a webimap route: madmail applies CORS headers only to
++ * `/new` and the `/webimap/*` / `/websmtp/*` API routes, never to the `/`
++ * index page, so probing `/` flags every madmail server — including correctly
++ * configured ones — as CORS-blocked. `GET /webimap/mailboxes` is the
++ * side-effect-free choice (unlike POST /new, which would provision an
++ * account), and it is gated by the same CORS policy that will answer the
++ * core's later requests, including whether webimap is enabled at all.
++ *
+  * This is a best-effort heuristic, not a guarantee — the caller only warns on
+- * it (the user can proceed anyway). Caveats: it probes `/` (side-effect-free,
+- * unlike POST /new which would provision an account), assuming madmail serves
+- * CORS headers on `/` too; and a plain GET is a CORS "simple request", so an
+- * 'ok' here does not prove the later preflighted requests (the auth-header
+- * `GET /webimap/*` calls) will pass. On its own errors it returns 'ok' so a
+- * flaky probe never blocks a server that would in fact work.
++ * it (the user can proceed anyway). Caveat: a plain GET is a CORS "simple
++ * request", so an 'ok' here does not prove the later preflighted requests
++ * (the auth-header `GET /webimap/*` calls) will pass — though madmail answers
++ * preflights from the same CORS policy this GET exercises. On its own errors
++ * it returns 'ok' so a flaky probe never blocks a server that would in fact
++ * work.
+  */
+ async function diagnoseWebimapServer(
+   host: string
+ ): Promise<'ok' | 'cors' | 'unreachable'> {
+-  const base = `${webimapBaseUrl(host)}/`
++  const probeUrl = `${webimapBaseUrl(host)}/webimap/mailboxes`
+   const reaches = async (mode: RequestMode): Promise<boolean> => {
+     const controller = new AbortController()
+     const timer = setTimeout(() => controller.abort(), 6000)
+     try {
+-      await fetch(base, {
++      await fetch(probeUrl, {
+         method: 'GET',
+         mode,
+         cache: 'no-store',

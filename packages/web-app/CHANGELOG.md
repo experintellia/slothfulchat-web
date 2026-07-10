@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **webimap setup fix**: the up-front server check now probes the actual
+  webimap endpoint (`GET /webimap/mailboxes`) instead of the server's index
+  page. madmail sends CORS headers only on its API routes, so the old probe
+  wrongly reported every madmail server — including correctly configured
+  ones — as "reachable but refusing browser requests (CORS)".
 - **Self-hosting**: a new `SLOTHFUL_DEFAULT_CHATMAIL` build/customize variable
   points the "create new account" onboarding flow at your own chatmail relay
   (accepts a bare host, a URL, or a `dcaccount:` QR). The welcome-screen
