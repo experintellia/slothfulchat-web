@@ -2,6 +2,7 @@
 // load main.html headless, assert the frontend renders past a blank screen
 // and the wasm core answers rpc. Modeled on scripts/smoke-core-wasm.mjs.
 import { spawn } from 'node:child_process'
+import { writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
@@ -192,22 +193,34 @@ try {
     'OK: manifest advertises openpgp4fpr handler + share target + .xdc file handler + focus-existing'
   )
 
-  // Launch the app under a query and observe the runtime's gated delivery. We
-  // register our own recorders through the runtime's real setters the instant
-  // window.r is published (so the runtime's buffering/gate logic stays in
-  // charge), assert nothing is delivered while the gate is closed, then drive
-  // emitUIFullyReady() ourselves — exactly what the frontend's startup() does
-  // once an account is selected — and observe the flush. This runs long before
-  // the real frontend finishes booting its wasm core and re-registers, so it's
-  // deterministic. Returns { beforeGate, qr, sendToChat, url }.
+  // A minimal fixture that loads ONLY runtime.js — not bundle.js, so no second
+  // wasm core boots. The launch handlers live entirely in runtime.js (URL →
+  // window.r's buffered pendings, gated on emitUIFullyReady), so this exercises
+  // the real code without a second core fighting the main page over OPFS (that
+  // contention flaked CI when we booted the full app in extra pages).
+  const FIXTURE = script('../packages/web-app/dist/__launch-fixture.html')
+  writeFileSync(
+    FIXTURE,
+    '<!doctype html><meta charset="utf-8"><title>launch fixture</title>' +
+      '<body><div id="root"></div>' +
+      '<script src="./runtime.js" type="module"></script>'
+  )
+
+  // Launch the runtime under a query and observe its gated delivery. Each run
+  // uses an isolated context (no shared SW/OPFS with the main page). We register
+  // recorders through the runtime's real setters the instant window.r is
+  // published (so its buffering/gate logic stays in charge), assert nothing is
+  // delivered while the gate is closed, then drive emitUIFullyReady() ourselves
+  // — exactly what the frontend's startup() does once an account is selected —
+  // and observe the flush. Returns { beforeGate, qr, sendToChat, url }.
   const launchAndCapture = async query => {
-    const p = await browser.newPage()
-    await p.addInitScript(() => {
+    const ctx = await browser.newContext()
+    await ctx.addInitScript(() => {
       // freeze the real eval before avoid-eval.js stubs it, else playwright's
       // evaluate()/waitForFunction() break (see the boot page setup above)
       Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
     })
-    await p.addInitScript(() => {
+    await ctx.addInitScript(() => {
       window.__captured = { qr: null, sendToChat: null }
       let _r
       Object.defineProperty(window, 'r', {
@@ -228,11 +241,9 @@ try {
         },
       })
     })
-    await p.goto(
-      `http://localhost:${APP_PORT}/main.html?${query}` +
-        `&proxy=ws://localhost:${PROXY_PORT}&persist=0`
-    )
-    await p.waitForFunction(() => !!window.r, null, { timeout: 30_000 })
+    const p = await ctx.newPage()
+    await p.goto(`http://localhost:${APP_PORT}/__launch-fixture.html?${query}`)
+    await p.waitForFunction(() => !!window.r, null, { timeout: 15_000 })
     // gate is still closed (emitUIFullyReady not called yet): nothing delivered
     const beforeGate = await p.evaluate(() => ({ ...window.__captured }))
     // open the gate exactly as the frontend does after selecting an account
@@ -244,7 +255,7 @@ try {
     )
     const captured = await p.evaluate(() => window.__captured)
     const url = p.url()
-    await p.close()
+    await ctx.close()
     return { beforeGate, ...captured, url }
   }
 
@@ -282,6 +293,12 @@ try {
     throw new Error(`?text= not stripped after delivery: ${textRun.url}`)
   }
   console.log('OK: shared text gated until UI-ready, flushed to onWebxdcSendToChat(null, text), URL scrubbed')
+
+  try {
+    unlinkSync(FIXTURE)
+  } catch {
+    /* best-effort cleanup; dist is ephemeral anyway */
+  }
 
   // (3) the primitive the .xdc file handler relies on: writeTempFileFromBase64
   // must round-trip base64 bytes onto the wasm memfs (WebxdcSaveToChatDialog
