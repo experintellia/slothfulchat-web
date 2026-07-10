@@ -440,6 +440,22 @@ try {
     problems.push('chat container still paints the background image (it would stretch to full chat height)')
   if (problems.length) throw new Error('export verification problems:\n  ' + problems.join('\n  '))
 
+  // --- reactions: hover title names the reactors; click opens the dialog ---
+  const reactionsCluster = exportPage.locator('[data-reactions-msg]').first()
+  const reactionsTitle = await reactionsCluster.getAttribute('title')
+  // the reactor is the exporting account itself, which core names "Me"
+  if (!/.+: .*👍/.test(reactionsTitle ?? ''))
+    throw new Error(`reactions title attribute wrong: ${reactionsTitle}`)
+  await reactionsCluster.click()
+  const reactionsDialog = exportPage.locator('.html-export-dialog')
+  await reactionsDialog.waitFor({ state: 'visible', timeout: 10_000 })
+  const dialogText = await reactionsDialog.innerText()
+  if (!dialogText.includes('Me') || !dialogText.includes('👍'))
+    throw new Error(`reactions dialog missing reactor info: ${dialogText}`)
+  await reactionsDialog.locator('[data-action="close"]').click()
+  await reactionsDialog.waitFor({ state: 'detached', timeout: 5_000 })
+  console.log('OK: reactions dialog shows who reacted')
+
   // --- "Save transcript (.txt)" button downloads the plain-text log ---
   const txtDownloadP = exportPage.waitForEvent('download', { timeout: 30_000 })
   await exportPage.locator('#save-txt-button').click()

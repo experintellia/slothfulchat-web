@@ -79,7 +79,8 @@ exists:
   self-contained renderer, "Save single-file HTML" snapshot button),
   `messages.txt`, the raw jsonrpc data as `messages.json`, and the media
   files next to it; a `manifest.toml` makes the zip double as a webxdc
-  viewer app when renamed to `.xdc`. `desktop/0032`, `desktop/0035`
+  viewer app when renamed to `.xdc`. `desktop/0032`, `desktop/0035`,
+  `desktop/0037`
 - **Public Bots & Public Channels suggestions in the New Chat dialog** — two
   pseudo entries below "New Group"/"New Channel": "Public Bots" opens a
   searchable directory of community-made bots (name, admin, description,
@@ -125,7 +126,7 @@ contribution intended.
   menu on top of the app's: the chat-list handler awaited `getFullChatById`
   before calling `preventDefault`, so it fired too late for the web build
   (Electron has no native menu, so upstream never saw it). `preventDefault`
-  now runs synchronously before the await. `desktop/0035`
+  now runs synchronously before the await. `desktop/0036`
 
 ## UI & mobile polish
 

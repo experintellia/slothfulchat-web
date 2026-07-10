@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 10 Jul 2026 14:00:00 +0000
-Subject: [PATCH 33/36] web-app: Public Bots directory + Public Channels
+Subject: [PATCH 33/37] web-app: Public Bots directory + Public Channels
  suggestions in New Chat
 
 Two community suggestions below the New Group / New Channel entries of

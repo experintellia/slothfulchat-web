@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 8 Jul 2026 23:01:12 +0000
-Subject: [PATCH 16/36] web-app: show the slothfulchat-web source commit in the
+Subject: [PATCH 16/37] web-app: show the slothfulchat-web source commit in the
  About dialog
 
 Surfaces which commit + message a deployed instance was built from,
