@@ -396,3 +396,82 @@ write API in our pipeline that sahpool does *not* also exercise. Three fixes:
 e2e: `scripts/test-persistence.mjs` step 7 overwrites the OPFS accounts.toml
 with 2 MiB of `0xff`, reloads, and asserts the account is healed and the
 quarantine file exists.
+
+## Feature — animated Lottie / Telegram `.tgs` stickers (2026-07-10)
+
+Reference: ArcaneChat's Android client (`glide/lottie/LottieDecoder.java`)
+bundles the airbnb Lottie library and decodes `.tgs` → `LottieComposition` →
+animated drawable in the sticker slot. Chatmail core never renders stickers, so
+the web edition needs the same two halves: core *classifies* the file, the app
+*plays* it.
+
+- **Core (2 changed lines, `patches/core`)**: `guess_msgtype_from_path_suffix`
+  mapped `tgs` → `Viewtype::File`; changed to `Viewtype::Sticker` so a `.tgs`
+  attachment lands in the sticker slot (and a `.tgs` you send via the file
+  picker is classified as a sticker, emitting `Chat-Content: sticker`).
+  `mimeparser::parse_attachments` only honored a `Chat-Content: sticker` header
+  on parts already typed `Image`/`Gif`, which dropped animated stickers;
+  removed that precondition so an explicitly-tagged sticker is honored whatever
+  its detected type. Mirrors ArcaneChat's core changes (they also blanket-map
+  `webp` → `Sticker`; we don't — that would turn every WebP image into a
+  sticker, and the loosened header path already re-types tagged WebP stickers).
+- **Frontend (`patches/desktop`)**: new `LottieSticker.tsx` fetches the sticker
+  blob, sniffs the gzip magic (`1f 8b`) so both gzipped `.tgs` and plain Lottie
+  `.json` go through one path, decompresses `.tgs` with `DecompressionStream`,
+  and plays it with **lottie-web's eval-free `lottie_light`** build (the SVG
+  renderer). `messageAttachment.tsx` routes Lottie stickers to it; static/WebP
+  stickers keep the existing `<img>` path. Honors `prefers-reduced-motion`
+  (renders a still first frame). On decode failure it shows a neutral 🧩 box so
+  the message layout stays stable.
+- **CSP gotcha**: the app CSP is `script-src 'self' 'wasm-unsafe-eval'` — no
+  `'unsafe-eval'`. The *full* lottie-web build calls `eval()` for Lottie
+  expressions and would be blocked; `lottie_light` has no expression evaluator
+  (and `.tgs` forbids expressions anyway). Verified the production `bundle.js`
+  contains **zero** `eval(` calls after adding it.
+- **Build note**: `lottie-web` added to the vendored frontend `package.json`
+  *and* its `pnpm-lock.yaml` (CI installs `--frozen-lockfile`); esbuild bundles
+  `lottie_light` with 0 warnings/errors. Release browser build + frontend
+  `tsc` both pass.
+**Cost:** core = 2 changed lines (1 patch); desktop = 1 patch (new component +
+~30 lines wiring + one dependency).
+
+### Composer sticker picker (2026-07-10)
+
+The picker was assumed descoped, but most of it already worked: the web-app
+runtime implements `transformStickerURL`/`deleteSticker`, and the core RPCs it
+drives (`misc_get_sticker_folder`, `misc_save_sticker`, `misc_get_stickers`)
+run on the wasm memfs — the tokio-wasm-shim `fs` has full `create_dir_all` +
+`read_dir` + `DirEntry`/`FileType` support, and the stickers dir
+(`accounts/<id>/stickers/`, outside the blobdir) is mirrored to OPFS like the
+rest of the memfs (`mark_dirty` fires on every write/copy/mkdir), so saved
+stickers **persist across reloads**. So listing, saving to a collection,
+deleting, and sending all already worked for static (png/webp/gif) stickers.
+
+Two gaps closed to finish it for animated stickers:
+- **Core (`patches/core`)**: `misc_get_stickers` filtered to png/webp/gif, so a
+  saved `.tgs` never listed. Added `.tgs` to the accepted extensions.
+- **Frontend (`patches/desktop`)**: the picker rendered every thumbnail with a
+  plain `<img>`; `.tgs` thumbnails now use the same `LottieSticker` player
+  (made reusable via an optional `className`). Static stickers keep `<img>`.
+
+Not changed (upstream behavior, not a browser gap): the picker is populated
+only by "add to sticker collection" on a received sticker — there's no bulk
+pack-import UI, on desktop either.
+
+**Cost:** core = 1 changed line (1 patch); desktop = 1 patch (picker wiring +
+`LottieSticker` className refactor).
+
+### Hardening (self-review, 2026-07-10)
+
+- **Gzip-bomb guard**: a `.tgs` renders automatically when its message scrolls
+  into view, so `LottieSticker` caps both the compressed blob (1 MiB) and the
+  streamed decompressed output (8 MiB, enforced chunk-wise) — a hostile sticker
+  can't expand unboundedly and OOM the tab that also hosts the wasm core.
+- **Scoped the `Chat-Content: sticker` override**: it now only re-types
+  file-bearing parts (`Image`/`Gif`/`File`/`Sticker`), not `Text`/`Webxdc`/
+  `Voice`/etc., so the header can't turn a text message or a real file
+  attachment into a fileless/broken sticker.
+- Scoped Lottie detection to `.tgs` only (dropped a half-wired `.json` path) so
+  message rendering, the picker, and "save to collection" agree on one format;
+  remount `LottieSticker` per file via a `key` so a recycled row/thumbnail
+  doesn't keep a stale failure.

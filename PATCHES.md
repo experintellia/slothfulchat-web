@@ -59,6 +59,13 @@ exists:
 - **Build info in the About dialog** — shows the slothfulchat-web version and
   source commit a deployed instance was built from, with the commit message
   on hover. `desktop/0016`, `desktop/0024`, `desktop/0025`
+- **Stickers, including animated Lottie** — Telegram `.tgs` (gzipped Lottie)
+  stickers render and send, alongside static ones. Core classifies `.tgs` as a
+  sticker and honors the `Chat-Content: sticker` header for file-bearing parts;
+  the frontend plays `.tgs` with lottie-web's eval-free player (CSP-safe, with a
+  gzip-bomb size cap) in both messages and the composer sticker picker (which
+  now lists `.tgs` too). Mirrors ArcaneChat's animated-sticker support.
+  `core/0014`, `core/0015`, `desktop/0027`, `desktop/0028`
 
 ## Bugfixes
 

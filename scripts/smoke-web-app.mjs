@@ -32,6 +32,19 @@ page.on('pageerror', e => {
   pageErrors.push(e.message)
   console.error('[pageerror]', e.message)
 })
+// CSP violations surface as console errors ("Refused to ..."). The Lottie
+// sticker player must stay eval-free to satisfy script-src 'self'
+// 'wasm-unsafe-eval'; a regression to an eval-using build would show up here.
+const cspViolations = []
+page.on('console', m => {
+  const t = m.text()
+  if (
+    m.type() === 'error' &&
+    /Content Security Policy|Refused to (?:evaluate|execute|run)/.test(t)
+  ) {
+    cspViolations.push(t.slice(0, 300))
+  }
+})
 
 // upstream's avoid-eval.js replaces window.eval with a throwing stub, which
 // breaks playwright's evaluate/waitForFunction. Freeze the real eval first
@@ -70,6 +83,22 @@ try {
       .map(e => e.className.toString().split(' ')[0]),
   }))
   console.log('OK: frontend rendered #root:', JSON.stringify(snippet))
+
+  // Lottie sticker support: the animated-sticker player (lottie-web) must be
+  // bundled, otherwise .tgs stickers silently fall back to a broken image.
+  // Assert it shipped in the served bundle. (A full render e2e needs a
+  // two-account message carrying a .tgs — left as follow-up.)
+  const lottieBundled = await page.evaluate(async appPort => {
+    const src = await (await fetch(`http://localhost:${appPort}/bundle.js`)).text()
+    // These are lottie-web-internal player methods (not our own component code,
+    // which only calls loadAnimation/goToAndStop/destroy), so this fails if the
+    // player itself didn't bundle — not merely if our component shipped.
+    return /registerAnimation/.test(src) && /setSubframeRendering/.test(src)
+  }, APP_PORT)
+  if (!lottieBundled) {
+    throw new Error('lottie-web sticker player missing from bundle.js')
+  }
+  console.log('OK: lottie sticker player bundled')
 
   // -- regression: an SW-controlled reload must still deliver the proxy config
   // to the core worker. The app-shell SW serves the precached worker.js whose
@@ -115,6 +144,28 @@ try {
   console.log(
     `OK: SW-served worker kept proxy config (dead-host configure failed with: ${configureError.slice(0, 120)})`
   )
+
+  // Sticker picker backend: its core RPCs must round-trip on the wasm memfs
+  // (misc_get_sticker_folder does create_dir_all; misc_get_stickers does
+  // read_dir on the account's stickers/ dir, which lives outside the blobdir).
+  // A regression in the fs shim would throw here.
+  const stickerBackend = await page.evaluate(async () => {
+    const id = await window.exp.rpc.addAccount()
+    const folder = await window.exp.rpc.miscGetStickerFolder(id)
+    const packs = await window.exp.rpc.miscGetStickers(id)
+    return { folder, packCount: Object.keys(packs).length }
+  })
+  if (!stickerBackend.folder || !stickerBackend.folder.endsWith('stickers')) {
+    throw new Error(`sticker folder RPC returned unexpected path: ${stickerBackend.folder}`)
+  }
+  console.log(
+    `OK: sticker picker backend works on wasm (folder=${stickerBackend.folder}, packs=${stickerBackend.packCount})`
+  )
+
+  if (cspViolations.length > 0) {
+    console.error(`FAIL: ${cspViolations.length} CSP violation(s): ${cspViolations[0]}`)
+    failed = true
+  }
 
   if (pageErrors.length > 0) {
     console.error(`FAIL: ${pageErrors.length} uncaught page error(s)`)

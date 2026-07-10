@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <dev@slothfulchat.local>
+Date: Fri, 10 Jul 2026 01:07:09 +0000
+Subject: [PATCH 14/15] sticker: classify .tgs as Sticker + honor Chat-Content
+ sticker header
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+.tgs (gzipped Lottie / Telegram animated sticker) mapped to Viewtype::File,
+so animated stickers arrived as generic file chips. Map it to Viewtype::Sticker.
+Also widen the Chat-Content: sticker override from Image/Gif-only to any
+file-bearing part (Image/Gif/File/Sticker), so an explicitly-tagged sticker is
+honored whatever its detected type — but NOT Text/Webxdc/Voice/Audio/Video, so
+the header can't turn a text message or a real file attachment into a
+fileless/broken sticker. Core carries the blob opaquely; the app layer gunzips
+and plays the Lottie.
+---
+ src/message.rs    |  5 ++++-
+ src/mimeparser.rs | 12 ++++++++++--
+ 2 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/src/message.rs b/src/message.rs
+index 4a80b5744..677b75e69 100644
+--- a/src/message.rs
++++ b/src/message.rs
+@@ -1595,7 +1595,10 @@ pub(crate) fn guess_msgtype_from_path_suffix(path: &Path) -> Option<(Viewtype, &
+         "rtf" => (Viewtype::File, "application/rtf"),
+         "spx" => (Viewtype::File, "audio/ogg"), // Ogg Speex Profile
+         "svg" => (Viewtype::File, "image/svg+xml"),
+-        "tgs" => (Viewtype::File, "application/x-tgsticker"),
++        // .tgs is a gzipped Lottie animation (Telegram animated sticker).
++        // Classify it as a sticker so it renders in the sticker slot; the web
++        // frontend gunzips + plays the Lottie (core carries the blob opaquely).
++        "tgs" => (Viewtype::Sticker, "application/x-tgsticker"),
+         "tiff" => (Viewtype::File, "image/tiff"),
+         "tif" => (Viewtype::File, "image/tiff"),
+         "ttf" => (Viewtype::File, "font/ttf"),
+diff --git a/src/mimeparser.rs b/src/mimeparser.rs
+index eda7f8540..357ea9f32 100644
+--- a/src/mimeparser.rs
++++ b/src/mimeparser.rs
+@@ -848,8 +848,16 @@ fn parse_attachments(&mut self) {
+             {
+                 part.typ = Viewtype::Voice;
+             }
+-            if (part.typ == Viewtype::Image || part.typ == Viewtype::Gif)
+-                && let Some(value) = self.get_header(HeaderDef::ChatContent)
++            // Honor an explicit `Chat-Content: sticker` header. Upstream only
++            // re-typed Image/Gif parts, which dropped animated stickers (a .tgs
++            // guesses as File/Sticker). Widen it to any file-bearing part
++            // (File/Sticker included) but NOT to Text/Webxdc/Voice/Audio/Video
++            // etc., so the header can't turn a text message or a real file
++            // attachment (pdf, .xdc) into a fileless/broken sticker.
++            if matches!(
++                part.typ,
++                Viewtype::Image | Viewtype::Gif | Viewtype::File | Viewtype::Sticker
++            ) && let Some(value) = self.get_header(HeaderDef::ChatContent)
+                 && value == "sticker"
+             {
+                 part.typ = Viewtype::Sticker;

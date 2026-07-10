@@ -1,0 +1,335 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <dev@slothfulchat.local>
+Date: Fri, 10 Jul 2026 01:07:28 +0000
+Subject: [PATCH 27/28] web-app: render animated Lottie (.tgs) stickers with
+ lottie-web
+
+Telegram animated stickers (.tgs = gzipped Lottie JSON) can't be shown by an
+<img>. Add a LottieSticker component that fetches the blob, gunzips .tgs via
+DecompressionStream (with a compressed + decompressed size cap so a hostile
+sticker can't gzip-bomb the tab), and plays it with lottie-web's eval-free
+'light' player (required by the app CSP: no 'unsafe-eval'), honoring
+prefers-reduced-motion and remounting per file via a key. messageAttachment
+routes .tgs stickers to it and keeps static/webp on the existing <img> path.
+The component takes an optional className so the composer picker can reuse it.
+Mirrors ArcaneChat's Android LottieDecoder; the core carries the blob and never
+renders it.
+---
+ packages/frontend/package.json                |   1 +
+ .../components/attachment/LottieSticker.tsx   | 173 ++++++++++++++++++
+ .../attachment/messageAttachment.tsx          |  43 +++++
+ packages/frontend/src/types.d.ts              |   8 +
+ pnpm-lock.yaml                                |   8 +
+ 5 files changed, 233 insertions(+)
+ create mode 100644 packages/frontend/src/components/attachment/LottieSticker.tsx
+
+diff --git a/packages/frontend/package.json b/packages/frontend/package.json
+index 69f2d3505..b43f0ff59 100644
+--- a/packages/frontend/package.json
++++ b/packages/frontend/package.json
+@@ -37,6 +37,7 @@
+     "jsqr": "^1.4.0",
+     "linkify-plugin-hashtag": "^4.3.2",
+     "linkifyjs": "^4.3.2",
++    "lottie-web": "^5.12.2",
+     "mime-types": "catalog:",
+     "moment": "^2.30.1",
+     "path-browserify": "^1.0.1",
+diff --git a/packages/frontend/src/components/attachment/LottieSticker.tsx b/packages/frontend/src/components/attachment/LottieSticker.tsx
+new file mode 100644
+index 000000000..f4dacab53
+--- /dev/null
++++ b/packages/frontend/src/components/attachment/LottieSticker.tsx
+@@ -0,0 +1,173 @@
++import React, { useEffect, useRef, useState } from 'react'
++import classNames from 'classnames'
++// The "light" player has no expression evaluator, so it does not call eval() —
++// required under the wasm edition's CSP (script-src 'self' 'wasm-unsafe-eval',
++// no 'unsafe-eval'). Telegram .tgs stickers never use expressions anyway.
++import lottie, {
++  type AnimationItem,
++} from 'lottie-web/build/player/lottie_light'
++import { getLogger } from '@deltachat-desktop/shared/logger'
++
++const log = getLogger('renderer/LottieSticker')
++
++// Guards against a malicious sticker (a .tgs renders automatically when its
++// message scrolls into view — no user interaction). Telegram caps .tgs at
++// 64 KB; these bounds are generous but still stop a gzip bomb from expanding
++// unboundedly and OOM-killing the tab (which also hosts the wasm core).
++const MAX_COMPRESSED_BYTES = 1024 * 1024 // 1 MiB on the wire
++const MAX_DECOMPRESSED_BYTES = 8 * 1024 * 1024 // 8 MiB after gunzip
++
++type Props = {
++  /** Ready-to-fetch blob URL of the sticker file (runtime.transformBlobURL). */
++  src: string
++  /** Rendered edge length in px (stickers are square-ish; SVG scales freely). */
++  size: number
++  /**
++   * Class(es) for the container element. Defaults to the message-bubble sticker
++   * classes; the composer picker passes its own so message layout doesn't leak.
++   */
++  className?: string
++}
++
++/**
++ * Fetches a Telegram `.tgs` sticker (gzipped Lottie JSON), decompresses it, and
++ * plays it with the lottie-web SVG renderer. This is the web counterpart to
++ * ArcaneChat's Android LottieDecoder — the chatmail core carries the sticker
++ * blob opaquely and never renders it, so the animation lives here.
++ */
++export default function LottieSticker({ src, size, className }: Props) {
++  const containerRef = useRef<HTMLDivElement>(null)
++  const [failed, setFailed] = useState(false)
++  const baseClass = className ?? 'attachment-content sticker'
++
++  useEffect(() => {
++    let animation: AnimationItem | undefined
++    let cancelled = false
++
++    loadLottieData(src)
++      .then(data => {
++        if (cancelled || !containerRef.current) {
++          return
++        }
++        // Honor the OS "reduce motion" setting: still show the sticker, but as a
++        // still first frame instead of a looping animation.
++        const reduceMotion = window.matchMedia(
++          '(prefers-reduced-motion: reduce)'
++        ).matches
++        animation = lottie.loadAnimation({
++          container: containerRef.current,
++          renderer: 'svg',
++          loop: !reduceMotion,
++          autoplay: !reduceMotion,
++          animationData: data,
++          rendererSettings: { progressiveLoad: true },
++        })
++        if (reduceMotion) {
++          animation.goToAndStop(0, true)
++        }
++      })
++      .catch(err => {
++        if (!cancelled) {
++          log.warn('failed to render lottie sticker', err)
++          setFailed(true)
++        }
++      })
++
++    return () => {
++      cancelled = true
++      animation?.destroy()
++    }
++  }, [src])
++
++  if (failed) {
++    // Decompression/parse failed (corrupt sticker, or no DecompressionStream) —
++    // fall back to a neutral square so the message layout stays stable.
++    return (
++      <div
++        className={classNames(baseClass, 'lottie-sticker-fallback')}
++        style={{
++          width: size,
++          height: size,
++          display: 'flex',
++          alignItems: 'center',
++          justifyContent: 'center',
++          fontSize: size / 2.5,
++          opacity: 0.5,
++        }}
++        title='sticker could not be displayed'
++      >
++        🧩
++      </div>
++    )
++  }
++
++  return (
++    <div
++      ref={containerRef}
++      className={classNames(baseClass, 'lottie-sticker')}
++      style={{ width: size, height: size }}
++    />
++  )
++}
++
++/**
++ * Fetch the sticker bytes and return parsed Lottie JSON. Sniffs the gzip magic
++ * number (0x1f 0x8b) rather than trusting the extension, so both `.tgs`
++ * (gzipped) and plain `.json` stickers work through the same path.
++ */
++async function loadLottieData(url: string): Promise<unknown> {
++  const response = await fetch(url)
++  if (!response.ok) {
++    throw new Error(`sticker fetch failed: ${response.status}`)
++  }
++  const bytes = new Uint8Array(await response.arrayBuffer())
++  if (bytes.byteLength > MAX_COMPRESSED_BYTES) {
++    throw new Error(`sticker too large: ${bytes.byteLength} bytes`)
++  }
++  const isGzip = bytes[0] === 0x1f && bytes[1] === 0x8b
++  let jsonText: string
++  if (isGzip) {
++    if (typeof DecompressionStream === 'undefined') {
++      throw new Error('gzip decompression is not supported by this browser')
++    }
++    const stream = new Blob([bytes as BlobPart])
++      .stream()
++      .pipeThrough(new DecompressionStream('gzip'))
++    jsonText = await readTextCapped(stream, MAX_DECOMPRESSED_BYTES)
++  } else {
++    jsonText = new TextDecoder().decode(bytes)
++  }
++  return JSON.parse(jsonText)
++}
++
++/**
++ * Read a stream to a string, aborting once more than `cap` bytes have arrived.
++ * The cap is enforced as chunks stream in, so a gzip bomb never materializes
++ * its full expansion in memory.
++ */
++async function readTextCapped(
++  stream: ReadableStream<Uint8Array>,
++  cap: number
++): Promise<string> {
++  const reader = stream.getReader()
++  const decoder = new TextDecoder()
++  let text = ''
++  let total = 0
++  try {
++    for (;;) {
++      const { done, value } = await reader.read()
++      if (done) {
++        break
++      }
++      total += value.byteLength
++      if (total > cap) {
++        throw new Error(`decompressed sticker exceeds ${cap} bytes`)
++      }
++      text += decoder.decode(value, { stream: true })
++    }
++    return text + decoder.decode()
++  } finally {
++    // Releases the lock; on an already-closed stream this is a no-op.
++    await reader.cancel().catch(() => {})
++  }
++}
+diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
+index 6c763d74c..3447fe74c 100644
+--- a/packages/frontend/src/components/attachment/messageAttachment.tsx
++++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
+@@ -18,6 +18,7 @@ import FullscreenMedia, {
+ import useDialog from '../../hooks/dialog/useDialog'
+ import useConfirmationDialog from '../../hooks/dialog/useConfirmationDialog'
+ import { AudioPlayer } from '../AudioPlayer'
++import LottieSticker from './LottieSticker'
+ import { NextVoiceMessagePlayerContext } from '../../contexts/NextVoiceMessagePlayerContext'
+ // eslint-disable-next-line @typescript-eslint/no-unused-vars
+ import { AudioAttachment as GalleryAudioAttachment } from './galleryAttachment'
+@@ -41,6 +42,23 @@ type AttachmentProps = {
+  */
+ export const LARGE_IMAGE_PIXEL_THRESHOLD = 50_000_000
+ 
++/**
++ * Whether a message's attachment is a Telegram `.tgs` sticker (gzipped Lottie),
++ * which must be played by the lottie-web renderer rather than shown as an
++ * <img>. Scoped to `.tgs` so message rendering, the composer picker
++ * (`misc_get_stickers`), and "save to collection" all agree on one format.
++ */
++function isLottieStickerFile(
++  message: Pick<T.Message, 'file' | 'fileName' | 'fileMime'>
++): message is typeof message & { file: string } {
++  if (!message.file) {
++    return false
++  }
++  const name = (message.fileName ?? '').toLowerCase()
++  const mime = (message.fileMime ?? '').toLowerCase()
++  return name.endsWith('.tgs') || mime === 'application/x-tgsticker'
++}
++
+ export default function Attachment({
+   text,
+   message,
+@@ -152,6 +170,31 @@ export default function Attachment({
+     message.dimensionsWidth * message.dimensionsHeight >
+       LARGE_IMAGE_PIXEL_THRESHOLD
+ 
++  // Lottie stickers (gzipped .tgs or plain Lottie .json) can't be shown by an
++  // <img> — they need the lottie-web player. This covers a Sticker viewtype as
++  // well as a stray .tgs that arrived as a plain File (e.g. from a client that
++  // didn't tag it), so it sits ahead of the image/sticker and generic branches.
++  if (isLottieStickerFile(message)) {
++    return (
++      <button
++        type='button'
++        onClick={onClickAttachment}
++        tabIndex={tabindexForInteractiveContents}
++        className={classNames(
++          'message-attachment-media',
++          withCaption ? 'content-below' : null
++        )}
++      >
++        <LottieSticker
++          // remount per file so a recycled row doesn't keep a stale failure
++          key={message.file}
++          src={runtime.transformBlobURL(message.file)}
++          size={maxStickerSize}
++        />
++      </button>
++    )
++  }
++
+   if (
+     (isImage(message.viewType) || message.viewType === 'Sticker') &&
+     !isOversizedImage
+diff --git a/packages/frontend/src/types.d.ts b/packages/frontend/src/types.d.ts
+index cf683d32e..32664c4e0 100644
+--- a/packages/frontend/src/types.d.ts
++++ b/packages/frontend/src/types.d.ts
+@@ -1,5 +1,13 @@
+ declare module '@mapbox/geojson-extent'
+ declare module '@deltachat/react-qr-reader'
++// The eval-free "light" player build ships no types of its own; it exposes the
++// same default player object as the package root.
++declare module 'lottie-web/build/player/lottie_light' {
++  import type { LottiePlayer } from 'lottie-web'
++  const lottie: LottiePlayer
++  export default lottie
++  export * from 'lottie-web'
++}
+ // Shut up the TypeScript error
+ // https://www.typescriptlang.org/tsconfig/#noUncheckedSideEffectImports.
+ declare module 'moment/min/locales'
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 463868159..1817bc4a8 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -177,6 +177,9 @@ importers:
+       linkifyjs:
+         specifier: ^4.3.2
+         version: 4.3.2
++      lottie-web:
++        specifier: ^5.12.2
++        version: 5.13.0
+       mime-types:
+         specifier: 'catalog:'
+         version: 2.1.35
+@@ -2993,6 +2996,9 @@ packages:
+     resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
+     hasBin: true
+ 
++  lottie-web@5.13.0:
++    resolution: {integrity: sha512-+gfBXl6sxXMPe8tKQm7qzLnUy5DUPJPKIyRHwtpCpyUEYjHYRJC/5gjUvdkuO2c3JllrPtHXH5UJJK8LRYl5yQ==}
++
+   loupe@3.1.1:
+     resolution: {integrity: sha512-edNu/8D5MKVfGVFRhFf8aAxiTM6Wumfz5XsaatSxlD3w4R1d/WEKUTydCdPGbl9K7QG/Ca3GnDV2sIKIpXRQcw==}
+ 
+@@ -6909,6 +6915,8 @@ snapshots:
+     dependencies:
+       js-tokens: 4.0.0
+ 
++  lottie-web@5.13.0: {}
++
+   loupe@3.1.1:
+     dependencies:
+       get-func-name: 2.0.2
