@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.0 — 2026-07-10
+
+- **Animated stickers**: Telegram `.tgs` (gzipped Lottie) stickers play in
+  messages and in the composer sticker picker, and sending a `.tgs` via the
+  file picker delivers it as a sticker. Playback uses lottie-web's eval-free
+  build (CSP-safe), caps compressed/decompressed size against gzip bombs, and
+  honors reduced-motion preferences.
+- **Message Info** shows attachment details (file name, MIME type, size,
+  image/video dimensions, audio/video duration) and the delivery-failure
+  reason; clicking a failed message's status icon opens Message Info.
+- **webimap setup**: pasting a full `https://…` URL into the madmail server
+  field works, and an unreachable or CORS-blocked server is detected up front
+  with a clear message instead of an opaque login error.
+- **About dialog**: SlothfulChat's own icon on the About dialog and welcome
+  screen, links restyled as buttons, and a Changelog button that opens the
+  bundled changelog viewer (also reachable at `/changelog`).
+- Big dialogs (settings, about, profiles, media view, new chat, QR scanner)
+  go full-screen on phone-sized viewports.
+- **Storage resilience**: a corrupted `accounts.toml` with no rebuildable
+  accounts no longer bricks boot permanently (the self-heal rebuild now
+  writes a config core accepts).
+
 ## 0.3.0 — 2026-07-09
 
 - **Sticker picker** (fixes a crash on open).

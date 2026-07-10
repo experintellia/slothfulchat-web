@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 — 2026-07-10
+
+- Also carries the `version` field of `window.__slothfulConfig` through
+  `config.js` regeneration (alongside `commitHash`/`commitMessage`), so the
+  version shown in the web app's About dialog survives relabeling a release
+  zip.
+
 ## 0.3.0 — 2026-07-09
 
 - Preserves the source-commit info baked into a release zip
