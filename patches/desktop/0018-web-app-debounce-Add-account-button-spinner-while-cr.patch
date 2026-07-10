@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <experintellia@users.noreply.github.com>
 Date: Wed, 8 Jul 2026 21:55:46 +0000
-Subject: [PATCH 18/33] web-app: debounce Add-account button, spinner while
+Subject: [PATCH 18/35] web-app: debounce Add-account button, spinner while
  creating
 
 Creating + selecting an account isn't instant (new SQLite db + schema
