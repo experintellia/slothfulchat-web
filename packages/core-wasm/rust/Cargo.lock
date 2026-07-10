@@ -1311,6 +1311,7 @@ dependencies = [
  "log",
  "serde_json",
  "tokio-wasm-shim",
+ "toml",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",

@@ -188,7 +188,10 @@ pub fn sync_remove(path: impl AsRef<Path>) -> io::Result<()> {
 
 pub async fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
     let path = normalize(path.as_ref());
-    match FS.lock().unwrap().remove(&path) {
+    // bind before matching: the scrutinee temporary would hold the FS lock
+    // across mark_dirty, which re-locks for the accounts.toml write-through
+    let removed = FS.lock().unwrap().remove(&path);
+    match removed {
         Some(_) => {
             mark_dirty(&path);
             Ok(())

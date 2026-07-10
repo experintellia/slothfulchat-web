@@ -64,14 +64,7 @@ pub async fn init(
                 JsValue::from_str(&format!(
                     "failed to create accounts: {orig} (self-heal failed: {heal})"
                 ))
-            })?;
-            Accounts::new(PathBuf::from("/accounts"), true)
-                .await
-                .map_err(|e| {
-                    JsValue::from_str(&format!(
-                        "failed to create accounts even after accounts.toml self-heal: {e:#}"
-                    ))
-                })?
+            })?
         }
         Err(e) => {
             return Err(JsValue::from_str(&format!(
@@ -100,18 +93,23 @@ pub async fn init(
 }
 
 const ACCOUNTS_CONFIG: &str = "/accounts/accounts.toml";
+/// Last-good copy, refreshed by the fs shim before every accounts.toml
+/// overwrite (crates/tokio-wasm-shim/src/opfs.rs).
+const ACCOUNTS_CONFIG_BAK: &str = "/accounts/accounts.toml.bak";
 
 /// Last-resort recovery for a corrupted accounts.toml: dump the contents to
-/// the console, quarantine the file to accounts.toml.broken (kept in OPFS for
-/// forensics) and rebuild it from the account directories — their names are
-/// the account uuids (`AccountConfig { id, dir, uuid }`, dir == uuid).
-async fn heal_accounts_config(cause: &str) -> Result<(), String> {
+/// the console, quarantine the file to accounts.toml.broken (kept in OPFS
+/// for forensics), then restore the last-good backup — or, when the backup
+/// is missing/stale/unusable, rebuild the file from the account directories,
+/// whose names are the account uuids (`AccountConfig { id, dir, uuid }`,
+/// dir == uuid). Returns the freshly opened account manager.
+async fn heal_accounts_config(cause: &str) -> Result<Accounts, String> {
     let io = |e: std::io::Error| e.to_string();
     let bytes = tokio::fs::read(ACCOUNTS_CONFIG).await.map_err(io)?;
     let hex: Vec<String> = bytes.iter().take(64).map(|b| format!("{b:02x}")).collect();
     log::error!(
-        "accounts.toml is corrupt ({cause}); quarantining to accounts.toml.broken and rebuilding \
-         from the account dirs.\nsize: {} bytes\nfirst 64 bytes: {}\nfirst 4 KiB (lossy):\n{}",
+        "accounts.toml is corrupt ({cause}); quarantining to accounts.toml.broken and restoring \
+         from backup / the account dirs.\nsize: {} bytes\nfirst 64 bytes: {}\nfirst 4 KiB (lossy):\n{}",
         bytes.len(),
         hex.join(" "),
         String::from_utf8_lossy(&bytes[..bytes.len().min(4096)])
@@ -133,6 +131,26 @@ async fn heal_accounts_config(cause: &str) -> Result<(), String> {
     }
     uuids.sort();
 
+    // Stage 1: the last-good backup keeps ids, selected_account and account
+    // order. Only usable when it lists exactly the accounts that exist on
+    // disk — a stale one would silently hide (or list nonexistent) accounts.
+    if let Ok(bak) = tokio::fs::read(ACCOUNTS_CONFIG_BAK).await {
+        let bak = String::from_utf8_lossy(&bak).into_owned();
+        if !bak.is_empty() && config_uuids(&bak) == uuids {
+            tokio::fs::write(ACCOUNTS_CONFIG, &bak).await.map_err(io)?;
+            match Accounts::new(PathBuf::from("/accounts"), true).await {
+                Ok(accounts) => {
+                    log::warn!("restored accounts.toml from the last-good backup");
+                    return Ok(accounts);
+                }
+                Err(e) => log::warn!(
+                    "backup accounts.toml is unusable too ({e:#}); rebuilding from the account dirs"
+                ),
+            }
+        }
+    }
+
+    // Stage 2: rebuild from the account dirs.
     // InnerConfig schema (vendor/core/src/accounts.rs); accounts_order is
     // #[serde(default)] and may be omitted, but `accounts` is required — with
     // no [[accounts]] tables below it must be written as an explicit empty
@@ -156,7 +174,34 @@ async fn heal_accounts_config(cause: &str) -> Result<(), String> {
         "rebuilt accounts.toml with {} account(s):\n{toml}",
         uuids.len()
     );
-    tokio::fs::write(ACCOUNTS_CONFIG, toml).await.map_err(io)
+    tokio::fs::write(ACCOUNTS_CONFIG, toml).await.map_err(io)?;
+    Accounts::new(PathBuf::from("/accounts"), true)
+        .await
+        .map_err(|e| format!("rebuilt accounts.toml is still unusable: {e:#}"))
+}
+
+/// Extracts the sorted account uuids out of an accounts.toml body (the
+/// `uuid` keys of the `[[accounts]]` tables). Real TOML parse — a string
+/// scrape would silently rot with core's serialization format and disable
+/// the heal's backup stage. Unparseable/malformed input yields an empty
+/// list, which never matches a non-empty dir set.
+fn config_uuids(text: &str) -> Vec<String> {
+    let Ok(value) = text.parse::<toml::Value>() else {
+        return Vec::new();
+    };
+    let Some(accounts) = value.get("accounts").and_then(|a| a.as_array()) else {
+        return Vec::new();
+    };
+    let mut uuids: Vec<String> = accounts
+        .iter()
+        .filter_map(|account| account.get("uuid").and_then(|u| u.as_str()))
+        .map(str::to_owned)
+        .collect();
+    if uuids.len() != accounts.len() {
+        return Vec::new(); // an account entry without a uuid = malformed
+    }
+    uuids.sort();
+    uuids
 }
 
 fn fs_err(err: std::io::Error) -> JsValue {

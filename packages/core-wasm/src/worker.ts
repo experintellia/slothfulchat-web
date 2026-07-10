@@ -53,7 +53,9 @@ const config = new Promise<ConfigMessage>(resolve => {
  * cache, offline) starts us before that. A failed sahpool install cannot be
  * retried (it leaks its own partial handles and the next attempt hangs), so
  * wait for the lock BEFORE init: probe every sahpool pool file until all can
- * be exclusively acquired. Fresh origins have no pool dir — no wait. */
+ * be exclusively acquired. The wasm side also holds permanent handles on
+ * memfs/accounts/accounts.toml{,.bak} (synchronous config write-through), so
+ * probe those too. Fresh origins have neither dir — no wait. */
 async function waitForOpfsSyncHandles(): Promise<void> {
   const probeDir = async (dir: any): Promise<void> => {
     for await (const entry of dir.values()) {
@@ -65,13 +67,40 @@ async function waitForOpfsSyncHandles(): Promise<void> {
       }
     }
   }
+  const notFoundOk = (err: unknown) => {
+    if ((err as DOMException)?.name !== 'NotFoundError') throw err
+  }
+  const probeAll = async (root: any): Promise<void> => {
+    // NotFound tolerance must cover the getDirectoryHandle too (fresh origin
+    // has no pool dir) WITHOUT bailing out of the whole probe — the memfs
+    // config locks below must still be checked. Lock errors propagate.
+    await root
+      .getDirectoryHandle('.opfs-sahpool')
+      .then(probeDir)
+      .catch(notFoundOk)
+    // exactly the two files the wasm side holds permanent handles on; NOT
+    // the whole memfs mirror (nothing else is ever locked, and account dirs
+    // hold arbitrarily many blobs)
+    const accounts = await root
+      .getDirectoryHandle('memfs')
+      .then((m: any) => m.getDirectoryHandle('accounts'))
+      .catch(() => null)
+    if (!accounts) return
+    for (const name of ['accounts.toml', 'accounts.toml.bak']) {
+      await accounts
+        .getFileHandle(name)
+        .then((f: any) => f.createSyncAccessHandle())
+        .then((h: any) => h.close())
+        .catch(notFoundOk)
+    }
+  }
   for (let attempt = 1; attempt <= 30; attempt++) {
     try {
       const root = await (self as any).navigator.storage.getDirectory()
       // race a timeout: createSyncAccessHandle can HANG (not reject) while
       // the previous worker is mid-teardown
       await Promise.race([
-        probeDir(await root.getDirectoryHandle('.opfs-sahpool')),
+        probeAll(root),
         new Promise((_, reject) => setTimeout(() => reject(new Error('probe timeout')), 2000)),
       ])
       return
