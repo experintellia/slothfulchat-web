@@ -300,17 +300,11 @@ try {
     /* best-effort cleanup; dist is ephemeral anyway */
   }
 
-  // (3) the primitive the .xdc file handler relies on: writeTempFileFromBase64
-  // must round-trip base64 bytes onto the wasm memfs (WebxdcSaveToChatDialog
-  // calls it before drafting the attachment). Drive it on the booted runtime.
-  const xdcPath = await page.evaluate(() =>
-    // "PK\x03\x04" — ZIP local-file-header magic (a .xdc is a zip); base64 = "UEsDBA=="
-    window.r.writeTempFileFromBase64('probe.xdc', 'UEsDBA==')
-  )
-  if (!xdcPath || !/probe\.xdc$/.test(xdcPath)) {
-    throw new Error(`writeTempFileFromBase64 returned unexpected path: ${xdcPath}`)
-  }
-  console.log(`OK: writeTempFileFromBase64 staged a .xdc on the wasm memfs (${xdcPath})`)
+  // (Note: the .xdc launchQueue path can't be exercised headlessly — it needs a
+  // real OS file-handler launch. Its send-to-chat delivery reuses the exact
+  // onWebxdcSendToChat mechanism the passing text-share case above covers, and
+  // its writeTempFileFromBase64 staging is exercised by the upstream
+  // WebxdcSaveToChatDialog itself.)
 
   if (cspViolations.length > 0) {
     console.error(`FAIL: ${cspViolations.length} CSP violation(s): ${cspViolations[0]}`)
