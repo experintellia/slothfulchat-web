@@ -41,8 +41,8 @@ jumbomoji). New strings live in _untranslated_en.json.
 ---
  _locales/_untranslated_en.json                |    6 +
  .../src/components/chat/ChatContextMenu.tsx   |   11 +
- .../components/dialogs/ExportChatToHtml.tsx   | 1019 +++++++++++++++++
- 3 files changed, 1036 insertions(+)
+ .../components/dialogs/ExportChatToHtml.tsx   | 1231 +++++++++++++++++
+ 3 files changed, 1248 insertions(+)
  create mode 100644 packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
@@ -98,10 +98,10 @@ index ec54fd200..60d6f4352 100644
          (chatListItems.some(c => c.freshMessageCounter > 0)
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 new file mode 100644
-index 000000000..2e72996a7
+index 000000000..2e0c42572
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-@@ -0,0 +1,1019 @@
+@@ -0,0 +1,1231 @@
 +import React, { useEffect, useRef, useState } from 'react'
 +import moment from 'moment'
 +import { T } from '@deltachat/jsonrpc-client'
@@ -151,9 +151,10 @@ index 000000000..2e72996a7
 + * and markup, media referenced from the bundled `media/` directory), the raw
 + * message data as `messages.json`, a plain-text transcript `messages.txt`,
 + * and a `manifest.toml` so the archive doubles as a webxdc app (rename to
-+ * `.xdc` and send it into a chat to view an export in-app). The viewer has a
-+ * "save single-file HTML" button that snapshots the rendered DOM with media
-+ * inlined as data: URIs.
++ * `.xdc` and send it into a chat to view an export in-app). The viewer's
++ * toolbar can save a plain-text transcript and — behind an explainer dialog —
++ * a single-file HTML snapshot of the rendered DOM with media inlined as
++ * data: URIs.
 + */
 +export default function ExportChatToHtml({ chat, onClose }: Props) {
 +  const tx = useTranslationFunction()
@@ -386,7 +387,23 @@ index 000000000..2e72996a7
 +  background-color: var(--navBarBackground);
 +  color: var(--navBarText);
 +}
-+.html-export-header .author-avatar { display: inline-block; }
++.html-export-header .author-avatar { display: inline-block; flex-shrink: 0; }
++.html-export-header .author-avatar img,
++.html-export-header .author-avatar .label {
++  display: block;
++  width: 40px;
++  height: 40px;
++  border-radius: 50%;
++  object-fit: cover;
++}
++.html-export-header .author-avatar .label {
++  color: var(--avatarLabelColor, white);
++  background-color: var(--local-avatar-color);
++  font-size: 22px;
++  line-height: 40px;
++  text-align: center;
++  user-select: none;
++}
 +.html-export-header-name {
 +  font-size: 18px;
 +  font-weight: bold;
@@ -396,8 +413,13 @@ index 000000000..2e72996a7
 +  font-size: 12px;
 +  opacity: 0.8;
 +}
-+.html-export-save-button {
++.html-export-buttons {
 +  margin-inline-start: auto;
++  display: flex;
++  gap: 8px;
++  flex-shrink: 0;
++}
++.html-export-save-button {
 +  background-color: var(--colorPrimary);
 +  color: white;
 +  border: none;
@@ -407,6 +429,34 @@ index 000000000..2e72996a7
 +  cursor: pointer;
 +}
 +.html-export-save-button:disabled { opacity: 0.5; }
++.html-export-dialog-backdrop {
++  position: fixed;
++  inset: 0;
++  z-index: 100;
++  background: rgba(0, 0, 0, 0.5);
++  display: flex;
++  align-items: center;
++  justify-content: center;
++}
++.html-export-dialog {
++  background: var(--bgPrimary, white);
++  color: var(--textPrimary, black);
++  border-radius: 8px;
++  max-width: 420px;
++  padding: 20px;
++  font-size: 14px;
++  line-height: 1.45;
++  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
++}
++.html-export-dialog h2 { margin: 0 0 8px; font-size: 16px; }
++.html-export-dialog p { margin: 8px 0; }
++.html-export-dialog-status { opacity: 0.85; }
++.html-export-dialog-actions {
++  display: flex;
++  justify-content: flex-end;
++  gap: 8px;
++  margin-top: 16px;
++}
 +`
 +
 +/**
@@ -489,6 +539,38 @@ index 000000000..2e72996a7
 +      .join('')
 +  const isImageLike = (viewType: string) =>
 +    viewType === 'Image' || viewType === 'Gif' || viewType === 'Video'
++  // same numbers as upstream messageAttachment.tsx calculateHeight() — the
++  // app sizes images via an explicit height attribute, not css
++  const maxStickerSize = 200
++  const displayHeight = (msg: any) => {
++    if (msg.viewType === 'Sticker') {
++      return maxStickerSize
++    }
++    const height = msg.dimensionsHeight
++    const width = msg.dimensionsWidth
++    if (!height || !width) {
++      return null
++    }
++    const minWidth = 200
++    const minHeight = 50
++    const maxSize = 450 // maxLandscapeWidth / maxPortraitHeight
++    let finalHeight
++    if (height > width) {
++      finalHeight = Math.min(height, maxSize)
++      if (height < maxSize && (finalHeight / height) * width < minWidth) {
++        finalHeight = (height / width) * minWidth
++      }
++    } else {
++      finalHeight = Math.min(height, (maxSize / width) * height)
++      if ((finalHeight / height) * width < minWidth) {
++        finalHeight = (height / width) * minWidth
++      }
++      if (finalHeight < minHeight) {
++        finalHeight = minHeight
++      }
++    }
++    return Math.round(finalHeight)
++  }
 +
 +  const avatarHtml = (contact: any, extra: boolean) => {
 +    const src = fileHref(contact.profileImage)
@@ -517,9 +599,13 @@ index 000000000..2e72996a7
 +        msg.dimensionsHeight > msg.dimensionsWidth && 'portrait',
 +        msg.viewType === 'Sticker' && 'sticker',
 +      ])
++      const height = displayHeight(msg)
++      const sizeAttrs =
++        (height ? ` height="${height}"` : '') +
++        (msg.viewType === 'Sticker' ? ` width="${maxStickerSize}"` : '')
 +      return (
 +        `<figure class="${cls(['message-attachment-media', withCaption && 'content-below'])}">` +
-+        `<img class="${imgClass}" src="${src}"></figure>`
++        `<img class="${imgClass}" src="${src}"${sizeAttrs}></figure>`
 +      )
 +    }
 +    if (src && msg.viewType === 'Video') {
@@ -720,11 +806,77 @@ index 000000000..2e72996a7
 +      .join('\n')
 +  }
 +
-+  // --- "save single-file HTML": snapshot the rendered DOM, media as data: ---
++  // --- toolbar: transcript download + single-file snapshot with dialog ---
++  const deliverFile = (name: string, contents: BlobPart, type: string) => {
++    const file = new File([contents], name, { type })
++    const webxdc = (window as any).webxdc
++    if (webxdc && webxdc.sendToChat) {
++      // inside a webxdc viewer: hand the file back into a chat
++      return Promise.resolve(
++        webxdc.sendToChat({ file: { name, blob: file } })
++      ).catch(() => {})
++    }
++    const url = URL.createObjectURL(file)
++    const a = document.createElement('a')
++    a.href = url
++    a.download = name
++    a.click()
++    setTimeout(() => URL.revokeObjectURL(url), 10_000)
++    return Promise.resolve()
++  }
++
++  // plain-text transcript regenerated from the embedded data (same shape as
++  // the zip's messages.txt)
++  const buildTranscript = () => {
++    const pad = (n: number) => String(n).padStart(2, '0')
++    const stamp = (ts: number) => {
++      const d = new Date(ts * 1000)
++      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
++    }
++    const lines = [
++      data.chat.name,
++      `exported ${new Date(data.exportedAt).toLocaleString()}`,
++    ]
++    for (const item of data.items) {
++      if (item.kind === 'dayMarker') {
++        lines.push('', `── ${fmtDay(item.timestamp)} ──`, '')
++        continue
++      }
++      const msg = data.messages[item.msg_id]
++      if (!msg) {
++        continue
++      }
++      if (msg.isInfo) {
++        lines.push(`* ${msg.text || ''}`)
++        continue
++      }
++      const filePart = msg.file ? `[${msg.fileName || 'attachment'}] ` : ''
++      lines.push(
++        `[${stamp(msg.timestamp)}] ${authorName(msg.sender.displayName, msg.overrideSenderName)}: ${filePart}${msg.text || ''}`
++      )
++    }
++    return lines.join('\n') + '\n'
++  }
++  const txtButton = document.getElementById(
++    'save-txt-button'
++  ) as HTMLButtonElement | null
++  if (txtButton) {
++    txtButton.addEventListener('click', () => {
++      txtButton.disabled = true
++      deliverFile(
++        (document.title || 'chat') + '.txt',
++        buildTranscript(),
++        'text/plain'
++      ).then(() => {
++        txtButton.disabled = false
++      })
++    })
++  }
++
 +  const inlineMedia = (el: Element) => {
 +    const src = el.getAttribute('src')
 +    if (!src || /^(data:|https?:)/.test(src)) {
-+      return Promise.resolve()
++      return Promise.resolve(true)
 +    }
 +    return (
 +      fetch(src)
@@ -740,47 +892,104 @@ index 000000000..2e72996a7
 +              reader.readAsDataURL(blob)
 +            })
 +        )
-+        .then(dataUrl => el.setAttribute('src', dataUrl as string))
++        .then(dataUrl => {
++          el.setAttribute('src', dataUrl as string)
++          return true
++        })
 +        // keep the relative media/ reference (e.g. on file://, where fetch is
 +        // blocked — the snapshot then still works next to the media directory)
-+        .catch(() => {})
++        .catch(() => false)
 +    )
 +  }
-+  const button = document.getElementById(
-+    'save-static-button'
-+  ) as HTMLButtonElement | null
-+  if (button) {
-+    button.addEventListener('click', () => {
-+      button.disabled = true
++
++  const snapshot = (statusEl: HTMLElement) =>
++    new Promise<void>(resolve => {
 +      const root = document.documentElement.cloneNode(true) as HTMLElement
++      // strip everything that only exists for the interactive viewer: the
++      // scripts (incl. the data island) and the toolbar/dialog ui
 +      root
-+        .querySelectorAll('script, #save-static-button')
++        .querySelectorAll('script, .html-export-ui')
 +        .forEach(el => el.remove())
 +      Promise.all(
 +        Array.from(
 +          root.querySelectorAll('img[src], audio[src], video[src]')
 +        ).map(inlineMedia)
 +      )
-+        .then(() => {
++        .then(results => {
++          const failed = results.filter(ok => !ok).length
 +          const html = '<!doctype html>\n' + root.outerHTML
-+          const name = (document.title || 'chat') + '.html'
-+          const file = new File([html], name, { type: 'text/html' })
-+          const webxdc = (window as any).webxdc
-+          if (webxdc && webxdc.sendToChat) {
-+            // inside a webxdc viewer: hand the snapshot back into a chat
-+            webxdc.sendToChat({ file: { name, blob: file } }).catch(() => {})
-+          } else {
-+            const url = URL.createObjectURL(file)
-+            const a = document.createElement('a')
-+            a.href = url
-+            a.download = name
-+            a.click()
-+            setTimeout(() => URL.revokeObjectURL(url), 10_000)
-+          }
++          return deliverFile(
++            (document.title || 'chat') + '.html',
++            html,
++            'text/html'
++          ).then(() => {
++            statusEl.textContent =
++              failed > 0
++                ? `Saved — but ${failed} media file(s) could not be embedded ` +
++                  '(the browser blocks reading them when this page is opened ' +
++                  'from disk). Keep the media folder next to the saved file, ' +
++                  'or save again with the viewer served over HTTP or running ' +
++                  'as a webxdc app.'
++                : 'Saved. The file is fully self-contained.'
++          })
 +        })
-+        .finally(() => {
-+          button.disabled = false
++        .catch(error => {
++          statusEl.textContent = 'Saving failed: ' + (error?.message || error)
 +        })
++        // always settle, so the dialog buttons never get stuck on "Saving…"
++        .then(resolve)
++    })
++
++  const staticButton = document.getElementById(
++    'save-static-button'
++  ) as HTMLButtonElement | null
++  if (staticButton) {
++    staticButton.addEventListener('click', () => {
++      if (document.querySelector('.html-export-dialog-backdrop')) {
++        return
++      }
++      staticButton.disabled = true
++      const backdrop = document.createElement('div')
++      backdrop.className = 'html-export-dialog-backdrop html-export-ui'
++      backdrop.innerHTML =
++        '<div class="html-export-dialog" role="dialog" aria-modal="true">' +
++        '<h2>Save single-file HTML</h2>' +
++        '<p>Bakes the whole chat — styles and media included — into one ' +
++        'static HTML file that can be viewed anywhere, without JavaScript ' +
++        'and without the media folder.</p>' +
++        '<p class="html-export-dialog-status"></p>' +
++        '<div class="html-export-dialog-actions">' +
++        '<button type="button" class="html-export-save-button" data-action="cancel">Cancel</button>' +
++        '<button type="button" class="html-export-save-button" data-action="save">Save</button>' +
++        '</div></div>'
++      document.body.appendChild(backdrop)
++      const statusEl = backdrop.querySelector(
++        '.html-export-dialog-status'
++      ) as HTMLElement
++      const cancelButton = backdrop.querySelector(
++        '[data-action="cancel"]'
++      ) as HTMLButtonElement
++      const saveButton = backdrop.querySelector(
++        '[data-action="save"]'
++      ) as HTMLButtonElement
++      const close = () => {
++        backdrop.remove()
++        staticButton.disabled = false
++      }
++      cancelButton.addEventListener('click', close)
++      backdrop.addEventListener('click', event => {
++        if (event.target === backdrop) {
++          close()
++        }
++      })
++      saveButton.addEventListener('click', () => {
++        saveButton.disabled = true
++        statusEl.textContent = 'Saving…'
++        snapshot(statusEl).then(() => {
++          saveButton.remove()
++          cancelButton.textContent = 'Close'
++        })
++      })
 +    })
 +  }
 +}
@@ -800,7 +1009,10 @@ index 000000000..2e72996a7
 +    `<header class="html-export-header"><span id="header-avatar"></span><div>` +
 +    `<h1 class="html-export-header-name" id="header-name"></h1>` +
 +    `<div class="html-export-header-subtitle" id="header-subtitle"></div>` +
-+    `</div><button type="button" id="save-static-button" class="html-export-save-button">Save single-file HTML</button></header>\n` +
++    `</div><div class="html-export-buttons html-export-ui">` +
++    `<button type="button" id="save-txt-button" class="html-export-save-button">Save transcript (.txt)</button>` +
++    `<button type="button" id="save-static-button" class="html-export-save-button">Save single-file HTML</button>` +
++    `</div></header>\n` +
 +    `<div class="message-list-and-composer"><div class="message-list-and-composer__message-list">` +
 +    `<div id="message-list"><ol id="export-message-list" aria-label="Messages"></ol></div>` +
 +    `</div></div>\n` +
