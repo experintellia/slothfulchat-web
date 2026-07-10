@@ -16,8 +16,13 @@
   `media/` with attachments/avatars next to it (50 MB per file / 300 MB
   total, larger attachments become file tiles). The zip carries a
   `manifest.toml`, so renamed to `.xdc` it doubles as a webxdc viewer app
-  that can be sent into a chat. Offline e2e coverage in
-  `scripts/test-export-chat-html.mjs`.
+  that can be sent into a chat. A confirm dialog explains what is not
+  included (read receipts, full HTML e-mail contents, webxdc app content)
+  and takes an optional start/end date to export only part of the history.
+  The viewer names reactors (hover + click dialog), links files/images to
+  the bundled originals, anchors quotes to their target message, renders
+  vcard contact tiles, and marks failed/undownloaded/HTML-only messages.
+  Offline e2e coverage in `scripts/test-export-chat-html.mjs`.
 
 ## 0.4.0 — 2026-07-10
 

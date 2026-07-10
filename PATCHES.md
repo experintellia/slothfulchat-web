@@ -79,8 +79,10 @@ exists:
   self-contained renderer, "Save single-file HTML" snapshot button),
   `messages.txt`, the raw jsonrpc data as `messages.json`, and the media
   files next to it; a `manifest.toml` makes the zip double as a webxdc
-  viewer app when renamed to `.xdc`. `desktop/0032`, `desktop/0035`,
-  `desktop/0037`
+  viewer app when renamed to `.xdc`. A confirm dialog names what is not
+  included (read receipts, full HTML e-mails, webxdc app content) and takes
+  an optional date range. `desktop/0032`, `desktop/0035`, `desktop/0037`,
+  `desktop/0039`
 - **Public Bots & Public Channels suggestions in the New Chat dialog** — two
   pseudo entries below "New Group"/"New Channel": "Public Bots" opens a
   searchable directory of community-made bots (name, admin, description,

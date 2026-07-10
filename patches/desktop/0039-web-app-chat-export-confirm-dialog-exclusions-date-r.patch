@@ -1,0 +1,512 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Fri, 10 Jul 2026 19:15:47 +0000
+Subject: [PATCH 39/39] web-app: chat export confirm dialog (exclusions + date
+ range) and viewer gap fixes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Export Chat now opens a confirm dialog before running: it explains what
+the export contains and — per review of what the app shows that an
+export cannot carry — states that read receipts, full HTML e-mail
+contents and webxdc app contents are not included. Optional From/Until
+date fields (inclusive, local time) export only part of the history;
+day markers without remaining messages are dropped, and the filtered
+range applies to the viewer, messages.json, messages.txt and the
+bundled media alike.
+
+Viewer fixes for information that was already in the export data but
+not shown (from the gap-hunt review):
+
+- Vcard messages render a contact tile (avatar, name, address) from the
+  embedded vcardContact instead of an empty bubble; webxdc messages say
+  that app content is not part of the export instead of showing nothing.
+- File tiles are download links to the bundled media/ file (with a
+  'not included' note when a file exceeded the size budget); images
+  link to the full-size original.
+- Quotes anchor-link to their quoted message when it is in the export.
+  The anchor wraps only the author line — wrapping the whole quote
+  produced nested <a> elements (quoted text can contain links), which
+  the HTML parser fragments into duplicated anchors.
+- Failed messages show the error text (status-icon tooltip) and the
+  error style independent of delivery state, like the app; messages
+  that were never fully downloaded render the app's download
+  placeholder instead of stub text; messages with a full HTML variant
+  say so.
+- Forwarded incoming group messages name the forwarder; author names
+  carry the sender address as tooltip; the date tooltip includes the
+  received time when it deviates; location-bearing messages show the
+  location icon; .tgs Lottie stickers fall back to the file tile
+  instead of a broken <img>.
+
+New strings live in _untranslated_en.json.
+---
+ _locales/_untranslated_en.json                |  12 +
+ .../components/dialogs/ExportChatToHtml.tsx   | 283 ++++++++++++++++--
+ 2 files changed, 262 insertions(+), 33 deletions(-)
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 4ab7816b3..fe3dfc4b3 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -1,4 +1,16 @@
+ {
++  "export_chat_explain": {
++    "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
++  },
++  "export_chat_start_date": {
++    "message": "From (optional)"
++  },
++  "export_chat_end_date": {
++    "message": "Until (optional)"
++  },
++  "export_chat_start_button": {
++    "message": "Export"
++  },
+   "menu_export_chat": {
+     "message": "Export Chat"
+   },
+diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+index 2210714c6..da4e27a51 100644
+--- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
++++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+@@ -1,4 +1,4 @@
+-import React, { useEffect, useRef, useState } from 'react'
++import React, { useRef, useState } from 'react'
+ import moment from 'moment'
+ import { T } from '@deltachat/jsonrpc-client'
+ 
+@@ -52,19 +52,36 @@ type Props = {
+  * a single-file HTML snapshot of the rendered DOM with media inlined as
+  * data: URIs.
+  */
++/** inclusive unix-seconds range; null side = unbounded */
++type ExportRange = { startTs: number | null; endTs: number | null }
++
+ export default function ExportChatToHtml({ chat, onClose }: Props) {
+   const tx = useTranslationFunction()
+   const accountId = selectedAccountId()
++  const [phase, setPhase] = useState<'configure' | 'running'>('configure')
+   const [progress, setProgress] = useState(0)
++  const [startDate, setStartDate] = useState('')
++  const [endDate, setEndDate] = useState('')
+   const cancelled = useRef(false)
+-  const started = useRef(false)
+ 
+-  useEffect(() => {
+-    if (started.current) {
+-      return
++  const startExport = () => {
++    setPhase('running')
++    // interpret both dates in the user's local timezone, inclusive
++    const range: ExportRange = {
++      startTs: startDate
++        ? new Date(startDate + 'T00:00:00').getTime() / 1000
++        : null,
++      endTs: endDate
++        ? new Date(endDate + 'T23:59:59.999').getTime() / 1000
++        : null,
+     }
+-    started.current = true
+-    exportChatToZip(accountId, chat, setProgress, () => cancelled.current)
++    exportChatToZip(
++      accountId,
++      chat,
++      range,
++      setProgress,
++      () => cancelled.current
++    )
+       .then(filename => {
+         window.__userFeedback?.({
+           type: 'success',
+@@ -82,8 +99,52 @@ export default function ExportChatToHtml({ chat, onClose }: Props) {
+         })
+       })
+       .finally(onClose)
+-    // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [])
++  }
++
++  if (phase === 'configure') {
++    return (
++      <Dialog onClose={onClose} canOutsideClickClose={false} width={400}>
++        <DialogHeader title={tx('menu_export_chat')} />
++        <DialogBody>
++          <DialogContent>
++            <p className='whitespace'>{tx('export_chat_explain')}</p>
++            <label style={{ display: 'block', margin: '8px 0' }}>
++              {tx('export_chat_start_date')}{' '}
++              <input
++                type='date'
++                value={startDate}
++                onChange={event => setStartDate(event.target.value)}
++                data-testid='export-chat-start-date'
++              />
++            </label>
++            <label style={{ display: 'block', margin: '8px 0' }}>
++              {tx('export_chat_end_date')}{' '}
++              <input
++                type='date'
++                value={endDate}
++                onChange={event => setEndDate(event.target.value)}
++                data-testid='export-chat-end-date'
++              />
++            </label>
++          </DialogContent>
++          <DialogFooter>
++            <FooterActions align='end'>
++              <FooterActionButton onClick={onClose} data-testid='cancel'>
++                {tx('cancel')}
++              </FooterActionButton>
++              <FooterActionButton
++                styling='primary'
++                onClick={startExport}
++                data-testid='export-chat-start'
++              >
++                {tx('export_chat_start_button')}
++              </FooterActionButton>
++            </FooterActions>
++          </DialogFooter>
++        </DialogBody>
++      </Dialog>
++    )
++  }
+ 
+   return (
+     <Dialog
+@@ -401,6 +462,50 @@ body.html-export::before {
+ }
+ .html-export-reactions-name { flex-grow: 1; }
+ .html-export-reactions-emoji { font-size: 20px; }
++.html-export-media-link { display: inline-block; font-size: 0; }
++a.message-attachment-generic {
++  display: block;
++  color: inherit;
++  text-decoration: none;
++}
++a.html-export-quote-jump {
++  display: block;
++  text-decoration: none;
++}
++.html-export-note {
++  font-style: italic;
++  font-size: 12px;
++  opacity: 0.75;
++  margin: 4px 0;
++}
++.html-export-vcard {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  background-color: rgba(0, 0, 0, 0.08);
++  border-radius: 10px;
++  padding: 9px 15px 9px 9px;
++  min-width: 200px;
++  max-width: 260px;
++  margin: 4px 0;
++}
++.html-export-vcard-avatar {
++  display: block;
++  width: 36px;
++  height: 36px;
++  border-radius: 50%;
++  object-fit: cover;
++  flex-shrink: 0;
++}
++.html-export-vcard-initial {
++  color: var(--avatarLabelColor, white);
++  font-size: 20px;
++  line-height: 36px;
++  text-align: center;
++  user-select: none;
++}
++.html-export-vcard-name { font-weight: bold; }
++.html-export-vcard-addr { font-size: 12px; opacity: 0.8; }
+ `
+ 
+ /**
+@@ -537,7 +642,11 @@ function chatExportViewer() {
+     }
+     const src = fileHref(msg.file)
+     const isImage = msg.viewType === 'Image' || msg.viewType === 'Gif'
+-    if (src && (isImage || msg.viewType === 'Sticker')) {
++    // gzipped-Lottie stickers can't render in an <img>; show the file tile
++    const isLottieSticker =
++      (msg.fileName || '').toLowerCase().endsWith('.tgs') ||
++      (msg.fileMime || '').toLowerCase() === 'application/x-tgsticker'
++    if (src && !isLottieSticker && (isImage || msg.viewType === 'Sticker')) {
+       const imgClass = cls([
+         'attachment-content',
+         msg.dimensionsHeight > msg.dimensionsWidth && 'portrait',
+@@ -547,9 +656,11 @@ function chatExportViewer() {
+       const sizeAttrs =
+         (height ? ` height="${height}"` : '') +
+         (msg.viewType === 'Sticker' ? ` width="${maxStickerSize}"` : '')
++      // link to the bundled original for a full-size view
+       return (
+         `<figure class="${cls(['message-attachment-media', withCaption && 'content-below'])}">` +
+-        `<img class="${imgClass}" src="${src}"${sizeAttrs}></figure>`
++        `<a class="html-export-media-link" href="${src}" target="_blank" rel="noopener noreferrer">` +
++        `<img class="${imgClass}" src="${src}"${sizeAttrs}></a></figure>`
+       )
+     }
+     if (src && msg.viewType === 'Video') {
+@@ -564,17 +675,44 @@ function chatExportViewer() {
+         `<audio src="${src}" controls></audio></div>`
+       )
+     }
+-    // everything else (and media over the size cap): the generic file tile
++    // everything else (and media over the size cap): the generic file tile —
++    // a download link when the file made it into the zip
+     const name = msg.fileName || ''
+     const dot = name.lastIndexOf('.')
+     const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
+-    return (
+-      `<div class="${cls(['message-attachment-generic', withCaption && 'content-below'])}">` +
++    const tileClass = cls([
++      'message-attachment-generic',
++      withCaption && 'content-below',
++    ])
++    const inner =
+       `<div class="file-icon" title="${esc(msg.fileMime || '')}">` +
+       (ext ? `<div class="file-extension">${esc(ext)}</div>` : '') +
+       `</div><div class="text-part">` +
+       `<div class="name">${esc(name)}</div>` +
+-      `<div class="size">${esc(fmtSize(msg.fileBytes))}</div>` +
++      `<div class="size">${esc(fmtSize(msg.fileBytes))}${src ? '' : ' — not included in the export'}</div>` +
++      `</div>`
++    return src
++      ? `<a class="${tileClass}" href="${src}" download="${esc(name)}">${inner}</a>`
++      : `<div class="${tileClass}">${inner}</div>`
++  }
++
++  // Vcard messages: msg.vcardContact is fully embedded (name, address,
++  // color, base64 avatar) — render a contact tile like the app does
++  const vcardHtml = (msg: any) => {
++    const contact = msg.vcardContact
++    if (!contact) {
++      return ''
++    }
++    const initial = (
++      Array.from(String(contact.displayName || contact.addr || '#'))[0] || '#'
++    ).toUpperCase()
++    const avatar = contact.profileImage
++      ? `<img class="html-export-vcard-avatar" src="data:image/jpeg;base64,${esc(contact.profileImage)}">`
++      : `<span class="html-export-vcard-avatar html-export-vcard-initial" style="background-color: ${esc(contact.color || '#888888')};">${esc(initial)}</span>`
++    return (
++      `<div class="html-export-vcard">${avatar}<div>` +
++      `<div class="html-export-vcard-name">${esc(contact.displayName)}</div>` +
++      `<div class="html-export-vcard-addr">${esc(contact.addr)}</div>` +
+       `</div></div>`
+     )
+   }
+@@ -585,10 +723,20 @@ function chatExportViewer() {
+       hasMessage && !quote.isForwarded
+         ? ` style="border-left-color: ${esc(quote.authorDisplayColor)};"`
+         : ''
++    // jump to the quoted message when it is part of the export; the anchor
++    // wraps only the (plain-text) author line — the quoted text itself may
++    // contain links, and nested <a> elements get fragmented by the parser
++    const jump = hasMessage && data.messages[quote.messageId]
++    const authorTag = jump
++      ? [
++          `<a class="quote-author html-export-quote-jump" href="#${quote.messageId}"`,
++          'a',
++        ]
++      : ['<div class="quote-author"', 'div']
+     const author = hasMessage
+-      ? `<div class="quote-author" style="color: ${esc(quote.authorDisplayColor)};">${esc(
++      ? `${authorTag[0]} style="color: ${esc(quote.authorDisplayColor)};">${esc(
+           authorName(quote.authorDisplayName, quote.overrideSenderName)
+-        )}</div>`
++        )}</${authorTag[1]}>`
+       : ''
+     const text = quote.text
+       ? `<div class="quoted-text">${renderText(String(quote.text).slice(0, 3000))}</div>`
+@@ -644,14 +792,28 @@ function chatExportViewer() {
+     if (msg.isEdited) {
+       parts.push('<span class="edited">edited</span>')
+     }
++    if (msg.hasLocation) {
++      parts.push('<span class="location-icon"></span>')
++    }
++    const dateTitle =
++      fmtFull(msg.timestamp) +
++      (msg.hasDeviatingTimestamp && msg.receivedTimestamp
++        ? ` · received ${fmtFull(msg.receivedTimestamp)}`
++        : '')
+     parts.push(
+-      `<span class="date date--${direction}" title="${esc(fmtFull(msg.timestamp))}">${esc(fmtTime(msg.timestamp))}</span>`
++      `<span class="date date--${direction}" title="${esc(dateTitle)}">${esc(fmtTime(msg.timestamp))}</span>`
+     )
+     parts.push('<span class="spacer"></span>')
+     const hideStatus =
+       data.chat.chatType === 'OutBroadcast' &&
+       (status === 'delivered' || status === 'read')
+-    if (direction === 'outgoing' && status && !hideStatus) {
++    if (msg.error != null) {
++      // like the app, failed messages surface independently of state; the
++      // error text lives in the icon's tooltip
++      parts.push(
++        `<div class="delivery-status-wrapper" title="${esc(msg.error)}"><div class="status-icon error"></div></div>`
++      )
++    } else if (direction === 'outgoing' && status && !hideStatus) {
+       parts.push(
+         `<div class="delivery-status-wrapper"><div class="status-icon ${esc(status)}"></div></div>`
+       )
+@@ -682,13 +844,18 @@ function chatExportViewer() {
+     )
+     let authorOrForwarded
+     if (msg.isForwarded) {
+-      authorOrForwarded = `<div class="forwarded-indicator"><span class="forwarded-indicator-button">Forwarded Message</span></div>`
++      // like upstream: name the forwarder for incoming group messages
++      const label =
++        data.chat.chatType !== 'Single' && direction !== 'outgoing'
++          ? `Forwarded by ${esc(authorName(msg.sender.displayName, msg.overrideSenderName))}`
++          : 'Forwarded Message'
++      authorOrForwarded = `<div class="forwarded-indicator"><span class="forwarded-indicator-button">${label}</span></div>`
+     } else {
+       const canHide =
+         (!msg.overrideSenderName && direction === 'outgoing') || !showAuthor
+       authorOrForwarded =
+         `<div class="${cls(['author-wrapper', canHide && 'can-hide'])}">` +
+-        `<span class="author" style="color: ${esc(msg.sender.color)};">${esc(
++        `<span class="author" style="color: ${esc(msg.sender.color)};" title="${esc(msg.sender.address || '')}">${esc(
+           authorName(msg.sender.displayName, msg.overrideSenderName)
+         )}</span></div>`
+     }
+@@ -704,20 +871,39 @@ function chatExportViewer() {
+       direction,
+       s.message,
+       msg.viewType === 'Sticker' && 'type-sticker',
+-      STATUS[msg.state] === 'error' && 'error',
++      (STATUS[msg.state] === 'error' || msg.error != null) && 'error',
+       msg.isForwarded && 'forwarded',
+     ])
++    // not-fully-downloaded messages get the app's placeholder, not the stub
++    // text pretending to be the message
++    const DOWNLOAD_LABEL: any = {
++      Available: 'not downloaded',
++      InProgress: 'downloading…',
++      Failure: 'download failed',
++      Undecipherable: 'cannot decrypt',
++    }
++    const body =
++      msg.downloadState && msg.downloadState !== 'Done'
++        ? `<div class="download">${esc(msg.text || '')} — ${DOWNLOAD_LABEL[msg.downloadState] || esc(msg.downloadState)}</div>`
++        : (msg.quote ? quoteHtml(msg.quote) : '') +
++          attachmentHtml(msg, hasText) +
++          (msg.viewType === 'Vcard' ? vcardHtml(msg) : '') +
++          (msg.viewType === 'Webxdc'
++            ? `<div class="html-export-note">webxdc app${msg.fileName ? ` “${esc(msg.fileName)}”` : ''} — app content is not part of the export</div>`
++            : '') +
++          (hasText
++            ? `<div dir="auto" class="text">${renderText(msg.text)}</div>`
++            : '') +
++          (msg.hasHtml
++            ? '<div class="html-export-note">full HTML message — not part of the export</div>'
++            : '')
+     return (
+       `<li class="message-wrapper"><div class="${messageClass}" id="${msg.id}">` +
+       avatar +
+       `<div class="msg-container" style="border-color: ${esc(msg.sender.color)};">` +
+       authorOrForwarded +
+       `<div class="msg-body">` +
+-      (msg.quote ? quoteHtml(msg.quote) : '') +
+-      attachmentHtml(msg, hasText) +
+-      (hasText
+-        ? `<div dir="auto" class="text">${renderText(msg.text)}</div>`
+-        : '') +
++      body +
+       footer +
+       `</div></div></li>`
+     )
+@@ -1180,6 +1366,7 @@ function sanitizeFilename(name: string): string {
+ async function exportChatToZip(
+   accountId: number,
+   chat: T.FullChat,
++  range: ExportRange,
+   onProgress: (progress: number) => void, // 0..1000
+   isCancelled: () => boolean
+ ): Promise<string> {
+@@ -1218,10 +1405,35 @@ async function exportChatToZip(
+   }
+   onProgress(300)
+ 
++  // date-range filter (inclusive, unix seconds, user-local interpretation
++  // done by the caller); day markers survive only when they still have a
++  // kept message following them
++  const inRange = (msg: T.Message) =>
++    (range.startTs === null || msg.timestamp >= range.startTs) &&
++    (range.endTs === null || msg.timestamp <= range.endTs)
++  const keptIds = msgIds.filter(id => messages[id] && inRange(messages[id]))
++  const keptIdSet = new Set(keptIds)
++  const keptMessages: { [id: number]: T.Message } = {}
++  for (const id of keptIds) {
++    keptMessages[id] = messages[id]
++  }
++  const filteredItems = items.filter(
++    item => item.kind !== 'message' || keptIdSet.has(item.msg_id)
++  )
++  for (let i = filteredItems.length - 1; i >= 0; i--) {
++    if (
++      filteredItems[i].kind === 'dayMarker' &&
++      (i === filteredItems.length - 1 ||
++        filteredItems[i + 1].kind === 'dayMarker')
++    ) {
++      filteredItems.splice(i, 1)
++    }
++  }
++
+   // contacts behind reactions (reactionsByContact only carries ids) — the
+   // viewer's who-reacted dialog needs their names/avatars
+   const reactionContactIds = new Set<number>()
+-  for (const id of msgIds) {
++  for (const id of keptIds) {
+     const reactions = messages[id]?.reactions
+     if (reactions) {
+       for (const contactId of Object.keys(reactions.reactionsByContact)) {
+@@ -1257,7 +1469,7 @@ async function exportChatToZip(
+     await collect(contact.profileImage)
+   }
+   let processed = 0
+-  for (const id of msgIds) {
++  for (const id of keptIds) {
+     const msg = messages[id]
+     if (msg) {
+       await collect(msg.file)
+@@ -1268,7 +1480,7 @@ async function exportChatToZip(
+     }
+     processed++
+     if (processed % 10 === 0) {
+-      onProgress(300 + Math.round((450 * processed) / msgIds.length))
++      onProgress(300 + Math.round((450 * processed) / keptIds.length))
+       checkCancelled()
+     }
+   }
+@@ -1282,8 +1494,8 @@ async function exportChatToZip(
+   const data = {
+     exportedAt: exportedAt.toISOString(),
+     chat,
+-    items,
+-    messages,
++    items: filteredItems,
++    messages: keptMessages,
+     files,
+     reactionContacts,
+     // hashed css-module class names the viewer needs
+@@ -1303,7 +1515,12 @@ async function exportChatToZip(
+     .toString()
+     .replace(/<\/script/gi, '<\\/script')
+   const indexHtml = buildIndexHtml(chat.name, css, dataJson, viewerSource)
+-  const messagesTxt = buildMessagesTxt(chat, items, messages, exportedAt)
++  const messagesTxt = buildMessagesTxt(
++    chat,
++    filteredItems,
++    keptMessages,
++    exportedAt
++  )
+ 
+   const encoder = new TextEncoder()
+   const zipEntries: { name: string; data: Uint8Array }[] = [
