@@ -7,8 +7,6 @@ summary of that patch stack: what we changed and why, without reading diffs.
 
 Each entry references its patch file by directory and number, e.g. `core/0005`
 = `patches/core/0005-wasm-IMAP-SMTP-through-a-WebSocket-TCP-proxy.patch`.
-(The desktop stack currently has two `0021` files; they are disambiguated by
-name below.)
 
 > **Keeping this up to date:** refresh this file **on every release** (see
 > [RELEASING.md](RELEASING.md)). The routine: list `patches/core` and
@@ -49,18 +47,18 @@ exists:
   all. Includes the login toggle, the welcome-screen "madmail server" entry,
   and a pre-flight check that tells the user when a server is unreachable or
   missing CORS instead of failing with an opaque core error. `core/0011`,
-  `desktop/0011`, `desktop/0021` (webimap URL input), `desktop/0025`
+  `desktop/0011`, `desktop/0021`, `desktop/0026`
 - **Attachment details & failure reason in Message Info** — file name, MIME
   type, size, image/video dimensions, audio/video duration; delivery failures
   show as an error banner, and clicking a message's failed-status icon opens
-  Message Info instead of a bare alert. `desktop/0021` (message info)
+  Message Info instead of a bare alert. `desktop/0022`
 - **Themeable avatars on all messages** — upstream renders avatars only for
   incoming group messages; we render them everywhere but hide the new cases
   by default, so themes can opt in to Rocket.Chat-style avatars on every
   message. Pixel-identical for existing themes. `desktop/0010`
 - **Build info in the About dialog** — shows the slothfulchat-web version and
   source commit a deployed instance was built from, with the commit message
-  on hover. `desktop/0016`, `desktop/0023`, `desktop/0024`
+  on hover. `desktop/0016`, `desktop/0024`, `desktop/0025`
 
 ## Bugfixes
 
@@ -107,7 +105,7 @@ contribution intended.
   self-referential "Delta Chat" strings are renamed (in every locale, via the
   translation-conversion step); credits, delta.chat links, and donation
   strings keep the Delta Chat name. `desktop/0001`, `desktop/0003`,
-  `desktop/0006`, `desktop/0017`, `desktop/0022`
+  `desktop/0006`, `desktop/0017`, `desktop/0023`
 - **Imprint links** on the About dialog and welcome screen — a hosted web app
   needs a legal-notice page. `desktop/0004`, `desktop/0005`
 - **Hidden upstream UI that can't work in this build** — proxy settings
@@ -117,7 +115,7 @@ contribution intended.
 - **Logging** — core Info/Warning/Error events are printed once by the
   core-wasm console bridge instead of twice, and the Log dialog points to the
   browser dev console instead of fetching a `/log` route this build never
-  serves. `desktop/0012`, `desktop/0023`
+  serves. `desktop/0012`, `desktop/0024`
 
 ## Missing / descoped (compared to upstream Delta Chat)
 
