@@ -1,0 +1,148 @@
+# What we changed compared to upstream
+
+The vendored upstreams (`vendor/core` = chatmail core, `vendor/deltachat-desktop`)
+are never modified in place — every change lives as a `git format-patch` file
+under `patches/core` and `patches/desktop`. This file is the human-readable
+summary of that patch stack: what we changed and why, without reading diffs.
+
+Each entry references its patch file by directory and number, e.g. `core/0005`
+= `patches/core/0005-wasm-IMAP-SMTP-through-a-WebSocket-TCP-proxy.patch`.
+(The desktop stack currently has two `0021` files; they are disambiguated by
+name below.)
+
+> **Keeping this up to date:** refresh this file **on every release** (see
+> [RELEASING.md](RELEASING.md)). The routine: list `patches/core` and
+> `patches/desktop`, diff against the references here, and fold every new or
+> removed patch into the fitting section — each patch file starts with its
+> commit message, which is usually all you need to read.
+
+## Running in the browser at all (the port itself)
+
+The bulk of `patches/core` makes a native Rust mail core compile and run on
+`wasm32-unknown-unknown`. These aren't features, they're the reason the fork
+exists:
+
+- **Build surface** — native-only dependencies are target-gated, tokio is
+  swapped for a browser-shim facade, and rusqlite is upgraded to a version
+  with first-class wasm/SQLite support. `core/0001`
+- **Clocks** — `SystemTime::now()`/`Instant::now()` abort on wasm, so
+  everything reads the JS clock instead, including rustls certificate
+  validation during the TLS handshake. `core/0002`, `core/0006`
+- **Filesystem** — `std::fs` doesn't exist in the browser; blob storage,
+  directory listing, and lockfile handling route through the project's
+  memfs/OPFS shim. `core/0004`, `core/0007`
+- **Networking** — browsers can't open TCP sockets, so IMAP/SMTP tunnels
+  through a local WebSocket→TCP proxy; TLS still terminates inside wasm, the
+  proxy only ever sees ciphertext. HTTP requests go through the browser's
+  `fetch()`. SOCKS/shadowsocks proxying is stubbed out. `core/0003`,
+  `core/0005`, `core/0010`
+- **Backups** — file-based backup export/import reimplemented for the wasm
+  VFS (sqlite-wasm-rs has no `sqlcipher_export`, so the database bytes are
+  swapped at the VFS level; encrypted backups stay unsupported on wasm).
+  `core/0008`, `core/0009`
+
+## New features
+
+- **webimap transport (madmail)** — a second mail transport speaking
+  [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
+  over plain HTTPS `fetch()`, so accounts on such servers need no bridge at
+  all. Includes the login toggle, the welcome-screen "madmail server" entry,
+  and a pre-flight check that tells the user when a server is unreachable or
+  missing CORS instead of failing with an opaque core error. `core/0011`,
+  `desktop/0011`, `desktop/0021` (webimap URL input), `desktop/0025`
+- **Attachment details & failure reason in Message Info** — file name, MIME
+  type, size, image/video dimensions, audio/video duration; delivery failures
+  show as an error banner, and clicking a message's failed-status icon opens
+  Message Info instead of a bare alert. `desktop/0021` (message info)
+- **Themeable avatars on all messages** — upstream renders avatars only for
+  incoming group messages; we render them everywhere but hide the new cases
+  by default, so themes can opt in to Rocket.Chat-style avatars on every
+  message. Pixel-identical for existing themes. `desktop/0010`
+- **Build info in the About dialog** — shows the slothfulchat-web version and
+  source commit a deployed instance was built from, with the commit message
+  on hover. `desktop/0016`, `desktop/0023`, `desktop/0024`
+
+## Bugfixes
+
+Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not
+upstreamed — this is a private patch-stack experiment with no upstream
+contribution intended.
+
+- Camera selection in the QR reader did nothing on multi-camera Android
+  Chromium devices, and the camera menu was blank before permissions were
+  granted; stale stored camera ids no longer show the error screen.
+  `desktop/0013`
+- Cancelling account creation crashed the welcome screen: a link component
+  resolved the (now unselected) account at render time instead of click time.
+  `desktop/0008`
+- Fast double-clicks on the "add account" button created duplicate accounts
+  (account creation isn't instant in the wasm core); creation is now
+  coalesced and the button shows a spinner. `desktop/0018`
+- Search fields gave no visual indication of focus; they now use the app's
+  standard focus outline. `desktop/0009`
+- webimap: the connectivity badge no longer sticks at "Connecting…" /
+  "Updating…", and a message that 404s on fetch/delete is treated as
+  already-consumed instead of putting the poll loop into an error backoff.
+  `core/0012`, `core/0013`
+
+## UI & mobile polish
+
+- Big dialogs (settings, about, profiles, media view, new-chat, QR scanner)
+  go edge-to-edge on phone-sized viewports, and the QR camera view fills the
+  available height. `desktop/0020`
+- The QR reader defaults to the rear camera — you scan someone else's code,
+  not your own face. `desktop/0015`
+- The connectivity view shows a loading state instead of a blank iframe while
+  the core is busy, and displays the WS bridge address with an edit button.
+  `desktop/0002`, `desktop/0007`
+- About dialog links are restyled as settings-style buttons, including
+  entries for the source repo and the bundled changelog viewer.
+  `desktop/0019`
+
+## Different decisions than upstream
+
+- **Branding** — the app calls itself SlothfulChat and uses its own icon in
+  the About dialog and welcome screen, with explicit "experimental fork, not
+  affiliated with Delta Chat" notices and a source-code link. Only
+  self-referential "Delta Chat" strings are renamed (in every locale, via the
+  translation-conversion step); credits, delta.chat links, and donation
+  strings keep the Delta Chat name. `desktop/0001`, `desktop/0003`,
+  `desktop/0006`, `desktop/0017`, `desktop/0022`
+- **Imprint links** on the About dialog and welcome screen — a hosted web app
+  needs a legal-notice page. `desktop/0004`, `desktop/0005`
+- **Hidden upstream UI that can't work in this build** — proxy settings
+  (unimplemented on wasm) and the second-device / multi-device backup
+  transfer flow (iroh doesn't run in browsers yet). `desktop/0001`,
+  `desktop/0014`
+- **Logging** — core Info/Warning/Error events are printed once by the
+  core-wasm console bridge instead of twice, and the Log dialog points to the
+  browser dev console instead of fetching a `/log` route this build never
+  serves. `desktop/0012`, `desktop/0023`
+
+## Missing / descoped (compared to upstream Delta Chat)
+
+Deliberate omissions — postponed, not rejected. [DESCOPED.md](DESCOPED.md) has
+the full table with what re-enabling each one would take.
+
+- **webxdc apps** — not in upstream's browser edition either; needs a
+  sandboxed iframe host on a separate origin (planned, see issue #2).
+- **Second-device / multi-device backup transfer** — the UI is hidden
+  (`desktop/0014`) because it *cannot* work here: browser iroh is relay-only
+  with no LAN connectivity, and Delta Chat's backup transfer is
+  LAN-restricted by design. File-based backup export/import covers moving an
+  account meanwhile.
+- **Maps / location streaming** — no map UI ships (it's a webxdc upstream).
+  When it lands, the plan is to adopt ArcaneChat's per-message POI location
+  API so a shared pin is tappable (issue #36).
+- **Video calls** — the runtime hook is desktop-specific; opening the call
+  URL in a new tab would be low effort but hasn't been prioritized.
+- **HTML email viewing** — unimplemented in upstream's browser target too;
+  needs a sandboxed viewer.
+- **Database encryption (sqlcipher)** — doesn't build for wasm32; OPFS
+  storage is origin-sandboxed by the browser instead.
+
+Like ArcaneChat, this fork experiments a few steps ahead of upstream Delta
+Chat while staying protocol-compatible with it; where ArcaneChat (or a
+closed upstream PR) already designed something well, planned features borrow
+that shape — e.g. the map POI API (#36) and per-account disabling modeled on
+chatmail/core#5314 (#37).

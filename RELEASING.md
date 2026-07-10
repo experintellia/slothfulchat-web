@@ -44,6 +44,11 @@ any `v*` tag. The workflow rebuilds from a clean checkout and does two things:
    Then add a `## 0.3.0 — <date>` entry to the `CHANGELOG.md` of each package
    that actually changed (npm always includes CHANGELOG.md in the tarball);
    packages that didn't change just carry the bumped version with no new entry.
+
+   Also refresh [PATCHES.md](PATCHES.md) — the human-readable summary of the
+   upstream patch stack — whenever `patches/` changed since the last release:
+   go over the patch files (each starts with its commit message) and fold
+   anything new or removed into the fitting section there.
 2. Commit, then tag and push (the tag must match the version you just set —
    `publish-npm.yml` rejects a tag whose packages drifted):
 
