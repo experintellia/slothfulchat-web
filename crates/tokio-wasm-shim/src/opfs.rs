@@ -52,9 +52,13 @@ static PENDING: Mutex<Option<(UnboundedSender<PathBuf>, HashSet<PathBuf>)>> = Mu
 /// instead, through sync access handles held for the worker's lifetime
 /// (`CONFIG_SAHS`), the same way sahpool protects the sqlite files.
 const ACCOUNTS_TOML: &str = "/accounts/accounts.toml";
+const ACCOUNTS_TOML_NAME: &str = "accounts.toml";
 /// Last-good copy, refreshed from the previous content before every
 /// accounts.toml overwrite; the wasm self-heal restores from it.
 const ACCOUNTS_TOML_BAK: &str = "accounts.toml.bak";
+/// Configs are ~100 bytes per account; anything bigger is garbage (the iOS
+/// incident was ~1 MiB of it) and must never be copied into the backup.
+const CONFIG_BAK_MAX: usize = 512 * 1024;
 
 thread_local! {
     /// sahpool management handle; `Some` = persistence is on (util is not Send).
@@ -92,12 +96,12 @@ pub async fn enable_persistence() -> Result<(), String> {
     let accounts_dir = ensure_dirs(&root, Path::new("/accounts"))
         .await
         .map_err(|e| format!("opfs: failed to create accounts dir: {}", js_err(e)))?;
-    let main = open_sah(&accounts_dir, "accounts.toml")
-        .await
-        .map_err(|e| format!("opfs: failed to lock accounts.toml: {}", js_err(e)))?;
-    let bak = open_sah(&accounts_dir, ACCOUNTS_TOML_BAK)
-        .await
-        .map_err(|e| format!("opfs: failed to lock accounts.toml.bak: {}", js_err(e)))?;
+    let (main, bak) = futures::future::try_join(
+        open_sah(&accounts_dir, ACCOUNTS_TOML_NAME),
+        open_sah(&accounts_dir, ACCOUNTS_TOML_BAK),
+    )
+    .await
+    .map_err(|e| format!("opfs: failed to lock the accounts config: {}", js_err(e)))?;
     CONFIG_SAHS.with(|c| *c.borrow_mut() = Some((main, bak)));
 
     let (tx, rx) = unbounded();
@@ -108,13 +112,14 @@ pub async fn enable_persistence() -> Result<(), String> {
 }
 
 /// Queues `path` (normalized, absolute) for asynchronous OPFS reconciliation.
-/// accounts.toml never queues: it is written through synchronously via the
-/// held sync access handles instead. No-op unless persistence is enabled.
+/// accounts.toml normally never queues: it is written through synchronously
+/// via the held sync access handles; the queue is only its fallback when
+/// that write fails. No-op unless persistence is enabled.
 pub(crate) fn mark_dirty(path: &Path) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
-    if path == Path::new(ACCOUNTS_TOML) && reconcile_config_sync() {
+    if path.as_os_str() == std::ffi::OsStr::new(ACCOUNTS_TOML) && reconcile_config_sync() {
         return;
     }
     let mut guard = PENDING.lock().unwrap();
@@ -125,67 +130,99 @@ pub(crate) fn mark_dirty(path: &Path) {
     }
 }
 
-/// Synchronous accounts.toml write-through: preserves the previous content as
-/// accounts.toml.bak (the self-heal's restore source), then writes the current
-/// memfs state — write first, truncate last, all in one JS task, so a worker
-/// teardown can never leave a half-written file. Returns false when the
-/// handles are not held (setup failed half-way) → caller uses the async queue.
+/// Synchronous accounts.toml write-through. Returns false when the handles
+/// are not held (persistence setup failed half-way) or the write failed
+/// (e.g. the browser invalidated the handle) → the caller falls back to the
+/// async queue, whose reconcile retries with a freshly opened handle.
 fn reconcile_config_sync() -> bool {
     CONFIG_SAHS.with(|c| {
         let borrow = c.borrow();
         let Some((main, bak)) = borrow.as_ref() else {
             return false;
         };
-        let at0 = || {
-            let opts = FileSystemReadWriteOptions::new();
-            opts.set_at(0.0);
-            opts
-        };
-        let result = (|| -> Result<(), JsValue> {
-            match fs::snapshot(Path::new(ACCOUNTS_TOML)) {
-                Snapshot::File(data) => {
-                    let old_len = main.get_size()? as usize;
-                    if old_len > 0 {
-                        let mut old = vec![0u8; old_len];
-                        let read = main.read_with_u8_array_and_options(&mut old, &at0())? as usize;
-                        old.truncate(read);
-                        let written = bak.write_with_u8_array_and_options(&old, &at0())? as usize;
-                        if written == old.len() {
-                            bak.truncate_with_f64(old.len() as f64)?;
-                            bak.flush()?;
-                        }
-                    }
-                    let written = main.write_with_u8_array_and_options(&data, &at0())? as usize;
-                    if written != data.len() {
-                        return Err(JsValue::from_str(&format!(
-                            "opfs: partial config write ({written} of {} bytes)",
-                            data.len()
-                        )));
-                    }
-                    main.truncate_with_f64(data.len() as f64)?;
-                    main.flush()?;
-                }
-                // removed from memfs (quarantine rename): the file itself
-                // cannot be deleted while its SAH is held — empty = gone
-                Snapshot::Missing => {
-                    main.truncate_with_f64(0.0)?;
-                    main.flush()?;
-                }
-                Snapshot::Dir => {}
+        match write_config_through(main, bak) {
+            Ok(()) => true,
+            Err(err) => {
+                web_sys::console::warn_2(
+                    &JsValue::from_str(
+                        "opfs sync write-through failed for accounts.toml; queueing async retry",
+                    ),
+                    &err,
+                );
+                false
             }
-            Ok(())
-        })();
-        if let Err(err) = result {
-            web_sys::console::warn_2(
-                &JsValue::from_str("opfs sync write-through failed for accounts.toml"),
-                &err,
-            );
         }
-        true
     })
 }
 
-/// Opens (creating if needed) a permanent sync access handle for `name` in `dir`.
+/// Preserves the previous accounts.toml content as accounts.toml.bak (the
+/// self-heal's restore source), then commits the current memfs state — all in
+/// one JS task, so a worker teardown can never leave a half-written file.
+fn write_config_through(
+    main: &FileSystemSyncAccessHandle,
+    bak: &FileSystemSyncAccessHandle,
+) -> Result<(), JsValue> {
+    match fs::snapshot(Path::new(ACCOUNTS_TOML)) {
+        Snapshot::File(data) => {
+            let old_len = main.get_size()? as usize;
+            if old_len > 0 && old_len <= CONFIG_BAK_MAX {
+                let opts = FileSystemReadWriteOptions::new();
+                opts.set_at(0.0);
+                let mut old = vec![0u8; old_len];
+                let read = main.read_with_u8_array_and_options(&mut old, &opts)? as usize;
+                old.truncate(read);
+                if old == data {
+                    return Ok(()); // no-op sync (core re-syncs unconditionally)
+                }
+                // Refresh the backup only when the previous content plausibly
+                // IS a config (core's serialization starts with this key): a
+                // failed quarantine truncate must not launder corrupt bytes
+                // into the last-good copy.
+                if old.starts_with(b"selected_account") {
+                    if let Err(err) = sah_write(bak, &old) {
+                        // never keep a torn backup (new prefix + stale tail);
+                        // empty is safely ignored by the heal
+                        let _ = bak.truncate_with_f64(0.0);
+                        let _ = bak.flush();
+                        web_sys::console::warn_2(
+                            &JsValue::from_str("opfs: accounts.toml.bak refresh failed; cleared"),
+                            &err,
+                        );
+                    }
+                }
+            }
+            sah_write(main, &data)?;
+        }
+        // removed from memfs (the heal's quarantine rename): the file itself
+        // cannot be deleted while its SAH is held — empty = gone
+        Snapshot::Missing => {
+            main.truncate_with_f64(0.0)?;
+            main.flush()?;
+        }
+        Snapshot::Dir => {}
+    }
+    Ok(())
+}
+
+/// Commits `data` to a sync access handle crash-safely: write at offset 0
+/// first, truncate to the new length last, then flush — a teardown mid-way
+/// leaves old-tail garbage, never an empty or shorter-than-written file.
+fn sah_write(sah: &FileSystemSyncAccessHandle, data: &[u8]) -> Result<(), JsValue> {
+    let opts = FileSystemReadWriteOptions::new();
+    opts.set_at(0.0);
+    let written = sah.write_with_u8_array_and_options(data, &opts)? as usize;
+    if written != data.len() {
+        return Err(JsValue::from_str(&format!(
+            "opfs: partial write ({written} of {} bytes)",
+            data.len()
+        )));
+    }
+    sah.truncate_with_f64(data.len() as f64)?;
+    sah.flush()?;
+    Ok(())
+}
+
+/// Opens (creating if needed) a sync access handle for `name` in `dir`.
 async fn open_sah(
     dir: &FileSystemDirectoryHandle,
     name: &str,
@@ -222,37 +259,12 @@ async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), 
         Snapshot::File(data) => {
             let dir = ensure_dirs(root, path.parent().unwrap_or(Path::new("/"))).await?;
             let name = file_name(path)?;
-            let create = FileSystemGetFileOptions::new();
-            create.set_create(true);
-            let handle: FileSystemFileHandle =
-                JsFuture::from(dir.get_file_handle_with_options(&name, &create))
-                    .await?
-                    .into();
             // Sync access handle, NOT createWritable(): WebKit only shipped
             // FileSystemWritableFileStream in Safari 18.4 and we saw it hand
             // back ~1MB of garbage as accounts.toml on iOS. SAH is the older
             // API the sahpool sqlite VFS already trusts on the same devices.
-            // Write first, truncate to the new length last — no empty-file
-            // window if the worker dies mid-reconcile.
-            let sah: FileSystemSyncAccessHandle =
-                JsFuture::from(handle.create_sync_access_handle())
-                    .await?
-                    .into();
-            let write = |data: &[u8]| -> Result<(), JsValue> {
-                let opts = FileSystemReadWriteOptions::new();
-                opts.set_at(0.0);
-                let written = sah.write_with_u8_array_and_options(data, &opts)?;
-                if written as usize != data.len() {
-                    return Err(JsValue::from_str(&format!(
-                        "opfs: partial write ({written} of {} bytes)",
-                        data.len()
-                    )));
-                }
-                sah.truncate_with_f64(data.len() as f64)?;
-                sah.flush()?;
-                Ok(())
-            };
-            let result = write(&data);
+            let sah = open_sah(&dir, &name).await?;
+            let result = sah_write(&sah, &data);
             sah.close();
             result?;
         }

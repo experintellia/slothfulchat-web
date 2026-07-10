@@ -58,11 +58,11 @@ await page.addInitScript(() => {
 const rpc = (method, ...args) =>
   page.evaluate(([m, a]) => window.exp.rpc[m](...a), [method, args])
 
+const appUrl = `http://localhost:${APP_PORT}/main.html?proxy=ws://localhost:${PROXY_PORT}`
+
 let failed = false
 try {
-  await page.goto(
-    `http://localhost:${APP_PORT}/main.html?proxy=ws://localhost:${PROXY_PORT}`
-  )
+  await page.goto(appUrl)
   await page.waitForFunction(() => window.__coreSystemInfo, null, {
     timeout: 120_000,
   })
@@ -135,7 +135,6 @@ try {
   // from a page that does NOT run the app: navigate to a 404 (same origin, so
   // OPFS is reachable; the SW passes 404s through when the network is up) and
   // retry until the old worker's teardown releases the locks.
-  const appUrl = `http://localhost:${APP_PORT}/main.html?proxy=ws://localhost:${PROXY_PORT}`
   const injectOpfsCorruption = async fn => {
     await page.goto(`http://localhost:${APP_PORT}/__no_app__`)
     const deadline = Date.now() + 15_000
@@ -199,7 +198,12 @@ try {
   if (!brokenKept) {
     throw new Error('accounts.toml.broken missing in OPFS after self-heal')
   }
-  console.log('OK: corrupt accounts.toml self-healed, quarantine file kept')
+  // the dir rebuild would also yield 1 configured account — make sure it was
+  // actually the backup stage that healed (it preserves ids/order/selection)
+  if (!consoleTail.some(l => l.includes('restored accounts.toml from the last-good backup'))) {
+    throw new Error('heal did not restore from the last-good backup')
+  }
+  console.log('OK: corrupt accounts.toml self-healed from backup, quarantine kept')
 
   // 8. the CI flake shape: 0-byte accounts.toml AND no account dirs → the
   // heal must skip the (now stale) backup, rebuild a parseable config with
@@ -210,14 +214,21 @@ try {
     const dir = await (
       await root.getDirectoryHandle('memfs')
     ).getDirectoryHandle('accounts')
-    for await (const [name, handle] of dir.entries()) {
-      if (handle.kind === 'directory') {
-        await dir.removeEntry(name, { recursive: true })
-      }
-    }
+    // truncate FIRST: createWritable is blocked until the old worker's lock
+    // releases, so the destructive dir removal below can't race a still-live
+    // worker flushing writes that recreate the dirs
     const file = await dir.getFileHandle('accounts.toml')
     const w = await file.createWritable()
     await w.close() // truncates to 0 bytes
+    // collect names before removing: mutating an OPFS directory during
+    // async iteration can skip entries
+    const names = []
+    for await (const [name, handle] of dir.entries()) {
+      if (handle.kind === 'directory') names.push(name)
+    }
+    for (const name of names) {
+      await dir.removeEntry(name, { recursive: true })
+    }
   })
   console.log('OK: truncated OPFS accounts.toml to 0 bytes, removed account dirs')
   await page.goto(appUrl)

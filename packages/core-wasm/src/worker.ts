@@ -71,22 +71,27 @@ async function waitForOpfsSyncHandles(): Promise<void> {
     if ((err as DOMException)?.name !== 'NotFoundError') throw err
   }
   const probeAll = async (root: any): Promise<void> => {
-    await probeDir(await root.getDirectoryHandle('.opfs-sahpool')).catch(notFoundOk)
-    // config files only, NOT the whole memfs mirror: nothing else is ever
-    // locked, and account dirs hold arbitrarily many blobs
+    // NotFound tolerance must cover the getDirectoryHandle too (fresh origin
+    // has no pool dir) WITHOUT bailing out of the whole probe — the memfs
+    // config locks below must still be checked. Lock errors propagate.
+    await root
+      .getDirectoryHandle('.opfs-sahpool')
+      .then(probeDir)
+      .catch(notFoundOk)
+    // exactly the two files the wasm side holds permanent handles on; NOT
+    // the whole memfs mirror (nothing else is ever locked, and account dirs
+    // hold arbitrarily many blobs)
     const accounts = await root
       .getDirectoryHandle('memfs')
       .then((m: any) => m.getDirectoryHandle('accounts'))
       .catch(() => null)
-    if (accounts) {
-      for await (const entry of accounts.values()) {
-        if (entry.kind === 'file') {
-          await entry
-            .createSyncAccessHandle()
-            .then((h: any) => h.close())
-            .catch(notFoundOk)
-        }
-      }
+    if (!accounts) return
+    for (const name of ['accounts.toml', 'accounts.toml.bak']) {
+      await accounts
+        .getFileHandle(name)
+        .then((f: any) => f.createSyncAccessHandle())
+        .then((h: any) => h.close())
+        .catch(notFoundOk)
     }
   }
   for (let attempt = 1; attempt <= 30; attempt++) {

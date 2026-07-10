@@ -181,15 +181,25 @@ async fn heal_accounts_config(cause: &str) -> Result<Accounts, String> {
 }
 
 /// Extracts the sorted account uuids out of an accounts.toml body (the
-/// `uuid = "..."` lines of the `[[accounts]]` tables).
-fn config_uuids(toml: &str) -> Vec<String> {
-    let mut uuids: Vec<String> = toml
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("uuid = \""))
-        .filter_map(|rest| rest.strip_suffix('"'))
-        .filter(|u| uuid::Uuid::parse_str(u).is_ok())
+/// `uuid` keys of the `[[accounts]]` tables). Real TOML parse — a string
+/// scrape would silently rot with core's serialization format and disable
+/// the heal's backup stage. Unparseable/malformed input yields an empty
+/// list, which never matches a non-empty dir set.
+fn config_uuids(text: &str) -> Vec<String> {
+    let Ok(value) = text.parse::<toml::Value>() else {
+        return Vec::new();
+    };
+    let Some(accounts) = value.get("accounts").and_then(|a| a.as_array()) else {
+        return Vec::new();
+    };
+    let mut uuids: Vec<String> = accounts
+        .iter()
+        .filter_map(|account| account.get("uuid").and_then(|u| u.as_str()))
         .map(str::to_owned)
         .collect();
+    if uuids.len() != accounts.len() {
+        return Vec::new(); // an account entry without a uuid = malformed
+    }
     uuids.sort();
     uuids
 }
