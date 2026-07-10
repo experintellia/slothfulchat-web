@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 16:32:03 +0000
-Subject: [PATCH 35/37] web-app: chat export viewer pins the chat background to
+Subject: [PATCH 35/39] web-app: chat export viewer pins the chat background to
  the viewport
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

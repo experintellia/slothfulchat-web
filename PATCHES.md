@@ -46,8 +46,11 @@ exists:
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at
   all. Includes the login toggle, the welcome-screen "madmail server" entry,
   and a pre-flight check that tells the user when a server is unreachable or
-  missing CORS instead of failing with an opaque core error. `core/0011`,
-  `desktop/0011`, `desktop/0021`, `desktop/0026`
+  missing CORS instead of failing with an opaque core error (the probe
+  targets `GET /webimap/mailboxes` — madmail sends CORS headers only on
+  `/new` and the webimap/websmtp API routes, so probing `/` misreported
+  every server as CORS-blocked). `core/0011`, `desktop/0011`,
+  `desktop/0021`, `desktop/0026`, `desktop/0039`
 - **Attachment details & failure reason in Message Info** — file name, MIME
   type, size, image/video dimensions, audio/video duration; delivery failures
   show as an error banner, and clicking a message's failed-status icon opens
