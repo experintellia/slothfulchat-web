@@ -4,12 +4,12 @@
 #   lint   — fast, no submodules, no wasm build: syntax-checks every .mjs and
 #            type/compile-checks the standalone Rust shim crate. Gives quick
 #            feedback on obvious breakage in seconds.
-#   smoke  — the real test suite. Builds the whole app exactly like
+#   test   — the real test suite. Builds the whole app exactly like
 #            deploy-pages.yml (patched core + upstream desktop bundle + release
-#            wasm), then runs the headless Playwright smoke suites that assert
-#            the wasm core boots and the frontend renders on top of it.
+#            wasm), then runs the headless Playwright smoke suites plus the
+#            bridge-picker and chat-export E2E suites on top of it.
 #
-# The build half of `smoke` is a faithful copy of deploy-pages.yml — the same
+# The build half of `test` is a faithful copy of deploy-pages.yml — the same
 # two ordering traps apply (jsonrpc-client generated before the root install;
 # assemble before build). Keep the two in sync when either changes.
 
@@ -79,10 +79,10 @@ jobs:
           cargo check --all-targets
           cargo clippy --all-targets
 
-  # ---- real test suite: full build + headless smoke tests ----
+  # ---- real test suite: full build + headless smoke/E2E tests ----
   # Mirrors deploy-pages.yml's build; see that file for the detailed rationale
   # behind each step (apt/microsoft-repo removal, order traps, env quirks).
-  smoke:
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
