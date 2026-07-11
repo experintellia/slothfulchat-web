@@ -200,13 +200,44 @@ sw.addEventListener('fetch', (event: any) => {
       if (!result.data) {
         return new Response('blob not found', { status: 404 })
       }
+      const total = result.data.byteLength
       const headers: Record<string, string> = {
         'content-type': result.mime ?? 'application/octet-stream',
+        // advertise range support so <video>/<audio> expose a working seek bar;
+        // without this browsers treat the media as non-seekable
+        'accept-ranges': 'bytes',
       }
       if (downloadName) {
         headers['content-disposition'] =
           `attachment; filename="${downloadName.replace(/["\\]/g, '')}"`
       }
+      // media seeking: honor Range with 206 Partial Content. The whole blob is
+      // already in memory, so we just slice it — no streaming needed.
+      const range = event.request.headers.get('range')
+      const m = range && /^bytes=(\d*)-(\d*)$/.exec(range.trim())
+      if (m && (m[1] || m[2])) {
+        let start: number
+        let end: number
+        if (m[1] === '') {
+          // suffix range: last N bytes
+          start = Math.max(0, total - Number(m[2]))
+          end = total - 1
+        } else {
+          start = Number(m[1])
+          end = m[2] === '' ? total - 1 : Math.min(Number(m[2]), total - 1)
+        }
+        if (start > end || start >= total) {
+          return new Response(null, {
+            status: 416,
+            headers: { 'content-range': `bytes */${total}`, 'accept-ranges': 'bytes' },
+          })
+        }
+        headers['content-range'] = `bytes ${start}-${end}/${total}`
+        headers['content-length'] = String(end - start + 1)
+        const chunk = result.data.subarray(start, end + 1)
+        return new Response(chunk as unknown as BodyInit, { status: 206, headers })
+      }
+      headers['content-length'] = String(total)
       return new Response(result.data as unknown as BodyInit, { headers })
     })()
   )
