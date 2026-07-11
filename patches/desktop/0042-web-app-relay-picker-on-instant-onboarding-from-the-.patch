@@ -27,10 +27,12 @@ public relays from the chatmail directory.
   self-named links like [nine.testrun.org](https://nine.testrun.org),
   and bare autolinks — so decorative links and prose domains stay out.
   Unit-tested in src/tests/relayDirectory.test.ts.
-- RelayPicker.tsx renders the dropdown (a DeltaSelect, matching the
-  display-name input above it) only when there is a real choice: more
-  than one relay, and no scanned dcaccount:/dclogin: QR pinning the
-  server. Everything fails soft to "no dropdown".
+- RelayPicker.tsx renders the dropdown only when there is a real
+  choice: more than one relay, and no scanned dcaccount:/dclogin: QR
+  pinning the server. Everything fails soft to "no dropdown". Styled
+  (styles.module.scss) to match the display-name DeltaInput above it —
+  same label/underline/focus theme vars as the login inputs, custom
+  chevron — instead of the cramped stock DeltaSelect look.
 - The choice lives in InstantOnboardingContext so account creation
   (useInstantOnboarding builds dcaccount:<picked host>) and the consent
   text (UserAgreement links the picked relay's /privacy.html) always
@@ -40,14 +42,15 @@ public relays from the chatmail directory.
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  .../WelcomeScreen/InstantOnboardingScreen.tsx |   5 +
- .../screens/WelcomeScreen/RelayPicker.tsx     |  65 ++++++++
+ .../screens/WelcomeScreen/RelayPicker.tsx     |  71 +++++++++
  .../screens/WelcomeScreen/UserAgreement.tsx   |  29 ++--
  .../screens/WelcomeScreen/relayDirectory.ts   | 141 ++++++++++++++++++
  .../WelcomeScreen/relayDirectoryParse.ts      |  82 ++++++++++
+ .../screens/WelcomeScreen/styles.module.scss  |  49 ++++++
  .../src/contexts/InstantOnboardingContext.tsx |  14 ++
  .../src/hooks/useInstantOnboarding.ts         |  21 ++-
  .../frontend/src/tests/relayDirectory.test.ts |  63 ++++++++
- 8 files changed, 407 insertions(+), 13 deletions(-)
+ 9 files changed, 462 insertions(+), 13 deletions(-)
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
@@ -78,15 +81,15 @@ index dc53ee49e..cdeb369a0 100644
                  {welcomeQr?.qr.kind === 'login' && (
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
 new file mode 100644
-index 000000000..9d150b44b
+index 000000000..230417b14
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,71 @@
 +import React, { useEffect, useState } from 'react'
 +
 +import useInstantOnboarding from '../../../hooks/useInstantOnboarding'
-+import { DeltaSelect } from '../../Login-Styles'
 +import { defaultRelayHost, fetchSelectableRelays } from './relayDirectory'
++import styles from './styles.module.scss'
 +
 +/**
 + * slothfulchat-web: dropdown on the instant-onboarding ("create profile")
@@ -133,18 +136,24 @@ index 000000000..9d150b44b
 +      : defaultRelayHost()
 +
 +  return (
-+    <DeltaSelect
-+      id='relay-picker'
-+      label='Chatmail relay for your new address'
-+      value={value}
-+      onChange={event => setSelectedRelayHost(event.target.value)}
-+    >
-+      {relays.map(host => (
-+        <option key={host} value={host}>
-+          {host}
-+        </option>
-+      ))}
-+    </DeltaSelect>
++    <div className={styles.relayPicker}>
++      <label htmlFor='relay-picker' className={styles.relayPickerLabel}>
++        Chatmail relay for your new address
++      </label>
++      <div className={styles.relayPickerSelect}>
++        <select
++          id='relay-picker'
++          value={value}
++          onChange={event => setSelectedRelayHost(event.target.value)}
++        >
++          {relays.map(host => (
++            <option key={host} value={host}>
++              {host}
++            </option>
++          ))}
++        </select>
++      </div>
++    </div>
 +  )
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
@@ -424,6 +433,63 @@ index 000000000..38b9cb46b
 +  }
 +
 +  return found
++}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
+index 438b76adc..7ba74900e 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
++++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
+@@ -78,3 +78,52 @@
+   background-color: var(--buttonSecondaryText);
+   margin-inline-start: 0.2em;
+ }
++
++.relayPicker {
++  margin: 4px 0 14px;
++  text-align: left;
++  width: 100%;
++}
++
++.relayPickerLabel {
++  color: var(--deltaChatPrimaryFgLight);
++  display: block;
++  font-size: 13px;
++  margin-bottom: 2px;
++}
++
++.relayPickerSelect {
++  position: relative;
++  width: 100%;
++
++  &::after {
++    border: solid var(--deltaChatPrimaryFgLight);
++    border-width: 0 2px 2px 0;
++    content: '';
++    height: 7px;
++    pointer-events: none;
++    position: absolute;
++    right: 6px;
++    top: 50%;
++    transform: translateY(-70%) rotate(45deg);
++    width: 7px;
++  }
++
++  select {
++    appearance: none;
++    background: none;
++    border: none;
++    border-bottom: 1px solid var(--deltaChatPrimaryFgLight);
++    color: var(--bp4InputText);
++    cursor: pointer;
++    font-size: 16px;
++    padding: 8px 28px 8px 0;
++    width: 100%;
++
++    &:focus {
++      border-bottom-color: var(--loginInputFocusColor);
++      color: var(--loginInputFocusColor);
++      outline: none;
++    }
++  }
 +}
 diff --git a/packages/frontend/src/contexts/InstantOnboardingContext.tsx b/packages/frontend/src/contexts/InstantOnboardingContext.tsx
 index 9c2fc6e29..a92312f69 100644
