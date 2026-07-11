@@ -114,7 +114,7 @@ index 4e131b723..934ab9c4a 100644
        <DownloadOnDemand settings={settingsStore.settings} />
  
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index 99af66cbe..17d5f8a49 100644
+index 99af66cbe..b8559d672 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 @@ -21,7 +21,7 @@ import {
@@ -235,7 +235,7 @@ index 99af66cbe..17d5f8a49 100644
 +          <PseudoListItem
 +            id='contactdeveloper'
 +            text='Sloth (Slothful.chat Developer)'
-+            subText='Chat with developer for giving feedback and reporting bugs'
++            subText='Send feedback & report bugs'
 +            onClick={() => {
 +              // Hand the invite link to the regular QR / invite-link
 +              // machinery: it asks for confirmation and then sets up the chat.
