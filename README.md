@@ -32,7 +32,7 @@ origin is added to the CSP.
   tab); onboarding progress and the method chosen (default chatmail relay vs
   manual email login vs QR vs webimap); that a message was sent and of what kind
   (text/image/voice/file — never its content); which info links
-  (imprint/GitHub/changelog) were opened; QR scans; whether a community channel
+  (imprint/GitHub/changelog/donate) were opened; QR scans; whether a community channel
   was used; link-preview accept/dismiss; which kind of bridge is used (local /
   provided / custom); backup/key import-export (not the contents); coarse
   chat-count milestones (first, >10); coarse buckets for startup and other
