@@ -53,7 +53,11 @@ const watchdog = setTimeout(() => {
 }, 240_000)
 await new Promise(r => setTimeout(r, 500)) // let servers bind
 
-const browser = await chromium.launch()
+// CHROMIUM_EXECUTABLE: use a system/preinstalled Chromium instead of the
+// playwright-managed download (e.g. sandboxes where the download is blocked)
+const browser = await chromium.launch({
+  executablePath: process.env.CHROMIUM_EXECUTABLE || undefined,
+})
 const page = await browser.newPage()
 page.on('pageerror', e => console.error('[pageerror]', e.message))
 // upstream's avoid-eval.js breaks page.evaluate; freeze the real eval
