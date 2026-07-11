@@ -141,11 +141,42 @@ in source. All optional:
 | `SLOTHFUL_PUBLIC_BRIDGES` | Public bridges offered in the app's bridge picker dialog: `;`-separated `URL description` entries (URL up to the first space, rest is a super-short description). Malformed entries are dropped. Localhost + a custom field are always offered; the `SLOTHFUL_DEFAULT_PROXY` bridge appears automatically (deduped). |
 | `SLOTHFUL_DEFAULT_CHATMAIL` | Chatmail relay the "create new account" flow signs up on (host, URL or `dcaccount:` QR). Unset = upstream's default relay. Scanned QR codes still override it. |
 | `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the "Public Bots" / "Public Channels" community suggestions in the New Chat dialog instance-wide (also hides the per-user settings toggle). |
+| `SLOTHFUL_PLAUSIBLE_DOMAIN` | Plausible "site" id enabling **anonymous usage statistics**. Unset (the default) → no analytics at all: no events, no consent banner, no extra CSP origin. |
+| `SLOTHFUL_PLAUSIBLE_API` | Plausible events endpoint. Defaults to `https://plausible.io/api/event` when a domain is set; point it at your own instance to self-host analytics. |
+
+### Telemetry & privacy
+
+Two independent things (see the root [README](../../README.md#privacy--data-protection)
+for the user-facing summary):
+
+- **Local profiling** (`src/perf.ts`) — startup seams (`worker-spawn` →
+  `core-ready` → `ui-ready`, plus `first-account` for onboarding), a cold/warm
+  classification, and selected RPC round-trips (configure, send by kind, backup,
+  chat load) are timed with the User Timing API and shown in the **Diagnostics**
+  panel (`src/diagnostics.ts`), opened from a button a desktop patch adds to the
+  Log dialog. Purely on-device; nothing is sent.
+- **PGP timing** — the wasm core's tokio shim (`crates/tokio-wasm-shim/src/task.rs`)
+  times every inline `spawn_blocking`/`block_in_place` closure and exposes
+  `blocking_profile()`; this is "Step 0" of
+  [issue #3](https://github.com/experintellia/slothfulchat-web/issues/3).
+- **Usage statistics** (`src/analytics.ts`) — only when the instance sets the
+  Plausible env vars above. Events are POSTed to Plausible's events API from our
+  own bundle (**no third-party script**, so `script-src` stays `'self'`; only a
+  single `connect-src` origin is added, see `patchCsp` in `instance-config.mjs`).
+  Opt-out: on by default on a configured instance, a one-time notice
+  (`src/consent.ts`), re-toggleable in Diagnostics → Usage statistics. The
+  **closed** event list lives in `analytics.EVENTS` and is what both the notice
+  and the imprint render. Most events are derived from JSON-RPC method names / a
+  message `viewtype` / a chat-list length in `src/telemetry.ts` — never from
+  content; a few UI-only signals (onboarding welcome, link-preview accept/dismiss,
+  community-channel use) call `window.__slothfulTrack` from small desktop patch
+  hooks. Self-hosted builds (env unset) run none of this.
 
 The instance/proxy values surface at runtime as `window.__slothfulConfig`
 (injected before `runtime.js`); `runtime.ts` reads `defaultProxyUrl` from it.
 `imprint.html` is always emitted — with a placeholder when unconfigured, so the
 About link never dangles. Its scope/privacy/reporting text (imprint covers the
 site only; everything runs client-side and the operator never receives your
-data; how to handle problem users) is fixed in the template; only the operator
-name/address/email come from env.
+data; how to handle problem users) is fixed in the template; the operator
+name/address/email come from env, and an "Anonymous usage statistics" section is
+added automatically when `SLOTHFUL_PLAUSIBLE_DOMAIN` is set.

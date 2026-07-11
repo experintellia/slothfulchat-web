@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <dev@slothful.chat>
+Date: Sat, 11 Jul 2026 14:39:33 +0000
+Subject: [PATCH 43/43] web-app: anonymous analytics hooks (onboarding, link
+ preview, community)
+
+Call window.__slothfulTrack (set by our runtime.js in the browser edition):
+- WelcomeScreen: top-of-funnel 'welcome' onboarding step.
+- useLinkPreview: link_preview accept (onAdd) / dismiss (onDismiss, onRemove).
+- PublicChannels: 'community' when a community-channel source is opened.
+All no-op on other targets and when analytics is disabled.
+---
+ .../src/components/composer/linkPreview/useLinkPreview.ts | 6 ++++++
+ .../src/components/dialogs/PublicChannels/index.tsx       | 2 ++
+ .../src/components/screens/WelcomeScreen/index.tsx        | 8 ++++++++
+ 3 files changed, 16 insertions(+)
+
+diff --git a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
+index eb6d6c287..84f1fc5a5 100644
+--- a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
++++ b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
+@@ -204,6 +204,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
+     if (!url || (!!draftFile && !isPreviewActive)) {
+       return
+     }
++    // slothfulchat: anonymous analytics — the user accepted a link preview
++    ;(window as any).__slothfulTrack?.('link_preview', { action: 'accept' })
+     const token = ++tokenRef.current
+     setPhase({ kind: 'loading' })
+     // Bail out of a hung fetch so the spinner doesn't linger forever.
+@@ -257,6 +259,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
+   }, [accountId, url, draftFile, isPreviewActive, attach])
+ 
+   const onRemove = useCallback(() => {
++    // slothfulchat: the user dismissed (removed) an attached preview
++    ;(window as any).__slothfulTrack?.('link_preview', { action: 'dismiss' })
+     tokenRef.current++
+     clearStagedTemp()
+     if (previewActiveRef.current) {
+@@ -270,6 +274,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
+   }, [clearStagedTemp, removeFile, setPreviewActive, url])
+ 
+   const onDismiss = useCallback(() => {
++    // slothfulchat: the user dismissed the link-preview ghost
++    ;(window as any).__slothfulTrack?.('link_preview', { action: 'dismiss' })
+     if (url) {
+       dismissedRef.current = url
+     }
+diff --git a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
+index 4420fa53e..b9aae4d77 100644
+--- a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
++++ b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
+@@ -49,6 +49,8 @@ function ChannelSourceItem({
+         type='button'
+         className={'contact-list-item-button ' + styles.botListItem}
+         onClick={() => {
++          // slothfulchat: anonymous analytics — a community channel was used
++          ;(window as any).__slothfulTrack?.('community')
+           runtime.openLink(source.url)
+           onClose()
+         }}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/index.tsx b/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
+index be9b1d300..0aa222ffc 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
+@@ -31,6 +31,14 @@ export default function WelcomeScreen({ selectedAccountId, ...props }: Props) {
+   const [hasConfiguredAccounts, setHasConfiguredAccounts] = useState(false)
+   const { openDialog } = useDialog()
+ 
++  // slothfulchat: onboarding-funnel analytics — top of the funnel only. No-op
++  // unless the browser edition set window.__slothfulTrack (runtime.js). The
++  // chosen method and configure success/failure are derived from RPCs in our
++  // telemetry layer, so nothing finer needs a hook here.
++  React.useEffect(() => {
++    ;(window as any).__slothfulTrack?.('onboarding', { step: 'welcome' })
++  }, [])
++
+   useLayoutEffect(() => {
+     // On a fresh DC start we will not have any yet.
+     const checkAccounts = async () => {

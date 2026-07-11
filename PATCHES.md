@@ -51,6 +51,16 @@ exists:
   browser, and an earlier up-front reachability/CORS probe misdiagnosed
   working servers, so the hints ride on the real error instead. `core/0011`,
   `desktop/0011`, `desktop/0021`, `desktop/0026`
+- **Profiling & anonymous usage statistics** — an in-app Diagnostics panel
+  (opened from the log dialog) shows on-device startup/RPC timing that never
+  leaves the device; PGP timing is measured in the wasm shim
+  (`crates/tokio-wasm-shim`, issue #3 Step 0). The official demo instance can
+  additionally collect opt-out, cookieless usage stats via Plausible's events
+  API from our own bundle (no third-party script, one extra `connect-src`
+  origin); self-hosted builds collect nothing. Most events are derived from
+  JSON-RPC traffic in `packages/web-app/src`; two desktop hooks add the UI-only
+  signals (onboarding welcome, link-preview accept/dismiss, community-channel
+  use) and the Diagnostics button. `desktop/0042`, `desktop/0043`
 - **Attachment details & failure reason in Message Info** — file name, MIME
   type, size, image/video dimensions, audio/video duration; delivery failures
   show as an error banner, and clicking a message's failed-status icon opens

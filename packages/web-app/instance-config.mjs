@@ -22,6 +22,13 @@ import { createHash } from 'node:crypto'
 //   SLOTHFUL_IMPRINT_NAME    responsible person/entity (legal imprint)
 //   SLOTHFUL_IMPRINT_ADDRESS postal address (newlines allowed)
 //   SLOTHFUL_IMPRINT_EMAIL   contact email
+//   SLOTHFUL_PLAUSIBLE_DOMAIN  Plausible "site" id enabling anonymous usage
+//                            stats. UNSET (self-host default) = no analytics at
+//                            all (no events, no banner, no extra CSP origin), so
+//                            the imprint privacy promise stays literally true.
+//   SLOTHFUL_PLAUSIBLE_API   Plausible events endpoint. Defaults to the cloud
+//                            (https://plausible.io/api/event) when a domain is
+//                            set; point it at your own instance to self-host.
 //   SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS
 //                            "1"/"true": hide the community suggestions
 //                            ("Public Bots", "Public Channels") in the New
@@ -57,6 +64,11 @@ export function parsePublicBridges(raw) {
 }
 
 export function buildConfig(env, build = {}) {
+  const plausibleDomain = env.SLOTHFUL_PLAUSIBLE_DOMAIN || ''
+  // default the endpoint to Plausible cloud once a domain is configured; empty
+  // (self-host default) keeps analytics fully off
+  const plausibleApi =
+    env.SLOTHFUL_PLAUSIBLE_API || (plausibleDomain ? 'https://plausible.io/api/event' : '')
   return {
     instanceName: env.SLOTHFUL_INSTANCE_NAME || '',
     instanceUrl: env.SLOTHFUL_INSTANCE_URL || '',
@@ -80,10 +92,46 @@ export function buildConfig(env, build = {}) {
     // release builds (CI sets NODE_ENV=production) hide devmode features:
     // window.exp access, debug log level, dev_ prototype themes
     devmode: env.NODE_ENV !== 'production',
+    // anonymous usage stats: only present when this instance opted in at build
+    // time. runtime.ts treats analytics===false as "no analytics" everywhere.
+    analytics: Boolean(plausibleDomain && plausibleApi),
+    plausibleDomain,
+    plausibleApi,
     version: build.version || '',
     commitHash: build.commitHash || '',
     commitMessage: build.commitMessage || '',
   }
+}
+
+/** The origin the analytics code POSTs to, or '' when analytics is off. Used to
+ * open exactly one extra CSP connect-src on instances that enable stats. */
+export function analyticsOrigin(config) {
+  if (!config.analytics || !config.plausibleApi) return ''
+  try {
+    return new URL(config.plausibleApi).origin
+  } catch {
+    return ''
+  }
+}
+
+/** Canonicalise the CSP connect-src in main.html/index.html: drop any
+ * previously-injected http(s) origin and add `origin` when analytics is on.
+ * Idempotent, so assemble.mjs (from the pristine template) and customize.mjs
+ * (from a prebuilt zip that may carry a stale origin) both converge. Non-origin
+ * tokens (ws:, wss:, data:, …) are preserved. Anchored on `connect-src 'self'`
+ * (the real directive always lists 'self' first) so it never matches the word
+ * "connect-src" in the explanatory HTML comment above the meta tag. */
+export function patchCsp(html, origin) {
+  // only strip a previously-injected *bare* origin (scheme://host[:port], no
+  // path) — that's what analyticsOrigin() produces. Path-scoped or wildcard
+  // entries in the template (e.g. the link-preview `https://*:*/unfurl`) are
+  // preserved.
+  const isBareOrigin = t => /^https?:\/\/[^/]+\/?$/.test(t)
+  return html.replace(/connect-src 'self'([^;"]*)/, (_m, body) => {
+    const kept = body.split(/\s+/).filter(t => t && !isBareOrigin(t))
+    if (origin) kept.push(origin)
+    return "connect-src 'self'" + (kept.length ? ' ' + kept.join(' ') : '')
+  })
 }
 
 export const configJs = config =>
@@ -175,8 +223,37 @@ ${
 }
 The operator of
 this site never receives, stores, sees or processes your messages or account
-data, and has no way to know what you do in the app.</p>
-
+data.${
+    config.analytics
+      ? ' Beyond the anonymous usage statistics described below, the operator has no way to know what you do in the app.'
+      : ' The operator has no way to know what you do in the app.'
+  }</p>
+${
+  config.analytics
+    ? `
+<h2>Anonymous usage statistics</h2>
+<p>This is a public demo instance. To understand which features are used and
+where the app is slow, it collects <strong>anonymous, aggregated usage
+statistics</strong> — using
+<a href="https://plausible.io/data-policy" target="_blank" rel="noopener">Plausible</a>,
+a privacy-focused analytics tool that uses no cookies and does no cross-site
+tracking. What is collected: that the app was opened; progress through account
+setup and which method was chosen (the default chatmail relay vs a manual email
+login vs QR vs webimap); that a message was sent and of what kind
+(text/image/voice/file — never its content); which info links
+(imprint/GitHub/changelog) were opened; that a QR code was scanned, a community
+channel was used, a link preview was shown, a backup or key was exported/imported
+(never the contents); coarse milestones such as having your first chat or more
+than ten; which kind of bridge is used; and coarse ranges for startup and other
+timings, plus fatal startup errors by category. <strong>No message content,
+contact or email addresses, account data, or free text is ever
+collected.</strong> Statistics are on by default here and you are asked once on
+your first visit; you can opt out at any time in the app (Settings → open the log
+→ Diagnostics → Usage statistics), and self-hosted instances collect nothing at
+all.</p>
+`
+    : ''
+}
 <h2>Problems with other users</h2>
 <p>Because the operator has no access to your conversations, they cannot moderate
 them and cannot act on reports about other users. If someone harasses you or

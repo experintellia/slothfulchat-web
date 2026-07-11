@@ -165,6 +165,9 @@ jobs:
           SLOTHFUL_IMPRINT_NAME: ${{ vars.SLOTHFUL_IMPRINT_NAME }}
           SLOTHFUL_IMPRINT_ADDRESS: ${{ vars.SLOTHFUL_IMPRINT_ADDRESS }}
           SLOTHFUL_IMPRINT_EMAIL: ${{ vars.SLOTHFUL_IMPRINT_EMAIL }}
+          # anonymous usage stats: unset -> no analytics (see instance-config.mjs)
+          SLOTHFUL_PLAUSIBLE_DOMAIN: ${{ vars.SLOTHFUL_PLAUSIBLE_DOMAIN }}
+          SLOTHFUL_PLAUSIBLE_API: ${{ vars.SLOTHFUL_PLAUSIBLE_API }}
       - name: Build web-app runtime + service worker (into dist/)
         run: pnpm --filter @slothfulchat/web-app build
 

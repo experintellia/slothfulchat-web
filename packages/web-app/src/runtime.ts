@@ -8,6 +8,15 @@
  * (upstream file untouched). bundle.js stays byte-identical to upstream.
  */
 import { startCore, type Core, type BaseDeltaChat } from '@slothfulchat/core-wasm'
+import * as perf from './perf'
+import * as analytics from './analytics'
+import * as session from './session'
+import { observeTransport } from './telemetry'
+import { maybeShowConsentBanner } from './consent'
+import { initDiagnostics } from './diagnostics'
+
+// earliest boot milestone we control: our runtime bundle has finished loading
+perf.boot('runtime-eval')
 
 // ponytail: local structural types instead of importing @deltachat-desktop/*
 // type packages (they are not part of this workspace). bundle.js only cares
@@ -244,13 +253,20 @@ function getCore(): Core {
     const wsProxyUrl = resolveBridgeUrl()
     // OPFS persistence is on by default; ?persist=0 opts out (fresh-core tests)
     const persist = params.get('persist') !== '0'
+    // which kind of bridge this session uses (local device / instance-provided /
+    // user-custom); no-op unless analytics is enabled
+    analytics.event('bridge', { kind: bridgeKind(wsProxyUrl) })
+    perf.boot('worker-spawn')
     core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))
+    // time selected RPC round-trips (local) + derive anonymous usage events
+    observeTransport(core.transport as any)
     // the worker reports when it gave up waiting for the OPFS lock — the core
     // is (almost certainly) running in another tab. ponytail: no faster
     // web-lock detection — its release lags on reloads and false-positives
     core.worker.addEventListener('message', event => {
       const type = (event as MessageEvent).data?.type
       if (type === 'fatal-opfs-locked') {
+        analytics.event('boot_error', { kind: 'opfs-locked' })
         showFatalDialog(
           'sc-already-running-dialog',
           'Already running in another tab',
@@ -258,6 +274,7 @@ function getCore(): Core {
             'only run in one at a time. Close the other tab, then retry.'
         )
       } else if (type === 'fatal-storage-blocked') {
+        analytics.event('boot_error', { kind: 'storage-blocked' })
         showFatalDialog(
           'sc-storage-blocked-dialog',
           'Browser storage is blocked',
@@ -267,6 +284,7 @@ function getCore(): Core {
             'Settings → Safari → Advanced → Block All Cookies.'
         )
       } else if (type === 'fatal-init-error') {
+        analytics.event('boot_error', { kind: 'init-error' })
         showFatalDialog(
           'sc-init-error-dialog',
           `${APP_NAME} could not start`,
@@ -292,10 +310,35 @@ function getCore(): Core {
     // debug/smoke marker: proves the wasm core booted and answers rpc
     core.transport
       .request('get_system_info', [])
-      .then(info => ((window as any).__coreSystemInfo = info))
+      .then(info => {
+        perf.boot('core-ready') // first successful RPC = core is up
+        ;(window as any).__coreSystemInfo = info
+      })
       .catch(err => console.error('wasm core get_system_info failed', err))
+    // classify the session as onboarding (no account yet) vs returning, for the
+    // cold/warm startup bucket and the pageview retention prop, then send the
+    // one pageview + startup sample once account state is known (so mode is
+    // accurate). All no-ops unless analytics is enabled.
+    core.transport
+      .request('get_all_account_ids', [])
+      .then(ids => session.setHadAccount(Array.isArray(ids) && ids.length > 0))
+      .catch(() => {})
+      .finally(() => {
+        analytics.pageview()
+        analytics.trackStartup(perf.getStartup())
+      })
   }
   return core
+}
+
+/** local device / instance-provided / user-custom bridge, for the `bridge`
+ * event. Matches the resolved URL against the known options (localhost + the
+ * operator's default/public bridges); anything else is a user-entered custom. */
+function bridgeKind(url: string): 'local' | 'provided' | 'custom' {
+  const n = normBridgeUrl(url)
+  if (n === normBridgeUrl(DEFAULT_LOCAL_BRIDGE)) return 'local'
+  const known = new Set(bridgeOptions().map(o => normBridgeUrl(o.url)))
+  return known.has(n) ? 'provided' : 'custom'
 }
 
 const isIOS =
@@ -529,6 +572,7 @@ class BrowserRuntime {
   }
 
   emitUIFullyReady(): void {
+    perf.boot('ui-fully-ready')
     // The frontend has finished startup() and selected an account, so its
     // onOpenQrUrl / onWebxdcSendToChat are now registered with a real accountId.
     // Open the gate and flush any launch payload captured before now.
@@ -537,6 +581,10 @@ class BrowserRuntime {
     this.flushPendingSendToChat()
   }
   emitUIReady(): void {
+    perf.boot('ui-ready')
+    // send the bucketed startup sample (fires once, and only once cold/warm is
+    // known — see analytics.trackStartup; getCore's account probe also calls it)
+    analytics.trackStartup(perf.getStartup())
     console.log('emitUIReady') // no backend to notify
   }
   onDragFileOut(_file: string): void {
@@ -1034,6 +1082,8 @@ class BrowserRuntime {
   }
 
   openLink(link: string): void {
+    // all in-app external links funnel through here (About dialog, ClickableLink)
+    analytics.trackLink(link)
     window.open(link, '_blank')?.focus()
   }
 
@@ -1085,6 +1135,25 @@ class BrowserRuntime {
 
     initBlobServiceWorker(this.log)
     this.askBrowserForNotificationPermission()
+
+    // diagnostics panel (opened from the Log dialog) + one-time usage-stats
+    // notice. Both no-op on self-hosted builds, where analytics is unconfigured.
+    // (The pageview + startup sample are sent from getCore once account state
+    // is known.)
+    initDiagnostics()
+    maybeShowConsentBanner()
+
+    // onboarding funnel hook: WelcomeScreen (desktop patch) calls this for the
+    // top-of-funnel "welcome" step; the chosen method and success/failure are
+    // derived from RPCs in telemetry.ts. Just forwards to analytics, guarded and
+    // best-effort — a no-op when analytics is off.
+    ;(window as any).__slothfulTrack = (name: string, props?: Record<string, string>) => {
+      try {
+        analytics.event(name, props)
+      } catch {
+        /* never let a UI hook throw */
+      }
+    }
 
     document.body.addEventListener('drop', async e => {
       if (!this.onDrop) {
