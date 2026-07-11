@@ -13,6 +13,12 @@
 // is only allowed to an IP that was just resolved for an allowlisted domain —
 // so a hosted bridge can only reach vetted chatmail servers. Empty = allow all.
 //
+// Optional unfurl endpoint: serves GET /unfurl?url=… on the same port for the
+// webapp's link previews — a hardened server-side metadata fetcher, NOT a
+// tunnel; see unfurl.mjs. On by default for an allow-all bridge, off once
+// CHATMAIL_ALLOWLIST is set (a vetted hosted bridge shouldn't silently fetch
+// arbitrary pages); UNFURL=1 / UNFURL=0 overrides either way.
+//
 // ponytail: still a single inspectable file — no auth, the port + optional
 // domain allowlist are the only guards. A hostile authoritative DNS server for
 // an allowlisted domain could point it at an internal IP (SSRF); acceptable for
@@ -21,6 +27,7 @@ import { createServer } from 'node:http';
 import { connect } from 'node:net';
 import { resolve4, resolve6 } from 'node:dns/promises';
 import { WebSocketServer } from 'ws';
+import { unfurlHandler } from './unfurl.mjs';
 
 const PORT = Number(process.env.PORT ?? 8641);
 const ALLOWED_TCP_PORTS = new Set([143, 465, 587, 993]);
@@ -37,6 +44,16 @@ const ALLOWLIST = (process.env.CHATMAIL_ALLOWLIST ?? process.env.CHATMAIL_WHITEL
 const ALLOW_TTL_MS = 10 * 60 * 1000; // temporary: resolved IPs expire after 10 min
 const allowedIps = new Map(); // ip -> expiresAt (ms)
 
+// Unfurl endpoint (link previews): on by default for an allow-all bridge — a
+// local/personal one, where the operator hasn't restricted reach anyway, so a
+// same-host preview fetcher is fine and needs no config. Off once an allowlist
+// is set: a hosted bridge that vets its mail destinations shouldn't silently
+// double as an open web-preview fetcher — opt in explicitly with UNFURL=1.
+// An explicit UNFURL=1 / UNFURL=0 always wins.
+const UNFURL = process.env.UNFURL !== undefined && process.env.UNFURL !== ''
+  ? process.env.UNFURL === '1'
+  : ALLOWLIST.length === 0;
+
 const isAllowlisted = host => {
   const h = host.toLowerCase();
   return ALLOWLIST.some(d => h === d || h.endsWith('.' + d));
@@ -51,7 +68,12 @@ const ipAllowed = ip => {
   return true;
 };
 
-const server = createServer();
+// plain (non-upgrade) HTTP requests only carry the opt-in unfurl endpoint
+const server = createServer((req, res) => {
+  if (UNFURL && req.url.startsWith('/unfurl')) return unfurlHandler(req, res);
+  res.statusCode = 404;
+  res.end();
+});
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', async (ws, req) => {
@@ -116,4 +138,9 @@ wss.on('connection', async (ws, req) => {
 server.listen(PORT, () => {
   console.log(`ws-tcp proxy on ws://localhost:${PORT}`);
   if (ALLOWLIST.length) console.log(`allowlist: ${ALLOWLIST.join(', ')}`);
+  console.log(
+    UNFURL
+      ? `unfurl endpoint on http://localhost:${PORT}/unfurl?url=...`
+      : 'unfurl endpoint off (allowlist set; UNFURL=1 to enable)'
+  );
 });

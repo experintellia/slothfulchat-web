@@ -1,0 +1,1611 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 10 Jul 2026 23:14:32 +0000
+Subject: [PATCH] web-app: sender-baked link previews with a composer ghost UI
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the draft contains a URL and no image is attached, the composer shows a
+quiet, dismissible ghost offering to add a link preview. Accepting fetches the
+link's OpenGraph metadata, renders a preview card into a PNG on the sender's
+device, and attaches it as the message image; the link text stays in the body.
+
+Because the result is an ordinary text + image message, the recipient's client
+never contacts the link (no IP/metadata leak, keeps E2EE intact) and every
+client renders it as-is — nothing to implement on the receive side. This is a
+UI prototype: the baked-image approach is a compromise to validate the composer
+UX now; the eventual design moves generation into core with the preview carried
+as structured message metadata, and this card becomes a renderer over it.
+
+New packages/frontend/src/components/composer/linkPreview/ module wired into
+Composer.tsx:
+- detectUrl: first previewable http(s) URL in the draft (debounced).
+- openGraph: preview metadata types + the compact-vs-hero layout heuristic.
+- renderCard: canvas → PNG card (opaque light surface so it reads on any
+  recipient theme; measured layout; shrink-to-fit ≤ 0.6 MB; play glyph for video).
+- generate: fetch via the bridge's unfurl endpoint (webapp-only — the browser
+  fetch is CORS-bound and near-useless direct, so there is no direct tier; the
+  bridge fetches server-side and returns metadata + image as JSON). Derives the
+  endpoint from the configured bridge URL (?proxy=, ws→http); unreachable →
+  UnfurlUnavailableError.
+- useLinkPreview: the ghost state machine. Gates on a 'user has their own file'
+  signal (mirrored in a ref so our own attach isn't mistaken for a user file);
+  dismissal is per-message (forgotten once the composer has no URL); a
+  generation timeout; abort-token invalidation on URL change.
+- LinkPreviewGhost: idle ghost → loading bar → ready chip (the baked card shown
+  big with a labeled ⤢ Bigger / ⤡ Smaller size toggle and remove) → an
+  'unavailable' hint when the unfurl endpoint can't be reached.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ .../Settings/ExperimentalFeatures.tsx         |   5 +
+ .../src/components/composer/Composer.tsx      |  55 ++-
+ .../composer/linkPreview/LinkPreviewGhost.tsx | 122 +++++++
+ .../composer/linkPreview/detectUrl.ts         |  80 +++++
+ .../composer/linkPreview/generate.ts          | 254 ++++++++++++++
+ .../composer/linkPreview/openGraph.ts         |  56 +++
+ .../composer/linkPreview/renderCard.ts        | 332 ++++++++++++++++++
+ .../composer/linkPreview/styles.module.scss   | 206 +++++++++++
+ .../composer/linkPreview/useLinkPreview.ts    | 330 +++++++++++++++++
+ packages/shared/shared-types.d.ts             |   2 +
+ packages/shared/state.ts                      |   1 +
+ 11 files changed, 1426 insertions(+), 17 deletions(-)
+ create mode 100644 packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
+ create mode 100644 packages/frontend/src/components/composer/linkPreview/detectUrl.ts
+ create mode 100644 packages/frontend/src/components/composer/linkPreview/generate.ts
+ create mode 100644 packages/frontend/src/components/composer/linkPreview/openGraph.ts
+ create mode 100644 packages/frontend/src/components/composer/linkPreview/renderCard.ts
+ create mode 100644 packages/frontend/src/components/composer/linkPreview/styles.module.scss
+ create mode 100644 packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
+
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index 185e50b3c..1decdd8f1 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -71,6 +71,11 @@ export function ExperimentalFeatures() {
+           showExperimentalInfoDialog('enableOnDemandLocationStreaming', value)
+         }
+       />
++      <DesktopSettingsSwitch
++        settingsKey='linkPreviewSuggestions'
++        label='Link-preview suggestions'
++        description='When your message contains a link and has no image, offer to attach a preview card. Turn off to never be prompted.'
++      />
+       {runtime.getRuntimeInfo().isContentProtectionSupported && (
+         <DesktopSettingsSwitch
+           settingsKey='contentProtectionEnabled'
+diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
+index bd995140f..adbab3f1b 100644
+--- a/packages/frontend/src/components/composer/Composer.tsx
++++ b/packages/frontend/src/components/composer/Composer.tsx
+@@ -13,6 +13,8 @@ import { extension } from 'mime-types'
+ 
+ import MenuAttachment from './menuAttachment'
+ import ComposerMessageInput from './ComposerMessageInput'
++import LinkPreviewGhost from './linkPreview/LinkPreviewGhost'
++import { useLinkPreview } from './linkPreview/useLinkPreview'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { EmojiAndStickerPicker } from './EmojiAndStickerPicker'
+ import { Quote } from '../message/Message'
+@@ -136,6 +138,24 @@ const Composer = forwardRef<
+     [chatId, updateDraftText]
+   )
+ 
++  const settingsStore = useSettingsStore()[0]
++
++  // Sender-baked link previews: when the draft has a URL and no image, offer to
++  // generate a preview card and attach it as an image. See docs/link-preview.md.
++  // The suggestion can be turned off entirely in Settings → Advanced
++  // (experimental); it's on by default, so a missing/undefined flag means on.
++  const linkPreview = useLinkPreview({
++    accountId,
++    chatId,
++    text: draftState.text,
++    draftFile: draftState.file,
++    addFileToDraft,
++    removeFile,
++    disabled:
++      messageEditing.isEditingModeActive ||
++      settingsStore?.desktopSettings.linkPreviewSuggestions === false,
++  })
++
+   const onArrowUpWhenEmpty = useCallback(async () => {
+     if (messageEditing.isEditingModeActive) {
+       return
+@@ -533,8 +553,6 @@ const Composer = forwardRef<
+         }
+       }
+ 
+-  const settingsStore = useSettingsStore()[0]
+-
+   const focusMessageInput = useCallback(() => {
+     // Only one of these is actually rendered at any given moment.
+     regularMessageInputRef.current?.focus()
+@@ -645,21 +663,24 @@ const Composer = forwardRef<
+                   />
+                 </section>
+               )}
+-              {draftState.file && !draftState.vcardContact && (
+-                <section
+-                  className='attachment-quote-section is-attachment'
+-                  aria-label={tx('attachment')}
+-                >
+-                  {/* TODO make this pretty: draft image/video/attachment */}
+-                  {/* <p>file: {draftState.file}</p> */}
+-                  {/* {draftState.viewType} */}
+-                  <DraftAttachment attachment={draftState} />
+-                  <CloseButton
+-                    onClick={removeFile}
+-                    aria-label={tx('remove_attachment')}
+-                  />
+-                </section>
+-              )}
++              {draftState.file &&
++                !draftState.vcardContact &&
++                !linkPreview.isPreviewActive && (
++                  <section
++                    className='attachment-quote-section is-attachment'
++                    aria-label={tx('attachment')}
++                  >
++                    {/* TODO make this pretty: draft image/video/attachment */}
++                    {/* <p>file: {draftState.file}</p> */}
++                    {/* {draftState.viewType} */}
++                    <DraftAttachment attachment={draftState} />
++                    <CloseButton
++                      onClick={removeFile}
++                      aria-label={tx('remove_attachment')}
++                    />
++                  </section>
++                )}
++              <LinkPreviewGhost preview={linkPreview} />
+               {draftState.vcardContact && (
+                 <section
+                   className='attachment-quote-section is-attachment'
+diff --git a/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx b/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
+new file mode 100644
+index 000000000..bc531e58d
+--- /dev/null
++++ b/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
+@@ -0,0 +1,122 @@
++import React from 'react'
++
++import { CloseButton } from '../../Dialog'
++import Spinner from '../../Spinner'
++import type { UseLinkPreview } from './useLinkPreview'
++
++import styles from './styles.module.scss'
++
++type Props = {
++  preview: UseLinkPreview
++}
++
++/**
++ * The composer's link-preview affordance. Auto-appears as a quiet dashed "ghost"
++ * when the draft contains a URL and no image is attached; becomes a chip once a
++ * preview has been generated and attached.
++ */
++export default function LinkPreviewGhost({ preview }: Props) {
++  const { phase } = preview
++  if (!phase) {
++    return null
++  }
++
++  if (phase.kind === 'loading') {
++    return (
++      <div className={styles.bar} aria-live='polite' data-testid='link-preview-loading'>
++        <Spinner size={18} />
++        <span className={styles.barLabel}>Generating preview…</span>
++      </div>
++    )
++  }
++
++  if (phase.kind === 'unavailable') {
++    return (
++      <div
++        className={styles.bar}
++        aria-live='polite'
++        data-testid='link-preview-unavailable'
++      >
++        <span className={styles.linkIcon} aria-hidden='true' />
++        <span className={styles.barLabel}>
++          Link previews need a bridge with unfurl enabled.
++        </span>
++        <CloseButton
++          onClick={preview.onDismiss}
++          aria-label='Dismiss'
++          data-testid='link-preview-dismiss'
++        />
++      </div>
++    )
++  }
++
++  if (phase.kind === 'idle') {
++    // Skeleton of the compact card "Add" will bake — light surface, placeholder
++    // title lines + the real host, and a thumbnail box on the right. We don't
++    // know yet whether the page has a (large) image, so preview the smaller
++    // variant to hint at the shape of the result.
++    return (
++      <div className={styles.ghost} data-testid='link-preview-ghost'>
++        <div className={styles.ghostLeft}>
++          <div className={styles.ghostCard} aria-hidden='true'>
++            <div className={styles.ghostBody}>
++              <span className={styles.skelLine} />
++              <span className={`${styles.skelLine} ${styles.skelLineShort}`} />
++              <span className={styles.ghostHost}>{phase.host}</span>
++            </div>
++            <span className={styles.ghostThumb} />
++          </div>
++          <span className={styles.ghostHint}>
++            Click “Add” to fetch and attach a preview
++          </span>
++        </div>
++        <div className={styles.ghostActions}>
++          <button
++            type='button'
++            className={styles.addButton}
++            onClick={preview.onAdd}
++            data-testid='link-preview-add'
++            aria-label='Add link preview'
++          >
++            Add
++          </button>
++          <CloseButton
++            onClick={preview.onDismiss}
++            aria-label='Dismiss preview'
++            data-testid='link-preview-dismiss'
++          />
++        </div>
++      </div>
++    )
++  }
++
++  // phase.kind === 'ready' — the baked card IS the preview (title/host/image are
++  // baked into it), so show it big and skip the redundant text; keep only the
++  // size toggle (with a word, not just a glyph) and remove.
++  const isHero = phase.layout === 'hero'
++  return (
++    <div className={styles.ready} data-testid='link-preview-ready'>
++      <img
++        className={styles.preview}
++        src={phase.image}
++        alt='Link preview to be sent'
++      />
++      <div className={styles.readyControls}>
++        <button
++          type='button'
++          className={styles.labelButton}
++          onClick={preview.onToggleLayout}
++          data-testid='link-preview-toggle'
++          aria-label={isHero ? 'Collapse to compact' : 'Expand to hero'}
++        >
++          {isHero ? '⤡ Smaller' : '⤢ Bigger'}
++        </button>
++        <CloseButton
++          onClick={preview.onRemove}
++          aria-label='Remove preview'
++          data-testid='link-preview-remove'
++        />
++      </div>
++    </div>
++  )
++}
+diff --git a/packages/frontend/src/components/composer/linkPreview/detectUrl.ts b/packages/frontend/src/components/composer/linkPreview/detectUrl.ts
+new file mode 100644
+index 000000000..1a29ff2b0
+--- /dev/null
++++ b/packages/frontend/src/components/composer/linkPreview/detectUrl.ts
+@@ -0,0 +1,80 @@
++// Extracts the first "previewable" http(s) URL from composer draft text.
++//
++// A previewable URL is a plain http/https web link. We deliberately ignore
++// Delta Chat's own scheme links (invite codes, OpenPGP fingerprints, mailto,
++// etc.) because generating a web preview for them makes no sense and could be
++// privacy-surprising.
++
++const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+/gi
++
++// Schemes/hosts we never preview even if they appear as an http(s) URL.
++const IGNORED_HOST_SUFFIXES = ['localhost', '127.0.0.1', '[::1]']
++
++/**
++ * Trailing characters that are almost never part of a URL when a link is typed
++ * inline in prose (closing brackets, sentence punctuation).
++ */
++function trimTrailingPunctuation(url: string): string {
++  let out = url
++  // Strip trailing punctuation, but keep a closing paren if there's a matching
++  // opening one inside the URL (e.g. Wikipedia "..._(disambiguation)").
++  // eslint-disable-next-line no-constant-condition
++  while (out.length > 0) {
++    const last = out[out.length - 1]
++    if (last === undefined) {
++      break
++    }
++    if (last === ')') {
++      const opens = (out.match(/\(/g) || []).length
++      const closes = (out.match(/\)/g) || []).length
++      if (closes > opens) {
++        out = out.slice(0, -1)
++        continue
++      }
++      break
++    }
++    if ('.,;:!?"\'`>]}'.includes(last)) {
++      out = out.slice(0, -1)
++      continue
++    }
++    break
++  }
++  return out
++}
++
++export type DetectedUrl = {
++  /** The normalized URL string, safe to pass to the fetcher. */
++  url: string
++  /** Lower-cased hostname without a leading `www.`. */
++  host: string
++}
++
++/**
++ * Returns the first previewable URL in `text`, or `null` if there is none.
++ * Only the first match is considered — we preview at most one link per message.
++ */
++export function detectPreviewableUrl(text: string): DetectedUrl | null {
++  if (!text) {
++    return null
++  }
++  URL_RE.lastIndex = 0
++  let match: RegExpExecArray | null
++  while ((match = URL_RE.exec(text)) !== null) {
++    const candidate = trimTrailingPunctuation(match[0])
++    let parsed: URL
++    try {
++      parsed = new URL(candidate)
++    } catch {
++      continue
++    }
++    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
++      continue
++    }
++    const host = parsed.hostname.toLowerCase().replace(/^www\./, '')
++    if (!host || IGNORED_HOST_SUFFIXES.some(h => parsed.hostname === h)) {
++      continue
++    }
++    return { url: parsed.toString(), host }
++  }
++  return null
++}
+diff --git a/packages/frontend/src/components/composer/linkPreview/generate.ts b/packages/frontend/src/components/composer/linkPreview/generate.ts
+new file mode 100644
+index 000000000..a582bf1b3
+--- /dev/null
++++ b/packages/frontend/src/components/composer/linkPreview/generate.ts
+@@ -0,0 +1,254 @@
++// Orchestrates link-preview generation: fetch the page's metadata + image,
++// render the card to a PNG, and stage it as a temp file ready for
++// `addFileToDraft(path, name, 'File')` (attached as File so core sends the PNG
++// uncompressed — see useLinkPreview; 'Image' would recode to alpha-less JPEG).
++//
++// NOTE ON SCOPE — this is a UI prototype, not the final design. Attaching the
++// preview as an *image* is a deliberate compromise so we can build and validate
++// the composer UX now while staying compatible with every existing client (an
++// image needs no receive-side change). The intended end state is to move preview
++// generation into *core* and carry the preview as real structured message
++// metadata (title/description/image/host as first-class message fields), not a
++// baked PNG. When that happens, this desktop card becomes a renderer over that
++// metadata.
++//
++// Fetching is WEBAPP-ONLY and goes through the bridge's unfurl endpoint. We do
++// NOT try a direct browser `fetch()` of the page first: browser fetches are
++// CORS-bound and virtually every real site blocks cross-origin reads of its
++// HTML, so a direct attempt almost always fails — and a blocked cross-origin
++// GET still hits the site, so it just double-fetches (sender's IP + bridge).
++// Instead we go straight to `GET /unfurl?url=…` on the configured ws-tcp
++// bridge's own HTTP port (`packages/ws-tcp-proxy/unfurl.mjs`) — a hardened
++// metadata fetcher (NOT a tunnel; that would be an open proxy) that fetches the
++// page server-side and returns OpenGraph metadata + the image as JSON with
++// permissive CORS. Nothing to configure app-side: we reuse the bridge URL. The
++// endpoint is on by default for a local/allow-all bridge; if it's unreachable
++// the composer shows a quiet "needs a bridge with unfurl" hint. (Native clients
++// will fetch directly, no CORS, and need none of this.)
++
++import { getLogger } from '@deltachat-desktop/shared/logger'
++import { runtime } from '@deltachat-desktop/runtime-interface'
++
++import { chooseLayout, type LinkMetadata, type PreviewLayout } from './openGraph'
++import { renderCardPng, type Drawable } from './renderCard'
++
++const log = getLogger('renderer/composer/linkPreview')
++
++/**
++ * Thrown when the unfurl endpoint can't be reached at all (no bridge, wrong
++ * URL, connection refused, or the browser blocking a localhost fetch) — as
++ * opposed to the endpoint responding that a given page has no preview. The
++ * composer turns this into a "needs a bridge with unfurl enabled" hint rather
++ * than silently doing nothing.
++ */
++export class UnfurlUnavailableError extends Error {}
++
++/**
++ * HTTP base of the unfurl endpoint, derived from the configured ws-tcp bridge:
++ * the unfurl route lives on the bridge's own port, so there is nothing extra to
++ * configure — we just reuse the bridge URL (`?proxy=` / `slothfulchat.proxyUrl`
++ * / per-instance default, matching runtime.ts) and swap the scheme (ws→http,
++ * wss→https). Webapp-only: native builds have no bridge URL.
++ */
++function unfurlBaseUrl(): string | null {
++  try {
++    const proxy =
++      new URLSearchParams(window.location.search).get('proxy') ||
++      window.localStorage.getItem('slothfulchat.proxyUrl') ||
++      (window as any).__slothfulConfig?.defaultProxyUrl ||
++      'ws://localhost:8641'
++    if (!proxy || !/^wss?:\/\//.test(proxy)) {
++      return null
++    }
++    return proxy.replace(/^ws(s?):\/\//, 'http$1://').replace(/\/+$/, '')
++  } catch {
++    return null
++  }
++}
++
++/** Shape of the unfurl service's JSON reply (see packages/ws-tcp-proxy/unfurl.mjs). */
++type UnfurlReply = {
++  url: string
++  title: string
++  description: string | null
++  isVideo: boolean
++  twitterCard: string | null
++  imageWidth: number | null
++  imageHeight: number | null
++  /** base64 (no data: prefix) og:image bytes, fetched by the service. */
++  image: string | null
++  imageMime: string | null
++}
++
++/**
++ * Fetch `url` via the bridge's unfurl endpoint. Returns already-parsed metadata
++ * plus the decoded thumbnail. Throws `UnfurlUnavailableError` when the endpoint
++ * itself can't be reached (→ "needs a bridge with unfurl" hint), or a plain
++ * Error when it responds but has no preview for this page (→ silent).
++ */
++async function fetchViaUnfurlService(
++  url: string
++): Promise<{ meta: LinkMetadata; thumbnail: Drawable }> {
++  const base = unfurlBaseUrl()
++  if (!base) {
++    throw new UnfurlUnavailableError('no bridge configured')
++  }
++  let res: Response
++  try {
++    res = await fetch(`${base}/unfurl?url=${encodeURIComponent(url)}`)
++  } catch (err) {
++    // network-level failure: no bridge, refused, or the browser blocked the
++    // localhost fetch (Local Network Access) — the endpoint is unreachable.
++    throw new UnfurlUnavailableError(`unfurl endpoint unreachable: ${err}`)
++  }
++  if (!res.ok) {
++    throw new Error(`unfurl replied ${res.status}`)
++  }
++  const data: UnfurlReply = await res.json()
++  if (!data || typeof data.title !== 'string' || !data.title) {
++    throw new Error('unfurl service returned no usable metadata')
++  }
++
++  let thumbnail: Drawable = null
++  if (data.image) {
++    try {
++      const mime =
++        data.imageMime && data.imageMime.startsWith('image')
++          ? data.imageMime
++          : 'image/jpeg'
++      const img = await loadImage(`data:${mime};base64,${data.image}`)
++      thumbnail = {
++        image: img,
++        naturalWidth: img.naturalWidth || 1,
++        naturalHeight: img.naturalHeight || 1,
++      }
++    } catch (err) {
++      log.info('unfurl thumbnail decode failed', url, err)
++    }
++  }
++
++  const host = (() => {
++    try {
++      return new URL(url).hostname.toLowerCase().replace(/^www\./, '')
++    } catch {
++      return url
++    }
++  })()
++  const isVideo = !!data.isVideo
++  const imageWidth = data.imageWidth ?? null
++  const imageHeight = data.imageHeight ?? null
++  const meta: LinkMetadata = {
++    url,
++    host,
++    title: data.title,
++    description: data.description ?? null,
++    imageUrl: null, // the image came inline; nothing left to fetch
++    imageWidth,
++    imageHeight,
++    isVideo,
++    suggestedLayout: chooseLayout({
++      isVideo,
++      twitterCard: data.twitterCard ?? null,
++      imageUrl: data.image ? url : null,
++      imageWidth,
++      imageHeight,
++    }),
++  }
++  return { meta, thumbnail }
++}
++
++function loadImage(dataUrl: string): Promise<HTMLImageElement> {
++  return new Promise((resolve, reject) => {
++    const img = new Image()
++    img.onload = () => resolve(img)
++    img.onerror = () => reject(new Error('image decode failed'))
++    img.src = dataUrl
++  })
++}
++
++/**
++ * A prepared preview: the fetched metadata plus the decoded thumbnail, kept in
++ * memory so the layout can be re-rendered (expand/collapse) without re-fetching.
++ */
++export type PreparedPreview = {
++  meta: LinkMetadata
++  thumbnail: Drawable
++  /** Layout picked from metadata; may differ from the initial `suggestedLayout`
++   *  once the real image aspect ratio is known. */
++  initialLayout: PreviewLayout
++}
++
++/**
++ * Fetch a URL into a ready-to-render preview, or `null` when the endpoint
++ * responds but there's nothing to show. Throws `UnfurlUnavailableError` when
++ * the unfurl endpoint can't be reached at all (the caller shows a hint).
++ * `accountId` is unused now (kept for signature stability with the eventual
++ * core-native path).
++ */
++export async function preparePreview(
++  _accountId: number,
++  url: string
++): Promise<PreparedPreview | null> {
++  let meta: LinkMetadata
++  let thumbnail: Drawable
++  try {
++    ;({ meta, thumbnail } = await fetchViaUnfurlService(url))
++  } catch (err) {
++    if (err instanceof UnfurlUnavailableError) {
++      throw err
++    }
++    log.info('no preview available for', url, err)
++    return null
++  }
++
++  let initialLayout = meta.suggestedLayout
++  // Refine when the site didn't declare dimensions but the decoded image is wide.
++  if (
++    initialLayout === 'compact' &&
++    thumbnail &&
++    !meta.isVideo &&
++    thumbnail.naturalWidth / thumbnail.naturalHeight >= 1.6 &&
++    thumbnail.naturalWidth >= 480
++  ) {
++    initialLayout = 'hero'
++  }
++  // A hero with no usable image looks empty — fall back to compact/text.
++  if (initialLayout === 'hero' && !thumbnail) {
++    initialLayout = 'compact'
++  }
++  return { meta, thumbnail, initialLayout }
++}
++
++export type StagedCard = {
++  path: string
++  fileName: string
++  width: number
++  height: number
++  bytes: number
++  /** The rendered PNG as a `data:` URL, so the composer can show the card
++   *  (what will actually be sent) before the message goes out. */
++  dataUrl: string
++}
++
++/** Render `prepared` at `layout` and stage a temp PNG (attached as File so it
++ * ships uncompressed with its transparency intact). */
++export async function stageCard(
++  prepared: PreparedPreview,
++  layout: PreviewLayout
++): Promise<StagedCard> {
++  const rendered = await renderCardPng({
++    meta: prepared.meta,
++    thumbnail: prepared.thumbnail,
++    layout,
++  })
++  const fileName = 'link-preview.png'
++  const path = await runtime.writeTempFileFromBase64(fileName, rendered.base64)
++  return {
++    path,
++    fileName,
++    width: rendered.width,
++    height: rendered.height,
++    bytes: rendered.bytes,
++    dataUrl: `data:image/png;base64,${rendered.base64}`,
++  }
++}
+diff --git a/packages/frontend/src/components/composer/linkPreview/openGraph.ts b/packages/frontend/src/components/composer/linkPreview/openGraph.ts
+new file mode 100644
+index 000000000..a79acdbcb
+--- /dev/null
++++ b/packages/frontend/src/components/composer/linkPreview/openGraph.ts
+@@ -0,0 +1,56 @@
++// Preview metadata shape + the compact-vs-hero layout heuristic. The metadata
++// itself is fetched and parsed server-side by the bridge's unfurl endpoint
++// (see generate.ts / packages/ws-tcp-proxy/unfurl.mjs); this module only holds
++// the types the frontend consumes and the layout rule.
++
++export type PreviewLayout = 'compact' | 'hero'
++
++export type LinkMetadata = {
++  url: string
++  host: string
++  title: string
++  description: string | null
++  /** Absolute URL of the preview image, or null if the page declares none. */
++  imageUrl: string | null
++  imageWidth: number | null
++  imageHeight: number | null
++  isVideo: boolean
++  /** Layout the metadata asks for; the user can still override it. */
++  suggestedLayout: PreviewLayout
++}
++
++/**
++ * Decide compact vs hero from the metadata alone (no hardcoded site list).
++ * The site's own declarations win: a large-image twitter card or a video wants
++ * a hero; a plain summary card or a small/square image wants compact.
++ */
++export function chooseLayout(opts: {
++  isVideo: boolean
++  twitterCard: string | null
++  imageUrl: string | null
++  imageWidth: number | null
++  imageHeight: number | null
++}): PreviewLayout {
++  if (opts.isVideo) {
++    return 'hero'
++  }
++  const card = opts.twitterCard?.toLowerCase()
++  if (card === 'summary_large_image' || card === 'player') {
++    return 'hero'
++  }
++  if (card === 'summary') {
++    return 'compact'
++  }
++  if (opts.imageUrl && opts.imageWidth && opts.imageHeight) {
++    const wide = opts.imageWidth / opts.imageHeight >= 1.5
++    const bigEnough = opts.imageWidth >= 480
++    if (wide && bigEnough) {
++      return 'hero'
++    }
++    // Small or square images (favicons, avatars) read better as a side thumb.
++    return 'compact'
++  }
++  // Image with unknown dimensions: default to compact; the renderer measures the
++  // decoded image and can be nudged to hero there if it turns out wide.
++  return 'compact'
++}
+diff --git a/packages/frontend/src/components/composer/linkPreview/renderCard.ts b/packages/frontend/src/components/composer/linkPreview/renderCard.ts
+new file mode 100644
+index 000000000..6bac8c019
+--- /dev/null
++++ b/packages/frontend/src/components/composer/linkPreview/renderCard.ts
+@@ -0,0 +1,332 @@
++// Draws a self-contained link-preview card onto a canvas and exports it as PNG.
++//
++// The card carries its own opaque light surface so text stays legible on any
++// recipient theme; transparency is used only for the rounded-corner cut-outs and
++// the soft drop shadow, which composite cleanly onto any chat background.
++//
++// PNG is used for universal decodeability. Since PNG has no quality knob, size is
++// controlled by pixel dimensions: we render at 2x for crisp text and step the
++// scale down until the encoded image fits the byte budget.
++
++import type { LinkMetadata, PreviewLayout } from './openGraph'
++
++const BUDGET_BYTES = 600 * 1024 // keep previews well under ~0.6 MB
++const SCALES = [2, 1.5, 1.25, 1]
++
++// Locked light-surface palette (see docs/link-preview.md).
++const COLORS = {
++  surface: '#f4f6f9',
++  title: '#121821',
++  desc: '#525d68',
++  host: '#0e7f5b',
++  border: 'rgba(16,26,38,.14)',
++  shadow: 'rgba(8,14,22,.30)',
++}
++
++const CARD_W = 452 // logical card width (css px), excluding the shadow margin
++const RADIUS = 14
++const INNER_PAD = 16
++const HERO_H = 194
++const THUMB = 78 // compact side-thumbnail size
++
++export type Drawable = {
++  image: CanvasImageSource
++  naturalWidth: number
++  naturalHeight: number
++} | null
++
++export type RenderInput = {
++  meta: LinkMetadata
++  thumbnail: Drawable
++  layout: PreviewLayout
++}
++
++export type RenderedCard = {
++  /** base64 PNG (no data: prefix), ready for writeTempFileFromBase64. */
++  base64: string
++  width: number
++  height: number
++  bytes: number
++}
++
++function roundRect(
++  ctx: CanvasRenderingContext2D,
++  x: number,
++  y: number,
++  w: number,
++  h: number,
++  r: number
++) {
++  const rr = Math.min(r, w / 2, h / 2)
++  ctx.beginPath()
++  ctx.moveTo(x + rr, y)
++  ctx.arcTo(x + w, y, x + w, y + h, rr)
++  ctx.arcTo(x + w, y + h, x, y + h, rr)
++  ctx.arcTo(x, y + h, x, y, rr)
++  ctx.arcTo(x, y, x + w, y, rr)
++  ctx.closePath()
++}
++
++/** Wrap `text` to `maxW`, clamp to `maxLines`, ellipsis the last line. */
++function wrapLines(
++  ctx: CanvasRenderingContext2D,
++  text: string,
++  maxW: number,
++  maxLines: number,
++  font: string
++): string[] {
++  ctx.font = font
++  const words = text.split(/\s+/).filter(Boolean)
++  const lines: string[] = []
++  let line = ''
++  for (const w of words) {
++    const test = line ? line + ' ' + w : w
++    if (ctx.measureText(test).width > maxW && line) {
++      lines.push(line)
++      line = w
++      if (lines.length === maxLines) {
++        break
++      }
++    } else {
++      line = test
++    }
++  }
++  if (lines.length < maxLines && line) {
++    lines.push(line)
++  }
++  const consumedWords = lines.join(' ').split(/\s+/).filter(Boolean).length
++  if (consumedWords < words.length) {
++    let last = lines[lines.length - 1] || ''
++    while (last.length && ctx.measureText(last + '…').width > maxW) {
++      last = last.slice(0, -1)
++    }
++    lines[lines.length - 1] = last.replace(/\s+$/, '') + '…'
++  }
++  return lines
++}
++
++/** Draw pre-wrapped lines; returns the y of the last baseline. */
++function drawLines(
++  ctx: CanvasRenderingContext2D,
++  lines: string[],
++  x: number,
++  y: number,
++  lineH: number,
++  font: string,
++  color: string
++): number {
++  ctx.font = font
++  ctx.fillStyle = color
++  ctx.textBaseline = 'alphabetic'
++  for (let i = 0; i < lines.length; i++) {
++    ctx.fillText(lines[i] ?? '', x, y + lineH * (i + 1))
++  }
++  return y + lineH * lines.length
++}
++
++function drawHost(
++  ctx: CanvasRenderingContext2D,
++  host: string,
++  x: number,
++  y: number
++) {
++  const s = 12
++  roundRect(ctx, x, y - s + 1, s, s, 3)
++  ctx.fillStyle = COLORS.host
++  ctx.fill()
++  ctx.font = '650 12.5px system-ui, sans-serif'
++  ctx.fillStyle = COLORS.host
++  ctx.fillText(host.toUpperCase(), x + s + 7, y)
++}
++
++/** Draw a "cover"-fitted image into a clipped rounded rect. */
++function drawCover(
++  ctx: CanvasRenderingContext2D,
++  d: Drawable,
++  x: number,
++  y: number,
++  w: number,
++  h: number,
++  r: number
++) {
++  if (!d) {
++    // Neutral placeholder block so layout is stable even without an image.
++    roundRect(ctx, x, y, w, h, r)
++    ctx.fillStyle = '#dfe4ea'
++    ctx.fill()
++    return
++  }
++  ctx.save()
++  roundRect(ctx, x, y, w, h, r)
++  ctx.clip()
++  const scale = Math.max(w / d.naturalWidth, h / d.naturalHeight)
++  const dw = d.naturalWidth * scale
++  const dh = d.naturalHeight * scale
++  ctx.drawImage(d.image, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh)
++  ctx.restore()
++}
++
++function drawPlayGlyph(
++  ctx: CanvasRenderingContext2D,
++  cx: number,
++  cy: number
++) {
++  const r = 26
++  ctx.save()
++  ctx.beginPath()
++  ctx.arc(cx, cy, r, 0, Math.PI * 2)
++  ctx.fillStyle = 'rgba(8,12,18,.55)'
++  ctx.fill()
++  ctx.beginPath()
++  ctx.moveTo(cx - 8, cy - 12)
++  ctx.lineTo(cx - 8, cy + 12)
++  ctx.lineTo(cx + 13, cy)
++  ctx.closePath()
++  ctx.fillStyle = '#ffffff'
++  ctx.fill()
++  ctx.restore()
++}
++
++/** Render one canvas at `scale` (device pixels per css px). */
++function buildCanvas(input: RenderInput, scale: number): HTMLCanvasElement {
++  const { meta, thumbnail, layout } = input
++  const PAD = 28
++  const hasThumb = thumbnail != null || layout === 'hero'
++  const titleFont = '600 17px system-ui, sans-serif'
++  const descFont = '400 14px system-ui, sans-serif'
++
++  // Measure the wrapped text first so the card is sized to its actual content
++  // (a fixed worst-case height leaves a blank band under short titles).
++  const c = document.createElement('canvas')
++  const ctx = c.getContext('2d')!
++  const sideThumb = hasThumb && layout !== 'hero'
++  const textW = CARD_W - INNER_PAD * 2 - (sideThumb ? THUMB + 14 : 0)
++  const titleLines = wrapLines(ctx, meta.title, textW, 2, titleFont)
++  const descLines = meta.description
++    ? wrapLines(ctx, meta.description, textW, sideThumb ? 1 : 2, descFont)
++    : []
++  // title block + optional description block + host row (baseline offset 20,
++  // ~6px descender allowance)
++  const textH =
++    22 * titleLines.length +
++    (descLines.length ? 4 + 20 * descLines.length : 0) +
++    20 + 6
++
++  let cardH: number
++  if (layout === 'hero') {
++    cardH = HERO_H + 4 + textH + INNER_PAD
++  } else {
++    const textCardH = INNER_PAD - 2 + textH + INNER_PAD
++    cardH = sideThumb ? Math.max(THUMB + INNER_PAD * 2, textCardH) : textCardH
++  }
++  cardH = Math.round(cardH)
++
++  const wCss = CARD_W + PAD * 2
++  const hCss = cardH + PAD * 2
++
++  c.width = Math.round(wCss * scale)
++  c.height = Math.round(hCss * scale)
++  ctx.scale(scale, scale)
++
++  // surface + shadow
++  ctx.save()
++  ctx.shadowColor = COLORS.shadow
++  ctx.shadowBlur = 22
++  ctx.shadowOffsetY = 8
++  ctx.fillStyle = COLORS.surface
++  roundRect(ctx, PAD, PAD, CARD_W, cardH, RADIUS)
++  ctx.fill()
++  ctx.restore()
++
++  // hairline border
++  ctx.lineWidth = 1
++  ctx.strokeStyle = COLORS.border
++  roundRect(ctx, PAD + 0.5, PAD + 0.5, CARD_W - 1, cardH - 1, RADIUS)
++  ctx.stroke()
++
++  // clip content to the card
++  ctx.save()
++  roundRect(ctx, PAD, PAD, CARD_W, cardH, RADIUS)
++  ctx.clip()
++
++  const ox = PAD
++  const oy = PAD
++  const tx = ox + INNER_PAD
++
++  if (layout === 'hero') {
++    drawCover(ctx, thumbnail, ox, oy, CARD_W, HERO_H, 0)
++    if (meta.isVideo) {
++      drawPlayGlyph(ctx, ox + CARD_W / 2, oy + HERO_H / 2)
++    }
++    const afterT = drawLines(
++      ctx, titleLines, tx, oy + HERO_H + 4, 22, titleFont, COLORS.title
++    )
++    const afterD = descLines.length
++      ? drawLines(ctx, descLines, tx, afterT + 4, 20, descFont, COLORS.desc)
++      : afterT
++    drawHost(ctx, meta.host, tx, afterD + 20)
++  } else {
++    if (sideThumb) {
++      const thx = ox + CARD_W - INNER_PAD - THUMB
++      const thy = oy + (cardH - THUMB) / 2
++      drawCover(ctx, thumbnail, thx, thy, THUMB, THUMB, Math.max(8, RADIUS - 6))
++    }
++    const afterT = drawLines(
++      ctx, titleLines, tx, oy + INNER_PAD - 2, 22, titleFont, COLORS.title
++    )
++    const afterD = descLines.length
++      ? drawLines(ctx, descLines, tx, afterT + 4, 20, descFont, COLORS.desc)
++      : afterT
++    drawHost(ctx, meta.host, tx, afterD + 20)
++  }
++  ctx.restore()
++  return c
++}
++
++function toPngBase64(
++  canvas: HTMLCanvasElement
++): Promise<{ base64: string; bytes: number }> {
++  return new Promise((resolve, reject) => {
++    canvas.toBlob(blob => {
++      if (!blob) {
++        reject(new Error('canvas.toBlob returned null'))
++        return
++      }
++      const reader = new FileReader()
++      reader.onerror = () => reject(reader.error)
++      reader.onloadend = () => {
++        const dataUrl = String(reader.result)
++        const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
++        resolve({ base64, bytes: blob.size })
++      }
++      reader.readAsDataURL(blob)
++    }, 'image/png')
++  })
++}
++
++/**
++ * Render the card and return a PNG that fits the byte budget, stepping the
++ * pixel scale down until it does (last resort: return the smallest attempt).
++ */
++export async function renderCardPng(input: RenderInput): Promise<RenderedCard> {
++  let smallest: (RenderedCard & { canvas: HTMLCanvasElement }) | null = null
++  for (const scale of SCALES) {
++    const canvas = buildCanvas(input, scale)
++    const { base64, bytes } = await toPngBase64(canvas)
++    const result = {
++      base64,
++      bytes,
++      width: canvas.width,
++      height: canvas.height,
++      canvas,
++    }
++    if (bytes <= BUDGET_BYTES) {
++      return result
++    }
++    if (!smallest || bytes < smallest.bytes) {
++      smallest = result
++    }
++  }
++  // Everything was over budget (huge/complex thumbnail); return the smallest.
++  return smallest as RenderedCard
++}
+diff --git a/packages/frontend/src/components/composer/linkPreview/styles.module.scss b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
+new file mode 100644
+index 000000000..0d752a182
+--- /dev/null
++++ b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
+@@ -0,0 +1,206 @@
++// Link-preview ghost / chip, shown in the composer's upper bar alongside the
++// quote and attachment sections. Uses theme variables so it blends in both
++// light and dark themes.
++
++.base {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  padding: 9px;
++  border-bottom: 1px solid
++    color-mix(in srgb, var(--messageQuotedText) 15%, transparent);
++}
++
++.ghost {
++  composes: base;
++  align-items: center;
++  gap: 8px;
++  margin: 5px;
++  padding: 5px;
++}
++
++// A skeleton of the compact card "Add" will bake: a light surface (fixed
++// colors, like the sent card, so it previews the real result on any theme) with
++// placeholder title lines, the real host, and a thumbnail box on the right. The
++// dashed border keeps the "this is a suggestion, not content yet" ghost read.
++// Card + its "click to fetch" hint, stacked; the action buttons sit beside it.
++.ghostLeft {
++  flex: 1 1 auto;
++  min-width: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 6px;
++}
++
++.ghostHint {
++  padding: 0 2px;
++  font-size: 12px;
++  color: color-mix(in srgb, var(--messageText) 60%, transparent);
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++
++.ghostCard {
++  flex: 0 0 auto;
++  min-width: 0;
++  display: flex;
++  align-items: center;
++  gap: 12px;
++  // Match the baked compact card: same surface, corner radius (renderCard
++  // RADIUS=14), inner padding and soft shadow — a dashed border is the only
++  // "this isn't real content yet" cue.
++  padding: 12px 14px;
++  border-radius: 14px;
++  background: #f4f6f9;
++  border: 1px dashed rgba(16, 26, 38, 0.2);
++  box-shadow: 0 2px 10px rgba(8, 14, 22, 0.1);
++}
++
++.ghostBody {
++  flex: 1 1 auto;
++  min-width: 0;
++  display: flex;
++  flex-direction: column;
++  gap: 7px;
++}
++
++// Placeholder bars standing in for the card's title (taller/darker) and
++// description (thinner/lighter) rows.
++.skelLine {
++  width: 62%;
++  height: 11px;
++  border-radius: 4px;
++  background: rgba(16, 26, 38, 0.17);
++}
++
++.skelLineShort {
++  width: 90%;
++  height: 8px;
++  background: rgba(16, 26, 38, 0.1);
++}
++
++.ghostHost {
++  margin-top: 2px;
++  font-size: 12.5px;
++  font-weight: 650;
++  letter-spacing: 0.02em;
++  text-transform: uppercase;
++  color: #0e7f5b; // matches the sent card's host color
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++
++.ghostThumb {
++  flex: 0 0 auto;
++  width: 60px;
++  height: 60px;
++  border-radius: 10px;
++  background: #dfe4ea; // matches the card's empty-image placeholder block
++}
++
++.ghostActions {
++  flex: 0 0 auto;
++  display: flex;
++  align-items: center;
++  gap: 4px;
++}
++
++.ready {
++  composes: base;
++  align-items: center;
++}
++
++// The baked card shown at a readable size — it already carries the title, host
++// and image, so it's the whole preview (no separate text). Bounded so the
++// composer bar stays reasonable; object-fit keeps the card's aspect on both
++// compact and hero.
++.preview {
++  flex: 0 1 auto;
++  min-width: 0;
++  max-width: 100%;
++  max-height: 220px;
++  object-fit: contain;
++  object-position: left center;
++  border-radius: 6px;
++}
++
++.readyControls {
++  flex: 0 0 auto;
++  margin-left: auto;
++  display: flex;
++  align-items: center;
++  gap: 4px;
++}
++
++// Like .iconButton but with a word next to the glyph so the size toggle reads.
++.labelButton {
++  flex: 0 0 auto;
++  border: none;
++  background: none;
++  cursor: pointer;
++  font-size: 13px;
++  line-height: 1;
++  padding: 6px 10px;
++  border-radius: 6px;
++  white-space: nowrap;
++  color: color-mix(in srgb, var(--messageText) 75%, transparent);
++
++  &:hover {
++    background: color-mix(in srgb, var(--messageText) 10%, transparent);
++  }
++  &:focus-visible {
++    outline: 2px solid var(--colorPrimary, #415e6b);
++    outline-offset: 1px;
++  }
++}
++
++.bar {
++  composes: base;
++  gap: 8px;
++}
++
++.barLabel {
++  font-size: 13px;
++  color: color-mix(in srgb, var(--messageText) 70%, transparent);
++}
++
++.linkIcon {
++  flex: 0 0 auto;
++  width: 18px;
++  height: 18px;
++  border-radius: 4px;
++  background: color-mix(in srgb, var(--colorPrimary, #415e6b) 22%, transparent);
++  position: relative;
++
++  &::after {
++    content: '';
++    position: absolute;
++    inset: 4px;
++    border: 2px solid var(--colorPrimary, #415e6b);
++    border-radius: 3px;
++    opacity: 0.85;
++  }
++}
++
++.addButton {
++  flex: 0 0 auto;
++  border: none;
++  border-radius: 6px;
++  padding: 6px 14px;
++  font-size: 13px;
++  font-weight: 600;
++  cursor: pointer;
++  color: #fff;
++  background: var(--colorPrimary, #415e6b);
++
++  &:hover {
++    filter: brightness(1.06);
++  }
++  &:focus-visible {
++    outline: 2px solid var(--colorPrimary, #415e6b);
++    outline-offset: 2px;
++  }
++}
++
+diff --git a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
+new file mode 100644
+index 000000000..eb6d6c287
+--- /dev/null
++++ b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
+@@ -0,0 +1,330 @@
++// State machine behind the composer's link-preview ghost.
++//
++// Watches the draft text for a URL and, when there is one and no other file is
++// attached, offers to generate a sender-baked preview card. Generation is
++// explicit (the user taps "Add"); once attached, the card can be removed or
++// toggled between compact and hero without re-fetching.
++
++import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
++import { T } from '@deltachat/jsonrpc-client'
++
++import { getLogger } from '@deltachat-desktop/shared/logger'
++import { runtime } from '@deltachat-desktop/runtime-interface'
++
++import { detectPreviewableUrl } from './detectUrl'
++import {
++  preparePreview,
++  stageCard,
++  UnfurlUnavailableError,
++  type PreparedPreview,
++  type StagedCard,
++} from './generate'
++import type { PreviewLayout } from './openGraph'
++
++const log = getLogger('renderer/composer/linkPreview')
++
++// Give up (and hide the spinner) if generation hasn't finished in this long —
++// the core's own fetch caps at 60s and the unfurl fetch has no timeout, so a
++// hung request would otherwise leave the loading state forever.
++const GENERATION_TIMEOUT_MS = 25_000
++
++export type LinkPreviewPhase =
++  | { kind: 'idle'; host: string } // ghost offering to add a preview
++  | { kind: 'loading' }
++  | {
++      kind: 'ready'
++      host: string
++      title: string
++      layout: PreviewLayout
++      /** `data:` URL of the baked card, shown as the preview in the chip. */
++      image: string
++    }
++  // The unfurl endpoint couldn't be reached: show a quiet "needs a bridge with
++  // unfurl enabled" hint instead of silently doing nothing.
++  | { kind: 'unavailable' }
++
++export type UseLinkPreview = {
++  /** Non-null when the ghost/card should be shown in the composer. */
++  phase: LinkPreviewPhase | null
++  /** True while a generated preview is the current draft attachment. */
++  isPreviewActive: boolean
++  onAdd: () => void
++  onRemove: () => void
++  onToggleLayout: () => void
++  onDismiss: () => void
++}
++
++type Params = {
++  accountId: number
++  chatId: number
++  text: string
++  /** The current draft's attached file path, if any. */
++  draftFile: string | null
++  addFileToDraft: (
++    file: string,
++    fileName: string | null,
++    viewType: T.Viewtype
++  ) => Promise<void>
++  removeFile: () => void
++  /** Disable the feature entirely (e.g. while editing an existing message). */
++  disabled?: boolean
++}
++
++const DETECT_DEBOUNCE_MS = 400
++
++export function useLinkPreview(params: Params): UseLinkPreview {
++  const { accountId, chatId, text, draftFile, addFileToDraft, removeFile } =
++    params
++
++  // Debounced URL detection so the ghost doesn't flicker while typing.
++  const [detected, setDetected] = useState(() => detectPreviewableUrl(text))
++  useEffect(() => {
++    const id = setTimeout(
++      () => setDetected(detectPreviewableUrl(text)),
++      DETECT_DEBOUNCE_MS
++    )
++    return () => clearTimeout(id)
++  }, [text])
++
++  const url = detected?.url ?? null
++  const host = detected?.host ?? ''
++
++  const [phase, setPhase] = useState<LinkPreviewPhase | null>(null)
++  const [isPreviewActive, setIsPreviewActive] = useState(false)
++  // Mirror of `isPreviewActive` that updates synchronously: our own
++  // `addFileToDraft` changes `draftFile` in the same tick we mark the preview
++  // active, and `userFilePresent` (read during render) must already see the
++  // flag flipped — otherwise the URL effect briefly treats our fresh preview
++  // as a user file and drops it.
++  const previewActiveRef = useRef(false)
++  const setPreviewActive = useCallback((active: boolean) => {
++    previewActiveRef.current = active
++    setIsPreviewActive(active)
++  }, [])
++
++  // The last URL the user dismissed (or that a preview was removed/failed for);
++  // the ghost stays hidden while that exact URL is in the composer. Reset once
++  // the composer has no URL (message sent, link deleted) so the same link in a
++  // new message offers the ghost again — the dismissal is per-message, not a
++  // permanent per-chat mute.
++  const dismissedRef = useRef<string | null>(null)
++  // Increments on every URL change / action to invalidate in-flight async work.
++  const tokenRef = useRef(0)
++  // Kept in memory so layout toggles re-render without re-fetching.
++  const preparedRef = useRef<PreparedPreview | null>(null)
++  const stagedPathRef = useRef<string | null>(null)
++
++  const clearStagedTemp = useCallback(() => {
++    if (stagedPathRef.current) {
++      runtime.removeTempFile(stagedPathRef.current).catch(() => {})
++      stagedPathRef.current = null
++    }
++  }, [])
++
++  // A file the user attached themselves — i.e. a draft file that is NOT our
++  // generated preview. Our own preview keeps `isPreviewActive` in lockstep with
++  // `draftFile`, so attaching/removing it never flips this; it changes only when
++  // the user attaches or removes their own file.
++  // `draftFile` is '' (not null) when empty, so test truthiness. Uses the ref,
++  // not the state, so our own attach (which flips the ref synchronously before
++  // changing `draftFile`) never reads as a user file.
++  const userFilePresent = !!draftFile && !previewActiveRef.current
++
++  // React to the detected URL changing (or disappearing), or to the user
++  // attaching/removing their own file. Keying on `userFilePresent` (not raw
++  // `draftFile`) is what lets this react to the user's files without our own
++  // attach re-triggering it and dropping the fresh preview.
++  useEffect(() => {
++    // Any change here invalidates in-flight generation and the memoized preview.
++    tokenRef.current++
++    clearStagedTemp()
++    preparedRef.current = null
++
++    // If our preview is attached when this runs, the reason is always a stale
++    // one (the URL changed or was removed — `userFilePresent` can't be true
++    // while a preview is active), so drop it.
++    if (previewActiveRef.current) {
++      removeFile()
++      setPreviewActive(false)
++    }
++
++    // No URL in the composer (sent, cleared, or link removed): forget any
++    // dismissal so the same link, typed again later, offers the ghost afresh.
++    if (!url) {
++      dismissedRef.current = null
++    }
++
++    if (
++      params.disabled ||
++      !url ||
++      userFilePresent ||
++      dismissedRef.current === url
++    ) {
++      setPhase(null)
++      return
++    }
++    setPhase({ kind: 'idle', host })
++    // `host` tracks `url`; `isPreviewActive` is read but deliberately not a dep
++    // (our own attach must not retrigger this effect and remove the preview).
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [url, params.disabled, userFilePresent])
++
++  const attach = useCallback(
++    async (
++      prepared: PreparedPreview,
++      layout: PreviewLayout,
++      token: number
++    ): Promise<StagedCard | null> => {
++      const staged = await stageCard(prepared, layout)
++      if (token !== tokenRef.current) {
++        runtime.removeTempFile(staged.path).catch(() => {})
++        return null
++      }
++      stagedPathRef.current = staged.path
++      // Mark ours BEFORE addFileToDraft changes draftFile, so the URL effect
++      // doesn't mistake the fresh attachment for a user file (see the ref).
++      setPreviewActive(true)
++      // Attach as 'File', not 'Image': core promotes an image File to Image on
++      // send *without* recompressing it (chat.rs check_or_recode_image early-
++      // returns for File). Sending as 'Image' recodes to JPEG once the PNG tops
++      // ~500 KB (or 130 KB on "worse" media quality), and JPEG has no alpha, so
++      // into_rgb8() turns the card's transparent rounded-corner/shadow margin
++      // black. 'File' keeps the PNG (with transparency) byte-for-byte.
++      await addFileToDraft(staged.path, staged.fileName, 'File')
++      // The core copied the file into its blob dir; the temp copy is disposable.
++      clearStagedTemp()
++      return staged
++    },
++    [addFileToDraft, clearStagedTemp, setPreviewActive]
++  )
++
++  const onAdd = useCallback(() => {
++    // Nothing to preview, or the user has their own file attached — never
++    // clobber that. (The ghost is already hidden in that case; guard anyway.)
++    if (!url || (!!draftFile && !isPreviewActive)) {
++      return
++    }
++    const token = ++tokenRef.current
++    setPhase({ kind: 'loading' })
++    // Bail out of a hung fetch so the spinner doesn't linger forever.
++    const timeout = setTimeout(() => {
++      if (token === tokenRef.current) {
++        tokenRef.current++ // cancel the in-flight continuation
++        setPhase(null)
++        dismissedRef.current = url
++        log.info('link preview generation timed out', url)
++      }
++    }, GENERATION_TIMEOUT_MS)
++    ;(async () => {
++      const prepared = await preparePreview(accountId, url)
++      if (token !== tokenRef.current) {
++        return
++      }
++      if (!prepared) {
++        // Nothing worth showing — quietly give up (no manual editor by design).
++        setPhase(null)
++        dismissedRef.current = url
++        return
++      }
++      preparedRef.current = prepared
++      const staged = await attach(prepared, prepared.initialLayout, token)
++      if (token !== tokenRef.current) {
++        return
++      }
++      if (!staged) {
++        setPhase(null)
++        return
++      }
++      // `attach` already flipped isPreviewActive on success.
++      setPhase({
++        kind: 'ready',
++        host: prepared.meta.host,
++        title: prepared.meta.title,
++        layout: prepared.initialLayout,
++        image: staged.dataUrl,
++      })
++    })()
++      .catch(err => {
++        log.warn('link preview generation failed', err)
++        if (token === tokenRef.current) {
++          // Endpoint unreachable → hint the user; any other failure (no preview
++          // for this page) just quietly clears.
++          setPhase(err instanceof UnfurlUnavailableError ? { kind: 'unavailable' } : null)
++          dismissedRef.current = url
++        }
++      })
++      .finally(() => clearTimeout(timeout))
++  }, [accountId, url, draftFile, isPreviewActive, attach])
++
++  const onRemove = useCallback(() => {
++    tokenRef.current++
++    clearStagedTemp()
++    if (previewActiveRef.current) {
++      removeFile()
++      setPreviewActive(false)
++    }
++    if (url) {
++      dismissedRef.current = url
++    }
++    setPhase(null)
++  }, [clearStagedTemp, removeFile, setPreviewActive, url])
++
++  const onDismiss = useCallback(() => {
++    if (url) {
++      dismissedRef.current = url
++    }
++    setPhase(null)
++  }, [url])
++
++  const onToggleLayout = useCallback(() => {
++    const prepared = preparedRef.current
++    if (!prepared || phase?.kind !== 'ready') {
++      return
++    }
++    const next: PreviewLayout = phase.layout === 'hero' ? 'compact' : 'hero'
++    const prevImage = phase.image
++    const token = ++tokenRef.current
++    setPhase({ kind: 'loading' })
++    ;(async () => {
++      const staged = await attach(prepared, next, token)
++      if (token !== tokenRef.current) {
++        return
++      }
++      setPhase(
++        staged
++          ? {
++              kind: 'ready',
++              host: prepared.meta.host,
++              title: prepared.meta.title,
++              layout: next,
++              image: staged.dataUrl,
++            }
++          : null
++      )
++      // `attach` already flipped isPreviewActive on success.
++    })().catch(err => {
++      log.warn('link preview re-render failed', err)
++      if (token === tokenRef.current) {
++        setPhase({
++          kind: 'ready',
++          host: prepared.meta.host,
++          title: prepared.meta.title,
++          layout: phase.layout,
++          image: prevImage,
++        })
++      }
++    })
++  }, [attach, phase])
++
++  // Clean up any staged temp file on unmount / chat switch.
++  useEffect(() => {
++    return () => {
++      clearStagedTemp()
++    }
++  }, [chatId, clearStagedTemp])
++
++  return useMemo(
++    () => ({ phase, isPreviewActive, onAdd, onRemove, onToggleLayout, onDismiss }),
++    [phase, isPreviewActive, onAdd, onRemove, onToggleLayout, onDismiss]
++  )
++}
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index a131321a2..47ffa1235 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -39,6 +39,8 @@ export interface DesktopSettingsType {
+    */
+   enableBroadcastLists?: boolean
+   enableOnDemandLocationStreaming: boolean
++  /** webapp: show the composer's link-preview suggestion ghost. On by default. */
++  linkPreviewSuggestions: boolean
+   enterKeySends: boolean
+   locale: string | null
+   notifications: boolean
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index 5ac60b22e..75f069dcd 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -14,6 +14,7 @@ export function getDefaultState(): DesktopSettingsType {
+     credentials: undefined,
+     lastAccount: undefined,
+     enableOnDemandLocationStreaming: false,
++    linkPreviewSuggestions: true,
+     chatViewBgImg: undefined,
+     lastChats: {},
+     zoomFactor: undefined,
