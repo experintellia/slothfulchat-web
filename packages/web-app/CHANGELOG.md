@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Relay picker on onboarding**: the "create profile" screen shows a dropdown
+  right above the privacy-policy consent to choose which public chatmail relay
+  the new address is created on — the default relay first, then the relays
+  fetched live from the chatmail directory (the `relays.markdown` source
+  behind chatmail.at/relays), filtered down to those the WS→TCP bridge can
+  resolve over its `/dns` endpoint. The consent link follows the choice to the
+  picked relay's privacy policy. The dropdown only appears when there is a
+  real choice (more than one reachable relay, and no scanned
+  `dcaccount:`/`dclogin:` QR pinning the server); if the directory or bridge
+  is unreachable, onboarding looks exactly like before.
+
 ## 0.4.0 — 2026-07-11
 
 - **Link previews** (privacy-preserving, sender-baked): when the message you're
