@@ -131,7 +131,7 @@ export const EVENTS: ReadonlyArray<{
   {
     name: 'link',
     what: 'That an info link was opened (which one, not who).',
-    props: 'target = imprint · github · changelog',
+    props: 'target = imprint · github · changelog · donate',
   },
   {
     name: 'chats',
@@ -203,10 +203,12 @@ export function trackLink(href: string): void {
     ? 'imprint'
     : h.includes('/changelog')
       ? 'changelog'
-      : // only our own repo, not other github.com links (e.g. the madmail link)
-        h.includes('github.com/experintellia/slothfulchat-web')
-        ? 'github'
-        : ''
+      : h.includes('/donate')
+        ? 'donate'
+        : // only our own repo, not other github.com links (e.g. the madmail link)
+          h.includes('github.com/experintellia/slothfulchat-web')
+          ? 'github'
+          : ''
   if (target) event('link', { target })
 }
 

@@ -241,7 +241,7 @@ tracking. What is collected: that the app was opened; progress through account
 setup and which method was chosen (the default chatmail relay vs a manual email
 login vs QR vs webimap); that a message was sent and of what kind
 (text/image/voice/file — never its content); which info links
-(imprint/GitHub/changelog) were opened; that a QR code was scanned, a community
+(imprint/GitHub/changelog/donate) were opened; that a QR code was scanned, a community
 channel was used, a link preview was shown, a backup or key was exported/imported
 (never the contents); coarse milestones such as having your first chat or more
 than ten; which kind of bridge is used; and coarse ranges for startup and other
