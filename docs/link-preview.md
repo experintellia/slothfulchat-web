@@ -172,7 +172,7 @@ Wiring in **`Composer.tsx`**: derive the current URL from `draftState.text` in
 `onComposerMessageInputChange`; show the ghost when a URL exists and
 `!draftState.file`; on accept call `generate.ts` then `addFileToDraft(...,
 'Image')`; clear/replace on URL change, on manual attach, and in edit mode
-(skip entirely). i18n strings + a settings toggle (default on) + a
+(skip entirely). i18n strings + a settings toggle (default off, experimental) + a
 `packages/web-app` changelog entry.
 
 ### Increment 2 — optional unfurl service (new package, no core/proxy change)

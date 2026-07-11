@@ -117,7 +117,7 @@ exists:
   the message image — so the recipient's client never contacts the link (no
   IP/metadata leak) and every client renders an ordinary text+image message.
   Layout (compact vs large hero) follows the site's metadata and is toggleable
-  on the draft; on by default, suggestion disableable in Settings → Advanced.
+  on the draft; off by default (experimental), enableable in Settings → Advanced.
   `desktop/0041`
 
 ## Bugfixes
