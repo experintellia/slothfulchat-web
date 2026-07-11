@@ -17,7 +17,8 @@
   and reporting bugs") that opens a chat with the developer via a baked-in
   invite link. It sits with the other community suggestions, so Settings →
   Chats and Media's "Hide community suggestions" toggle (and the
-  `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` instance variable) hide it too.
+  `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` instance variable) hide it too, and it
+  automatically disappears once you've established the chat with the developer.
 
 ## 0.4.0 — 2026-07-11
 

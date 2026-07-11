@@ -27,7 +27,7 @@ SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS build/customize variable.
 ---
  .../src/components/AppPicker/index.tsx        |  17 +-
  .../src/components/Settings/ChatsAndMedia.tsx |  18 +
- .../components/dialogs/CreateChat/index.tsx   |  87 +++-
+ .../components/dialogs/CreateChat/index.tsx   | 110 ++++-
  .../components/dialogs/PublicBots/index.tsx   | 375 ++++++++++++++++++
  .../dialogs/PublicBots/styles.module.scss     |  93 +++++
  .../dialogs/PublicChannels/index.tsx          | 107 +++++
@@ -35,7 +35,7 @@ SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS build/customize variable.
  .../src/utils/slothfulInstanceConfig.ts       |  14 +
  packages/shared/shared-types.d.ts             |  11 +
  packages/shared/state.ts                      |   2 +
- 10 files changed, 729 insertions(+), 18 deletions(-)
+ 10 files changed, 752 insertions(+), 18 deletions(-)
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/index.tsx
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/styles.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/PublicChannels/index.tsx
@@ -114,7 +114,7 @@ index 4e131b723..934ab9c4a 100644
        <DownloadOnDemand settings={settingsStore.settings} />
  
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index 99af66cbe..a64b28770 100644
+index 99af66cbe..17d5f8a49 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 @@ -21,7 +21,7 @@ import {
@@ -142,7 +142,7 @@ index 99af66cbe..a64b28770 100644
  import { IMAGE_EXTENSIONS } from '@deltachat-desktop/shared/constants'
  
  // Exported (and a regular `enum` rather than `const enum`) so that callers like
-@@ -144,6 +147,12 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
+@@ -144,6 +147,17 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
    )
  }
  
@@ -152,10 +152,15 @@ index 99af66cbe..a64b28770 100644
 +const DEVELOPER_INVITE_LINK =
 +  'https://i.delta.chat/#B46FEBFE9C6FFA664EDCE3E4EA074B8D29AFD911&v=3&i=kwVtkflDAKPHh16IAC0I55sr&s=noRyH0enGqbsz1tNW-Hd4Fck&a=gwv7nupnl%40arcanechat.me&n=Sloth+%28slothful.chat+dev_'
 +
++// The developer's address (the `a=` part of the invite link above). Once a
++// contact with this address exists, the invite has been accepted and there
++// is a real chat, so the shortcut is dropped in favour of that chat.
++const DEVELOPER_ADDRESS = 'gwv7nupnl@arcanechat.me'
++
  type CreateChatMainProps = {
    onClose: DialogProps['onClose']
  }
-@@ -184,6 +193,17 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -184,6 +198,32 @@ function CreateChatMain(props: CreateChatMainProps) {
    const showAddBroadcastList = queryStr.length === 0
    const showAddContactQRScan = queryStr.length === 0
  
@@ -170,16 +175,33 @@ index 99af66cbe..a64b28770 100644
 +    settingsStore.desktopSettings.hideNewChatSuggestions !== true &&
 +    !instanceHidesPublicSuggestions()
 +
++  // Drop the "contact the developer" shortcut once a contact with the
++  // developer's address exists: accepting the invite creates that contact
++  // (and a chat), and the real chat is the better entry point from then on.
++  // Only show it once the lookup has resolved to "no such contact" — like
++  // the settings guard above, this keeps it from flashing in for users who
++  // already have the chat.
++  const developerContactFetch = useRpcFetch(
++    BackendRemote.rpc.lookupContactIdByAddr,
++    showPublicSuggestions ? [accountId, DEVELOPER_ADDRESS] : null
++  )
++  const showContactDeveloper =
++    showPublicSuggestions &&
++    developerContactFetch?.result?.ok === true &&
++    developerContactFetch.result.value == null
++
    // Don't offer the classic email / add-contact options if
    // forceEncryption is set (default)
  
-@@ -211,6 +231,13 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -211,6 +251,15 @@ function CreateChatMain(props: CreateChatMainProps) {
          ? [CreateChatExtraItemType.ADD_BROADCAST_LIST]
          : []),
        ...(showNewEmail ? [CreateChatExtraItemType.NEW_EMAIL] : []),
++      ...(showContactDeveloper
++        ? [CreateChatExtraItemType.CONTACT_DEVELOPER]
++        : []),
 +      ...(showPublicSuggestions
 +        ? [
-+            CreateChatExtraItemType.CONTACT_DEVELOPER,
 +            CreateChatExtraItemType.PUBLIC_BOTS,
 +            CreateChatExtraItemType.PUBLIC_CHANNELS,
 +          ]
@@ -187,15 +209,16 @@ index 99af66cbe..a64b28770 100644
        ...contactIds,
        ...(showAddContact ? [CreateChatExtraItemType.ADD_CONTACT] : []),
      ],
-@@ -221,6 +248,7 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -221,6 +270,8 @@ function CreateChatMain(props: CreateChatMainProps) {
        showAddContactQRScan,
        showAddGroup,
        showNewEmail,
++      showContactDeveloper,
 +      showPublicSuggestions,
        showPseudoListItemAddContactFromInviteLink,
      ]
    )
-@@ -452,6 +480,7 @@ function CreateChatMainRow({
+@@ -452,6 +503,7 @@ function CreateChatMainRow({
    const tx = useTranslationFunction()
    const accountId = selectedAccountId()
    const { openDialog } = useDialog()
@@ -203,7 +226,7 @@ index 99af66cbe..a64b28770 100644
  
    const el = (() => {
      switch (item) {
-@@ -510,6 +539,57 @@ function CreateChatMainRow({
+@@ -510,6 +562,57 @@ function CreateChatMainRow({
            </PseudoListItem>
          )
        }
@@ -261,7 +284,7 @@ index 99af66cbe..a64b28770 100644
        case CreateChatExtraItemType.ADD_CONTACT: {
          return (
            <PseudoListItemAddContact
-@@ -564,6 +644,9 @@ const enum CreateChatExtraItemType {
+@@ -564,6 +667,9 @@ const enum CreateChatExtraItemType {
    NEW_EMAIL,
    ADD_CONTACT,
    INVITE_LINK,
