@@ -42,6 +42,26 @@ test('parsePublicBridges: malformed entries are dropped, valid ones kept', () =>
   )
 })
 
+test('parsePublicBridges: tolerates shell-style wrapping quotes', () => {
+  // the whole value pasted with the SELFHOSTING example's double-quotes
+  deepStrictEqual(
+    parsePublicBridges('"wss://ws.host.de Community-run bridge, for testing;"'),
+    [{ url: 'wss://ws.host.de', description: 'Community-run bridge, for testing' }]
+  )
+  // single quotes, multiple entries
+  deepStrictEqual(
+    parsePublicBridges("'wss://a.example/b Foo; wss://c.example/d Bar'"),
+    [
+      { url: 'wss://a.example/b', description: 'Foo' },
+      { url: 'wss://c.example/d', description: 'Bar' },
+    ]
+  )
+  // quotes hugging an individual URL token
+  deepStrictEqual(parsePublicBridges('"wss://a.example/b" Foo'), [
+    { url: 'wss://a.example/b', description: 'Foo' },
+  ])
+})
+
 test('parsePublicBridges: empty / unset input', () => {
   deepStrictEqual(parsePublicBridges(''), [])
   deepStrictEqual(parsePublicBridges(undefined), [])

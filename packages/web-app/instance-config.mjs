@@ -38,12 +38,20 @@ import { createHash } from 'node:crypto'
 // the build.
 export function parsePublicBridges(raw) {
   return (raw || '')
+    .trim()
+    // Tolerate the whole value wrapped in shell-style quotes. A GitHub Actions
+    // Variable (or a .env) takes the raw value with no quoting, but the
+    // SELFHOSTING examples show quoted shell assignments (SLOTHFUL_..="..."),
+    // so it's an easy slip to paste the quotes into the Variable field — which
+    // would otherwise make the first URL start with a `"` and drop every entry.
+    .replace(/^(['"])([\s\S]*)\1$/, '$2')
     .split(';')
     .map(e => e.trim())
     .filter(Boolean)
     .map(e => {
       const m = /^(\S+)(?:\s+([^]*))?$/.exec(e)
-      return { url: m[1], description: (m[2] || '').trim() }
+      // also strip stray quotes hugging an individual URL token
+      return { url: m[1].replace(/^['"]+|['"]+$/g, ''), description: (m[2] || '').trim() }
     })
     .filter(({ url }) => /^wss?:\/\/.+/i.test(url))
 }
