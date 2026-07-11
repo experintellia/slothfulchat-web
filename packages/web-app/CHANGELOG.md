@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-07-11
 
 - **Link previews** (privacy-preserving, sender-baked): when the message you're
   typing contains a URL and has no image, the composer offers a dismissible
@@ -17,6 +17,12 @@
   consent link then names that relay and its privacy policy. Unset keeps
   upstream's default relay; users scanning a `dcaccount:`/`dclogin:` QR still
   override it.
+- **Public WS→TCP bridges**: operators can advertise bridges via a new
+  `SLOTHFUL_PUBLIC_BRIDGES` build/customize variable (`;`-separated
+  `URL description` entries), and the bridge dialog becomes an option picker
+  — localhost, the instance default, each public bridge, or a custom URL —
+  with a "Test selected" probe and copy explaining why a bridge is needed and
+  that its traffic is end-to-end encrypted.
 - **Export Chat** (three-dot menu): Telegram-style export of the open chat as
   a zip — `index.html` (a standalone viewer that looks like the message list,
   reusing the app's own stylesheets and markup, with a "Save single-file
@@ -32,14 +38,23 @@
   the bundled originals, anchors quotes to their target message, renders
   vcard contact tiles, and marks failed/undownloaded/HTML-only messages.
   Offline e2e coverage in `scripts/test-export-chat-html.mjs`.
-
-## 0.4.0 — 2026-07-10
-
 - **Animated stickers**: Telegram `.tgs` (gzipped Lottie) stickers play in
   messages and in the composer sticker picker, and sending a `.tgs` via the
   file picker delivers it as a sticker. Playback uses lottie-web's eval-free
   build (CSP-safe), caps compressed/decompressed size against gzip bombs, and
   honors reduced-motion preferences.
+- **New Chat suggestions**: a "Public Bots" entry opens a searchable
+  directory of community bots (from `deltachat-bot/public-bots`; first-run
+  consent, revocable in settings), and "Public Channels" links out to
+  community channel lists. A settings toggle hides them per user;
+  `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` hides them instance-wide.
+- **Read-by & reaction popovers**: hovering a message's delivery-status icon
+  shows who read it (avatar, name, relative time) once it's read, and hovering
+  a reaction shows who reacted per emoji — in a shared, compact card.
+- **OS integration** (installed PWA): registers as a handler for Delta Chat
+  invite links (`openpgp4fpr` / `i.delta.chat`), for shared text/links (opens
+  a "send to which chat?" picker), and for `.xdc` files. Launches are buffered
+  until an account is ready so they never fire too early.
 - **Message Info** shows attachment details (file name, MIME type, size,
   image/video dimensions, audio/video duration) and the delivery-failure
   reason; clicking a failed message's status icon opens Message Info.
@@ -52,6 +67,11 @@
   bundled changelog viewer (also reachable at `/changelog`).
 - Big dialogs (settings, about, profiles, media view, new chat, QR scanner)
   go full-screen on phone-sized viewports.
+- Dialog & input polish: single-input prompt dialogs (edit display name,
+  contact name, account tag) submit on Enter; a dialog no longer closes when a
+  drag started inside it is released over the backdrop; right-clicking the chat
+  list no longer leaks the browser's own context menu; and the inert "Enable
+  Webxdc Devtools" setting is hidden.
 - **Storage resilience**: a corrupted `accounts.toml` with no rebuildable
   accounts no longer bricks boot permanently (the self-heal rebuild now
   writes a config core accepts).
