@@ -345,7 +345,11 @@ try {
 
   // alice reacts to bob's message
   await rpc('sendReaction', aliceId, aliceIncomingId, ['👍'])
-  await new Promise((r) => setTimeout(r, 1500))
+  // give the OPFS write-through queue a moment to flush before the reload
+  // below tears down this core worker (see test-persistence.mjs) — too
+  // short a wait here races the old worker's persistence and the export
+  // can read back a stale/incomplete message list.
+  await new Promise((r) => setTimeout(r, 5_000))
 
   // --- drive the UI: select alice, open the chat, export ---
   // drop the unconfigured account the app auto-created at first boot, so the
