@@ -70,7 +70,7 @@ index 185e50b3c..1decdd8f1 100644
 +      <DesktopSettingsSwitch
 +        settingsKey='linkPreviewSuggestions'
 +        label='Link-preview suggestions'
-+        description='When your message contains a link and has no image, offer to attach a preview card. Turn off to never be prompted.'
++        description='When your message contains a link and has no image, offer to attach a preview card. Off by default; turn on to be prompted.'
 +      />
        {runtime.getRuntimeInfo().isContentProtectionSupported && (
          <DesktopSettingsSwitch
@@ -88,7 +88,7 @@ index bd995140f..adbab3f1b 100644
  import { getLogger } from '@deltachat-desktop/shared/logger'
  import { EmojiAndStickerPicker } from './EmojiAndStickerPicker'
  import { Quote } from '../message/Message'
-@@ -136,6 +138,24 @@ const Composer = forwardRef<
+@@ -136,6 +138,22 @@ const Composer = forwardRef<
      [chatId, updateDraftText]
    )
  
@@ -96,8 +96,7 @@ index bd995140f..adbab3f1b 100644
 +
 +  // Sender-baked link previews: when the draft has a URL and no image, offer to
 +  // generate a preview card and attach it as an image. See docs/link-preview.md.
-+  // The suggestion can be turned off entirely in Settings → Advanced
-+  // (experimental); it's on by default, so a missing/undefined flag means on.
++  // Experimental and off by default; turn it on in Settings → Advanced.
 +  const linkPreview = useLinkPreview({
 +    accountId,
 +    chatId,
@@ -113,7 +112,7 @@ index bd995140f..adbab3f1b 100644
    const onArrowUpWhenEmpty = useCallback(async () => {
      if (messageEditing.isEditingModeActive) {
        return
-@@ -533,8 +553,6 @@ const Composer = forwardRef<
+@@ -533,8 +551,6 @@ const Composer = forwardRef<
          }
        }
  
@@ -122,7 +121,7 @@ index bd995140f..adbab3f1b 100644
    const focusMessageInput = useCallback(() => {
      // Only one of these is actually rendered at any given moment.
      regularMessageInputRef.current?.focus()
-@@ -645,21 +663,24 @@ const Composer = forwardRef<
+@@ -645,21 +661,24 @@ const Composer = forwardRef<
                    />
                  </section>
                )}
@@ -1592,7 +1591,7 @@ index a131321a2..47ffa1235 100644
     */
    enableBroadcastLists?: boolean
    enableOnDemandLocationStreaming: boolean
-+  /** webapp: show the composer's link-preview suggestion ghost. On by default. */
++  /** webapp: show the composer's link-preview suggestion ghost. Off by default (experimental). */
 +  linkPreviewSuggestions: boolean
    enterKeySends: boolean
    locale: string | null
@@ -1605,7 +1604,7 @@ index 5ac60b22e..75f069dcd 100644
      credentials: undefined,
      lastAccount: undefined,
      enableOnDemandLocationStreaming: false,
-+    linkPreviewSuggestions: true,
++    linkPreviewSuggestions: false,
      chatViewBgImg: undefined,
      lastChats: {},
      zoomFactor: undefined,

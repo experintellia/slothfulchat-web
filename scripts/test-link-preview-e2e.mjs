@@ -282,6 +282,25 @@ try {
   await composer().waitFor({ state: 'visible', timeout: 30_000 })
   console.log('OK: chat open')
 
+  // the suggestion is gated by the `linkPreviewSuggestions` desktop setting,
+  // an experimental feature that is OFF by default — confirm that, then opt
+  // in for the rest of this test to exercise the feature.
+  const dsBefore = await page.evaluate(() => window.exp.runtime.getDesktopSettings())
+  if (dsBefore.linkPreviewSuggestions !== false)
+    throw new Error(`linkPreviewSuggestions should default to false, got ${dsBefore.linkPreviewSuggestions}`)
+  console.log('OK: link-preview suggestions setting defaults off')
+  await page.evaluate(() =>
+    window.exp.runtime.setDesktopSetting('linkPreviewSuggestions', true)
+  )
+  await page.reload()
+  await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
+  await accItem.waitFor({ state: 'visible', timeout: 60_000 })
+  await accItem.hover()
+  await accItem.click()
+  await chatItem.waitFor({ state: 'visible', timeout: 30_000 })
+  await chatItem.click()
+  await composer().waitFor({ state: 'visible', timeout: 30_000 })
+
   // -- ghost appears when a URL is typed --
   await composer().fill(`have a look at ${ogBase}/hero.html`)
   const ghost = page.getByTestId('link-preview-ghost')
@@ -289,13 +308,6 @@ try {
   if (!(await ghost.textContent()).includes('og.localhost'))
     throw new Error('ghost does not show the link host')
   await shot('01-ghost')
-  // the suggestion is gated by the `linkPreviewSuggestions` desktop setting,
-  // which is an experimental feature that is ON by default (a missing key or
-  // undefined counts as on) — the ghost above only appeared because of that.
-  const ds = await page.evaluate(() => window.exp.runtime.getDesktopSettings())
-  if (ds.linkPreviewSuggestions !== true)
-    throw new Error(`linkPreviewSuggestions should default to true, got ${ds.linkPreviewSuggestions}`)
-  console.log('OK: link-preview suggestions setting defaults on')
 
   // -- Add → ready chip, draft gets a File attachment (attached as File so core
   //    ships the transparent PNG uncompressed; it promotes File→Image on send) --

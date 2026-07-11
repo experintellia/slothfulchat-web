@@ -9,8 +9,8 @@
   recipient's client never contacts the link (no IP/metadata leak) and every
   client renders it as an ordinary text+image message. Metadata is fetched
   through a bridge with unfurl enabled; layout (compact vs large "hero") follows
-  the site's own metadata and can be toggled or removed on the draft. On by
-  default; the suggestion can be turned off in Settings → Advanced.
+  the site's own metadata and can be toggled or removed on the draft. Off by
+  default (experimental); turn it on in Settings → Advanced.
 - **Self-hosting**: a new `SLOTHFUL_DEFAULT_CHATMAIL` build/customize variable
   points the "create new account" onboarding flow at your own chatmail relay
   (accepts a bare host, a URL, or a `dcaccount:` QR). The welcome-screen
