@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Link previews** (privacy-preserving, sender-baked): when the message you're
+  typing contains a URL and has no image, the composer offers a dismissible
+  ghost to add a preview. Accepting renders the link's OpenGraph metadata into a
+  card image **on your device** and attaches it as the message image — so the
+  recipient's client never contacts the link (no IP/metadata leak) and every
+  client renders it as an ordinary text+image message. Metadata is fetched
+  through a bridge with unfurl enabled; layout (compact vs large "hero") follows
+  the site's own metadata and can be toggled or removed on the draft. On by
+  default; the suggestion can be turned off in Settings → Advanced.
 - **Self-hosting**: a new `SLOTHFUL_DEFAULT_CHATMAIL` build/customize variable
   points the "create new account" onboarding flow at your own chatmail relay
   (accepts a bare host, a URL, or a `dcaccount:` QR). The welcome-screen

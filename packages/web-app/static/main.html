@@ -17,7 +17,12 @@
       Copy of upstream target-browser main.html with CSP loosened for the
       wasm edition: 'wasm-unsafe-eval' (core wasm), worker-src 'self'
       (core worker + blobs service worker), connect-src ws:/wss: (WS-TCP
-      proxy) + data:/blob:.
+      proxy) + data:/blob: + http://*:*/unfurl and https://*:*/unfurl (the
+      link-preview unfurl endpoint, on whatever bridge you point at — any
+      host/port, matching ws:/wss: above, but pinned to the /unfurl PATH so
+      the page can't fetch any other URL: a guardrail against accidentally
+      reaching a CDN, and it rules out a lazy exfil bucket at some other path.
+      `:*` is a wildcard port — needed as the local bridge is on :8641.)
       * style-src 'unsafe-inline' is needed for theming and the virtual list.
     -->
     <meta
@@ -31,7 +36,7 @@
                    child-src blob: ;
                    img-src 'self' data: blob: file: webxdc-icon: ;
                    media-src 'self' file: blob: ;
-                   connect-src 'self' ws: wss: data: blob:"
+                   connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl"
     />
     <link rel="stylesheet" href="./fonts/fonts.css" />
     <link rel="stylesheet" href="./main.css" />

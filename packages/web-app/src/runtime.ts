@@ -44,6 +44,7 @@ function getDefaultSettings() {
     credentials: undefined,
     lastAccount: undefined as number | undefined,
     enableOnDemandLocationStreaming: false,
+    linkPreviewSuggestions: true,
     chatViewBgImg: undefined as string | undefined,
     lastChats: {},
     zoomFactor: undefined,
