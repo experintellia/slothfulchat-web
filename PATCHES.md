@@ -110,6 +110,15 @@ exists:
   default) whenever the account is actually created on it. Unset falls back to
   upstream's default instance; scanned `dcaccount:`/`dclogin:` QR codes still
   override it. `desktop/0038`
+- **Privacy-preserving link previews** — when the draft contains a URL and no
+  image, the composer offers a dismissible ghost to add a preview. Accepting
+  fetches the link's OpenGraph metadata (through a bridge with unfurl enabled)
+  and renders it into a card image *on the sender's device*, attaching it as
+  the message image — so the recipient's client never contacts the link (no
+  IP/metadata leak) and every client renders an ordinary text+image message.
+  Layout (compact vs large hero) follows the site's metadata and is toggleable
+  on the draft; on by default, suggestion disableable in Settings → Advanced.
+  `desktop/0041`
 
 ## Bugfixes
 
