@@ -19,6 +19,20 @@
   suggestions" toggle (and the `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` instance
   variable) hide it too, and it automatically disappears once you've
   established the chat with the developer.
+- **Diagnostics panel** (Settings → open the log → Diagnostics): on-device
+  profiling — cold/warm startup breakdown (worker → core → UI, plus first
+  account configured), recent-startups history, and timed round-trips (account
+  configure, send by kind, backup import/export, chat load) — with a copy
+  button. Never leaves your device. PGP encrypt/decrypt/keygen time is measured
+  in the wasm shim (issue #3, Step 0).
+- **Anonymous usage statistics** on configured instances only (via Plausible's
+  events API from our own bundle — no third-party script). Opt-out, with a
+  one-time notice, a diagnostics-panel toggle, a closed and fully documented
+  event list, and an imprint privacy section. Self-hosted builds collect
+  nothing. Events cover onboarding funnel + method, account/server type, sends
+  by kind, QR scans, community-channel use, link-preview accept/dismiss, info-
+  link clicks, bridge kind, backup/key import-export, first-chat / >10-chat
+  milestones, bucketed startup (cold/warm), and fatal boot errors by category.
 
 ## 0.4.0 — 2026-07-11
 

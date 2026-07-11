@@ -4,6 +4,51 @@ Feasibility prototype: a DeltaChat client running **fully in the browser** — c
 
 See [SELFHOSTING.md](SELFHOSTING.md) to run your own instance, [PLAN.md](PLAN.md) for the full plan, [PATCHES.md](PATCHES.md) for a human-readable summary of what we changed compared to upstream, [DESCOPED.md](DESCOPED.md) for deliberate omissions, [FINDINGS.md](FINDINGS.md) for the feasibility log.
 
+## Privacy & data protection
+
+The app runs **entirely in your browser**. Your accounts, messages, encryption
+keys and files are stored only on your device and are exchanged end-to-end
+encrypted, directly with the mail servers, through a relay that only ever sees
+encrypted traffic. **Self-hosted instances collect no analytics whatsoever** —
+no events, no banner, not even an extra network origin in the
+Content-Security-Policy (this is the default; see "Operators" below).
+
+**Local profiling** (startup timing and action latency) uses the browser's
+User Timing API and is **never sent anywhere** — it stays on your device and is
+only shown, on request, in the in-app Diagnostics panel (Settings → open the log
+→ **Diagnostics**), where a "copy diagnostics" button lets you volunteer the
+numbers in a bug report.
+
+**The official public demo instance** additionally collects **anonymous,
+aggregated usage statistics** via [Plausible](https://plausible.io/data-policy)
+(a privacy-focused analytics tool — no cookies, no cross-site tracking). It is
+enabled by default there, you are asked once on your first visit, and you can
+**opt out at any time** in Diagnostics → Usage statistics (the choice is
+remembered). Because events are sent by our own code via Plausible's events API,
+**no third-party JavaScript is loaded** and only a single extra `connect-src`
+origin is added to the CSP.
+
+- **Collected:** that the app was opened (new vs returning, installed-PWA vs
+  tab); onboarding progress and the method chosen (default chatmail relay vs
+  manual email login vs QR vs webimap); that a message was sent and of what kind
+  (text/image/voice/file — never its content); which info links
+  (imprint/GitHub/changelog) were opened; QR scans; whether a community channel
+  was used; link-preview accept/dismiss; which kind of bridge is used (local /
+  provided / custom); backup/key import-export (not the contents); coarse
+  chat-count milestones (first, >10); coarse buckets for startup and other
+  timings; and fatal startup errors by category. The exact, closed list lives in
+  `packages/web-app/src/analytics.ts` (`EVENTS`) and is what the in-app notice
+  and the imprint render.
+- **Never collected:** message content, contact or email addresses, account
+  data, or any free text.
+
+**Operators:** analytics is opt-in *for the instance*, at build time. It only
+turns on when `SLOTHFUL_PLAUSIBLE_DOMAIN` (and optionally
+`SLOTHFUL_PLAUSIBLE_API`, which defaults to Plausible cloud — point it at your
+own Plausible to self-host analytics) are set in CI. Leave them unset for a
+fully private instance. The per-instance imprint (`imprint.html`) documents this
+automatically. See [`packages/web-app`](packages/web-app/README.md) for details.
+
 ## Layout
 
 - `vendor/core`, `vendor/deltachat-desktop` — submodules pinned at upstream commits (never modified in place)

@@ -6,7 +6,7 @@ import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import * as sass from 'sass'
-import { buildConfig, configJs, imprintHtml, patchBootError, patchManifest, patchTitle } from './instance-config.mjs'
+import { analyticsOrigin, buildConfig, configJs, imprintHtml, patchBootError, patchCsp, patchManifest, patchTitle } from './instance-config.mjs'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 const repo = join(here, '..', '..')
@@ -126,12 +126,17 @@ const config = buildConfig(env, await gitBuildMeta())
 // inline script would be silently blocked.
 await writeFile(join(dist, 'config.js'), configJs(config))
 // instance name also becomes the tab title (runtime.ts keeps it updated)
-const mainHtml = patchTitle(
-  (await readFile(join(here, 'static/main.html'), 'utf-8')).replace(
-    '<!--slothful-config-->',
-    '<script src="./config.js"></script>'
+// analytics (when configured) POSTs to Plausible from our own bundle, so the
+// only CSP change is one extra connect-src origin; script-src stays 'self'
+const mainHtml = patchCsp(
+  patchTitle(
+    (await readFile(join(here, 'static/main.html'), 'utf-8')).replace(
+      '<!--slothful-config-->',
+      '<script src="./config.js"></script>'
+    ),
+    config.instanceName
   ),
-  config.instanceName
+  analyticsOrigin(config)
 )
 
 // our overlays. index.html is a copy of main.html so the bare site root

@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <dev@slothful.chat>
+Date: Sat, 11 Jul 2026 14:39:33 +0000
+Subject: [PATCH 42/43] web-app: add Diagnostics button to the log dialog
+
+Opens the browser edition's local profiling + usage-statistics panel
+(window.__slothfulDiagnostics, set by our runtime.js). Hidden on every
+other target because that global only exists in the wasm web build.
+---
+ packages/frontend/src/components/dialogs/Log/index.tsx | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/packages/frontend/src/components/dialogs/Log/index.tsx b/packages/frontend/src/components/dialogs/Log/index.tsx
+index df6e38b2b..af521960e 100644
+--- a/packages/frontend/src/components/dialogs/Log/index.tsx
++++ b/packages/frontend/src/components/dialogs/Log/index.tsx
+@@ -232,6 +232,16 @@ export function LogDialog({ onClose }: DialogProps) {
+       </DialogBody>
+       <DialogFooter>
+         <FooterActions>
++          {/* slothfulchat: advanced-user diagnostics (local profiling +
++              usage-stats opt-out). runtime.js exposes __slothfulDiagnostics
++              only in the browser edition, so this button is hidden elsewhere. */}
++          {(window as any).__slothfulDiagnostics && (
++            <FooterActionButton
++              onClick={() => (window as any).__slothfulDiagnostics.open()}
++            >
++              Diagnostics
++            </FooterActionButton>
++          )}
+           <FooterActionButton onClick={copyToClipboard}>
+             {tx(copySuccess ? 'copied_to_clipboard' : 'menu_copy_to_clipboard')}
+           </FooterActionButton>

@@ -17,11 +17,13 @@ import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
 import { unzipSync, zipSync } from 'fflate'
 import {
+  analyticsOrigin,
   buildConfig,
   buildPrecache,
   configJs,
   imprintHtml,
   patchBootError,
+  patchCsp,
   patchManifest,
   patchTitle,
 } from './instance-config.mjs'
@@ -150,7 +152,9 @@ const config = buildConfig(env, existingBuild)
 files['config.js'] = enc(configJs(config))
 files['imprint.html'] = enc(imprintHtml(config, env))
 for (const f of ['main.html', 'index.html']) {
-  files[f] = enc(patchTitle(dec(files[f]), config.instanceName))
+  // patchCsp is idempotent: it strips any origin baked by a previous build
+  // before adding this instance's, so re-customising a zip stays correct
+  files[f] = enc(patchCsp(patchTitle(dec(files[f]), config.instanceName), analyticsOrigin(config)))
 }
 files['manifest.webmanifest'] = enc(patchManifest(dec(files['manifest.webmanifest']), config.instanceName))
 files['boot-error.js'] = enc(patchBootError(dec(files['boot-error.js']), config.instanceName))
