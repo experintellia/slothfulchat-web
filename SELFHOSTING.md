@@ -112,13 +112,19 @@ them. The imprint's scope/privacy/reporting wording is fixed in the template —
 only the name/address/email come from these vars. **The imprint is not legal
 advice; have it reviewed if you operate under Impressum/DDG rules.**
 
-> **Setting these as GitHub Actions Variables?** Enter the **raw value with no
-> quotes** — GitHub stores the field verbatim, so `"…"` becomes part of the
-> value. The `NAME="value"` form in the shell examples above is shell quoting
-> and belongs only on a command line. And use the **Variables** tab (Settings →
-> Secrets and variables → Actions → Variables), not Secrets — the build reads
-> `${{ vars.* }}`, which cannot see Secrets. (`SLOTHFUL_PUBLIC_BRIDGES`
-> tolerates accidental wrapping quotes, but the others take the field as-is.)
+> **Setting these as GitHub Actions Variables?** Three things trip people up:
+> - Add them as **Repository variables** (Settings → Secrets and variables →
+>   Actions → Variables → *Repository variables*). An **Environment** variable
+>   scoped to the `github-pages` environment does *not* work: the build reads
+>   these in the `build` job, which has no `environment:`, so it can't see
+>   environment-scoped variables — the value comes through empty.
+> - Use the **Variables** tab, not **Secrets** — the build reads
+>   `${{ vars.* }}`, which cannot read Secrets.
+> - Enter the **raw value with no quotes** — GitHub stores the field verbatim,
+>   so `"…"` becomes part of the value. The `NAME="value"` form in the shell
+>   examples above is shell quoting and belongs only on a command line.
+>   (`SLOTHFUL_PUBLIC_BRIDGES` tolerates accidental wrapping quotes; the others
+>   take the field as-is.)
 
 Users can always override the bridge at runtime in the app's bridge picker
 dialog (which offers a local bridge, your `SLOTHFUL_PUBLIC_BRIDGES` options
