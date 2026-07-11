@@ -1,0 +1,670 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 11 Jul 2026 14:33:49 +0000
+Subject: [PATCH 42/42] web-app: relay picker on instant onboarding from the
+ live chatmail directory
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The "create profile" onboarding screen always signed up on one fixed
+relay (the SLOTHFUL_DEFAULT_CHATMAIL one, or upstream's default
+instance). Give users a choice: a dropdown right above the
+privacy-policy consent, listing the default relay first and then the
+public relays from the chatmail directory.
+
+- relayDirectory.ts fetches the directory live from the chatmail pages
+  sources (relays.markdown behind https://chatmail.at/relays), and
+  keeps only relays whose hostname the WS→TCP bridge's /dns endpoint
+  resolves to at least one IP — a relay the bridge can't resolve can't
+  be signed up on from this app. The bridge URL is resolved exactly
+  like the runtime does (?proxy= > saved > instance default >
+  localhost). The default relay is never probed away and always listed
+  first. Successful loads are cached per page load; failures retry.
+- relayDirectoryParse.ts is the tolerant markdown scanner (the file is
+  hand-maintained prose, not a machine format): it accepts a hostname
+  only where the author spelled it out — dcaccount: signup targets,
+  self-named links like [nine.testrun.org](https://nine.testrun.org),
+  and bare autolinks — so decorative links and prose domains stay out.
+  Unit-tested in src/tests/relayDirectory.test.ts.
+- RelayPicker.tsx renders the dropdown only when there is a real
+  choice: more than one relay, and no scanned dcaccount:/dclogin: QR
+  pinning the server. Everything fails soft to "no dropdown". Styled
+  (styles.module.scss) to match the display-name DeltaInput above it —
+  same label/underline/focus theme vars as the login inputs, custom
+  chevron — instead of the cramped stock DeltaSelect look.
+- The choice lives in InstantOnboardingContext so account creation
+  (useInstantOnboarding builds dcaccount:<picked host>) and the consent
+  text (UserAgreement links the picked relay's /privacy.html) always
+  agree; resetInstantOnboarding clears it. A scanned account/login QR
+  still overrides everything, as before.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .../WelcomeScreen/InstantOnboardingScreen.tsx |   5 +
+ .../screens/WelcomeScreen/RelayPicker.tsx     |  71 +++++++++
+ .../screens/WelcomeScreen/UserAgreement.tsx   |  29 ++--
+ .../screens/WelcomeScreen/relayDirectory.ts   | 141 ++++++++++++++++++
+ .../WelcomeScreen/relayDirectoryParse.ts      |  82 ++++++++++
+ .../screens/WelcomeScreen/styles.module.scss  |  49 ++++++
+ .../src/contexts/InstantOnboardingContext.tsx |  14 ++
+ .../src/hooks/useInstantOnboarding.ts         |  21 ++-
+ .../frontend/src/tests/relayDirectory.test.ts |  63 ++++++++
+ 9 files changed, 462 insertions(+), 13 deletions(-)
+ create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
+ create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
+ create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
+ create mode 100644 packages/frontend/src/tests/relayDirectory.test.ts
+
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+index dc53ee49e..cdeb369a0 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+@@ -3,6 +3,7 @@ import React, { useContext, useEffect, useState } from 'react'
+ import AdditionalActionInfo from './AdditionalActionInfo'
+ import Button from '../../Button'
+ import ProfileImageSelector from '../../dialogs/EditProfileDialog/ProfileImageSelector'
++import RelayPicker from './RelayPicker'
+ import UserAgreement from './UserAgreement'
+ import useAlertDialog from '../../../hooks/dialog/useAlertDialog'
+ import useChat from '../../../hooks/chat/useChat'
+@@ -181,6 +182,10 @@ export default function InstantOnboardingScreen({
+             <AdditionalActionInfo accountId={selectedAccountId} />
+             <p>{tx('set_name_and_avatar_explain')}</p>
+             <div className={styles.welcomeScreenButtonGroup}>
++              {/* slothfulchat-web: pick the chatmail relay the address is
++                  created on — right above the privacy-policy consent so the
++                  policy link (UserAgreement) always matches the choice */}
++              <RelayPicker />
+               <div className={styles.instantOnboardingAgreement}>
+                 {welcomeQr?.qr.kind !== 'login' && <UserAgreement />}
+                 {welcomeQr?.qr.kind === 'login' && (
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
+new file mode 100644
+index 000000000..230417b14
+--- /dev/null
++++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
+@@ -0,0 +1,71 @@
++import React, { useEffect, useState } from 'react'
++
++import useInstantOnboarding from '../../../hooks/useInstantOnboarding'
++import { defaultRelayHost, fetchSelectableRelays } from './relayDirectory'
++import styles from './styles.module.scss'
++
++/**
++ * slothfulchat-web: dropdown on the instant-onboarding ("create profile")
++ * screen to pick which public chatmail relay the new address is created on.
++ *
++ * The list comes live from the chatmail relay directory, filtered down to
++ * relays the WS→TCP bridge can resolve (see relayDirectory.ts); the default
++ * relay is always offered and listed first. Renders nothing while loading,
++ * when the directory is unavailable, when there is nothing to choose (fewer
++ * than two relays), or when a scanned `dcaccount:`/`dclogin:` QR already pins
++ * the server.
++ */
++export default function RelayPicker() {
++  const { welcomeQr, selectedRelayHost, setSelectedRelayHost } =
++    useInstantOnboarding()
++  const [relays, setRelays] = useState<string[] | null>(null)
++
++  // With a scanned account/login QR the server is fixed — no choice to offer.
++  const relayChoosable =
++    welcomeQr?.qr.kind !== 'account' && welcomeQr?.qr.kind !== 'login'
++
++  useEffect(() => {
++    if (!relayChoosable) {
++      return
++    }
++    let stale = false
++    fetchSelectableRelays().then(list => {
++      if (!stale) {
++        setRelays(list)
++      }
++    })
++    return () => {
++      stale = true
++    }
++  }, [relayChoosable])
++
++  if (!relayChoosable || relays === null || relays.length < 2) {
++    return null
++  }
++
++  const value =
++    selectedRelayHost && relays.includes(selectedRelayHost)
++      ? selectedRelayHost
++      : defaultRelayHost()
++
++  return (
++    <div className={styles.relayPicker}>
++      <label htmlFor='relay-picker' className={styles.relayPickerLabel}>
++        Chatmail relay for your new address
++      </label>
++      <div className={styles.relayPickerSelect}>
++        <select
++          id='relay-picker'
++          value={value}
++          onChange={event => setSelectedRelayHost(event.target.value)}
++        >
++          {relays.map(host => (
++            <option key={host} value={host}>
++              {host}
++            </option>
++          ))}
++        </select>
++      </div>
++    </div>
++  )
++}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
+index de5acd99d..f5438b4d0 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
+@@ -36,21 +36,26 @@ function extractLinkFromQrCode(qrWithUrl: QrWithUrl<AccountQr>) {
+ 
+ export default function UserAgreement() {
+   const tx = useTranslationFunction()
+-  const { welcomeQr } = useInstantOnboarding()
++  const { welcomeQr, selectedRelayHost } = useInstantOnboarding()
+   const isDefaultInstance = isQRWithDefaultInstance(welcomeQr)
+ 
+-  // slothfulchat-web: when the operator configured their own default chatmail
+-  // relay (SLOTHFUL_DEFAULT_CHATMAIL) and the account is actually created on
+-  // it — i.e. the user didn't scan a specific account/login QR — the consent
+-  // link must name that relay and point at ITS privacy policy, not upstream's
+-  // default instance. `configurationQR` in useInstantOnboarding keeps the
+-  // configured default for exactly these (non-account, non-login) cases.
+-  const configuredHost =
+-    isDefaultInstance &&
+-    welcomeQr?.qr.kind !== 'account' &&
+-    welcomeQr?.qr.kind !== 'login'
+-      ? instanceDefaultChatmailHost()
++  // slothfulchat-web: the relay actually signed up on can differ from
++  // upstream's default instance — because the operator configured their own
++  // default relay (SLOTHFUL_DEFAULT_CHATMAIL), or because the user picked one
++  // in the onboarding relay dropdown (RelayPicker). Both only apply when the
++  // account is really created on that relay — i.e. the user didn't scan a
++  // specific account/login QR (matching `configurationQR` in
++  // useInstantOnboarding) — and then the consent link must name that relay
++  // and point at ITS privacy policy. The dropdown choice wins over the
++  // configured default, exactly like it does for account creation.
++  const relayChoosable =
++    welcomeQr?.qr.kind !== 'account' && welcomeQr?.qr.kind !== 'login'
++  const pickedHost =
++    isDefaultInstance && relayChoosable
++      ? (selectedRelayHost ?? instanceDefaultChatmailHost())
+       : undefined
++  const configuredHost =
++    pickedHost === DEFAULT_CHATMAIL_HOSTNAME ? undefined : pickedHost
+ 
+   return (
+     <>
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
+new file mode 100644
+index 000000000..7a5b72241
+--- /dev/null
++++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
+@@ -0,0 +1,141 @@
++// slothfulchat-web: live directory of public chatmail relays for the
++// instant-onboarding relay picker.
++//
++// The list is fetched from the chatmail.at pages sources (relays.markdown),
++// parsed with a deliberately tolerant scanner (relayDirectoryParse.ts — the
++// file is hand-maintained prose, not a machine format), and each candidate is
++// then probed through the WS→TCP bridge's /dns endpoint — a relay the bridge
++// can't even resolve can't be signed up on from this app, so it is dropped.
++// Everything here fails soft: on any error the caller just gets the default
++// relay alone and the picker UI stays hidden.
++
++import { getLogger } from '@deltachat-desktop/shared/logger'
++
++import { DEFAULT_CHATMAIL_HOSTNAME } from './chatmailInstances'
++import { parseRelaysMarkdown } from './relayDirectoryParse'
++import { instanceDefaultChatmailHost } from '../../../utils/slothfulInstanceConfig'
++
++const log = getLogger('renderer/WelcomeScreen/relayDirectory')
++
++/** Source of the public relay list (markdown behind https://chatmail.at/relays). */
++export const RELAY_DIRECTORY_URL =
++  'https://raw.githubusercontent.com/chatmail/pages/refs/heads/main/relays.markdown'
++
++const FETCH_TIMEOUT_MS = 10_000
++const DNS_PROBE_TIMEOUT_MS = 4_000
++
++/** The relay the "create profile" button signs up on when the user doesn't
++ * pick anything else: the operator-configured SLOTHFUL_DEFAULT_CHATMAIL relay,
++ * falling back to upstream's default instance. */
++export function defaultRelayHost(): string {
++  return instanceDefaultChatmailHost() ?? DEFAULT_CHATMAIL_HOSTNAME
++}
++
++/** Resolve the WS→TCP bridge URL exactly like the web-app runtime does
++ * (`?proxy=` > saved > per-instance default > localhost) — the picker must
++ * probe through the same bridge the core will actually connect through. */
++function resolveBridgeUrl(): string | undefined {
++  try {
++    const proxy =
++      new URLSearchParams(window.location.search).get('proxy') ||
++      window.localStorage.getItem('slothfulchat.proxyUrl') ||
++      (window as any).__slothfulConfig?.defaultProxyUrl ||
++      'ws://localhost:8641'
++    return /^wss?:\/\//.test(proxy) ? proxy.replace(/\/+$/, '') : undefined
++  } catch {
++    return undefined
++  }
++}
++
++/** True when the bridge's /dns/{host} endpoint answers with at least one IP —
++ * i.e. the relay is resolvable through the bridge this app sends mail over.
++ * Timeouts, socket errors and empty answers all count as unreachable. */
++export function relayResolvesOverBridge(
++  host: string,
++  timeoutMs = DNS_PROBE_TIMEOUT_MS
++): Promise<boolean> {
++  const bridge = resolveBridgeUrl()
++  if (!bridge) return Promise.resolve(false)
++  return new Promise(resolve => {
++    let ws: WebSocket
++    try {
++      ws = new WebSocket(`${bridge}/dns/${encodeURIComponent(host)}`)
++    } catch {
++      resolve(false)
++      return
++    }
++    let done = false
++    const finish = (ok: boolean) => {
++      if (done) return
++      done = true
++      clearTimeout(timer)
++      try {
++        ws.close()
++      } catch {
++        /* already closing */
++      }
++      resolve(ok)
++    }
++    const timer = setTimeout(() => finish(false), timeoutMs)
++    ws.onmessage = event => {
++      try {
++        const ips = JSON.parse(String(event.data))
++        finish(Array.isArray(ips) && ips.length > 0)
++      } catch {
++        finish(false)
++      }
++    }
++    ws.onerror = () => finish(false)
++    ws.onclose = () => finish(false)
++  })
++}
++
++async function loadSelectableRelays(): Promise<string[]> {
++  const defaultHost = defaultRelayHost()
++  const controller = new AbortController()
++  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
++  let markdown: string
++  try {
++    const response = await fetch(RELAY_DIRECTORY_URL, {
++      signal: controller.signal,
++    })
++    if (!response.ok) {
++      throw new Error(`HTTP ${response.status}`)
++    }
++    markdown = await response.text()
++  } finally {
++    clearTimeout(timer)
++  }
++
++  const others = parseRelaysMarkdown(markdown).filter(
++    host => host !== defaultHost
++  )
++  const reachable = await Promise.all(
++    others.map(host => relayResolvesOverBridge(host))
++  )
++  // The default relay is never probed away: it's this instance's configured
++  // signup target and stays offered (and first) even if the bridge is down.
++  return [defaultHost, ...others.filter((_, i) => reachable[i])]
++}
++
++let cached: Promise<string[]> | undefined
++
++/**
++ * Relays the user may pick for instant onboarding: the default relay first,
++ * then every directory relay the bridge can resolve, in directory order.
++ * Always contains at least the default relay; a single-entry result means
++ * "nothing to choose" (the picker hides itself then). A successful load is
++ * cached per page load — re-entering the onboarding screen doesn't refetch or
++ * reprobe — but a failed fetch is retried next time (the network or bridge
++ * may have come up meanwhile).
++ */
++export function fetchSelectableRelays(): Promise<string[]> {
++  if (!cached) {
++    cached = loadSelectableRelays().catch(error => {
++      cached = undefined
++      log.warn('relay directory unavailable, keeping the default relay', error)
++      return [defaultRelayHost()]
++    })
++  }
++  return cached
++}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
+new file mode 100644
+index 000000000..38b9cb46b
+--- /dev/null
++++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
+@@ -0,0 +1,82 @@
++// slothfulchat-web: pure markdown→hostnames scanner for the chatmail relay
++// directory. Kept free of browser/runtime imports so the unit tests
++// (src/tests/relayDirectory.test.ts) can load it under plain node — the
++// fetch/DNS-probe glue lives in relayDirectory.ts.
++
++// something that plausibly is a public DNS name: dotted labels, letters-only
++// TLD, no scheme/path leftovers
++const HOSTNAME_RE =
++  /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/
++
++const looksLikeHostname = (s: string): boolean =>
++  HOSTNAME_RE.test(s.toLowerCase())
++
++const hostOfUrl = (url: string): string | undefined => {
++  try {
++    return new URL(url).hostname.toLowerCase()
++  } catch {
++    return undefined
++  }
++}
++
++/**
++ * Pull relay hostnames out of the hand-written relays.markdown.
++ *
++ * We cannot rely on an exact document structure (it's a maintained prose
++ * page), so we accept a candidate only where the *author spelled out the
++ * relay's hostname* — that keeps decorative links ("see the docs here") out:
++ *  - `dcaccount:HOST` targets in markdown links or bare in the text — these
++ *    are unambiguously chatmail signup entries
++ *  - markdown links whose visible text is the hostname of their own http(s)
++ *    target (`[nine.testrun.org](https://nine.testrun.org)`, with or without
++ *    a path, `` ` `` / `*` / `_` decoration around the text is ignored)
++ *  - autolinks whose text is the bare host (`<https://example.org>` renders
++ *    as its own hostname, so it counts as the same thing)
++ *
++ * Deduped, lowercased, document order preserved.
++ */
++export function parseRelaysMarkdown(markdown: string): string[] {
++  const found: string[] = []
++  const seen = new Set<string>()
++  const add = (host?: string) => {
++    if (!host) return
++    const h = host.toLowerCase()
++    if (!looksLikeHostname(h) || seen.has(h)) return
++    seen.add(h)
++    found.push(h)
++  }
++
++  // (classic exec loops: the mocha ts-node config targets too old an ES
++  // level to iterate matchAll results)
++  let m: RegExpExecArray | null
++
++  // dcaccount: signup targets anywhere in the text (link targets or bare);
++  // strip a URL-style payload down to its host
++  const dcaccountRe = /dcaccount:([^\s)<>"']+)/gi
++  while ((m = dcaccountRe.exec(markdown)) !== null) {
++    const payload = (m[1] ?? '').replace(/^https?:\/\//i, '')
++    add(payload.replace(/[/?#].*$/, ''))
++  }
++
++  // [text](url) links where the visible text names the target's host
++  const linkRe = /\[([^\]\n]+)\]\(\s*(https?:\/\/[^\s)]+)\s*\)/gi
++  while ((m = linkRe.exec(markdown)) !== null) {
++    const text = (m[1] ?? '')
++      .trim()
++      .replace(/^[`*_]+|[`*_]+$/g, '')
++      .toLowerCase()
++    const host = hostOfUrl(m[2] ?? '')
++    if (host && text === host) add(host)
++  }
++
++  // autolinks: <https://example.org> (host only, no meaningful path)
++  const autolinkRe = /<(https?:\/\/[^\s>]+)>/gi
++  while ((m = autolinkRe.exec(markdown)) !== null) {
++    const url = m[1] ?? ''
++    const host = hostOfUrl(url)
++    if (host && url.replace(/^https?:\/\//i, '').replace(/\/$/, '') === host)
++      add(host)
++  }
++
++  return found
++}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
+index 438b76adc..7ba74900e 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
++++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
+@@ -78,3 +78,52 @@
+   background-color: var(--buttonSecondaryText);
+   margin-inline-start: 0.2em;
+ }
++
++.relayPicker {
++  margin: 4px 0 14px;
++  text-align: left;
++  width: 100%;
++}
++
++.relayPickerLabel {
++  color: var(--deltaChatPrimaryFgLight);
++  display: block;
++  font-size: 13px;
++  margin-bottom: 2px;
++}
++
++.relayPickerSelect {
++  position: relative;
++  width: 100%;
++
++  &::after {
++    border: solid var(--deltaChatPrimaryFgLight);
++    border-width: 0 2px 2px 0;
++    content: '';
++    height: 7px;
++    pointer-events: none;
++    position: absolute;
++    right: 6px;
++    top: 50%;
++    transform: translateY(-70%) rotate(45deg);
++    width: 7px;
++  }
++
++  select {
++    appearance: none;
++    background: none;
++    border: none;
++    border-bottom: 1px solid var(--deltaChatPrimaryFgLight);
++    color: var(--bp4InputText);
++    cursor: pointer;
++    font-size: 16px;
++    padding: 8px 28px 8px 0;
++    width: 100%;
++
++    &:focus {
++      border-bottom-color: var(--loginInputFocusColor);
++      color: var(--loginInputFocusColor);
++      outline: none;
++    }
++  }
++}
+diff --git a/packages/frontend/src/contexts/InstantOnboardingContext.tsx b/packages/frontend/src/contexts/InstantOnboardingContext.tsx
+index 9c2fc6e29..a92312f69 100644
+--- a/packages/frontend/src/contexts/InstantOnboardingContext.tsx
++++ b/packages/frontend/src/contexts/InstantOnboardingContext.tsx
+@@ -24,6 +24,11 @@ type InstantOnboardingContextValue = {
+   setWelcomeQr: (value?: WelcomeQrWithUrl) => void
+   showInstantOnboarding: boolean
+   welcomeQr?: WelcomeQrWithUrl
++  // slothfulchat-web: chatmail relay picked in the onboarding relay dropdown;
++  // undefined = the default relay (or the flow's QR decides, see
++  // useInstantOnboarding)
++  selectedRelayHost?: string
++  setSelectedRelayHost: (value?: string) => void
+ }
+ 
+ export const InstantOnboardingContext =
+@@ -46,11 +51,20 @@ export const InstantOnboardingProvider = ({
+     undefined
+   )
+ 
++  // slothfulchat-web: relay chosen in the onboarding dropdown (undefined =
++  // default). Lives here so the picker, the consent link (UserAgreement) and
++  // account creation (useInstantOnboarding) all agree on the same choice.
++  const [selectedRelayHost, setSelectedRelayHost] = useState<
++    string | undefined
++  >(undefined)
++
+   const value = {
+     setShowInstantOnboarding,
+     setWelcomeQr,
+     showInstantOnboarding,
+     welcomeQr,
++    selectedRelayHost,
++    setSelectedRelayHost,
+   }
+ 
+   return (
+diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
+index 17d65c0f8..6c95d7208 100644
+--- a/packages/frontend/src/hooks/useInstantOnboarding.ts
++++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
+@@ -6,6 +6,7 @@ import { ConfigureProgressDialog } from '../components/dialogs/ConfigureProgress
+ import { DEFAULT_CHATMAIL_HOSTNAME } from '../components/screens/WelcomeScreen/chatmailInstances'
+ import { InstantOnboardingContext } from '../contexts/InstantOnboardingContext'
+ import { instanceDefaultChatmailQr } from '../utils/slothfulInstanceConfig'
++import { defaultRelayHost } from '../components/screens/WelcomeScreen/relayDirectory'
+ 
+ import type { T } from '@deltachat/jsonrpc-client'
+ import type { WelcomeQrWithUrl } from '../contexts/InstantOnboardingContext'
+@@ -29,6 +30,11 @@ type InstantOnboarding = {
+    */
+   startInstantOnboardingFlow: (qrWithUrl?: WelcomeQrWithUrl) => Promise<void>
+   welcomeQr?: WelcomeQrWithUrl
++  /** slothfulchat-web: chatmail relay picked in the onboarding dropdown;
++   * undefined = the default relay. Ignored whenever a scanned
++   * `dcaccount:`/`dclogin:` QR pins the server. */
++  selectedRelayHost?: string
++  setSelectedRelayHost: (value?: string) => void
+ }
+ 
+ /*
+@@ -51,6 +57,8 @@ export default function useInstantOnboarding(): InstantOnboarding {
+     setWelcomeQr,
+     showInstantOnboarding,
+     welcomeQr,
++    selectedRelayHost,
++    setSelectedRelayHost,
+   } = context
+ 
+   const startInstantOnboardingFlow = useCallback(
+@@ -85,6 +93,14 @@ export default function useInstantOnboarding(): InstantOnboarding {
+       let configurationQR =
+         instanceDefaultChatmailQr() ?? `dcaccount:${DEFAULT_CHATMAIL_HOSTNAME}`
+ 
++      // slothfulchat-web: a relay picked in the onboarding dropdown replaces
++      // the default signup target. Deliberately BEFORE the welcomeQr handling:
++      // a scanned dcaccount:/dclogin: QR pins the server and must keep
++      // winning over the dropdown (which isn't shown in those flows anyway).
++      if (selectedRelayHost && selectedRelayHost !== defaultRelayHost()) {
++        configurationQR = `dcaccount:${selectedRelayHost}`
++      }
++
+       if (welcomeQr) {
+         if (welcomeQr.qr.kind === 'account') {
+           // override the default chatmail instance set above
+@@ -179,12 +195,13 @@ export default function useInstantOnboarding(): InstantOnboarding {
+         })
+       })
+     },
+-    [openDialog, secureJoin, welcomeQr]
++    [openDialog, secureJoin, welcomeQr, selectedRelayHost]
+   )
+ 
+   const resetInstantOnboarding = () => {
+     setWelcomeQr(undefined)
+     setShowInstantOnboarding(false)
++    setSelectedRelayHost(undefined)
+   }
+ 
+   return {
+@@ -193,5 +210,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
+     showInstantOnboarding,
+     startInstantOnboardingFlow,
+     welcomeQr,
++    selectedRelayHost,
++    setSelectedRelayHost,
+   }
+ }
+diff --git a/packages/frontend/src/tests/relayDirectory.test.ts b/packages/frontend/src/tests/relayDirectory.test.ts
+new file mode 100644
+index 000000000..7e695e458
+--- /dev/null
++++ b/packages/frontend/src/tests/relayDirectory.test.ts
+@@ -0,0 +1,63 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import { parseRelaysMarkdown } from '../components/screens/WelcomeScreen/relayDirectoryParse.js'
++
++// The relay directory (relays.markdown from the chatmail pages sources) is a
++// hand-maintained document, so the parser is a tolerant scanner rather than a
++// format: it must find relays wherever the author spelled the hostname out,
++// and must NOT be fooled by decorative links or prose mentioning domains.
++describe('parseRelaysMarkdown', () => {
++  it('finds self-named markdown links', () => {
++    const md = [
++      '# Public chatmail relays',
++      '',
++      '- [nine.testrun.org](https://nine.testrun.org) — the default relay',
++      '- [chatmail.example](https://chatmail.example/) operated by Example',
++    ].join('\n')
++    expect(parseRelaysMarkdown(md)).to.eql([
++      'nine.testrun.org',
++      'chatmail.example',
++    ])
++  })
++
++  it('finds dcaccount: signup targets, bare or as link', () => {
++    const md = [
++      '| relay | signup |',
++      '|---|---|',
++      '| Nine | [sign up](dcaccount:nine.testrun.org) |',
++      '| Other | dcaccount:https://other.example/new |',
++    ].join('\n')
++    expect(parseRelaysMarkdown(md)).to.eql([
++      'nine.testrun.org',
++      'other.example',
++    ])
++  })
++
++  it('finds autolinks and decorated link texts, deduplicated', () => {
++    const md = [
++      '- <https://relay.example>',
++      '- [`relay.example`](https://relay.example)',
++      '- [**bold.example**](https://bold.example/anything)',
++    ].join('\n')
++    expect(parseRelaysMarkdown(md)).to.eql(['relay.example', 'bold.example'])
++  })
++
++  it('ignores decorative links, prose domains and non-hostnames', () => {
++    const md = [
++      '---',
++      'title: Relays',
++      '---',
++      'See [the docs](https://chatmail.at/doc) or [Delta Chat](https://delta.chat).',
++      'Run your own with [chatmail/relay](https://github.com/chatmail/relay).',
++      'Contact us at mailto:someone@example.org.',
++      '- [nine.testrun.org](https://nine.testrun.org)',
++    ].join('\n')
++    expect(parseRelaysMarkdown(md)).to.eql(['nine.testrun.org'])
++  })
++
++  it('returns [] for empty or link-free documents', () => {
++    expect(parseRelaysMarkdown('')).to.eql([])
++    expect(parseRelaysMarkdown('# nothing here\njust words')).to.eql([])
++  })
++})

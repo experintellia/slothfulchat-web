@@ -110,6 +110,16 @@ exists:
   default) whenever the account is actually created on it. Unset falls back to
   upstream's default instance; scanned `dcaccount:`/`dclogin:` QR codes still
   override it. `desktop/0038`
+- **Relay picker on instant onboarding** — the "create profile" screen shows a
+  dropdown right above the privacy-policy consent to pick the chatmail relay
+  the new address is created on: the default relay first, then the public
+  relays fetched live from the chatmail directory (`relays.markdown` behind
+  chatmail.at/relays, parsed with a tolerant scanner), filtered down to relays
+  the WS→TCP bridge's `/dns` endpoint can resolve. The consent link follows
+  the choice to the picked relay's `/privacy.html`. Only rendered when there
+  is a real choice (more than one relay, no scanned `dcaccount:`/`dclogin:`
+  QR); fails soft to no dropdown when the directory or bridge is unreachable.
+  `desktop/0042`
 - **Privacy-preserving link previews** — when the draft contains a URL and no
   image, the composer offers a dismissible ghost to add a preview. Accepting
   fetches the link's OpenGraph metadata (through a bridge with unfurl enabled)

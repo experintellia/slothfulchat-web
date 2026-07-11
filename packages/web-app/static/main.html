@@ -23,6 +23,9 @@
       the page can't fetch any other URL: a guardrail against accidentally
       reaching a CDN, and it rules out a lazy exfil bucket at some other path.
       `:*` is a wildcard port — needed as the local bridge is on :8641.)
+      https://raw.githubusercontent.com is pinned to the exact relays.markdown
+      file the onboarding relay picker fetches (patches/desktop/0042) — the
+      one non-bridge URL the page may fetch, and nothing else on that host.
       * style-src 'unsafe-inline' is needed for theming and the virtual list.
     -->
     <meta
@@ -36,7 +39,7 @@
                    child-src blob: ;
                    img-src 'self' data: blob: file: webxdc-icon: ;
                    media-src 'self' file: blob: ;
-                   connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl"
+                   connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl https://raw.githubusercontent.com/chatmail/pages/refs/heads/main/relays.markdown"
     />
     <link rel="stylesheet" href="./fonts/fonts.css" />
     <link rel="stylesheet" href="./main.css" />

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 19:30:00 +0000
-Subject: [PATCH 38/40] web-app: configurable default chatmail relay for
+Subject: [PATCH 38/42] web-app: configurable default chatmail relay for
  instant onboarding
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -80,7 +80,7 @@ index 6e40c33ae..de5acd99d 100644
            {tx('instant_onboarding_agree_default2', DEFAULT_CHATMAIL_HOSTNAME)}
          </ClickableLink>
 diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
-index e8e5b8700..d90516945 100644
+index 1aabccd89..17d65c0f8 100644
 --- a/packages/frontend/src/hooks/useInstantOnboarding.ts
 +++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
 @@ -5,6 +5,7 @@ import useSecureJoin from './useSecureJoin'
