@@ -86,10 +86,14 @@ exists:
   included (read receipts, full HTML e-mails, webxdc app content) and takes
   an optional date range. `desktop/0032`, `desktop/0035`, `desktop/0037`,
   `desktop/0039`
-- **Public Bots & Public Channels suggestions in the New Chat dialog** — two
-  pseudo entries below "New Group"/"New Channel": "Public Bots" opens a
-  searchable directory of community-made bots (name, admin, description,
-  language) pulled from
+- **Community suggestions in the New Chat dialog** — pseudo entries below
+  "New Group"/"New Channel": "Sloth (Slothful.chat Developer)" opens a chat
+  with the developer (via a baked-in invite link, routed through the regular
+  invite-link confirmation flow) so users can send feedback and report bugs —
+  it disappears once a contact with the developer's address exists (i.e. once
+  the invite has been accepted and there is a real chat to use instead);
+  "Public Bots" opens a searchable directory of community-made bots (name,
+  admin, description, language) pulled from
   [deltachat-bot/public-bots](https://github.com/deltachat-bot/public-bots);
   the first open asks for consent to load from that third-party site and
   explains that the bots are community-made, not endorsed by us, and problems
@@ -97,7 +101,7 @@ exists:
   without asking (revocable via a settings switch). "Public Channels" opens a
   small dialog linking channel directories (arcanechat.me/channels and
   fedimeteo.com's per-city weather channels). Settings → Chats and Media can
-  hide both entries per user; the `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS`
+  hide all these entries per user; the `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS`
   build/customize variable hides them instance-wide including the toggles.
   `desktop/0033`
 - **Configurable default chatmail relay** — the welcome-screen "create new

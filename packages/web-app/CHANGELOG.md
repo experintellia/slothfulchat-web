@@ -12,6 +12,13 @@
   real choice (more than one reachable relay, and no scanned
   `dcaccount:`/`dclogin:` QR pinning the server); if the directory or bridge
   is unreachable, onboarding looks exactly like before.
+- **Contact the developer for feedback**: the New Chat dialog gains a "Sloth
+  (Slothful.chat Developer)" entry ("Send feedback & report bugs") that opens a
+  chat with the developer via a baked-in invite link. It sits with the other
+  community suggestions, so Settings → Chats and Media's "Hide community
+  suggestions" toggle (and the `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` instance
+  variable) hide it too, and it automatically disappears once you've
+  established the chat with the developer.
 
 ## 0.4.0 — 2026-07-11
 
