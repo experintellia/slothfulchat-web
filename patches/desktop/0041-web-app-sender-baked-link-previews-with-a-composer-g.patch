@@ -88,7 +88,7 @@ index bd995140f..adbab3f1b 100644
  import { getLogger } from '@deltachat-desktop/shared/logger'
  import { EmojiAndStickerPicker } from './EmojiAndStickerPicker'
  import { Quote } from '../message/Message'
-@@ -136,6 +138,22 @@ const Composer = forwardRef<
+@@ -136,6 +138,23 @@ const Composer = forwardRef<
      [chatId, updateDraftText]
    )
  
@@ -112,7 +112,7 @@ index bd995140f..adbab3f1b 100644
    const onArrowUpWhenEmpty = useCallback(async () => {
      if (messageEditing.isEditingModeActive) {
        return
-@@ -533,8 +551,6 @@ const Composer = forwardRef<
+@@ -533,8 +552,6 @@ const Composer = forwardRef<
          }
        }
  
@@ -121,7 +121,7 @@ index bd995140f..adbab3f1b 100644
    const focusMessageInput = useCallback(() => {
      // Only one of these is actually rendered at any given moment.
      regularMessageInputRef.current?.focus()
-@@ -645,21 +661,24 @@ const Composer = forwardRef<
+@@ -645,21 +662,24 @@ const Composer = forwardRef<
                    />
                  </section>
                )}
