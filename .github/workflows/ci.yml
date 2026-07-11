@@ -208,3 +208,15 @@ jobs:
       # viewer over file:// and exercises the "Save single-file HTML" button.
       - name: E2E test — chat export to zip
         run: node scripts/test-export-chat-html.mjs
+
+      # unfurl service self-check (fully offline): metadata + inline image,
+      # SSRF guards (private-IP / literal-IP refusal), size cap, rate limit.
+      - name: Self-check — unfurl service
+        run: node scripts/test-unfurl.mjs
+
+      # link-preview e2e (fully offline: mock madmail + a local OpenGraph
+      # server on *.localhost + the unfurl service): type URL → ghost → Add →
+      # baked PNG card attaches → send; layout toggle, remove, dismiss, and
+      # the CORS-blocked→unfurl fallback path.
+      - name: E2E test — link-preview ghost UI
+        run: node scripts/test-link-preview-e2e.mjs

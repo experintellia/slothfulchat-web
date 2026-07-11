@@ -6,7 +6,9 @@ connections and DNS lookups through this WebSocket bridge. **TLS terminates
 inside the wasm core** — the bridge only ever relays ciphertext, it never sees
 your credentials or messages.
 
-It's a single ~90-line file. Read it before you run it — that's the point.
+It's a single ~130-line file (plus an optional second one for the off-by-default
+[unfurl endpoint](#unfurl-endpoint-optional-for-link-previews)). Read it before
+you run it — that's the point.
 
 ## Run it
 
@@ -51,6 +53,37 @@ CHATMAIL_ALLOWLIST=nine.testrun.org,chatmail.example npx @slothfulchat/ws-tcp-pr
 
 Empty/unset `CHATMAIL_ALLOWLIST` = allow all (local-dev default).
 (`CHATMAIL_WHITELIST`, the pre-0.1.2 name, still works but warns.)
+
+## Unfurl endpoint (link previews)
+
+The bridge also serves `GET /unfurl?url={http(s) URL}` on the same port as the
+tunnel (implemented in [`unfurl.mjs`](unfurl.mjs), a second single file): it
+fetches the page + its `og:image` server-side and returns parsed OpenGraph
+metadata as JSON with `Access-Control-Allow-Origin: *`. The webapp's composer
+uses it as the fallback for link previews when browser CORS blocks the direct
+fetch. **There is nothing to configure app-side** — the app derives the unfurl
+URL from the bridge it's already pointed at (`?proxy=`, `ws→http`).
+
+**Enabled by default on an allow-all bridge** (no `CHATMAIL_ALLOWLIST`) — a
+local/personal bridge that already reaches anywhere, so a same-host preview
+fetcher is fine and needs zero config. **Disabled by default once an allowlist
+is set**: a hosted bridge that carefully vets its mail destinations shouldn't
+silently double as an open web-preview fetcher, so there you opt in explicitly
+with `UNFURL=1`. `UNFURL=1` / `UNFURL=0` overrides the default either way. A
+bridge with it off answers `/unfurl` with `404` and the preview quietly falls
+back to "not available".
+
+This is a *preview fetcher*, not a tunnel: **HTTP GET only**; DNS is resolved
+by the handler and private / loopback / link-local / CGNAT addresses are
+refused (checked inside the socket's own `lookup`, so a rebinding resolver
+can't swap the address — literal-IP hosts are checked separately); redirects
+(max 5) re-run the checks per hop; 1 MB page / 4 MB image caps; 15 s timeout;
+30 requests/min per client.
+
+(`UNFURL_ALLOW_PRIVATE=1` disables the private-IP guard for the test suite —
+never set it on a real deployment.) Note that recent Chromium blocks pages
+from fetching `localhost` services without a Local Network Access permission
+prompt — a deployed (https, non-local) bridge avoids that.
 
 ## License
 
