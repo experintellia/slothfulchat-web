@@ -3,11 +3,14 @@
 #
 # The build order is load-bearing and NOT obvious — see the comments below.
 # It was derived empirically (a full clean build was run end-to-end); do not
-# reorder steps casually. The two ordering traps:
+# reorder steps casually. The three ordering traps:
 #   1. the @deltachat/jsonrpc-client `file:` dep must be generated + built
 #      BEFORE the root `pnpm install` tries to resolve it.
 #   2. `pnpm assemble` wipes and repopulates dist/, so `pnpm build` (which
 #      emits runtime.js + blobs-sw.js INTO dist/) must run AFTER assemble.
+#   3. rust-cache must run AFTER apply-patches — build/core doesn't exist
+#      before it (wrong cache key), and apply-patches rm -rf's build/core
+#      (would delete a restored target/).
 #
 # To enable: repo Settings -> Pages -> Source = "GitHub Actions".
 
@@ -64,21 +67,6 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      # Cache the cargo registry + all target/ dirs (root, build/core native
-      # test build, and the wasm build). The native `cargo test` and the
-      # ~10-min release wasm build dominate wall time, so this is the cache
-      # that matters most.
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-        env:
-          # Save the cache even when the job fails — otherwise a broken deploy
-          # rebuilds the ~10-min wasm step from scratch on every retry.
-          CACHE_ON_FAILURE: true
-        with:
-          workspaces: |
-            build/core
-            packages/core-wasm/rust
-
       - name: Setup Node 22 + pnpm (corepack)
         uses: actions/setup-node@v4
         with:
@@ -101,6 +89,25 @@ jobs:
       # upstream desktop, 0 patches).
       - name: Apply patch stacks (creates build/core, build/desktop)
         run: pnpm apply-patches
+
+      # Cache the cargo registry + the build/core and wasm target/ dirs. The
+      # native `cargo test` and the ~10-min release wasm build dominate wall
+      # time, so this is the cache that matters most.
+      # ORDER TRAP #3: this MUST run after apply-patches. rust-cache hashes the
+      # workspaces' Cargo.lock files at restore time — build/core only exists
+      # once apply-patches has created it, so running earlier computes a key
+      # blind to the core dependency graph. Worse, apply-patches recreates
+      # build/core with `rm -rf`, which would wipe a restored build/core/target.
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        env:
+          # Save the cache even when the job fails — otherwise a broken deploy
+          # rebuilds the ~10-min wasm step from scratch on every retry.
+          CACHE_ON_FAILURE: true
+        with:
+          workspaces: |
+            build/core
+            packages/core-wasm/rust
 
       # ORDER TRAP #1: generate + build the @deltachat/jsonrpc-client TS client
       # from the patched core at its pinned commit. `cargo test` generates the
