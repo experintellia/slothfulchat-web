@@ -203,6 +203,14 @@ jobs:
       - name: E2E test — bridge picker dialog
         run: node scripts/test-bridge-dialog.mjs
 
+      # relay picker e2e (offline: the directory fetch and the bridge /dns +
+      # /tcp probes are both mocked): the instant-onboarding relay dropdown
+      # lists the directory relays default-first, lazily probes reachability +
+      # latency once opened, offers an "Other…" host field, and the consent
+      # link follows the selection.
+      - name: E2E test — relay picker dropdown
+        run: node scripts/test-relay-picker.mjs
+
       # chat export e2e (fully offline, mock madmail): drives the three-dot
       # "Export Chat" flow, unpacks the zip, renders the extracted index.html
       # viewer over file:// and exercises the "Save single-file HTML" button.
