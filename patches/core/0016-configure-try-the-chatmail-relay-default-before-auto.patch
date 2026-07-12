@@ -1,0 +1,217 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 12 Jul 2026 12:00:00 +0000
+Subject: [PATCH] configure: try the chatmail relay default before autoconfig
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A `dcaccount:` QR hands the core an address on a chatmail relay with no
+server details, so configure() runs the classic-email autoconfig probes
+(autoconfig.<domain>, the .well-known path, autoconfig.thunderbird.net,
+MX/SRV) before it ever tries the relay host itself — a waste for chatmail
+relays, which all speak IMAP on 993 and SMTP on 465 with implicit TLS,
+addressed by the relay hostname.
+
+Add configure/chatmail_default.rs: for a bare dcaccount address whose
+domain is not in the offline provider database, fill in that standard
+convention and configure with it first, only falling back to autoconfig
+if it doesn't connect. Provider-database domains (e.g. nine.testrun.org)
+keep their existing path, which already avoids network autoconfig and may
+carry relay-specific settings. The random credentials are generated once
+by login_param_from_account_qr and reused across both attempts, so a
+fallback never creates a second address. The ports live in one place for
+the eventual WebSocket-transport relays.
+---
+ src/configure.rs                  |  36 +++++++--
+ src/configure/chatmail_default.rs | 124 ++++++++++++++++++++++++++++++
+ 2 files changed, 155 insertions(+), 5 deletions(-)
+ create mode 100644 src/configure/chatmail_default.rs
+
+diff --git a/src/configure.rs b/src/configure.rs
+index 33da10d44..3a7efa536 100644
+--- a/src/configure.rs
++++ b/src/configure.rs
+@@ -11,6 +11,7 @@
+ 
+ mod auto_mozilla;
+ mod auto_outlook;
++mod chatmail_default;
+ pub(crate) mod server_params;
+ 
+ use anyhow::{Context as _, Result, bail, ensure, format_err};
+@@ -179,14 +180,39 @@ pub async fn add_transport_from_qr(&self, qr: &str) -> Result<()> {
+         self.stop_io().await;
+ 
+         let result = async move {
+-            let mut param = match crate::qr::check_qr(self, qr).await? {
+-                crate::qr::Qr::Account { .. } => login_param_from_account_qr(self, qr).await?,
++            match crate::qr::check_qr(self, qr).await? {
++                crate::qr::Qr::Account { .. } => {
++                    let mut param = login_param_from_account_qr(self, qr).await?;
++                    // slothfulchat-web: a `dcaccount:` address lives on a chatmail
++                    // relay, which always speaks IMAP/SMTP on the standard chatmail
++                    // ports — so configure with that convention first and only fall
++                    // back to classic-email autoconfig if it doesn't connect.
++                    // See configure/chatmail_default.rs.
++                    if let Some(mut convention) = chatmail_default::chatmail_default_param(&param) {
++                        match self.add_transport_inner(&mut convention).await {
++                            Ok(()) => return Ok(()),
++                            // If the user cancelled the ongoing configuration
++                            // (ConfigureProgressDialog's "Cancel" -> stop_ongoing),
++                            // don't silently retry with autoconfig — that would
++                            // configure the account after they backed out.
++                            // add_transport_inner surfaces cancellation as an error
++                            // carrying the "Canceled" marker from its cancel race
++                            // above; any other error just means the chatmail
++                            // convention didn't connect, so fall through.
++                            Err(err) if format!("{err:#}").contains("Canceled") => {
++                                return Err(err);
++                            }
++                            Err(_) => {}
++                        }
++                    }
++                    self.add_transport_inner(&mut param).await?;
++                }
+                 crate::qr::Qr::Login { address, options } => {
+-                    login_param_from_login_qr(&address, options)?
++                    let mut param = login_param_from_login_qr(&address, options)?;
++                    self.add_transport_inner(&mut param).await?;
+                 }
+                 _ => bail!("QR code does not contain account"),
+-            };
+-            self.add_transport_inner(&mut param).await?;
++            }
+             Ok(())
+         }
+         .await;
+diff --git a/src/configure/chatmail_default.rs b/src/configure/chatmail_default.rs
+new file mode 100644
+index 000000000..79940db56
+--- /dev/null
++++ b/src/configure/chatmail_default.rs
+@@ -0,0 +1,124 @@
++//! slothfulchat-web: try the standard chatmail relay convention before autoconfig.
++//!
++//! A `dcaccount:` QR hands the core an address on a chatmail relay with no server
++//! details, so [`configure`](super::configure) falls through to the
++//! classic-email autoconfig probes (Mozilla autoconfig at `autoconfig.<domain>`,
++//! the `.well-known` path, `autoconfig.thunderbird.net`, MX/SRV lookups) before
++//! it ever tries the relay host itself. Chatmail relays need none of that: they
++//! all speak IMAP on 993 and SMTP on 465 with implicit TLS, addressed by the
++//! relay hostname. So for such accounts we configure with that convention first
++//! and only fall back to autoconfig if it doesn't connect — see the call site in
++//! [`Context::add_transport_from_qr`](crate::context::Context::add_transport_from_qr).
++
++use crate::login_param::{EnteredImapLoginParam, EnteredLoginParam, EnteredSmtpLoginParam};
++use crate::provider::{self, Socket};
++
++/// Standard chatmail relay ports, implicit TLS on both.
++///
++/// Every chatmail relay currently uses these; when relays gain a WebSocket
++/// transport this module is the single place that needs to learn about it.
++const CHATMAIL_IMAP_PORT: u16 = 993;
++const CHATMAIL_SMTP_PORT: u16 = 465;
++
++/// Given the login params built from a `dcaccount:` QR, returns a copy with the
++/// standard chatmail IMAP/SMTP servers filled in — configuring it then connects
++/// straight to the relay and skips the classic-email autoconfig probes.
++///
++/// Returns `None` (i.e. keep the normal autoconfig path) whenever the convention
++/// can't or shouldn't apply:
++/// - the QR/user already supplied server details — respect them;
++/// - the address carries no domain;
++/// - the domain is covered by the offline provider database — `configure()`
++///   already avoids network autoconfig there, and the database may carry
++///   relay-specific settings we would otherwise drop.
++pub(crate) fn chatmail_default_param(param: &EnteredLoginParam) -> Option<EnteredLoginParam> {
++    let has_server_details = !param.imap.server.is_empty()
++        || param.imap.port != 0
++        || param.imap.security != Socket::Automatic
++        || !param.imap.user.is_empty()
++        || !param.smtp.server.is_empty()
++        || param.smtp.port != 0
++        || param.smtp.security != Socket::Automatic
++        || !param.smtp.user.is_empty();
++    if has_server_details {
++        return None;
++    }
++
++    let domain = match param.addr.rsplit_once('@') {
++        Some((_, domain)) if !domain.is_empty() => domain,
++        _ => return None,
++    };
++    if provider::get_provider_info(domain).is_some() {
++        return None;
++    }
++
++    let mut convention = param.clone();
++    convention.imap = EnteredImapLoginParam {
++        server: domain.to_string(),
++        port: CHATMAIL_IMAP_PORT,
++        security: Socket::Ssl,
++        user: param.addr.clone(),
++        ..param.imap.clone()
++    };
++    convention.smtp = EnteredSmtpLoginParam {
++        server: domain.to_string(),
++        port: CHATMAIL_SMTP_PORT,
++        security: Socket::Ssl,
++        user: param.addr.clone(),
++        ..param.smtp.clone()
++    };
++    Some(convention)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn bare_account_param(addr: &str) -> EnteredLoginParam {
++        EnteredLoginParam {
++            addr: addr.to_string(),
++            imap: EnteredImapLoginParam {
++                password: "s3cret".to_string(),
++                ..Default::default()
++            },
++            ..Default::default()
++        }
++    }
++
++    #[test]
++    fn fills_in_the_chatmail_convention_for_a_bare_relay_account() {
++        // mehl.cloud is a chatmail relay that is not in the offline provider DB.
++        let param = bare_account_param("ab12cd34@mehl.cloud");
++        let convention = chatmail_default_param(&param).expect("convention applies");
++        assert_eq!(convention.imap.server, "mehl.cloud");
++        assert_eq!(convention.imap.port, CHATMAIL_IMAP_PORT);
++        assert_eq!(convention.imap.security, Socket::Ssl);
++        assert_eq!(convention.imap.user, "ab12cd34@mehl.cloud");
++        assert_eq!(convention.smtp.server, "mehl.cloud");
++        assert_eq!(convention.smtp.port, CHATMAIL_SMTP_PORT);
++        assert_eq!(convention.smtp.security, Socket::Ssl);
++        // credentials are carried over untouched
++        assert_eq!(convention.imap.password, "s3cret");
++    }
++
++    #[test]
++    fn skips_domains_in_the_provider_database() {
++        // nine.testrun.org ships in the offline provider database, so the normal
++        // path already avoids network autoconfig and keeps the DB's settings.
++        let param = bare_account_param("ab12cd34@nine.testrun.org");
++        assert!(chatmail_default_param(&param).is_none());
++    }
++
++    #[test]
++    fn respects_explicit_server_details() {
++        let mut param = bare_account_param("ab12cd34@mehl.cloud");
++        param.imap.server = "imap.example.org".to_string();
++        assert!(chatmail_default_param(&param).is_none());
++    }
++
++    #[test]
++    fn ignores_addresses_without_a_domain() {
++        let param = bare_account_param("not-an-address");
++        assert!(chatmail_default_param(&param).is_none());
++    }
++}
