@@ -2,15 +2,19 @@
 
 ## Unreleased
 
-- **Relay picker: loading state, latency & custom relay**: the onboarding relay
-  dropdown is now a custom control that appears instantly and probes each relay
-  over the bridge only when opened (so the common "take the default" path no
-  longer waits on the probes). Each relay shows a spinner while probing, a rough
-  round-trip latency once it answers, or greyed-out when the bridge can't reach
-  it; an "Other…" entry lets you type any chatmail relay by hostname. Creating
-  an account on a picked or typed relay no longer runs the slow classic-email
-  autoconfig lookups — the core tries the standard chatmail server setup first
-  and only falls back to autoconfig if that doesn't connect.
+- **Relay picker: dialog with reachability & latency, custom relay**: the
+  onboarding relay picker is now a row that opens a "Choose a chatmail relay"
+  dialog (instead of an inline dropdown that clipped against the screen edge).
+  The list appears instantly; each relay is probed over the bridge only when the
+  dialog opens (with a little sonar-ping animation while it probes, so the
+  common "take the default" path doesn't wait). A relay shows its round-trip
+  latency when it answers, otherwise "unreachable" — including a relay a hosted
+  bridge's allowlist won't route to, since the real signup would be refused the
+  same way; a refused probe is never shown as reachable. An "Other relay…" field
+  lets you type any chatmail relay by hostname. Creating an account on a
+  picked or typed relay no longer runs the slow classic-email autoconfig
+  lookups — the core tries the standard chatmail server setup first and only
+  falls back to autoconfig if that doesn't connect.
 - **Relay picker directory source fixed**: the relay picker (shipped in 0.5.0)
   fetched the relay list from a chatmail pages repo that is private, so the
   fetch 404ed and the dropdown never appeared. It now fetches JSON from

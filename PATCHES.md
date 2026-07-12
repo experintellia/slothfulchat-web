@@ -128,9 +128,10 @@ exists:
   upstream's default instance; scanned `dcaccount:`/`dclogin:` QR codes still
   override it. `desktop/0038`
 - **Relay picker on instant onboarding** — the "create profile" screen shows a
-  dropdown right above the privacy-policy consent to pick the chatmail relay
-  the new address is created on: the default relay first, then the public
-  relays fetched live from the relay directory. The directory is JSON from
+  row (right above the privacy-policy consent) with the chatmail relay the new
+  address will be created on, and a button that opens a "Choose a chatmail
+  relay" dialog: the default relay first, then the public relays fetched live
+  from the relay directory. The directory is JSON from
   [chatmail-relays-mirror](https://github.com/experintellia/chatmail-relays-mirror),
   a dumb automated daily mirror of chatmail.at/relays (the site's markdown
   source repo is private and the site sends no CORS headers, so a browser app
@@ -139,13 +140,19 @@ exists:
   `instance-config.patchCsp`) elsewhere, or `off` disables the picker. The
   consent link follows the choice to the picked relay's `/privacy.html`. Only
   rendered when there is a real choice (more than one relay, no scanned
-  `dcaccount:`/`dclogin:` QR); fails soft to no dropdown when the directory is
-  unreachable. A small custom dropdown (not a native `<select>`) probes each
-  relay over the bridge only once opened — reachability plus a rough TCP+TLS
-  handshake latency to :993 — so the picker appears instantly and the common
-  "take the default" path pays no probe cost; relays the bridge can't resolve
-  are shown greyed-out and unselectable, and an "Other…" entry accepts any
-  relay by hostname. Because these are all chatmail relays, account creation on
+  `dcaccount:`/`dclogin:` QR); fails soft to no picker when the directory is
+  unreachable. Fetching the list is cheap and done up front; each relay is
+  probed over the bridge only when the dialog opens — it actually opens the
+  relay's IMAPS port (:993) through the bridge, with a little sonar-ping
+  animation while it does — and the row shows an honest state: a round-trip
+  latency (colour-coded dot) when the relay answers, otherwise `unreachable`
+  (greyed, unselectable). "Otherwise" deliberately includes the case where the
+  relay resolves but a hosted bridge's allowlist forbids the tunnel (close
+  4003): the real signup would be refused the same way, so it is genuinely
+  unreachable through this bridge — a refused probe is never shown as a success.
+  A dialog rather than an inline dropdown so the list can't clip against the
+  onboarding dialog and the status has room. An "Other relay…" field accepts any
+  chatmail relay by hostname. Because these are all chatmail relays, account creation on
   a picked/typed relay skips the classic-email autoconfig probes: the core
   tries the standard chatmail server convention first and only autoconfigures
   if that doesn't connect (see `core/0016`). `desktop/0042`, `core/0016`
