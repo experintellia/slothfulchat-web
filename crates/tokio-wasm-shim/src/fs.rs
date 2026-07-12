@@ -243,8 +243,18 @@ pub fn sync_rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<(
     let mut moved = Vec::new();
     for key in keys {
         let node = fs.remove(&key).unwrap();
-        let suffix = key.strip_prefix(&from).unwrap().to_path_buf();
-        let target = to.join(suffix);
+        let suffix = key.strip_prefix(&from).unwrap();
+        // `to.join("")` appends a trailing slash ("/accounts/accounts.toml/"),
+        // and such a key never component-compares equal to the real path — it
+        // slips past the accounts.toml write-through guard and the file rots
+        // to 0 bytes in OPFS (issue #75). When `key` IS `from` (single-file
+        // rename — core writes accounts.toml exactly this way, via
+        // write-tmp-then-rename), the target is simply `to`.
+        let target = if suffix.as_os_str().is_empty() {
+            to.clone()
+        } else {
+            to.join(suffix)
+        };
         fs.insert(target.clone(), node);
         moved.push(target);
     }

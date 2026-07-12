@@ -131,13 +131,18 @@ async fn heal_accounts_config(cause: &str) -> Result<Accounts, String> {
     }
     uuids.sort();
 
+    let bak = tokio::fs::read(ACCOUNTS_CONFIG_BAK)
+        .await
+        .ok()
+        .map(|b| String::from_utf8_lossy(&b).into_owned());
+
     // Stage 1: the last-good backup keeps ids, selected_account and account
-    // order. Only usable when it lists exactly the accounts that exist on
-    // disk — a stale one would silently hide (or list nonexistent) accounts.
-    if let Ok(bak) = tokio::fs::read(ACCOUNTS_CONFIG_BAK).await {
-        let bak = String::from_utf8_lossy(&bak).into_owned();
-        if !bak.is_empty() && config_uuids(&bak) == uuids {
-            tokio::fs::write(ACCOUNTS_CONFIG, &bak).await.map_err(io)?;
+    // order. Only usable verbatim when it lists exactly the accounts that
+    // exist on disk — a stale one would silently hide (or list nonexistent)
+    // accounts. This exact-match path is the strongest recovery.
+    if let Some(bak) = &bak {
+        if !bak.is_empty() && config_uuids(bak) == uuids {
+            tokio::fs::write(ACCOUNTS_CONFIG, bak).await.map_err(io)?;
             match Accounts::new(PathBuf::from("/accounts"), true).await {
                 Ok(accounts) => {
                     log::warn!("restored accounts.toml from the last-good backup");
@@ -150,34 +155,183 @@ async fn heal_accounts_config(cause: &str) -> Result<Accounts, String> {
         }
     }
 
-    // Stage 2: rebuild from the account dirs.
-    // InnerConfig schema (vendor/core/src/accounts.rs); accounts_order is
-    // #[serde(default)] and may be omitted, but `accounts` is required — with
-    // no [[accounts]] tables below it must be written as an explicit empty
-    // array or the rebuilt file itself fails to parse. ids are reassigned
-    // from 1.
-    let mut toml = format!(
-        "selected_account = {}\nnext_id = {}\n",
-        if uuids.is_empty() { 0 } else { 1 },
-        uuids.len() + 1
-    );
-    if uuids.is_empty() {
-        toml += "accounts = []\n";
-    }
-    for (i, uuid) in uuids.iter().enumerate() {
-        toml += &format!(
-            "\n[[accounts]]\nid = {}\ndir = \"{uuid}\"\nuuid = \"{uuid}\"\n",
-            i + 1
-        );
-    }
+    // Stage 2: rebuild from the account dirs, using the backup (even when its
+    // uuid set no longer matches disk exactly) as *id hints* so surviving
+    // accounts keep their numbering; new dirs get fresh ids. Renumbering from
+    // 1 would break every persisted account reference (issue #75).
+    let toml = rebuild_config(&uuids, bak.as_deref());
     log::warn!(
         "rebuilt accounts.toml with {} account(s):\n{toml}",
         uuids.len()
     );
-    tokio::fs::write(ACCOUNTS_CONFIG, toml).await.map_err(io)?;
+    tokio::fs::write(ACCOUNTS_CONFIG, &toml).await.map_err(io)?;
     Accounts::new(PathBuf::from("/accounts"), true)
         .await
         .map_err(|e| format!("rebuilt accounts.toml is still unusable: {e:#}"))
+}
+
+/// Per-account id hints salvaged from a (possibly stale) accounts.toml.bak.
+struct ConfigHints {
+    /// uuid → id from the backup.
+    ids: std::collections::HashMap<String, u32>,
+    /// uuid the backup had selected, if that id resolved to an account.
+    selected_uuid: Option<String>,
+    /// the backup's `next_id` (0 if absent), so we never reissue an id it had
+    /// already handed out to an account since deleted.
+    next_id: u32,
+    /// the backup's `accounts_order` (ids), preserved where the ids survive.
+    order: Vec<u32>,
+}
+
+/// Tolerant parse of the backup into id hints. Returns `None` when the backup
+/// is unparseable OR internally inconsistent (an account without id/uuid,
+/// duplicate ids, duplicate uuids, id < 1) — such hints can't be trusted, so
+/// the caller renumbers from scratch instead.
+fn parse_hints(bak: &str) -> Option<ConfigHints> {
+    use std::collections::{HashMap, HashSet};
+    // `toml::from_str`, NOT `str::parse::<toml::Value>()`: in toml 0.9 the
+    // FromStr impl parses a single *value*, so it rejects a whole document.
+    let value = toml::from_str::<toml::Value>(bak).ok()?;
+    let accounts = value.get("accounts")?.as_array()?;
+    let mut ids: HashMap<String, u32> = HashMap::new();
+    let mut id_set: HashSet<u32> = HashSet::new();
+    let mut id_to_uuid: HashMap<u32, String> = HashMap::new();
+    for account in accounts {
+        let id = account.get("id")?.as_integer()?;
+        let uuid = account.get("uuid")?.as_str()?.to_owned();
+        let id = u32::try_from(id).ok().filter(|&id| id >= 1)?;
+        if !id_set.insert(id) {
+            return None; // duplicate id
+        }
+        if ids.insert(uuid.clone(), id).is_some() {
+            return None; // duplicate uuid
+        }
+        id_to_uuid.insert(id, uuid);
+    }
+    let selected_uuid = value
+        .get("selected_account")
+        .and_then(|v| v.as_integer())
+        .and_then(|v| u32::try_from(v).ok())
+        .and_then(|id| id_to_uuid.get(&id).cloned());
+    let next_id = value
+        .get("next_id")
+        .and_then(|v| v.as_integer())
+        .and_then(|v| u32::try_from(v).ok())
+        .unwrap_or(0);
+    let order = value
+        .get("accounts_order")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_integer())
+                .filter_map(|v| u32::try_from(v).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(ConfigHints {
+        ids,
+        selected_uuid,
+        next_id,
+        order,
+    })
+}
+
+/// Rebuilds an accounts.toml body from the account directories on disk.
+///
+/// `disk_uuids` are the uuid-named dirs (sorted internally, so caller order
+/// does not matter). `bak` is the raw backup body, if any. When the backup
+/// parses into consistent [`ConfigHints`], surviving uuids keep their backup
+/// id, selection and order; brand-new uuids get ids after the highest one
+/// already in use (respecting the backup's `next_id`). Otherwise (no backup /
+/// unusable hints) ids are assigned from 1 in uuid-sorted order — the
+/// historical behavior.
+///
+/// The output parses as core's `InnerConfig` (vendor/core/src/accounts.rs):
+/// `accounts_order` is `#[serde(default)]` (omitted when empty), but `accounts`
+/// is required — with no `[[accounts]]` tables it must be an explicit `[]`.
+fn rebuild_config(disk_uuids: &[String], bak: Option<&str>) -> String {
+    use std::collections::HashSet;
+
+    let hints = bak.and_then(parse_hints);
+
+    // Sort here so the numbering (and the new-uuid id order) is deterministic
+    // regardless of the caller's dir-iteration order.
+    let mut disk: Vec<&String> = disk_uuids.iter().collect();
+    disk.sort();
+
+    // Assign an id to every disk uuid, and compute the next unissued id.
+    let mut assigned: Vec<(u32, &String)> = Vec::new();
+    let next_id = if let Some(hints) = &hints {
+        let mut max_used = 0u32;
+        let mut new_uuids: Vec<&String> = Vec::new();
+        for &uuid in &disk {
+            match hints.ids.get(uuid) {
+                Some(&id) => {
+                    assigned.push((id, uuid));
+                    max_used = max_used.max(id);
+                }
+                None => new_uuids.push(uuid),
+            }
+        }
+        // New ids start past the highest surviving id, never below the
+        // backup's next_id (so a since-deleted account's id is not reused).
+        let mut next = max_used.saturating_add(1).max(hints.next_id).max(1);
+        for uuid in new_uuids {
+            assigned.push((next, uuid));
+            next = next.saturating_add(1);
+        }
+        // Keep the backup's next_id floor even when no new uuid consumed it:
+        // ids below it were provably handed out before (to accounts since
+        // deleted), and reissuing one would let stale per-account state keyed
+        // on the id bleed into a future account.
+        next
+    } else {
+        for (i, &uuid) in disk.iter().enumerate() {
+            assigned.push((i as u32 + 1, uuid));
+        }
+        disk.len() as u32 + 1
+    };
+    assigned.sort_by_key(|(id, _)| *id);
+
+    // selected_account: the backup's selection if its uuid still exists, else
+    // the lowest-id account, else 0 (no accounts).
+    let selected = hints
+        .as_ref()
+        .and_then(|h| h.selected_uuid.as_ref())
+        .and_then(|uuid| assigned.iter().find(|(_, u)| *u == uuid).map(|(id, _)| *id))
+        .unwrap_or_else(|| assigned.iter().map(|(id, _)| *id).min().unwrap_or(0));
+
+    // accounts_order: the backup's order filtered to surviving ids, then any
+    // remaining ids appended (sorted, for a deterministic file).
+    let assigned_ids: HashSet<u32> = assigned.iter().map(|(id, _)| *id).collect();
+    let mut order: Vec<u32> = Vec::new();
+    if let Some(hints) = &hints {
+        for id in &hints.order {
+            if assigned_ids.contains(id) && !order.contains(id) {
+                order.push(*id);
+            }
+        }
+    }
+    let mut remaining: Vec<u32> = assigned
+        .iter()
+        .map(|(id, _)| *id)
+        .filter(|id| !order.contains(id))
+        .collect();
+    remaining.sort_unstable();
+    order.extend(remaining);
+
+    let mut toml = format!("selected_account = {selected}\nnext_id = {next_id}\n");
+    if !order.is_empty() {
+        let ids: Vec<String> = order.iter().map(u32::to_string).collect();
+        toml += &format!("accounts_order = [{}]\n", ids.join(", "));
+    }
+    if assigned.is_empty() {
+        toml += "accounts = []\n";
+    }
+    for (id, uuid) in &assigned {
+        toml += &format!("\n[[accounts]]\nid = {id}\ndir = \"{uuid}\"\nuuid = \"{uuid}\"\n");
+    }
+    toml
 }
 
 /// Extracts the sorted account uuids out of an accounts.toml body (the
@@ -186,7 +340,10 @@ async fn heal_accounts_config(cause: &str) -> Result<Accounts, String> {
 /// the heal's backup stage. Unparseable/malformed input yields an empty
 /// list, which never matches a non-empty dir set.
 fn config_uuids(text: &str) -> Vec<String> {
-    let Ok(value) = text.parse::<toml::Value>() else {
+    // `toml::from_str`, NOT `str::parse::<toml::Value>()`: toml 0.9's FromStr
+    // parses a lone value and rejects a document, which would silently disable
+    // this whole stage (empty list never equals a non-empty dir set).
+    let Ok(value) = toml::from_str::<toml::Value>(text) else {
         return Vec::new();
     };
     let Some(accounts) = value.get("accounts").and_then(|a| a.as_array()) else {
@@ -243,5 +400,170 @@ impl DeltaChat {
 
     pub fn fs_mkdirp(&self, path: String) -> Result<(), JsValue> {
         tokio::fs::sync_create_dir_all(&path).map_err(fs_err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rebuild_config;
+
+    // Re-parses a rebuilt body and pulls out the fields the tests assert on.
+    // Doubles as a check that every emitted body is valid TOML.
+    fn parse(body: &str) -> (u32, u32, Vec<u32>, Vec<(u32, String)>) {
+        let value: toml::Value = toml::from_str(body).expect("rebuilt toml must parse");
+        let selected = value["selected_account"].as_integer().unwrap() as u32;
+        let next_id = value["next_id"].as_integer().unwrap() as u32;
+        let order: Vec<u32> = value
+            .get("accounts_order")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().map(|v| v.as_integer().unwrap() as u32).collect())
+            .unwrap_or_default();
+        let accounts = value["accounts"].as_array().unwrap();
+        let accounts = accounts
+            .iter()
+            .map(|a| {
+                let id = a["id"].as_integer().unwrap() as u32;
+                let uuid = a["uuid"].as_str().unwrap().to_owned();
+                assert_eq!(a["dir"].as_str().unwrap(), uuid, "dir must equal uuid");
+                (id, uuid)
+            })
+            .collect();
+        (selected, next_id, order, accounts)
+    }
+
+    fn u(n: u8) -> String {
+        // deterministic, uuid-shaped, already sort-stable in this byte
+        format!("00000000-0000-0000-0000-0000000000{n:02x}")
+    }
+
+    #[test]
+    fn no_bak_renumbers_from_one_uuid_sorted() {
+        let disk = vec![u(2), u(1), u(3)];
+        let mut sorted = disk.clone();
+        sorted.sort();
+        let (selected, next_id, _order, accounts) = parse(&rebuild_config(&disk, None));
+        assert_eq!(selected, 1);
+        assert_eq!(next_id, 4);
+        assert_eq!(
+            accounts,
+            vec![
+                (1, sorted[0].clone()),
+                (2, sorted[1].clone()),
+                (3, sorted[2].clone())
+            ]
+        );
+    }
+
+    #[test]
+    fn garbage_bak_renumbers_from_one() {
+        let disk = vec![u(1), u(2)];
+        let (selected, next_id, _order, accounts) =
+            parse(&rebuild_config(&disk, Some("this is not toml {{{")));
+        assert_eq!(selected, 1);
+        assert_eq!(next_id, 3);
+        assert_eq!(accounts, vec![(1, u(1)), (2, u(2))]);
+    }
+
+    #[test]
+    fn partial_overlap_keeps_ids_new_gets_next() {
+        // bak knew accounts 7 and 4; disk still has 7's uuid plus a brand-new
+        // one; account 4's uuid is gone.
+        let bak = format!(
+            "selected_account = 7\nnext_id = 9\naccounts_order = [4, 7]\n\
+             \n[[accounts]]\nid = 7\ndir = \"{a}\"\nuuid = \"{a}\"\n\
+             \n[[accounts]]\nid = 4\ndir = \"{b}\"\nuuid = \"{b}\"\n",
+            a = u(7),
+            b = u(4),
+        );
+        let mut disk = vec![u(7), u(9)]; // u(9) is new
+        disk.sort();
+        let (selected, next_id, order, accounts) = parse(&rebuild_config(&disk, Some(&bak)));
+        // u(7) keeps id 7; the new uuid gets the backup's next_id (9).
+        assert!(accounts.contains(&(7, u(7))));
+        assert!(accounts.contains(&(9, u(9))));
+        assert_eq!(accounts.len(), 2);
+        assert_eq!(next_id, 10);
+        assert_eq!(selected, 7); // selected uuid survived
+                                 // order: bak order filtered to survivors (7), then new ids appended (9).
+        assert_eq!(order, vec![7, 9]);
+    }
+
+    #[test]
+    fn bak_next_id_floor_survives_without_new_uuids() {
+        // bak had handed out ids up to 8 (next_id = 9) to accounts since
+        // deleted; only id 2 survives and NO new dir exists. The rebuilt
+        // next_id must stay 9 — dropping to 3 would reissue ids that stale
+        // per-account state may still reference.
+        let bak = format!(
+            "selected_account = 2\nnext_id = 9\n\
+             \n[[accounts]]\nid = 2\ndir = \"{a}\"\nuuid = \"{a}\"\n\
+             \n[[accounts]]\nid = 7\ndir = \"{gone}\"\nuuid = \"{gone}\"\n",
+            a = u(2),
+            gone = u(7),
+        );
+        let disk = vec![u(2)];
+        let (selected, next_id, _order, accounts) = parse(&rebuild_config(&disk, Some(&bak)));
+        assert_eq!(accounts, vec![(2, u(2))]);
+        assert_eq!(next_id, 9);
+        assert_eq!(selected, 2);
+    }
+
+    #[test]
+    fn duplicate_id_hints_are_ignored() {
+        // two accounts share id 1 → hints unusable → renumber from 1.
+        let bak = format!(
+            "selected_account = 1\nnext_id = 2\n\
+             \n[[accounts]]\nid = 1\ndir = \"{a}\"\nuuid = \"{a}\"\n\
+             \n[[accounts]]\nid = 1\ndir = \"{b}\"\nuuid = \"{b}\"\n",
+            a = u(5),
+            b = u(6),
+        );
+        let mut disk = vec![u(5), u(6)];
+        disk.sort();
+        let (selected, next_id, _order, accounts) = parse(&rebuild_config(&disk, Some(&bak)));
+        assert_eq!(selected, 1);
+        assert_eq!(next_id, 3);
+        assert_eq!(accounts, vec![(1, disk[0].clone()), (2, disk[1].clone())]);
+    }
+
+    #[test]
+    fn selected_account_falls_back_when_selection_gone() {
+        // bak selected an account whose uuid no longer exists on disk.
+        let bak = format!(
+            "selected_account = 3\nnext_id = 4\n\
+             \n[[accounts]]\nid = 2\ndir = \"{a}\"\nuuid = \"{a}\"\n\
+             \n[[accounts]]\nid = 3\ndir = \"{gone}\"\nuuid = \"{gone}\"\n",
+            a = u(2),
+            gone = u(3),
+        );
+        let disk = vec![u(2)]; // only account 2 survives
+        let (selected, next_id, _order, accounts) = parse(&rebuild_config(&disk, Some(&bak)));
+        assert_eq!(accounts, vec![(2, u(2))]);
+        assert_eq!(selected, 2); // lowest surviving id, since selection is gone
+        assert_eq!(next_id, 4); // the bak's next_id floor, not max surviving + 1
+    }
+
+    #[test]
+    fn empty_dir_set() {
+        let (selected, next_id, order, accounts) = parse(&rebuild_config(&[], None));
+        assert_eq!(selected, 0);
+        assert_eq!(next_id, 1);
+        assert!(order.is_empty());
+        assert!(accounts.is_empty());
+    }
+
+    #[test]
+    fn empty_dir_set_with_bak() {
+        let bak = format!(
+            "selected_account = 1\nnext_id = 2\n\
+             \n[[accounts]]\nid = 1\ndir = \"{a}\"\nuuid = \"{a}\"\n",
+            a = u(1),
+        );
+        let (selected, next_id, _order, accounts) = parse(&rebuild_config(&[], Some(&bak)));
+        assert_eq!(selected, 0);
+        // the bak's next_id floor holds even with no survivors: id 1 was
+        // provably issued to the (now gone) account
+        assert_eq!(next_id, 2);
+        assert!(accounts.is_empty());
     }
 }
