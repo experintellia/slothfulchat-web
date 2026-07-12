@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-07-12
 
 - **Relay picker on onboarding**: the "create profile" screen shows a dropdown
   right above the privacy-policy consent to choose which public chatmail relay
@@ -33,6 +33,17 @@
   by kind, QR scans, community-channel use, link-preview accept/dismiss, info-
   link clicks, bridge kind, backup/key import-export, first-chat / >10-chat
   milestones, bucketed startup (cold/warm), and fatal boot errors by category.
+- **Seekable video/audio**: the blob service worker now answers HTTP Range
+  requests (206 Partial Content, `Accept-Ranges`), so seeking in served
+  `<video>`/`<audio>` works instead of the media being treated as
+  non-seekable.
+- `SLOTHFUL_PUBLIC_BRIDGES` parsing tolerates shell-style quotes pasted into
+  the GitHub Variable (previously a stray quote failed the `ws://`/`wss://`
+  guard and silently dropped the whole list); SELFHOSTING.md documents the
+  Variables-tab traps next to the env-var table.
+- The webimap setup-failure alert no longer dumps the raw wasm stack
+  backtrace before the troubleshooting checklist; the trimmed error message
+  survives as a footnote under it.
 
 ## 0.4.0 — 2026-07-11
 

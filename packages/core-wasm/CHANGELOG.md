@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 — 2026-07-12
+
+- The tokio shim now profiles inline `spawn_blocking`/`block_in_place`
+  closures (PGP keygen/encrypt/decrypt): per-session total/max/count exposed
+  via `blocking_profile()`, individually slow closures logged as
+  `sc:blocking …ms`. Groundwork ("Step 0 — profile first") for offloading PGP
+  to a worker (issue #3); feeds the web app's Diagnostics panel.
+
 ## 0.4.0 — 2026-07-10
 
 - Animated sticker support in the bundled core (core patches 0014, 0015):
