@@ -185,6 +185,17 @@ jobs:
       - name: Smoke test — core-wasm boots in the browser
         run: pnpm --filter @slothfulchat/core-wasm test
 
+      # account ids/fingerprints e2e (issue #75): accounts.toml write-through
+      # survives reload with ids/fingerprints/selection intact and no self-heal.
+      - name: E2E test — account ids survive reload (issue #75)
+        run: node scripts/test-account-ids-e2e.mjs
+
+      # account churn e2e (post-#75 sahpool-leak incident): ~32 add+remove
+      # cycles must not leak sahpool pool slots, brick boot with SQLITE_CANTOPEN,
+      # or trip the self-heal on a valid accounts.toml.
+      - name: E2E test — account churn does not leak sahpool slots
+        run: node scripts/test-account-churn-e2e.mjs
+
       # ORDER TRAP #2 (see deploy-pages.yml): assemble wipes+repopulates dist/,
       # build emits runtime.js + blobs-sw.js into it — build must come after.
       - name: Assemble web-app dist/ (upstream bundle + wasm + overlays)
