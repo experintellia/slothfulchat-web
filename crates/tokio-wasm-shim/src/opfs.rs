@@ -56,6 +56,8 @@ const ACCOUNTS_TOML_NAME: &str = "accounts.toml";
 /// Last-good copy, refreshed from the previous content before every
 /// accounts.toml overwrite; the wasm self-heal restores from it.
 const ACCOUNTS_TOML_BAK: &str = "accounts.toml.bak";
+/// Full memfs path of the backup (the const above is just the file name).
+const ACCOUNTS_TOML_BAK_PATH: &str = "/accounts/accounts.toml.bak";
 /// Configs are ~100 bytes per account; anything bigger is garbage (the iOS
 /// incident was ~1 MiB of it) and must never be copied into the backup.
 const CONFIG_BAK_MAX: usize = 512 * 1024;
@@ -119,7 +121,11 @@ pub(crate) fn mark_dirty(path: &Path) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
-    if path.as_os_str() == std::ffi::OsStr::new(ACCOUNTS_TOML) && reconcile_config_sync() {
+    // Component-wise compare (Path, not the raw OsStr): a `sync_rename` can
+    // hand us a trailing-slash spelling of this path, which is byte-unequal
+    // but component-equal. Missing it here sends the write to the async queue,
+    // where the flusher used to fail forever on the held SAH (issue #75).
+    if path == Path::new(ACCOUNTS_TOML) && reconcile_config_sync() {
         return;
     }
     let mut guard = PENDING.lock().unwrap();
@@ -133,7 +139,11 @@ pub(crate) fn mark_dirty(path: &Path) {
 /// Synchronous accounts.toml write-through. Returns false when the handles
 /// are not held (persistence setup failed half-way) or the write failed
 /// (e.g. the browser invalidated the handle) → the caller falls back to the
-/// async queue, whose reconcile retries with a freshly opened handle.
+/// async queue. The flusher's [`reconcile_config`] then retries: through the
+/// held handles again, or — if they were invalidated — by closing, reopening
+/// and retrying through fresh ones. It must NEVER open a *second* SAH on the
+/// same file while these are held (createSyncAccessHandle would throw
+/// NoModificationAllowedError forever — the original issue #75 failure).
 fn reconcile_config_sync() -> bool {
     CONFIG_SAHS.with(|c| {
         let borrow = c.borrow();
@@ -255,6 +265,18 @@ async fn flusher(root: FileSystemDirectoryHandle, mut rx: UnboundedReceiver<Path
 
 /// Makes the OPFS mirror match the current memfs state at `path`.
 async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), JsValue> {
+    // accounts.toml and its .bak are owned by the synchronous write-through
+    // while CONFIG_SAHS holds their exclusive handles. The generic path below
+    // would call open_sah on them — a SECOND createSyncAccessHandle on a
+    // locked file always throws NoModificationAllowedError (issue #75), so the
+    // write could never land and the file stayed 0 bytes. Route them through
+    // the held handles; only fall through here when no handles are held
+    // (reconcile_config returns false → CONFIG_SAHS is None, persistence setup
+    // failed half-way, so the generic open_sah path below is correct).
+    let is_config = path == Path::new(ACCOUNTS_TOML) || path == Path::new(ACCOUNTS_TOML_BAK_PATH);
+    if is_config && reconcile_config(root, path).await? {
+        return Ok(());
+    }
     match fs::snapshot(path) {
         Snapshot::File(data) => {
             let dir = ensure_dirs(root, path.parent().unwrap_or(Path::new("/"))).await?;
@@ -287,6 +309,56 @@ async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), 
         }
     }
     Ok(())
+}
+
+/// Flusher-side reconciliation for accounts.toml (and its .bak). Guarantees no
+/// second SAH is ever opened on a file whose exclusive handle is held in
+/// CONFIG_SAHS. Returns `Ok(true)` when the write was handled here, `Ok(false)`
+/// when no handles are held and the caller should use the generic path.
+///
+/// Careful with the thread-local `RefCell`: every borrow is dropped before an
+/// `.await`, or re-entry on the single-threaded worker could panic.
+async fn reconcile_config(root: &FileSystemDirectoryHandle, path: &Path) -> Result<bool, JsValue> {
+    // No handles held → the write-through never armed; the generic path is
+    // correct (nothing owns a lock on the file).
+    if !CONFIG_SAHS.with(|c| c.borrow().is_some()) {
+        return Ok(false);
+    }
+
+    // While the handles are held, the .bak's OPFS bytes are written solely by
+    // write_config_through (from the main sync path). A .bak reaching the
+    // flusher — via a /accounts subtree rename/remove or a hydrated-state
+    // path — has nothing to do here, and opening a second SAH on it would
+    // fail. Leave it to the main write-through.
+    if path == Path::new(ACCOUNTS_TOML_BAK_PATH) {
+        return Ok(true);
+    }
+
+    // Retry through the held handles first.
+    if reconcile_config_sync() {
+        return Ok(true);
+    }
+
+    // The held-handle write failed — the browser most likely invalidated the
+    // handles. Take them out of CONFIG_SAHS (no borrow across the awaits
+    // below!), close them, reopen fresh ones and retry once through those.
+    if let Some((main, bak)) = CONFIG_SAHS.with(|c| c.borrow_mut().take()) {
+        main.close();
+        bak.close();
+    }
+    let accounts_dir = ensure_dirs(root, Path::new("/accounts")).await?;
+    let (main, bak) = futures::future::try_join(
+        open_sah(&accounts_dir, ACCOUNTS_TOML_NAME),
+        open_sah(&accounts_dir, ACCOUNTS_TOML_BAK),
+    )
+    .await
+    // Reopen failed: leave CONFIG_SAHS None so later writes take the generic
+    // path; the flusher logs the returned error.
+    ?;
+    let result = write_config_through(&main, &bak);
+    CONFIG_SAHS.with(|c| *c.borrow_mut() = Some((main, bak)));
+    result?;
+    Ok(true)
 }
 
 fn file_name(path: &Path) -> Result<String, JsValue> {
