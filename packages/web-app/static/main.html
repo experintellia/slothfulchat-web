@@ -23,9 +23,14 @@
       the page can't fetch any other URL: a guardrail against accidentally
       reaching a CDN, and it rules out a lazy exfil bucket at some other path.
       `:*` is a wildcard port — needed as the local bridge is on :8641.)
-      https://raw.githubusercontent.com is pinned to the exact relays.markdown
-      file the onboarding relay picker fetches (patches/desktop/0042) — the
-      one non-bridge URL the page may fetch, and nothing else on that host.
+      The raw.githubusercontent.com URL is pinned to the exact relay-directory
+      JSON the onboarding relay picker fetches (patches/desktop/0042,
+      chatmail-relays-mirror) — one non-bridge URL, nothing else on that host.
+      connect-src is REWRITTEN at assemble/customize time
+      (instance-config.patchCsp): the relay-directory pin follows
+      SLOTHFUL_RELAY_DIRECTORY and the analytics origin follows
+      SLOTHFUL_PLAUSIBLE_DOMAIN, so keep the values here in sync with the base
+      list + default pin there.
       * style-src 'unsafe-inline' is needed for theming and the virtual list.
     -->
     <meta
@@ -39,7 +44,7 @@
                    child-src blob: ;
                    img-src 'self' data: blob: file: webxdc-icon: ;
                    media-src 'self' file: blob: ;
-                   connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl https://raw.githubusercontent.com/chatmail/pages/refs/heads/main/relays.markdown"
+                   connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl https://raw.githubusercontent.com/experintellia/chatmail-relays-mirror/refs/heads/data/relays.json"
     />
     <link rel="stylesheet" href="./fonts/fonts.css" />
     <link rel="stylesheet" href="./main.css" />

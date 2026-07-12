@@ -155,9 +155,16 @@ files['imprint.html'] = enc(imprintHtml(config, env))
 // privacy.html reflects config.analytics, which customize can flip — regenerate
 files['privacy.html'] = enc(privacyHtml(config, env))
 for (const f of ['main.html', 'index.html']) {
-  // patchCsp is idempotent: it strips any origin baked by a previous build
-  // before adding this instance's, so re-customising a zip stays correct
-  files[f] = enc(patchCsp(patchTitle(dec(files[f]), config.instanceName), analyticsOrigin(config)))
+  // patchCsp is idempotent: it strips any analytics origin and relay-directory
+  // URL baked by a previous build before adding this instance's, so
+  // re-customising a zip stays correct
+  files[f] = enc(
+    patchCsp(
+      patchTitle(dec(files[f]), config.instanceName),
+      analyticsOrigin(config),
+      config.relayDirectoryUrl
+    )
+  )
 }
 files['manifest.webmanifest'] = enc(patchManifest(dec(files['manifest.webmanifest']), config.instanceName))
 files['boot-error.js'] = enc(patchBootError(dec(files['boot-error.js']), config.instanceName))

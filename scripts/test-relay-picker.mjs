@@ -1,16 +1,17 @@
-// E2E test for the instant-onboarding relay picker (patches/desktop/0042):
-// the "create profile" screen offers a dropdown of chatmail relays — default
-// relay first, then the relays from the live directory that the WS→TCP
-// bridge's /dns endpoint can resolve — and the privacy-policy consent link
-// follows the selection.
+// E2E test for the instant-onboarding relay picker (patches/desktop
+// 0042/0043): the "create profile" screen offers a dropdown of chatmail
+// relays — default relay first, then the relays from the live directory that
+// the WS→TCP bridge's /dns endpoint can resolve — and the privacy-policy
+// consent link follows the selection.
 //
-// The directory fetch (relays.markdown on raw.githubusercontent.com) is
-// intercepted with a Playwright route and answered with a fixture, so the
-// test runs offline and doesn't depend on the real directory's contents:
+// The directory fetch (the chatmail-relays-mirror relays.json on
+// raw.githubusercontent.com) is intercepted with a Playwright route and
+// answered with a fixture, so the test runs offline and doesn't depend on
+// the real mirror's contents:
 //  - nine.testrun.org — the default relay, must stay first
 //  - example.org — resolvable, must be offered
 //  - relay.does-not-exist.invalid — guaranteed NXDOMAIN, must be filtered out
-//  - a decorative [chatmail docs](...) link — must not be parsed as a relay
+//  - a junk entry (host is a URL, not a bare hostname) — must be skipped
 //
 // Modeled on scripts/smoke-web-app.mjs (servers, eval fix).
 import { spawn } from 'node:child_process'
@@ -21,18 +22,16 @@ const script = p => fileURLToPath(new URL(p, import.meta.url))
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
 const APP_PORT = Number(process.env.APP_PORT ?? 8642)
 
-const RELAYS_MARKDOWN = `---
-title: Known public chatmail relays
----
-
-# Known public chatmail relays
-
-See the [chatmail docs](https://chatmail.at/doc/relay) to run your own.
-
-- [nine.testrun.org](https://nine.testrun.org) — the default relay
-- [example.org](https://example.org) — a reachable test relay
-- [relay.does-not-exist.invalid](https://relay.does-not-exist.invalid) — unreachable
-`
+const RELAYS_JSON = JSON.stringify({
+  source: 'https://chatmail.at/relays',
+  fetchedAt: '2026-07-12T00:00:00Z',
+  relays: [
+    { host: 'nine.testrun.org' },
+    { host: 'example.org' },
+    { host: 'relay.does-not-exist.invalid' },
+    { host: 'https://chatmail.at/doc/relay' },
+  ],
+})
 
 const procs = [
   spawn('node', [script('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs')], {
@@ -71,8 +70,8 @@ await page.route('https://raw.githubusercontent.com/**', route => {
   directoryRequested = true
   route.fulfill({
     status: 200,
-    contentType: 'text/plain; charset=utf-8',
-    body: RELAYS_MARKDOWN,
+    contentType: 'text/plain; charset=utf-8', // GitHub raw serves JSON as text/plain
+    body: RELAYS_JSON,
   })
 })
 
@@ -102,7 +101,7 @@ if (!options.includes('example.org'))
 if (options.some(o => o.includes('invalid')))
   fail(`NXDOMAIN relay not filtered out: ${options}`)
 if (options.some(o => o.includes('chatmail.at')))
-  fail(`decorative docs link parsed as relay: ${options}`)
+  fail(`junk (URL-valued host) entry not skipped: ${options}`)
 
 // consent link follows the selection
 const consent = page.locator('a', { hasText: 'Privacy Policy' })

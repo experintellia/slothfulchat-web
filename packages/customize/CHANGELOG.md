@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- New `SLOTHFUL_RELAY_DIRECTORY` variable: relay-directory JSON for the
+  onboarding relay picker (an https URL, or `off` to hide the picker; unset =
+  the chatmail-relays-mirror default). The CSP re-patch (`patchCsp`) now pins
+  this URL alongside the analytics origin, replacing whatever relay pin the
+  zip carried.
+
 ## 0.5.1 — 2026-07-12
 
 - Regenerates `privacy.html` and re-patches the CSP `connect-src` for the

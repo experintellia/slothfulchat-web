@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Relay picker directory source fixed**: the relay picker (shipped in 0.5.0)
+  fetched the relay list from a chatmail pages repo that is private, so the
+  fetch 404ed and the dropdown never appeared. It now fetches JSON from
+  [chatmail-relays-mirror](https://github.com/experintellia/chatmail-relays-mirror),
+  an automated daily mirror of [chatmail.at/relays](https://chatmail.at/relays)
+  (which a browser app can't read directly — no CORS, private source repo),
+  served with CORS from GitHub raw. A new `SLOTHFUL_RELAY_DIRECTORY`
+  build/customize variable points an instance at another directory URL (the
+  page CSP is pinned to it automatically) or disables the picker with `off`.
+
 ## 0.5.1 — 2026-07-12
 
 - **Relay picker on onboarding**: the "create profile" screen shows a dropdown
