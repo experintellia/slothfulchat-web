@@ -126,8 +126,9 @@ const config = buildConfig(env, await gitBuildMeta())
 // inline script would be silently blocked.
 await writeFile(join(dist, 'config.js'), configJs(config))
 // instance name also becomes the tab title (runtime.ts keeps it updated)
-// analytics (when configured) POSTs to Plausible from our own bundle, so the
-// only CSP change is one extra connect-src origin; script-src stays 'self'
+// CSP connect-src: analytics (when configured) POSTs to Plausible from our own
+// bundle (one extra origin), and the relay-directory URL is pinned so the
+// onboarding picker can fetch it; script-src stays 'self'
 const mainHtml = patchCsp(
   patchTitle(
     (await readFile(join(here, 'static/main.html'), 'utf-8')).replace(
@@ -136,7 +137,8 @@ const mainHtml = patchCsp(
     ),
     config.instanceName
   ),
-  analyticsOrigin(config)
+  analyticsOrigin(config),
+  config.relayDirectoryUrl
 )
 
 // our overlays. index.html is a copy of main.html so the bare site root

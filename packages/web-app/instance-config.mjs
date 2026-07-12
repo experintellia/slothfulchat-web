@@ -82,6 +82,11 @@ export function buildConfig(env, build = {}) {
     // keeps upstream's default instance. Read by the patched useInstantOnboarding
     // (see patches/desktop, slothfulInstanceConfig.instanceDefaultChatmailQr).
     defaultChatmailInstance: env.SLOTHFUL_DEFAULT_CHATMAIL || '',
+    // relay-directory source for the onboarding relay picker (patches/desktop
+    // relayDirectory.ts): '' = the frontend's built-in default mirror, an
+    // http(s) URL = fetch there, 'off' = picker disabled. Garbage is treated
+    // as unset. patchCsp pins main.html's connect-src to the same value.
+    relayDirectoryUrl: normalizeRelayDirectory(env.SLOTHFUL_RELAY_DIRECTORY),
     // imprint.html is always emitted (placeholder when unconfigured), so the
     // About link can point at it unconditionally
     imprintUrl: 'imprint.html',
@@ -115,21 +120,81 @@ export function analyticsOrigin(config) {
   }
 }
 
-/** Canonicalise the CSP connect-src in main.html/index.html: drop any
- * previously-injected http(s) origin and add `origin` when analytics is on.
- * Idempotent, so assemble.mjs (from the pristine template) and customize.mjs
- * (from a prebuilt zip that may carry a stale origin) both converge. Non-origin
- * tokens (ws:, wss:, data:, …) are preserved. Anchored on `connect-src 'self'`
- * (the real directive always lists 'self' first) so it never matches the word
- * "connect-src" in the explanatory HTML comment above the meta tag. */
-export function patchCsp(html, origin) {
-  // only strip a previously-injected *bare* origin (scheme://host[:port], no
-  // path) — that's what analyticsOrigin() produces. Path-scoped or wildcard
-  // entries in the template (e.g. the link-preview `https://*:*/unfurl`) are
-  // preserved.
+// Default relay-directory source: a dumb automated daily mirror of
+// https://chatmail.at/relays (single-snapshot `data` branch, CORS via GitHub
+// raw). It's the project's OWN repo (same `experintellia` org as this app),
+// not an arbitrary third party — whoever controls it controls the relay list
+// the picker offers, so a first-party source is the point. Must match
+// RELAY_DIRECTORY_URL in the patched frontend (relayDirectory.ts) — the
+// frontend falls back to it when the config value is empty, and patchCsp pins
+// the CSP to it by default. (A lint-job test guards the two against drift.)
+export const DEFAULT_RELAY_DIRECTORY_URL =
+  'https://raw.githubusercontent.com/experintellia/chatmail-relays-mirror/refs/heads/data/relays.json'
+
+// SLOTHFUL_RELAY_DIRECTORY: '' (use default mirror) | 'off' | http(s) URL.
+// Garbage (not a URL, not "off") counts as unset — a broken value must not
+// end up as a CSP source or a fetch target. The URL must be a SINGLE clean
+// token: it is appended verbatim into main.html's connect-src, so a value
+// with a space would inject an extra CSP source and a ';' would truncate the
+// directive (and break patchCsp idempotency). Reject anything with
+// whitespace/quotes/';' and require URL() to accept it.
+export function normalizeRelayDirectory(raw) {
+  // trim, strip wrapping shell quotes, trim again (padding may sit inside the
+  // quotes, e.g. `" off "`)
+  const value = (raw || '')
+    .trim()
+    .replace(/^(['"])([\s\S]*)\1$/, '$2')
+    .trim()
+  if (/^off$/i.test(value)) return 'off'
+  if (/^https?:\/\/\S+$/i.test(value) && !/["';]/.test(value)) {
+    try {
+      // eslint-disable-next-line no-new
+      new URL(value)
+      return value
+    } catch {
+      /* not a parseable URL — fall through to unset */
+    }
+  }
+  return ''
+}
+
+/** The relay-directory URL to pin in the CSP connect-src (and the frontend
+ * fetches): '' → the default mirror, an https URL → that, 'off' → no pin.
+ * Takes an already-normalized value (buildConfig stores one). */
+export function relayDirectoryPin(relayDirectory) {
+  const normalized = normalizeRelayDirectory(relayDirectory)
+  return normalized === 'off' ? '' : normalized || DEFAULT_RELAY_DIRECTORY_URL
+}
+
+/** Canonicalise the CSP connect-src in main.html/index.html: drop the two
+ * build-managed sources — the analytics Plausible origin and the
+ * relay-directory URL — then re-add each per config. Idempotent, so
+ * assemble.mjs (from the pristine template) and customize.mjs (from a prebuilt
+ * zip that may carry stale values) both converge. Non-managed tokens (ws:,
+ * wss:, data:, the link-preview unfurl wildcard, …) are preserved. Anchored on
+ * the `'self'` that always follows `connect-src` in the real directive, so it
+ * never matches the word "connect-src" in the explanatory HTML comment above
+ * the meta tag.
+ *
+ * `origin` is the analytics origin (analyticsOrigin(config), '' when off);
+ * `relayDirectory` is the normalized config.relayDirectoryUrl ('' | 'off' |
+ * url). */
+export function patchCsp(html, origin, relayDirectory = '') {
+  // strip a previously-injected *bare* origin (scheme://host[:port], no path)
+  // — that's what analyticsOrigin() produces
   const isBareOrigin = t => /^https?:\/\/[^/]+\/?$/.test(t)
+  // strip a previously-injected relay-directory URL: a path-scoped http(s) URL
+  // that is NOT the link-preview unfurl wildcard. The default mirror, a custom
+  // directory, and the historical markdown pin all match this — so a stale one
+  // (markdown, or another instance's) is replaced rather than accumulated.
+  const isManagedRelay = t =>
+    /^https?:\/\/[^/]+\/.+/.test(t) && !t.includes('*:*/unfurl')
+  const relayPin = relayDirectoryPin(relayDirectory)
   return html.replace(/connect-src 'self'([^;"]*)/, (_m, body) => {
-    const kept = body.split(/\s+/).filter(t => t && !isBareOrigin(t))
+    const kept = body
+      .split(/\s+/)
+      .filter(t => t && !isBareOrigin(t) && !isManagedRelay(t))
+    if (relayPin) kept.push(relayPin)
     if (origin) kept.push(origin)
     return "connect-src 'self'" + (kept.length ? ' ' + kept.join(' ') : '')
   })

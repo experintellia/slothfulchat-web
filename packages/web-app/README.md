@@ -140,6 +140,7 @@ in source. All optional:
 | `SLOTHFUL_DEFAULT_PROXY` | Default `wss://` bridge the app uses when the user hasn't set one. Without it the app defaults to `ws://localhost:8641`. |
 | `SLOTHFUL_PUBLIC_BRIDGES` | Public bridges offered in the app's bridge picker dialog: `;`-separated `URL description` entries (URL up to the first space, rest is a super-short description). Malformed entries are dropped. Localhost + a custom field are always offered; the `SLOTHFUL_DEFAULT_PROXY` bridge appears automatically (deduped). |
 | `SLOTHFUL_DEFAULT_CHATMAIL` | Chatmail relay the "create new account" flow signs up on (host, URL or `dcaccount:` QR). Unset = upstream's default relay. Scanned QR codes still override it. |
+| `SLOTHFUL_RELAY_DIRECTORY` | Relay-directory JSON for the onboarding relay picker (`{"relays":[{"host":"…"}]}`, CORS-readable; the page CSP is pinned to this URL). Unset = the [chatmail-relays-mirror](https://github.com/experintellia/chatmail-relays-mirror) default; `off` = no picker. |
 | `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the "Public Bots" / "Public Channels" community suggestions in the New Chat dialog instance-wide (also hides the per-user settings toggle). |
 | `SLOTHFUL_PLAUSIBLE_DOMAIN` | Plausible "site" id enabling **anonymous usage statistics**. Unset (the default) → no analytics at all: no events, no consent banner, no extra CSP origin. |
 | `SLOTHFUL_PLAUSIBLE_API` | Plausible events endpoint. Defaults to `https://plausible.io/api/event` when a domain is set; point it at your own instance to self-host analytics. |

@@ -130,13 +130,18 @@ exists:
 - **Relay picker on instant onboarding** — the "create profile" screen shows a
   dropdown right above the privacy-policy consent to pick the chatmail relay
   the new address is created on: the default relay first, then the public
-  relays fetched live from the chatmail directory (`relays.markdown` behind
-  chatmail.at/relays, parsed with a tolerant scanner), filtered down to relays
-  the WS→TCP bridge's `/dns` endpoint can resolve. The consent link follows
-  the choice to the picked relay's `/privacy.html`. Only rendered when there
-  is a real choice (more than one relay, no scanned `dcaccount:`/`dclogin:`
-  QR); fails soft to no dropdown when the directory or bridge is unreachable.
-  `desktop/0042`
+  relays fetched live from the relay directory, filtered down to relays the
+  WS→TCP bridge's `/dns` endpoint can resolve. The directory is JSON from
+  [chatmail-relays-mirror](https://github.com/experintellia/chatmail-relays-mirror),
+  a dumb automated daily mirror of chatmail.at/relays (the site's markdown
+  source repo is private and the site sends no CORS headers, so a browser app
+  can read neither directly); the `SLOTHFUL_RELAY_DIRECTORY` build/customize
+  variable points the fetch (and the CSP `connect-src` pin, via
+  `instance-config.patchCsp`) elsewhere, or `off` disables the picker. The
+  consent link follows the choice to the picked relay's `/privacy.html`. Only
+  rendered when there is a real choice (more than one relay, no scanned
+  `dcaccount:`/`dclogin:` QR); fails soft to no dropdown when the directory or
+  bridge is unreachable. `desktop/0042`
 - **Privacy-preserving link previews** — when the draft contains a URL and no
   image, the composer offers a dismissible ghost to add a preview. Accepting
   fetches the link's OpenGraph metadata (through a bridge with unfurl enabled)

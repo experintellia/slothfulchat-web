@@ -1,56 +1,53 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
-Date: Sat, 11 Jul 2026 14:33:49 +0000
+Date: Sun, 12 Jul 2026 14:36:43 +0000
 Subject: [PATCH 42/42] web-app: relay picker on instant onboarding from the
- live chatmail directory
+ chatmail relay directory
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-The "create profile" onboarding screen always signed up on one fixed
-relay (the SLOTHFUL_DEFAULT_CHATMAIL one, or upstream's default
-instance). Give users a choice: a dropdown right above the
-privacy-policy consent, listing the default relay first and then the
-public relays from the chatmail directory.
+The "create profile" onboarding screen shows a dropdown right above the
+privacy-policy consent to pick the chatmail relay the new address is
+created on: the default relay first, then the public relays fetched live
+from the relay directory, filtered down to relays the WS→TCP bridge's
+/dns endpoint can resolve — a relay the bridge can't resolve can't be
+signed up on from this app.
 
-- relayDirectory.ts fetches the directory live from the chatmail pages
-  sources (relays.markdown behind https://chatmail.at/relays), and
-  keeps only relays whose hostname the WS→TCP bridge's /dns endpoint
-  resolves to at least one IP — a relay the bridge can't resolve can't
-  be signed up on from this app. The bridge URL is resolved exactly
-  like the runtime does (?proxy= > saved > instance default >
-  localhost). The default relay is never probed away and always listed
-  first. Successful loads are cached per page load; failures retry.
-- relayDirectoryParse.ts is the tolerant markdown scanner (the file is
-  hand-maintained prose, not a machine format): it accepts a hostname
-  only where the author spelled it out — dcaccount: signup targets,
-  self-named links like [nine.testrun.org](https://nine.testrun.org),
-  and bare autolinks — so decorative links and prose domains stay out.
-  Unit-tested in src/tests/relayDirectory.test.ts.
-- RelayPicker.tsx renders the dropdown only when there is a real
-  choice: more than one relay, and no scanned dcaccount:/dclogin: QR
-  pinning the server. Everything fails soft to "no dropdown". Styled
-  (styles.module.scss) to match the display-name DeltaInput above it —
-  same label/underline/focus theme vars as the login inputs, custom
-  chevron — instead of the cramped stock DeltaSelect look.
-- The choice lives in InstantOnboardingContext so account creation
-  (useInstantOnboarding builds dcaccount:<picked host>) and the consent
-  text (UserAgreement links the picked relay's /privacy.html) always
-  agree; resetInstantOnboarding clears it. A scanned account/login QR
-  still overrides everything, as before.
+The directory is JSON from chatmail-relays-mirror — a dumb automated
+daily mirror of chatmail.at/relays (the site's markdown source repo is
+private and the site sends no CORS headers, so a browser app can read
+neither directly); it's the project's own repo, served with CORS from
+GitHub raw. A small defensive JSON extractor ({relays:[{host}]}) takes
+the valid hostnames and skips anything malformed, with a body-size cap
+against a hostile source. The consent link follows the choice to the
+picked relay's /privacy.html.
+
+The dropdown only renders when there is a real choice: more than one
+reachable relay, and no scanned dcaccount:/dclogin: QR pinning the
+server. Everything fails soft — if the directory or the bridge is
+unreachable, onboarding looks exactly like before. Styled
+(styles.module.scss) to match the display-name input above it.
+
+The source is configurable via SLOTHFUL_RELAY_DIRECTORY (baked into
+window.__slothfulConfig.relayDirectoryUrl): unset = the default mirror,
+a https URL = fetch there, "off" = no directory, the picker never
+shows. The choice lives in InstantOnboardingContext so account creation
+and the consent link always agree; a scanned account/login QR still
+overrides everything.
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  .../WelcomeScreen/InstantOnboardingScreen.tsx |   5 +
- .../screens/WelcomeScreen/RelayPicker.tsx     |  71 +++++++++
- .../screens/WelcomeScreen/UserAgreement.tsx   |  29 ++--
- .../screens/WelcomeScreen/relayDirectory.ts   | 141 ++++++++++++++++++
- .../WelcomeScreen/relayDirectoryParse.ts      |  82 ++++++++++
- .../screens/WelcomeScreen/styles.module.scss  |  49 ++++++
+ .../screens/WelcomeScreen/RelayPicker.tsx     |  71 +++++++
+ .../screens/WelcomeScreen/UserAgreement.tsx   |  29 +--
+ .../screens/WelcomeScreen/relayDirectory.ts   | 185 ++++++++++++++++++
+ .../WelcomeScreen/relayDirectoryParse.ts      |  40 ++++
+ .../screens/WelcomeScreen/styles.module.scss  |  49 +++++
  .../src/contexts/InstantOnboardingContext.tsx |  14 ++
- .../src/hooks/useInstantOnboarding.ts         |  21 ++-
- .../frontend/src/tests/relayDirectory.test.ts |  63 ++++++++
- 9 files changed, 462 insertions(+), 13 deletions(-)
+ .../src/hooks/useInstantOnboarding.ts         |  21 +-
+ .../frontend/src/tests/relayDirectory.test.ts |  71 +++++++
+ 9 files changed, 472 insertions(+), 13 deletions(-)
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
@@ -201,35 +198,63 @@ index de5acd99d..f5438b4d0 100644
      <>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
 new file mode 100644
-index 000000000..7a5b72241
+index 000000000..e9b72e541
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,185 @@
 +// slothfulchat-web: live directory of public chatmail relays for the
 +// instant-onboarding relay picker.
 +//
-+// The list is fetched from the chatmail.at pages sources (relays.markdown),
-+// parsed with a deliberately tolerant scanner (relayDirectoryParse.ts — the
-+// file is hand-maintained prose, not a machine format), and each candidate is
-+// then probed through the WS→TCP bridge's /dns endpoint — a relay the bridge
-+// can't even resolve can't be signed up on from this app, so it is dropped.
-+// Everything here fails soft: on any error the caller just gets the default
-+// relay alone and the picker UI stays hidden.
++// The list is fetched as JSON from an automated mirror of
++// https://chatmail.at/relays (the site's markdown source repo is private and
++// the site itself sends no CORS headers, so a browser app can't read either
++// directly — the mirror re-publishes the list daily with CORS enabled).
++// Operators can point elsewhere or disable the picker via
++// SLOTHFUL_RELAY_DIRECTORY. Each candidate is then probed through the WS→TCP
++// bridge's /dns endpoint — a relay the bridge can't even resolve can't be
++// signed up on from this app, so it is dropped. Everything here fails soft:
++// on any error the caller just gets the default relay alone and the picker UI
++// stays hidden.
 +
 +import { getLogger } from '@deltachat-desktop/shared/logger'
 +
 +import { DEFAULT_CHATMAIL_HOSTNAME } from './chatmailInstances'
-+import { parseRelaysMarkdown } from './relayDirectoryParse'
++import { parseRelayDirectory } from './relayDirectoryParse'
 +import { instanceDefaultChatmailHost } from '../../../utils/slothfulInstanceConfig'
 +
 +const log = getLogger('renderer/WelcomeScreen/relayDirectory')
 +
-+/** Source of the public relay list (markdown behind https://chatmail.at/relays). */
++/** Default source of the public relay list: a dumb automated daily mirror of
++ * https://chatmail.at/relays, served with CORS from GitHub raw. */
 +export const RELAY_DIRECTORY_URL =
-+  'https://raw.githubusercontent.com/chatmail/pages/refs/heads/main/relays.markdown'
++  'https://raw.githubusercontent.com/experintellia/chatmail-relays-mirror/refs/heads/data/relays.json'
++
++/**
++ * `SLOTHFUL_RELAY_DIRECTORY` (baked into
++ * `window.__slothfulConfig.relayDirectoryUrl`): unset/empty = the default
++ * mirror above; a https URL = fetch the relay-directory JSON from there
++ * (must be CORS-readable and allowed by main.html's connect-src, which
++ * assemble/customize pin to this same value); `off` = no directory at all,
++ * the picker never shows. Returns undefined when the picker is disabled.
++ */
++function relayDirectoryUrl(): string | undefined {
++  const value = (window as any).__slothfulConfig?.relayDirectoryUrl
++  if (typeof value !== 'string' || value.trim() === '') {
++    return RELAY_DIRECTORY_URL
++  }
++  const trimmed = value.trim()
++  if (trimmed.toLowerCase() === 'off') {
++    return undefined
++  }
++  return trimmed
++}
 +
 +const FETCH_TIMEOUT_MS = 10_000
 +const DNS_PROBE_TIMEOUT_MS = 4_000
++// The directory is a small hand-sized list; anything larger is a broken or
++// hostile source, so cap the body to avoid OOMing the tab before the timeout
++// bites (the real mirror is a few KB).
++const MAX_DIRECTORY_BYTES = 512 * 1024
 +
 +/** The relay the "create profile" button signs up on when the user doesn't
 + * pick anything else: the operator-configured SLOTHFUL_DEFAULT_CHATMAIL relay,
@@ -299,22 +324,38 @@ index 000000000..7a5b72241
 +
 +async function loadSelectableRelays(): Promise<string[]> {
 +  const defaultHost = defaultRelayHost()
++  const url = relayDirectoryUrl()
++  if (url === undefined) {
++    // picker disabled by the operator (SLOTHFUL_RELAY_DIRECTORY=off)
++    return [defaultHost]
++  }
 +  const controller = new AbortController()
 +  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-+  let markdown: string
++  let directory: unknown
 +  try {
-+    const response = await fetch(RELAY_DIRECTORY_URL, {
++    const response = await fetch(url, {
 +      signal: controller.signal,
 +    })
 +    if (!response.ok) {
 +      throw new Error(`HTTP ${response.status}`)
 +    }
-+    markdown = await response.text()
++    const declaredLength = Number(response.headers.get('content-length'))
++    if (declaredLength > MAX_DIRECTORY_BYTES) {
++      throw new Error(`directory too large (${declaredLength} bytes)`)
++    }
++    // parse explicitly (GitHub raw serves the file as text/plain; the
++    // content-type never matters this way). Guard the body size too — a
++    // missing/lying Content-Length shouldn't let an unbounded body through.
++    const text = await response.text()
++    if (text.length > MAX_DIRECTORY_BYTES) {
++      throw new Error(`directory too large (${text.length} bytes)`)
++    }
++    directory = JSON.parse(text)
 +  } finally {
 +    clearTimeout(timer)
 +  }
 +
-+  const others = parseRelaysMarkdown(markdown).filter(
++  const others = parseRelayDirectory(directory).filter(
 +    host => host !== defaultHost
 +  )
 +  const reachable = await Promise.all(
@@ -348,90 +389,48 @@ index 000000000..7a5b72241
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
 new file mode 100644
-index 000000000..38b9cb46b
+index 000000000..2fc3fe404
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
-@@ -0,0 +1,82 @@
-+// slothfulchat-web: pure markdown→hostnames scanner for the chatmail relay
-+// directory. Kept free of browser/runtime imports so the unit tests
+@@ -0,0 +1,40 @@
++// slothfulchat-web: pure extractor for the chatmail relay-directory JSON.
++// Kept free of browser/runtime imports so the unit tests
 +// (src/tests/relayDirectory.test.ts) can load it under plain node — the
 +// fetch/DNS-probe glue lives in relayDirectory.ts.
++//
++// Expected shape (produced by the chatmail-relays-mirror repo, a dumb
++// automated mirror of https://chatmail.at/relays):
++//   { "source": "…", "fetchedAt": "…", "relays": [ { "host": "…" }, … ] }
++// The extractor is defensive anyway: the document is fetched from the network
++// at runtime, so anything malformed — wrong root type, junk entries, invalid
++// hostnames — is skipped rather than thrown, and callers get whatever valid
++// hosts remain (possibly none). Unknown fields are ignored.
 +
 +// something that plausibly is a public DNS name: dotted labels, letters-only
 +// TLD, no scheme/path leftovers
 +const HOSTNAME_RE =
 +  /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/
 +
-+const looksLikeHostname = (s: string): boolean =>
-+  HOSTNAME_RE.test(s.toLowerCase())
-+
-+const hostOfUrl = (url: string): string | undefined => {
-+  try {
-+    return new URL(url).hostname.toLowerCase()
-+  } catch {
-+    return undefined
-+  }
-+}
-+
 +/**
-+ * Pull relay hostnames out of the hand-written relays.markdown.
-+ *
-+ * We cannot rely on an exact document structure (it's a maintained prose
-+ * page), so we accept a candidate only where the *author spelled out the
-+ * relay's hostname* — that keeps decorative links ("see the docs here") out:
-+ *  - `dcaccount:HOST` targets in markdown links or bare in the text — these
-+ *    are unambiguously chatmail signup entries
-+ *  - markdown links whose visible text is the hostname of their own http(s)
-+ *    target (`[nine.testrun.org](https://nine.testrun.org)`, with or without
-+ *    a path, `` ` `` / `*` / `_` decoration around the text is ignored)
-+ *  - autolinks whose text is the bare host (`<https://example.org>` renders
-+ *    as its own hostname, so it counts as the same thing)
-+ *
-+ * Deduped, lowercased, document order preserved.
++ * Relay hostnames from a parsed relay-directory JSON document: lowercased,
++ * validated against a strict hostname shape, deduplicated, document order
++ * preserved. Malformed documents or entries yield `[]` / get skipped.
 + */
-+export function parseRelaysMarkdown(markdown: string): string[] {
++export function parseRelayDirectory(data: unknown): string[] {
++  const relays = (data as { relays?: unknown } | null | undefined)?.relays
++  if (!Array.isArray(relays)) {
++    return []
++  }
 +  const found: string[] = []
 +  const seen = new Set<string>()
-+  const add = (host?: string) => {
-+    if (!host) return
-+    const h = host.toLowerCase()
-+    if (!looksLikeHostname(h) || seen.has(h)) return
++  for (const entry of relays) {
++    const host = (entry as { host?: unknown } | null | undefined)?.host
++    if (typeof host !== 'string') continue
++    const h = host.trim().toLowerCase()
++    if (!HOSTNAME_RE.test(h) || seen.has(h)) continue
 +    seen.add(h)
 +    found.push(h)
 +  }
-+
-+  // (classic exec loops: the mocha ts-node config targets too old an ES
-+  // level to iterate matchAll results)
-+  let m: RegExpExecArray | null
-+
-+  // dcaccount: signup targets anywhere in the text (link targets or bare);
-+  // strip a URL-style payload down to its host
-+  const dcaccountRe = /dcaccount:([^\s)<>"']+)/gi
-+  while ((m = dcaccountRe.exec(markdown)) !== null) {
-+    const payload = (m[1] ?? '').replace(/^https?:\/\//i, '')
-+    add(payload.replace(/[/?#].*$/, ''))
-+  }
-+
-+  // [text](url) links where the visible text names the target's host
-+  const linkRe = /\[([^\]\n]+)\]\(\s*(https?:\/\/[^\s)]+)\s*\)/gi
-+  while ((m = linkRe.exec(markdown)) !== null) {
-+    const text = (m[1] ?? '')
-+      .trim()
-+      .replace(/^[`*_]+|[`*_]+$/g, '')
-+      .toLowerCase()
-+    const host = hostOfUrl(m[2] ?? '')
-+    if (host && text === host) add(host)
-+  }
-+
-+  // autolinks: <https://example.org> (host only, no meaningful path)
-+  const autolinkRe = /<(https?:\/\/[^\s>]+)>/gi
-+  while ((m = autolinkRe.exec(markdown)) !== null) {
-+    const url = m[1] ?? ''
-+    const host = hostOfUrl(url)
-+    if (host && url.replace(/^https?:\/\//i, '').replace(/\/$/, '') === host)
-+      add(host)
-+  }
-+
 +  return found
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
@@ -601,70 +600,78 @@ index 17d65c0f8..6c95d7208 100644
  }
 diff --git a/packages/frontend/src/tests/relayDirectory.test.ts b/packages/frontend/src/tests/relayDirectory.test.ts
 new file mode 100644
-index 000000000..7e695e458
+index 000000000..4d3f81998
 --- /dev/null
 +++ b/packages/frontend/src/tests/relayDirectory.test.ts
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,71 @@
 +import { expect } from 'chai'
 +import { describe, it } from 'mocha'
 +
-+import { parseRelaysMarkdown } from '../components/screens/WelcomeScreen/relayDirectoryParse.js'
++import { parseRelayDirectory } from '../components/screens/WelcomeScreen/relayDirectoryParse.js'
 +
-+// The relay directory (relays.markdown from the chatmail pages sources) is a
-+// hand-maintained document, so the parser is a tolerant scanner rather than a
-+// format: it must find relays wherever the author spelled the hostname out,
-+// and must NOT be fooled by decorative links or prose mentioning domains.
-+describe('parseRelaysMarkdown', () => {
-+  it('finds self-named markdown links', () => {
-+    const md = [
-+      '# Public chatmail relays',
-+      '',
-+      '- [nine.testrun.org](https://nine.testrun.org) — the default relay',
-+      '- [chatmail.example](https://chatmail.example/) operated by Example',
-+    ].join('\n')
-+    expect(parseRelaysMarkdown(md)).to.eql([
++// The relay directory JSON comes from an automated mirror of
++// https://chatmail.at/relays, but it is still network input: the extractor
++// must take the valid hosts and silently skip everything else — a malformed
++// document must never throw, it just yields fewer (or zero) relays.
++describe('parseRelayDirectory', () => {
++  it('extracts hosts in document order', () => {
++    const doc = {
++      source: 'https://chatmail.at/relays',
++      fetchedAt: '2026-07-12T02:14:06Z',
++      relays: [
++        { host: 'nine.testrun.org' },
++        { host: 'mehl.cloud' },
++        { host: 'chat.adminforge.de' },
++      ],
++    }
++    expect(parseRelayDirectory(doc)).to.eql([
 +      'nine.testrun.org',
-+      'chatmail.example',
++      'mehl.cloud',
++      'chat.adminforge.de',
 +    ])
 +  })
 +
-+  it('finds dcaccount: signup targets, bare or as link', () => {
-+    const md = [
-+      '| relay | signup |',
-+      '|---|---|',
-+      '| Nine | [sign up](dcaccount:nine.testrun.org) |',
-+      '| Other | dcaccount:https://other.example/new |',
-+    ].join('\n')
-+    expect(parseRelaysMarkdown(md)).to.eql([
-+      'nine.testrun.org',
-+      'other.example',
-+    ])
++  it('lowercases, trims and deduplicates', () => {
++    const doc = {
++      relays: [
++        { host: ' Nine.Testrun.Org ' },
++        { host: 'nine.testrun.org' },
++        { host: 'MEHL.CLOUD' },
++      ],
++    }
++    expect(parseRelayDirectory(doc)).to.eql(['nine.testrun.org', 'mehl.cloud'])
 +  })
 +
-+  it('finds autolinks and decorated link texts, deduplicated', () => {
-+    const md = [
-+      '- <https://relay.example>',
-+      '- [`relay.example`](https://relay.example)',
-+      '- [**bold.example**](https://bold.example/anything)',
-+    ].join('\n')
-+    expect(parseRelaysMarkdown(md)).to.eql(['relay.example', 'bold.example'])
++  it('skips junk entries but keeps the valid ones', () => {
++    const doc = {
++      relays: [
++        { host: 'nine.testrun.org' },
++        { host: 'https://not-a-bare-host.example' },
++        { host: 'no-dots' },
++        { host: 'bad host.example' },
++        { host: 42 },
++        { notHost: 'x.example' },
++        null,
++        'just-a-string.example',
++        { host: 'mehl.cloud', extraUnknownField: true },
++      ],
++    }
++    expect(parseRelayDirectory(doc)).to.eql(['nine.testrun.org', 'mehl.cloud'])
 +  })
 +
-+  it('ignores decorative links, prose domains and non-hostnames', () => {
-+    const md = [
-+      '---',
-+      'title: Relays',
-+      '---',
-+      'See [the docs](https://chatmail.at/doc) or [Delta Chat](https://delta.chat).',
-+      'Run your own with [chatmail/relay](https://github.com/chatmail/relay).',
-+      'Contact us at mailto:someone@example.org.',
-+      '- [nine.testrun.org](https://nine.testrun.org)',
-+    ].join('\n')
-+    expect(parseRelaysMarkdown(md)).to.eql(['nine.testrun.org'])
-+  })
-+
-+  it('returns [] for empty or link-free documents', () => {
-+    expect(parseRelaysMarkdown('')).to.eql([])
-+    expect(parseRelaysMarkdown('# nothing here\njust words')).to.eql([])
++  it('returns [] for malformed documents without throwing', () => {
++    for (const doc of [
++      null,
++      undefined,
++      'a string',
++      42,
++      [],
++      {},
++      { relays: 'not-an-array' },
++      { relays: {} },
++      { relays: [] },
++    ]) {
++      expect(parseRelayDirectory(doc)).to.eql([])
++    }
 +  })
 +})

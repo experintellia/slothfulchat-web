@@ -3,7 +3,16 @@
 //   node --test packages/web-app/instance-config.test.mjs
 import { deepStrictEqual, ok, strictEqual } from 'node:assert'
 import { test } from 'node:test'
-import { buildConfig, imprintHtml, parsePublicBridges, privacyHtml } from './instance-config.mjs'
+import {
+  DEFAULT_RELAY_DIRECTORY_URL,
+  analyticsOrigin,
+  buildConfig,
+  imprintHtml,
+  normalizeRelayDirectory,
+  parsePublicBridges,
+  patchCsp,
+  privacyHtml,
+} from './instance-config.mjs'
 import { EVENTS, isCatalogEvent } from './src/events.mjs'
 
 test('parsePublicBridges: multiple entries, URL up to first space', () => {
@@ -158,4 +167,115 @@ test('privacyHtml: analytics off has the no-analytics statement and no events', 
 
 test('imprintHtml links the privacy policy', () => {
   ok(imprintHtml(buildConfig({}), {}).includes('privacy.html'))
+})
+
+test('normalizeRelayDirectory: unset/garbage → default, off/URL pass through', () => {
+  strictEqual(normalizeRelayDirectory(undefined), '')
+  strictEqual(normalizeRelayDirectory(''), '')
+  strictEqual(normalizeRelayDirectory('not a url'), '')
+  strictEqual(normalizeRelayDirectory('ftp://weird.example/x'), '')
+  strictEqual(normalizeRelayDirectory('javascript:alert(1)'), '')
+  strictEqual(normalizeRelayDirectory('off'), 'off')
+  strictEqual(normalizeRelayDirectory(' OFF '), 'off')
+  strictEqual(normalizeRelayDirectory('https://x.example/relays.json'), 'https://x.example/relays.json')
+  // a ';' is legal in a URL path but would truncate the CSP directive — reject
+  strictEqual(normalizeRelayDirectory('https://x.example/a;b'), '')
+  // shell-style quotes pasted into a CI Variable are tolerated, including
+  // padding inside the quotes
+  strictEqual(normalizeRelayDirectory('"https://x.example/r.json"'), 'https://x.example/r.json')
+  strictEqual(normalizeRelayDirectory('"  off  "'), 'off')
+})
+
+test('normalizeRelayDirectory: rejects multi-token / injecting values', () => {
+  // the value is appended verbatim to connect-src, so a space would add a
+  // SECOND source — must be rejected, not passed through
+  strictEqual(
+    normalizeRelayDirectory('https://good.example/r.json https://evil.example'),
+    ''
+  )
+  strictEqual(normalizeRelayDirectory('https://x.example/r.json "extra"'), '')
+})
+
+test('patchCsp: relay-directory pin — default, custom, off; analytics coexists', () => {
+  const base = `<meta content="default-src 'none';
+                   connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl https://old.example/stale.json" />`
+  // unset → default mirror pinned, stale relay pin dropped, unfurl preserved
+  const def = patchCsp(base, '', '')
+  ok(def.includes(`https://*:*/unfurl ${DEFAULT_RELAY_DIRECTORY_URL}"`))
+  ok(!def.includes('old.example'))
+  ok(def.includes('https://*:*/unfurl'))
+
+  // custom URL swaps the pin
+  const custom = patchCsp(base, '', 'https://x.example/relays.json')
+  ok(custom.includes('https://x.example/relays.json"'))
+  ok(!custom.includes('chatmail-relays-mirror'))
+
+  // off → no relay pin at all
+  const off = patchCsp(base, '', 'off')
+  ok(!off.includes('relays.json'))
+  ok(off.includes(`http://*:*/unfurl https://*:*/unfurl"`))
+
+  // analytics origin and relay pin coexist
+  const both = patchCsp(base, 'https://plausible.io', '')
+  ok(both.includes('https://plausible.io'))
+  ok(both.includes(DEFAULT_RELAY_DIRECTORY_URL))
+
+  // idempotent for a clean custom value and for an injecting one (which falls
+  // back to the default and must not accumulate)
+  strictEqual(patchCsp(custom, '', 'https://x.example/relays.json'), custom)
+  const inj = patchCsp(base, '', 'https://x.example/a;b')
+  ok(!inj.includes('evil'))
+  ok(inj.includes(DEFAULT_RELAY_DIRECTORY_URL))
+  strictEqual(patchCsp(inj, '', 'https://x.example/a;b'), inj)
+})
+
+test('patchCsp: matches the real static/main.html CSP for unset config', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const html = await readFile(new URL('./static/main.html', import.meta.url), 'utf-8')
+  // the static default already pins the default mirror and no analytics, so
+  // patchCsp for an unset instance must be a no-op — the template and the
+  // rewriter agree on the base list + default pin
+  strictEqual(patchCsp(html, '', ''), html)
+  // and an override actually changes exactly the pin
+  const custom = patchCsp(html, '', 'https://x.example/relays.json')
+  ok(custom.includes('https://x.example/relays.json'))
+  ok(!custom.includes(DEFAULT_RELAY_DIRECTORY_URL))
+})
+
+test('buildConfig: relayDirectoryUrl wired from SLOTHFUL_RELAY_DIRECTORY', () => {
+  strictEqual(buildConfig({}).relayDirectoryUrl, '')
+  strictEqual(buildConfig({ SLOTHFUL_RELAY_DIRECTORY: 'off' }).relayDirectoryUrl, 'off')
+  strictEqual(
+    buildConfig({ SLOTHFUL_RELAY_DIRECTORY: 'https://x.example/r.json' }).relayDirectoryUrl,
+    'https://x.example/r.json'
+  )
+})
+
+// Drift guard: the frontend's own default (RELAY_DIRECTORY_URL in the patched
+// relayDirectory.ts) is what the app actually fetches when unset, while
+// DEFAULT_RELAY_DIRECTORY_URL pins the CSP and lives in main.html — they MUST
+// be byte-identical or the default picker silently fails under CSP (fetch to
+// one host, connect-src allows another). The frontend source lives in the
+// build/desktop worktree, invisible to this lint job, but it is captured in
+// the committed relay-picker patch — assert against that.
+test('frontend RELAY_DIRECTORY_URL default matches DEFAULT_RELAY_DIRECTORY_URL', async () => {
+  const { readFile, readdir } = await import('node:fs/promises')
+  const dir = new URL('../../patches/desktop/', import.meta.url)
+  const files = (await readdir(dir)).filter(f => f.endsWith('.patch'))
+  let match = null
+  for (const f of files) {
+    const patch = await readFile(new URL(f, dir), 'utf-8')
+    const m = patch.match(
+      /^\+export const RELAY_DIRECTORY_URL =\s*\n\+\s*'([^']+)'/m
+    )
+    if (m) {
+      match = m[1]
+      break
+    }
+  }
+  strictEqual(
+    match,
+    DEFAULT_RELAY_DIRECTORY_URL,
+    'frontend RELAY_DIRECTORY_URL (in patches/desktop) drifted from DEFAULT_RELAY_DIRECTORY_URL'
+  )
 })
