@@ -2,6 +2,7 @@
 // and customize.mjs (re-applies it to a prebuilt release zip, no rebuild).
 // Pure functions over strings/bytes — no filesystem access here.
 import { createHash } from 'node:crypto'
+import { EVENTS } from './src/events.mjs'
 
 // Per-instance config from env vars (set in CI, never committed to source):
 //   SLOTHFUL_INSTANCE_NAME   human name, e.g. "SlothfulChat"
@@ -212,48 +213,18 @@ ${operatorBlock}
 It does not concern the content of any messages or accounts.</p>
 
 <h2>Your data stays on your device</h2>
-<p>${esc(config.instanceName || 'This app')} runs entirely in your browser. Your accounts,
-messages, encryption keys and files are stored only on your device (in your
-browser's storage) and are exchanged end-to-end encrypted, directly with the
-mail servers, through a relay that only sees encrypted traffic.
-${
-  config.defaultProxyUrl
-    ? `By default this instance uses the relay at <code>${esc(config.defaultProxyUrl)}</code>.`
-    : `This instance has no default relay configured — you provide the address of your own relay.`
-}
-The operator of
-this site never receives, stores, sees or processes your messages or account
-data.${
+<p>${esc(config.instanceName || 'This app')} runs entirely in your browser: your accounts,
+messages and keys are stored on your device. Messages are end-to-end
+encrypted between Delta Chat / chatmail-capable contacts; messages to
+ordinary email addresses are sent as regular email — encrypted in transit,
+but not end-to-end. The operator never receives, stores, sees or processes your messages
+or account data. See the <a href="./privacy.html">full privacy policy</a> for
+details${
     config.analytics
-      ? ' Beyond the anonymous usage statistics described below, the operator has no way to know what you do in the app.'
-      : ' The operator has no way to know what you do in the app.'
-  }</p>
-${
-  config.analytics
-    ? `
-<h2>Anonymous usage statistics</h2>
-<p>This is a public demo instance. To understand which features are used and
-where the app is slow, it collects <strong>anonymous, aggregated usage
-statistics</strong> — using
-<a href="https://plausible.io/data-policy" target="_blank" rel="noopener">Plausible</a>,
-a privacy-focused analytics tool that uses no cookies and does no cross-site
-tracking. What is collected: that the app was opened; progress through account
-setup and which method was chosen (the default chatmail relay vs a manual email
-login vs QR vs webimap); that a message was sent and of what kind
-(text/image/voice/file — never its content); which info links
-(imprint/GitHub/changelog/donate) were opened; that a QR code was scanned, a community
-channel was used, a link preview was shown, a backup or key was exported/imported
-(never the contents); coarse milestones such as having your first chat or more
-than ten; which kind of bridge is used; and coarse ranges for startup and other
-timings, plus fatal startup errors by category. <strong>No message content,
-contact or email addresses, account data, or free text is ever
-collected.</strong> Statistics are on by default here and you are asked once on
-your first visit; you can opt out at any time in the app (Settings → open the log
-→ Diagnostics → Usage statistics), and self-hosted instances collect nothing at
-all.</p>
-`
-    : ''
-}
+      ? ', including exactly what the optional anonymous statistics collect'
+      : ''
+  }.</p>
+
 <h2>Problems with other users</h2>
 <p>Because the operator has no access to your conversations, they cannot moderate
 them and cannot act on reports about other users. If someone harasses you or
@@ -274,6 +245,132 @@ longer complies, please report it to the email address above.</p>
       ? ` — <a href="${esc(config.instanceUrl)}">${esc(config.instanceUrl)}</a>`
       : ''
   }<br />An unofficial experiment running Delta Chat's chatmail core in the browser. Not affiliated with Delta Chat.</p>
+<p><a href="./">← Back to the app</a></p>
+</body>
+</html>
+`
+}
+
+// privacy.html — standalone privacy policy. The "what is collected" list is
+// rendered from src/events.mjs — the same closed catalogue the app actually
+// sends from — so the published policy can never drift from the code.
+export function privacyHtml(config, env) {
+  const instanceLabel = config.instanceName || config.instanceUrl || 'this site'
+  const appName = config.instanceName || 'This app'
+  const selfhosting = 'https://github.com/experintellia/slothfulchat-web/blob/main/SELFHOSTING.md'
+
+  const eventRows = EVENTS.map(
+    e => `<li><code>${esc(e.name)}</code> — ${esc(e.what)}${
+      e.props ? `<br /><span class="props">${esc(e.props)}</span>` : ''
+    }</li>`
+  ).join('\n')
+
+  const analyticsSection = config.analytics
+    ? `<h2>Anonymous usage statistics</h2>
+<p>This is a public demo instance. To understand which features are used and
+where the app is slow, it collects <strong>anonymized, aggregated usage
+statistics</strong> — using
+<a href="https://plausible.io/data-policy" target="_blank" rel="noopener">Plausible</a>,
+a privacy-focused analytics tool: no cookies, no persistent identifiers, and
+visitor hashes that are unlinkable after 24 hours. Like any web request, each
+event Plausible's API receives carries your IP address and browser
+user-agent; Plausible uses them only to derive daily visitor aggregates and
+never stores them (see their data policy, linked above).
+Statistics are on by default on this instance; you can turn them off
+at any time with the &ldquo;Share anonymous usage statistics&rdquo; checkbox on
+the welcome screen or in the app's settings (Settings → Advanced, and
+Settings → open the log → Diagnostics).</p>
+<p><strong>Exactly these events and nothing else</strong> may be sent. Each
+event carries at most the fixed property vocabulary shown with it — never
+message content, contact or email addresses, account data, or free text:</p>
+<ul class="events">
+${eventRows}
+</ul>
+<p>Want zero analytics? Just opt out — nothing will be sent. Prefer it never
+even being asked? <a href="${selfhosting}" target="_blank" rel="noopener">Run
+your own instance</a> — self-hosted builds ship without analytics entirely.</p>`
+    : `<h2>No analytics</h2>
+<p>This instance collects <strong>no usage data at all</strong>: no analytics,
+no cookies, no tracking of any kind.</p>`
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" type="image/png" href="./images/icon-256.png" />
+<title>Privacy Policy — ${esc(config.instanceName || DEFAULT_NAME)}</title>
+<style>
+  body { font: 16px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; color: #222; }
+  a { color: #2c8a68; }
+  h2 { font-size: 1.15rem; margin-top: 2rem; }
+  .events li { margin: 6px 0; }
+  .events .props { color: #666; font-size: 0.85rem; }
+  .meta { color: #666; font-size: 0.9rem; margin-top: 2.5rem; }
+</style>
+</head>
+<body>
+<h1>Privacy Policy</h1>
+
+<h2>Your data stays on your device</h2>
+<p>${esc(appName)} runs entirely in your browser. Your accounts,
+messages, encryption keys and files are stored on your device (in your
+browser's storage). Messages are end-to-end encrypted between Delta Chat /
+chatmail-capable contacts; messages to ordinary email addresses are sent as
+regular email — encrypted in transit to the mail server, but not end-to-end.
+And as with any mail client, your email / chatmail provider also holds your
+messages: chatmail relays delete them after delivery, while a classic email
+account keeps them on the mail server.</p>
+
+<h2>The relay (bridge)</h2>
+<p>Browsers cannot open direct mail-server connections, so the app connects
+through a WebSocket relay (bridge). The relay cannot read your messages —
+the encrypted connections to the mail servers pass through it — but it
+necessarily learns your IP address, which mail servers you connect to, and
+when, and it may log those connections. The bridge at any given URL is run
+by its operator and may not be the reference implementation: treat it as
+that operator's service and choose a relay you trust, or run your own.
+The same applies to composer link previews, which are fetched through the
+bridge (see below). webimap / madmail accounts connect directly over HTTPS
+and do not use the relay.
+${
+  config.defaultProxyUrl
+    ? `By default this instance uses the relay at <code>${esc(config.defaultProxyUrl)}</code>.`
+    : `This instance has no default relay configured — you provide the address of your own relay.`
+}</p>
+<p>The operator of this site never receives, stores, sees or processes your
+messages or account data.${
+    config.defaultProxyUrl
+      ? ' If you use the relay this instance provides by default, its operator can see the connection metadata described above — never message content.'
+      : ''
+  }${
+    config.analytics
+      ? ' Beyond the anonymous usage statistics described below, the operator has no way to know what you do in the app.'
+      : ' The operator has no way to know what you do in the app.'
+  }</p>
+<p>Your messages do travel through the relays and email / chatmail providers
+of your account and of your contacts' accounts. Those are separate services
+run by their own operators, with their own privacy policies — the operator of
+this site is not them. Check the policies of the providers you use.</p>
+
+<h2>Links you open and link previews</h2>
+<p>When you open a link from a message, your browser contacts that site
+directly — like clicking any link on the web. Link previews in the composer
+are an optional, experimental feature that requires a user action per link:
+they exist only for links you type yourself, and the preview is fetched only
+when you accept the ghost preview offered under the composer. That fetch goes
+through the bridge you use, so the bridge operator learns that URL — use a
+local bridge for maximum privacy. Nothing about your contacts or conversations
+is sent along.</p>
+
+${analyticsSection}
+
+<p class="meta">${esc(instanceLabel)}${
+    config.instanceUrl
+      ? ` — <a href="${esc(config.instanceUrl)}">${esc(config.instanceUrl)}</a>`
+      : ''
+  }<br />An unofficial experiment running Delta Chat's chatmail core in the browser. Not affiliated with Delta Chat.<br />
+Operator and legal notice: see the <a href="./imprint.html">imprint</a>.</p>
 <p><a href="./">← Back to the app</a></p>
 </body>
 </html>

@@ -6,7 +6,7 @@ import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import * as sass from 'sass'
-import { analyticsOrigin, buildConfig, configJs, imprintHtml, patchBootError, patchCsp, patchManifest, patchTitle } from './instance-config.mjs'
+import { analyticsOrigin, buildConfig, configJs, imprintHtml, patchBootError, patchCsp, patchManifest, patchTitle, privacyHtml } from './instance-config.mjs'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 const repo = join(here, '..', '..')
@@ -157,8 +157,9 @@ await writeFile(
 await cp(join(here, 'static/viewport-keyboard.js'), join(dist, 'viewport-keyboard.js'))
 await writeFile(join(dist, '.nojekyll'), '')
 
-// imprint.html — standalone legal notice, template in instance-config.mjs.
+// imprint.html + privacy.html — standalone pages, templates in instance-config.mjs.
 await writeFile(join(dist, 'imprint.html'), imprintHtml(config, env))
+await writeFile(join(dist, 'privacy.html'), privacyHtml(config, env))
 
 // PWA install + favicon icons (Chrome wants >=192 + 512): the fork's own sloth
 // icon, pre-generated from static/images/icon-source.png by scripts/make-icons.mjs

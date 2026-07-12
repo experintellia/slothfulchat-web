@@ -58,9 +58,11 @@ exists:
   additionally collect opt-out, cookieless usage stats via Plausible's events
   API from our own bundle (no third-party script, one extra `connect-src`
   origin); self-hosted builds collect nothing. Most events are derived from
-  JSON-RPC traffic in `packages/web-app/src`; two desktop hooks add the UI-only
+  JSON-RPC traffic in `packages/web-app/src`; three desktop hooks add the UI-only
   signals (onboarding welcome, link-preview accept/dismiss, community-channel
-  use) and the Diagnostics button. `desktop/0042`, `desktop/0043`
+  use), the Diagnostics button, and the consent surfaces (welcome-screen opt-out
+  checkbox, Settings → Advanced toggle, privacy-policy links in About/welcome).
+  `desktop/0042`, `desktop/0043`, `desktop/0044`
 - **Attachment details & failure reason in Message Info** — file name, MIME
   type, size, image/video dimensions, audio/video duration; delivery failures
   show as an error banner, and clicking a message's failed-status icon opens

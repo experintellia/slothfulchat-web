@@ -22,9 +22,12 @@ numbers in a bug report.
 **The official public demo instance** additionally collects **anonymous,
 aggregated usage statistics** via [Plausible](https://plausible.io/data-policy)
 (a privacy-focused analytics tool — no cookies, no cross-site tracking). It is
-enabled by default there, you are asked once on your first visit, and you can
-**opt out at any time** in Diagnostics → Usage statistics (the choice is
-remembered). Because events are sent by our own code via Plausible's events API,
+enabled by default there — an opt-out checkbox sits right on the welcome
+screen, and you can **opt out at any time** in Settings → Advanced or
+Diagnostics → Usage statistics (the choice is remembered). Exactly what is
+collected is spelled out on the instance's generated `privacy.html`, rendered
+from the same catalog the code enforces at runtime. Because events are sent by
+our own code via Plausible's events API,
 **no third-party JavaScript is loaded** and only a single extra `connect-src`
 origin is added to the CSP.
 

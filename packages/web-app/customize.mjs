@@ -26,6 +26,7 @@ import {
   patchCsp,
   patchManifest,
   patchTitle,
+  privacyHtml,
 } from './instance-config.mjs'
 
 const REPO = 'experintellia/slothfulchat-web'
@@ -151,6 +152,8 @@ try {
 const config = buildConfig(env, existingBuild)
 files['config.js'] = enc(configJs(config))
 files['imprint.html'] = enc(imprintHtml(config, env))
+// privacy.html reflects config.analytics, which customize can flip — regenerate
+files['privacy.html'] = enc(privacyHtml(config, env))
 for (const f of ['main.html', 'index.html']) {
   // patchCsp is idempotent: it strips any origin baked by a previous build
   // before adding this instance's, so re-customising a zip stays correct

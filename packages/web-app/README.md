@@ -163,10 +163,12 @@ for the user-facing summary):
   Plausible env vars above. Events are POSTed to Plausible's events API from our
   own bundle (**no third-party script**, so `script-src` stays `'self'`; only a
   single `connect-src` origin is added, see `patchCsp` in `instance-config.mjs`).
-  Opt-out: on by default on a configured instance, a one-time notice
-  (`src/consent.ts`), re-toggleable in Diagnostics → Usage statistics. The
-  **closed** event list lives in `analytics.EVENTS` and is what both the notice
-  and the imprint render. Most events are derived from JSON-RPC method names / a
+  Opt-out: on by default on a configured instance; a checkbox on the welcome
+  screen (and in Settings → Advanced / Diagnostics → Usage statistics) opens an
+  info dialog (`src/consent.ts`) whose Accept/Opt-out buttons set the choice.
+  The **closed** event list lives in `src/events.mjs` — the single source that
+  the generated `privacy.html` renders and `event()` enforces at runtime.
+  Most events are derived from JSON-RPC method names / a
   message `viewtype` / a chat-list length in `src/telemetry.ts` — never from
   content; a few UI-only signals (onboarding welcome, link-preview accept/dismiss,
   community-channel use) call `window.__slothfulTrack` from small desktop patch
