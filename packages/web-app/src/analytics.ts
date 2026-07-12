@@ -139,17 +139,28 @@ export function event(name: string, props?: Props): void {
  * changelog). Other links are ignored. Called from runtime.openLink (all app
  * links funnel through it) and from our own overlay anchors (ui-shared). */
 export function trackLink(href: string): void {
-  const h = String(href).toLowerCase()
-  const target = h.includes('imprint.html')
-    ? 'imprint'
-    : h.includes('/changelog')
-      ? 'changelog'
-      : h.includes('/donate')
-        ? 'donate'
-        : // only our own repo, not other github.com links (e.g. the madmail link)
-          h.includes('github.com/experintellia/slothfulchat-web')
-          ? 'github'
-          : ''
+  // openLink() funnels EVERY external link through here — including links
+  // clicked inside private messages. Match our exact info links only (exact
+  // origin/path, not substrings), so an arbitrary message link (e.g. some
+  // site's /donate page) can never fire an event. Anything unmatched sends
+  // nothing, and the href itself is never transmitted either way.
+  let target = ''
+  try {
+    const u = new URL(String(href), location.href)
+    const ours = u.origin === location.origin
+    if (ours && u.pathname.endsWith('/imprint.html')) target = 'imprint'
+    else if (ours && /\/changelog\/?$/.test(u.pathname)) target = 'changelog'
+    else if (u.origin === 'https://delta.chat' && u.pathname.replace(/\/$/, '') === '/donate')
+      // the app's own donation device-message link
+      target = 'donate'
+    else if (
+      u.origin === 'https://github.com' &&
+      /^\/experintellia\/slothfulchat-web(\/|$)/.test(u.pathname)
+    )
+      target = 'github'
+  } catch {
+    return // unparseable href — never track
+  }
   if (target) event('link', { target })
 }
 
