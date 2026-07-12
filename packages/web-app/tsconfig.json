@@ -7,6 +7,9 @@
     "noEmit": true,
     "strict": true,
     "skipLibCheck": true,
+    // src/events.mjs is plain JS (shared with instance-config.mjs at build
+    // time) — let tsc type-check it via its JSDoc annotation
+    "allowJs": true,
     // core-wasm ships no .d.ts (esbuild build) — resolve types from its source.
     // esbuild honors these paths too, so the bundle also builds from source.
     "paths": {

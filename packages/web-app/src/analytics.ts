@@ -6,7 +6,7 @@
  * 1. Off unless the *instance* opts in at build time. Analytics only exists
  *    when SLOTHFUL_PLAUSIBLE_DOMAIN + SLOTHFUL_PLAUSIBLE_API are baked into
  *    config.js by assemble.mjs. Every self-hosted build leaves them empty, so
- *    self-hosters get zero analytics, no banner, and no extra CSP origin — the
+ *    self-hosters get zero analytics, no consent UI, and no extra CSP origin — the
  *    imprint's "your data stays on your device" stays literally true for them.
  *    Only the official demo instance sets these in CI.
  *
@@ -16,24 +16,29 @@
  *    means every line that could send data lives in this reviewable file. Only
  *    connect-src gains the Plausible origin, and only on the demo build.
  *
- * 3. Closed event catalogue (EVENTS below). We only ever send the event names
- *    and property *values* enumerated there — never message content, contact
- *    addresses, account data, or free text. The consent banner and diagnostics
- *    panel render this same catalogue, so "what's collected" can never drift
- *    from what is actually sent.
+ * 3. Closed event catalogue (src/events.mjs). We only ever send the event
+ *    names and property *values* enumerated there — never message content,
+ *    contact addresses, account data, or free text. The generated privacy.html
+ *    renders that same catalogue and event() enforces it at runtime, so
+ *    "what's collected" can never drift from what is actually sent.
  *
- * 4. Opt-out, but asked. Analytics is on by default on the demo instance, the
- *    consent banner is shown once, and the user can opt out there or later in
- *    the diagnostics panel. Opting out is remembered in localStorage.
+ * 4. Opt-out by design. Analytics is on by default on the demo instance; the
+ *    welcome screen shows an opt-out checkbox (which opens the info dialog in
+ *    consent.ts), and the same toggle exists in Settings → Advanced and the
+ *    diagnostics panel. There is no unprompted banner — a returning visitor
+ *    who never touches the controls stays opted in. Opting out is remembered
+ *    in localStorage.
  */
 
 import * as session from './session'
+import { EVENTS, isCatalogEvent } from './events.mjs'
 
 type Config = {
   analytics?: boolean
   plausibleDomain?: string
   plausibleApi?: string
   instanceUrl?: string
+  devmode?: boolean
 }
 const cfg = (): Config => (window as any).__slothfulConfig ?? {}
 
@@ -74,91 +79,18 @@ export function setConsent(consent: Consent): void {
 }
 
 /** Whether events may be sent right now. Opt-out: enabled unless the instance
- * isn't configured, we're not online, or the user explicitly denied. An unset
- * choice counts as enabled (the banner is shown alongside, so it is "asked"). */
+ * isn't configured or the user explicitly denied. An unset choice counts as
+ * enabled — deliberate opt-out semantics: the welcome checkbox / Settings /
+ * diagnostics toggles are the (always-available, never-forced) ask. */
 export function isEnabled(): boolean {
   return isConfigured() && getConsent() !== 'denied'
 }
 
 // --- the closed catalogue of what we may send --------------------------
 
-/** Each entry documents an event we might send and, in plain language, what it
- * means. The `props` list enumerates the *only* property values ever attached —
- * a fixed vocabulary, never user text. Rendered verbatim in the consent UI. */
-export const EVENTS: ReadonlyArray<{
-  name: string
-  what: string
-  props?: string
-}> = [
-  {
-    name: 'pageview',
-    what: 'That the app was opened.',
-    props: 'mode = new · returning · unknown; display = standalone · browser',
-  },
-  {
-    name: 'onboarding',
-    what: 'Progress through account setup and which method was chosen.',
-    props: 'step = welcome · method · configuring · success · failed; method = chatmail · qr · manual · webimap; reason = network · auth · other',
-  },
-  {
-    name: 'account_created',
-    what: 'That an account was set up, and how it was set up.',
-    props: 'transport = imap · webimap; method = chatmail (default relay) · manual (email login) · qr · webimap',
-  },
-  {
-    name: 'send',
-    what: 'That a message was sent, and of what kind (never its content).',
-    props: 'type = text · image · voice · audio · file · sticker · video · other; transport = imap · webimap; chatmail = yes · no',
-  },
-  {
-    name: 'qr_scan',
-    what: 'That a QR / invite code was scanned or pasted.',
-  },
-  {
-    name: 'community',
-    what: 'That a community channel / public suggestion was used.',
-  },
-  {
-    name: 'link_preview',
-    what: 'That a composer link preview was accepted or dismissed.',
-    props: 'action = accept · dismiss',
-  },
-  {
-    name: 'bridge',
-    what: 'Which kind of WS→TCP bridge the session uses.',
-    props: 'kind = local · provided · custom',
-  },
-  {
-    name: 'link',
-    what: 'That an info link was opened (which one, not who).',
-    props: 'target = imprint · github · changelog · donate',
-  },
-  {
-    name: 'chats',
-    what: 'A coarse milestone: having your first chat, or more than ten.',
-    props: 'milestone = first · ten',
-  },
-  {
-    name: 'backup',
-    what: 'That a backup was exported or imported — never its contents.',
-    props: 'action = export · import',
-  },
-  {
-    name: 'keys',
-    what: 'That encryption keys were exported or imported — never the keys.',
-    props: 'action = export · import',
-  },
-  {
-    name: 'startup',
-    what: 'A coarse range for how long the app took to start.',
-    props: 'bucket = <0.5s · 0.5-1s · 1-2s · 2-4s · >4s; mode = cold · warm',
-  },
-  {
-    name: 'boot_error',
-    what: 'That the app hit a fatal startup error, by category (helps us fix white-screens).',
-    props: 'kind = opfs-locked · storage-blocked · init-error',
-  },
-] as const
+// Lives in events.mjs (plain JS) so instance-config.mjs can render it into
+// privacy.html at build time; re-exported here for the in-app consumers.
+export { EVENTS }
 
 // --- sending -----------------------------------------------------------
 
@@ -169,6 +101,15 @@ type Props = Record<string, string | number | boolean>
 export function event(name: string, props?: Props): void {
   if (!isEnabled()) return
   const c = cfg()
+  // Runtime enforcement of the closed catalogue: anything outside events.mjs
+  // (unknown event, unknown prop key, value outside the fixed vocabulary) is
+  // dropped, so no caller — including window.__slothfulTrack — can ever send
+  // more than the published policy. Never throw (analytics must never break
+  // the app); warn only in devmode so drift is visible in dev, silent in prod.
+  if (!isCatalogEvent(name, props)) {
+    if (c.devmode) console.warn('[analytics] dropped non-catalogue event:', name, props)
+    return
+  }
   const body = {
     name,
     // Plausible needs a domain (its "site" id) and a url. We deliberately send
@@ -235,12 +176,17 @@ export function trackStartup(ms: number | null): void {
   event('startup', { bucket, mode })
 }
 
-// build a stable, param-free url for Plausible; fall back to the real location
+// build a stable, param-free url for Plausible: origin + path only — never
+// the query string or fragment, on any path (?proxy=/invite params must not
+// leak into analytics). Falls back to the real location's origin + path.
 function originUrl(c: Config): string {
   try {
-    if (c.instanceUrl) return new URL(location.pathname, c.instanceUrl).href
-    return location.origin + location.pathname
+    if (c.instanceUrl) {
+      const u = new URL(location.pathname, c.instanceUrl)
+      return u.origin + u.pathname
+    }
   } catch {
-    return location.href
+    // malformed instanceUrl — fall through to the real location
   }
+  return location.origin + location.pathname
 }

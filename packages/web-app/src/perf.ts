@@ -45,7 +45,6 @@ export function boot(mark: BootMark): void {
   } catch {
     // performance.mark can throw in exotic environments; timing is best-effort
   }
-  if (mark === 'ui-ready') recordStartup()
 }
 
 /** A finished cold-start summary, all values ms since navigation start. */
@@ -64,9 +63,11 @@ const STARTUP_KEEP = 20 // rolling window; enough to eyeball variance, tiny in s
 let startupRecorded = false
 
 /** Persist a startup summary into a small rolling buffer in localStorage, so
- * "was startup slow the last few launches?" survives reloads. Called once, when
- * the UI becomes ready. */
-function recordStartup(): void {
+ * "was startup slow the last few launches?" survives reloads. Called once by
+ * runtime.ts after the core has answered get_all_account_ids — recording any
+ * earlier (e.g. at ui-ready) races the core-ready mark and the cold/warm mode,
+ * leaving every record mode:'unknown' with no coreReady. */
+export function recordStartup(): void {
   if (startupRecorded) return
   startupRecorded = true
   const rec: StartupRecord = {

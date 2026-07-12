@@ -12,7 +12,7 @@ import * as perf from './perf'
 import * as analytics from './analytics'
 import * as session from './session'
 import { observeTransport } from './telemetry'
-import { maybeShowConsentBanner } from './consent'
+import { showAnalyticsInfoDialog } from './consent'
 import { initDiagnostics } from './diagnostics'
 
 // earliest boot milestone we control: our runtime bundle has finished loading
@@ -324,6 +324,7 @@ function getCore(): Core {
       .then(ids => session.setHadAccount(Array.isArray(ids) && ids.length > 0))
       .catch(() => {})
       .finally(() => {
+        perf.recordStartup()
         analytics.pageview()
         analytics.trackStartup(perf.getStartup())
       })
@@ -1136,12 +1137,10 @@ class BrowserRuntime {
     initBlobServiceWorker(this.log)
     this.askBrowserForNotificationPermission()
 
-    // diagnostics panel (opened from the Log dialog) + one-time usage-stats
-    // notice. Both no-op on self-hosted builds, where analytics is unconfigured.
-    // (The pageview + startup sample are sent from getCore once account state
-    // is known.)
+    // diagnostics panel (opened from the Log dialog); a no-op on self-hosted
+    // builds, where analytics is unconfigured. (The pageview + startup sample
+    // are sent from getCore once account state is known.)
     initDiagnostics()
-    maybeShowConsentBanner()
 
     // onboarding funnel hook: WelcomeScreen (desktop patch) calls this for the
     // top-of-funnel "welcome" step; the chosen method and success/failure are
@@ -1153,6 +1152,17 @@ class BrowserRuntime {
       } catch {
         /* never let a UI hook throw */
       }
+    }
+
+    // analytics consent UI hook: the welcome screen and Settings → Advanced
+    // (desktop patches) render an opt-out checkbox through this. Opt-out
+    // semantics: 'unset' counts as enabled. configured=false (every self-hosted
+    // build) hides the checkbox entirely.
+    ;(window as any).__slothfulAnalyticsUi = {
+      configured: analytics.isConfigured(),
+      enabled: () => analytics.getConsent() !== 'denied',
+      setEnabled: (on: boolean) => analytics.setConsent(on ? 'granted' : 'denied'),
+      showInfo: showAnalyticsInfoDialog,
     }
 
     document.body.addEventListener('drop', async e => {

@@ -10,17 +10,18 @@
  *     is ever sent from here.
  *
  *   • Usage statistics — only when the instance is configured for analytics:
- *     the opt-out toggle and the same "what's collected" disclosure the consent
- *     banner shows. This is the "toggle it later in settings" control.
+ *     the opt-out toggle plus a one-line summary linking the generated
+ *     privacy.html (which renders the exact event catalogue). This is the
+ *     "toggle it later" control alongside Settings → Advanced.
  *
  * Plain DOM overlay (no React), so it needs no upstream frontend patch beyond
  * the one button that opens it.
  */
 import { snapshot, type StartupRecord } from './perf'
 import { isConfigured, getConsent, setConsent } from './analytics'
-import { el, whatIsCollected, imprintUrl, linkTo } from './ui-shared'
+import { el, linkTo } from './ui-shared'
 
-let root: HTMLElement | null = null
+let root: HTMLDialogElement | null = null
 
 /** Register window.__slothfulDiagnostics so the Log-dialog button can open us,
  * and expose a console entry point for local poking. */
@@ -32,14 +33,28 @@ export function open(): void {
   if (root) return
   root = buildOverlay()
   document.body.append(root)
+  // native <dialog> + showModal: the Log dialog we're opened from is a
+  // top-layer modal, so a plain z-index div would render behind it (see
+  // consent.ts for the same pattern)
+  root.showModal()
 }
 
 export function close(): void {
-  root?.remove()
-  root = null
+  root?.close()
 }
 
-function buildOverlay(): HTMLElement {
+function buildOverlay(): HTMLDialogElement {
+  // transparent full-viewport dialog; our own backdrop div inside it
+  // (::backdrop can't be styled from inline styles)
+  const dlg = el(
+    'dialog',
+    'position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;border:none;padding:0;margin:0;background:transparent;'
+  )
+  // fires on close() and on Esc — single cleanup path
+  dlg.addEventListener('close', () => {
+    dlg.remove()
+    root = null
+  })
   const backdrop = el(
     'div',
     [
@@ -74,7 +89,9 @@ function buildOverlay(): HTMLElement {
   panel.append(perfSection())
   if (isConfigured()) panel.append(usageSection())
 
-  return backdrop
+  backdrop.append(panel)
+  dlg.append(backdrop)
+  return dlg
 }
 
 // --- performance section ------------------------------------------------
@@ -148,10 +165,13 @@ function usageSection(): HTMLElement {
   row.append(cb, el('span', '', 'Send anonymous usage statistics'))
   s.append(row)
 
-  s.append(whatIsCollected())
-
   const foot = el('p', 'margin:8px 0 0;font-size:13px;')
-  foot.append(document.createTextNode('Full details: '), linkTo(imprintUrl(), 'imprint & privacy notice'))
+  foot.append(
+    document.createTextNode(
+      'Anonymous, aggregated counts only — never message content, addresses, or free text. Full details, including the exact list of events: '
+    ),
+    linkTo('privacy.html', 'privacy policy')
+  )
   s.append(foot)
   return s
 }
