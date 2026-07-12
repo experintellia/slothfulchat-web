@@ -1,13 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-07-12
+
+- Regenerates `privacy.html` and re-patches the CSP `connect-src` for the
+  analytics origin on every run: analytics is baked-in config that
+  re-customising a zip flips off (self-hosted builds collect nothing), so the
+  privacy page and CSP now follow it. The CSP patch is idempotent — origins
+  baked by a previous build are stripped before this instance's is added.
+
+## 0.4.0 — 2026-07-10
+
+<!-- shipped in the 0.4.0 tarball, but mislabeled "Unreleased" in its copy of
+     this file -->
 
 - Prompts for (and honors the `SLOTHFUL_DEFAULT_CHATMAIL` env var of) a new
   default chatmail relay, baked into `window.__slothfulConfig` so the "create
   new account" onboarding flow signs up on the operator's own relay.
-
-## 0.4.0 — 2026-07-10
-
 - Also carries the `version` field of `window.__slothfulConfig` through
   `config.js` regeneration (alongside `commitHash`/`commitMessage`), so the
   version shown in the web app's About dialog survives relabeling a release

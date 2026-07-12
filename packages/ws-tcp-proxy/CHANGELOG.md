@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-07-10
+
+<!-- the two entries below shipped in the 0.4.0 tarball; the first was
+     mislabeled "Unreleased" in its copy of this file -->
 
 - New unfurl endpoint: `GET /unfurl?url=…` on the same port returns OpenGraph
   metadata + the `og:image` (base64) as JSON with permissive CORS, the
@@ -11,12 +14,9 @@
   allow-all bridge, disabled once `CHATMAIL_ALLOWLIST` is set (a vetted hosted
   bridge shouldn't silently fetch arbitrary pages); `UNFURL=1` / `UNFURL=0`
   overrides.
-
-## 0.4.0 — 2026-07-10
-
-<!-- originally written as 0.3.1 on 2026-07-09, but never tagged or published
-     under that number; renumbered to ride the v0.4.0 release train -->
-
+<!-- the /dns/localhost entry was originally written as 0.3.1 on 2026-07-09,
+     but never tagged or published under that number; renumbered to ride the
+     v0.4.0 release train -->
 - `/dns/localhost` is now answered with a hardcoded loopback reply
   (`127.0.0.1`, `::1`) without querying the resolver and regardless of any
   allowlist, so the web app's bridge-reachability health check works
