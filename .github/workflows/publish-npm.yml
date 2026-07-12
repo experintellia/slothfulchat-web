@@ -9,7 +9,8 @@
 # version. Bump them all in lockstep first (node scripts/set-release-version.mjs
 # X.Y.Z), commit, tag, push; a guard step rejects a tag whose packages drifted.
 # Each package is still published only if its version isn't on the registry yet,
-# so re-running a tag is idempotent (release assets re-upload with --clobber).
+# so re-running a tag is idempotent (an existing complete release is skipped —
+# releases are immutable, assets attach at creation only).
 #
 # The release zip is a GENERIC build: no SLOTHFUL_* vars, placeholder imprint.
 # Self-hosters bake their values in with the customize script — see
@@ -183,8 +184,22 @@ jobs:
         run: |
           (cd packages/web-app/dist && zip -qr "$GITHUB_WORKSPACE/slothfulchat-web-$GITHUB_REF_NAME.zip" .)
           cp packages/customize/dist/cli.mjs slothfulchat-customize.mjs
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
-          gh release upload "$GITHUB_REF_NAME" --clobber "slothfulchat-web-$GITHUB_REF_NAME.zip" slothfulchat-customize.mjs
+          # Releases are immutable: assets can only be attached at creation
+          # (a later `gh release upload` gets HTTP 422), so create the release
+          # and its assets in one shot. On re-runs a complete release is
+          # skipped; an asset-less one (e.g. a run that died mid-create) can't
+          # be repaired in place and must be deleted first.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            if gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name' | grep -qx 'slothfulchat-customize.mjs'; then
+              echo "release $GITHUB_REF_NAME already exists with assets — skipping"
+            else
+              echo "::error::release $GITHUB_REF_NAME exists without assets and is immutable. Delete it (gh release delete $GITHUB_REF_NAME) and re-run."
+              exit 1
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+              "slothfulchat-web-$GITHUB_REF_NAME.zip" slothfulchat-customize.mjs
+          fi
 
       - name: Publish packages whose version is new
         run: |

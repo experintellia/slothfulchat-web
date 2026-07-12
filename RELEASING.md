@@ -31,8 +31,9 @@ any `v*` tag. The workflow rebuilds from a clean checkout and does two things:
 - **npm**: publishes **each package whose package.json version is not on the
   registry yet** — versions already on the registry are skipped. Since every
   release bumps all three to a fresh number, they normally all publish; the
-  skip only makes re-running the same tag idempotent (release assets re-upload
-  with `--clobber`).
+  skip only makes re-running the same tag idempotent (a complete GitHub
+  release is likewise skipped — releases are immutable, so assets attach at
+  creation only; an asset-less one must be deleted before re-running).
 
 1. Pick the next tag version (strictly greater than the last — the whole train
    moves up together) and set it everywhere at once:
