@@ -1,23 +1,21 @@
-// E2E test for the instant-onboarding relay picker (patches/desktop 0042 +
-// 0047): the "create profile" screen offers a custom dropdown of chatmail
-// relays — default relay first, then the relays from the live directory. The
-// list is fetched up front; each relay is probed over the WS→TCP bridge only
-// once the dropdown is opened (reachability + a rough latency), and an
-// "Other…" entry lets the user type any relay by hostname. The privacy-policy
-// consent link follows the selection.
+// E2E test for the instant-onboarding relay picker (patch desktop/0042): the
+// "create profile" screen shows a row with the chosen chatmail relay and a
+// button that opens a dialog to change it. The dialog lists the directory
+// relays (default first), probes each over the WS→TCP bridge when it opens
+// (reachability + a round-trip latency), offers an "Other…" hostname field, and
+// the privacy-policy consent link follows the selection.
 //
 // Both network dependencies are mocked so the test is hermetic and offline:
-//  - the directory fetch (chatmail-relays-mirror relays.json on
-//    raw.githubusercontent.com) is answered from a fixture:
-//      nine.testrun.org — the default relay, must stay first
-//      example.org — resolvable, reachable, shows a latency
-//      relay.does-not-exist.invalid — resolves to nothing, shown but disabled
-//      a junk entry (host is a URL) — must be skipped by the parser
-//  - the bridge WebSocket probes (/dns/{host}, /tcp/{ip}/993) are intercepted
-//    with page.routeWebSocket so reachability/latency outcomes are
-//    deterministic regardless of the sandbox's DNS egress.
-//
-// Modeled on scripts/smoke-web-app.mjs (servers, eval fix).
+//  - the directory fetch (chatmail-relays-mirror relays.json) is a fixture:
+//      nine.testrun.org — the default relay, first, reachable
+//      example.org — reachable, shows a latency
+//      relay.blocked.example — resolves, but the bridge refuses the /tcp probe
+//        (allowlist, close 4003): the real signup would be refused the same
+//        way, so it must show "unreachable" + disabled, never a false success
+//      relay.does-not-exist.invalid — resolves to nothing: unreachable, disabled
+//      a junk entry (host is a URL) — skipped by the parser
+//  - the bridge probes (/dns/{host}, /tcp/{ip}/993) are intercepted with
+//    page.routeWebSocket so the outcomes are deterministic.
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
@@ -32,10 +30,20 @@ const RELAYS_JSON = JSON.stringify({
   relays: [
     { host: 'nine.testrun.org' },
     { host: 'example.org' },
+    { host: 'relay.blocked.example' },
     { host: 'relay.does-not-exist.invalid' },
     { host: 'https://chatmail.at/doc/relay' },
   ],
 })
+
+// per-host resolved IP, so the /tcp handler can treat the blocked relay's IP
+// differently; the NXDOMAIN relay resolves to nothing
+const IP_BY_HOST = {
+  'nine.testrun.org': '10.0.0.1',
+  'example.org': '10.0.0.2',
+  'relay.blocked.example': '10.0.0.9',
+}
+const BLOCKED_IP = '10.0.0.9'
 
 const procs = [
   spawn('node', [script('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs')], {
@@ -56,8 +64,6 @@ const watchdog = setTimeout(() => {
 }, 240_000)
 await new Promise(r => setTimeout(r, 500)) // let servers bind
 
-// CHROMIUM_EXECUTABLE: use a system/preinstalled Chromium instead of the
-// playwright-managed download (e.g. sandboxes where the download is blocked)
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_EXECUTABLE || undefined,
 })
@@ -79,29 +85,34 @@ await page.route('https://raw.githubusercontent.com/**', route => {
   })
 })
 
-// intercept the bridge probes: /dns/{host} answers with IPs (empty = the
-// unreachable relay), /tcp/{ip}/993 sends a byte so a latency is measured.
-// `relayProbed` records whether any *relay* (not the runtime's /dns/localhost
-// bridge health check) was probed — used to assert the picker probes lazily.
+// intercept the bridge probes. `relayProbed` records whether any *relay* (not
+// the runtime's /dns/localhost health check) was probed — used to assert the
+// dialog probes lazily (only once opened).
 let relayProbed = false
 await page.routeWebSocket(/\/(dns|tcp)\//, ws => {
   const url = ws.url()
   if (url.includes('/dns/')) {
     const host = decodeURIComponent(url.split('/dns/')[1] || '')
     if (host !== 'localhost') relayProbed = true
-    const ips = host === 'relay.does-not-exist.invalid' ? [] : ['93.184.216.34']
-    ws.send(JSON.stringify(ips))
+    const ip = IP_BY_HOST[host]
+    ws.send(JSON.stringify(ip ? [ip] : []))
     ws.close()
   } else if (url.includes('/tcp/')) {
     relayProbed = true
-    // stand in for the relay's TLS ServerHello, so the picker times a handshake
-    setTimeout(() => {
-      try {
-        ws.send('tls')
-      } catch {
-        /* already closed */
-      }
-    }, 12)
+    const ip = decodeURIComponent((url.split('/tcp/')[1] || '').split('/')[0])
+    if (ip === BLOCKED_IP) {
+      // bridge allowlist refuses the tunnel — same close code the real proxy uses
+      ws.close({ code: 4003 })
+    } else {
+      // stand in for the relay's TLS ServerHello, so a latency is measured
+      setTimeout(() => {
+        try {
+          ws.send('tls')
+        } catch {
+          /* already closed */
+        }
+      }, 12)
+    }
   }
 })
 
@@ -116,51 +127,55 @@ await page.goto(`http://localhost:${APP_PORT}/main.html`)
 // welcome screen → "Create New Profile" → instant onboarding screen
 await page.getByTestId('create-account-button').click({ timeout: 60_000 })
 
-// the picker button appears once the (mocked) directory is fetched — it shows
-// the default relay and only needs the directory (>= 2 relays), no probing yet
-const button = page.getByTestId('relay-picker-button')
-await button.waitFor({ state: 'visible', timeout: 30_000 })
+// the picker row appears once the (mocked) directory is fetched; it shows the
+// default relay and only needs the directory (>= 2 relays), no probing yet
+const trigger = page.getByTestId('relay-picker-button')
+await trigger.waitFor({ state: 'visible', timeout: 30_000 })
 if (!directoryRequested) fail('picker visible but directory was never fetched')
-if (!/nine\.testrun\.org/.test(await button.textContent()))
-  fail(`default relay not shown on the closed picker: ${await button.textContent()}`)
+if (!/nine\.testrun\.org/.test(await trigger.textContent()))
+  fail(`default relay not shown on the picker row: ${await trigger.textContent()}`)
 
 // consent link starts on the default relay
 const consent = page.locator('a', { hasText: 'Privacy Policy' })
 if (!/nine\.testrun\.org/.test((await consent.getAttribute('href')) || ''))
   fail('consent link does not point at the default relay initially')
 
-// lazy: the directory has been fetched and the picker is showing, but no relay
-// has been probed over the bridge yet — probing must wait until the dropdown is
-// opened (the whole point of the loading rework)
-if (relayProbed)
-  fail('relays were probed before the dropdown was opened (probing is not lazy)')
+// lazy: nothing has been probed before the dialog is opened
+if (relayProbed) fail('relays were probed before the dialog was opened (not lazy)')
 
-// open the dropdown → the directory relays are listed, junk skipped
-await button.click()
-await page.getByTestId('relay-picker-menu').waitFor({ state: 'visible' })
-const optDefault = page.getByTestId('relay-option-nine.testrun.org')
+// open the dialog → the directory relays are listed, junk skipped
+await trigger.click()
 const optExample = page.getByTestId('relay-option-example.org')
+const optBlocked = page.getByTestId('relay-option-relay.blocked.example')
 const optInvalid = page.getByTestId('relay-option-relay.does-not-exist.invalid')
-await optExample.waitFor({ state: 'visible' })
-if ((await optDefault.count()) === 0) fail('default relay missing from the menu')
+await optExample.waitFor({ state: 'visible', timeout: 15_000 })
+if ((await page.getByTestId('relay-option-nine.testrun.org').count()) === 0)
+  fail('default relay missing from the dialog')
 if (
   (await page.locator('[data-testid^="relay-option-"]', { hasText: 'chatmail.at' }).count()) !== 0
 )
   fail('junk (URL-valued host) entry not skipped')
 
-// probing resolves: example.org reachable with a latency badge, the invalid
-// relay disabled and marked unreachable
+// example.org: reachable, shows a latency
 await optExample.locator('text=/\\d+ ms/').waitFor({ timeout: 15_000 })
-await page
-  .getByTestId('relay-option-relay.does-not-exist.invalid')
-  .filter({ hasText: 'unreachable' })
-  .waitFor({ timeout: 15_000 })
-if ((await optInvalid.getAttribute('aria-disabled')) !== 'true')
-  fail('unreachable relay is not disabled')
 if ((await optExample.getAttribute('aria-disabled')) === 'true')
   fail('reachable relay is unexpectedly disabled')
 
-// select example.org → consent link follows
+// relay.blocked.example: the bridge (allowlist) refused the tunnel with 4003,
+// so the real signup would be refused the same way — it must read as
+// unreachable + disabled, never a latency (a refused probe is not a success)
+await optBlocked.filter({ hasText: 'unreachable' }).waitFor({ timeout: 15_000 })
+if ((await optBlocked.getAttribute('aria-disabled')) !== 'true')
+  fail('a relay the bridge refused to reach was not disabled')
+if ((await optBlocked.locator('text=/\\d+ ms/').count()) !== 0)
+  fail('a probe the bridge refused was shown with a latency (false success)')
+
+// relay.does-not-exist.invalid: unreachable and disabled
+await optInvalid.filter({ hasText: 'unreachable' }).waitFor({ timeout: 15_000 })
+if ((await optInvalid.getAttribute('aria-disabled')) !== 'true')
+  fail('unreachable relay is not disabled')
+
+// select example.org → dialog closes, consent link follows
 await optExample.click()
 let href = await consent.getAttribute('href')
 console.log('consent link after selecting example.org:', href)
@@ -168,7 +183,7 @@ if (href !== 'https://example.org/privacy.html')
   fail(`consent link did not follow the selection: ${href}`)
 
 // the "Other…" field accepts a hand-typed relay
-await button.click()
+await trigger.click()
 await page.getByTestId('relay-option-other').click()
 await page.getByTestId('relay-custom-input').fill('custom.relay.example')
 await page.getByTestId('relay-custom-confirm').click()
@@ -178,13 +193,13 @@ if (href !== 'https://custom.relay.example/privacy.html')
   fail(`consent link did not follow the custom relay: ${href}`)
 
 // switching back to the default restores the stock link
-await button.click()
+await trigger.click()
 await page.getByTestId('relay-option-nine.testrun.org').click()
 if (!/nine\.testrun\.org\/privacy\.html/.test((await consent.getAttribute('href')) || ''))
   fail('consent link did not switch back to the default relay')
 
 console.log(
-  'PASS: relay picker lists directory relays, probes lazily (latency + unreachable), custom relay + consent link follow'
+  'PASS: relay dialog lists relays, probes lazily (latency vs unreachable — a refused/blocked probe is never a false success), custom relay + consent link follow'
 )
 clearTimeout(watchdog)
 await browser.close()
