@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 — 2026-07-12
+## 0.5.1 — 2026-07-12
 
 - The tokio shim now profiles inline `spawn_blocking`/`block_in_place`
   closures (PGP keygen/encrypt/decrypt): per-session total/max/count exposed

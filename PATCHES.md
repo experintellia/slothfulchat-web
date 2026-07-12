@@ -61,8 +61,9 @@ exists:
   JSON-RPC traffic in `packages/web-app/src`; three desktop hooks add the UI-only
   signals (onboarding welcome, link-preview accept/dismiss, community-channel
   use), the Diagnostics button, and the consent surfaces (welcome-screen opt-out
-  checkbox, Settings → Advanced toggle, privacy-policy links in About/welcome).
-  `desktop/0043`, `desktop/0044`, `desktop/0045`
+  checkbox, Settings → Advanced toggle, privacy-policy links in About/welcome);
+  a fourth fires `chat_export` when a chat export succeeds.
+  `desktop/0043`, `desktop/0044`, `desktop/0045`, `desktop/0046`
 - **Attachment details & failure reason in Message Info** — file name, MIME
   type, size, image/video dimensions, audio/video duration; delivery failures
   show as an error banner, and clicking a message's failed-status icon opens
