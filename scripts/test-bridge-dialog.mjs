@@ -34,7 +34,12 @@ await new Promise(r => setTimeout(r, 500)) // let the server bind
 const browser = await chromium.launch(
   process.env.CHROMIUM_BIN ? { executablePath: process.env.CHROMIUM_BIN } : {}
 )
-const page = await browser.newPage()
+// The app's blobs-sw registration may location.reload() the page on its own
+// (uncontrolled-page recovery / update activation in runtime.ts), which
+// destroys the evaluate context mid-test on slow runners (#72). This test
+// never needs the SW — the dialog lives in runtime.js — so block it.
+const context = await browser.newContext({ serviceWorkers: 'block' })
+const page = await context.newPage()
 page.on('pageerror', e => console.error('[pageerror]', e.message))
 
 // upstream's avoid-eval.js replaces window.eval with a throwing stub, which

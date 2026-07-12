@@ -244,7 +244,7 @@ try {
     await rpc('startIo', id)
     return id
   }
-  const aliceId = await setup('Alice Weber')
+  let aliceId = await setup('Alice Weber')
   const bobId = await setup('Bob Martinez')
   const avatarPath = await page.evaluate(
     (b64) => window.exp.runtime.writeTempFileFromBase64('bob-avatar.png', b64),
@@ -357,8 +357,35 @@ try {
   for (const id of await rpc('getAllAccountIds')) {
     if (id !== aliceId && id !== bobId) await rpc('removeAccount', id)
   }
+  // Core's addAccount selects the new account, so the persisted selection is
+  // bob (created last). The frontend's async startup() restores that stored
+  // selection and can land AFTER our alice click below, flipping the view to
+  // bob mid-test (the #72 wrong-chat export). Persist alice as the selection
+  // so the app's own startup and our clicks agree.
+  await rpc('selectAccount', aliceId)
   await page.reload()
   await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
+  // Wait for the frontend's async startup() to finish selecting its account
+  // BEFORE driving the UI: on slow runners that restore lands late and
+  // overrides our clicks mid-test — the #72 flake where the export ran on
+  // bob's view and produced Alice_Weber's zip.
+  await page
+    .locator('[data-testid^="selected-account:"]:not([data-testid="selected-account:undefined"])')
+    .waitFor({ state: 'attached', timeout: 120_000 })
+  // Account ids may NOT survive the reload: the accounts.toml OPFS
+  // write-through can lose late writes, and the boot self-heal then rebuilds
+  // the registry from the account dirs, RENUMBERING accounts from 1 (alice
+  // becomes 1, bob 2 — so account-item-${aliceId} would click BOB, the #72
+  // wrong-chat export). The per-account DBs are durable, so re-resolve alice
+  // by displayname instead of trusting the pre-reload id.
+  aliceId = await (async () => {
+    for (const id of await rpc('getAllAccountIds')) {
+      const info = await rpc('getAccountInfo', id).catch(() => null)
+      if (info?.displayName === 'Alice Weber') return id
+    }
+    throw new Error('no account named Alice Weber after reload')
+  })()
+  console.log(`OK: alice resolved to account ${aliceId} after reload`)
   const accItem = page.getByTestId(`account-item-${aliceId}`)
   await accItem.waitFor({ state: 'visible', timeout: 60_000 })
   await accItem.hover()
@@ -366,12 +393,42 @@ try {
   await page.getByTestId(`selected-account:${aliceId}`).waitFor({ state: 'attached', timeout: 30_000 })
   await page.mouse.move(600, 400)
 
-  const chatItem = page.locator('.chat-list .chat-list-item').filter({ hasText: 'Bob' }).first()
+  // anchor on the chat NAME node — a bare hasText would also match bob's
+  // "Alice Weber" chat through its message preview (the "Bob Martinez" vcard),
+  // silently opening the wrong chat when the view is on the wrong account
+  const chatItem = page
+    .locator('.chat-list .chat-list-item')
+    .filter({ has: page.locator('.header .name', { hasText: 'Bob Martinez' }) })
+    .first()
   await chatItem.waitFor({ state: 'visible', timeout: 30_000 })
   await chatItem.click()
   await page.locator('.message.outgoing').first().waitFor({ state: 'visible', timeout: 30_000 })
   await page.screenshot({ path: OUT + 'app-chat.png', fullPage: false })
   console.log('OK: chat open in UI, screenshot taken')
+
+  // CI flake guard (#72): an account-switch race after "chat open" sometimes
+  // moved the view, and the export then produced Alice_Weber's zip instead of
+  // Bob's. Right before each export, make sure the visible chat header really
+  // is Bob's DM on alice's account — re-select if the view drifted.
+  const bobHeader = page.locator('.navbar-chat-name').filter({ hasText: 'Bob Martinez' })
+  const ensureBobChatOpen = async () => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await bobHeader.waitFor({ state: 'visible', timeout: 15_000 })
+        return
+      } catch (e) {
+        if (attempt >= 2) throw e
+        const actual = await page.locator('.navbar-chat-name').textContent().catch(() => null)
+        console.log(`chat header shows ${JSON.stringify(actual)}, re-selecting alice's Bob chat`)
+        await accItem.hover()
+        await accItem.click()
+        await page.getByTestId(`selected-account:${aliceId}`).waitFor({ state: 'attached', timeout: 30_000 })
+        await chatItem.waitFor({ state: 'visible', timeout: 30_000 })
+        await chatItem.click()
+      }
+    }
+  }
+  await ensureBobChatOpen()
 
   // three-dot menu -> Export Chat -> confirm dialog (notes + date range)
   await page.locator('#three-dot-menu-button').click()
@@ -388,6 +445,12 @@ try {
   const downloadP = page.waitForEvent('download', { timeout: 60_000 })
   await page.getByTestId('export-chat-start').click()
   const download = await downloadP
+  const zipName = download.suggestedFilename()
+  if (!zipName.startsWith('Bob_Martinez'))
+    throw new Error(
+      `exported the WRONG chat: zip is "${zipName}", expected "Bob_Martinez - …" ` +
+        '(the app was on the wrong account/chat when export was clicked)'
+    )
   const exportPath = OUT + download.suggestedFilename()
   await download.saveAs(exportPath)
   console.log(`OK: downloaded ${download.suggestedFilename()}`)
@@ -541,6 +604,7 @@ try {
 
   // --- second export with a future start date: range filter yields nothing ---
   const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
+  await ensureBobChatOpen()
   await page.locator('#three-dot-menu-button').click()
   await page.getByText('Export Chat', { exact: true }).click()
   await page.getByTestId('export-chat-start-date').fill(tomorrow)
