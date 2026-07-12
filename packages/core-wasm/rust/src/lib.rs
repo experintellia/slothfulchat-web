@@ -58,8 +58,26 @@ pub async fn init(
         // iOS: the OPFS mirror handed back ~1MB of garbage for it). The sqlite
         // DBs live in the sahpool VFS and are unaffected, so rebuilding the
         // account list recovers everything.
+        //
+        // But only heal when the config is ACTUALLY bad. A storage failure —
+        // e.g. the sahpool pool exhausted → sqlite SQLITE_CANTOPEN, the post-#75
+        // boot incident — surfaces through `Accounts::new` exactly like a corrupt
+        // config would, yet rebuilding the registry cannot fix it: the heal then
+        // quarantines a perfectly VALID accounts.toml, rebuilds it identically
+        // and fails the same way (a quarantine loop on every boot). Gate the heal
+        // on the config being implausible for the account dirs on disk.
         Err(e) if persist && tokio::fs::sync_is_file(ACCOUNTS_CONFIG) => {
             let orig = format!("{e:#}");
+            let text = tokio::fs::read_to_string(ACCOUNTS_CONFIG)
+                .await
+                .unwrap_or_default();
+            let disk_uuids = disk_account_uuids().await.unwrap_or_default();
+            if config_is_plausible(&text, &disk_uuids) {
+                return Err(JsValue::from_str(&format!(
+                    "failed to create accounts: {orig} (accounts.toml is valid and matches the \
+                     account dirs; not healing — the failure is elsewhere, e.g. sqlite storage)"
+                )));
+            }
             heal_accounts_config(&orig).await.map_err(|heal| {
                 JsValue::from_str(&format!(
                     "failed to create accounts: {orig} (self-heal failed: {heal})"
@@ -97,6 +115,72 @@ const ACCOUNTS_CONFIG: &str = "/accounts/accounts.toml";
 /// overwrite (crates/tokio-wasm-shim/src/opfs.rs).
 const ACCOUNTS_CONFIG_BAK: &str = "/accounts/accounts.toml.bak";
 
+/// The account uuids present on disk: the uuid-named dirs directly under
+/// `/accounts` (a dir name IS its account uuid). Sorted. Shared by the
+/// self-heal rebuild and the heal gate ([`config_is_plausible`]).
+async fn disk_account_uuids() -> std::io::Result<Vec<String>> {
+    let mut entries = tokio::fs::read_dir("/accounts").await?;
+    let mut uuids: Vec<String> = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        if !entry.metadata().await?.is_dir() {
+            continue;
+        }
+        match entry.path().file_name().and_then(|n| n.to_str()) {
+            Some(name) if uuid::Uuid::parse_str(name).is_ok() => uuids.push(name.to_owned()),
+            _ => {}
+        }
+    }
+    uuids.sort();
+    Ok(uuids)
+}
+
+/// Whether `text` is a usable accounts.toml for the accounts on disk — the gate
+/// that keeps the self-heal from firing on non-config failures. A storage error
+/// (e.g. the sahpool pool exhausted → sqlite CANTOPEN, post-#75) reaches
+/// `Accounts::new`'s error arm just like a corrupt config would, but rebuilding
+/// the registry cannot fix it, and quarantining a VALID config is pure damage
+/// (it loops). So the heal runs only when THIS returns false.
+///
+/// Plausible = parses as a TOML document with integer `selected_account` and
+/// `next_id`, and an `accounts` array whose every entry has an integer id ≥ 1
+/// and a string uuid, AND every listed uuid has a dir on disk. (A registry that
+/// references a nonexistent dir IS heal-worthy — the rebuild drops the ghost. A
+/// disk dir NOT yet in the config is fine: that is a freshly created account.)
+fn config_is_plausible(text: &str, disk_uuids: &[String]) -> bool {
+    // `toml::from_str`, NOT `str::parse::<toml::Value>()`: toml 0.9's FromStr
+    // parses a lone value and rejects a whole document.
+    let Ok(value) = toml::from_str::<toml::Value>(text) else {
+        return false;
+    };
+    if value
+        .get("selected_account")
+        .and_then(|v| v.as_integer())
+        .is_none()
+    {
+        return false;
+    }
+    if value.get("next_id").and_then(|v| v.as_integer()).is_none() {
+        return false;
+    }
+    let Some(accounts) = value.get("accounts").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    let disk: std::collections::HashSet<&str> = disk_uuids.iter().map(String::as_str).collect();
+    for account in accounts {
+        match account.get("id").and_then(|v| v.as_integer()) {
+            Some(id) if id >= 1 => {}
+            _ => return false,
+        }
+        let Some(uuid) = account.get("uuid").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        if !disk.contains(uuid) {
+            return false; // registry lists an account with no dir on disk → heal
+        }
+    }
+    true
+}
+
 /// Last-resort recovery for a corrupted accounts.toml: dump the contents to
 /// the console, quarantine the file to accounts.toml.broken (kept in OPFS
 /// for forensics), then restore the last-good backup — or, when the backup
@@ -118,18 +202,7 @@ async fn heal_accounts_config(cause: &str) -> Result<Accounts, String> {
         .await
         .map_err(io)?;
 
-    let mut entries = tokio::fs::read_dir("/accounts").await.map_err(io)?;
-    let mut uuids: Vec<String> = Vec::new();
-    while let Some(entry) = entries.next_entry().await.map_err(io)? {
-        if !entry.metadata().await.map_err(io)?.is_dir() {
-            continue;
-        }
-        match entry.path().file_name().and_then(|n| n.to_str()) {
-            Some(name) if uuid::Uuid::parse_str(name).is_ok() => uuids.push(name.to_owned()),
-            _ => {}
-        }
-    }
-    uuids.sort();
+    let uuids = disk_account_uuids().await.map_err(io)?;
 
     let bak = tokio::fs::read(ACCOUNTS_CONFIG_BAK)
         .await
@@ -189,6 +262,11 @@ struct ConfigHints {
 /// the caller renumbers from scratch instead.
 fn parse_hints(bak: &str) -> Option<ConfigHints> {
     use std::collections::{HashMap, HashSet};
+    // Ids above this are rejected as implausible: core issues ids sequentially
+    // from 1, so such a value signals corruption, and letting one through risks
+    // the `saturating_add` in rebuild_config pinning at u32::MAX and colliding
+    // (two "next" ids both saturate to the same value → duplicate id).
+    const MAX_PLAUSIBLE_ID: i64 = 1_000_000;
     // `toml::from_str`, NOT `str::parse::<toml::Value>()`: in toml 0.9 the
     // FromStr impl parses a single *value*, so it rejects a whole document.
     let value = toml::from_str::<toml::Value>(bak).ok()?;
@@ -199,6 +277,9 @@ fn parse_hints(bak: &str) -> Option<ConfigHints> {
     for account in accounts {
         let id = account.get("id")?.as_integer()?;
         let uuid = account.get("uuid")?.as_str()?.to_owned();
+        if id > MAX_PLAUSIBLE_ID {
+            return None; // implausibly large id → distrust the whole hints
+        }
         let id = u32::try_from(id).ok().filter(|&id| id >= 1)?;
         if !id_set.insert(id) {
             return None; // duplicate id
@@ -213,11 +294,11 @@ fn parse_hints(bak: &str) -> Option<ConfigHints> {
         .and_then(|v| v.as_integer())
         .and_then(|v| u32::try_from(v).ok())
         .and_then(|id| id_to_uuid.get(&id).cloned());
-    let next_id = value
-        .get("next_id")
-        .and_then(|v| v.as_integer())
-        .and_then(|v| u32::try_from(v).ok())
-        .unwrap_or(0);
+    let next_id_raw = value.get("next_id").and_then(|v| v.as_integer());
+    if next_id_raw.is_some_and(|v| v > MAX_PLAUSIBLE_ID) {
+        return None; // implausibly large next_id → distrust the whole hints
+    }
+    let next_id = next_id_raw.and_then(|v| u32::try_from(v).ok()).unwrap_or(0);
     let order = value
         .get("accounts_order")
         .and_then(|v| v.as_array())
@@ -405,7 +486,7 @@ impl DeltaChat {
 
 #[cfg(test)]
 mod tests {
-    use super::rebuild_config;
+    use super::{config_is_plausible, rebuild_config};
 
     // Re-parses a rebuilt body and pulls out the fields the tests assert on.
     // Doubles as a check that every emitted body is valid TOML.
@@ -550,6 +631,72 @@ mod tests {
         assert_eq!(next_id, 1);
         assert!(order.is_empty());
         assert!(accounts.is_empty());
+    }
+
+    // One `[[accounts]]` table for uuid `a` with the given id.
+    fn account_entry(id: u32, a: &str) -> String {
+        format!("\n[[accounts]]\nid = {id}\ndir = \"{a}\"\nuuid = \"{a}\"\n")
+    }
+
+    #[test]
+    fn plausible_valid_config_matching_disk() {
+        let cfg = format!(
+            "selected_account = 1\nnext_id = 2\n{}",
+            account_entry(1, &u(1))
+        );
+        assert!(config_is_plausible(&cfg, &[u(1)]));
+        // an empty registry with no dirs is also plausible (fresh origin).
+        assert!(config_is_plausible(
+            "selected_account = 0\nnext_id = 1\naccounts = []\n",
+            &[]
+        ));
+    }
+
+    #[test]
+    fn implausible_when_unparseable() {
+        assert!(!config_is_plausible("this is not toml {{{", &[u(1)]));
+    }
+
+    #[test]
+    fn implausible_when_missing_key() {
+        // next_id absent
+        let no_next = format!("selected_account = 1\n{}", account_entry(1, &u(1)));
+        assert!(!config_is_plausible(&no_next, &[u(1)]));
+        // accounts array absent
+        assert!(!config_is_plausible(
+            "selected_account = 0\nnext_id = 1\n",
+            &[]
+        ));
+    }
+
+    #[test]
+    fn implausible_when_id_below_one() {
+        let cfg = format!(
+            "selected_account = 0\nnext_id = 1\n{}",
+            account_entry(0, &u(1))
+        );
+        assert!(!config_is_plausible(&cfg, &[u(1)]));
+    }
+
+    #[test]
+    fn implausible_when_listed_uuid_has_no_dir() {
+        // registry references an account whose dir is gone → heal-worthy ghost.
+        let cfg = format!(
+            "selected_account = 1\nnext_id = 2\n{}",
+            account_entry(1, &u(1))
+        );
+        assert!(!config_is_plausible(&cfg, &[])); // nothing on disk
+        assert!(!config_is_plausible(&cfg, &[u(2)])); // a different dir on disk
+    }
+
+    #[test]
+    fn plausible_ignores_extra_disk_dirs() {
+        // a brand-new dir not yet in the config is not a reason to heal.
+        let cfg = format!(
+            "selected_account = 1\nnext_id = 3\n{}",
+            account_entry(1, &u(1))
+        );
+        assert!(config_is_plausible(&cfg, &[u(1), u(2)]));
     }
 
     #[test]

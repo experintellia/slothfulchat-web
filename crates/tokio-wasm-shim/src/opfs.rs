@@ -6,7 +6,11 @@
 //!    as the *default* sqlite VFS, so every database rusqlite opens lands in
 //!    OPFS under `.opfs-sahpool/.opaque/*` (opaque pool files with the real
 //!    path embedded in a header). DB files never touch the memfs, so there is
-//!    no double storage.
+//!    no double storage. The flip side: a memfs subtree removal cannot free a
+//!    db's pool slot — that is done separately, keyed by the pool's logical
+//!    *filenames* (see [`purge_pool_files_under`] and the boot orphan sweep in
+//!    [`enable_persistence`]), which is why the "never touch the memfs"
+//!    invariant still holds even though removal now reaches into the pool.
 //! 2. **memfs → OPFS mirror**: the in-memory fs is hydrated from the OPFS
 //!    directory `memfs/` at startup, and every mutation is written through
 //!    asynchronously by a single FIFO flusher task (single-threaded worker,
@@ -26,7 +30,9 @@ use std::sync::Mutex;
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::StreamExt;
 use js_sys::Uint8Array;
-use sqlite_wasm_vfs::sahpool::{install as install_sahpool, OpfsSAHPoolCfgBuilder, OpfsSAHPoolUtil};
+use sqlite_wasm_vfs::sahpool::{
+    install as install_sahpool, OpfsSAHPoolCfgBuilder, OpfsSAHPoolUtil,
+};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
@@ -80,16 +86,64 @@ fn js_err(err: JsValue) -> String {
 /// OPFS and starts the write-through flusher. Call once, in a dedicated
 /// worker, before opening any database.
 pub async fn enable_persistence() -> Result<(), String> {
-    // ponytail: fixed pool of 32 OPFS files (db+wal+journal per account plus
-    // temp/backup copies); grow via SAHPOOL add_capacity if that ever limits.
+    // Start at 32 pool files (the historical floor); the reserve below grows
+    // it to the live account count. Each account settles at ~1 slot (dc.db);
+    // wal/journal are transient (auto-checkpointed). `util` stays a LOCAL here
+    // until after the hydrate + sweep + reserve below — nothing between install
+    // and the final store opens a database, so SAHPOOL can be `None` meanwhile,
+    // and keeping the handle local lets us sweep/reserve without a RefCell
+    // borrow held across the awaits.
     let cfg = OpfsSAHPoolCfgBuilder::new().initial_capacity(32).build();
     let util = install_sahpool::<sqlite_wasm_rs::WasmOsCallback>(&cfg, true)
         .await
         .map_err(|e| format!("failed to install opfs-sahpool vfs: {e}"))?;
-    SAHPOOL.with(|c| *c.borrow_mut() = Some(util));
 
     let root = mirror_root().await.map_err(js_err)?;
-    hydrate(&root).await.map_err(|e| format!("opfs hydrate failed: {}", js_err(e)))?;
+    hydrate(&root)
+        .await
+        .map_err(|e| format!("opfs hydrate failed: {}", js_err(e)))?;
+
+    // Boot-time orphan sweep. Every db core creates lives inside an account
+    // dir that IS mirrored into the memfs, so any pool file whose parent dir is
+    // absent from the freshly hydrated memfs is an orphan left by a removed
+    // account whose slot the pre-fix `remove_account` never freed. Reclaim it:
+    // this is what un-bricks deployments already at the 32-slot ceiling, where
+    // the leaked slots outnumber the free ones and the next open fails with
+    // SQLITE_CANTOPEN (the post-#75 boot incident). delete_db is synchronous.
+    let mut reclaimed = 0u32;
+    for name in util.list() {
+        let is_orphan = match Path::new(&name).parent() {
+            Some(parent) => !fs::sync_is_dir(parent),
+            None => false,
+        };
+        if is_orphan {
+            match util.delete_db(&name) {
+                Ok(_) => reclaimed += 1,
+                Err(err) => web_sys::console::warn_1(&JsValue::from_str(&format!(
+                    "opfs: could not reclaim orphaned pool slot {name:?}: {err}"
+                ))),
+            }
+        }
+    }
+    if reclaimed > 0 {
+        web_sys::console::log_1(&JsValue::from_str(&format!(
+            "opfs: reclaimed {reclaimed} orphaned sahpool slot(s) from removed accounts"
+        )));
+    }
+
+    // Grow the pool ahead of need. A live account is ~1 slot steady plus a
+    // transient wal/journal during open and migration; 2N+8 covers those
+    // transients and leaves headroom for accounts created in-session. Growth
+    // persists (physical pool files) and we never shrink here; the max(32,…)
+    // keeps the historical floor. Without this, enough live accounts + churn
+    // leaks exhaust the fixed pool → CANTOPEN at boot (post-#75 incident).
+    let account_dirs = fs::count_child_dirs("/accounts") as u32;
+    let needed = std::cmp::max(32, account_dirs.saturating_mul(2).saturating_add(8));
+    util.reserve_minimum_capacity(needed)
+        .await
+        .map_err(|e| format!("opfs: failed to reserve sahpool capacity: {e}"))?;
+
+    SAHPOOL.with(|c| *c.borrow_mut() = Some(util));
 
     // lock accounts.toml (+ .bak) for the worker's lifetime; all writes to it
     // become synchronous (see ACCOUNTS_TOML). On a fresh origin this creates
@@ -487,4 +541,40 @@ pub fn sqlite_vfs_take(name: &str) -> Result<Vec<u8>, String> {
             Ok(bytes)
         }
     })
+}
+
+/// Frees the sahpool slots of every db whose logical path lives under `prefix`
+/// (e.g. a removed account dir `/accounts/<uuid>`). The sqlite files live ONLY
+/// in the sahpool VFS — they never touch the memfs (see the module docs) — so a
+/// memfs subtree removal leaves their pool slots allocated forever. Before this,
+/// every removed account permanently burned a slot; with the pinned capacity,
+/// enough churn exhausted the pool and `Accounts::new` failed SQLITE_CANTOPEN at
+/// boot (the post-#75 incident). Called from the memfs removal paths in `fs.rs`.
+/// No-op unless persistence is enabled.
+pub(crate) fn purge_pool_files_under(prefix: &Path) {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    SAHPOOL.with(|c| {
+        let borrow = c.borrow();
+        let Some(util) = borrow.as_ref() else {
+            return;
+        };
+        // delete_db is SYNC (the db must be closed — core closes the context
+        // before removing the dir), so there is no borrow-across-await hazard.
+        for name in util.list() {
+            // Component-wise `starts_with` (Path, not raw str) so "/accounts/ab"
+            // never matches "/accounts/abc/dc.db".
+            if Path::new(&name).starts_with(prefix) {
+                if let Err(err) = util.delete_db(&name) {
+                    // A still-open db (or any delete failure) leaves a residual
+                    // leak — degraded, not fatal (the boot sweep catches it
+                    // next time). Warn and keep going.
+                    web_sys::console::warn_1(&JsValue::from_str(&format!(
+                        "opfs: failed to free pool slot for {name:?}: {err}"
+                    )));
+                }
+            }
+        }
+    });
 }

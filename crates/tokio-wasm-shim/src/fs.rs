@@ -23,7 +23,7 @@ enum Node {
 
 static FS: Mutex<BTreeMap<PathBuf, Node>> = Mutex::new(BTreeMap::new());
 
-use crate::opfs::mark_dirty;
+use crate::opfs::{mark_dirty, purge_pool_files_under};
 // re-exported here so the core can reach persistence entry points via `tokio::fs::*`
 pub use crate::opfs::{enable_persistence, sqlite_vfs_import, sqlite_vfs_take};
 
@@ -183,6 +183,11 @@ pub fn sync_remove(path: impl AsRef<Path>) -> io::Result<()> {
     }
     drop(fs);
     mark_dirty(&prefix);
+    // Free the sahpool slots of any dbs that lived under this subtree — the
+    // memfs removal above cannot, since sqlite files never touch the memfs.
+    // (core's `remove_account` removes account dirs via a subtree path; see
+    // opfs.rs::purge_pool_files_under.)
+    purge_pool_files_under(&prefix);
     Ok(())
 }
 
@@ -194,6 +199,9 @@ pub async fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
     match removed {
         Some(_) => {
             mark_dirty(&path);
+            // Exact-path variant of the pool-slot reclaim (see sync_remove);
+            // harmless completeness — core removes db dirs via the subtree paths.
+            purge_pool_files_under(&path);
             Ok(())
         }
         None => Err(not_found()),
@@ -220,6 +228,10 @@ pub async fn remove_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
     }
     drop(fs);
     mark_dirty(&prefix);
+    // Free the sahpool slots of any dbs under this subtree — the memfs removal
+    // cannot (sqlite files never touch the memfs). core's `remove_account`
+    // removes the account dir through this path; see opfs.rs.
+    purge_pool_files_under(&prefix);
     Ok(())
 }
 
@@ -228,6 +240,11 @@ pub async fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<
 }
 
 /// Synchronous rename (see [`sync_read`]).
+///
+/// Note: this does NOT touch sahpool pool files, which are keyed by their
+/// original logical path — a memfs rename would not move them. Core only
+/// renames files (e.g. the write-tmp-then-rename of accounts.toml), never a
+/// dir containing sqlite dbs, so renaming a db-bearing dir is unsupported here.
 pub fn sync_rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {
     let from = normalize(from.as_ref());
     let to = normalize(to.as_ref());
@@ -312,6 +329,18 @@ pub fn sync_is_file(path: impl AsRef<Path>) -> bool {
         FS.lock().unwrap().get(&normalize(path.as_ref())),
         Some(Node::File { .. })
     )
+}
+
+/// Counts the immediate sub-directories of `path` in the memfs. The OPFS
+/// boot-time capacity reserve uses it to size the sahpool to the live account
+/// count (the dirs directly under `/accounts`); see `opfs::enable_persistence`.
+pub(crate) fn count_child_dirs(path: impl AsRef<Path>) -> usize {
+    let dir = normalize(path.as_ref());
+    FS.lock()
+        .unwrap()
+        .iter()
+        .filter(|(k, v)| k.parent() == Some(dir.as_path()) && matches!(v, Node::Dir))
+        .count()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
