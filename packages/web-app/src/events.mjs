@@ -87,6 +87,11 @@ export const EVENTS = [
     what: 'That the app hit a fatal startup error, by category (helps us fix white-screens).',
     props: 'kind = opfs-locked · storage-blocked · init-error',
   },
+  {
+    name: 'chat_export',
+    what: 'That a chat was exported, and whether a custom date range was selected.',
+    props: 'custom_range = yes · no',
+  },
 ]
 
 /**

@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Sun, 12 Jul 2026 12:00:00 +0000
+Subject: [PATCH 46/46] web-app: chat export analytics event
+
+Fire a 'chat_export' analytics event when a chat is successfully
+exported (via window.__slothfulTrack). The 'custom_range' property
+indicates whether the user filled in a From or Until date in the
+confirm dialog. No-op on other targets and when analytics is
+disabled.
+
+.../components/dialogs/ExportChatToHtml.tsx               | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+index da4e27a51..f11d8a5d9 100644
+--- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
++++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+@@ -119,6 +119,14 @@ export default function ExportChatToHtml({ chat, onClose }: Props) {
+       () => cancelled.current
+     )
+       .then(filename => {
++        // slothfulchat: anonymous analytics — the user exported a chat, with
++        // or without a custom date range (yes = at least one date was filled)
++        ;(window as any).__slothfulTrack?.('chat_export', {
++          custom_range:
++            startDate || endDate
++              ? ('yes' as const)
++              : ('no' as const),
++        })
+         window.__userFeedback?.({
+           type: 'success',
+           text: tx('chat_exported_as_x', filename),
