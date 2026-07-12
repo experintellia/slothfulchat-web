@@ -250,6 +250,11 @@ try {
   // count. Pre-fix, every churn cycle leaked one more named slot forever;
   // fixed, named tracks live accounts (ids.length) plus a small constant
   // (transient wal/journal + in-flight opens) regardless of CHURN_CYCLES.
+  // BEST-EFFORT ONLY: the worker holds exclusive SAHs on pooled files, so
+  // getFile() throws for most of them from here and `named` undercounts —
+  // this assertion is a tripwire, not the test's teeth. The real regression
+  // coverage is (a)/(b): the CANTOPEN / heal console scan, which is what
+  // caught the pre-fix leak (saturation at cycle 29).
   const finalPool = await enumeratePool()
   const liveAccounts = ids.length
   const boundedLimit = liveAccounts + 6

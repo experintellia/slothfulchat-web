@@ -110,6 +110,12 @@ pub async fn enable_persistence() -> Result<(), String> {
     // this is what un-bricks deployments already at the 32-slot ceiling, where
     // the leaked slots outnumber the free ones and the next open fails with
     // SQLITE_CANTOPEN (the post-#75 boot incident). delete_db is synchronous.
+    //
+    // Known window: the account dir mirrors to OPFS asynchronously while the
+    // pool file is durable at once, so a worker killed within the sub-second
+    // gap right after add_account can leave a db whose dir never landed — the
+    // sweep then reclaims that just-created (still empty) account's db. An
+    // established account cannot hit this: once its dir has flushed it stays.
     let mut reclaimed = 0u32;
     for name in util.list() {
         let is_orphan = match Path::new(&name).parent() {
