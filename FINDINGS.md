@@ -93,7 +93,25 @@ The upstream deltachat-desktop browser-edition frontend (`bundle.js` byte-identi
 - **SQLite → OPFS**: the sahpool VFS lives in the companion crate `sqlite-wasm-vfs` 0.2 (not sqlite-wasm-rs itself). Installed as the default VFS at core init (`OpfsSAHPoolCfgBuilder`, capacity 32); DB bytes land in opaque pool files under `.opfs-sahpool/` — synchronous-durable via sync access handles, dedicated-worker requirement already met, no COOP/COEP needed.
 - **Blob memfs → OPFS mirror** (shim `opfs.rs`): hydrate the memfs from OPFS `memfs/` at boot, then a dirty-path FIFO flusher write-through. No double storage: DB files never touch the memfs (rusqlite goes straight through the sahpool VFS).
 - **Gotcha (patch 0009)**: the M4 backup-import byte swap was hardwired to the memory VFS — with sahpool as default it silently targeted the wrong VFS; now dispatches to whichever VFS is default.
-- Limitations (prototype-acceptable): async blob flush can lose last-moment writes on tab close (DB itself is sync-durable); single tab only (sahpool handles are exclusive); removed accounts orphan their pool slot; fixed pool capacity 32.
+- Limitations (prototype-acceptable): async blob flush can lose last-moment writes on tab close (DB itself is sync-durable); single tab only (sahpool handles are exclusive); ~~removed accounts orphan their pool slot; fixed pool capacity 32~~ (FIXED, see below).
+
+### Pool-slot leak fixed (2026-07-12): post-#75 boot CANTOPEN
+
+The M5 "removed accounts orphan their pool slot" + "fixed pool capacity 32"
+limitations combined into a production brick: `remove_account` removed only the
+memfs keys, never the account's sqlite files (they live solely in the sahpool
+VFS), so every removed account permanently burned a pool slot. Enough churn
+filled the fixed 32-slot pool; the next `Accounts::new` failed
+`unable to open database file` (SQLITE_CANTOPEN, err 14) at boot — and the
+self-heal made it worse, quarantining a VALID accounts.toml and rebuilding it
+identically (a boot loop). Three-part fix (opfs.rs/fs.rs/lib.rs): (1) the memfs
+removal paths now `delete_db` the pool files under the removed subtree
+(`purge_pool_files_under`); (2) `enable_persistence` sweeps orphaned pool files
+at boot (any pool file whose parent dir is absent from the hydrated memfs) and
+reserves capacity `max(32, 2N+8)` for N account dirs — the sweep un-bricks
+already-exhausted deployments; (3) the self-heal is gated on the config actually
+being implausible (`config_is_plausible`), so a storage failure no longer
+triggers a quarantine loop.
 
 ## Prototype complete — feasibility answer
 **YES.** A full DeltaChat client — networking, UI, multiaccount, backup IMEX, persistence — runs in a plain browser tab with:
