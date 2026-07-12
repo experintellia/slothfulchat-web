@@ -1,0 +1,214 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <experintellia@users.noreply.github.com>
+Date: Sat, 11 Jul 2026 16:15:53 +0000
+Subject: [PATCH 44/44] web-app: analytics opt-out checkbox on welcome screen +
+ privacy policy links
+
+---
+ .../src/components/Settings/Advanced.tsx      | 45 +++++++++++++++++++
+ .../src/components/dialogs/About/index.tsx    |  9 ++++
+ .../WelcomeScreen/OnboardingScreen.tsx        | 43 +++++++++++++++++-
+ .../src/utils/slothfulInstanceConfig.ts       | 24 ++++++++++
+ 4 files changed, 120 insertions(+), 1 deletion(-)
+
+diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
+index 15e418e7e..79669fa2b 100644
+--- a/packages/frontend/src/components/Settings/Advanced.tsx
++++ b/packages/frontend/src/components/Settings/Advanced.tsx
+@@ -10,6 +10,8 @@ import SettingsButton from './SettingsButton'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import CoreSettingsSwitch from './CoreSettingsSwitch'
+ import DesktopSettingsSwitch from './DesktopSettingsSwitch'
++import SettingsSwitch from './SettingsSwitch'
++import { instanceAnalyticsUi } from '../../utils/slothfulInstanceConfig'
+ import { AutostartState } from '@deltachat-desktop/shared/shared-types'
+ import { selectedAccountId } from '../../ScreenController'
+ import TransportsDialog from '../dialogs/Transports'
+@@ -81,6 +83,13 @@ export default function Advanced({ onClose }: Props) {
+       <SettingsHeading>{tx('pref_experimental_features')}</SettingsHeading>
+       <ExperimentalFeatures />
+ 
++      {instanceAnalyticsUi() && (
++        <>
++          <SettingsSeparator />
++          <AnalyticsSwitch />
++        </>
++      )}
++
+       {runtime.getRuntimeInfo().target !== 'browser' && (
+         <>
+           <SettingsSeparator />
+@@ -91,6 +100,42 @@ export default function Advanced({ onClose }: Props) {
+   )
+ }
+ 
++// slothfulchat: opt-out switch for the anonymous usage statistics. The consent
++// lives in the host page's localStorage (window.__slothfulAnalyticsUi, see
++// slothfulchat-web's runtime.ts), not in desktop settings, so this is a small
++// self-contained switch rather than a DesktopSettingsSwitch.
++function AnalyticsSwitch() {
++  const analyticsUi = instanceAnalyticsUi()
++  const [enabled, setEnabled] = useState(() => analyticsUi?.enabled() ?? false)
++
++  if (!analyticsUi) {
++    return null
++  }
++  return (
++    <>
++      <SettingsSwitch
++        label='Share anonymous usage statistics'
++        description='Anonymous, aggregated counts only — never message content, contacts, or free text.'
++        value={enabled}
++        onChange={next => {
++          analyticsUi.setEnabled(next)
++          setEnabled(next)
++        }}
++      />
++      <SettingsButton
++        onClick={() =>
++          runtime.openLink(new URL('privacy.html', document.baseURI).href)
++        }
++      >
++        {/* link-blue like settingsSelectorValue, so the row reads as a link */}
++        <span style={{ color: 'var(--colorPrimary)' }}>
++          {'Learn more in the privacy policy'}
++        </span>
++      </SettingsButton>
++    </>
++  )
++}
++
+ function SettingsAutoStart() {
+   const tx = useTranslationFunction()
+ 
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index 790307731..d8053b29b 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -118,6 +118,15 @@ export default function About({ onClose }: DialogProps) {
+         >
+           {'Imprint'}
+         </SettingsIconButton>
++        <SettingsIconButton
++          icon='visibility'
++          onClick={() =>
++            runtime.openLink(new URL('privacy.html', document.baseURI).href)
++          }
++          dataTestid='about-privacy'
++        >
++          {'Privacy policy'}
++        </SettingsIconButton>
+         <SettingsSeparator />
+         <SettingsIconButton
+           icon='question_mark'
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+index ce5a87504..485d9b9b1 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+@@ -1,4 +1,4 @@
+-import React from 'react'
++import React, { useState } from 'react'
+ 
+ import AlternativeSetupsDialog from './AlternativeSetupsDialog'
+ import UseWebimapServerDialog from './UseWebimapServerDialog'
+@@ -7,6 +7,7 @@ import useDialog from '../../../hooks/dialog/useDialog'
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+ import { DialogBody, DialogContent, DialogFooter, DialogHeader } from '../../Dialog'
+ import { ClickableLink } from '../../helpers/ClickableLink'
++import { instanceAnalyticsUi } from '../../../utils/slothfulInstanceConfig'
+ 
+ import styles from './styles.module.scss'
+ 
+@@ -28,6 +29,21 @@ export default function OnboardingScreen(props: Props) {
+   const tx = useTranslationFunction()
+   const { openDialog } = useDialog()
+ 
++  // slothfulchat: opt-out checkbox for the anonymous usage statistics — only
++  // rendered on instances built with analytics (undefined on self-hosted ones)
++  const analyticsUi = instanceAnalyticsUi()
++  const [shareStats, setShareStats] = useState(() => analyticsUi?.enabled() ?? false)
++  const onToggleStats = (event: React.MouseEvent<HTMLInputElement>) => {
++    if (!analyticsUi) {
++      return
++    }
++    // don't toggle consent here — the dialog's Opt out / Accept buttons are
++    // the only place that changes it; re-sync the checkbox once it closes
++    // (Esc = no change). preventDefault on click reliably blocks the toggle.
++    event.preventDefault()
++    analyticsUi.showInfo().then(() => setShareStats(analyticsUi.enabled()))
++  }
++
+   const onAlreadyHaveAccount = () => {
+     openDialog(AlternativeSetupsDialog, {
+       selectedAccountId: props.selectedAccountId,
+@@ -99,6 +115,27 @@ export default function OnboardingScreen(props: Props) {
+         </DialogContent>
+       </DialogBody>
+       <DialogFooter>
++        {analyticsUi && (
++          <div
++            className={styles.welcomeScreenFooterLinks}
++            style={{ fontSize: '13px', marginBottom: '4px' }}
++          >
++            <label>
++              <input
++                type='checkbox'
++                checked={shareStats}
++                onClick={onToggleStats}
++                readOnly
++              />{' '}
++              Share anonymous usage statistics
++            </label>{' '}
++            (
++            <ClickableLink href={new URL('privacy.html', document.baseURI).href}>
++              learn more
++            </ClickableLink>
++            )
++          </div>
++        )}
+         <div className={styles.welcomeScreenFooterLinks}>
+           <ClickableLink href='https://github.com/experintellia/slothfulchat-web'>
+             Source code
+@@ -107,6 +144,10 @@ export default function OnboardingScreen(props: Props) {
+           <ClickableLink href={new URL('imprint.html', document.baseURI).href}>
+             Imprint
+           </ClickableLink>
++          {' · '}
++          <ClickableLink href={new URL('privacy.html', document.baseURI).href}>
++            Privacy
++          </ClickableLink>
+         </div>
+       </DialogFooter>
+     </>
+diff --git a/packages/frontend/src/utils/slothfulInstanceConfig.ts b/packages/frontend/src/utils/slothfulInstanceConfig.ts
+index 3e4473553..93a4e738a 100644
+--- a/packages/frontend/src/utils/slothfulInstanceConfig.ts
++++ b/packages/frontend/src/utils/slothfulInstanceConfig.ts
+@@ -70,3 +70,27 @@ export function instanceDefaultChatmailQr(): string | undefined {
+ export function instanceDefaultChatmailHost(): string | undefined {
+   return parseDefaultChatmail()?.host
+ }
++
++/**
++ * The anonymous-usage-statistics consent bridge installed by slothfulchat-web's
++ * runtime.ts as `window.__slothfulAnalyticsUi`. Stats are opt-out: `enabled()`
++ * reflects the current (localStorage-backed) choice, `setEnabled()` records a
++ * new one, `showInfo()` opens the runtime's info dialog explaining what is
++ * collected — its Opt out / Accept buttons record a choice too, so re-read
++ * `enabled()` once the returned promise resolves (dialog closed).
++ */
++export type AnalyticsUi = {
++  enabled: () => boolean
++  setEnabled: (on: boolean) => void
++  showInfo: () => Promise<void>
++}
++
++/**
++ * The analytics consent bridge, or `undefined` when this instance was built
++ * without analytics (every self-hosted build) or on upstream runtimes — so
++ * callers simply hide their checkbox.
++ */
++export function instanceAnalyticsUi(): AnalyticsUi | undefined {
++  const ui = (window as any).__slothfulAnalyticsUi
++  return ui?.configured ? ui : undefined
++}
