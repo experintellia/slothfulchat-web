@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 — 2026-07-12
+## 0.5.1 — 2026-07-12
 
 - Regenerates `privacy.html` and re-patches the CSP `connect-src` for the
   analytics origin on every run: analytics is baked-in config that

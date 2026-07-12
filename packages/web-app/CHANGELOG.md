@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 — 2026-07-12
+## 0.5.1 — 2026-07-12
 
 - **Relay picker on onboarding**: the "create profile" screen shows a dropdown
   right above the privacy-policy consent to choose which public chatmail relay
@@ -31,8 +31,9 @@
   event list, and an imprint privacy section. Self-hosted builds collect
   nothing. Events cover onboarding funnel + method, account/server type, sends
   by kind, QR scans, community-channel use, link-preview accept/dismiss, info-
-  link clicks, bridge kind, backup/key import-export, first-chat / >10-chat
-  milestones, bucketed startup (cold/warm), and fatal boot errors by category.
+  link clicks, bridge kind, backup/key import-export, chat export, first-chat /
+  >10-chat milestones, bucketed startup (cold/warm), and fatal boot errors by
+  category.
 - **Seekable video/audio**: the blob service worker now answers HTTP Range
   requests (206 Partial Content, `Accept-Ranges`), so seeking in served
   `<video>`/`<audio>` works instead of the media being treated as

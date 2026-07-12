@@ -1,6 +1,6 @@
 {
   "name": "@slothfulchat/web-app",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "type": "module",
   "description": "deltachat-desktop's frontend running standalone in the browser on the wasm core.",
