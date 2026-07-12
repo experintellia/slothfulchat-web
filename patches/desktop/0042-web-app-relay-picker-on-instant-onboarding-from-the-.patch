@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 12 Jul 2026 14:36:43 +0000
-Subject: [PATCH 42/42] web-app: relay picker on instant onboarding from the
+Subject: [PATCH 42/46] web-app: relay picker on instant onboarding from the
  chatmail relay directory
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -39,15 +39,15 @@ overrides everything.
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  .../WelcomeScreen/InstantOnboardingScreen.tsx |   5 +
- .../screens/WelcomeScreen/RelayPicker.tsx     |  71 +++++++
- .../screens/WelcomeScreen/UserAgreement.tsx   |  29 +--
- .../screens/WelcomeScreen/relayDirectory.ts   | 185 ++++++++++++++++++
- .../WelcomeScreen/relayDirectoryParse.ts      |  40 ++++
- .../screens/WelcomeScreen/styles.module.scss  |  49 +++++
- .../src/contexts/InstantOnboardingContext.tsx |  14 ++
+ .../screens/WelcomeScreen/RelayPicker.tsx     | 327 ++++++++++++++++++
+ .../screens/WelcomeScreen/UserAgreement.tsx   |  29 +-
+ .../screens/WelcomeScreen/relayDirectory.ts   | 269 ++++++++++++++
+ .../WelcomeScreen/relayDirectoryParse.ts      |  51 +++
+ .../screens/WelcomeScreen/styles.module.scss  | 196 +++++++++++
+ .../src/contexts/InstantOnboardingContext.tsx |  14 +
  .../src/hooks/useInstantOnboarding.ts         |  21 +-
- .../frontend/src/tests/relayDirectory.test.ts |  71 +++++++
- 9 files changed, 472 insertions(+), 13 deletions(-)
+ .../frontend/src/tests/relayDirectory.test.ts | 102 ++++++
+ 9 files changed, 1001 insertions(+), 13 deletions(-)
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
@@ -78,31 +78,66 @@ index dc53ee49e..cdeb369a0 100644
                  {welcomeQr?.qr.kind === 'login' && (
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
 new file mode 100644
-index 000000000..230417b14
+index 000000000..859c5a79c
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
-@@ -0,0 +1,71 @@
-+import React, { useEffect, useState } from 'react'
+@@ -0,0 +1,327 @@
++import React, { useCallback, useEffect, useRef, useState } from 'react'
 +
 +import useInstantOnboarding from '../../../hooks/useInstantOnboarding'
-+import { defaultRelayHost, fetchSelectableRelays } from './relayDirectory'
++import {
++  defaultRelayHost,
++  fetchRelayDirectory,
++  probeRelay,
++} from './relayDirectory'
++import { normalizeRelayHost } from './relayDirectoryParse'
 +import styles from './styles.module.scss'
++
++// English is hardcoded here (like the rest of patch desktop/0042) so the relay
++// picker stays a self-contained patch and doesn't have to touch every locale
++// file. See PATCHES.md.
++
++type ProbeStatus = 'probing' | 'reachable' | 'unreachable'
++type Probe = { status: ProbeStatus; latencyMs: number | null }
 +
 +/**
 + * slothfulchat-web: dropdown on the instant-onboarding ("create profile")
 + * screen to pick which public chatmail relay the new address is created on.
 + *
-+ * The list comes live from the chatmail relay directory, filtered down to
-+ * relays the WS→TCP bridge can resolve (see relayDirectory.ts); the default
-+ * relay is always offered and listed first. Renders nothing while loading,
-+ * when the directory is unavailable, when there is nothing to choose (fewer
-+ * than two relays), or when a scanned `dcaccount:`/`dclogin:` QR already pins
-+ * the server.
++ * The list comes live from the chatmail relay directory (relayDirectory.ts),
++ * default relay first. Fetching that list is cheap and done on mount; probing
++ * each relay over the WS→TCP bridge is not, so it happens lazily — only when
++ * the user opens the dropdown. Each relay then shows a live state: a spinner
++ * while probing, a rough latency once its IMAPS handshake answers, or greyed
++ * out and unselectable when the bridge can't resolve it. An "Other…" entry
++ * lets the user type any chatmail relay by hostname.
++ *
++ * Renders nothing while the directory is loading, when it is unavailable, when
++ * there is nothing to choose (fewer than two relays), or when a scanned
++ * `dcaccount:`/`dclogin:` QR already pins the server.
 + */
 +export default function RelayPicker() {
 +  const { welcomeQr, selectedRelayHost, setSelectedRelayHost } =
 +    useInstantOnboarding()
 +  const [relays, setRelays] = useState<string[] | null>(null)
++  const [open, setOpen] = useState(false)
++  const [probes, setProbes] = useState<Record<string, Probe>>({})
++  const [customHost, setCustomHost] = useState<string | undefined>(undefined)
++  const [customOpen, setCustomOpen] = useState(false)
++  const [customInput, setCustomInput] = useState('')
++  const [customError, setCustomError] = useState(false)
++
++  const containerRef = useRef<HTMLDivElement>(null)
++  const probedRef = useRef<Set<string>>(new Set())
++  const mountedRef = useRef(true)
++  useEffect(() => {
++    mountedRef.current = true
++    return () => {
++      mountedRef.current = false
++    }
++  }, [])
++
++  const defaultHost = defaultRelayHost()
 +
 +  // With a scanned account/login QR the server is fixed — no choice to offer.
 +  const relayChoosable =
@@ -113,7 +148,7 @@ index 000000000..230417b14
 +      return
 +    }
 +    let stale = false
-+    fetchSelectableRelays().then(list => {
++    fetchRelayDirectory().then(list => {
 +      if (!stale) {
 +        setRelays(list)
 +      }
@@ -123,33 +158,254 @@ index 000000000..230417b14
 +    }
 +  }, [relayChoosable])
 +
++  // A custom ("Other…") relay chosen earlier this onboarding session lives in
++  // the shared context (selectedRelayHost) but isn't in the fetched directory,
++  // so re-surface it when the picker remounts — otherwise the closed picker
++  // would show the default while account creation (and the consent link) still
++  // target the custom host.
++  useEffect(() => {
++    if (
++      relays &&
++      selectedRelayHost &&
++      selectedRelayHost !== defaultHost &&
++      !relays.includes(selectedRelayHost)
++    ) {
++      setCustomHost(selectedRelayHost)
++    }
++  }, [relays, selectedRelayHost, defaultHost])
++
++  const startProbe = useCallback((host: string) => {
++    if (probedRef.current.has(host)) {
++      return
++    }
++    probedRef.current.add(host)
++    setProbes(prev => ({
++      ...prev,
++      [host]: { status: 'probing', latencyMs: null },
++    }))
++    probeRelay(host).then(({ reachable, latencyMs }) => {
++      if (!mountedRef.current) {
++        return
++      }
++      setProbes(prev => ({
++        ...prev,
++        [host]: {
++          status: reachable ? 'reachable' : 'unreachable',
++          latencyMs,
++        },
++      }))
++    })
++  }, [])
++
++  // Probe reachability + latency lazily, only once the dropdown is opened.
++  useEffect(() => {
++    if (open && relays) {
++      relays.forEach(startProbe)
++      if (customHost) {
++        startProbe(customHost)
++      }
++    }
++  }, [open, relays, customHost, startProbe])
++
++  // Close on outside click / Escape while open.
++  useEffect(() => {
++    if (!open) {
++      return
++    }
++    const onPointerDown = (event: MouseEvent) => {
++      if (
++        containerRef.current &&
++        !containerRef.current.contains(event.target as Node)
++      ) {
++        setOpen(false)
++      }
++    }
++    const onKeyDown = (event: KeyboardEvent) => {
++      if (event.key === 'Escape') {
++        setOpen(false)
++      }
++    }
++    document.addEventListener('mousedown', onPointerDown)
++    document.addEventListener('keydown', onKeyDown)
++    return () => {
++      document.removeEventListener('mousedown', onPointerDown)
++      document.removeEventListener('keydown', onKeyDown)
++    }
++  }, [open])
++
 +  if (!relayChoosable || relays === null || relays.length < 2) {
 +    return null
 +  }
 +
++  const hosts =
++    customHost && !relays.includes(customHost) ? [...relays, customHost] : relays
 +  const value =
-+    selectedRelayHost && relays.includes(selectedRelayHost)
++    selectedRelayHost && hosts.includes(selectedRelayHost)
 +      ? selectedRelayHost
-+      : defaultRelayHost()
++      : defaultHost
++
++  const isSelectable = (host: string) =>
++    host === defaultHost || probes[host]?.status !== 'unreachable'
++
++  const choose = (host: string) => {
++    if (!isSelectable(host)) {
++      return
++    }
++    setSelectedRelayHost(host === defaultHost ? undefined : host)
++    setOpen(false)
++    setCustomOpen(false)
++  }
++
++  const submitCustom = () => {
++    const host = normalizeRelayHost(customInput)
++    if (!host) {
++      setCustomError(true)
++      return
++    }
++    setCustomHost(host)
++    setSelectedRelayHost(host === defaultHost ? undefined : host)
++    startProbe(host)
++    setCustomInput('')
++    setCustomError(false)
++    setCustomOpen(false)
++    setOpen(false)
++  }
++
++  const renderState = (host: string) => {
++    const probe = probes[host]
++    if (!probe || probe.status === 'probing') {
++      return <span className={styles.relayPickerSpinner} aria-hidden='true' />
++    }
++    if (probe.status === 'unreachable') {
++      return (
++        <span className={styles.relayPickerUnreachable}>unreachable</span>
++      )
++    }
++    if (probe.latencyMs !== null) {
++      return (
++        <span className={styles.relayPickerLatency}>{probe.latencyMs} ms</span>
++      )
++    }
++    return (
++      <span className={styles.relayPickerReachable} aria-hidden='true'>
++        ✓
++      </span>
++    )
++  }
 +
 +  return (
-+    <div className={styles.relayPicker}>
-+      <label htmlFor='relay-picker' className={styles.relayPickerLabel}>
++    <div className={styles.relayPicker} ref={containerRef}>
++      <label id='relay-picker-label' className={styles.relayPickerLabel}>
 +        Chatmail relay for your new address
 +      </label>
-+      <div className={styles.relayPickerSelect}>
-+        <select
-+          id='relay-picker'
-+          value={value}
-+          onChange={event => setSelectedRelayHost(event.target.value)}
++      <button
++        type='button'
++        id='relay-picker'
++        data-testid='relay-picker-button'
++        className={styles.relayPickerButton}
++        aria-haspopup='listbox'
++        aria-expanded={open}
++        aria-labelledby='relay-picker-label'
++        onClick={() => setOpen(current => !current)}
++      >
++        <span className={styles.relayPickerButtonValue}>{value}</span>
++        <span className={styles.relayPickerChevron} aria-hidden='true' />
++      </button>
++      {open && (
++        <div
++          className={styles.relayPickerMenu}
++          data-testid='relay-picker-menu'
++          role='listbox'
 +        >
-+          {relays.map(host => (
-+            <option key={host} value={host}>
-+              {host}
-+            </option>
++          {hosts.map(host => (
++            <div
++              key={host}
++              role='option'
++              data-testid={`relay-option-${host}`}
++              aria-selected={host === value}
++              aria-disabled={!isSelectable(host)}
++              tabIndex={0}
++              className={[
++                styles.relayPickerOption,
++                host === value ? styles.relayPickerOptionSelected : '',
++                !isSelectable(host) ? styles.relayPickerOptionDisabled : '',
++              ]
++                .filter(Boolean)
++                .join(' ')}
++              onClick={() => choose(host)}
++              onKeyDown={event => {
++                if (event.key === 'Enter' || event.key === ' ') {
++                  event.preventDefault()
++                  choose(host)
++                }
++              }}
++            >
++              <span className={styles.relayPickerOptionHost}>
++                {host}
++                {host === defaultHost && (
++                  <span className={styles.relayPickerDefaultTag}>default</span>
++                )}
++              </span>
++              {renderState(host)}
++            </div>
 +          ))}
-+        </select>
-+      </div>
++          {!customOpen && (
++            <div
++              role='option'
++              data-testid='relay-option-other'
++              aria-selected={false}
++              tabIndex={0}
++              className={`${styles.relayPickerOption} ${styles.relayPickerOther}`}
++              onClick={() => setCustomOpen(true)}
++              onKeyDown={event => {
++                if (event.key === 'Enter' || event.key === ' ') {
++                  event.preventDefault()
++                  setCustomOpen(true)
++                }
++              }}
++            >
++              Other…
++            </div>
++          )}
++          {customOpen && (
++            <div className={styles.relayPickerCustomRow}>
++              <input
++                type='text'
++                autoFocus={true}
++                data-testid='relay-custom-input'
++                className={[
++                  styles.relayPickerCustomInput,
++                  customError ? styles.relayPickerCustomInputError : '',
++                ]
++                  .filter(Boolean)
++                  .join(' ')}
++                placeholder='relay hostname, e.g. chat.example.org'
++                value={customInput}
++                onChange={event => {
++                  setCustomInput(event.target.value)
++                  if (customError) {
++                    setCustomError(false)
++                  }
++                }}
++                onKeyDown={event => {
++                  if (event.key === 'Enter') {
++                    event.preventDefault()
++                    submitCustom()
++                  }
++                }}
++              />
++              <button
++                type='button'
++                data-testid='relay-custom-confirm'
++                className={styles.relayPickerCustomConfirm}
++                onClick={submitCustom}
++              >
++                Use
++              </button>
++            </div>
++          )}
++        </div>
++      )}
 +    </div>
 +  )
 +}
@@ -198,10 +454,10 @@ index de5acd99d..f5438b4d0 100644
      <>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
 new file mode 100644
-index 000000000..e9b72e541
+index 000000000..829e84770
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,269 @@
 +// slothfulchat-web: live directory of public chatmail relays for the
 +// instant-onboarding relay picker.
 +//
@@ -210,11 +466,14 @@ index 000000000..e9b72e541
 +// the site itself sends no CORS headers, so a browser app can't read either
 +// directly — the mirror re-publishes the list daily with CORS enabled).
 +// Operators can point elsewhere or disable the picker via
-+// SLOTHFUL_RELAY_DIRECTORY. Each candidate is then probed through the WS→TCP
-+// bridge's /dns endpoint — a relay the bridge can't even resolve can't be
-+// signed up on from this app, so it is dropped. Everything here fails soft:
-+// on any error the caller just gets the default relay alone and the picker UI
-+// stays hidden.
++// SLOTHFUL_RELAY_DIRECTORY.
++//
++// Fetching the list is cheap and happens up front; probing each relay over the
++// WS→TCP bridge is not, so it runs lazily — only once the user opens the picker
++// (see RelayPicker.tsx). A relay the bridge can't even resolve can't be signed
++// up on from this app, so it is offered but disabled; a reachable relay is also
++// timed (TCP+TLS handshake to :993) for a rough latency hint. Everything fails
++// soft: the default relay is always offered and never probed away.
 +
 +import { getLogger } from '@deltachat-desktop/shared/logger'
 +
@@ -251,6 +510,7 @@ index 000000000..e9b72e541
 +
 +const FETCH_TIMEOUT_MS = 10_000
 +const DNS_PROBE_TIMEOUT_MS = 4_000
++const LATENCY_PROBE_TIMEOUT_MS = 4_000
 +// The directory is a small hand-sized list; anything larger is a broken or
 +// hostile source, so cap the body to avoid OOMing the tab before the timeout
 +// bites (the real mirror is a few KB).
@@ -279,25 +539,24 @@ index 000000000..e9b72e541
 +  }
 +}
 +
-+/** True when the bridge's /dns/{host} endpoint answers with at least one IP —
-+ * i.e. the relay is resolvable through the bridge this app sends mail over.
-+ * Timeouts, socket errors and empty answers all count as unreachable. */
-+export function relayResolvesOverBridge(
++/** IPs the bridge's /dns/{host} endpoint resolves for `host`, or `[]` on any
++ * timeout, socket error or empty answer. */
++function resolveRelayIps(
 +  host: string,
 +  timeoutMs = DNS_PROBE_TIMEOUT_MS
-+): Promise<boolean> {
++): Promise<string[]> {
 +  const bridge = resolveBridgeUrl()
-+  if (!bridge) return Promise.resolve(false)
++  if (!bridge) return Promise.resolve([])
 +  return new Promise(resolve => {
 +    let ws: WebSocket
 +    try {
 +      ws = new WebSocket(`${bridge}/dns/${encodeURIComponent(host)}`)
 +    } catch {
-+      resolve(false)
++      resolve([])
 +      return
 +    }
 +    let done = false
-+    const finish = (ok: boolean) => {
++    const finish = (ips: string[]) => {
 +      if (done) return
 +      done = true
 +      clearTimeout(timer)
@@ -306,23 +565,109 @@ index 000000000..e9b72e541
 +      } catch {
 +        /* already closing */
 +      }
-+      resolve(ok)
++      resolve(ips)
 +    }
-+    const timer = setTimeout(() => finish(false), timeoutMs)
++    const timer = setTimeout(() => finish([]), timeoutMs)
 +    ws.onmessage = event => {
 +      try {
 +        const ips = JSON.parse(String(event.data))
-+        finish(Array.isArray(ips) && ips.length > 0)
++        finish(
++          Array.isArray(ips) ? ips.filter(ip => typeof ip === 'string') : []
++        )
 +      } catch {
-+        finish(false)
++        finish([])
 +      }
 +    }
-+    ws.onerror = () => finish(false)
-+    ws.onclose = () => finish(false)
++    ws.onerror = () => finish([])
++    ws.onclose = () => finish([])
 +  })
 +}
 +
-+async function loadSelectableRelays(): Promise<string[]> {
++/** True when the bridge can resolve `host` — i.e. the relay is reachable over
++ * the bridge this app sends mail through. */
++export function relayResolvesOverBridge(
++  host: string,
++  timeoutMs = DNS_PROBE_TIMEOUT_MS
++): Promise<boolean> {
++  return resolveRelayIps(host, timeoutMs).then(ips => ips.length > 0)
++}
++
++/** Milliseconds until the relay's IMAPS port (993) sends its first TLS bytes
++ * through the bridge — a rough round-trip latency hint — or `null` when the
++ * bridge won't open the tunnel (e.g. an allowlisted hosted bridge) or the
++ * connection fails/times out. Best-effort only. */
++function tcpHandshakeMs(
++  ip: string,
++  timeoutMs = LATENCY_PROBE_TIMEOUT_MS
++): Promise<number | null> {
++  const bridge = resolveBridgeUrl()
++  if (!bridge) return Promise.resolve(null)
++  return new Promise(resolve => {
++    const start =
++      typeof performance !== 'undefined' ? performance.now() : Date.now()
++    let ws: WebSocket
++    try {
++      ws = new WebSocket(`${bridge}/tcp/${encodeURIComponent(ip)}/993`)
++      ws.binaryType = 'arraybuffer'
++    } catch {
++      resolve(null)
++      return
++    }
++    let done = false
++    const finish = (ms: number | null) => {
++      if (done) return
++      done = true
++      clearTimeout(timer)
++      try {
++        ws.close()
++      } catch {
++        /* already closing */
++      }
++      resolve(ms)
++    }
++    const timer = setTimeout(() => finish(null), timeoutMs)
++    // The bridge accepts the WS immediately; the first *message* is the relay's
++    // TLS ServerHello (ciphertext), so its arrival ≈ TCP + TLS round trip.
++    ws.onmessage = () => {
++      const now =
++        typeof performance !== 'undefined' ? performance.now() : Date.now()
++      finish(Math.max(0, Math.round(now - start)))
++    }
++    // A forbidden (allowlist) or failed tunnel closes without a message.
++    ws.onerror = () => finish(null)
++    ws.onclose = () => finish(null)
++  })
++}
++
++export type RelayProbe = {
++  /** the bridge could resolve the relay's hostname */
++  reachable: boolean
++  /** rough handshake latency in ms, or null when unavailable/not measured */
++  latencyMs: number | null
++}
++
++/**
++ * Probe one relay over the bridge: resolve it (reachability) and, when it
++ * resolves, time the IMAPS handshake to its first IPv4 (latency hint). Never
++ * rejects — an unreachable or unmeasurable relay just comes back with
++ * `reachable`/`latencyMs` cleared. IPv6-only relays report reachable with no
++ * latency (the raw /tcp endpoint addresses IPv4 literals).
++ */
++export async function probeRelay(host: string): Promise<RelayProbe> {
++  try {
++    const ips = await resolveRelayIps(host)
++    if (ips.length === 0) {
++      return { reachable: false, latencyMs: null }
++    }
++    const ipv4 = ips.find(ip => /^\d{1,3}(\.\d{1,3}){3}$/.test(ip))
++    const latencyMs = ipv4 ? await tcpHandshakeMs(ipv4) : null
++    return { reachable: true, latencyMs }
++  } catch {
++    return { reachable: false, latencyMs: null }
++  }
++}
++
++async function loadRelayDirectory(): Promise<string[]> {
 +  const defaultHost = defaultRelayHost()
 +  const url = relayDirectoryUrl()
 +  if (url === undefined) {
@@ -355,31 +700,26 @@ index 000000000..e9b72e541
 +    clearTimeout(timer)
 +  }
 +
++  // The default relay is always offered and listed first; the directory
++  // supplies the rest, in its own order, minus a duplicate of the default.
 +  const others = parseRelayDirectory(directory).filter(
 +    host => host !== defaultHost
 +  )
-+  const reachable = await Promise.all(
-+    others.map(host => relayResolvesOverBridge(host))
-+  )
-+  // The default relay is never probed away: it's this instance's configured
-+  // signup target and stays offered (and first) even if the bridge is down.
-+  return [defaultHost, ...others.filter((_, i) => reachable[i])]
++  return [defaultHost, ...others]
 +}
 +
 +let cached: Promise<string[]> | undefined
 +
 +/**
-+ * Relays the user may pick for instant onboarding: the default relay first,
-+ * then every directory relay the bridge can resolve, in directory order.
-+ * Always contains at least the default relay; a single-entry result means
-+ * "nothing to choose" (the picker hides itself then). A successful load is
-+ * cached per page load — re-entering the onboarding screen doesn't refetch or
-+ * reprobe — but a failed fetch is retried next time (the network or bridge
-+ * may have come up meanwhile).
++ * The relays the user may pick from: the default relay first, then every relay
++ * in the directory, in directory order. This is the cheap step (one fetch, no
++ * probing) that decides whether the picker is worth showing at all — a
++ * single-entry result means "nothing to choose". Cached per page load; a failed
++ * fetch is retried next time (the network may have come up meanwhile).
 + */
-+export function fetchSelectableRelays(): Promise<string[]> {
++export function fetchRelayDirectory(): Promise<string[]> {
 +  if (!cached) {
-+    cached = loadSelectableRelays().catch(error => {
++    cached = loadRelayDirectory().catch(error => {
 +      cached = undefined
 +      log.warn('relay directory unavailable, keeping the default relay', error)
 +      return [defaultRelayHost()]
@@ -389,10 +729,10 @@ index 000000000..e9b72e541
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
 new file mode 100644
-index 000000000..2fc3fe404
+index 000000000..5df93720c
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,51 @@
 +// slothfulchat-web: pure extractor for the chatmail relay-directory JSON.
 +// Kept free of browser/runtime imports so the unit tests
 +// (src/tests/relayDirectory.test.ts) can load it under plain node — the
@@ -410,6 +750,17 @@ index 000000000..2fc3fe404
 +// TLD, no scheme/path leftovers
 +const HOSTNAME_RE =
 +  /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/
++
++/**
++ * Normalize a user-typed relay host (trim, lowercase) and return it only when
++ * it looks like a bare public hostname, else `undefined`. Shares the exact
++ * shape the directory extractor accepts, so a hand-typed relay in the picker's
++ * "Other…" field is validated the same way as a fetched one.
++ */
++export function normalizeRelayHost(value: string): string | undefined {
++  const h = value.trim().toLowerCase()
++  return HOSTNAME_RE.test(h) ? h : undefined
++}
 +
 +/**
 + * Relay hostnames from a parsed relay-directory JSON document: lowercased,
@@ -434,16 +785,17 @@ index 000000000..2fc3fe404
 +  return found
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
-index 438b76adc..7ba74900e 100644
+index 438b76adc..476dfb740 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
-@@ -78,3 +78,52 @@
+@@ -78,3 +78,199 @@
    background-color: var(--buttonSecondaryText);
    margin-inline-start: 0.2em;
  }
 +
 +.relayPicker {
 +  margin: 4px 0 14px;
++  position: relative;
 +  text-align: left;
 +  width: 100%;
 +}
@@ -455,40 +807,186 @@ index 438b76adc..7ba74900e 100644
 +  margin-bottom: 2px;
 +}
 +
-+.relayPickerSelect {
-+  position: relative;
++.relayPickerButton {
++  align-items: center;
++  appearance: none;
++  background: none;
++  border: none;
++  border-bottom: 1px solid var(--deltaChatPrimaryFgLight);
++  color: var(--bp4InputText);
++  cursor: pointer;
++  display: flex;
++  font-size: 16px;
++  gap: 8px;
++  justify-content: space-between;
++  padding: 8px 4px 8px 0;
 +  width: 100%;
 +
-+  &::after {
-+    border: solid var(--deltaChatPrimaryFgLight);
-+    border-width: 0 2px 2px 0;
-+    content: '';
-+    height: 7px;
-+    pointer-events: none;
-+    position: absolute;
-+    right: 6px;
-+    top: 50%;
-+    transform: translateY(-70%) rotate(45deg);
-+    width: 7px;
++  &:focus {
++    border-bottom-color: var(--loginInputFocusColor);
++    color: var(--loginInputFocusColor);
++    outline: none;
 +  }
++}
 +
-+  select {
-+    appearance: none;
++.relayPickerButtonValue {
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.relayPickerChevron {
++  border: solid var(--deltaChatPrimaryFgLight);
++  border-width: 0 2px 2px 0;
++  flex: none;
++  height: 7px;
++  margin-right: 4px;
++  transform: translateY(-2px) rotate(45deg);
++  width: 7px;
++}
++
++.relayPickerMenu {
++  background: var(--contextMenuBg);
++  border: 1px solid var(--contextMenuBorder);
++  border-radius: 6px;
++  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
++  color: var(--contextMenuText);
++  left: 0;
++  margin-top: 4px;
++  max-height: 260px;
++  overflow-y: auto;
++  position: absolute;
++  right: 0;
++  top: 100%;
++  z-index: 20;
++}
++
++.relayPickerOption {
++  align-items: center;
++  cursor: pointer;
++  display: flex;
++  font-size: 15px;
++  gap: 10px;
++  justify-content: space-between;
++  padding: 9px 12px;
++
++  &:hover,
++  &:focus {
++    background: var(--globalHoverBg);
++    outline: none;
++  }
++}
++
++.relayPickerOptionSelected {
++  font-weight: 600;
++}
++
++.relayPickerOptionDisabled {
++  cursor: default;
++  opacity: 0.5;
++
++  &:hover,
++  &:focus {
 +    background: none;
-+    border: none;
-+    border-bottom: 1px solid var(--deltaChatPrimaryFgLight);
-+    color: var(--bp4InputText);
-+    cursor: pointer;
-+    font-size: 16px;
-+    padding: 8px 28px 8px 0;
-+    width: 100%;
-+
-+    &:focus {
-+      border-bottom-color: var(--loginInputFocusColor);
-+      color: var(--loginInputFocusColor);
-+      outline: none;
-+    }
 +  }
++}
++
++.relayPickerOptionHost {
++  align-items: baseline;
++  display: flex;
++  gap: 6px;
++  min-width: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.relayPickerDefaultTag {
++  color: var(--deltaChatPrimaryFgLight);
++  flex: none;
++  font-size: 11px;
++  font-weight: 400;
++  opacity: 0.8;
++}
++
++.relayPickerLatency {
++  color: var(--deltaChatPrimaryFgLight);
++  flex: none;
++  font-size: 12px;
++  font-variant-numeric: tabular-nums;
++}
++
++.relayPickerReachable {
++  color: var(--deltaChatPrimaryFgLight);
++  flex: none;
++  font-size: 13px;
++}
++
++.relayPickerUnreachable {
++  color: var(--colorDanger);
++  flex: none;
++  font-size: 12px;
++  opacity: 0.85;
++}
++
++.relayPickerSpinner {
++  animation: relayPickerSpin 0.7s linear infinite;
++  border: 2px solid var(--deltaChatPrimaryFgLight);
++  border-radius: 50%;
++  border-top-color: transparent;
++  flex: none;
++  height: 13px;
++  opacity: 0.6;
++  width: 13px;
++}
++
++@keyframes relayPickerSpin {
++  to {
++    transform: rotate(360deg);
++  }
++}
++
++.relayPickerOther {
++  border-top: 1px solid var(--contextMenuBorder);
++  color: var(--deltaChatPrimaryFgLight);
++}
++
++.relayPickerCustomRow {
++  border-top: 1px solid var(--contextMenuBorder);
++  display: flex;
++  gap: 8px;
++  padding: 9px 12px;
++}
++
++.relayPickerCustomInput {
++  background: none;
++  border: none;
++  border-bottom: 1px solid var(--deltaChatPrimaryFgLight);
++  color: var(--contextMenuText);
++  flex: 1;
++  font-size: 14px;
++  min-width: 0;
++  padding: 4px 0;
++
++  &:focus {
++    border-bottom-color: var(--loginInputFocusColor);
++    outline: none;
++  }
++}
++
++.relayPickerCustomInputError {
++  border-bottom-color: var(--colorDanger);
++}
++
++.relayPickerCustomConfirm {
++  background: none;
++  border: none;
++  color: var(--loginInputFocusColor);
++  cursor: pointer;
++  flex: none;
++  font-size: 14px;
++  font-weight: 600;
++  padding: 4px 6px;
 +}
 diff --git a/packages/frontend/src/contexts/InstantOnboardingContext.tsx b/packages/frontend/src/contexts/InstantOnboardingContext.tsx
 index 9c2fc6e29..a92312f69 100644
@@ -600,14 +1098,17 @@ index 17d65c0f8..6c95d7208 100644
  }
 diff --git a/packages/frontend/src/tests/relayDirectory.test.ts b/packages/frontend/src/tests/relayDirectory.test.ts
 new file mode 100644
-index 000000000..4d3f81998
+index 000000000..7c8d38f4e
 --- /dev/null
 +++ b/packages/frontend/src/tests/relayDirectory.test.ts
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,102 @@
 +import { expect } from 'chai'
 +import { describe, it } from 'mocha'
 +
-+import { parseRelayDirectory } from '../components/screens/WelcomeScreen/relayDirectoryParse.js'
++import {
++  normalizeRelayHost,
++  parseRelayDirectory,
++} from '../components/screens/WelcomeScreen/relayDirectoryParse.js'
 +
 +// The relay directory JSON comes from an automated mirror of
 +// https://chatmail.at/relays, but it is still network input: the extractor
@@ -672,6 +1173,34 @@ index 000000000..4d3f81998
 +      { relays: [] },
 +    ]) {
 +      expect(parseRelayDirectory(doc)).to.eql([])
++    }
++  })
++})
++
++// A relay typed by hand into the picker's "Other…" field must be validated the
++// same way a fetched one is, so the plumbing (dcaccount:<host>, the consent
++// link) only ever sees a plausible bare hostname.
++describe('normalizeRelayHost', () => {
++  it('accepts and lowercases/trims a bare hostname', () => {
++    expect(normalizeRelayHost('  Chat.Example.Org ')).to.equal(
++      'chat.example.org'
++    )
++    expect(normalizeRelayHost('nine.testrun.org')).to.equal('nine.testrun.org')
++  })
++
++  it('rejects anything that is not a bare hostname', () => {
++    for (const value of [
++      '',
++      '   ',
++      'no-dots',
++      'https://chat.example.org',
++      'chat.example.org/new',
++      'user@chat.example.org',
++      'bad host.example',
++      'chat.example.',
++      '.example.org',
++    ]) {
++      expect(normalizeRelayHost(value), value).to.equal(undefined)
 +    }
 +  })
 +})
