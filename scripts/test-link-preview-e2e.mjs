@@ -262,18 +262,60 @@ try {
   await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
   console.log('OK: wasm core booted')
 
-  // one offline webimap account + a group chat (self-only: composer, no peers)
-  const accountId = await rpc('addAccount')
+  // one offline webimap account + a group chat (self-only: composer, no peers).
+  // Reuse the unconfigured account the app auto-creates at first boot instead
+  // of addAccount + removing it: when the reload below races the accounts.toml
+  // OPFS write-through, the wasm self-heal rebuilds the registry from the
+  // account dirs and RENUMBERS accounts from 1 — with the auto account (id 1)
+  // the healed id equals the real id either way, so the account-item-{id}
+  // wait can't strand on a renumbered account (#72).
+  const accountId = (await rpc('getAllAccountIds'))[0] ?? (await rpc('addAccount'))
   await rpc('addTransportFromQr', accountId, QR)
   await rpc('setConfig', accountId, 'displayname', 'Alice Weber')
   const chatId = await rpc('createGroupChat', accountId, 'preview-test', false)
   for (const id of await rpc('getAllAccountIds')) {
     if (id !== accountId) await rpc('removeAccount', id)
   }
+  // OPFS write-through barrier (#72): the memfs→OPFS mirror flushes through a
+  // single FIFO queue (crates/tokio-wasm-shim/src/opfs.rs), so a marker file
+  // written NOW appears in OPFS only after every earlier mutation (the
+  // account's dir and blobs) has been reconciled. Reloading
+  // before that tears down the core worker mid-flush and the account is gone
+  // for good — that's the CI flake where account-item-{id} never showed up.
+  // (Poll from Node: waitForFunction never awaits async predicates.)
+  const markerPath = await page.evaluate(() =>
+    window.exp.runtime.writeTempFile('opfs-flush-barrier', 'x')
+  )
+  const flushDeadline = Date.now() + 120_000
+  for (;;) {
+    // memfs "/tmp/…" mirrors to OPFS "memfs/tmp/…"
+    const flushed = await page.evaluate(async (p) => {
+      try {
+        let dir = await navigator.storage.getDirectory()
+        const parts = ('memfs' + p).split('/').filter(Boolean)
+        for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part)
+        await dir.getFileHandle(parts[parts.length - 1])
+        return true
+      } catch {
+        return false
+      }
+    }, markerPath)
+    if (flushed) break
+    if (Date.now() > flushDeadline)
+      throw new Error('OPFS flush barrier never reached the mirror — account would not survive a reload')
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  console.log('OK: OPFS mirror flushed (accounts durable), reloading')
   await page.reload()
   await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
+  // fail fast with a real diagnosis if the account didn't survive the reload
+  const idsAfterReload = await rpc('getAllAccountIds')
+  if (!idsAfterReload.includes(accountId))
+    throw new Error(
+      `account ${accountId} missing after reload (persistence raced the reload?), have: ${JSON.stringify(idsAfterReload)}`
+    )
   const accItem = page.getByTestId(`account-item-${accountId}`)
-  await accItem.waitFor({ state: 'visible', timeout: 60_000 })
+  await accItem.waitFor({ state: 'visible', timeout: 120_000 })
   await accItem.hover()
   await accItem.click()
   const chatItem = page.locator('.chat-list .chat-list-item').filter({ hasText: 'preview-test' }).first()
