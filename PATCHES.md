@@ -142,9 +142,11 @@ exists:
   rendered when there is a real choice (more than one relay, no scanned
   `dcaccount:`/`dclogin:` QR); fails soft to no picker when the directory is
   unreachable. Fetching the list is cheap and done up front; each relay is
-  probed over the bridge only when the dialog opens — it actually opens the
-  relay's IMAPS port (:993) through the bridge, with a little sonar-ping
-  animation while it does — and the row shows an honest state: a round-trip
+  probed over the bridge only when the dialog opens (a few at a time through a
+  small worker pool, so a large directory doesn't flood a single-process local
+  bridge) — it actually opens the relay's IMAP port (:143) through the bridge,
+  with a little sonar-ping animation while it does — and the row shows an honest
+  state: a round-trip
   latency (colour-coded dot) when the relay answers, otherwise `unreachable`
   (greyed, unselectable). "Otherwise" deliberately includes the case where the
   relay resolves but a hosted bridge's allowlist forbids the tunnel (close

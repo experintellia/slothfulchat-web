@@ -75,7 +75,7 @@ await page.routeWebSocket(/\/(dns|tcp)\//, ws => {
     const ip = decodeURIComponent((url.split('/tcp/')[1] || '').split('/')[0])
     setTimeout(() => {
       try {
-        ws.send('tls')
+        ws.send('* OK ready')
       } catch {
         /* closed */
       }

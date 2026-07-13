@@ -14,7 +14,7 @@
 //        way, so it must show "unreachable" + disabled, never a false success
 //      relay.does-not-exist.invalid — resolves to nothing: unreachable, disabled
 //      a junk entry (host is a URL) — skipped by the parser
-//  - the bridge probes (/dns/{host}, /tcp/{ip}/993) are intercepted with
+//  - the bridge probes (/dns/{host}, /tcp/{ip}/143) are intercepted with
 //    page.routeWebSocket so the outcomes are deterministic.
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -99,15 +99,21 @@ await page.routeWebSocket(/\/(dns|tcp)\//, ws => {
     ws.close()
   } else if (url.includes('/tcp/')) {
     relayProbed = true
-    const ip = decodeURIComponent((url.split('/tcp/')[1] || '').split('/')[0])
+    const parts = (url.split('/tcp/')[1] || '').split('/')
+    const ip = decodeURIComponent(parts[0])
+    const port = parts[1]
     if (ip === BLOCKED_IP) {
       // bridge allowlist refuses the tunnel — same close code the real proxy uses
       ws.close({ code: 4003 })
-    } else {
-      // stand in for the relay's TLS ServerHello, so a latency is measured
+    } else if (port === '143') {
+      // A real IMAP server greets in plaintext on 143 the moment the socket is
+      // up; on IMAPS :993 it stays SILENT until the client speaks TLS. Answer
+      // only on 143 so this test also guards the probe's port choice — probing
+      // :993 (or anything that doesn't greet) would leave every relay silent →
+      // unreachable, and the reachable-relay assertions below would fail.
       setTimeout(() => {
         try {
-          ws.send('tls')
+          ws.send('* OK ready')
         } catch {
           /* already closed */
         }
