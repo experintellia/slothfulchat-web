@@ -10,8 +10,9 @@
 #            bridge-picker and chat-export E2E suites on top of it.
 #
 # The build half of `test` is a faithful copy of deploy-pages.yml — the same
-# two ordering traps apply (jsonrpc-client generated before the root install;
-# assemble before build). Keep the two in sync when either changes.
+# three ordering traps apply (jsonrpc-client generated before the root install;
+# assemble before build; rust-cache after apply-patches). Keep the two in sync
+# when either changes.
 
 name: CI
 
@@ -114,15 +115,6 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-        env:
-          CACHE_ON_FAILURE: true
-        with:
-          workspaces: |
-            build/core
-            packages/core-wasm/rust
-
       - name: Setup Node 22 + pnpm (corepack)
         uses: actions/setup-node@v4
         with:
@@ -143,6 +135,20 @@ jobs:
       - name: Apply patch stacks (creates build/core, build/desktop)
         run: pnpm apply-patches
 
+      # ORDER TRAP #3: this MUST run after apply-patches. rust-cache hashes the
+      # workspaces' Cargo.lock files at restore time — build/core only exists
+      # once apply-patches has created it, so running earlier computes a key
+      # blind to the core dependency graph. Worse, apply-patches recreates
+      # build/core with `rm -rf`, which would wipe a restored build/core/target.
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        env:
+          CACHE_ON_FAILURE: true
+        with:
+          workspaces: |
+            build/core
+            packages/core-wasm/rust
+
       # ORDER TRAP #1 (see deploy-pages.yml): the workspace override points
       # @deltachat/jsonrpc-client at this file: path, so it must be generated +
       # built before the root `pnpm install` can resolve it.
@@ -161,6 +167,14 @@ jobs:
 
       # Playwright chromium for the headless smoke suites (--with-deps pulls the
       # runner's shared libs). Uses the pinned playwright from the lockfile.
+      # Browser downloads are cached; `playwright install` skips the download
+      # when the pinned browser build is already in ~/.cache/ms-playwright.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: playwright-${{ runner.os }}-
       - name: Install Playwright chromium
         run: pnpm exec playwright install --with-deps chromium
 
@@ -174,8 +188,13 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build:browser
 
-      - name: Build wasm core (release)
-        run: pnpm --filter @slothfulchat/core-wasm build:wasm
+      # --no-opt skips wasm-pack's wasm-opt post-pass (~5.5 min of the step;
+      # longer than the Rust compile itself). Safe here: the suites are purely
+      # functional, and the cargo release profile (opt-level=s + LTO) is kept —
+      # only binaryen's extra size/speed pass is dropped. deploy-pages.yml
+      # still runs the fully optimized build:wasm for production.
+      - name: Build wasm core (release, no wasm-opt)
+        run: pnpm --filter @slothfulchat/core-wasm build:wasm:ci
 
       - name: Build core-wasm TS (worker + index)
         run: pnpm --filter @slothfulchat/core-wasm build
