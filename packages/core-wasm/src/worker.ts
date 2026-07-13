@@ -12,7 +12,7 @@ import initWasm, { init } from '../wasm-dist/deltachat_wasm.js'
 interface FsRequest {
   type: 'fs'
   id: number
-  op: 'read' | 'write' | 'remove' | 'exists' | 'mkdirp'
+  op: 'read' | 'write' | 'remove' | 'exists' | 'mkdirp' | 'flush'
   path: string
   data?: Uint8Array
 }
@@ -173,6 +173,11 @@ scope.onmessage = async (event: MessageEvent<string | FsRequest | ConfigMessage>
         break
       case 'mkdirp':
         dc.fs_mkdirp(msg.path)
+        break
+      case 'flush':
+        // awaits until every queued OPFS write-through is durable (backup
+        // import persistence, see DeltaChat.fs_flush)
+        await dc.fs_flush()
         break
       default:
         throw new Error(`unknown fs op: ${(msg as FsRequest).op}`)

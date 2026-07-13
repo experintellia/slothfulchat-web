@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Backup import now persists its images before finishing**: after restoring
+  from a backup you no longer have to reload several times for the pictures to
+  show up. Imported blobs are written to the in-memory fs and mirrored to OPFS
+  by an asynchronous flusher; a reload before that queue drained rebuilt the fs
+  from a still-incomplete OPFS, so images were missing until enough further
+  reloads let the background flush catch up. The `importBackup` call now waits
+  for every imported blob to be durably in OPFS before it resolves, so a reload
+  immediately afterwards finds everything.
 - **Relay picker: dialog with reachability & latency, custom relay**: the
   onboarding relay picker is now a row that opens a "Choose a chatmail relay"
   dialog (instead of an inline dropdown that clipped against the screen edge).

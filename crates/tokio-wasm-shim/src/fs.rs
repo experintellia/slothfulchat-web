@@ -25,7 +25,7 @@ static FS: Mutex<BTreeMap<PathBuf, Node>> = Mutex::new(BTreeMap::new());
 
 use crate::opfs::{mark_dirty, purge_pool_files_under};
 // re-exported here so the core can reach persistence entry points via `tokio::fs::*`
-pub use crate::opfs::{enable_persistence, sqlite_vfs_import, sqlite_vfs_take};
+pub use crate::opfs::{enable_persistence, flush_pending, sqlite_vfs_import, sqlite_vfs_take};
 
 /// Point-in-time state of one memfs path, for the OPFS write-through.
 pub(crate) enum Snapshot {

@@ -24,8 +24,9 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::StreamExt;
@@ -50,6 +51,17 @@ const MIRROR_DIR: &str = "memfs";
 static ENABLED: AtomicBool = AtomicBool::new(false);
 /// Paths queued for flushing; dedupes queue entries (last state wins anyway).
 static PENDING: Mutex<Option<(UnboundedSender<PathBuf>, HashSet<PathBuf>)>> = Mutex::new(None);
+/// Count of write-throughs queued to the flusher but not yet reconciled to
+/// OPFS. Incremented when a path enters the channel (see [`mark_dirty`]),
+/// decremented after the flusher finishes its reconcile — so it reaches 0 only
+/// when every queued mutation is durable. [`flush_pending`] awaits that.
+///
+/// It is NOT the same as `PENDING`'s set being empty: the flusher removes a
+/// path from that set *before* awaiting its (async) OPFS write, so an empty set
+/// still leaves the last write in flight. Tracking a separate counter that
+/// drops only post-write is what makes "all imported blobs are durable"
+/// observable (the backup-import reload race, #77).
+static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
 
 /// memfs path of core's account registry. Too important for the async
 /// mirror: a reload can kill the worker between `get_file_handle(create)`
@@ -191,9 +203,43 @@ pub(crate) fn mark_dirty(path: &Path) {
     let mut guard = PENDING.lock().unwrap();
     if let Some((tx, pending)) = guard.as_mut() {
         if pending.insert(path.to_path_buf()) {
+            // Count this queued write before it enters the channel; the flusher
+            // decrements once it has reconciled the path (see `flusher`). A path
+            // re-marked while already queued (insert == false) rides on the work
+            // already counted — the flusher re-snapshots the latest state.
+            INFLIGHT.fetch_add(1, Ordering::SeqCst);
             let _ = tx.unbounded_send(path.to_path_buf());
         }
     }
+}
+
+/// Awaits until every write-through queued so far has been reconciled to OPFS
+/// (the [`INFLIGHT`] counter reaches 0). No-op when persistence is disabled.
+///
+/// Used to make backup import durable before its RPC resolves: the imported
+/// blobs are written to the memfs and queued here, and a page reload before the
+/// async flusher drains them would rebuild the memfs from OPFS without those
+/// blobs (#77 — "reload N times to see the images"). Draining first closes that
+/// window.
+///
+/// A generous cap keeps a genuinely stuck flusher from hanging the caller
+/// forever; hitting it is a bug worth the warning, not the normal path (the
+/// queue is typically already near-drained by the time import finishes).
+pub async fn flush_pending() {
+    if !ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    // ~30s worst case (1500 * 20ms); real drains are far shorter.
+    for _ in 0..1500 {
+        if INFLIGHT.load(Ordering::SeqCst) == 0 {
+            return;
+        }
+        wasmtimer::tokio::sleep(Duration::from_millis(20)).await;
+    }
+    web_sys::console::warn_1(&JsValue::from_str(&format!(
+        "opfs: flush_pending timed out with {} write(s) still queued",
+        INFLIGHT.load(Ordering::SeqCst)
+    )));
 }
 
 /// Synchronous accounts.toml write-through. Returns false when the handles
@@ -320,6 +366,11 @@ async fn flusher(root: FileSystemDirectoryHandle, mut rx: UnboundedReceiver<Path
                 &err,
             );
         }
+        // Decrement AFTER the reconcile (success or failure) so `flush_pending`
+        // only observes 0 once the write has actually reached OPFS. Failure
+        // still counts as "no longer in flight" — retrying is not this task's
+        // job and a stuck non-zero counter would hang `flush_pending`.
+        INFLIGHT.fetch_sub(1, Ordering::SeqCst);
     }
 }
 

@@ -54,6 +54,9 @@ export interface Core {
   /** Removes a file or directory tree. */
   fsRemove(path: string): Promise<void>
   fsExists(path: string): Promise<boolean>
+  /** Resolves once every queued OPFS write-through is durable (backup-import
+   * persistence — see the worker `flush` op). No-op without persistence. */
+  fsFlush(): Promise<void>
 }
 
 /** Spawns the core worker and returns the typed client.
@@ -87,7 +90,7 @@ export function startCore(
     pending.delete(msg.id)
   })
   const fsRequest = (
-    op: 'read' | 'write' | 'remove' | 'exists',
+    op: 'read' | 'write' | 'remove' | 'exists' | 'flush',
     path: string,
     data?: Uint8Array,
   ): Promise<FsResponse> =>
@@ -113,6 +116,9 @@ export function startCore(
       await fsRequest('remove', path)
     },
     fsExists: async (path) => (await fsRequest('exists', path)).exists === true,
+    fsFlush: async () => {
+      await fsRequest('flush', '')
+    },
   }
 }
 

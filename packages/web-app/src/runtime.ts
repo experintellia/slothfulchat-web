@@ -297,6 +297,10 @@ function getCore(): Core {
     // the browser target (upstream's node server rewrites it to a tmp dir).
     // There is no server here, so rewrite it to a memfs dir before it reaches
     // the core. bundle.js stays untouched.
+    const activeCore = core
+    // request ids of in-flight import_backup calls, so we can hold their
+    // success response until the imported blobs are durable (see below)
+    const pendingImports = new Set<number | string>()
     const originalSend = core.transport._send.bind(core.transport)
     core.transport._send = (message: any) => {
       if (
@@ -305,7 +309,32 @@ function getCore(): Core {
       ) {
         message.params[1] = EXPORTS_DIR
       }
+      // Backup import writes every blob into the memfs and queues it for the
+      // ASYNC OPFS flusher. If the page reloads before that queue drains, the
+      // memfs is rebuilt from OPFS without the un-flushed blobs → broken images
+      // that only return once re-fetched from the server ("reload N times to
+      // see the images", #77). Track the call so we can drain before reporting
+      // success — see the _onmessage wrap.
+      if (message?.method === 'import_backup' && message.id != null) {
+        pendingImports.add(message.id)
+      }
       originalSend(message)
+    }
+    // Hold a successful import_backup response until fsFlush() confirms every
+    // imported blob has reached OPFS, so the frontend's importBackup promise
+    // resolves only once a reload would find everything. Errors pass straight
+    // through (a failed import wrote nothing to persist).
+    const transport = core.transport as any
+    const originalOnMessage = transport._onmessage.bind(transport)
+    transport._onmessage = (message: any) => {
+      if (message?.id != null && pendingImports.delete(message.id) && !message.error) {
+        activeCore
+          .fsFlush()
+          .catch(err => console.warn('post-import OPFS flush failed', err))
+          .finally(() => originalOnMessage(message))
+        return
+      }
+      originalOnMessage(message)
     }
     // debug/smoke marker: proves the wasm core booted and answers rpc
     core.transport
