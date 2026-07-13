@@ -113,6 +113,14 @@ already-exhausted deployments; (3) the self-heal is gated on the config actually
 being implausible (`config_is_plausible`), so a storage failure no longer
 triggers a quarantine loop.
 
+Residual (accepted) limit: the pool only grows at boot, so creating roughly
+`N+8`-plus accounts in ONE session (no reload) can still exhaust the current
+capacity — that account creation errors, nothing corrupts, and the next reload
+re-sizes the pool and recovers. The airtight fix (reserve free slots before
+every db open) needs an async seam inside core's `Sql::open` — a new core
+patch — and was deliberately skipped to keep the patch stack lean; see
+DESCOPED.md.
+
 ## Prototype complete — feasibility answer
 **YES.** A full DeltaChat client — networking, UI, multiaccount, backup IMEX, persistence — runs in a plain browser tab with:
 - **9 patches (~2500 lines) on core, 0 patches on desktop**
