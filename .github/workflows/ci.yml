@@ -188,8 +188,13 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build:browser
 
-      - name: Build wasm core (release)
-        run: pnpm --filter @slothfulchat/core-wasm build:wasm
+      # --no-opt skips wasm-pack's wasm-opt post-pass (~5.5 min of the step;
+      # longer than the Rust compile itself). Safe here: the suites are purely
+      # functional, and the cargo release profile (opt-level=s + LTO) is kept —
+      # only binaryen's extra size/speed pass is dropped. deploy-pages.yml
+      # still runs the fully optimized build:wasm for production.
+      - name: Build wasm core (release, no wasm-opt)
+        run: pnpm --filter @slothfulchat/core-wasm build:wasm:ci
 
       - name: Build core-wasm TS (worker + index)
         run: pnpm --filter @slothfulchat/core-wasm build
