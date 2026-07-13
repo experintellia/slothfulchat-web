@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- Backup-import durability: new `flush` fs side-channel op and `Core.fsFlush()`
+  (backed by `DeltaChat::fs_flush` → the shim's `tokio::fs::flush_pending`),
+  which resolve once every queued OPFS write-through is durable. The web app
+  awaits it before reporting an `import_backup` success, so imported blobs are
+  persisted before the RPC resolves — otherwise a reload while the async OPFS
+  flusher is still draining rebuilt the fs from an incomplete OPFS and the
+  images were missing (#89).
+- Pool-slot leak fixed (post-#75 boot `SQLITE_CANTOPEN`): `remove_account` only
+  cleared the memfs keys and never the account's sqlite files (they live solely
+  in the sahpool VFS), so every removed account permanently burned a pool slot
+  until the fixed 32-slot pool filled and the next boot failed "unable to open
+  database file". The memfs removal paths now free the pool files, boot sweeps
+  orphaned slots (un-bricking already-exhausted installs) and grows the pool to
+  the live account count, and the accounts.toml self-heal is gated on the config
+  actually being implausible so a storage failure no longer triggers a
+  quarantine boot-loop (#85).
+- accounts.toml no longer rots to 0 bytes in OPFS: a trailing-slash spelling
+  from a subtree rename slipped past the synchronous write-through guard and the
+  file was left empty; paths are now compared component-wise. The self-heal's
+  rebuild also preserves account IDs (using the last-good backup as id hints)
+  instead of renumbering from 1, which had broken persisted per-account
+  references (#83).
+
 ## 0.5.1 — 2026-07-12
 
 - The tokio shim now profiles inline `spawn_blocking`/`block_in_place`
