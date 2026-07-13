@@ -493,3 +493,45 @@ pack-import UI, on desktop either.
   message rendering, the picker, and "save to collection" agree on one format;
   remount `LottieSticker` per file via a `key` so a recycled row/thumbnail
   doesn't keep a stale failure.
+
+## Backup-import reload race — images returned only after N reloads (2026-07-13)
+
+Field report: after "Restore from Backup", the imported chats' images/blobs
+were broken and only appeared after reloading the app ~3 times.
+
+Root cause is the M5 async blob mirror at its worst case. Backup import unpacks
+every blob into the memfs (`import_backup_stream_inner` → tar unpack + per-blob
+`fs::rename`); each write only `mark_dirty`s the path onto the single FIFO OPFS
+flusher (`tokio-wasm-shim/src/{fs,opfs}.rs`). The **database** is made durable
+synchronously (sahpool VFS byte-swap in `Sql::import`), but the blobs drain
+asynchronously and slowly (one `createSyncAccessHandle`+write+close each, only
+when the single-threaded worker yields). Nothing waited for that queue: the
+`importBackup` RPC resolved as soon as the DB was in, with the blob tail still
+in flight. A reload before it drained rebuilt the memfs from OPFS via
+`hydrate()` from a **still-incomplete** OPFS, so the not-yet-flushed blobs
+showed broken. They are NOT re-downloaded from the server. They come back
+because the previous core worker is not terminated on navigation (terminating
+on `pagehide` was tried and reverted — see the "instant-reload OPFS race" note
+above), so it keeps draining its blob queue into OPFS in the background while
+the new worker blocks on the OPFS lock wait; each subsequent reload's
+`hydrate()` therefore snapshots a fuller OPFS, until after a few reloads it is
+complete (the "reload 3 times" symptom).
+
+Fix: make the mirror drainable and drain it as part of finishing an import.
+- `opfs.rs`: an `INFLIGHT` counter (incremented when a path enters the flusher
+  channel, decremented only *after* its reconcile reaches OPFS — deliberately
+  not the `PENDING` set, which is cleared before the async write) plus
+  `flush_pending()`, which awaits `INFLIGHT == 0` (30s safety cap + warning).
+- Exposed through `tokio::fs::flush_pending` → the wrapper's async
+  `DeltaChat::fs_flush` (`packages/core-wasm/rust`) → a new `flush` fs
+  side-channel op in `worker.ts` → `Core.fsFlush()` in the core-wasm package.
+- `runtime.ts` holds a **successful** `import_backup` response (tracked by
+  request id in the `_send` wrap) until `fsFlush()` confirms every imported blob
+  is durable, then delivers it. So the frontend's `importBackup` promise resolves
+  only once a reload would find everything; failed imports pass straight through.
+
+Drain deliberately runs on the RPC *response*, not mid-import: by then core has
+finished every blob write, so `INFLIGHT` reflects the whole remaining queue and
+can't read a transient 0. Verified the shim compiles for `wasm32-unknown-unknown`
+and that a `#[wasm_bindgen]` async `&self` method (the `fs_flush` shape) builds;
+a full wasm/e2e build needs the vendored core submodule + toolchain.

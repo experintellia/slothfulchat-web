@@ -482,6 +482,15 @@ impl DeltaChat {
     pub fn fs_mkdirp(&self, path: String) -> Result<(), JsValue> {
         tokio::fs::sync_create_dir_all(&path).map_err(fs_err)
     }
+
+    /// Awaits until every queued OPFS write-through is durable. Used after a
+    /// backup import so the imported blobs are persisted before the RPC
+    /// resolves — otherwise a reload before the async flusher drains them
+    /// rebuilds the memfs from OPFS without those blobs (#77). No-op unless
+    /// persistence is enabled.
+    pub async fn fs_flush(&self) {
+        tokio::fs::flush_pending().await;
+    }
 }
 
 #[cfg(test)]
