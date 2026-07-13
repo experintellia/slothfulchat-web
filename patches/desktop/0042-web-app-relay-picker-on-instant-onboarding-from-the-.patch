@@ -40,15 +40,15 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  .../WelcomeScreen/InstantOnboardingScreen.tsx |   5 +
  .../screens/WelcomeScreen/RelayPicker.tsx     |  95 ++++++
- .../WelcomeScreen/RelayPickerDialog.tsx       | 225 ++++++++++++++
+ .../WelcomeScreen/RelayPickerDialog.tsx       | 238 ++++++++++++++
  .../screens/WelcomeScreen/UserAgreement.tsx   |  29 +-
- .../screens/WelcomeScreen/relayDirectory.ts   | 278 ++++++++++++++++++
- .../WelcomeScreen/relayDirectoryParse.ts      |  51 ++++
- .../screens/WelcomeScreen/styles.module.scss  | 264 +++++++++++++++++
+ .../screens/WelcomeScreen/relayDirectory.ts   | 290 ++++++++++++++++++
+ .../WelcomeScreen/relayDirectoryParse.ts      |  51 +++
+ .../screens/WelcomeScreen/styles.module.scss  | 264 ++++++++++++++++
  .../src/contexts/InstantOnboardingContext.tsx |  14 +
  .../src/hooks/useInstantOnboarding.ts         |  21 +-
- .../frontend/src/tests/relayDirectory.test.ts | 102 +++++++
- 10 files changed, 1071 insertions(+), 13 deletions(-)
+ .../frontend/src/tests/relayDirectory.test.ts | 102 ++++++
+ 10 files changed, 1096 insertions(+), 13 deletions(-)
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
@@ -181,10 +181,10 @@ index 000000000..934629448
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 new file mode 100644
-index 000000000..f5ce27354
+index 000000000..120289cdd
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,238 @@
 +import React, { useEffect, useRef, useState } from 'react'
 +
 +import Dialog, { DialogBody, DialogContent, DialogHeader } from '../../Dialog'
@@ -256,18 +256,31 @@ index 000000000..f5ce27354
 +      ? [...relays, selectedHost]
 +      : relays
 +
-+  // Opening the dialog IS the intent to choose, so probe every relay now.
++  // Opening the dialog IS the intent to choose, so probe every relay now — but
++  // through a small worker pool, not all at once: each probe opens a WebSocket
++  // to the bridge (a /dns then a /tcp), so firing a whole directory in parallel
++  // would flood a single-process local bridge (and could starve the runtime's
++  // own bridge health check). A handful in flight fills the list fast enough.
 +  useEffect(() => {
-+    for (const host of hosts) {
-+      if (probedRef.current.has(host)) {
-+        continue
-+      }
-+      probedRef.current.add(host)
-+      probeRelay(host).then(probe => {
-+        if (mountedRef.current) {
++    let cancelled = false
++    const queue = hosts.filter(host => !probedRef.current.has(host))
++    queue.forEach(host => probedRef.current.add(host))
++    const CONCURRENCY = 5
++    let next = 0
++    const worker = async (): Promise<void> => {
++      while (!cancelled && next < queue.length) {
++        const host = queue[next++]
++        const probe = await probeRelay(host)
++        if (!cancelled && mountedRef.current) {
 +          setProbes(prev => ({ ...prev, [host]: probe }))
 +        }
-+      })
++      }
++    }
++    for (let i = 0; i < Math.min(CONCURRENCY, queue.length); i++) {
++      void worker()
++    }
++    return () => {
++      cancelled = true
 +    }
 +    // hosts is derived from immutable props; probe once on open
 +    // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -455,10 +468,10 @@ index de5acd99d..f5438b4d0 100644
      <>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
 new file mode 100644
-index 000000000..25d3a063e
+index 000000000..a37fe2ea3
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,290 @@
 +// slothfulchat-web: live directory of public chatmail relays for the
 +// instant-onboarding relay picker.
 +//
@@ -584,13 +597,23 @@ index 000000000..25d3a063e
 +  })
 +}
 +
-+/** Outcome of the IMAPS handshake probe: `{ ms }` when the relay answered on
-+ * :993 (round trip in ms), or `'unreachable'` when it didn't. The probe runs
-+ * over the *same* bridge the core signs up through, so anything it can't reach
-+ * the signup can't reach either: a relay whose :993 refuses/times out, and a
-+ * relay the bridge's allowlist forbids (a hosted bridge closes with 4003 for
-+ * any host it isn't configured to route to — the real signup gets the same
-+ * 4003) both mean "can't use this relay here", not a soft "couldn't measure". */
++// Port to probe for reachability + latency. Deliberately the plaintext IMAP
++// port (143), NOT IMAPS (993): on 993 the server stays silent until the client
++// sends a TLS ClientHello, so a passive "wait for the first byte" probe there
++// times out on every relay. On 143 the IMAP server sends a plaintext greeting
++// (`* OK …`, RFC 3501) the instant the TCP connection is up — the round trip we
++// want — and chatmail relays (Dovecot) all listen on it. We only read the
++// greeting and close: no credentials, no STARTTLS.
++const IMAP_PROBE_PORT = 143
++
++/** Outcome of the IMAP reachability probe: `{ ms }` when the relay's IMAP port
++ * greeted us (round trip in ms), or `'unreachable'` when it didn't. The probe
++ * runs over the *same* bridge the core signs up through, so anything it can't
++ * reach the signup can't reach either: a relay whose IMAP port refuses/times
++ * out, and a relay the bridge's allowlist forbids (a hosted bridge closes with
++ * 4003 for any host it isn't configured to route to — the real signup gets the
++ * same 4003) both mean "can't use this relay here", not a soft "couldn't
++ * measure". */
 +type HandshakeResult = { ms: number } | 'unreachable'
 +
 +function tcpHandshake(
@@ -604,7 +627,9 @@ index 000000000..25d3a063e
 +      typeof performance !== 'undefined' ? performance.now() : Date.now()
 +    let ws: WebSocket
 +    try {
-+      ws = new WebSocket(`${bridge}/tcp/${encodeURIComponent(ip)}/993`)
++      ws = new WebSocket(
++        `${bridge}/tcp/${encodeURIComponent(ip)}/${IMAP_PROBE_PORT}`
++      )
 +      ws.binaryType = 'arraybuffer'
 +    } catch {
 +      resolve('unreachable')
@@ -623,17 +648,17 @@ index 000000000..25d3a063e
 +      resolve(result)
 +    }
 +    const timer = setTimeout(() => finish('unreachable'), timeoutMs)
-+    // The bridge accepts the WS immediately; the first *message* is the relay's
-+    // TLS ServerHello (ciphertext), so its arrival ≈ TCP + TLS round trip.
++    // The bridge accepts the WS immediately; the first *message* is the IMAP
++    // server's plaintext greeting, so its arrival ≈ the TCP round trip.
 +    ws.onmessage = () => {
 +      const now =
 +        typeof performance !== 'undefined' ? performance.now() : Date.now()
 +      finish({ ms: Math.max(0, Math.round(now - start)) })
 +    }
-+    // Any close/error before a message means we couldn't reach :993 through the
-+    // bridge — a down relay, or one the bridge's allowlist forbids (4003) — and
-+    // the real signup would fail the same way. onerror is a no-op; onclose
-+    // always follows it.
++    // Any close/error before a message means we couldn't reach the relay's IMAP
++    // port through the bridge — a down relay, or one the bridge's allowlist
++    // forbids (4003) — and the real signup would fail the same way. onerror is a
++    // no-op; onclose always follows it.
 +    ws.onerror = () => {}
 +    ws.onclose = () => finish('unreachable')
 +  })
@@ -641,8 +666,8 @@ index 000000000..25d3a063e
 +
 +/** Whether a relay can be reached over the bridge the core will sign up
 + * through. `reachable` carries the round-trip `latencyMs`; `unreachable` means
-+ * DNS didn't resolve, or the relay's :993 (or the bridge's allowlist) refused
-+ * the connection. */
++ * DNS didn't resolve, or the relay's IMAP port (or the bridge's allowlist)
++ * refused the connection. */
 +export type RelayStatus = 'reachable' | 'unreachable'
 +
 +export type RelayProbe = {
@@ -653,7 +678,7 @@ index 000000000..25d3a063e
 +
 +/**
 + * Probe one relay over the bridge: resolve it, then (over the same bridge the
-+ * core will use) actually open its IMAPS port to see whether it answers and how
++ * core will use) actually open its IMAP port to see whether it answers and how
 + * fast. Never rejects — every failure maps to `unreachable`, never a success.
 + */
 +export async function probeRelay(host: string): Promise<RelayProbe> {
