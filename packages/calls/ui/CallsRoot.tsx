@@ -43,8 +43,17 @@ export function CallsRoot({ store, callbacks }: CallsRootProps) {
       muted={snapshot.muted}
       remoteStream={snapshot.remoteStream}
       error={snapshot.error}
+      localLevel={snapshot.localLevel}
+      remoteLevel={snapshot.remoteLevel}
+      microphones={snapshot.microphones}
+      cameras={snapshot.cameras}
+      selectedMicrophoneId={snapshot.selectedMicrophoneId}
+      selectedCameraId={snapshot.selectedCameraId}
+      deviceSwitchError={snapshot.deviceSwitchError}
       onHangup={callbacks.onHangup}
       onToggleMute={callbacks.onToggleMute}
+      onSelectMicrophone={callbacks.onSelectMicrophone}
+      onSelectCamera={callbacks.onSelectCamera}
     />
   )
 }

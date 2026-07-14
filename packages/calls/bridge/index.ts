@@ -11,14 +11,25 @@
  *
  * DOM lib is available here (for `navigator`/`RTCPeerConnection`), but there are
  * no React or DOM-tree (`document`) dependencies: this is glue, not UI.
+ *
+ * M2 also adds the level-metering tap (`createTrackAnalyser` below): the only
+ * piece of this file that reaches for a real `AudioContext`, mirroring how
+ * `defaultMediaFactories` is the only piece that reaches for a real
+ * `RTCPeerConnection`/`getUserMedia` — `engine/level-meter.ts` stays
+ * DOM-import-free by taking an already-constructed analyser.
  */
 
 import {
   AudioCallEngine,
+  TrackLevelMeter,
+  enumerateInputDevices,
+  type AnalyserLike,
   type AudioCallMediaFactories,
   type CallDirection,
   type CallState,
   type CallStateListener,
+  type DeviceEnumerator,
+  type InputDevices,
   type PeerConnectionLike,
 } from '../engine/index.ts'
 
@@ -29,6 +40,10 @@ export {
   type CallState,
   type CallStateChange,
   type CallStateListener,
+  type CallDeviceInfo,
+  type DeviceEnumerator,
+  type InputDevices,
+  shouldShowDevicePicker,
 } from '../engine/index.ts'
 
 /**
@@ -143,6 +158,27 @@ export function defaultMediaFactories(): AudioCallMediaFactories {
   }
 }
 
+/**
+ * The real platform seam for M2 device enumeration: `enumerateDevices` bound
+ * to `navigator.mediaDevices`. Tests inject a fake {@link DeviceEnumerator}
+ * instead (see `engine/devices.test.ts`).
+ */
+export function defaultDeviceEnumerator(): DeviceEnumerator {
+  return {
+    enumerateDevices: () => navigator.mediaDevices.enumerateDevices(),
+  }
+}
+
+/**
+ * Enumerate the mic/camera picker options using the real platform seam. A
+ * thin convenience wrapper over `engine`'s {@link enumerateInputDevices} so
+ * `packages/web-app/src/runtime.ts` doesn't need to import `engine/` directly
+ * just for this one call (docs/calls.md: engine/ is consumed via `ui`/`bridge`).
+ */
+export function listInputDevices(): Promise<InputDevices> {
+  return enumerateInputDevices(defaultDeviceEnumerator())
+}
+
 export interface CallBridgeCallbacks {
   /** Observe engine call-state (drives "calling…/connected" and teardown in the UI). */
   onStateChange?: CallStateListener
@@ -156,6 +192,104 @@ export interface CallBridgeCallbacks {
   onCallMessageId?: (callMessageId: number) => void
   /** A fatal error tore the call down; the engine is already ended. */
   onError?: (error: Error) => void
+  /**
+   * Smoothed local-mic level, 0..1 (M2 speaking rings, docs/calls.md:
+   * "Web-Audio level meters driving avatar rings"). Starts firing (~10x/sec)
+   * as soon as the local stream exists — i.e. once `state` is `ringing`
+   * (outgoing, mic already acquired to build the offer) or `connecting`
+   * (incoming, mic acquired on accept). Never fires for an incoming call
+   * still ringing (mic deliberately untouched — see `AudioCallEngine.receiveCall`).
+   */
+  onLocalLevel?: (level: number) => void
+  /** Smoothed remote-peer level, 0..1, same cadence, starting once
+   * `onRemoteStream` has fired. */
+  onRemoteLevel?: (level: number) => void
+  /**
+   * `AudioCallEngine.switchMicrophone` failed (M2 device selection) — the
+   * previous mic keeps flowing untouched; surface this next to the device
+   * picker (a toast/inline note), not as a call-ending error.
+   */
+  onDeviceSwitchError?: (error: Error) => void
+}
+
+/**
+ * Lazily-created `AudioContext` shared by every level-metering tap on the
+ * page (M2). One instance rather than one per track: browsers cap the number
+ * of concurrent `AudioContext`s, and there is nothing to gain from separate
+ * contexts here — each tap is just its own `MediaStreamAudioSourceNode` →
+ * `AnalyserNode` chain hung off the same clock. Created on first use (not at
+ * module load) so a page that never places/receives a call never pays for one.
+ */
+let sharedMeterAudioContext: AudioContext | null = null
+
+function getSharedMeterAudioContext(): AudioContext {
+  if (sharedMeterAudioContext == null) {
+    sharedMeterAudioContext = new AudioContext()
+  }
+  if (sharedMeterAudioContext.state === 'suspended') {
+    // Best-effort: by the time a track exists to meter, the call started from
+    // a user gesture (call button / Accept click), so this is expected to
+    // succeed; if it doesn't, the meter just reads a flat 0 until it does
+    // rather than throwing.
+    void sharedMeterAudioContext.resume().catch(() => {})
+  }
+  return sharedMeterAudioContext
+}
+
+export interface TrackAnalyserHandle {
+  readonly analyser: AnalyserLike
+  /** Disconnect this tap from the shared `AudioContext`. Does NOT stop the
+   * underlying `MediaStreamTrack` — that stays owned by the engine/call. */
+  dispose(): void
+}
+
+/**
+ * Wire a real Web Audio `AnalyserNode` to one live audio track, for
+ * `engine/level-meter.ts`'s `TrackLevelMeter` to poll (M2 speaking rings).
+ * The only file in `packages/calls` that constructs a real `AudioContext` —
+ * everything downstream (`TrackLevelMeter`) only sees the structural
+ * {@link AnalyserLike}.
+ *
+ * The analyser is routed through a zero-gain node to the shared context's
+ * `destination`: not to be heard (gain 0 = silent — the actual remote-audio
+ * playback is the separate `<audio>` element in `CallOverlay`), but because a
+ * Web Audio node with no path to `destination` is not guaranteed to keep
+ * being pulled/processed in every browser, which would silently stop the
+ * meter from producing fresh samples.
+ */
+export function createTrackAnalyser(track: MediaStreamTrack): TrackAnalyserHandle {
+  const context = getSharedMeterAudioContext()
+  const source = context.createMediaStreamSource(new MediaStream([track]))
+  const analyser = context.createAnalyser()
+  analyser.fftSize = 512
+  const silentSink = context.createGain()
+  silentSink.gain.value = 0
+  source.connect(analyser)
+  analyser.connect(silentSink)
+  silentSink.connect(context.destination)
+  return {
+    analyser,
+    dispose: () => {
+      // best-effort: disconnecting an already-disconnected/torn-down node is
+      // harmless, but guard anyway since dispose() must never throw into a
+      // teardown path.
+      try {
+        source.disconnect()
+      } catch {
+        /* best-effort */
+      }
+      try {
+        analyser.disconnect()
+      } catch {
+        /* best-effort */
+      }
+      try {
+        silentSink.disconnect()
+      } catch {
+        /* best-effort */
+      }
+    },
+  }
 }
 
 export interface OutgoingCallParams {
@@ -196,6 +330,14 @@ export class CallBridge {
   private readonly callbacks: CallBridgeCallbacks
   private readonly pendingOfferSdp: string | null
 
+  /** M2 speaking-ring metering (local + remote), lazily created once each
+   * stream exists — see {@link ensureLocalLevelMeter}/{@link startRemoteLevelMeter}
+   * and torn down together in {@link stopLevelMeters}. */
+  private localLevelMeter: TrackLevelMeter | null = null
+  private localMeterTap: TrackAnalyserHandle | null = null
+  private remoteLevelMeter: TrackLevelMeter | null = null
+  private remoteMeterTap: TrackAnalyserHandle | null = null
+
   private constructor(init: {
     rpc: CallsRpcClient
     direction: CallDirection
@@ -222,9 +364,35 @@ export class CallBridge {
       factories: init.factories,
       gatherOptions: { overallTimeoutMs: DEFAULT_GATHER_TIMEOUT_MS },
       callbacks: {
-        onStateChange: init.callbacks.onStateChange,
-        onRemoteStream: init.callbacks.onRemoteStream,
+        onStateChange: (state, change) => {
+          init.callbacks.onStateChange?.(state, change)
+          // Centralizing on the state machine (rather than also hooking
+          // hangup()/remoteEnded()/acceptedElsewhere() directly) covers every
+          // teardown path uniformly — including the engine's own internal
+          // failure path — since ALL of them funnel through
+          // AudioCallEngine.end(), which the state machine notifies exactly
+          // once no matter which caller reached `ended` first.
+          if (state === 'ended') {
+            this.stopLevelMeters()
+          }
+        },
+        onRemoteStream: (stream) => {
+          init.callbacks.onRemoteStream?.(stream)
+          this.startRemoteLevelMeter(stream)
+        },
         onError: init.callbacks.onError,
+        onDeviceSwitchError: init.callbacks.onDeviceSwitchError,
+        // Fires for the FIRST mic acquisition (placeCall/accept) AND every
+        // successful `switchMicrophone` (M2 device selection) — one precise
+        // "local track (re)ready" seam, so the local meter always listens to
+        // whatever device is actually live rather than assuming
+        // `localMediaStream`'s first audio track never changes identity
+        // (`switchMicrophone` mutates the stream's tracks in place via
+        // `removeTrack`/`addTrack`, so the *stream* reference is stable but
+        // the *track* underneath it is not).
+        onLocalTrackChanged: (track) => {
+          this.retapLocalLevelMeter(track)
+        },
         onLocalOffer: (sdp) => {
           void this.placeOutgoing(sdp)
         },
@@ -233,6 +401,53 @@ export class CallBridge {
         },
       },
     })
+  }
+
+  /** (Re)start metering the local mic on `track` — used both for the initial
+   * mic and every subsequent {@link switchMicrophone}, via
+   * `onLocalTrackChanged` above. Disposes any previous tap/meter first so a
+   * mid-call switch doesn't leak the old device's analyser. */
+  private retapLocalLevelMeter(track: MediaStreamTrack): void {
+    this.localLevelMeter?.stop()
+    this.localMeterTap?.dispose()
+    const tap = createTrackAnalyser(track)
+    this.localMeterTap = tap
+    this.localLevelMeter = new TrackLevelMeter({
+      analyser: tap.analyser,
+      onLevel: (level) => this.callbacks.onLocalLevel?.(level),
+    })
+    this.localLevelMeter.start()
+  }
+
+  /** Start metering the remote peer's audio the moment its stream arrives. */
+  private startRemoteLevelMeter(stream: MediaStream): void {
+    this.stopRemoteLevelMeter() // defensive: a stream swap isn't expected in M1/M2, but don't leak if it happens
+    const track = stream.getAudioTracks()[0]
+    if (track == null) return
+    const tap = createTrackAnalyser(track)
+    this.remoteMeterTap = tap
+    this.remoteLevelMeter = new TrackLevelMeter({
+      analyser: tap.analyser,
+      onLevel: (level) => this.callbacks.onRemoteLevel?.(level),
+    })
+    this.remoteLevelMeter.start()
+  }
+
+  private stopRemoteLevelMeter(): void {
+    this.remoteLevelMeter?.stop()
+    this.remoteLevelMeter = null
+    this.remoteMeterTap?.dispose()
+    this.remoteMeterTap = null
+  }
+
+  /** Stop and dispose both meters — called once, from the `ended` branch of
+   * the wrapped `onStateChange` above, covering every teardown path. */
+  private stopLevelMeters(): void {
+    this.localLevelMeter?.stop()
+    this.localLevelMeter = null
+    this.localMeterTap?.dispose()
+    this.localMeterTap = null
+    this.stopRemoteLevelMeter()
   }
 
   static outgoing(
@@ -283,6 +498,16 @@ export class CallBridge {
     return this.engine.remoteMediaStream
   }
 
+  /** The local mic's `MediaStream` (M2: lets the runtime read the ACTUAL
+   * in-use device off `getAudioTracks()[0].getSettings().deviceId` to seed
+   * the device picker's initial selection — see `AudioCallEngine.localMediaStream`
+   * for why the *stream* reference stays stable across a `switchMicrophone`
+   * hot-swap while the *track* underneath it doesn't). `null` while an
+   * incoming call is still ringing (mic not yet acquired). */
+  get localStream(): MediaStream | null {
+    return this.engine.localMediaStream
+  }
+
   /** Local mic mute state (see {@link AudioCallEngine.muted}). */
   get muted(): boolean {
     return this.engine.muted
@@ -296,6 +521,22 @@ export class CallBridge {
   /** Flip mute and return the new value. */
   toggleMuted(): boolean {
     return this.engine.toggleMuted()
+  }
+
+  /** The mic `deviceId` currently in use, or `null` if none was ever
+   * explicitly selected (browser default). See {@link switchMicrophone}. */
+  get audioInputDeviceId(): string | null {
+    return this.engine.audioInputDeviceId
+  }
+
+  /**
+   * Hot-switch the outgoing mic mid-call (M2 device selection) — see
+   * `AudioCallEngine.switchMicrophone`. A failure reports
+   * `callbacks.onDeviceSwitchError` and leaves the call/previous mic
+   * untouched; it never ends the call.
+   */
+  async switchMicrophone(deviceId: string): Promise<void> {
+    await this.engine.switchMicrophone(deviceId)
   }
 
   /**

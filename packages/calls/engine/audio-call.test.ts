@@ -1,7 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { AudioCallEngine, type AudioCallOptions, type PeerConnectionLike } from './audio-call.ts';
+import {
+  AudioCallEngine,
+  type AudioCallOptions,
+  type PeerConnectionLike,
+  type RtpSenderLike,
+} from './audio-call.ts';
 import { gatherUntilEnoughIce } from './ice-gathering.ts';
 import type { CallState } from './call-state.ts';
 
@@ -43,6 +48,16 @@ class FakeStream {
   constructor(tracks: FakeTrack[]) {
     this.tracks = tracks;
   }
+  /** Mirrors real `MediaStream.removeTrack` — used by
+   * `AudioCallEngine.switchMicrophone` to drop the old track from the
+   * existing local stream in place. */
+  removeTrack(track: FakeTrack): void {
+    this.tracks = this.tracks.filter((t) => t !== track);
+  }
+  /** Mirrors real `MediaStream.addTrack`. */
+  addTrack(track: FakeTrack): void {
+    this.tracks.push(track);
+  }
   getTracks(): FakeTrack[] {
     return this.tracks;
   }
@@ -55,6 +70,25 @@ function micStream(): FakeStream {
   return new FakeStream([new FakeTrack('audio')]);
 }
 
+/** A controllable fake `RTCRtpSender` — tracks `replaceTrack` calls so tests
+ * can assert the hot-switch actually swapped the outgoing track. Typed
+ * against the ambient `MediaStreamTrack`/`RtpSenderLike` shape (not
+ * `FakeTrack` directly) the same way the rest of this file's fakes are — the
+ * `getUserMedia`/stream boundary is where the `as unknown as` cast to the
+ * ambient WebRTC types happens; a `FakeTrack` instance flows through as a
+ * `MediaStreamTrack` from that point on. */
+class FakeSender implements RtpSenderLike {
+  track: MediaStreamTrack | null;
+  replaceTrackCalls: Array<MediaStreamTrack | null> = [];
+  constructor(track: MediaStreamTrack | null) {
+    this.track = track;
+  }
+  async replaceTrack(track: MediaStreamTrack | null): Promise<void> {
+    this.replaceTrackCalls.push(track);
+    this.track = track;
+  }
+}
+
 /** A controllable fake peer connection satisfying PeerConnectionLike. */
 class FakePc implements PeerConnectionLike {
   connectionState: RTCPeerConnectionState = 'new';
@@ -62,6 +96,7 @@ class FakePc implements PeerConnectionLike {
   remoteDescription: RTCSessionDescriptionInit | null = null;
   closed = false;
   addedTracks: unknown[] = [];
+  senders: FakeSender[] = [];
   configuration: RTCConfiguration;
   private connListeners = new Set<() => void>();
   private trackListeners = new Set<(e: { streams: ReadonlyArray<MediaStream> }) => void>();
@@ -103,7 +138,12 @@ class FakePc implements PeerConnectionLike {
   }
   addTrack(track: MediaStreamTrack): unknown {
     this.addedTracks.push(track);
-    return {};
+    const sender = new FakeSender(track);
+    this.senders.push(sender);
+    return sender;
+  }
+  getSenders(): FakeSender[] {
+    return this.senders;
   }
   close(): void {
     this.closed = true;
@@ -137,6 +177,8 @@ function makeEngine(
     answers: [] as string[],
     remoteStreams: [] as MediaStream[],
     errors: [] as Error[],
+    deviceSwitchErrors: [] as Error[],
+    localTrackChanges: [] as MediaStreamTrack[],
   };
   const pcs: FakePc[] = [];
   const defaultGetUserMedia = async () => micStream() as unknown as MediaStream;
@@ -158,6 +200,8 @@ function makeEngine(
       onLocalAnswer: (sdp) => events.answers.push(sdp),
       onRemoteStream: (s) => events.remoteStreams.push(s),
       onError: (e) => events.errors.push(e),
+      onDeviceSwitchError: (e) => events.deviceSwitchErrors.push(e),
+      onLocalTrackChanged: (t) => events.localTrackChanges.push(t),
     },
   });
   return { engine, events, pcs, lastPc: () => pcs[pcs.length - 1] };
@@ -255,6 +299,133 @@ test('mute intent set before the mic is acquired is applied once it is', async (
   await accepting;
 
   assert.equal(stream.getTracks()[0].enabled, false, 'mute intent applied once the mic arrives');
+});
+
+// ── Device switching (M2) ─────────────────────────────────────────────────────
+
+test('switchMicrophone replaces the sender track via RTCRtpSender.replaceTrack, no renegotiation', async () => {
+  const gumCalls: MediaStreamConstraints[] = [];
+  const { engine, lastPc } = makeEngine({
+    getUserMedia: async (constraints) => {
+      gumCalls.push(constraints);
+      return micStream() as unknown as MediaStream;
+    },
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  pc.fireConnectionState('connected');
+  const originalTrack = pc.senders[0].track;
+  assert.equal(engine.audioInputDeviceId, null, 'no device explicitly selected yet');
+
+  await engine.switchMicrophone('mic-2');
+
+  assert.equal(pc.senders.length, 1, 'no new sender/renegotiation — same sender, track replaced');
+  assert.equal(pc.senders[0].replaceTrackCalls.length, 1);
+  assert.notEqual(pc.senders[0].track, originalTrack, 'sender now carries the new track');
+  assert.equal((originalTrack as unknown as FakeTrack).stopped, true, 'old track stopped');
+  assert.equal(engine.audioInputDeviceId, 'mic-2');
+  const constraints = gumCalls[1].audio;
+  assert.ok(typeof constraints === 'object' && 'deviceId' in constraints);
+  assert.deepEqual((constraints as MediaTrackConstraints).deviceId, { exact: 'mic-2' });
+});
+
+test('onLocalTrackChanged fires on initial mic acquisition and again on a successful switch (re-tap seam for the level meter)', async () => {
+  const { engine, events } = makeEngine();
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  assert.equal(events.localTrackChanges.length, 1, 'fired once for the initial mic');
+
+  await engine.switchMicrophone('mic-2');
+  assert.equal(events.localTrackChanges.length, 2, 'fired again after the hot-switch');
+  assert.notEqual(events.localTrackChanges[0], events.localTrackChanges[1], 'a distinct track object');
+});
+
+test('switchMicrophone preserves mute state across the swap', async () => {
+  const { engine, lastPc } = makeEngine();
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  lastPc().fireConnectionState('connected');
+  engine.setMuted(true);
+
+  await engine.switchMicrophone('mic-2');
+
+  const pc = lastPc();
+  const newTrack = pc.senders[0].track as unknown as FakeTrack;
+  assert.equal(newTrack.enabled, false, 'mute intent carried over to the new track');
+});
+
+test('switchMicrophone failure reports onDeviceSwitchError and leaves the call/old track intact', async () => {
+  let call = 0;
+  const { engine, events, lastPc } = makeEngine({
+    getUserMedia: async () => {
+      call += 1;
+      if (call === 1) return micStream() as unknown as MediaStream; // initial acquire succeeds
+      throw new Error('NotFoundError'); // the switch fails
+    },
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  pc.fireConnectionState('connected');
+  const originalTrack = pc.senders[0].track;
+
+  await engine.switchMicrophone('missing-device');
+
+  assert.equal(events.deviceSwitchErrors.length, 1);
+  assert.match(events.deviceSwitchErrors[0].message, /NotFoundError/);
+  assert.equal(engine.state, 'connected', 'call is NOT torn down by a failed switch');
+  assert.equal(pc.senders[0].track, originalTrack, 'the old track is left flowing, untouched');
+  assert.equal(pc.senders[0].replaceTrackCalls.length, 0, 'replaceTrack never reached');
+});
+
+test('switchMicrophone before a peer connection exists (incoming, still ringing) reports an error, does not throw', async () => {
+  const { engine, events } = makeEngine();
+  engine.receiveCall('OFFER_FROM_PEER');
+  assert.equal(engine.state, 'ringing');
+
+  await engine.switchMicrophone('mic-2'); // must not throw
+
+  assert.equal(events.deviceSwitchErrors.length, 1);
+  assert.equal(engine.state, 'ringing', 'no side effect on call state');
+});
+
+test('switchMicrophone after hang up is a silent no-op', async () => {
+  const { engine, events } = makeEngine();
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  engine.hangup();
+
+  await engine.switchMicrophone('mic-2'); // must not throw, must not resurrect
+
+  assert.equal(engine.state, 'ended');
+  assert.equal(events.deviceSwitchErrors.length, 0, 'ended is a silent no-op, not an error');
+});
+
+test('RACE: switchMicrophone in flight when hang up lands — new stream is stopped, not adopted', async () => {
+  const gum = deferred<MediaStream>();
+  let call = 0;
+  const { engine, lastPc } = makeEngine({
+    getUserMedia: async () => {
+      call += 1;
+      return call === 1 ? (micStream() as unknown as MediaStream) : gum.promise;
+    },
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  const originalTrack = pc.senders[0].track;
+
+  const switching = engine.switchMicrophone('mic-2');
+  engine.hangup(); // torn down while the new getUserMedia is in flight
+  const lateStream = micStream();
+  gum.resolve(lateStream as unknown as MediaStream);
+  await switching;
+
+  assert.equal(engine.state, 'ended');
+  assert.equal(pc.senders[0].track, originalTrack, 'sender untouched — replaceTrack never called');
+  assert.equal(pc.senders[0].replaceTrackCalls.length, 0);
+  assert.equal(lateStream.tracks[0].stopped, true, 'the orphaned new-device stream is stopped');
 });
 
 // ── Race freedom ──────────────────────────────────────────────────────────────

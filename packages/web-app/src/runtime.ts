@@ -12,6 +12,7 @@ import {
   CallBridge,
   defaultMediaFactories,
   fetchIceServers,
+  listInputDevices,
   type CallsRpcClient,
   type CallState,
 } from '@slothfulchat/calls/bridge'
@@ -1644,9 +1645,14 @@ function showWebxdcNotImplementedDialog() {
 // overlay (hangup, mute) — mounted once (`mountCallsUi`) into the main window
 // (docs/calls.md: "Ringing always renders in the main window … can never be
 // popup-blocked"). `CallManager` below owns no DOM itself: it only pushes
-// state into the shared `CallsUiStore` that the mounted React tree observes.
-// The detached popup window + signaling IPC (M4) and richer UI (speaking
-// rings etc., M2+) build on top of this same seam later.
+// state into the shared `CallsUiStore` that the mounted React tree observes —
+// including, as of M2, the `onLocalLevel`/`onRemoteLevel` Web-Audio meter
+// callbacks that drive the per-participant speaking rings in `CallOverlay`,
+// and the mic/camera `DevicePicker` (enumerate once the local stream exists,
+// hot-switch the mic mid-call via `CallBridge.switchMicrophone` ->
+// `RTCRtpSender.replaceTrack` — no renegotiation, see `AudioCallEngine`'s
+// "DEVICE HOT-SWITCHING" doc). The detached popup window + signaling IPC (M4)
+// builds on top of this same seam later.
 
 /** `${accountId}` scoping is implicit (one call at a time in M1). */
 class CallManager {
@@ -1666,7 +1672,16 @@ class CallManager {
     cancelled: boolean
     /** Set when a fatal error is being shown, to keep the UI up. */
     errored: boolean
+    /** M2: guards `refreshDevices` running more than once per call — it's
+     * driven off every `onState` tick (there is no dedicated "local stream
+     * ready" runtime event; the engine-level one, `onLocalTrackChanged`, is
+     * consumed by the bridge's level-meter retap, not surfaced here). */
+    devicesRefreshed: boolean
   } | null = null
+  /** M2: live device-list refresh while a call is up (e.g. a mic/camera is
+   * plugged/unplugged mid-call) — registered in `startOutgoingCall`/
+   * `openIncomingCall`, torn down in `teardown`. */
+  private deviceChangeHandler: (() => void) | null = null
 
   constructor(log: Logger) {
     this.log = log
@@ -1674,6 +1689,8 @@ class CallManager {
       onAccept: () => this.acceptCurrent(),
       onHangup: () => this.hangupCurrent(),
       onToggleMute: () => this.toggleMuteCurrent(),
+      onSelectMicrophone: deviceId => this.selectMicrophone(deviceId),
+      onSelectCamera: deviceId => this.ui.setSelectedCamera(deviceId),
     })
     this.subscribe()
   }
@@ -1727,8 +1744,10 @@ class CallManager {
       bridge: null,
       cancelled: false,
       errored: false,
+      devicesRefreshed: false,
     }
     this.call = slot
+    this.registerDeviceChangeListener(slot)
 
     void (async () => {
       try {
@@ -1745,6 +1764,14 @@ class CallManager {
             // placeOutgoingCall resolves, before any OutgoingCallAccepted can
             // round-trip back), so no onCallMessageId indexing is needed.
             onError: err => this.onError(slot, err),
+            // M2 speaking rings: forward the bridge's Web-Audio meters into
+            // the shared store; CallOverlay's SpeakingRing tiles render them.
+            onLocalLevel: level => this.ui.setLocalLevel(level),
+            onRemoteLevel: level => this.ui.setRemoteLevel(level),
+            // M2 device picker: a failed switchMicrophone leaves the call/old
+            // mic untouched — surface it next to the picker, not as a
+            // call-ending error (contrast onError above).
+            onDeviceSwitchError: err => this.ui.showDeviceSwitchError(err.message || 'Could not switch microphone'),
           }
         )
         slot.bridge = bridge
@@ -1777,8 +1804,10 @@ class CallManager {
       bridge: null,
       cancelled: false,
       errored: false,
+      devicesRefreshed: false,
     }
     this.call = slot
+    this.registerDeviceChangeListener(slot)
 
     void (async () => {
       try {
@@ -1792,6 +1821,9 @@ class CallManager {
             onStateChange: state => this.onState(slot, state),
             onRemoteStream: stream => this.ui.attachRemoteStream(stream),
             onError: err => this.onError(slot, err),
+            onLocalLevel: level => this.ui.setLocalLevel(level),
+            onRemoteLevel: level => this.ui.setRemoteLevel(level),
+            onDeviceSwitchError: err => this.ui.showDeviceSwitchError(err.message || 'Could not switch microphone'),
           }
         )
         slot.bridge = bridge
@@ -1839,6 +1871,16 @@ class CallManager {
   ): void {
     if (this.call !== slot) return
     this.ui.setState(state)
+    // M2 device picker: refresh once the local stream exists — i.e. once we
+    // are past `ringing` for an outgoing call (mic acquired to build the
+    // offer) or reach `connecting` for an incoming one (mic acquired on
+    // accept). `devicesRefreshed` makes this a one-shot per call; a
+    // `devicechange` event (see `registerDeviceChangeListener`) re-enumerates
+    // later without touching the one-shot selected-device seeding below.
+    if (!slot.devicesRefreshed && (state === 'connecting' || state === 'connected')) {
+      slot.devicesRefreshed = true
+      void this.refreshDevices(slot, { seedSelectedMicrophone: true })
+    }
     if (state === 'ended') {
       // The engine also ends autonomously (pc failed/closed, remote CallEnded).
       // Defer so an onError firing synchronously right after end() can flip
@@ -1860,6 +1902,63 @@ class CallManager {
     if (this.call !== slot) return
     this.call = null
     this.ui.clear()
+    this.unregisterDeviceChangeListener()
+  }
+
+  /**
+   * M2 device picker: enumerate mic/camera options and push them into the
+   * store. `seedSelectedMicrophone` additionally reads the ACTUAL device in
+   * use off the local track's `getSettings().deviceId` (real browser default
+   * selection, e.g. "communications" device — not necessarily
+   * `microphones[0]`) so the `<select>` opens pre-selected on the right
+   * option rather than defaulting to the first enumerated entry.
+   */
+  private async refreshDevices(
+    slot: NonNullable<CallManager['call']>,
+    options: { seedSelectedMicrophone: boolean }
+  ): Promise<void> {
+    const devices = await listInputDevices()
+    if (this.call !== slot) return // call ended/replaced while enumerating
+    this.ui.setDevices(devices)
+    if (options.seedSelectedMicrophone) {
+      const activeDeviceId = slot.bridge?.localStream?.getAudioTracks()[0]?.getSettings().deviceId
+      if (activeDeviceId) this.ui.setSelectedMicrophone(activeDeviceId)
+    }
+  }
+
+  /** Hot-switch the mic (M2) — see `AudioCallEngine.switchMicrophone` for the
+   * `RTCRtpSender.replaceTrack` mechanics and failure semantics (the call
+   * keeps running on the old mic; `onDeviceSwitchError` surfaces the error). */
+  private selectMicrophone(deviceId: string): void {
+    const c = this.call
+    if (!c?.bridge) return
+    const bridge = c.bridge
+    void bridge.switchMicrophone(deviceId).then(() => {
+      if (this.call !== c) return // call ended/replaced while switching
+      // A failure leaves `audioInputDeviceId` unchanged (still the old
+      // device); only reflect the pick in the store once it actually took —
+      // the onDeviceSwitchError callback above already surfaced the failure.
+      if (bridge.audioInputDeviceId === deviceId) this.ui.setSelectedMicrophone(deviceId)
+    })
+  }
+
+  /** Re-enumerate on `devicechange` (e.g. a mic/camera plugged/unplugged
+   * mid-call) so the picker's option list stays live, not just a one-shot
+   * snapshot from call start. Does not touch the current selection. */
+  private registerDeviceChangeListener(slot: NonNullable<CallManager['call']>): void {
+    this.unregisterDeviceChangeListener()
+    const handler = () => {
+      void this.refreshDevices(slot, { seedSelectedMicrophone: false })
+    }
+    navigator.mediaDevices.addEventListener('devicechange', handler)
+    this.deviceChangeHandler = () => {
+      navigator.mediaDevices.removeEventListener('devicechange', handler)
+    }
+  }
+
+  private unregisterDeviceChangeListener(): void {
+    this.deviceChangeHandler?.()
+    this.deviceChangeHandler = null
   }
 
   /** Best-effort: label the UI with the chat name. */

@@ -39,6 +39,33 @@ export const subtitle: CSSProperties = {
   color: '#a8a8a8',
 }
 
+/** M2 speaking rings: the row holding the local + remote `SpeakingRing`
+ * tiles. `CallOverlay` is audio-only (no camera video, M3), so this row IS
+ * the participant list, not an overlay atop video frames. */
+export const participantsRow: CSSProperties = {
+  display: 'flex',
+  gap: 24,
+  justifyContent: 'center',
+  margin: '2px 0',
+}
+
+export const participantColumn: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  gap: 6,
+  maxWidth: 110,
+}
+
+export const participantLabel: CSSProperties = {
+  fontSize: 12,
+  color: '#c8c8c8',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  maxWidth: '100%',
+}
+
 export const errorText: CSSProperties = {
   ...subtitle,
   color: '#ff8080',
@@ -64,3 +91,35 @@ export const COLOR_ACCEPT = '#2ea043'
 export const COLOR_DECLINE = '#d13d3d'
 export const COLOR_NEUTRAL = '#333'
 export const COLOR_NEUTRAL_ACTIVE = '#555'
+
+/** M2 device picker (docs/calls.md: "when more than one mic/camera exists,
+ * let the user choose"). One row per kind, each only rendered when
+ * `shouldShowDevicePicker` says so — see `DevicePicker.tsx`. */
+export const deviceRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  width: '100%',
+  fontSize: 13,
+}
+
+export const deviceLabel: CSSProperties = {
+  color: '#a8a8a8',
+  flexShrink: 0,
+}
+
+export const deviceSelect: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  padding: '5px 8px',
+  borderRadius: 6,
+  border: '1px solid #444',
+  background: '#2a2a2a',
+  color: '#eee',
+  fontSize: 13,
+}
+
+export const deviceSwitchError: CSSProperties = {
+  ...errorText,
+  fontSize: 12,
+}

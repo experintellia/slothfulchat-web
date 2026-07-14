@@ -1,6 +1,6 @@
 # Calls (native WebRTC 1:1 audio/video) — our own, better-integrated implementation
 
-Status: **in progress** — M0 (interop spec + `packages/calls` scaffold + un-gate patch) and M1 (audio call happy path — outgoing + incoming, hangup, mute) landed; M2–M5 pending. The real two-way-audio gate against a live client / `chatmail/calls-echobot` is verified by CI/human, not in the headless build sandbox. · Branch: `claude/calls-impl-m0-9t3ote`
+Status: **in progress** — M0 (interop spec + scaffold + un-gate patch), M1 (audio call happy path), and M2 (mic/camera device selection + hot-switching, avatar speaking-rings) landed; M3–M5 pending. Calls stay audio-only until M3 (the camera picker records a preference only for now). The real two-way-audio gate against a live Delta Chat client / `chatmail/calls-echobot` is verified by CI/human, not in the headless build sandbox. · Branch: `claude/calls-impl-m0-9t3ote`
 
 ## What & why
 

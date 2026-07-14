@@ -15,7 +15,7 @@
  * `mount.tsx`) trivially unit-testable and reusable from a future popup
  * window (M4) with no changes.
  */
-import type { CallDirection, CallState } from '../engine/index.ts'
+import type { CallDeviceInfo, CallDirection, CallState } from '../engine/index.ts'
 
 /** Callbacks the mounted UI invokes on user action; supplied by whatever owns
  * the active call (the runtime's call manager). */
@@ -26,6 +26,13 @@ export interface CallsUiCallbacks {
   onHangup(): void
   /** Toggle local mic mute. */
   onToggleMute(): void
+  /** M2 device picker: the user picked a different mic — hot-switches
+   * mid-call via `AudioCallEngine.switchMicrophone`/`replaceTrack`. */
+  onSelectMicrophone(deviceId: string): void
+  /** M2 device picker: the user picked a different camera. Recorded as a
+   * preference; M2 is still audio-only, so there is no live video track to
+   * hot-switch yet (that lands with video calling in M3). */
+  onSelectCamera(deviceId: string): void
 }
 
 /** What the UI renders. `active: false` means nothing is mounted-visible
@@ -46,6 +53,28 @@ export type CallUiSnapshot =
        * level, but the UI stays up (with a Close button) so the message is
        * readable instead of just vanishing. */
       error: string | null
+      /** Smoothed 0..1 voice level for the local mic (M2 speaking rings),
+       * from the bridge's `onLocalLevel`. 0 until the local stream exists
+       * (an incoming call still ringing has no mic yet). */
+      localLevel: number
+      /** Smoothed 0..1 voice level for the remote peer, from `onRemoteLevel`.
+       * 0 until `remoteStream` arrives. */
+      remoteLevel: number
+      /** M2 device picker options — only populated once enumeration
+       * resolves (needs a `getUserMedia` grant for real labels; the runtime
+       * enumerates right after the local stream is acquired). Empty until
+       * then, which `DevicePicker` treats the same as "nothing to pick from". */
+      microphones: CallDeviceInfo[]
+      cameras: CallDeviceInfo[]
+      /** Currently-selected mic/camera `deviceId`, or `null` before any
+       * explicit selection (browser default in use). */
+      selectedMicrophoneId: string | null
+      selectedCameraId: string | null
+      /** Set if the last `switchMicrophone` hot-switch failed
+       * (`AudioCallEngine`'s `onDeviceSwitchError`) — the call keeps running
+       * on the previous mic; this is surfaced inline next to the picker, not
+       * as the call-ending `error` above. */
+      deviceSwitchError: string | null
     }
 
 const INACTIVE_SNAPSHOT: CallUiSnapshot = { active: false }
@@ -78,6 +107,13 @@ export class CallsUiStore {
       muted: false,
       remoteStream: null,
       error: null,
+      localLevel: 0,
+      remoteLevel: 0,
+      microphones: [],
+      cameras: [],
+      selectedMicrophoneId: null,
+      selectedCameraId: null,
+      deviceSwitchError: null,
     }
     this.notify()
   }
@@ -110,6 +146,57 @@ export class CallsUiStore {
   attachRemoteStream(stream: MediaStream): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, remoteStream: stream }
+    this.notify()
+  }
+
+  /** Mirror of `bridge`'s `onLocalLevel` (M2 speaking rings) — smoothed 0..1
+   * local mic level, ~10x/sec once the local stream exists. A no-op once the
+   * call is no longer active, same guard as every other setter here (a stray
+   * late tick from a meter mid-teardown must not resurrect a cleared snapshot). */
+  setLocalLevel(level: number): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, localLevel: level }
+    this.notify()
+  }
+
+  /** Mirror of `bridge`'s `onRemoteLevel` — smoothed 0..1 remote-peer level. */
+  setRemoteLevel(level: number): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, remoteLevel: level }
+    this.notify()
+  }
+
+  /** M2 device picker: replace the enumerated mic/camera lists (e.g. once
+   * enumeration resolves, or on a `devicechange` event mid-call). */
+  setDevices(devices: { microphones: CallDeviceInfo[]; cameras: CallDeviceInfo[] }): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, microphones: devices.microphones, cameras: devices.cameras }
+    this.notify()
+  }
+
+  /** Mirror of `bridge.audioInputDeviceId`/`engine.audioInputDeviceId` after
+   * a successful `switchMicrophone` (or the initial selection). Also clears
+   * any stale `deviceSwitchError` — a successful switch supersedes it. */
+  setSelectedMicrophone(deviceId: string): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, selectedMicrophoneId: deviceId, deviceSwitchError: null }
+    this.notify()
+  }
+
+  /** The user's camera preference (M2 picker; no live track to switch until
+   * M3's video calling lands — see `CallsUiCallbacks.onSelectCamera`). */
+  setSelectedCamera(deviceId: string): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, selectedCameraId: deviceId }
+    this.notify()
+  }
+
+  /** `AudioCallEngine`'s `onDeviceSwitchError` — a `switchMicrophone` call
+   * failed; the previous mic keeps flowing untouched (contrast `showError`,
+   * which is call-ending). */
+  showDeviceSwitchError(message: string): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, deviceSwitchError: message }
     this.notify()
   }
 

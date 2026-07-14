@@ -29,6 +29,24 @@
  *
  * After `ended` the instance is spent; create a new one for the next call.
  *
+ * ── DEVICE HOT-SWITCHING (M2) ─────────────────────────────────────────────────
+ *
+ * {@link AudioCallEngine.switchMicrophone} lets the caller swap the outgoing
+ * mic mid-call: it acquires a fresh `getUserMedia` stream constrained to the
+ * requested `deviceId`, then calls `RTCRtpSender.replaceTrack` on the existing
+ * audio sender — the peer's SDP/m-line is untouched, so this needs NO
+ * renegotiation (no new offer/answer round-trip over DeltaChat messaging,
+ * which per docs/calls.md is the whole point: renegotiating would mean
+ * another slow store-and-forward message exchange mid-call). It follows the
+ * same epoch-guard discipline as placeCall/accept, but a failure here does
+ * NOT end the call — the previous track keeps flowing untouched; only
+ * `callbacks.onDeviceSwitchError` fires, so a device going away mid-call
+ * degrades to "still on the old mic" rather than dropping the call.
+ * `callbacks.onLocalTrackChanged` fires on both the initial mic acquisition
+ * AND every successful switch, so a consumer that taps the local track (e.g.
+ * the M2 speaking-ring level meter) has one precise seam to re-tap on rather
+ * than assuming `localMediaStream`'s first audio track never changes identity.
+ *
  * ── RACE FREEDOM ──────────────────────────────────────────────────────────────
  *
  * Teardown ({@link AudioCallEngine.end}) can land at ANY await boundary of the
@@ -63,6 +81,16 @@ import {
 } from './call-state.ts';
 
 /**
+ * The subset of `RTCRtpSender` {@link AudioCallEngine.switchMicrophone} needs.
+ * A real `RTCRtpSender` (as returned by `RTCPeerConnection.getSenders()`) is
+ * structurally assignable to this, and so is a test fake.
+ */
+export interface RtpSenderLike {
+  readonly track: MediaStreamTrack | null;
+  replaceTrack(track: MediaStreamTrack | null): Promise<void>;
+}
+
+/**
  * The subset of `RTCPeerConnection` the engine drives. A real
  * `RTCPeerConnection` is structurally assignable to this, and so is a test
  * fake. Extends {@link GatheringPeerConnection} so the same object satisfies the
@@ -76,6 +104,7 @@ export interface PeerConnectionLike extends GatheringPeerConnection {
   setLocalDescription(description?: RTCLocalSessionDescriptionInit): Promise<void>;
   setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void>;
   addTrack(track: MediaStreamTrack, ...streams: MediaStream[]): unknown;
+  getSenders(): RtpSenderLike[];
   close(): void;
   // Overloads are NOT inherited/merged across `extends`: a subtype's
   // addEventListener must be assignable to the base's, so we must restate the
@@ -118,10 +147,30 @@ export interface AudioCallCallbacks {
   onLocalAnswer?(sdp: string): void;
   /** The remote audio stream became available (attach to an `<audio>` element in the UI). */
   onRemoteStream?(stream: MediaStream): void;
+  /**
+   * The outgoing local audio track was replaced — either the very first mic
+   * acquisition (placeCall/accept) or a successful {@link
+   * AudioCallEngine.switchMicrophone}. Consumers that tap the local track
+   * (e.g. the M2 speaking-ring level meter, which hangs a Web-Audio analyser
+   * off whatever track it first saw) must re-tap on this event rather than
+   * assuming `localMediaStream`'s first audio track never changes identity —
+   * `switchMicrophone` mutates the stream in place via
+   * `removeTrack`/`addTrack`, so the *stream* reference is stable but the
+   * *track* underneath it is not.
+   */
+  onLocalTrackChanged?(track: MediaStreamTrack): void;
   /** Mirror of the state machine, for convenience (same as `subscribe`). */
   onStateChange?: CallStateListener;
   /** A fatal error tore the call down; the engine is already `ended`. */
   onError?(error: Error): void;
+  /**
+   * {@link AudioCallEngine.switchMicrophone} failed (e.g. the device was
+   * unplugged, or permission was revoked). The call is NOT torn down — the
+   * previous mic track keeps flowing untouched; the UI should surface this as
+   * a toast/inline error next to the device picker, not as a call-ending
+   * error (contrast {@link onError}).
+   */
+  onDeviceSwitchError?(error: Error): void;
 }
 
 export interface AudioCallOptions {
@@ -140,6 +189,13 @@ export interface AudioCallOptions {
   gatherOptions?: GatherOptions;
   /** Audio track constraints. Default: `true` (default mic). */
   audioConstraints?: MediaTrackConstraints | boolean;
+  /**
+   * Preferred microphone `deviceId` (from {@link CallDeviceInfo}), applied to
+   * the very first `getUserMedia` call (placeCall/accept) as `{ deviceId: {
+   * exact } }`. Mid-call changes go through {@link AudioCallEngine.switchMicrophone}
+   * instead — this only seeds the initial acquisition.
+   */
+  audioInputDeviceId?: string;
 }
 
 type ConnectionListener = () => void;
@@ -153,6 +209,10 @@ export class AudioCallEngine {
   private readonly gather: (pc: GatheringPeerConnection, options?: GatherOptions) => Promise<void>;
   private readonly gatherOptions: GatherOptions | undefined;
   private readonly audioConstraints: MediaTrackConstraints | boolean;
+  /** Current mic selection; `null` until an explicit `switchMicrophone` or an
+   * `audioInputDeviceId` constructor option. Read by {@link mediaConstraints}
+   * and exposed via {@link audioInputDeviceId} for the UI to pre-select. */
+  private selectedAudioInputDeviceId: string | null = null;
 
   private direction: CallDirection | null = null;
   private pc: PeerConnectionLike | null = null;
@@ -184,6 +244,7 @@ export class AudioCallEngine {
     this.gather = options.gather ?? gatherUntilEnoughIce;
     this.gatherOptions = options.gatherOptions;
     this.audioConstraints = options.audioConstraints ?? true;
+    this.selectedAudioInputDeviceId = options.audioInputDeviceId ?? null;
     if (this.callbacks.onStateChange) {
       this.machine.subscribe(this.callbacks.onStateChange);
     }
@@ -210,6 +271,13 @@ export class AudioCallEngine {
   /** Whether the local mic is currently muted (see {@link setMuted}). */
   get muted(): boolean {
     return this.mutedState;
+  }
+
+  /** The mic `deviceId` currently in use, or `null` if none was ever
+   * explicitly selected (browser default). Set via the constructor's
+   * `audioInputDeviceId` or a successful {@link switchMicrophone}. */
+  get audioInputDeviceId(): string | null {
+    return this.selectedAudioInputDeviceId;
   }
 
   /**
@@ -266,6 +334,7 @@ export class AudioCallEngine {
       }
       this.localStream = stream;
       this.applyMutedToLocalStream();
+      this.notifyLocalTrackChanged(stream);
 
       const pc = this.createPeerConnection(epoch);
       // Attach the gather listeners BEFORE setLocalDescription so no candidate
@@ -366,6 +435,7 @@ export class AudioCallEngine {
       }
       this.localStream = stream;
       this.applyMutedToLocalStream();
+      this.notifyLocalTrackChanged(stream);
 
       const pc = this.createPeerConnection(epoch);
       const gathered = this.gather(pc, this.gatherOptionsWithSignal());
@@ -388,6 +458,106 @@ export class AudioCallEngine {
     } catch (error) {
       this.fail(epoch, error);
     }
+  }
+
+  // ── Device switching (M2) ────────────────────────────────────────────────────
+
+  /**
+   * Hot-switch the outgoing mic to `deviceId` without renegotiating: acquires
+   * a fresh `getUserMedia` stream constrained to that device, then
+   * `RTCRtpSender.replaceTrack`s it onto the existing audio sender. Requires
+   * an active peer connection (i.e. not while an incoming call is still
+   * `ringing` — the mic/pc don't exist yet at that point, same precondition
+   * as {@link setMuted} in spirit but this one DOES need a pc to hold a
+   * sender). Safe to call from `connecting` or `connected`; a no-op if the
+   * call has already ended (mirrors the other public methods' epoch checks).
+   *
+   * On failure (device gone, permission revoked, etc.) the call is left
+   * exactly as it was — the previous track keeps flowing — and
+   * `callbacks.onDeviceSwitchError` fires instead of tearing anything down;
+   * see the class doc's "DEVICE HOT-SWITCHING" section for the rationale.
+   */
+  async switchMicrophone(deviceId: string): Promise<void> {
+    const epoch = this.epoch;
+    if (epoch == null || this.machine.isTerminal) return; // ended: silent no-op
+    const pc = this.pc;
+    if (pc == null) {
+      this.reportDeviceSwitchError(
+        new Error('switchMicrophone: no active peer connection yet')
+      );
+      return;
+    }
+
+    let newStream: MediaStream;
+    try {
+      newStream = await this.factories.getUserMedia({
+        audio: this.audioConstraintsFor(deviceId),
+        video: false,
+      });
+    } catch (error) {
+      this.reportDeviceSwitchError(error);
+      return;
+    }
+    if (!this.ensureActive(epoch)) {
+      this.stopStream(newStream); // call ended while getUserMedia was in flight
+      return;
+    }
+
+    const newTrack = newStream.getAudioTracks()[0];
+    if (newTrack == null) {
+      this.stopStream(newStream);
+      this.reportDeviceSwitchError(
+        new Error('switchMicrophone: the new stream had no audio track')
+      );
+      return;
+    }
+    newTrack.enabled = !this.mutedState; // preserve mute intent across the swap
+
+    try {
+      const sender = pc.getSenders().find((s) => s.track != null && s.track.kind === 'audio');
+      if (sender == null) {
+        throw new Error('switchMicrophone: no audio sender to replace');
+      }
+      await sender.replaceTrack(newTrack);
+    } catch (error) {
+      this.stopStream(newStream);
+      this.reportDeviceSwitchError(error);
+      return;
+    }
+    if (!this.ensureActive(epoch)) {
+      // Torn down during replaceTrack: the pc is already closed (which stops
+      // the outgoing track anyway), just release the stream we just made.
+      this.stopStream(newStream);
+      return;
+    }
+
+    // Swap the track within the existing MediaStream so localMediaStream
+    // (and anything holding a reference to it) reflects the new device.
+    const oldStream = this.localStream;
+    if (oldStream != null) {
+      for (const oldTrack of oldStream.getAudioTracks()) {
+        oldStream.removeTrack(oldTrack);
+        oldTrack.stop();
+      }
+      oldStream.addTrack(newTrack);
+    } else {
+      this.localStream = newStream;
+    }
+    this.selectedAudioInputDeviceId = deviceId;
+    this.callbacks.onLocalTrackChanged?.(newTrack);
+  }
+
+  /** Fire {@link AudioCallCallbacks.onLocalTrackChanged} for `stream`'s first
+   * audio track, if any (a fresh `getUserMedia({ audio: true, video: false })`
+   * stream always has exactly one). */
+  private notifyLocalTrackChanged(stream: MediaStream): void {
+    const track = stream.getAudioTracks()[0];
+    if (track != null) this.callbacks.onLocalTrackChanged?.(track);
+  }
+
+  private reportDeviceSwitchError(error: unknown): void {
+    const normalized = error instanceof Error ? error : new Error(String(error));
+    this.callbacks.onDeviceSwitchError?.(normalized);
   }
 
   // ── Teardown ──────────────────────────────────────────────────────────────
@@ -418,7 +588,14 @@ export class AudioCallEngine {
   // ── Internals ───────────────────────────────────────────────────────────────
 
   private mediaConstraints(): MediaStreamConstraints {
-    return { audio: this.audioConstraints, video: false };
+    return { audio: this.audioConstraintsFor(this.selectedAudioInputDeviceId), video: false };
+  }
+
+  /** Merge a preferred `deviceId` (if any) into the base audio constraints. */
+  private audioConstraintsFor(deviceId: string | null): MediaTrackConstraints | boolean {
+    if (deviceId == null) return this.audioConstraints;
+    const base = typeof this.audioConstraints === 'object' ? this.audioConstraints : {};
+    return { ...base, deviceId: { exact: deviceId } };
   }
 
   private beginEpoch(): object {

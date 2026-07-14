@@ -7,10 +7,12 @@ reimplement instead of embedding the upstream webapp, the interop constraints,
 the windowing model, and the milestone plan) and
 [`engine/INTEROP.md`](engine/INTEROP.md) for the exact wire-format spec.
 
-**Status:** M1 — audio call, happy path (outgoing + incoming, hangup, mute).
-`packages/web-app/src/runtime.ts` implements the call hooks, subscribes to the
-core's call events, and mounts the `ui/` tree. No video, no device pickers
-(M2/M3), no detached popup window (M4).
+**Status:** M1 (audio call, happy path) done; M2 in progress — per-track
+Web-Audio level metering and glowing per-participant speaking rings
+(`engine/level-meter.ts`, `ui/SpeakingRing.tsx`), and mic/camera device
+enumeration + a picker with mid-call mic hot-switching
+(`engine/devices.ts`, `AudioCallEngine.switchMicrophone`, `ui/DevicePicker.tsx`)
+are landed. No video (M3), no detached popup window (M4).
 
 ## Layout — an enforced split, not just a folder convention
 
@@ -21,8 +23,10 @@ engine/   pure TS, ZERO React/DOM imports — the WebRTC state machine,
           or a detached popup.
 ui/       React — incoming-ring dialog (IncomingCallRing), in-page call
           overlay with hangup + mute (CallOverlay), switched by CallsRoot off
-          the observable CallsUiStore. Device pickers/speaking rings (M2) and
-          video (M3) land later without changing this shape.
+          the observable CallsUiStore. M2 adds per-participant speaking rings
+          (SpeakingRing, driven by the bridge's Web-Audio meters) and a
+          mic/camera DevicePicker (only shown when a kind has >1 device);
+          video (M3) lands the same way without changing this shape.
 bridge/   thin glue — connects engine/ to the typed jsonrpc client
           (rpc.placeOutgoingCall/acceptIncomingCall/endCall/iceServers/
           callInfo) and the popup<->opener signaling relay.
