@@ -75,22 +75,28 @@ incoming-call events are *already in our code* (`packages/web-app`), so the whol
 call experience can be **our own React tree mounted by the runtime** — no frontend
 patch for any call UI. Layers:
 
-1. **`packages/calls-engine`** (framework-agnostic TS, unit-testable, no DOM):
-   the WebRTC state machine — `getUserMedia`/`getDisplayMedia`, `RTCPeerConnection`,
-   non-trickle ICE gathering, offer/answer (de)serialization in the
-   `calls-webapp`-compatible format, `replaceTrack` for camera↔screen, device
-   enumeration, and per-track audio-level metering (Web Audio `AnalyserNode`) for
-   the speaking rings. Location-agnostic so it runs in an overlay *or* a popup.
-2. **React call UI** (in the same package, or `packages/calls-ui`): ring/incoming
-   dialog, in-call window (video tiles, avatar speaking-rings, mute/camera/screen
-   controls, device pickers, hangup, relay-connection indicator). Styled to fit
-   the app; consumes the engine's observable call state.
-3. **`packages/web-app/src/runtime.ts`** (ours): implement `startOutgoingVideoCall`
+**One package, `packages/calls`**, with an enforced internal split (engine imports
+no React/DOM — unit-testable; split into two packages later only if a second
+consumer ever appears — YAGNI):
+
+1. **`engine/`** (framework-agnostic TS, no DOM/React): the WebRTC state machine —
+   `getUserMedia`/`getDisplayMedia`, `RTCPeerConnection`, non-trickle ICE gathering,
+   offer/answer (de)serialization in the `calls-webapp`-compatible format,
+   `replaceTrack` for camera↔screen, device enumeration, and per-track audio-level
+   metering (Web Audio `AnalyserNode`) for the speaking rings. Location-agnostic so
+   it runs in an overlay *or* a popup.
+2. **`ui/`** (React): ring/incoming dialog, in-call window (video tiles, avatar
+   speaking-rings, mute/camera/screen controls, device pickers, hangup,
+   relay-connection indicator). Styled to fit the app; consumes the engine's
+   observable call state.
+3. **`bridge/`** (thin glue re-exported for the web-app runtime) — connects the
+   engine to the typed jsonrpc client and the popup⇄opener signaling relay.
+4. **`packages/web-app/src/runtime.ts`** (ours): implement `startOutgoingVideoCall`
    / `openIncomingVideoCallWindow`; subscribe to the call events on the existing
    in-page emitter; mount the ring overlay + call window; bridge the engine to the
    typed jsonrpc client (`rpc.placeOutgoingCall`/`acceptIncomingCall`/`endCall`/
    `iceServers`/`callInfo`).
-4. **One `patches/desktop/00NN` patch** (thin): un-gate the `ChatView.tsx` call
+5. **One `patches/desktop/00NN` patch** (thin): un-gate the `ChatView.tsx` call
    button for `target === 'browser'`; optionally the `Message.tsx` accept/redial
    buttons so call history renders in the chat log. Nothing else upstream.
 
@@ -155,10 +161,19 @@ overlay fallback; no core-access breakage.
   Confirm `ice_servers()` returns hostnames the *browser* resolves (our WASM DNS
   is stubbed); host-side resolution is the only likely core-side snag.
 - Settings: expose `WhoCanCallMe`; overridable ICE/relay config.
-- Relay UX (**needs a follow-up decision with the user**): a "connected via relay"
-  indicator when the active candidate pair is `relay`; whether to *prompt before*
-  relaying (privacy — media metadata transits `turn.delta.chat` / the relay) or
-  fall back silently. Left open per your note.
+- Relay UX (**recommended; policy call to confirm**): **silent automatic ICE
+  fallback** is the default — no mid-call prompt (interrupting ringing is bad UX
+  and can't yield an informed choice). Rationale: relay is actually *more* private
+  toward the peer (it never sees your IP), and since the TURN server is your own
+  chatmail relay — which already terminates your IMAP/SMTP and knows your IP — it
+  leaks essentially nothing new; only the shared `turn.delta.chat` fallback is a
+  marginally new operator. The meaningful control is a **pre-set posture, not a
+  per-call ask**: a `WhoCanCallMe`-adjacent setting **"Hide my IP from contacts
+  during calls (always relay)"** → `iceTransportPolicy: 'relay'` (off by default
+  for quality; on for anonymity — mirrors upstream desktop forcing relay-only).
+  Plus a **non-blocking live indicator** of direct-vs-relay so power users can see
+  what happened. Forcing relay-only still interoperates (it only narrows our
+  candidate set).
 - Privacy docs (`README`, generated `privacy.html`): disclose STUN/TURN origins and
   relay routing.
 - Content-free call analytics in `packages/web-app/src/analytics.ts` (matching the
@@ -168,8 +183,8 @@ overlay fallback; no core-access breakage.
 
 ## Files to touch
 
-- **New** `packages/calls-engine/` (+ optionally `packages/calls-ui/`) — engine +
-  React components (ours).
+- **New** `packages/calls/` — one package, internal `engine/` (pure TS) + `ui/`
+  (React) + `bridge/` glue (ours).
 - `packages/web-app/src/runtime.ts` — implement the two hooks, subscribe to call
   events, mount ring/call UI, bridge to jsonrpc (replace stubs ~L648–653).
 - `packages/web-app/` build/CSP/`Permissions-Policy`; `src/analytics.ts` events.
@@ -197,8 +212,9 @@ overlay fallback; no core-access breakage.
 - **Interop format** — must match `calls-webapp`'s on-wire payload exactly, or real
   DC clients can't be called. Nailed down in M0 from source.
 - **Frontier churn** — upstream calls unreleased at our pin; keep the seam patch thin.
-- **Relay privacy UX** — deferred, needs a decision (prompt-before-relay vs. silent);
-  configurable regardless.
+- **Relay privacy UX** — recommended: silent ICE fallback + a "always relay / hide
+  IP from contacts" setting + a direct-vs-relay indicator (no mid-call prompt). A
+  privacy-policy call to confirm; configurable regardless. See M5.
 - **Popup ⇄ core IPC** — reason overlay is default; popup is enhancement (M4).
 - **`ice_servers()` on WASM** — verify it returns hostnames (browser resolves) not
   host-side DNS.
