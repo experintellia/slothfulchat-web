@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Tue, 14 Jul 2026 12:25:58 +0000
+Subject: [PATCH 47/47] web-app: un-gate the call button in ChatView for the
+ browser runtime
+
+Calls now have a home (packages/calls) and a runtime bridge
+(packages/web-app/src/runtime.ts), so the browser target should get the
+same call-button entry point as electron. Message.tsx's CallIconButton
+already has no target gate (it just disables itself while the runtime
+hooks are stubbed), so no change is needed there.
+---
+ packages/frontend/src/components/ChatView/ChatView.tsx | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
+index 19fbda5c2..2e08871ad 100644
+--- a/packages/frontend/src/components/ChatView/ChatView.tsx
++++ b/packages/frontend/src/components/ChatView/ChatView.tsx
+@@ -321,9 +321,11 @@ function ChatNavButtons({
+           <Icon coloring='navbar' icon='map' size={18} />
+         </Button>
+       )}
+-      {/* Calls are only implemented on Electron; Tauri and Browser
+-        runtimes do not implement `startOutgoingVideoCall`. */}
+-      {runtime.getRuntimeInfo().target === 'electron' &&
++      {/* Calls are implemented on Electron and our Browser runtime (see
++        packages/calls + packages/web-app/src/runtime.ts); Tauri does not
++        implement `startOutgoingVideoCall`. */}
++      {(runtime.getRuntimeInfo().target === 'electron' ||
++        runtime.getRuntimeInfo().target === 'browser') &&
+         chat.canSend &&
+         chat.isEncrypted &&
+         // Core only allows placing calls in chats of type "single"

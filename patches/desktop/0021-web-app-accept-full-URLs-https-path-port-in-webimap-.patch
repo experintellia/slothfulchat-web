@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 9 Jul 2026 20:55:05 +0000
-Subject: [PATCH 21/42] web-app: accept full URLs (https, path, port) in
+Subject: [PATCH 21/47] web-app: accept full URLs (https, path, port) in
  webimap host input
 
 Parse the pasted value as a URL and take only its host[:port] before

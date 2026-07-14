@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Sun, 12 Jul 2026 12:00:00 +0000
-Subject: [PATCH 46/46] web-app: chat export analytics event
+Subject: [PATCH 46/47] web-app: chat export analytics event
 
 Fire a 'chat_export' analytics event when a chat is successfully
 exported (via window.__slothfulTrack). The 'custom_range' property
@@ -11,12 +11,15 @@ disabled.
 
 .../components/dialogs/ExportChatToHtml.tsx               | 8 ++++++++
  1 file changed, 8 insertions(+)
+---
+ .../frontend/src/components/dialogs/ExportChatToHtml.tsx  | 8 ++++++++
+ 1 file changed, 8 insertions(+)
 
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-index da4e27a51..f11d8a5d9 100644
+index da4e27a51..20af835b4 100644
 --- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-@@ -119,6 +119,14 @@ export default function ExportChatToHtml({ chat, onClose }: Props) {
+@@ -83,6 +83,14 @@ export default function ExportChatToHtml({ chat, onClose }: Props) {
        () => cancelled.current
      )
        .then(filename => {

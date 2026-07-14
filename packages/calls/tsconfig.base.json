@@ -1,0 +1,23 @@
+{
+  // Shared by every packages/calls/*/tsconfig.json. Each subfolder overrides
+  // "lib"/"jsx" to enforce the engine/ui/bridge split (see engine/tsconfig.json
+  // for the enforcement rationale) rather than sharing one flat config.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    // engine/ui/bridge import each other with explicit ".ts"/".tsx" specifiers
+    // (not just for tsc's sake — Node's built-in type-stripping test runner,
+    // which has no bundler in front of it, requires the extension too).
+    "allowImportingTsExtensions": true,
+    // Reject TS syntax that only "erases" on paper (parameter properties,
+    // enums, namespaces, etc.) — anything Node's `node --test *.test.ts`
+    // (strip-only type stripping, no transform step) can't actually run. Catches
+    // e.g. `constructor(private x: T) {}` at typecheck time instead of at
+    // `node --test` runtime.
+    "erasableSyntaxOnly": true
+  }
+}

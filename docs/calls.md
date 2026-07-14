@@ -1,6 +1,6 @@
 # Calls (native WebRTC 1:1 audio/video) — our own, better-integrated implementation
 
-Status: **planned** (design only; no code yet) · Branch: `claude/plan-adding-calls-p1gxfp`
+Status: **in progress** — M0 landed (interop spec + `packages/calls` scaffold + un-gate patch); M1–M5 pending. · Branch: `claude/calls-impl-m0-9t3ote`
 
 ## What & why
 
@@ -41,8 +41,12 @@ users — which would defeat the purpose. Concretely:
   arrives or a timeout fires, *then* place the offer / send the answer. (An extra
   data channel can promote more candidates after connect — optional, later.)
 - The payload our engine puts in `place_call_info` / `accept_call_info` must match
-  what `calls-webapp` expects (base64-encoded; exact structure = raw SDP vs.
-  JSON-wrapped needs confirming from `calls-webapp` source — **M0 research task**).
+  what `calls-webapp` expects. **M0 finding (verified against upstream source):** it
+  is the **raw SDP string** — not base64, not JSON-wrapped, not url-encoded.
+  `calls-webapp` passes `localDescription.sdp` straight to `startCall`/`acceptCall`
+  and re-wraps received payloads as `{type, sdp}` itself; core stores/re-emits it
+  verbatim. (The base64+url-encode from the webapp README is a *separate* boundary —
+  the client↔webapp URL hash — which we do not use. See `packages/calls/engine/INTEROP.md`.)
 - Test against a real DeltaChat client and [`chatmail/calls-echobot`](https://github.com/chatmail/calls-echobot).
 
 ## What already exists (verified against our pins)

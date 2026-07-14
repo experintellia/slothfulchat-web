@@ -60,6 +60,17 @@ jobs:
       - name: Unit-test instance-config (parsePublicBridges etc.)
         run: node --test packages/web-app/instance-config.test.mjs
 
+      # packages/calls engine/ (docs/calls.md M0): dependency-free too — Node's
+      # built-in type-stripping test runner needs no pnpm install, only
+      # "erasable" TS syntax (see packages/calls/tsconfig.base.json).
+      - name: Unit-test packages/calls engine (interop serializer, ICE gathering)
+        run: node --test packages/calls/engine/*.test.ts
+
+      # Enforces docs/calls.md's "engine/ imports NO React/DOM": no react
+      # import, no .tsx file, no reaching into ../ui or ../bridge.
+      - name: Check packages/calls engine/ import boundary
+        run: node scripts/check-calls-engine-boundary.mjs
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -164,6 +175,13 @@ jobs:
 
       - name: Install workspace deps
         run: pnpm install
+
+      # packages/calls (docs/calls.md M0): per-subfolder typecheck now that
+      # real @types/node / @types/react / react are installed — engine/'s
+      # narrower tsconfig (no "jsx", see engine/tsconfig.json) is what actually
+      # enforces the type-level half of the React/DOM import boundary.
+      - name: Typecheck packages/calls (engine/ui/bridge)
+        run: pnpm --filter @slothfulchat/calls build
 
       # Playwright chromium for the headless smoke suites (--with-deps pulls the
       # runner's shared libs). Uses the pinned playwright from the lockfile.

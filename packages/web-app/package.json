@@ -13,6 +13,7 @@
     "test": "node ../../scripts/smoke-web-app.mjs"
   },
   "dependencies": {
+    "@slothfulchat/calls": "workspace:*",
     "@slothfulchat/core-wasm": "workspace:*"
   },
   "devDependencies": {

@@ -1,0 +1,18 @@
+{
+  // engine/ is the framework-agnostic WebRTC state machine (docs/calls.md:
+  // "pure TS, ZERO React/DOM imports, unit-testable"). That is an *import*
+  // boundary, not a ban on WebRTC *types* — RTCPeerConnection, MediaStream,
+  // RTCConfiguration etc. are ambient globals from the "DOM" lib with zero
+  // import statements attached, so "lib": ["ES2022", "DOM"] is required here
+  // and does not violate the invariant. What DOES violate it:
+  //   - "jsx" is deliberately omitted — engine/ has no business with JSX.
+  //   - importing 'react'/'react-dom', or reaching into ../ui or ../bridge —
+  //     enforced at the import level by ../../../scripts/check-calls-engine-boundary.mjs
+  //     (a type-level lib restriction can't catch that; it's about specifiers,
+  //     not types).
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["."]
+}
