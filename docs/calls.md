@@ -1,34 +1,49 @@
-# Calls (native WebRTC 1:1 audio/video)
+# Calls (native WebRTC 1:1 audio/video) — our own, better-integrated implementation
 
 Status: **planned** (design only; no code yet) · Branch: `claude/plan-adding-calls-p1gxfp`
 
 ## What & why
 
-Delta Chat gained a **native 1:1 WebRTC calls** feature (place/accept/end call,
-ringing, SDP offer/answer relayed as encrypted DeltaChat messages). Our pinned
-core already ships it and the desktop frontend already renders the UI — it is
-simply **gated off** for the browser target. This doc plans turning it on for
-slothfulchat-web.
+Delta Chat has a native 1:1 WebRTC calls feature: place/accept/end call with
+ringing, where the SDP offer/answer travel as encrypted DeltaChat messages. Our
+pinned core already ships the signaling API and events; the desktop frontend
+already renders the entry-point UI but **gates it to `target === 'electron'`**,
+and our `runtime.ts` stubs the hooks.
 
-Note: the old `DESCOPED.md` line ("Video calls — open call URL in new tab, low
-effort") describes the *retired* video-chat-instance-URL feature and is stale.
-The current feature is real peer-to-peer WebRTC, so the work and the shape are
-different (and larger) than that line implies.
+Rather than bundle the upstream [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)
+in an iframe, **we reimplement the call surface ourselves** — a small WebRTC
+engine plus our own React UI — because we want a call experience that is
+tighter, nicer, and extensible beyond what the drop-in webapp offers:
 
-## Why this is tractable in the browser
+- **Input-device selection**: when more than one mic/camera exists, let the user
+  choose (and switch mid-call).
+- **Speaking indicators**: a glowing ring around each participant avatar that
+  reacts to their voice level (Discord/Jitsi style) — nice-looking *and* a
+  troubleshooting aid ("are they even transmitting?").
+- **Screen sharing**: `getDisplayMedia()` that **takes over the outgoing camera
+  track** (via `RTCRtpSender.replaceTrack`), so the remote sees it as the normal
+  video track and every existing peer implementation just works.
 
-The **media path is native browser WebRTC** — `getUserMedia` +
-`RTCPeerConnection` run in [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)
-(plain web JS), so **no WASM is involved** in the call itself. **Signaling** (the
-SDP offer/answer) rides through the core as ordinary encrypted DeltaChat messages
-over our existing IMAP/SMTP-over-WS transport, which already works. "Adding calls"
-is therefore a **runtime-bridge + asset-bundling + frontend-ungate + CSP** job,
-not a core-WASM porting job.
+The old `DESCOPED.md` "open a video-chat URL in a tab" line is retired — that was
+a different, dead feature.
 
-Caveat: this is a **frontier feature** — upstream desktop calls
-([deltachat-desktop#5447](https://github.com/deltachat/deltachat-desktop/issues/5447))
-were unreleased/experimental as of our pin, so expect API churn; treat it as
-prototype-grade like the rest of the repo.
+Caveat: this is a **frontier feature** (upstream desktop calls,
+[deltachat-desktop#5447](https://github.com/deltachat/deltachat-desktop/issues/5447),
+were still experimental at our pin) — prototype-grade, like the rest of the repo.
+
+## Interoperability (a hard constraint)
+
+Because we reimplement our own peer, we **must stay wire-compatible** with real
+Delta Chat clients (Android/desktop run `calls-webapp`), or we can't call actual
+users — which would defeat the purpose. Concretely:
+
+- Signaling is **non-trickle**: gather ICE candidates until a relay candidate
+  arrives or a timeout fires, *then* place the offer / send the answer. (An extra
+  data channel can promote more candidates after connect — optional, later.)
+- The payload our engine puts in `place_call_info` / `accept_call_info` must match
+  what `calls-webapp` expects (base64-encoded; exact structure = raw SDP vs.
+  JSON-wrapped needs confirming from `calls-webapp` source — **M0 research task**).
+- Test against a real DeltaChat client and [`chatmail/calls-echobot`](https://github.com/chatmail/calls-echobot).
 
 ## What already exists (verified against our pins)
 
@@ -37,147 +52,164 @@ Core `@deltachat/jsonrpc-client@2.53.0` / `chatmail/core` `v2.53.0`:
 - Methods: `place_outgoing_call(accountId, chatId, place_call_info /*SDP offer*/, has_video) -> msgId`,
   `accept_incoming_call(accountId, msgId, accept_call_info /*SDP answer*/)`,
   `end_call(accountId, msgId)`, `call_info(accountId, msgId)`,
-  `ice_servers(accountId) -> string` (JSON ICE list, ships a working default:
-  STUN `nine.testrun.org:3478` + TURN `turn.delta.chat:3478`, public creds).
+  `ice_servers(accountId) -> string` (JSON ICE list — already returns a **chatmail
+  relay's TURN** plus a STUN default, so relay fallback needs no extra infra).
 - Events: `IncomingCall{ msgId, chatId, place_call_info, has_video }`,
   `OutgoingCallAccepted{ msgId, chatId, accept_call_info }`,
   `IncomingCallAccepted{ msgId, chatId, from_this_device }`,
   `CallEnded{ msgId, chatId }`.
+- Config `WhoCanCallMe` (privacy — who may ring you).
 
-Frontend `vendor/deltachat-desktop` @ `1b90817`:
+Frontend `vendor/deltachat-desktop` @ `1b90817`: `runtime.ts` declares the two
+call hooks; `ChatView.tsx` shows the call button only for `target === 'electron'`;
+`Message.tsx` renders call info-messages with accept/redial buttons wired to those
+hooks. Our `packages/web-app/src/runtime.ts` stubs both (~L648–653). Electron's
+`packages/target-electron/src/windows/video-call.ts` (+ `startHandlingIncomingVideoCalls`)
+is a structural reference for the signaling bridge, though we don't reuse its UI.
 
-- `runtime.ts` declares `startOutgoingVideoCall(accountId, chatId, { startWithCameraEnabled })`
-  and `openIncomingVideoCallWindow({ accountId, chatId, callMessageId, callerWebrtcOffer, startWithCameraEnabled })`.
-- `ChatView.tsx` shows the call button only when
-  `runtime.getRuntimeInfo().target === 'electron'`.
-- `Message.tsx` renders call info-messages with accept/redial buttons wired to
-  those two runtime hooks.
+## Architecture — where the code lives (answers "package or patches?")
 
-Our `packages/web-app/src/runtime.ts` stubs both hooks
-(`log.critical('Method not implemented.')`, ~L648–653).
+**A new package holds everything reusable; a single thin desktop patch only
+un-gates the entry points.** This works because the call hooks and the
+incoming-call events are *already in our code* (`packages/web-app`), so the whole
+call experience can be **our own React tree mounted by the runtime** — no frontend
+patch for any call UI. Layers:
 
-Reference implementation to port: electron's
-`packages/target-electron/src/windows/video-call.ts` (+ `startHandlingIncomingVideoCalls`
-in `ipc.ts`) — bundles the `calls-webapp`, exposes a `window.calls` bridge
-(`startCall`/`acceptCall`/`endCall`/`getIceServers`/`getAvatar`), passes the
-incoming offer via URL hash, and bridges to `rpc.placeOutgoingCall` /
-`acceptIncomingCall` / `endCall` / `iceServers`; subscribes to `IncomingCall`.
+1. **`packages/calls-engine`** (framework-agnostic TS, unit-testable, no DOM):
+   the WebRTC state machine — `getUserMedia`/`getDisplayMedia`, `RTCPeerConnection`,
+   non-trickle ICE gathering, offer/answer (de)serialization in the
+   `calls-webapp`-compatible format, `replaceTrack` for camera↔screen, device
+   enumeration, and per-track audio-level metering (Web Audio `AnalyserNode`) for
+   the speaking rings. Location-agnostic so it runs in an overlay *or* a popup.
+2. **React call UI** (in the same package, or `packages/calls-ui`): ring/incoming
+   dialog, in-call window (video tiles, avatar speaking-rings, mute/camera/screen
+   controls, device pickers, hangup, relay-connection indicator). Styled to fit
+   the app; consumes the engine's observable call state.
+3. **`packages/web-app/src/runtime.ts`** (ours): implement `startOutgoingVideoCall`
+   / `openIncomingVideoCallWindow`; subscribe to the call events on the existing
+   in-page emitter; mount the ring overlay + call window; bridge the engine to the
+   typed jsonrpc client (`rpc.placeOutgoingCall`/`acceptIncomingCall`/`endCall`/
+   `iceServers`/`callInfo`).
+4. **One `patches/desktop/00NN` patch** (thin): un-gate the `ChatView.tsx` call
+   button for `target === 'browser'`; optionally the `Message.tsx` accept/redial
+   buttons so call history renders in the chat log. Nothing else upstream.
 
-## Call flow to reproduce
+## Windowing model (answers the ringing/popup question)
 
-1. **Outgoing**: call button → `startOutgoingVideoCall` → open webapp (camera/mic)
-   → webapp emits SDP **offer** → `rpc.placeOutgoingCall(offer)` → core sends
-   offer message. On `OutgoingCallAccepted{accept_call_info}` → feed **answer** to
-   webapp → ICE via `rpc.iceServers()` → media connects.
-2. **Incoming**: `IncomingCall{place_call_info=offer, has_video}` → ring UI / open
-   webapp with offer → accept → webapp emits **answer** → `rpc.acceptIncomingCall(answer)`
-   → core sends answer. `IncomingCallAccepted` dismisses the ring on other devices.
-3. **End**: either side → `rpc.endCall` / `CallEnded` → tear down webapp + media.
+- **Ringing always renders in the main window** as an in-app popup/modal overlay
+  (mounted by the runtime), so it can never be popup-blocked and is reliable on
+  mobile PWAs.
+- **The active call prefers a detached popup window** (`window.open`, same origin,
+  hosting the engine + our call UI). If `window.open` returns `null`
+  (popup-blocked) or the window can't be established, **fall back to an in-page
+  overlay** in the main window — same engine, same components, different mount
+  point.
+- Popup ⇄ core: the core Worker is owned by the main tab and can't be shared
+  (dedicated-worker/OPFS constraint), so a popup runs media + `RTCPeerConnection`
+  locally and relays *signaling only* to the opener via `postMessage`/
+  `BroadcastChannel`; the opener forwards to the core. This IPC seam is the reason
+  the **overlay is the safe default** and the popup is a progressive enhancement.
 
-## Recommended approach
+## The call flow
 
-Host the `calls-webapp` **same-origin in a sandboxed
-`<iframe allow="camera; microphone">` overlay** inside the PWA (not a popup —
-popups are blocked on mobile PWAs and break the single-window install model).
-Bridge it to the core via the typed `jsonrpc-client` we already own
-(`WasmTransport`) using `postMessage`/`MessageChannel`. Keep new logic in **our**
-package plus one thin desktop patch; **no core patch expected**.
+1. **Outgoing**: call button → `startOutgoingVideoCall` → engine acquires mic
+   (audio-first) → gathers ICE (relay-or-timeout) → SDP **offer** →
+   `rpc.placeOutgoingCall(offer)`. On `OutgoingCallAccepted{accept_call_info}` →
+   feed **answer** into the engine → connected.
+2. **Incoming**: `IncomingCall{place_call_info, has_video}` → ring overlay in main
+   window → accept → engine builds **answer** → `rpc.acceptIncomingCall(answer)`.
+   `IncomingCallAccepted{from_this_device}` dismisses the ring elsewhere.
+3. **End**: either side → `rpc.endCall` / `CallEnded` → engine tears down media +
+   peer connection; UI closes.
 
-## Milestones (each a stop/go checkpoint)
+## Milestones (audio-first, each a stop/go checkpoint)
 
-**M0 — vendor the calls-webapp + doc correction.** Add `deltachat/calls-webapp`
-as a build input (submodule under `vendor/`, or a pinned prebuilt-asset dep —
-choose by build weight & license); confirm license composes with our GPL-3.0 whole
-and add it to the README license table. Wire its built assets into
-`packages/web-app` static output under e.g. `/calls-webapp/`. Update
-`DESCOPED.md`/`PLAN.md` (retire the stale "open URL in tab" line).
+**M0 — engine skeleton + interop research + un-gate.** Scaffold `calls-engine`;
+confirm the exact `calls-webapp` payload format from its source and encode a
+matching (de)serializer; thin patch to un-gate the call button for `browser`;
+update `DESCOPED.md`/`PLAN.md`.
 
-**M1 — outgoing call, happy path.** Implement `startOutgoingVideoCall` in
-`packages/web-app/src/runtime.ts`: mount the iframe overlay, establish the
-`window.calls` bridge (`getIceServers`→`rpc.iceServers`; `getAvatar`→chat avatar
-via existing blob/`transformBlobURL` path; `startCall(offer)`→`rpc.placeOutgoingCall`),
-subscribe to `OutgoingCallAccepted` to return the answer, `endCall`→`rpc.endCall`
-+ `CallEnded` teardown. Thin `patches/desktop` patch un-gating the `ChatView.tsx`
-call button for `target === 'browser'`.
-**Verify:** call the browser from a second real client (`chatmail/calls-echobot`
-for automation, or Android/desktop for a human check); media connects.
+**M1 — audio call, happy path (outgoing + incoming).** Full audio-only 1:1: place,
+ring, accept, connect, hang up, via the runtime bridge + in-page overlay UI. ICE
+from `rpc.iceServers`. **Verify** against a real DeltaChat client and
+`calls-echobot`: two-way audio connects and tears down cleanly.
 
-**M2 — incoming call.** Browser equivalent of `startHandlingIncomingVideoCalls`:
-subscribe to `IncomingCall` on the shared event stream, surface a ring (in-app
-modal + `Notification` when backgrounded); on accept open the iframe with the offer
-and wire `acceptCall(answer)`→`rpc.acceptIncomingCall`. Un-gate `Message.tsx`
-accept/redial for `browser` in the same patch; handle `IncomingCallAccepted`
-(dismiss ring) and `CallEnded`.
-**Verify:** second client calls the browser; ring shows, accept connects;
-decline/hangup tears down both ends.
+**M2 — device selection + speaking rings.** Enumerate mics/cameras, picker UI,
+hot-switch mid-call via `replaceTrack`; Web-Audio level meters driving avatar rings
+(local + remote). **Verify**: switching input devices works mid-call; rings track
+who's talking.
 
-**M3 — CSP, permissions, privacy, settings.**
-- **CSP**: the strict single-origin CSP must gain what WebRTC needs —
-  `connect-src` entries for the STUN/TURN hosts from `ice_servers()`
-  (`*.testrun.org`, `turn.delta.chat`; browsers gate ICE via `connect-src`),
-  `frame-src 'self'` for the iframe, and `Permissions-Policy` / iframe `allow`
-  for `camera; microphone`. Verify `ice_servers()` returns **hostnames** the
-  browser resolves (our WASM DNS is stubbed); if it resolves host-side, that is
-  the one place a small shim/patch may be needed.
-- **Settings**: expose core's `WhoCanCallMe` privacy config in the web-app UI.
-- **Privacy docs**: update README "Privacy & data protection" + generated
-  `privacy.html` — calls add STUN/TURN origins and relay media through
-  `turn.delta.chat`; disclose it and make ICE config overridable where reasonable.
-- **Analytics**: add content-free call events to `packages/web-app/src/analytics.ts`,
-  matching the existing closed `EVENTS` policy.
-**Verify:** call works with no CSP violations; PWA still installable; privacy page
-regenerates cleanly.
+**M3 — video + screen share.** Add camera video (`has_video`) and
+`getDisplayMedia()` that replaces the outgoing video track (camera↔screen toggle),
+remote-compatible. **Verify** with a real client: video both ways; screen share
+appears as normal video to the peer; toggling back to camera works.
 
-**M4 — polish & automation.** Ringtone/vibration, in-call controls, busy/timeout/
-missed states via `call_info`, mobile-viewport layout (reuse the full-screen-dialog
-patch approach, `0020`/`0031`). Playwright smoke based on upstream
-`packages/e2e-tests`: drive an outgoing call against a local echo/second core,
-assert `placeOutgoingCall` fires and an `RTCPeerConnection` reaches `connected`.
-Log patch count + findings in `FINDINGS.md`.
+**M4 — detached popup window** with overlay fallback + signaling IPC bridge; recover
+gracefully from popup-block. **Verify**: call in popup; block popups → seamless
+overlay fallback; no core-access breakage.
+
+**M5 — CSP, permissions, privacy, settings, polish.**
+- CSP: add `connect-src` for the STUN/TURN hosts from `ice_servers()` (browsers
+  gate ICE via `connect-src`); `Permissions-Policy` / element `allow` for
+  `camera; microphone; display-capture`. (No `frame-src` needed — no iframe.)
+  Confirm `ice_servers()` returns hostnames the *browser* resolves (our WASM DNS
+  is stubbed); host-side resolution is the only likely core-side snag.
+- Settings: expose `WhoCanCallMe`; overridable ICE/relay config.
+- Relay UX (**needs a follow-up decision with the user**): a "connected via relay"
+  indicator when the active candidate pair is `relay`; whether to *prompt before*
+  relaying (privacy — media metadata transits `turn.delta.chat` / the relay) or
+  fall back silently. Left open per your note.
+- Privacy docs (`README`, generated `privacy.html`): disclose STUN/TURN origins and
+  relay routing.
+- Content-free call analytics in `packages/web-app/src/analytics.ts` (matching the
+  closed `EVENTS` policy). Ringtone/vibration, missed/busy/timeout via `call_info`,
+  mobile layout. Playwright smoke: drive an outgoing call, assert
+  `RTCPeerConnection` reaches `connected`. Log patch count + findings in `FINDINGS.md`.
 
 ## Files to touch
 
-- `packages/web-app/src/runtime.ts` — implement both hooks + incoming-call
-  subscription + iframe/bridge host (replace the two stubs at ~L648–653).
-- `packages/web-app/` build config + static assets — bundle/serve `calls-webapp`;
-  CSP + `Permissions-Policy` additions.
-- `packages/web-app/src/analytics.ts` — call events.
-- New `patches/desktop/00NN-*.patch` — un-gate call UI (`ChatView.tsx`,
-  `Message.tsx`) for `target === 'browser'`; optional `WhoCanCallMe` settings entry.
-- `vendor/` + `.gitmodules` (or `package.json`) — vendor `calls-webapp`.
-- `DESCOPED.md`, `PLAN.md`, `README.md`, `FINDINGS.md`, privacy-page generator — docs.
-- Core patch: **not expected**; contingency only if `ice_servers()` or call
-  messaging hits the WASM DNS/net stubs at runtime (surfaces at M1/M3 verify).
+- **New** `packages/calls-engine/` (+ optionally `packages/calls-ui/`) — engine +
+  React components (ours).
+- `packages/web-app/src/runtime.ts` — implement the two hooks, subscribe to call
+  events, mount ring/call UI, bridge to jsonrpc (replace stubs ~L648–653).
+- `packages/web-app/` build/CSP/`Permissions-Policy`; `src/analytics.ts` events.
+- **One** `patches/desktop/00NN-*.patch` — un-gate `ChatView.tsx` (+ optional
+  `Message.tsx`) for `browser`.
+- `DESCOPED.md`, `PLAN.md`, `README.md`, `FINDINGS.md`, privacy generator — docs.
+- Core patch: **not expected** (contingency only if `ice_servers()`/call messaging
+  hits the WASM DNS/net stubs — surfaces at M1/M5 verify).
 
 ## Reuse (don't reinvent)
 
-- Typed client + `WasmTransport` in `packages/core-wasm` — call
-  `rpc.placeOutgoingCall/acceptIncomingCall/endCall/iceServers/callInfo` directly.
+- Typed client + `WasmTransport` in `packages/core-wasm` — call the call RPCs
+  directly.
 - Existing in-page event emitter in `runtime.ts` (the `/ws/backend` replacement) —
-  subscribe the `IncomingCall`/`*Accepted`/`CallEnded` handlers there.
-- Existing blob/avatar path (`transformBlobURL`, memfs+SW route) for `getAvatar()`.
+  subscribe `IncomingCall`/`OutgoingCallAccepted`/`IncomingCallAccepted`/`CallEnded`.
+- Existing blob/avatar path (`transformBlobURL`, memfs+SW) for avatars in call UI.
 - Existing camera-permission priming in `runtime.ts` (QR-reader `getUserMedia`,
   ~L1345) as the gesture/permission model.
-- `chatmail/calls-echobot` as an automated far-end for tests.
-- Electron `windows/video-call.ts` as the structural template.
+- `chatmail/calls-echobot` as an automated far-end; `calls-webapp` **source** as
+  the interop spec (payload format, ICE timing) — read it, don't ship it.
+- Electron `windows/video-call.ts` as a signaling-bridge reference.
 
 ## Risks / open questions
 
-- **Frontier churn**: desktop calls unreleased at our pin → API/UX may shift; keep
-  the patch thin and prototype-scoped.
-- **TURN reliability**: default `turn.delta.chat` public creds have quotas;
-  NAT-restricted networks *require* relay. Make ICE config overridable; document limits.
-- **CSP widening** conflicts with the repo's "single extra origin" privacy stance —
-  needs an explicit, documented decision (M3).
-- **`ice_servers()` on WASM**: confirm it returns unresolved hostnames (browser
-  resolves) vs. host-side DNS (stubbed) — the only likely core-side snag.
-- **Signaling latency**: offer/answer travel as DeltaChat messages; ring/connect
-  latency is inherent to DC — set UX expectations (timeouts, "calling…").
+- **Interop format** — must match `calls-webapp`'s on-wire payload exactly, or real
+  DC clients can't be called. Nailed down in M0 from source.
+- **Frontier churn** — upstream calls unreleased at our pin; keep the seam patch thin.
+- **Relay privacy UX** — deferred, needs a decision (prompt-before-relay vs. silent);
+  configurable regardless.
+- **Popup ⇄ core IPC** — reason overlay is default; popup is enhancement (M4).
+- **`ice_servers()` on WASM** — verify it returns hostnames (browser resolves) not
+  host-side DNS.
+- **CSP widening** vs. the repo's single-origin privacy stance — documented decision (M5).
+- **Signaling latency** — offer/answer ride DeltaChat messages; ring/connect delay is
+  inherent to DC; set UX expectations (timeouts, "calling…").
 
 ## Verification (end to end)
 
-Real second client (Android/desktop DeltaChat or `calls-echobot`): outgoing
-connects, incoming rings + accepts, hangup tears down both ends, no CSP errors,
-PWA still installable, privacy page regenerates. Playwright smoke asserts
-`RTCPeerConnection` reaches `connected`. Record patch count + findings in
-`FINDINGS.md`.
+Real second client (Android/desktop DeltaChat or `calls-echobot`): audio then video
+connect both ways, device switching + speaking rings work, screen share shows as
+video to the peer, hangup tears down both ends, popup-block falls back to overlay, no
+CSP errors, PWA still installable, privacy page regenerates. Playwright smoke asserts
+`RTCPeerConnection` reaches `connected`. Record patch count + findings in `FINDINGS.md`.
