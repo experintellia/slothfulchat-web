@@ -69,6 +69,17 @@ export interface GatherOptions {
   /** Injectable timers for deterministic tests. Default: global set/clear. */
   setTimeoutFn?: (cb: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
+  /**
+   * Optional abort. When it fires, gathering resolves immediately and every
+   * candidate/state listener is detached. Without this, a caller that tears the
+   * call down while parked at `await gatherUntilEnoughIce(pc)` would wait
+   * forever: a closed `pc` emits no further `icecandidate` /
+   * `icegatheringstatechange` events and never reaches `iceGatheringState ===
+   * "complete"`, so none of the racers below would ever settle — leaking this
+   * promise and the (closed) `pc` it closes over. The engine wires this to its
+   * teardown (see audio-call.ts).
+   */
+  signal?: AbortSignal;
 }
 
 /** True if any configured ICE server has a `turn:`/`turns:` URL. */
@@ -154,6 +165,21 @@ export function gatherUntilEnoughIce(
       new Promise<void>((resolve) => {
         const handle = setTimeoutFn(resolve, options.overallTimeoutMs!);
         cleanups.push(() => clearTimeoutFn(handle));
+      })
+    );
+  }
+
+  const signal = options.signal;
+  if (signal != undefined) {
+    racers.push(
+      new Promise<void>((resolve) => {
+        if (signal.aborted) {
+          resolve();
+          return;
+        }
+        const onAbort = () => resolve();
+        signal.addEventListener('abort', onAbort);
+        cleanups.push(() => signal.removeEventListener('abort', onAbort));
       })
     );
   }

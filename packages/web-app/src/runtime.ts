@@ -8,6 +8,14 @@
  * (upstream file untouched). bundle.js stays byte-identical to upstream.
  */
 import { startCore, type Core, type BaseDeltaChat } from '@slothfulchat/core-wasm'
+import {
+  CallBridge,
+  defaultMediaFactories,
+  fetchIceServers,
+  type CallsRpcClient,
+  type CallState,
+} from '@slothfulchat/calls/bridge'
+import { CallsUiStore, mountCallsUi } from '@slothfulchat/calls/ui'
 import * as perf from './perf'
 import * as analytics from './analytics'
 import * as session from './session'
@@ -627,7 +635,18 @@ class BrowserRuntime {
   createDeltaChatConnection(
     _callCounterFunction: (label: string) => void
   ): BaseDeltaChat<any> {
-    return getCore().dc
+    const dc = getCore().dc
+    // Bring the call manager up as soon as the connection exists so it is
+    // subscribed to IncomingCall on the in-page emitter and can ring for
+    // incoming calls without the user having opened any call UI first. Guarded:
+    // a fault in the (prototype) call subsystem must never break the core
+    // connection the whole app depends on.
+    try {
+      getCallManager(this.log)
+    } catch (err) {
+      this.log.error('failed to initialize call manager', err)
+    }
+    return dc
   }
 
   openMessageHTML(): void {
@@ -645,11 +664,34 @@ class BrowserRuntime {
   notifyWebxdcInstanceDeleted(): void {
     this.log.critical('Method not implemented.')
   }
-  startOutgoingVideoCall(): void {
-    this.log.critical('Method not implemented.')
+  /**
+   * Place an outgoing 1:1 call (audio-only for M1; `startWithCameraEnabled` is
+   * accepted for signature-compatibility with the frontend/electron but video
+   * is deferred to M3). The whole call — mic acquisition, non-trickle ICE,
+   * offer, ringing, connect, hangup — is conducted by the call manager against
+   * the wasm core's jsonrpc client. Runs inside the call-button click gesture,
+   * so the mic-permission prompt is allowed.
+   */
+  startOutgoingVideoCall(
+    accountId: number,
+    chatId: number,
+    _param?: { startWithCameraEnabled: boolean }
+  ): void {
+    getCallManager(this.log).startOutgoingCall(accountId, chatId)
   }
-  async openIncomingVideoCallWindow() {
-    throw new Error('Method not implemented.')
+  /**
+   * Show the incoming-call ring and, on accept, answer the call. Called both
+   * from the IncomingCall event subscription and from the chat log's
+   * accept/redial buttons (Message.tsx). Audio-only for M1.
+   */
+  async openIncomingVideoCallWindow(params: {
+    accountId: number
+    chatId: number
+    callMessageId: number
+    callerWebrtcOffer: string
+    startWithCameraEnabled: boolean
+  }): Promise<void> {
+    getCallManager(this.log).openIncomingCall(params)
   }
   async saveBackgroundImage(
     _file: string,
@@ -1592,6 +1634,250 @@ function showWebxdcNotImplementedDialog() {
   }
   document.body.appendChild(overlay)
   overlay.showModal()
+}
+
+// --- Native 1:1 calls (audio, M1) ------------------------------------------
+// The runtime side of packages/calls: subscribe to the core's call events on
+// the in-page emitter (getCore().dc), and drive the engine (via the bridge)
+// against the typed jsonrpc client. Ringing + in-call UI is our own React
+// tree from packages/calls/ui — the incoming-ring dialog and the in-page call
+// overlay (hangup, mute) — mounted once (`mountCallsUi`) into the main window
+// (docs/calls.md: "Ringing always renders in the main window … can never be
+// popup-blocked"). `CallManager` below owns no DOM itself: it only pushes
+// state into the shared `CallsUiStore` that the mounted React tree observes.
+// The detached popup window + signaling IPC (M4) and richer UI (speaking
+// rings etc., M2+) build on top of this same seam later.
+
+/** `${accountId}` scoping is implicit (one call at a time in M1). */
+class CallManager {
+  private readonly log: Logger
+  private readonly factories = defaultMediaFactories()
+  /** The single shared call-UI store; the React tree mounted by
+   * `mountCallsUi` observes it and re-renders on every push below. */
+  private readonly ui = new CallsUiStore()
+  private get rpc(): CallsRpcClient {
+    // The real generated RawClient is structurally a CallsRpcClient.
+    return getCore().dc.rpc as unknown as CallsRpcClient
+  }
+  /** The single active call (M1: one at a time). */
+  private call: {
+    accountId: number
+    bridge: CallBridge | null
+    cancelled: boolean
+    /** Set when a fatal error is being shown, to keep the UI up. */
+    errored: boolean
+  } | null = null
+
+  constructor(log: Logger) {
+    this.log = log
+    mountCallsUi(this.ui, {
+      onAccept: () => this.acceptCurrent(),
+      onHangup: () => this.hangupCurrent(),
+      onToggleMute: () => this.toggleMuteCurrent(),
+    })
+    this.subscribe()
+  }
+
+  private subscribe(): void {
+    const dc = getCore().dc
+    dc.on('IncomingCall', (accountId, event) => {
+      this.log.info('IncomingCall', accountId, event.msg_id)
+      this.openIncomingCall({
+        accountId,
+        chatId: event.chat_id,
+        callMessageId: event.msg_id,
+        callerWebrtcOffer: event.place_call_info,
+        startWithCameraEnabled: event.has_video,
+      })
+    })
+    dc.on('OutgoingCallAccepted', (accountId, event) => {
+      this.log.info('OutgoingCallAccepted', accountId, event.msg_id)
+      this.forCall(accountId, event.msg_id)?.provideAnswer(event.accept_call_info)
+    })
+    dc.on('IncomingCallAccepted', (accountId, event) => {
+      this.log.info('IncomingCallAccepted', accountId, event.msg_id, event.from_this_device)
+      // Accepted on ANOTHER device while still ringing here → stop our ring.
+      if (event.from_this_device) return
+      const bridge = this.forCall(accountId, event.msg_id)
+      if (bridge && bridge.state === 'ringing') bridge.acceptedElsewhere()
+    })
+    dc.on('CallEnded', (accountId, event) => {
+      this.log.info('CallEnded', accountId, event.msg_id)
+      this.forCall(accountId, event.msg_id)?.remoteEnded()
+    })
+  }
+
+  /** The active bridge iff it matches this (account, message) — else null. */
+  private forCall(accountId: number, msgId: number): CallBridge | null {
+    const c = this.call
+    if (c && c.bridge && c.accountId === accountId && c.bridge.callMessageId === msgId) {
+      return c.bridge
+    }
+    return null
+  }
+
+  startOutgoingCall(accountId: number, chatId: number): void {
+    if (this.call) {
+      this.log.warn('startOutgoingCall: already in a call, ignoring')
+      return
+    }
+    this.ui.showCall({ direction: 'outgoing', title: 'Call' })
+    const slot: NonNullable<CallManager['call']> = {
+      accountId,
+      bridge: null,
+      cancelled: false,
+      errored: false,
+    }
+    this.call = slot
+
+    void (async () => {
+      try {
+        const iceServers = await fetchIceServers(this.rpc, accountId)
+        if (slot.cancelled) return
+        const bridge = CallBridge.outgoing(
+          this.rpc,
+          { accountId, chatId, hasVideo: false, iceServers },
+          this.factories,
+          {
+            onStateChange: state => this.onState(slot, state),
+            onRemoteStream: stream => this.ui.attachRemoteStream(stream),
+            // Event routing reads bridge.callMessageId directly (set the moment
+            // placeOutgoingCall resolves, before any OutgoingCallAccepted can
+            // round-trip back), so no onCallMessageId indexing is needed.
+            onError: err => this.onError(slot, err),
+          }
+        )
+        slot.bridge = bridge
+        void this.decorateTitle(accountId, chatId) // fire-and-forget (cosmetic)
+        await bridge.start()
+      } catch (err) {
+        this.log.error('startOutgoingCall failed', err)
+        this.onError(slot, err instanceof Error ? err : new Error(String(err)))
+      }
+    })()
+  }
+
+  openIncomingCall(params: {
+    accountId: number
+    chatId: number
+    callMessageId: number
+    callerWebrtcOffer: string
+    startWithCameraEnabled: boolean
+  }): void {
+    const { accountId, chatId, callMessageId, callerWebrtcOffer } = params
+    // Same call already showing (event + Message.tsx button both call in).
+    if (this.forCall(accountId, callMessageId)) return
+    if (this.call) {
+      this.log.warn('openIncomingCall: already in a call, ignoring incoming')
+      return
+    }
+    this.ui.showCall({ direction: 'incoming', title: 'Call' })
+    const slot: NonNullable<CallManager['call']> = {
+      accountId,
+      bridge: null,
+      cancelled: false,
+      errored: false,
+    }
+    this.call = slot
+
+    void (async () => {
+      try {
+        const iceServers = await fetchIceServers(this.rpc, accountId)
+        if (slot.cancelled) return
+        const bridge = CallBridge.incoming(
+          this.rpc,
+          { accountId, chatId, callMessageId, offerSdp: callerWebrtcOffer, iceServers },
+          this.factories,
+          {
+            onStateChange: state => this.onState(slot, state),
+            onRemoteStream: stream => this.ui.attachRemoteStream(stream),
+            onError: err => this.onError(slot, err),
+          }
+        )
+        slot.bridge = bridge
+        void this.decorateTitle(accountId, chatId) // fire-and-forget (cosmetic)
+        await bridge.start()
+      } catch (err) {
+        this.log.error('openIncomingCall failed', err)
+        this.onError(slot, err instanceof Error ? err : new Error(String(err)))
+      }
+    })()
+  }
+
+  private acceptCurrent(): void {
+    const c = this.call
+    if (!c?.bridge) return
+    c.bridge.accept().catch(err => {
+      this.log.error('accept failed', err)
+      this.onError(c, err instanceof Error ? err : new Error(String(err)))
+    })
+  }
+
+  private hangupCurrent(): void {
+    const c = this.call
+    if (!c) return
+    // Tell the far end + tear down the engine (idempotent). If the bridge does
+    // not exist yet (hung up during ICE fetch), mark the async setup cancelled.
+    if (c.bridge) c.bridge.hangup()
+    else c.cancelled = true
+    // Always drop the UI now — do not wait on the engine's 'ended' emit, which
+    // is a no-op if the engine already ended (error Close button, double tap).
+    this.teardown(c)
+  }
+
+  /** Mute is a local-only `track.enabled` toggle on the engine, so it needs
+   * no core RPC — see `AudioCallEngine.setMuted`. */
+  private toggleMuteCurrent(): void {
+    const c = this.call
+    if (!c?.bridge) return
+    this.ui.setMuted(c.bridge.toggleMuted())
+  }
+
+  private onState(
+    slot: NonNullable<CallManager['call']>,
+    state: CallState
+  ): void {
+    if (this.call !== slot) return
+    this.ui.setState(state)
+    if (state === 'ended') {
+      // The engine also ends autonomously (pc failed/closed, remote CallEnded).
+      // Defer so an onError firing synchronously right after end() can flip
+      // `errored` first and keep the UI up with its error + Close button.
+      queueMicrotask(() => {
+        if (this.call === slot && !slot.errored) this.teardown(slot)
+      })
+    }
+  }
+
+  private onError(slot: NonNullable<CallManager['call']>, error: Error): void {
+    if (this.call !== slot) return
+    slot.errored = true
+    this.ui.showError(error.message || 'Call failed')
+    // UI stays up (with a Close button → hangupCurrent → teardown).
+  }
+
+  private teardown(slot: NonNullable<CallManager['call']>): void {
+    if (this.call !== slot) return
+    this.call = null
+    this.ui.clear()
+  }
+
+  /** Best-effort: label the UI with the chat name. */
+  private async decorateTitle(accountId: number, chatId: number): Promise<void> {
+    try {
+      const chat = await getCore().dc.rpc.getBasicChatInfo(accountId, chatId)
+      if (chat?.name) this.ui.setTitle(chat.name)
+    } catch {
+      /* keep the generic title */
+    }
+  }
+}
+
+let callManager: CallManager | null = null
+/** Lazily create the single call manager (subscribes to call events on first use). */
+function getCallManager(log: Logger): CallManager {
+  if (!callManager) callManager = new CallManager(log)
+  return callManager
 }
 
 function hideBridgeToast() {

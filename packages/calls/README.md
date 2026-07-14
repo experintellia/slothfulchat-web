@@ -7,8 +7,10 @@ reimplement instead of embedding the upstream webapp, the interop constraints,
 the windowing model, and the milestone plan) and
 [`engine/INTEROP.md`](engine/INTEROP.md) for the exact wire-format spec.
 
-**Status:** M0 — package skeleton + interop research. No feature UI or call
-flow yet; `packages/web-app/src/runtime.ts` still stubs the call hooks.
+**Status:** M1 — audio call, happy path (outgoing + incoming, hangup, mute).
+`packages/web-app/src/runtime.ts` implements the call hooks, subscribes to the
+core's call events, and mounts the `ui/` tree. No video, no device pickers
+(M2/M3), no detached popup window (M4).
 
 ## Layout — an enforced split, not just a folder convention
 
@@ -17,8 +19,10 @@ engine/   pure TS, ZERO React/DOM imports — the WebRTC state machine,
           non-trickle ICE gathering, calls-webapp-compatible offer/answer
           (de)serialization. Location-agnostic: runs the same in an overlay
           or a detached popup.
-ui/       React — ring/incoming dialog, in-call window, device pickers,
-          speaking rings. Consumes engine/'s call state.
+ui/       React — incoming-ring dialog (IncomingCallRing), in-page call
+          overlay with hangup + mute (CallOverlay), switched by CallsRoot off
+          the observable CallsUiStore. Device pickers/speaking rings (M2) and
+          video (M3) land later without changing this shape.
 bridge/   thin glue — connects engine/ to the typed jsonrpc client
           (rpc.placeOutgoingCall/acceptIncomingCall/endCall/iceServers/
           callInfo) and the popup<->opener signaling relay.

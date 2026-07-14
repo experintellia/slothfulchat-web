@@ -4,10 +4,29 @@
  * format spec this implements.
  *
  * M0 surface: the calls-webapp-compatible signaling (de)serializer + the
- * non-trickle ICE gathering policy + the shared RTC constants. The full WebRTC
- * state machine (getUserMedia, RTCPeerConnection lifecycle, replaceTrack, audio
- * metering) lands in later milestones and will import from here.
+ * non-trickle ICE gathering policy + the shared RTC constants.
+ *
+ * M1 surface: the audio-only WebRTC engine (getUserMedia, RTCPeerConnection
+ * lifecycle, non-trickle offer/answer orchestration, clean teardown) and the
+ * observable call-state machine that backs it. `replaceTrack`, device
+ * enumeration and audio metering land in later milestones and import from here.
  */
+
+export {
+  type CallState,
+  type CallDirection,
+  type CallStateChange,
+  type CallStateListener,
+  CallStateMachine,
+} from './call-state.ts';
+
+export {
+  type PeerConnectionLike,
+  type AudioCallMediaFactories,
+  type AudioCallCallbacks,
+  type AudioCallOptions,
+  AudioCallEngine,
+} from './audio-call.ts';
 
 export {
   type CallSdpType,
