@@ -218,6 +218,20 @@ overlay fallback; no core-access breakage.
 - **Signaling latency** — offer/answer ride DeltaChat messages; ring/connect delay is
   inherent to DC; set UX expectations (timeouts, "calling…").
 
+## Building it (deterministic orchestration)
+
+`.claude/workflows/calls-impl.mjs` runs this plan as a **milestone-gated
+multi-agent workflow** — one milestone per invocation so the stop/go gate stays
+human-owned. Per milestone it fans the build tasks out in parallel, runs an
+adversarial review on the risky ones (engine state machine, interop serializer,
+screenshare, popup IPC), then runs the milestone's verify and returns a structured
+GO / NO-GO. It routes Opus to the high-stakes reasoning and Sonnet to the
+mechanical bulk, and it never commits or pushes — you review the diff and commit.
+
+```
+Workflow({ name: 'calls-impl', args: 'M0' })   // then M1, M2, … after each review
+```
+
 ## Verification (end to end)
 
 Real second client (Android/desktop DeltaChat or `calls-echobot`): audio then video
