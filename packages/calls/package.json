@@ -13,7 +13,7 @@
   "scripts": {
     "build": "tsc --noEmit -p engine/tsconfig.json && tsc --noEmit -p ui/tsconfig.json && tsc --noEmit -p bridge/tsconfig.json",
     "lint:engine-boundary": "node ../../scripts/check-calls-engine-boundary.mjs",
-    "test": "node --test engine/*.test.ts"
+    "test": "node --test engine/*.test.ts bridge/*.test.ts"
   },
   "dependencies": {
     "react": "^19.2.0",

@@ -60,11 +60,13 @@ jobs:
       - name: Unit-test instance-config (parsePublicBridges etc.)
         run: node --test packages/web-app/instance-config.test.mjs
 
-      # packages/calls engine/ (docs/calls.md M0): dependency-free too — Node's
-      # built-in type-stripping test runner needs no pnpm install, only
-      # "erasable" TS syntax (see packages/calls/tsconfig.base.json).
-      - name: Unit-test packages/calls engine (interop serializer, ICE gathering)
-        run: node --test packages/calls/engine/*.test.ts
+      # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —
+      # Node's built-in type-stripping test runner needs no pnpm install, only
+      # "erasable" TS syntax (see packages/calls/tsconfig.base.json). bridge/
+      # imports only node builtins + local .ts (no react/DOM value imports), so
+      # it runs here too; this covers the popup-signaling IPC tests (M4).
+      - name: Unit-test packages/calls engine + bridge (interop, ICE, popup IPC)
+        run: node --test packages/calls/engine/*.test.ts packages/calls/bridge/*.test.ts
 
       # Enforces docs/calls.md's "engine/ imports NO React/DOM": no react
       # import, no .tsx file, no reaching into ../ui or ../bridge.

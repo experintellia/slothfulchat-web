@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/png" href="./images/icon-256.png" />
+    <!--
+      Detached call window (docs/calls.md §Windowing, M4). Opened same-origin
+      by the main tab via window.open(); it hosts the WebRTC engine + call UI
+      and relays SIGNALING ONLY back to the opener (postMessage), which forwards
+      to the core Worker. No core Worker, no service worker, no wasm here.
+
+      CSP mirrors main.html's stance (single-origin, script-src 'self') minus
+      the app-only pins (analytics / relay-directory). The STUN/TURN
+      connect-src widening the RTCPeerConnection needs for relay candidates is
+      the SAME cross-cutting change M5 makes for the main window's overlay path
+      (docs/calls.md M5: "add connect-src for the STUN/TURN hosts from
+      ice_servers()"); host/LAN candidates work without it. No Permissions-Policy
+      / element `allow` is needed: this is a TOP-LEVEL same-origin window (not an
+      iframe), so a granted camera/microphone permission applies directly.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none';
+                   style-src 'self' 'unsafe-inline';
+                   font-src 'self';
+                   script-src 'self';
+                   img-src 'self' data: blob: ;
+                   media-src 'self' blob: ;
+                   connect-src 'self' blob: data: ws: wss:"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #141414;
+        overflow: hidden;
+      }
+    </style>
+    <title>Call</title>
+  </head>
+  <body>
+    <script src="./call-popup.js" type="module"></script>
+  </body>
+</html>

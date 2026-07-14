@@ -10,9 +10,14 @@
 import { startCore, type Core, type BaseDeltaChat } from '@slothfulchat/core-wasm'
 import {
   CallBridge,
+  CallPopupHost,
   defaultMediaFactories,
   fetchIceServers,
   listInputDevices,
+  openCallPopup,
+  type CallBridgeCallbacks,
+  type CallDirection,
+  type CallPopupInit,
   type CallsRpcClient,
   type CallState,
 } from '@slothfulchat/calls/bridge'
@@ -1672,10 +1677,35 @@ class CallManager {
     // The real generated RawClient is structurally a CallsRpcClient.
     return getCore().dc.rpc as unknown as CallsRpcClient
   }
+  /** Whether to prefer a detached popup window for the active call (M4). The
+   * ring always stays in the main window regardless; this only governs where
+   * the *in-call* engine+UI live. Popup failures fall back to the overlay, so
+   * this stays `true` — a hook for a future "always overlay" setting. */
+  private readonly popupPreferred = true
   /** The single active call (M1: one at a time). */
   private call: {
     accountId: number
+    chatId: number
+    /** M4: outgoing vs incoming — needed by the popup handoff / fallback,
+     * which (unlike the M1 overlay path) can re-derive the call from the slot. */
+    direction: CallDirection
+    hasVideo: boolean
+    /** Best-effort chat/contact name (resolved by `decorateTitle`). */
+    title: string
+    /** Incoming: the caller's raw-SDP offer, retained so an accept can build a
+     * `CallBridge` (overlay) or hand it to the popup (`CallPopupInit.offerSdp`). */
+    offerSdp: string | null
+    /** Incoming: the info-message id (known from the `IncomingCall` event, so
+     * events route even before the ringing bridge exists). Outgoing: `null`
+     * until placed — then read off `bridge`/`popup` instead. */
+    callMessageId: number | null
+    /** M4: where the in-call engine+UI live. `overlay` = main-window `CallBridge`
+     * + `CallsUiStore` (M1 path); `popup` = a detached `CallPopupHost` relays
+     * signaling to the popup's own engine (this window shows nothing). */
+    mode: 'overlay' | 'popup'
     bridge: CallBridge | null
+    /** M4: set in `popup` mode — the opener-side relay to the detached window. */
+    popup: CallPopupHost | null
     cancelled: boolean
     /** Set when a fatal error is being shown, to keep the UI up. */
     errored: boolean
@@ -1717,28 +1747,52 @@ class CallManager {
     })
     dc.on('OutgoingCallAccepted', (accountId, event) => {
       this.log.info('OutgoingCallAccepted', accountId, event.msg_id)
-      this.forCall(accountId, event.msg_id)?.provideAnswer(event.accept_call_info)
+      const slot = this.slotForCall(accountId, event.msg_id)
+      if (slot == null) return
+      // Route the peer's answer to wherever the engine lives: relay it to the
+      // detached popup (M4), or feed the main-window overlay bridge (M1).
+      if (slot.mode === 'popup') slot.popup?.forwardAnswer(event.accept_call_info)
+      else slot.bridge?.provideAnswer(event.accept_call_info)
     })
     dc.on('IncomingCallAccepted', (accountId, event) => {
       this.log.info('IncomingCallAccepted', accountId, event.msg_id, event.from_this_device)
       // Accepted on ANOTHER device while still ringing here → stop our ring.
       if (event.from_this_device) return
-      const bridge = this.forCall(accountId, event.msg_id)
-      if (bridge && bridge.state === 'ringing') bridge.acceptedElsewhere()
+      const slot = this.slotForCall(accountId, event.msg_id)
+      // Only meaningful while still ringing (main-window overlay, pre-accept);
+      // in popup mode the call is already accepted here, so ignore.
+      if (slot == null || slot.mode !== 'overlay') return
+      if (slot.bridge) {
+        if (slot.bridge.state === 'ringing') slot.bridge.acceptedElsewhere()
+      } else {
+        // Ring not yet backed by a bridge (still fetching ICE) — drop it.
+        slot.cancelled = true
+        this.teardown(slot)
+      }
     })
     dc.on('CallEnded', (accountId, event) => {
       this.log.info('CallEnded', accountId, event.msg_id)
-      this.forCall(accountId, event.msg_id)?.remoteEnded()
+      const slot = this.slotForCall(accountId, event.msg_id)
+      if (slot == null) return
+      if (slot.mode === 'popup') slot.popup?.forwardRemoteEnded()
+      else if (slot.bridge) slot.bridge.remoteEnded()
+      else {
+        // The caller hung up while we were still setting up the ringing bridge.
+        slot.cancelled = true
+        this.teardown(slot)
+      }
     })
   }
 
-  /** The active bridge iff it matches this (account, message) — else null. */
-  private forCall(accountId: number, msgId: number): CallBridge | null {
+  /** The active call slot iff it matches this (account, message) — else null.
+   * The message id is known from the slot itself for an incoming call (routes
+   * events even before the ringing bridge exists), and from the popup host or
+   * the overlay bridge once an outgoing call has been placed. */
+  private slotForCall(accountId: number, msgId: number): NonNullable<CallManager['call']> | null {
     const c = this.call
-    if (c && c.bridge && c.accountId === accountId && c.bridge.callMessageId === msgId) {
-      return c.bridge
-    }
-    return null
+    if (c == null || c.accountId !== accountId) return null
+    const id = c.callMessageId ?? c.popup?.callMessageId ?? c.bridge?.callMessageId ?? null
+    return id === msgId ? c : null
   }
 
   startOutgoingCall(accountId: number, chatId: number, hasVideo = false): void {
@@ -1746,54 +1800,78 @@ class CallManager {
       this.log.warn('startOutgoingCall: already in a call, ignoring')
       return
     }
-    this.ui.showCall({ direction: 'outgoing', title: 'Call', hasVideo })
     const slot: NonNullable<CallManager['call']> = {
       accountId,
+      chatId,
+      direction: 'outgoing',
+      hasVideo,
+      title: 'Call',
+      offerSdp: null,
+      callMessageId: null,
+      mode: 'overlay',
       bridge: null,
+      popup: null,
       cancelled: false,
       errored: false,
       devicesRefreshed: false,
     }
     this.call = slot
-    this.registerDeviceChangeListener(slot)
+    // M4: prefer a detached popup (window.open must run in this click gesture).
+    // A synchronous popup-block returns false → fall straight through to the
+    // in-page overlay while still gesture-authorized for getUserMedia.
+    if (this.tryStartPopup(slot)) return
+    this.startOutgoingOverlay(slot)
+  }
 
+  /** Outgoing call in the main-window overlay (M1 path): fetch ICE, build the
+   * `CallBridge`, place the offer. Used when the popup is blocked/unavailable. */
+  private startOutgoingOverlay(slot: NonNullable<CallManager['call']>): void {
+    slot.mode = 'overlay'
+    this.ui.showCall({ direction: 'outgoing', title: slot.title, hasVideo: slot.hasVideo })
+    this.registerDeviceChangeListener(slot)
     void (async () => {
       try {
-        const iceServers = await fetchIceServers(this.rpc, accountId)
-        if (slot.cancelled) return
+        const iceServers = await fetchIceServers(this.rpc, slot.accountId)
+        if (slot.cancelled || slot.mode !== 'overlay') return
         const bridge = CallBridge.outgoing(
           this.rpc,
-          { accountId, chatId, hasVideo, iceServers },
+          { accountId: slot.accountId, chatId: slot.chatId, hasVideo: slot.hasVideo, iceServers },
           this.factories,
-          {
-            onStateChange: state => this.onState(slot, state),
-            onRemoteStream: stream => this.ui.attachRemoteStream(stream),
-            // Event routing reads bridge.callMessageId directly (set the moment
-            // placeOutgoingCall resolves, before any OutgoingCallAccepted can
-            // round-trip back), so no onCallMessageId indexing is needed.
-            onError: err => this.onError(slot, err),
-            // M2 speaking rings: forward the bridge's Web-Audio meters into
-            // the shared store; CallOverlay's SpeakingRing tiles render them.
-            onLocalLevel: level => this.ui.setLocalLevel(level),
-            onRemoteLevel: level => this.ui.setRemoteLevel(level),
-            // M2 device picker: a failed switchMicrophone/switchCamera leaves
-            // the call/old device untouched — surface it next to the picker,
-            // not as a call-ending error (contrast onError above).
-            onDeviceSwitchError: err => this.ui.showDeviceSwitchError(err.message || 'Could not switch device'),
-            // M3: local video preview + screen-share toggle state.
-            onLocalVideoTrackChanged: () => this.ui.setLocalStream(slot.bridge?.localStream ?? null),
-            onScreenShareChanged: sharing => this.ui.setScreenSharing(sharing),
-            onScreenShareError: err => this.ui.showScreenShareError(err.message || 'Could not share screen'),
-          }
+          this.overlayBridgeCallbacks(slot)
         )
         slot.bridge = bridge
-        void this.decorateTitle(accountId, chatId) // fire-and-forget (cosmetic)
+        void this.decorateTitle(slot.accountId, slot.chatId) // fire-and-forget (cosmetic)
         await bridge.start()
       } catch (err) {
         this.log.error('startOutgoingCall failed', err)
         this.onError(slot, err instanceof Error ? err : new Error(String(err)))
       }
     })()
+  }
+
+  /** The overlay-mode bridge callbacks (identical for outgoing + incoming):
+   * push engine state/streams/meters/errors into the shared main-window store.
+   * In popup mode the popup wires its OWN equivalents (`src/call-popup.ts`). */
+  private overlayBridgeCallbacks(slot: NonNullable<CallManager['call']>): CallBridgeCallbacks {
+    return {
+      onStateChange: state => this.onState(slot, state),
+      onRemoteStream: stream => this.ui.attachRemoteStream(stream),
+      // Event routing reads the message id off bridge/popup/slot (set the
+      // moment placeOutgoingCall resolves), so no onCallMessageId indexing.
+      onError: err => this.onError(slot, err),
+      // M2 speaking rings: forward the bridge's Web-Audio meters into the
+      // shared store; CallOverlay's SpeakingRing tiles render them.
+      onLocalLevel: level => this.ui.setLocalLevel(level),
+      onRemoteLevel: level => this.ui.setRemoteLevel(level),
+      // M2 device picker: a failed switchMicrophone/switchCamera leaves the
+      // call/old device untouched — surface it next to the picker, not as a
+      // call-ending error (contrast onError above).
+      onDeviceSwitchError: err => this.ui.showDeviceSwitchError(err.message || 'Could not switch device'),
+      // M3: local video preview + screen-share toggle state.
+      onLocalVideoTrackChanged: () => this.ui.setLocalStream(slot.bridge?.localStream ?? null),
+      onScreenShareChanged: sharing => this.ui.setScreenSharing(sharing),
+      onScreenShareError: err => this.ui.showScreenShareError(err.message || 'Could not share screen'),
+    }
   }
 
   openIncomingCall(params: {
@@ -1805,15 +1883,27 @@ class CallManager {
   }): void {
     const { accountId, chatId, callMessageId, callerWebrtcOffer, startWithCameraEnabled: hasVideo } = params
     // Same call already showing (event + Message.tsx button both call in).
-    if (this.forCall(accountId, callMessageId)) return
+    if (this.slotForCall(accountId, callMessageId)) return
     if (this.call) {
       this.log.warn('openIncomingCall: already in a call, ignoring incoming')
       return
     }
+    // Ringing ALWAYS renders in the main window (docs/calls.md §Windowing) — the
+    // popup is only opened on accept (see acceptCurrent). The ringing engine
+    // lives in the overlay bridge; it holds no media/pc yet (mic is untouched
+    // until accept), so handing it off to a popup later is cheap.
     this.ui.showCall({ direction: 'incoming', title: 'Call', hasVideo })
     const slot: NonNullable<CallManager['call']> = {
       accountId,
+      chatId,
+      direction: 'incoming',
+      hasVideo,
+      title: 'Call',
+      offerSdp: callerWebrtcOffer,
+      callMessageId,
+      mode: 'overlay',
       bridge: null,
+      popup: null,
       cancelled: false,
       errored: false,
       devicesRefreshed: false,
@@ -1824,23 +1914,10 @@ class CallManager {
     void (async () => {
       try {
         const iceServers = await fetchIceServers(this.rpc, accountId)
-        if (slot.cancelled) return
-        const bridge = CallBridge.incoming(
-          this.rpc,
-          { accountId, chatId, callMessageId, offerSdp: callerWebrtcOffer, hasVideo, iceServers },
-          this.factories,
-          {
-            onStateChange: state => this.onState(slot, state),
-            onRemoteStream: stream => this.ui.attachRemoteStream(stream),
-            onError: err => this.onError(slot, err),
-            onLocalLevel: level => this.ui.setLocalLevel(level),
-            onRemoteLevel: level => this.ui.setRemoteLevel(level),
-            onDeviceSwitchError: err => this.ui.showDeviceSwitchError(err.message || 'Could not switch device'),
-            onLocalVideoTrackChanged: () => this.ui.setLocalStream(slot.bridge?.localStream ?? null),
-            onScreenShareChanged: sharing => this.ui.setScreenSharing(sharing),
-            onScreenShareError: err => this.ui.showScreenShareError(err.message || 'Could not share screen'),
-          }
-        )
+        // Bail if cancelled, or if the user already accepted and we handed the
+        // call off to a popup while this ICE fetch was in flight.
+        if (slot.cancelled || slot.mode !== 'overlay') return
+        const bridge = this.newIncomingBridge(slot, iceServers)
         slot.bridge = bridge
         void this.decorateTitle(accountId, chatId) // fire-and-forget (cosmetic)
         await bridge.start()
@@ -1851,9 +1928,42 @@ class CallManager {
     })()
   }
 
+  /** Build an overlay-mode incoming `CallBridge` from the slot's retained
+   * offer/params. Shared by the ring setup and the popup→overlay fallback. */
+  private newIncomingBridge(
+    slot: NonNullable<CallManager['call']>,
+    iceServers: RTCIceServer[]
+  ): CallBridge {
+    return CallBridge.incoming(
+      this.rpc,
+      {
+        accountId: slot.accountId,
+        chatId: slot.chatId,
+        callMessageId: slot.callMessageId ?? 0,
+        offerSdp: slot.offerSdp ?? '',
+        hasVideo: slot.hasVideo,
+        iceServers,
+      },
+      this.factories,
+      this.overlayBridgeCallbacks(slot)
+    )
+  }
+
   private acceptCurrent(): void {
     const c = this.call
-    if (!c?.bridge) return
+    if (!c || c.direction !== 'incoming' || c.mode === 'popup') return
+    // M4: prefer handing the accepted call to a detached popup. The accept
+    // click is a user gesture, so window.open is allowed here.
+    if (c.offerSdp != null && this.tryStartPopup(c)) {
+      // Discard the main-window ringing engine (no media/pc/accept sent yet);
+      // slot.mode is now 'popup', so its 'ended' state change is ignored.
+      const ringing = c.bridge
+      c.bridge = null
+      ringing?.remoteEnded()
+      return
+    }
+    // Overlay accept (popup blocked/disabled, or bridge not ready yet).
+    if (!c.bridge) return
     c.bridge.accept().catch(err => {
       this.log.error('accept failed', err)
       this.onError(c, err instanceof Error ? err : new Error(String(err)))
@@ -1863,6 +1973,14 @@ class CallManager {
   private hangupCurrent(): void {
     const c = this.call
     if (!c) return
+    if (c.mode === 'popup') {
+      // Rare from the main window (it shows no in-call UI in popup mode), but
+      // e.g. app teardown can reach here: end the call from the opener side.
+      const msgId = c.callMessageId ?? c.popup?.callMessageId ?? null
+      if (msgId != null) this.rpc.endCall(c.accountId, msgId).catch(() => {})
+      this.teardown(c)
+      return
+    }
     // Tell the far end + tear down the engine (idempotent). If the bridge does
     // not exist yet (hung up during ICE fetch), mark the async setup cancelled.
     if (c.bridge) c.bridge.hangup()
@@ -1901,7 +2019,10 @@ class CallManager {
     slot: NonNullable<CallManager['call']>,
     state: CallState
   ): void {
-    if (this.call !== slot) return
+    // Only the overlay path drives the main-window store; in popup mode the
+    // popup owns its own UI, and a discarded ringing bridge's late 'ended' (on
+    // handoff) must not touch anything here.
+    if (this.call !== slot || slot.mode !== 'overlay') return
     this.ui.setState(state)
     // M2 device picker: refresh once the local stream exists — i.e. once we
     // are past `ringing` for an outgoing call (mic acquired to build the
@@ -1924,7 +2045,10 @@ class CallManager {
   }
 
   private onError(slot: NonNullable<CallManager['call']>, error: Error): void {
-    if (this.call !== slot) return
+    // Symmetric with onState: only the overlay path owns the main-window store.
+    // In popup mode the popup surfaces its own errors; an overlay-callback error
+    // here would otherwise paint an error into the (cleared) main window.
+    if (this.call !== slot || slot.mode !== 'overlay') return
     slot.errored = true
     this.ui.showError(error.message || 'Call failed')
     // UI stays up (with a Close button → hangupCurrent → teardown).
@@ -1933,8 +2057,109 @@ class CallManager {
   private teardown(slot: NonNullable<CallManager['call']>): void {
     if (this.call !== slot) return
     this.call = null
+    // M4: close the detached popup (idempotent — a popup that ended itself has
+    // already torn its host down). Opener-initiated close does NOT re-send
+    // endCall; the popup relayed its own on hangup, and remote/abrupt-close
+    // paths are handled inside CallPopupHost.
+    slot.popup?.close()
+    slot.popup = null
     this.ui.clear()
     this.unregisterDeviceChangeListener()
+  }
+
+  // ── M4: detached popup window (docs/calls.md §Windowing) ─────────────────────
+
+  /** Whether to attempt a detached popup for the active call. */
+  private popupEnabled(): boolean {
+    return (
+      this.popupPreferred &&
+      typeof window !== 'undefined' &&
+      typeof window.open === 'function'
+    )
+  }
+
+  /**
+   * Try to open the detached call popup for `slot`. Returns `true` if the popup
+   * window opened (we're now in popup mode — the popup runs the engine+UI and
+   * relays signaling here); `false` if popups are disabled or `window.open` was
+   * blocked (the caller falls back to the overlay synchronously, still inside
+   * the user gesture). A popup that opens but never handshakes triggers
+   * `onFallback` → {@link onPopupFallback} asynchronously.
+   */
+  private tryStartPopup(slot: NonNullable<CallManager['call']>): boolean {
+    if (!this.popupEnabled()) return false
+    const init: CallPopupInit = {
+      direction: slot.direction,
+      accountId: slot.accountId,
+      chatId: slot.chatId,
+      hasVideo: slot.hasVideo,
+      callMessageId: slot.callMessageId,
+      offerSdp: slot.offerSdp,
+      title: slot.title,
+    }
+    const host = openCallPopup(init, {
+      rpc: this.rpc,
+      onReady: () => this.log.info('call popup ready'),
+      onEnded: () => {
+        if (this.call === slot) this.teardown(slot)
+      },
+      onFallback: reason => this.onPopupFallback(slot, reason),
+    })
+    if (host == null) return false // popup-blocked → synchronous overlay fallback
+    slot.mode = 'popup'
+    slot.popup = host
+    // The popup owns the visible call UI now: drop any main-window ring/overlay
+    // and its device listener (the popup handles its own device hotplug).
+    this.ui.clear()
+    this.unregisterDeviceChangeListener()
+    return true
+  }
+
+  /**
+   * The popup opened but never handshaked (blank/failed page) — recover by
+   * running the call in the main-window overlay instead. Best-effort: by now
+   * the original gesture is stale, but a granted mic permission does not need a
+   * fresh gesture on most browsers.
+   */
+  private onPopupFallback(slot: NonNullable<CallManager['call']>, reason: string): void {
+    if (this.call !== slot) return
+    this.log.warn(`call popup unavailable (${reason}); falling back to overlay`)
+    slot.popup = null
+    slot.mode = 'overlay'
+    if (slot.direction === 'outgoing') this.startOutgoingOverlay(slot)
+    else this.startIncomingOverlayAccept(slot)
+  }
+
+  /**
+   * Resume an already-accepted incoming call in the overlay (popup fallback):
+   * re-show the call UI, build the incoming bridge, and go straight to building
+   * the answer — the user accepted in the ring, so there is no second prompt.
+   * Ordered so the ringing→connecting transitions land synchronously and the
+   * accept/decline dialog never flashes.
+   */
+  private startIncomingOverlayAccept(slot: NonNullable<CallManager['call']>): void {
+    slot.mode = 'overlay'
+    this.registerDeviceChangeListener(slot)
+    void (async () => {
+      try {
+        const iceServers = await fetchIceServers(this.rpc, slot.accountId)
+        if (slot.cancelled || slot.mode !== 'overlay') return
+        this.ui.showCall({ direction: 'incoming', title: slot.title, hasVideo: slot.hasVideo })
+        const bridge = this.newIncomingBridge(slot, iceServers)
+        slot.bridge = bridge
+        void this.decorateTitle(slot.accountId, slot.chatId)
+        // start() (sync: register offer, ringing) then accept() (sync: →
+        // connecting, then async mic) run back-to-back so the store is already
+        // past 'ringing' before React paints — no incoming-ring flash.
+        void bridge.start()
+        void bridge.accept().catch(err => {
+          this.log.error('accept failed', err)
+          this.onError(slot, err instanceof Error ? err : new Error(String(err)))
+        })
+      } catch (err) {
+        this.onError(slot, err instanceof Error ? err : new Error(String(err)))
+      }
+    })()
   }
 
   /**

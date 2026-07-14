@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Calls can run in a detached popup window (M4)**: an active 1:1 call now
+  prefers a separate `window.open` window (same origin) that hosts the WebRTC
+  engine and call UI, so the call keeps running while you use the rest of the
+  app. The popup owns the microphone/camera and peer connection and relays only
+  the SDP signaling back to this tab (which forwards it to the wasm core). If
+  the browser blocks the popup, or it fails to load, the call falls back
+  seamlessly to the in-page overlay — same controls, same engine. Ringing for
+  an incoming call always stays in the main window (it can never be
+  popup-blocked). New popup page: `/call-popup.html` (`src/call-popup.ts`).
 - **Backup import now persists its images before finishing**: after restoring
   from a backup you no longer have to reload several times for the pictures to
   show up. Imported blobs are written to the in-memory fs and mirrored to OPFS

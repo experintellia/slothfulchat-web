@@ -10,10 +10,13 @@ the windowing model, and the milestone plan) and
 **Status:** M1 (audio call, happy path), M2 (Web-Audio speaking rings +
 mic/camera device enumeration with mid-call mic hot-switching —
 `engine/level-meter.ts`/`ui/SpeakingRing.tsx`, `engine/devices.ts`/
-`AudioCallEngine.switchMicrophone`/`ui/DevicePicker.tsx`), and M3 (camera
+`AudioCallEngine.switchMicrophone`/`ui/DevicePicker.tsx`), M3 (camera
 video + screen share — `AudioCallEngine`'s `hasVideo`, `switchCamera`,
-`startScreenShare`/`stopScreenShare` via `RTCRtpSender.replaceTrack`) are
-landed. No detached popup window yet (M4).
+`startScreenShare`/`stopScreenShare` via `RTCRtpSender.replaceTrack`), and M4
+(detached popup window + overlay fallback + popup⇄opener signaling relay —
+`bridge/popup-signaling.ts`/`popup-host.ts`/`popup-client.ts`/`window-port.ts`,
+with `packages/web-app/src/call-popup.ts` as the popup DOM entry) are landed.
+M5 (CSP/permissions/privacy/settings/polish) pending.
 
 ## Layout — an enforced split, not just a folder convention
 
@@ -31,7 +34,11 @@ ui/       React — incoming-ring dialog (IncomingCallRing), in-page call
           speaking rings for a video call, and a screen-share toggle button.
 bridge/   thin glue — connects engine/ to the typed jsonrpc client
           (rpc.placeOutgoingCall/acceptIncomingCall/endCall/iceServers/
-          callInfo) and the popup<->opener signaling relay.
+          callInfo) and the popup<->opener signaling relay (M4:
+          popup-signaling.ts = protocol + RPC relay + SignalingPort seam
+          [DOM-free, unit-tested]; window-port.ts = the postMessage transport;
+          popup-host.ts = the opener side [handshake, fallback, event
+          forwarding]; popup-client.ts = the popup side).
 ```
 
 `engine/` may be imported by `ui/` and `bridge/`, never the other way around.

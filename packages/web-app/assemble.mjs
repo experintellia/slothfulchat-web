@@ -157,6 +157,12 @@ await writeFile(
   patchBootError(await readFile(join(here, 'static/boot-error.js'), 'utf-8'), config.instanceName)
 )
 await cp(join(here, 'static/viewport-keyboard.js'), join(dist, 'viewport-keyboard.js'))
+// Detached call window (docs/calls.md §Windowing, M4): a standalone same-origin
+// page the main tab opens with window.open. Its bundle (dist/call-popup.js) is
+// emitted by esbuild in `pnpm build`, alongside runtime.js. Self-contained CSP
+// (baked into the file), so — unlike main.html — it needs no assemble-time
+// rewrite.
+await cp(join(here, 'static/call-popup.html'), join(dist, 'call-popup.html'))
 await writeFile(join(dist, '.nojekyll'), '')
 
 // imprint.html + privacy.html — standalone pages, templates in instance-config.mjs.

@@ -46,6 +46,36 @@ export {
   shouldShowDevicePicker,
 } from '../engine/index.ts'
 
+// M4 — the detached call popup ⇄ opener signaling relay (docs/calls.md
+// §Windowing). The opener uses `openCallPopup`/`CallPopupHost`; the popup entry
+// (`packages/web-app/src/call-popup.ts`) uses `connectCallPopup` +
+// `windowSignalingPort`. Pure protocol + relay live in `popup-signaling.ts`
+// (unit-tested, DOM-free); the postMessage transport is `window-port.ts`.
+export {
+  CALL_POPUP_PROTOCOL,
+  PopupRpcClient,
+  servePopupRpc,
+  parsePopupMessage,
+  type SignalingPort,
+  type CallPopupInit,
+  type PopupCallEvent,
+  type PopupRpcMethod,
+  type OpenerToPopupMessage,
+  type PopupToOpenerMessage,
+  type PopupMessage,
+} from './popup-signaling.ts'
+export { windowSignalingPort } from './window-port.ts'
+export {
+  openCallPopup,
+  CallPopupHost,
+  CALL_POPUP_URL,
+  CALL_POPUP_TARGET,
+  CALL_POPUP_FEATURES,
+  DEFAULT_POPUP_READY_TIMEOUT_MS,
+  type CallPopupHostOptions,
+} from './popup-host.ts'
+export { connectCallPopup, type CallPopupConnection } from './popup-client.ts'
+
 /**
  * The subset of the generated jsonrpc `RawClient` the call bridge uses. The real
  * client (`getCore().dc.rpc`) is structurally assignable to this, so the runtime

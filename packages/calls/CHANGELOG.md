@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- M4 (detached popup window + overlay fallback): the active call now prefers a
+  same-origin `window.open` popup that hosts the engine + UI and owns media +
+  `RTCPeerConnection`, relaying SIGNALING ONLY to the opener; the opener
+  forwards to the core Worker (which stays owned by the main tab). New
+  `bridge/popup-signaling.ts` is the pure wire protocol — a `SignalingPort`
+  transport seam (DOM-free, so the whole relay is unit-tested against an
+  in-memory pair), a validated message union (`parsePopupMessage` rejects
+  foreign/malformed `postMessage`s), and the RPC relay: `PopupRpcClient` (a
+  `CallsRpcClient` whose calls travel to the opener) + `servePopupRpc` (opener
+  side, drives the real jsonrpc client, captures the placed msg id for event
+  routing). `window-port.ts` is the production `postMessage` transport
+  (same-origin + exact-peer-window guards). `popup-host.ts` is the opener
+  lifecycle: `window.open` → handshake with a readiness timeout → `init`
+  handoff → forward `OutgoingCallAccepted`/`CallEnded`/`IncomingCallAccepted`;
+  a synchronous popup-block (`window.open` → `null`) returns `null` so the
+  caller falls back to the overlay in-gesture, a handshake timeout closes the
+  blank window and calls `onFallback`, and an abrupt window close sends a
+  safety-net `endCall`. `popup-client.ts` is the popup side (`connectCallPopup`:
+  posts `ready`, awaits `init`, surfaces relayed core events). The popup DOM
+  entry lives in the web app (`packages/web-app/src/call-popup.ts` +
+  `static/call-popup.html`, bundled by esbuild alongside runtime.js) — it
+  re-homes the runtime's `CallManager` wiring into the popup (same `CallBridge`,
+  `CallsUiStore`, `mountCallsUi`, device pickers, speaking rings) with the
+  relayed `PopupRpcClient` as its `rpc`. `packages/web-app/src/runtime.ts`'s
+  `CallManager` gained a `mode: 'overlay' | 'popup'` per call: outgoing tries
+  the popup in the click gesture, incoming rings in the main window (always)
+  and hands the accepted call off to a popup on accept; both fall back to the
+  M1 overlay path unchanged. 10 new bridge unit tests cover message
+  validation, the RPC relay roundtrip + error/dispose paths, the handshake +
+  event forwarding, the handshake-timeout fallback, and the abrupt-close
+  `endCall` safety net (incl. that a remote `CallEnded` suppresses it).
 - New package: `engine/` (pure TS, no React/DOM imports) + `ui/` (React) +
   `bridge/` (runtime glue) skeleton, wired into the pnpm workspace and the
   `@slothfulchat/web-app` build (workspace dependency + `tsconfig.json`
