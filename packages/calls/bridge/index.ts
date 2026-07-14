@@ -155,6 +155,15 @@ export function defaultMediaFactories(): AudioCallMediaFactories {
     // only bridges TS's narrowed event-listener overloads in the interface.
     createPeerConnection: (configuration) =>
       new RTCPeerConnection(configuration) as unknown as PeerConnectionLike,
+    // M3 screen share: `getDisplayMedia` is not universally available (e.g.
+    // some embedded/older browser contexts) — feature-detect rather than
+    // reference it unconditionally, so `defaultMediaFactories()` itself never
+    // throws just because the platform lacks it. `AudioCallEngine.startScreenShare`
+    // already handles an absent `getDisplayMedia` gracefully (`onScreenShareError`).
+    getDisplayMedia:
+      typeof navigator.mediaDevices.getDisplayMedia === 'function'
+        ? (constraints) => navigator.mediaDevices.getDisplayMedia(constraints)
+        : undefined,
   }
 }
 
@@ -205,11 +214,32 @@ export interface CallBridgeCallbacks {
    * `onRemoteStream` has fired. */
   onRemoteLevel?: (level: number) => void
   /**
-   * `AudioCallEngine.switchMicrophone` failed (M2 device selection) — the
-   * previous mic keeps flowing untouched; surface this next to the device
-   * picker (a toast/inline note), not as a call-ending error.
+   * `AudioCallEngine.switchMicrophone`/`switchCamera` failed (M2/M3 device
+   * selection) — the previous device keeps flowing untouched; surface this
+   * next to the device picker (a toast/inline note), not as a call-ending
+   * error.
    */
   onDeviceSwitchError?: (error: Error) => void
+  /**
+   * The outgoing local VIDEO track was (re)established — initial camera
+   * acquisition, a `switchCamera`, or a screen-share start/stop (M3). Attach
+   * to a local-preview `<video>` element's `srcObject` on this event rather
+   * than assuming `localStream`'s video track never changes identity (mirrors
+   * why `onLocalLevel`'s meter re-taps on the analogous audio event).
+   */
+  onLocalVideoTrackChanged?: (track: MediaStreamTrack) => void
+  /**
+   * `AudioCallEngine.screenSharing` flipped (M3) — including the browser's
+   * own "Stop sharing" affordance ending the capture out-of-band. Drives the
+   * UI's screen-share toggle-button state.
+   */
+  onScreenShareChanged?: (sharing: boolean) => void
+  /**
+   * A screen-share start/stop failed (M3) — the call keeps running on
+   * whatever video was flowing before; surface this next to the screen-share
+   * control (a toast/inline note), not as the call-ending `onError`.
+   */
+  onScreenShareError?: (error: Error) => void
 }
 
 /**
@@ -295,8 +325,16 @@ export function createTrackAnalyser(track: MediaStreamTrack): TrackAnalyserHandl
 export interface OutgoingCallParams {
   accountId: number
   chatId: number
-  /** Whether we advertise video. M1 is audio-only, so the runtime passes false. */
+  /**
+   * Whether we advertise video (M3: the caller's choice, e.g. upstream
+   * `ChatView`'s "start_video_call" context-menu entry vs. "start_audio_call" —
+   * both already call `startOutgoingVideoCall(accountId, chatId, {
+   * startWithCameraEnabled })`). `true` acquires the camera alongside the mic
+   * and is also what is sent as `has_video` to `rpc.placeOutgoingCall`.
+   */
   hasVideo: boolean
+  /** Preferred camera `deviceId` (M3), seeding the initial acquisition when `hasVideo`. */
+  cameraInputDeviceId?: string
   iceServers: RTCIceServer[]
 }
 
@@ -307,6 +345,16 @@ export interface IncomingCallParams {
   callMessageId: number
   /** The caller's raw-SDP offer (`place_call_info`). */
   offerSdp: string
+  /**
+   * Whether the CALLER's offer included video (the `IncomingCall` event's
+   * `has_video`; M3). We mirror it — acquiring our own camera and adding a
+   * video track to the answer — because a peer that sent a video m-line
+   * expects one back (ordinary WebRTC offer/answer symmetry); `accept_incoming_call`
+   * itself has no separate `has_video` RPC parameter, so this is the only lever.
+   */
+  hasVideo: boolean
+  /** Preferred camera `deviceId` (M3), seeding the initial acquisition when `hasVideo`. */
+  cameraInputDeviceId?: string
   iceServers: RTCIceServer[]
 }
 
@@ -344,6 +392,7 @@ export class CallBridge {
     accountId: number
     chatId: number
     hasVideo: boolean
+    cameraInputDeviceId?: string
     callMessageId: number | null
     pendingOfferSdp: string | null
     iceServers: RTCIceServer[]
@@ -363,6 +412,8 @@ export class CallBridge {
       iceServers: init.iceServers,
       factories: init.factories,
       gatherOptions: { overallTimeoutMs: DEFAULT_GATHER_TIMEOUT_MS },
+      hasVideo: init.hasVideo,
+      videoInputDeviceId: init.cameraInputDeviceId,
       callbacks: {
         onStateChange: (state, change) => {
           init.callbacks.onStateChange?.(state, change)
@@ -393,6 +444,12 @@ export class CallBridge {
         onLocalTrackChanged: (track) => {
           this.retapLocalLevelMeter(track)
         },
+        // M3: local video preview + screen-share toggle state — passed
+        // straight through, no bridge-level bookkeeping needed (unlike the
+        // audio meter, nothing here taps a Web Audio graph).
+        onLocalVideoTrackChanged: init.callbacks.onLocalVideoTrackChanged,
+        onScreenShareChanged: init.callbacks.onScreenShareChanged,
+        onScreenShareError: init.callbacks.onScreenShareError,
         onLocalOffer: (sdp) => {
           void this.placeOutgoing(sdp)
         },
@@ -462,6 +519,7 @@ export class CallBridge {
       accountId: params.accountId,
       chatId: params.chatId,
       hasVideo: params.hasVideo,
+      cameraInputDeviceId: params.cameraInputDeviceId,
       callMessageId: null,
       pendingOfferSdp: null,
       iceServers: params.iceServers,
@@ -481,7 +539,8 @@ export class CallBridge {
       direction: 'incoming',
       accountId: params.accountId,
       chatId: params.chatId,
-      hasVideo: false,
+      hasVideo: params.hasVideo,
+      cameraInputDeviceId: params.cameraInputDeviceId,
       callMessageId: params.callMessageId,
       pendingOfferSdp: params.offerSdp,
       iceServers: params.iceServers,
@@ -537,6 +596,52 @@ export class CallBridge {
    */
   async switchMicrophone(deviceId: string): Promise<void> {
     await this.engine.switchMicrophone(deviceId)
+  }
+
+  /** The camera `deviceId` currently selected (M3), or `null` if none was
+   * ever explicitly selected. See {@link switchCamera}. */
+  get videoInputDeviceId(): string | null {
+    return this.engine.videoInputDeviceId
+  }
+
+  /**
+   * Hot-switch the outgoing camera mid-call (M3), mirroring {@link
+   * switchMicrophone} — see `AudioCallEngine.switchCamera` for the
+   * `RTCRtpSender.replaceTrack` mechanics, including its "while screen
+   * sharing this just records the preference" case. A failure reports
+   * `callbacks.onDeviceSwitchError`; it never ends the call.
+   */
+  async switchCamera(deviceId: string): Promise<void> {
+    await this.engine.switchCamera(deviceId)
+  }
+
+  /** Whether the outgoing video is currently a screen capture rather than
+   * the camera (M3). Always `false` for an audio-only call. */
+  get screenSharing(): boolean {
+    return this.engine.screenSharing
+  }
+
+  /**
+   * Start sharing the screen (M3) — see `AudioCallEngine.startScreenShare`
+   * for the `getDisplayMedia()` + `RTCRtpSender.replaceTrack` mechanics. A
+   * failure (no video on this call, capture unavailable, the user cancelled
+   * the browser's share picker) reports `callbacks.onScreenShareError` and
+   * never ends the call.
+   */
+  async startScreenShare(): Promise<void> {
+    await this.engine.startScreenShare()
+  }
+
+  /** Stop sharing the screen and restore the camera (M3) — see
+   * `AudioCallEngine.stopScreenShare`. Also triggered automatically when the
+   * browser's own "Stop sharing" affordance ends the capture. */
+  async stopScreenShare(): Promise<void> {
+    await this.engine.stopScreenShare()
+  }
+
+  /** Flip {@link screenSharing}. */
+  async toggleScreenShare(): Promise<void> {
+    await this.engine.toggleScreenShare()
   }
 
   /**

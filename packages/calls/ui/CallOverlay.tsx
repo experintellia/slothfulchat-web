@@ -4,23 +4,32 @@
  * an active call (outgoing ringing/"calling…" included — only an *incoming*
  * ring gets the separate accept/decline dialog, see `IncomingCallRing`).
  *
- * No device pickers yet; mute is a local-only `track.enabled` toggle
- * (`AudioCallEngine.setMuted` — see its doc comment), so it is available as
- * soon as a local stream exists, i.e. once `state` is `connecting` or
- * `connected` (outgoing calls acquire the mic while still `ringing`, but we
- * gate on connecting/connected uniformly so an incoming call — mic-less while
- * ringing — never shows a mute button that would do nothing).
+ * Mute is a local-only `track.enabled` toggle (`AudioCallEngine.setMuted` —
+ * see its doc comment), so it is available as soon as a local stream exists,
+ * i.e. once `state` is `connecting` or `connected` (outgoing calls acquire
+ * the mic while still `ringing`, but we gate on connecting/connected
+ * uniformly so an incoming call — mic-less while ringing — never shows a
+ * mute button that would do nothing).
  *
  * M2 adds a `SpeakingRing` per participant (local "You" + the remote title),
  * driven by `localLevel`/`remoteLevel` — the bridge's Web-Audio meters
  * (docs/calls.md: "a glowing ring around each participant avatar that reacts
- * to their voice level"). Still audio-only (no camera video, M3), so these
- * are the whole "tile" for each participant, not an overlay on a video frame.
+ * to their voice level"). For an audio-only call (`!hasVideo`) these rings
+ * ARE the whole "tile" for each participant, not an overlay on a video frame.
  *
  * M2 also adds the mic/camera `DevicePicker`, shown alongside mute (same
  * `connecting`/`connected` gate — a device picker before the mic exists would
  * have nothing to switch) and only rendered at all once
  * `shouldShowDevicePicker` says there is an actual choice.
+ *
+ * M3 (`hasVideo`): renders `<video>` tiles (remote big, local small
+ * self-preview, muted so we don't hear our own mic) INSTEAD of the
+ * audio-only `SpeakingRing` row — the video frame itself is the
+ * "is-this-person-live" signal a video call wants; a separate `<audio>` sink
+ * is not needed since the remote `<video>` element plays that same stream's
+ * audio track too. A screen-share toggle button sits next to mute, only
+ * meaningful (and only shown) once there is a live outgoing video track to
+ * hijack — same `connecting`/`connected` gate as mute/DevicePicker.
  */
 import { useEffect, useRef } from 'react'
 import type { CallDeviceInfo, CallDirection, CallState } from '../engine/index.ts'
@@ -33,7 +42,18 @@ export interface CallOverlayProps {
   state: CallState
   title: string
   muted: boolean
+  /** Whether this call carries video (M3) — gates the video tiles vs. the
+   * audio-only `SpeakingRing` row, and the screen-share control. */
+  hasVideo: boolean
   remoteStream: MediaStream | null
+  /** The local mic/camera stream (M3 local video preview). `null` while an
+   * incoming call is still ringing. */
+  localStream: MediaStream | null
+  /** Whether the outgoing video is currently a screen capture (M3). */
+  screenSharing: boolean
+  /** Set if the last screen-share start/stop failed; surfaced inline next to
+   * the screen-share control, not call-ending (contrast `error`). */
+  screenShareError: string | null
   error: string | null
   /** Smoothed 0..1 local-mic level (M2 speaking ring). */
   localLevel: number
@@ -49,6 +69,7 @@ export interface CallOverlayProps {
   onToggleMute(): void
   onSelectMicrophone(deviceId: string): void
   onSelectCamera(deviceId: string): void
+  onToggleScreenShare(): void
 }
 
 function statusText(direction: CallDirection, state: CallState): string {
@@ -70,7 +91,11 @@ export function CallOverlay({
   state,
   title,
   muted,
+  hasVideo,
   remoteStream,
+  localStream,
+  screenSharing,
+  screenShareError,
   error,
   localLevel,
   remoteLevel,
@@ -83,12 +108,18 @@ export function CallOverlay({
   onToggleMute,
   onSelectMicrophone,
   onSelectCamera,
+  onToggleScreenShare,
 }: CallOverlayProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null)
+  const localVideoRef = useRef<HTMLVideoElement | null>(null)
 
+  // Audio-only sink: only used when !hasVideo (a video call's own <video>
+  // element plays the same stream's audio track, so a separate <audio> would
+  // just double the audio output).
   useEffect(() => {
     const audioEl = audioRef.current
-    if (audioEl == null) return
+    if (audioEl == null || hasVideo) return
     audioEl.srcObject = remoteStream
     if (remoteStream != null) {
       audioEl.play().catch(() => {
@@ -97,7 +128,31 @@ export function CallOverlay({
         // expected to succeed in practice and is not worth surfacing.
       })
     }
-  }, [remoteStream])
+  }, [remoteStream, hasVideo])
+
+  useEffect(() => {
+    const videoEl = remoteVideoRef.current
+    if (videoEl == null || !hasVideo) return
+    videoEl.srcObject = remoteStream
+    if (remoteStream != null) {
+      videoEl.play().catch(() => {
+        // See the audio effect above for why a rejection here is expected
+        // and not worth surfacing.
+      })
+    }
+  }, [remoteStream, hasVideo])
+
+  useEffect(() => {
+    const videoEl = localVideoRef.current
+    if (videoEl == null || !hasVideo) return
+    videoEl.srcObject = localStream
+    if (localStream != null) {
+      videoEl.play().catch(() => {})
+    }
+    // Re-run when the store re-pushes `localStream` on a track (re)establish
+    // (initial camera, switchCamera, screen-share start/stop) — see
+    // `CallsUiStore.setLocalStream`'s doc for why identity alone isn't enough.
+  }, [localStream, hasVideo])
 
   const canMute = state === 'connecting' || state === 'connected'
   // Metering only starts once the respective stream exists (see
@@ -108,25 +163,40 @@ export function CallOverlay({
   return (
     <div role="dialog" aria-label="Call" style={styles.card}>
       <div style={styles.title}>{title}</div>
-      <div style={styles.participantsRow}>
-        <div style={styles.participantColumn}>
-          <SpeakingRing label="You" level={localLevel} muted={muted} />
-          <div style={styles.participantLabel}>You</div>
+      {hasVideo ? (
+        <div style={styles.videoStage}>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption -- remote peer video+audio, not user-facing captioned media */}
+          <video ref={remoteVideoRef} autoPlay playsInline style={styles.remoteVideo} />
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption -- local self-preview, muted (no audio needed) */}
+          <video ref={localVideoRef} autoPlay playsInline muted style={styles.localVideo} />
         </div>
-        <div style={styles.participantColumn}>
-          <SpeakingRing label={title} level={remoteLevel} />
-          <div style={styles.participantLabel}>{title}</div>
+      ) : (
+        <div style={styles.participantsRow}>
+          <div style={styles.participantColumn}>
+            <SpeakingRing label="You" level={localLevel} muted={muted} />
+            <div style={styles.participantLabel}>You</div>
+          </div>
+          <div style={styles.participantColumn}>
+            <SpeakingRing label={title} level={remoteLevel} />
+            <div style={styles.participantLabel}>{title}</div>
+          </div>
         </div>
-      </div>
+      )}
       <div style={error != null ? styles.errorText : styles.subtitle}>
         {error ?? statusText(direction, state)}
       </div>
-      {/* eslint-disable-next-line jsx-a11y/media-has-caption -- remote audio sink, not user-facing media */}
-      <audio ref={audioRef} autoPlay style={{ display: 'none' }} />
+      {screenShareError != null && error == null && (
+        <div style={styles.deviceSwitchError}>{screenShareError}</div>
+      )}
+      {!hasVideo && (
+        // eslint-disable-next-line jsx-a11y/media-has-caption -- remote audio sink, not user-facing media
+        <audio ref={audioRef} autoPlay style={{ display: 'none' }} />
+      )}
       {canMute && error == null && (
         <DevicePicker
           microphones={microphones}
           cameras={cameras}
+          hasVideo={hasVideo}
           selectedMicrophoneId={selectedMicrophoneId}
           selectedCameraId={selectedCameraId}
           deviceSwitchError={deviceSwitchError}
@@ -147,6 +217,20 @@ export function CallOverlay({
             }}
           >
             {muted ? 'Unmute' : 'Mute'}
+          </button>
+        )}
+        {hasVideo && canMute && error == null && (
+          <button
+            type="button"
+            onClick={onToggleScreenShare}
+            aria-pressed={screenSharing}
+            aria-label={screenSharing ? 'Stop sharing screen' : 'Share screen'}
+            style={{
+              ...styles.button,
+              background: screenSharing ? styles.COLOR_NEUTRAL_ACTIVE : styles.COLOR_NEUTRAL,
+            }}
+          >
+            {screenSharing ? 'Stop sharing' : 'Share screen'}
           </button>
         )}
         <button

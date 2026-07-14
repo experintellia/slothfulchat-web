@@ -29,10 +29,15 @@ export interface CallsUiCallbacks {
   /** M2 device picker: the user picked a different mic — hot-switches
    * mid-call via `AudioCallEngine.switchMicrophone`/`replaceTrack`. */
   onSelectMicrophone(deviceId: string): void
-  /** M2 device picker: the user picked a different camera. Recorded as a
-   * preference; M2 is still audio-only, so there is no live video track to
-   * hot-switch yet (that lands with video calling in M3). */
+  /** M2 device picker: the user picked a different camera — hot-switches
+   * mid-call via `AudioCallEngine.switchCamera`/`replaceTrack` (M3; a no-op
+   * beyond recording the preference while screen-sharing — see that
+   * method's doc). */
   onSelectCamera(deviceId: string): void
+  /** M3: toggle screen sharing on/off — `AudioCallEngine.startScreenShare`/
+   * `stopScreenShare` via `RTCRtpSender.replaceTrack` on the outgoing video
+   * sender. Only meaningful (and only shown) when `hasVideo`. */
+  onToggleScreenShare(): void
 }
 
 /** What the UI renders. `active: false` means nothing is mounted-visible
@@ -47,8 +52,24 @@ export type CallUiSnapshot =
       /** Chat/contact name, best-effort ("Call" until resolved). */
       title: string
       muted: boolean
-      /** Set once the peer's audio track arrives (`onRemoteStream`). */
+      /** Whether this call carries video (M3) — gates whether `CallOverlay`
+       * renders video tiles at all vs. the M1/M2 audio-only speaking rings,
+       * and whether the screen-share control is shown. */
+      hasVideo: boolean
+      /** Set once the peer's audio (or audio+video, when `hasVideo`) track
+       * arrives (`onRemoteStream`). */
       remoteStream: MediaStream | null
+      /** The local mic/camera `MediaStream` (M3: local video preview tile).
+       * `null` while an incoming call is still ringing (nothing acquired yet). */
+      localStream: MediaStream | null
+      /** Whether the outgoing video is currently a screen capture rather
+       * than the camera (M3). Always `false` when `!hasVideo`. */
+      screenSharing: boolean
+      /** Set if the last screen-share start/stop failed
+       * (`AudioCallEngine`'s `onScreenShareError`) — the call keeps running
+       * on whatever video was flowing before; surfaced inline next to the
+       * screen-share control, not as the call-ending `error` below. */
+      screenShareError: string | null
       /** Set on a fatal error; the call is already torn down at the engine
        * level, but the UI stays up (with a Close button) so the message is
        * readable instead of just vanishing. */
@@ -97,15 +118,20 @@ export class CallsUiStore {
   getSnapshot = (): CallUiSnapshot => this.snapshot
 
   /** Begin rendering a call: incoming ring or outgoing "calling…". Replaces
-   * any previous snapshot outright (one call at a time, M1). */
-  showCall(init: { direction: CallDirection; title: string }): void {
+   * any previous snapshot outright (one call at a time, M1). `hasVideo`
+   * (M3) defaults to `false` — audio-only, matching the M1/M2 shape. */
+  showCall(init: { direction: CallDirection; title: string; hasVideo?: boolean }): void {
     this.snapshot = {
       active: true,
       direction: init.direction,
       state: 'ringing',
       title: init.title,
       muted: false,
+      hasVideo: init.hasVideo ?? false,
       remoteStream: null,
+      localStream: null,
+      screenSharing: false,
+      screenShareError: null,
       error: null,
       localLevel: 0,
       remoteLevel: 0,
@@ -141,11 +167,42 @@ export class CallsUiStore {
     this.notify()
   }
 
-  /** The peer's audio stream arrived (`onRemoteStream`); the overlay attaches
-   * it to its `<audio>` sink. */
+  /** The peer's audio (or audio+video) stream arrived (`onRemoteStream`); the
+   * overlay attaches it to its `<audio>`/`<video>` sink. */
   attachRemoteStream(stream: MediaStream): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, remoteStream: stream }
+    this.notify()
+  }
+
+  /** Mirror of `bridge.localStream` (M3: local video preview) — pushed
+   * whenever the local mic/camera track (re)establishes, since the stream
+   * *reference* stays stable across a hot-switch/screen-share swap (see
+   * `AudioCallEngine`'s `onLocalTrackChanged`/`onLocalVideoTrackChanged`) but
+   * a plain reference-equality check wouldn't notice the *track* underneath
+   * changed — so callers push explicitly rather than relying on React
+   * re-rendering off an unchanged object identity. */
+  setLocalStream(stream: MediaStream | null): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, localStream: stream }
+    this.notify()
+  }
+
+  /** Mirror of `bridge.screenSharing`/`engine`'s `onScreenShareChanged` (M3) —
+   * also clears any stale `screenShareError`, same pattern as
+   * `setSelectedMicrophone` clearing `deviceSwitchError`. */
+  setScreenSharing(sharing: boolean): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, screenSharing: sharing, screenShareError: null }
+    this.notify()
+  }
+
+  /** `AudioCallEngine`'s `onScreenShareError` (M3) — a screen-share
+   * start/stop failed; the call keeps running on whatever video was flowing
+   * before (contrast `showError`, which is call-ending). */
+  showScreenShareError(message: string): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, screenShareError: message }
     this.notify()
   }
 

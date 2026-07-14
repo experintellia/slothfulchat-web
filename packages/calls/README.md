@@ -7,12 +7,13 @@ reimplement instead of embedding the upstream webapp, the interop constraints,
 the windowing model, and the milestone plan) and
 [`engine/INTEROP.md`](engine/INTEROP.md) for the exact wire-format spec.
 
-**Status:** M1 (audio call, happy path) done; M2 in progress — per-track
-Web-Audio level metering and glowing per-participant speaking rings
-(`engine/level-meter.ts`, `ui/SpeakingRing.tsx`), and mic/camera device
-enumeration + a picker with mid-call mic hot-switching
-(`engine/devices.ts`, `AudioCallEngine.switchMicrophone`, `ui/DevicePicker.tsx`)
-are landed. No video (M3), no detached popup window (M4).
+**Status:** M1 (audio call, happy path), M2 (Web-Audio speaking rings +
+mic/camera device enumeration with mid-call mic hot-switching —
+`engine/level-meter.ts`/`ui/SpeakingRing.tsx`, `engine/devices.ts`/
+`AudioCallEngine.switchMicrophone`/`ui/DevicePicker.tsx`), and M3 (camera
+video + screen share — `AudioCallEngine`'s `hasVideo`, `switchCamera`,
+`startScreenShare`/`stopScreenShare` via `RTCRtpSender.replaceTrack`) are
+landed. No detached popup window yet (M4).
 
 ## Layout — an enforced split, not just a folder convention
 
@@ -25,8 +26,9 @@ ui/       React — incoming-ring dialog (IncomingCallRing), in-page call
           overlay with hangup + mute (CallOverlay), switched by CallsRoot off
           the observable CallsUiStore. M2 adds per-participant speaking rings
           (SpeakingRing, driven by the bridge's Web-Audio meters) and a
-          mic/camera DevicePicker (only shown when a kind has >1 device);
-          video (M3) lands the same way without changing this shape.
+          mic/camera DevicePicker (only shown when a kind has >1 device).
+          M3 adds video tiles (remote + local self-preview) in place of the
+          speaking rings for a video call, and a screen-share toggle button.
 bridge/   thin glue — connects engine/ to the typed jsonrpc client
           (rpc.placeOutgoingCall/acceptIncomingCall/endCall/iceServers/
           callInfo) and the popup<->opener signaling relay.

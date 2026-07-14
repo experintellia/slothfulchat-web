@@ -35,11 +35,27 @@ class FakeTrack {
   stopped = false;
   /** Mirrors real `MediaStreamTrack.enabled`, which defaults to `true`. */
   enabled = true;
+  private endedListeners = new Set<() => void>();
   constructor(kind = 'audio') {
     this.kind = kind;
   }
   stop(): void {
     this.stopped = true;
+  }
+  /** Mirrors just enough of `MediaStreamTrack.addEventListener('ended', …)`
+   * for `AudioCallEngine.startScreenShare`'s native "Stop sharing" handling
+   * (M3) — the only event this fake track needs to support. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  addEventListener(type: string, listener: any): void {
+    if (type === 'ended') this.endedListeners.add(listener);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  removeEventListener(type: string, listener: any): void {
+    if (type === 'ended') this.endedListeners.delete(listener);
+  }
+  /** Test driver helper: simulate the browser's native "Stop sharing" button. */
+  fireEnded(): void {
+    for (const l of [...this.endedListeners]) l();
   }
 }
 
@@ -64,10 +80,27 @@ class FakeStream {
   getAudioTracks(): FakeTrack[] {
     return this.tracks.filter((t) => t.kind === 'audio');
   }
+  /** Mirrors real `MediaStream.getVideoTracks` (M3: `addLocalTracks` calls
+   * this unconditionally, same as `getAudioTracks`, so every fake stream —
+   * even an audio-only `micStream()` — must implement it). */
+  getVideoTracks(): FakeTrack[] {
+    return this.tracks.filter((t) => t.kind === 'video');
+  }
 }
 
 function micStream(): FakeStream {
   return new FakeStream([new FakeTrack('audio')]);
+}
+
+/** A mic + camera stream, for M3 video-call tests. */
+function avStream(): FakeStream {
+  return new FakeStream([new FakeTrack('audio'), new FakeTrack('video')]);
+}
+
+/** A `getDisplayMedia()`-shaped capture stream: one video track, no audio
+ * (matches `startScreenShare`'s `{ video: true, audio: false }` request). */
+function screenStream(): FakeStream {
+  return new FakeStream([new FakeTrack('video')]);
 }
 
 /** A controllable fake `RTCRtpSender` — tracks `replaceTrack` calls so tests
@@ -168,7 +201,9 @@ const ICE_SERVERS: RTCIceServer[] = [{ urls: 'turn:relay.example:3478' }];
 function makeEngine(
   overrides: {
     getUserMedia?: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
+    getDisplayMedia?: (constraints?: MediaStreamConstraints) => Promise<MediaStream>;
     gather?: AudioCallOptions['gather'];
+    hasVideo?: boolean;
   } = {}
 ) {
   const events = {
@@ -179,15 +214,21 @@ function makeEngine(
     errors: [] as Error[],
     deviceSwitchErrors: [] as Error[],
     localTrackChanges: [] as MediaStreamTrack[],
+    localVideoTrackChanges: [] as MediaStreamTrack[],
+    screenShareChanges: [] as boolean[],
+    screenShareErrors: [] as Error[],
   };
   const pcs: FakePc[] = [];
-  const defaultGetUserMedia = async () => micStream() as unknown as MediaStream;
+  const defaultGetUserMedia = async () =>
+    (overrides.hasVideo ? avStream() : micStream()) as unknown as MediaStream;
 
   const engine = new AudioCallEngine({
     iceServers: ICE_SERVERS,
     gather: overrides.gather ?? (async () => {}),
+    hasVideo: overrides.hasVideo,
     factories: {
       getUserMedia: overrides.getUserMedia ?? defaultGetUserMedia,
+      getDisplayMedia: overrides.getDisplayMedia,
       createPeerConnection: (config) => {
         const pc = new FakePc(config);
         pcs.push(pc);
@@ -202,6 +243,9 @@ function makeEngine(
       onError: (e) => events.errors.push(e),
       onDeviceSwitchError: (e) => events.deviceSwitchErrors.push(e),
       onLocalTrackChanged: (t) => events.localTrackChanges.push(t),
+      onLocalVideoTrackChanged: (t) => events.localVideoTrackChanges.push(t),
+      onScreenShareChanged: (sharing) => events.screenShareChanges.push(sharing),
+      onScreenShareError: (e) => events.screenShareErrors.push(e),
     },
   });
   return { engine, events, pcs, lastPc: () => pcs[pcs.length - 1] };
@@ -426,6 +470,334 @@ test('RACE: switchMicrophone in flight when hang up lands — new stream is stop
   assert.equal(pc.senders[0].track, originalTrack, 'sender untouched — replaceTrack never called');
   assert.equal(pc.senders[0].replaceTrackCalls.length, 0);
   assert.equal(lateStream.tracks[0].stopped, true, 'the orphaned new-device stream is stopped');
+});
+
+// ── Video + screen share (M3) ─────────────────────────────────────────────────
+
+test('hasVideo: placeCall adds a video track/sender alongside the mic', async () => {
+  const { engine, events, lastPc } = makeEngine({ hasVideo: true });
+  await engine.placeCall();
+
+  const pc = lastPc();
+  assert.equal(pc.addedTracks.length, 2, 'audio + video both added');
+  assert.equal(pc.senders.length, 2);
+  assert.ok(
+    pc.senders.some((s) => (s.track as unknown as { kind: string } | null)?.kind === 'video'),
+    'a video sender exists'
+  );
+  assert.equal(engine.hasVideo, true);
+  assert.equal(
+    events.localVideoTrackChanges.length,
+    1,
+    'onLocalVideoTrackChanged fires for the initial camera track'
+  );
+});
+
+test('hasVideo: accept adds a video track/sender alongside the mic', async () => {
+  const { engine, lastPc } = makeEngine({ hasVideo: true });
+  engine.receiveCall('OFFER_FROM_PEER');
+  await engine.accept();
+
+  const pc = lastPc();
+  assert.equal(pc.addedTracks.length, 2);
+  assert.ok(pc.senders.some((s) => (s.track as unknown as { kind: string } | null)?.kind === 'video'));
+});
+
+test('audio-only call (hasVideo false, default): no video sender, no video getUserMedia constraint', async () => {
+  const gumCalls: MediaStreamConstraints[] = [];
+  const { engine, lastPc } = makeEngine({
+    getUserMedia: async (constraints) => {
+      gumCalls.push(constraints);
+      return micStream() as unknown as MediaStream;
+    },
+  });
+  await engine.placeCall();
+  assert.equal(gumCalls[0].video, false, 'M1/M2 behavior unchanged: video never requested');
+  const pc = lastPc();
+  assert.equal(pc.addedTracks.length, 1, 'audio only');
+  assert.equal(engine.hasVideo, false);
+});
+
+test('startScreenShare replaces the video sender track via replaceTrack — no renegotiation', async () => {
+  const screen = screenStream();
+  const { engine, events, lastPc } = makeEngine({
+    hasVideo: true,
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  const videoSenderBefore = pc.senders.find((s) => (s.track as unknown as FakeTrack).kind === 'video');
+  assert.ok(videoSenderBefore);
+  const cameraTrack = videoSenderBefore!.track;
+
+  await engine.startScreenShare();
+
+  assert.equal(engine.screenSharing, true);
+  assert.equal(pc.senders.length, 2, 'no new sender — same video sender, track replaced');
+  assert.equal(videoSenderBefore!.replaceTrackCalls.length, 1);
+  assert.equal(videoSenderBefore!.track, screen.tracks[0], 'sender now carries the screen track');
+  assert.notEqual(videoSenderBefore!.track, cameraTrack);
+  assert.deepEqual(events.screenShareChanges, [true]);
+  assert.equal(events.localVideoTrackChanges.at(-1), screen.tracks[0]);
+});
+
+test('stopScreenShare reacquires the camera and replaceTrack-restores it', async () => {
+  const screen = screenStream();
+  let cameraCalls = 0;
+  const restoredCamera = new FakeTrack('video');
+  const { engine, events, lastPc } = makeEngine({
+    hasVideo: true,
+    getUserMedia: async () => {
+      cameraCalls += 1;
+      return (cameraCalls === 1 ? avStream() : new FakeStream([restoredCamera])) as unknown as MediaStream;
+    },
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  await engine.startScreenShare();
+  const videoSender = pc.senders.find((s) => s.track === (screen.tracks[0] as unknown as MediaStreamTrack));
+  assert.ok(videoSender);
+
+  await engine.stopScreenShare();
+
+  assert.equal(engine.screenSharing, false);
+  assert.equal(videoSender!.track, restoredCamera as unknown as MediaStreamTrack, 'camera restored onto the SAME sender');
+  assert.equal(screen.tracks[0].stopped, true, 'the screen-capture track is stopped');
+  assert.deepEqual(events.screenShareChanges, [true, false]);
+});
+
+test('toggleScreenShare flips between camera and screen', async () => {
+  const screen = screenStream();
+  const { engine } = makeEngine({
+    hasVideo: true,
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+
+  await engine.toggleScreenShare();
+  assert.equal(engine.screenSharing, true);
+  await engine.toggleScreenShare();
+  assert.equal(engine.screenSharing, false);
+});
+
+test('the browser\'s native "Stop sharing" (track ended) auto-restores the camera', async () => {
+  const screen = screenStream();
+  const restoredCamera = new FakeTrack('video');
+  let cameraCalls = 0;
+  const { engine, events, lastPc } = makeEngine({
+    hasVideo: true,
+    getUserMedia: async () => {
+      cameraCalls += 1;
+      return (cameraCalls === 1 ? avStream() : new FakeStream([restoredCamera])) as unknown as MediaStream;
+    },
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  await engine.startScreenShare();
+  const pc = lastPc();
+  const videoSender = pc.senders.find((s) => s.track === (screen.tracks[0] as unknown as MediaStreamTrack));
+
+  screen.tracks[0].fireEnded(); // simulate the browser's native "Stop sharing" button
+  await new Promise((r) => setTimeout(r, 0)); // let the fire-and-forget stopScreenShare() settle
+
+  assert.equal(engine.screenSharing, false);
+  assert.equal(videoSender!.track, restoredCamera as unknown as MediaStreamTrack);
+  assert.deepEqual(events.screenShareChanges, [true, false]);
+});
+
+test('startScreenShare on an audio-only call reports onScreenShareError, does not throw', async () => {
+  const { engine, events } = makeEngine(); // hasVideo defaults to false
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+
+  await engine.startScreenShare();
+
+  assert.equal(engine.screenSharing, false);
+  assert.equal(events.screenShareErrors.length, 1);
+  assert.match(events.screenShareErrors[0].message, /no outgoing video/);
+  assert.equal(engine.state, 'connecting', 'call is untouched by the failure');
+});
+
+test('startScreenShare when getDisplayMedia is not provided reports onScreenShareError', async () => {
+  const { engine, events } = makeEngine({ hasVideo: true }); // no getDisplayMedia override
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+
+  await engine.startScreenShare();
+
+  assert.equal(events.screenShareErrors.length, 1);
+  assert.match(events.screenShareErrors[0].message, /screen capture is not available/);
+});
+
+test('startScreenShare: user cancelling the browser share picker reports onScreenShareError, no call impact', async () => {
+  const { engine, events } = makeEngine({
+    hasVideo: true,
+    getDisplayMedia: async () => {
+      throw new Error('NotAllowedError');
+    },
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+
+  await engine.startScreenShare();
+
+  assert.equal(engine.screenSharing, false);
+  assert.equal(events.screenShareErrors.length, 1);
+  assert.match(events.screenShareErrors[0].message, /NotAllowedError/);
+  assert.equal(engine.state, 'connecting');
+});
+
+test('startScreenShare is a no-op while already sharing', async () => {
+  const screen = screenStream();
+  let getDisplayMediaCalls = 0;
+  const { engine } = makeEngine({
+    hasVideo: true,
+    getDisplayMedia: async () => {
+      getDisplayMediaCalls += 1;
+      return screen as unknown as MediaStream;
+    },
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  await engine.startScreenShare();
+
+  await engine.startScreenShare(); // already sharing
+
+  assert.equal(getDisplayMediaCalls, 1, 'getDisplayMedia only called once');
+});
+
+test('stopScreenShare is a no-op when not sharing', async () => {
+  const { engine, events } = makeEngine({ hasVideo: true });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+
+  await engine.stopScreenShare(); // never started
+
+  assert.equal(events.screenShareChanges.length, 0);
+  assert.equal(events.screenShareErrors.length, 0);
+});
+
+test('switchCamera replaces the video sender track via replaceTrack, no renegotiation', async () => {
+  const gumCalls: MediaStreamConstraints[] = [];
+  let call = 0;
+  const { engine, lastPc } = makeEngine({
+    hasVideo: true,
+    getUserMedia: async (constraints) => {
+      call += 1;
+      gumCalls.push(constraints);
+      return (call === 1 ? avStream() : new FakeStream([new FakeTrack('video')])) as unknown as MediaStream;
+    },
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  const videoSender = pc.senders.find((s) => (s.track as unknown as FakeTrack).kind === 'video');
+  const originalTrack = videoSender!.track;
+
+  await engine.switchCamera('cam-2');
+
+  assert.equal(pc.senders.length, 2, 'no new sender/renegotiation');
+  assert.equal(videoSender!.replaceTrackCalls.length, 1);
+  assert.notEqual(videoSender!.track, originalTrack);
+  assert.equal((originalTrack as unknown as FakeTrack).stopped, true);
+  assert.equal(engine.videoInputDeviceId, 'cam-2');
+  const constraints = gumCalls[1].video;
+  assert.ok(typeof constraints === 'object' && 'deviceId' in constraints);
+  assert.deepEqual((constraints as MediaTrackConstraints).deviceId, { exact: 'cam-2' });
+});
+
+test('switchCamera while screen sharing only records the preference (nothing live to replace)', async () => {
+  const screen = screenStream();
+  const { engine, lastPc } = makeEngine({
+    hasVideo: true,
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  await engine.startScreenShare();
+  const pc = lastPc();
+  const videoSender = pc.senders.find((s) => s.track === (screen.tracks[0] as unknown as MediaStreamTrack));
+  const replaceTrackCallsBefore = videoSender!.replaceTrackCalls.length;
+
+  await engine.switchCamera('cam-2');
+
+  assert.equal(engine.videoInputDeviceId, 'cam-2', 'preference recorded');
+  assert.equal(
+    videoSender!.replaceTrackCalls.length,
+    replaceTrackCallsBefore,
+    'screen-share track untouched'
+  );
+  assert.equal(engine.screenSharing, true, 'still sharing');
+});
+
+test('switchCamera on an audio-only call reports onDeviceSwitchError', async () => {
+  const { engine, events } = makeEngine(); // hasVideo: false
+  await engine.placeCall();
+
+  await engine.switchCamera('cam-2');
+
+  assert.equal(events.deviceSwitchErrors.length, 1);
+  assert.match(events.deviceSwitchErrors[0].message, /no video/);
+});
+
+test('RACE: screen share ending after hang up is a silent no-op', async () => {
+  const screen = screenStream();
+  const { engine, events } = makeEngine({
+    hasVideo: true,
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  await engine.startScreenShare();
+  engine.hangup();
+
+  await engine.stopScreenShare(); // must not throw, must not resurrect anything
+
+  assert.equal(engine.state, 'ended');
+  assert.deepEqual(events.screenShareChanges, [true]); // no extra "false" after hangup
+});
+
+test('RACE: startScreenShare in flight when hang up lands — capture is stopped, not adopted', async () => {
+  const gdm = deferred<MediaStream>();
+  const { engine, lastPc } = makeEngine({
+    hasVideo: true,
+    getDisplayMedia: () => gdm.promise,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  const videoSender = pc.senders.find((s) => (s.track as unknown as FakeTrack).kind === 'video');
+  const originalTrack = videoSender!.track;
+
+  const sharing = engine.startScreenShare();
+  engine.hangup();
+  const lateScreen = screenStream();
+  gdm.resolve(lateScreen as unknown as MediaStream);
+  await sharing;
+
+  assert.equal(engine.state, 'ended');
+  assert.equal(videoSender!.track, originalTrack, 'sender untouched — replaceTrack never called');
+  assert.equal(lateScreen.tracks[0].stopped, true, 'the orphaned capture is stopped');
+});
+
+test('end() while screen sharing stops the capture track', async () => {
+  const screen = screenStream();
+  const { engine } = makeEngine({
+    hasVideo: true,
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  await engine.startScreenShare();
+
+  engine.hangup();
+
+  assert.equal(screen.tracks[0].stopped, true);
 });
 
 // ── Race freedom ──────────────────────────────────────────────────────────────

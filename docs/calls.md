@@ -1,6 +1,6 @@
 # Calls (native WebRTC 1:1 audio/video) — our own, better-integrated implementation
 
-Status: **in progress** — M0 (interop spec + scaffold + un-gate patch), M1 (audio call happy path), and M2 (mic/camera device selection + hot-switching, avatar speaking-rings) landed; M3–M5 pending. Calls stay audio-only until M3 (the camera picker records a preference only for now). The real two-way-audio gate against a live Delta Chat client / `chatmail/calls-echobot` is verified by CI/human, not in the headless build sandbox. · Branch: `claude/calls-impl-m0-9t3ote`
+Status: **in progress** — M0 (interop spec + scaffold + un-gate patch), M1 (audio call happy path), M2 (mic/camera device selection + hot-switching, avatar speaking-rings), and M3 (camera video + screen share) landed; M4–M5 pending. M3: `AudioCallEngine`'s `hasVideo` adds a camera track/m-line alongside the mic (mirrored on the answer side per the caller's own `has_video`); `startScreenShare`/`stopScreenShare` take over that SAME outgoing video sender via `getDisplayMedia()` + `RTCRtpSender.replaceTrack` — no renegotiation, so a `calls-webapp` peer sees an ordinary track change, not a screen-share-specific protocol; the browser's native "Stop sharing" auto-restores the camera the same way. The real two-way-video/screen-share gate against a live Delta Chat client / `chatmail/calls-echobot` is verified by CI/human, not in the headless build sandbox. · Branch: `claude/calls-impl-m0-9t3ote`
 
 ## What & why
 

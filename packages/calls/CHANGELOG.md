@@ -70,3 +70,40 @@
   selection from the real in-use device (`localStream`'s
   `getSettings().deviceId`, not just "first enumerated"), and re-enumerates on
   `devicechange` for the lifetime of the call.
+- M3 (video + screen share): `AudioCallEngine` gains a `hasVideo` constructor
+  option — `placeCall`/`accept` now also acquire a camera track and `addTrack`
+  it alongside the mic (an ordinary second m-line; a `calls-webapp` peer that
+  itself sent `has_video: true` expects, and symmetrically sends, one back).
+  The resulting video `RTCRtpSender` is what `startScreenShare`/
+  `stopScreenShare` `replaceTrack` on: `startScreenShare` takes it over via
+  `getDisplayMedia()` — no renegotiation, no new m-line, so the remote peer
+  sees an ordinary "the video track changed" moment, not a screen-share
+  protocol; `stopScreenShare` re-acquires the camera and `replaceTrack`s it
+  back, restoring the camera exactly. The browser's own "Stop sharing"
+  affordance ending the capture track is handled identically to an explicit
+  toggle. Failures (no video on this call, capture unavailable, the share
+  picker cancelled, camera didn't come back) report the new
+  `onScreenShareError` and never end the call — same contract as
+  `onDeviceSwitchError`. `switchCamera` mirrors `switchMicrophone` for the
+  video sender (hot-switch via `replaceTrack` when the camera is live;
+  records a preference instead when currently screen-sharing, closing the M2
+  "camera picker only records a preference" gap). `bridge/index.ts` wires
+  `hasVideo` both ways — `OutgoingCallParams.hasVideo`/
+  `IncomingCallParams.hasVideo` (the latter mirroring the caller's own
+  `has_video` from the `IncomingCall` event, since `accept_incoming_call` has
+  no separate RPC parameter for it) — and adds
+  `startScreenShare`/`stopScreenShare`/`toggleScreenShare`/`switchCamera` plus
+  `defaultMediaFactories().getDisplayMedia` (feature-detected). `ui/CallOverlay`
+  renders `<video>` tiles (remote + local self-preview) instead of the
+  audio-only `SpeakingRing` row when `hasVideo`, plus a screen-share toggle
+  button; `CallsUiStore` gains `hasVideo`/`localStream`/`screenSharing`/
+  `screenShareError`. `packages/web-app/src/runtime.ts` no longer ignores
+  `startWithCameraEnabled` — upstream `ChatView`'s existing "start_audio_call"
+  vs. "start_video_call" context-menu entries (both already call
+  `startOutgoingVideoCall` with that flag; no frontend/patch change needed)
+  now actually start a video call, and incoming calls mirror the caller's
+  `has_video`. 18 new engine unit tests cover camera-track addition, screen
+  share start/stop/toggle, the native "Stop sharing" auto-restore path,
+  `switchCamera` (including the "while sharing" no-op-on-the-wire case), and
+  the teardown/race-freedom discipline already established for
+  `switchMicrophone`.

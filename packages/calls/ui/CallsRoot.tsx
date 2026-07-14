@@ -41,7 +41,11 @@ export function CallsRoot({ store, callbacks }: CallsRootProps) {
       state={snapshot.state}
       title={snapshot.title}
       muted={snapshot.muted}
+      hasVideo={snapshot.hasVideo}
       remoteStream={snapshot.remoteStream}
+      localStream={snapshot.localStream}
+      screenSharing={snapshot.screenSharing}
+      screenShareError={snapshot.screenShareError}
       error={snapshot.error}
       localLevel={snapshot.localLevel}
       remoteLevel={snapshot.remoteLevel}
@@ -54,6 +58,7 @@ export function CallsRoot({ store, callbacks }: CallsRootProps) {
       onToggleMute={callbacks.onToggleMute}
       onSelectMicrophone={callbacks.onSelectMicrophone}
       onSelectCamera={callbacks.onSelectCamera}
+      onToggleScreenShare={callbacks.onToggleScreenShare}
     />
   )
 }

@@ -666,24 +666,31 @@ class BrowserRuntime {
     this.log.critical('Method not implemented.')
   }
   /**
-   * Place an outgoing 1:1 call (audio-only for M1; `startWithCameraEnabled` is
-   * accepted for signature-compatibility with the frontend/electron but video
-   * is deferred to M3). The whole call — mic acquisition, non-trickle ICE,
-   * offer, ringing, connect, hangup — is conducted by the call manager against
-   * the wasm core's jsonrpc client. Runs inside the call-button click gesture,
-   * so the mic-permission prompt is allowed.
+   * Place an outgoing 1:1 call. `startWithCameraEnabled` (M3) is the upstream
+   * `ChatView` call button's own audio-vs-video choice ("start_audio_call" vs
+   * "start_video_call" in its context menu, both already calling this exact
+   * method/signature) — `true` acquires the camera alongside the mic and
+   * advertises `has_video` to the peer. The whole call — mic/camera
+   * acquisition, non-trickle ICE, offer, ringing, connect, hangup — is
+   * conducted by the call manager against the wasm core's jsonrpc client.
+   * Runs inside the call-button click gesture, so the mic/camera-permission
+   * prompt is allowed.
    */
   startOutgoingVideoCall(
     accountId: number,
     chatId: number,
-    _param?: { startWithCameraEnabled: boolean }
+    param?: { startWithCameraEnabled: boolean }
   ): void {
-    getCallManager(this.log).startOutgoingCall(accountId, chatId)
+    getCallManager(this.log).startOutgoingCall(accountId, chatId, param?.startWithCameraEnabled ?? false)
   }
   /**
    * Show the incoming-call ring and, on accept, answer the call. Called both
    * from the IncomingCall event subscription and from the chat log's
-   * accept/redial buttons (Message.tsx). Audio-only for M1.
+   * accept/redial buttons (Message.tsx). `startWithCameraEnabled` (M3) mirrors
+   * the CALLER's own `has_video` (the `IncomingCall` event's `has_video`) — we
+   * add our own camera track to the answer so both sides carry video, per
+   * ordinary WebRTC offer/answer symmetry (see `IncomingCallParams.hasVideo`'s
+   * doc in `@slothfulchat/calls/bridge`).
    */
   async openIncomingVideoCallWindow(params: {
     accountId: number
@@ -1690,7 +1697,8 @@ class CallManager {
       onHangup: () => this.hangupCurrent(),
       onToggleMute: () => this.toggleMuteCurrent(),
       onSelectMicrophone: deviceId => this.selectMicrophone(deviceId),
-      onSelectCamera: deviceId => this.ui.setSelectedCamera(deviceId),
+      onSelectCamera: deviceId => this.selectCamera(deviceId),
+      onToggleScreenShare: () => this.toggleScreenShareCurrent(),
     })
     this.subscribe()
   }
@@ -1733,12 +1741,12 @@ class CallManager {
     return null
   }
 
-  startOutgoingCall(accountId: number, chatId: number): void {
+  startOutgoingCall(accountId: number, chatId: number, hasVideo = false): void {
     if (this.call) {
       this.log.warn('startOutgoingCall: already in a call, ignoring')
       return
     }
-    this.ui.showCall({ direction: 'outgoing', title: 'Call' })
+    this.ui.showCall({ direction: 'outgoing', title: 'Call', hasVideo })
     const slot: NonNullable<CallManager['call']> = {
       accountId,
       bridge: null,
@@ -1755,7 +1763,7 @@ class CallManager {
         if (slot.cancelled) return
         const bridge = CallBridge.outgoing(
           this.rpc,
-          { accountId, chatId, hasVideo: false, iceServers },
+          { accountId, chatId, hasVideo, iceServers },
           this.factories,
           {
             onStateChange: state => this.onState(slot, state),
@@ -1768,10 +1776,14 @@ class CallManager {
             // the shared store; CallOverlay's SpeakingRing tiles render them.
             onLocalLevel: level => this.ui.setLocalLevel(level),
             onRemoteLevel: level => this.ui.setRemoteLevel(level),
-            // M2 device picker: a failed switchMicrophone leaves the call/old
-            // mic untouched — surface it next to the picker, not as a
-            // call-ending error (contrast onError above).
-            onDeviceSwitchError: err => this.ui.showDeviceSwitchError(err.message || 'Could not switch microphone'),
+            // M2 device picker: a failed switchMicrophone/switchCamera leaves
+            // the call/old device untouched — surface it next to the picker,
+            // not as a call-ending error (contrast onError above).
+            onDeviceSwitchError: err => this.ui.showDeviceSwitchError(err.message || 'Could not switch device'),
+            // M3: local video preview + screen-share toggle state.
+            onLocalVideoTrackChanged: () => this.ui.setLocalStream(slot.bridge?.localStream ?? null),
+            onScreenShareChanged: sharing => this.ui.setScreenSharing(sharing),
+            onScreenShareError: err => this.ui.showScreenShareError(err.message || 'Could not share screen'),
           }
         )
         slot.bridge = bridge
@@ -1791,14 +1803,14 @@ class CallManager {
     callerWebrtcOffer: string
     startWithCameraEnabled: boolean
   }): void {
-    const { accountId, chatId, callMessageId, callerWebrtcOffer } = params
+    const { accountId, chatId, callMessageId, callerWebrtcOffer, startWithCameraEnabled: hasVideo } = params
     // Same call already showing (event + Message.tsx button both call in).
     if (this.forCall(accountId, callMessageId)) return
     if (this.call) {
       this.log.warn('openIncomingCall: already in a call, ignoring incoming')
       return
     }
-    this.ui.showCall({ direction: 'incoming', title: 'Call' })
+    this.ui.showCall({ direction: 'incoming', title: 'Call', hasVideo })
     const slot: NonNullable<CallManager['call']> = {
       accountId,
       bridge: null,
@@ -1815,7 +1827,7 @@ class CallManager {
         if (slot.cancelled) return
         const bridge = CallBridge.incoming(
           this.rpc,
-          { accountId, chatId, callMessageId, offerSdp: callerWebrtcOffer, iceServers },
+          { accountId, chatId, callMessageId, offerSdp: callerWebrtcOffer, hasVideo, iceServers },
           this.factories,
           {
             onStateChange: state => this.onState(slot, state),
@@ -1823,7 +1835,10 @@ class CallManager {
             onError: err => this.onError(slot, err),
             onLocalLevel: level => this.ui.setLocalLevel(level),
             onRemoteLevel: level => this.ui.setRemoteLevel(level),
-            onDeviceSwitchError: err => this.ui.showDeviceSwitchError(err.message || 'Could not switch microphone'),
+            onDeviceSwitchError: err => this.ui.showDeviceSwitchError(err.message || 'Could not switch device'),
+            onLocalVideoTrackChanged: () => this.ui.setLocalStream(slot.bridge?.localStream ?? null),
+            onScreenShareChanged: sharing => this.ui.setScreenSharing(sharing),
+            onScreenShareError: err => this.ui.showScreenShareError(err.message || 'Could not share screen'),
           }
         )
         slot.bridge = bridge
@@ -1863,6 +1878,23 @@ class CallManager {
     const c = this.call
     if (!c?.bridge) return
     this.ui.setMuted(c.bridge.toggleMuted())
+  }
+
+  /** Toggle screen sharing (M3) — local-only, no core RPC (same
+   * `replaceTrack`, no-renegotiation reasoning as mute/device switching); see
+   * `AudioCallEngine.startScreenShare`/`stopScreenShare`. The store's
+   * `screenSharing`/`screenShareError` fields are kept live by the bridge's
+   * `onScreenShareChanged`/`onScreenShareError` callbacks (wired in
+   * `startOutgoingCall`/`openIncomingCall`), not by this method's return
+   * value — `toggleScreenShare` does real async capture/track work, so the
+   * store must reflect the eventual outcome, not an optimistic guess.
+   */
+  private toggleScreenShareCurrent(): void {
+    const c = this.call
+    if (!c?.bridge) return
+    c.bridge.toggleScreenShare().catch(err => {
+      this.log.error('toggleScreenShare failed', err)
+    })
   }
 
   private onState(
@@ -1923,6 +1955,10 @@ class CallManager {
     if (options.seedSelectedMicrophone) {
       const activeDeviceId = slot.bridge?.localStream?.getAudioTracks()[0]?.getSettings().deviceId
       if (activeDeviceId) this.ui.setSelectedMicrophone(activeDeviceId)
+      // M3: seed the camera picker the same way, only when this call
+      // actually has a live video track to read a deviceId off.
+      const activeCameraId = slot.bridge?.localStream?.getVideoTracks()[0]?.getSettings().deviceId
+      if (activeCameraId) this.ui.setSelectedCamera(activeCameraId)
     }
   }
 
@@ -1939,6 +1975,19 @@ class CallManager {
       // device); only reflect the pick in the store once it actually took —
       // the onDeviceSwitchError callback above already surfaced the failure.
       if (bridge.audioInputDeviceId === deviceId) this.ui.setSelectedMicrophone(deviceId)
+    })
+  }
+
+  /** Hot-switch the camera (M3) — see `AudioCallEngine.switchCamera` (mirrors
+   * `selectMicrophone` exactly, including its "while screen-sharing this
+   * just records a preference" no-op-on-the-wire case). */
+  private selectCamera(deviceId: string): void {
+    const c = this.call
+    if (!c?.bridge) return
+    const bridge = c.bridge
+    void bridge.switchCamera(deviceId).then(() => {
+      if (this.call !== c) return // call ended/replaced while switching
+      if (bridge.videoInputDeviceId === deviceId) this.ui.setSelectedCamera(deviceId)
     })
   }
 

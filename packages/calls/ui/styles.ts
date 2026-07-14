@@ -40,13 +40,46 @@ export const subtitle: CSSProperties = {
 }
 
 /** M2 speaking rings: the row holding the local + remote `SpeakingRing`
- * tiles. `CallOverlay` is audio-only (no camera video, M3), so this row IS
- * the participant list, not an overlay atop video frames. */
+ * tiles. Only rendered for an audio-only call (`!hasVideo`, M3) — a video
+ * call renders `videoStage` below instead, since the video frame itself is
+ * the participant tile. */
 export const participantsRow: CSSProperties = {
   display: 'flex',
   gap: 24,
   justifyContent: 'center',
   margin: '2px 0',
+}
+
+/** M3 video call: the remote video frame with a small local self-preview
+ * picture-in-picture, replacing `participantsRow` when `hasVideo`. */
+export const videoStage: CSSProperties = {
+  position: 'relative',
+  width: '100%',
+  aspectRatio: '4 / 3',
+  borderRadius: 10,
+  overflow: 'hidden',
+  background: '#000',
+}
+
+export const remoteVideo: CSSProperties = {
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover',
+  display: 'block',
+  background: '#000',
+}
+
+export const localVideo: CSSProperties = {
+  position: 'absolute',
+  right: 8,
+  bottom: 8,
+  width: '28%',
+  maxWidth: 110,
+  aspectRatio: '4 / 3',
+  objectFit: 'cover',
+  borderRadius: 6,
+  border: '1px solid rgba(255,255,255,.35)',
+  background: '#111',
 }
 
 export const participantColumn: CSSProperties = {

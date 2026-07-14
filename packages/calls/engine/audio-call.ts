@@ -1,5 +1,9 @@
 /**
- * The audio-only WebRTC call engine (M1 happy path — outgoing + incoming).
+ * The WebRTC call engine — audio-first (M1 happy path — outgoing + incoming),
+ * with optional camera video + screen share (M3). The class name predates M3
+ * and is kept for a stable, well-referenced identifier rather than churning
+ * every import across the package for a rename; `hasVideo: false` (the
+ * default) reproduces the original audio-only M1/M2 behavior exactly.
  *
  * Framework-agnostic, pure TS: it uses the ambient WebRTC *types*
  * (`RTCPeerConnection`, `MediaStream`, …) but IMPORTS no DOM/React and never
@@ -46,6 +50,26 @@
  * AND every successful switch, so a consumer that taps the local track (e.g.
  * the M2 speaking-ring level meter) has one precise seam to re-tap on rather
  * than assuming `localMediaStream`'s first audio track never changes identity.
+ *
+ * ── VIDEO + SCREEN SHARE (M3) ──────────────────────────────────────────────────
+ *
+ * `hasVideo` (constructor option) makes `placeCall`/`accept` also acquire a
+ * camera track alongside the mic and `addTrack` it onto the peer connection —
+ * an ordinary second m-line, nothing interop-special; a `calls-webapp` peer
+ * that itself sent `has_video: true` expects (and, symmetrically, sends) one.
+ * The resulting `RTCRtpSender` for that track is remembered as
+ * {@link videoSender} — the seam {@link startScreenShare}/{@link
+ * stopScreenShare} hang off, exactly like {@link switchMicrophone} hangs off
+ * the audio sender.
+ *
+ * {@link startScreenShare} takes over that SAME sender via
+ * `getDisplayMedia()` + `RTCRtpSender.replaceTrack` — no renegotiation, no new
+ * m-line, so the remote peer (any interop target) sees an ordinary "the video
+ * track changed" moment identical to a camera switch, not a screen-share
+ * *protocol* the far end would need to understand. {@link stopScreenShare}
+ * reverses it the same way: re-acquire the camera, `replaceTrack` it back.
+ * Both directions follow the epoch-guard / "failure never ends the call"
+ * discipline `switchMicrophone` established — see `onScreenShareError`.
  *
  * ── RACE FREEDOM ──────────────────────────────────────────────────────────────
  *
@@ -138,6 +162,14 @@ export interface AudioCallMediaFactories {
   getUserMedia(constraints: MediaStreamConstraints): Promise<MediaStream>;
   /** Typically `(config) => new RTCPeerConnection(config)`. */
   createPeerConnection(configuration: RTCConfiguration): PeerConnectionLike;
+  /**
+   * Screen-capture source for {@link AudioCallEngine.startScreenShare} (M3).
+   * Typically `navigator.mediaDevices.getDisplayMedia` bound to `mediaDevices`.
+   * Optional: only required if a consumer ever calls `startScreenShare` —
+   * `switchMicrophone`/audio-only calls never touch it, so a test harness
+   * that never exercises screen share can omit it entirely.
+   */
+  getDisplayMedia?(constraints?: MediaStreamConstraints): Promise<MediaStream>;
 }
 
 export interface AudioCallCallbacks {
@@ -159,6 +191,16 @@ export interface AudioCallCallbacks {
    * *track* underneath it is not.
    */
   onLocalTrackChanged?(track: MediaStreamTrack): void;
+  /**
+   * The outgoing local VIDEO track was (re)established — the initial camera
+   * acquisition (when `hasVideo`), a successful {@link
+   * AudioCallEngine.switchCamera}, or a {@link AudioCallEngine.startScreenShare}/
+   * {@link AudioCallEngine.stopScreenShare} swap (M3). A consumer rendering a
+   * local video preview `<video>` element should re-attach `srcObject` on this
+   * event rather than assuming `localMediaStream`'s video track never changes
+   * identity — same rationale as {@link onLocalTrackChanged} for audio.
+   */
+  onLocalVideoTrackChanged?(track: MediaStreamTrack): void;
   /** Mirror of the state machine, for convenience (same as `subscribe`). */
   onStateChange?: CallStateListener;
   /** A fatal error tore the call down; the engine is already `ended`. */
@@ -171,6 +213,22 @@ export interface AudioCallCallbacks {
    * error (contrast {@link onError}).
    */
   onDeviceSwitchError?(error: Error): void;
+  /**
+   * {@link AudioCallEngine.screenSharing} flipped, on both a successful
+   * {@link AudioCallEngine.startScreenShare} and a successful {@link
+   * AudioCallEngine.stopScreenShare} (including the browser's own "Stop
+   * sharing" affordance ending the capture out-of-band — see {@link
+   * startScreenShare}'s doc). Drives the UI's toggle-button state.
+   */
+  onScreenShareChanged?(sharing: boolean): void;
+  /**
+   * `startScreenShare`/`stopScreenShare` failed (capture picker cancelled, no
+   * outgoing video to hijack, camera didn't come back, …). The call is NOT
+   * torn down (mirrors `onDeviceSwitchError`'s contract exactly) — surface
+   * this as an inline note next to the screen-share control, not as the
+   * call-ending `onError`.
+   */
+  onScreenShareError?(error: Error): void;
 }
 
 export interface AudioCallOptions {
@@ -196,6 +254,27 @@ export interface AudioCallOptions {
    * instead — this only seeds the initial acquisition.
    */
   audioInputDeviceId?: string;
+  /**
+   * Whether this call carries video (M3, docs/calls.md: "Add camera video
+   * (has_video)"). When `true`, `placeCall`/`accept` also acquire a camera
+   * track and `addTrack` it alongside the mic — this is what {@link
+   * AudioCallEngine.startScreenShare} later hijacks via `replaceTrack`.
+   * Outgoing: the caller's choice (also what the runtime passes as `has_video`
+   * to `rpc.placeOutgoingCall`). Incoming: should mirror the remote offer's
+   * own `has_video` — the peer that sent a video m-line expects one back
+   * (ordinary WebRTC offer/answer symmetry), and it is also the only way
+   * {@link startScreenShare} has anything to replace. Default `false`
+   * (audio-only, M1/M2 behavior unchanged).
+   */
+  hasVideo?: boolean;
+  /** Video track constraints (when {@link hasVideo}). Default: `true` (default camera). */
+  videoConstraints?: MediaTrackConstraints | boolean;
+  /**
+   * Preferred camera `deviceId`, applied to the initial `getUserMedia` call
+   * the same way {@link audioInputDeviceId} seeds the mic. Mid-call changes go
+   * through {@link AudioCallEngine.switchCamera}.
+   */
+  videoInputDeviceId?: string;
 }
 
 type ConnectionListener = () => void;
@@ -213,11 +292,28 @@ export class AudioCallEngine {
    * `audioInputDeviceId` constructor option. Read by {@link mediaConstraints}
    * and exposed via {@link audioInputDeviceId} for the UI to pre-select. */
   private selectedAudioInputDeviceId: string | null = null;
+  /** Whether this call carries video (M3). See {@link AudioCallOptions.hasVideo}. */
+  private readonly wantsVideo: boolean;
+  private readonly videoConstraints: MediaTrackConstraints | boolean;
+  /** Current camera selection; mirrors {@link selectedAudioInputDeviceId} but
+   * for video (constructor's `videoInputDeviceId` or a successful {@link
+   * switchCamera}). Also what {@link stopScreenShare} reacquires when
+   * restoring the camera. */
+  private selectedVideoInputDeviceId: string | null = null;
 
   private direction: CallDirection | null = null;
   private pc: PeerConnectionLike | null = null;
   private localStream: MediaStream | null = null;
   private remoteStream: MediaStream | null = null;
+  /** The outgoing video `RTCRtpSender`, once a video track has been
+   * `addTrack`'d (i.e. `hasVideo` was set) — `null` for an audio-only call.
+   * {@link startScreenShare}/{@link stopScreenShare}/{@link switchCamera}
+   * `replaceTrack` on this SAME sender; no renegotiation, per class doc. */
+  private videoSender: RtpSenderLike | null = null;
+  /** The live `getDisplayMedia()` stream while screen-sharing, so {@link
+   * stopScreenShare}/{@link end} can release it. `null` otherwise. */
+  private screenShareStream: MediaStream | null = null;
+  private screenSharingState = false;
   /** Local mute (mic-enabled) intent. Applied to the local stream's audio
    * tracks as soon as one exists; survives across the ringing → connected
    * transition since it is re-applied whenever `localStream` is (re)assigned. */
@@ -245,6 +341,9 @@ export class AudioCallEngine {
     this.gatherOptions = options.gatherOptions;
     this.audioConstraints = options.audioConstraints ?? true;
     this.selectedAudioInputDeviceId = options.audioInputDeviceId ?? null;
+    this.wantsVideo = options.hasVideo ?? false;
+    this.videoConstraints = options.videoConstraints ?? true;
+    this.selectedVideoInputDeviceId = options.videoInputDeviceId ?? null;
     if (this.callbacks.onStateChange) {
       this.machine.subscribe(this.callbacks.onStateChange);
     }
@@ -278,6 +377,28 @@ export class AudioCallEngine {
    * `audioInputDeviceId` or a successful {@link switchMicrophone}. */
   get audioInputDeviceId(): string | null {
     return this.selectedAudioInputDeviceId;
+  }
+
+  /** Whether this call carries video (constructor's `hasVideo`; M3). `false`
+   * means there is no outgoing video sender at all, so {@link
+   * startScreenShare} always reports `onScreenShareError` on such a call. */
+  get hasVideo(): boolean {
+    return this.wantsVideo;
+  }
+
+  /** The camera `deviceId` currently selected — kept even while {@link
+   * screenSharing} is `true` (it's what {@link stopScreenShare} reacquires),
+   * so this does NOT reflect "what is on the wire right now" the way {@link
+   * screenSharing} does. `null` if none was ever explicitly selected. */
+  get videoInputDeviceId(): string | null {
+    return this.selectedVideoInputDeviceId;
+  }
+
+  /** Whether the outgoing video is currently a screen capture rather than the
+   * camera (M3). Always `false` for an audio-only call (no video sender to
+   * hijack in the first place). */
+  get screenSharing(): boolean {
+    return this.screenSharingState;
   }
 
   /**
@@ -340,9 +461,7 @@ export class AudioCallEngine {
       // Attach the gather listeners BEFORE setLocalDescription so no candidate
       // is missed (see ice-gathering.ts CRITICAL ORDERING).
       const gathered = this.gather(pc, this.gatherOptionsWithSignal());
-      for (const track of stream.getAudioTracks()) {
-        pc.addTrack(track, stream);
-      }
+      this.addLocalTracks(pc, stream);
       const offer = await pc.createOffer();
       if (!this.ensureActive(epoch)) return;
       await pc.setLocalDescription(offer);
@@ -441,9 +560,7 @@ export class AudioCallEngine {
       const gathered = this.gather(pc, this.gatherOptionsWithSignal());
       await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
       if (!this.ensureActive(epoch)) return;
-      for (const track of stream.getAudioTracks()) {
-        pc.addTrack(track, stream);
-      }
+      this.addLocalTracks(pc, stream);
       const answer = await pc.createAnswer();
       if (!this.ensureActive(epoch)) return;
       await pc.setLocalDescription(answer);
@@ -547,12 +664,282 @@ export class AudioCallEngine {
     this.callbacks.onLocalTrackChanged?.(newTrack);
   }
 
-  /** Fire {@link AudioCallCallbacks.onLocalTrackChanged} for `stream`'s first
-   * audio track, if any (a fresh `getUserMedia({ audio: true, video: false })`
-   * stream always has exactly one). */
+  // ── Video device switching + screen share (M3) ──────────────────────────────
+
+  /**
+   * Hot-switch the outgoing camera to `deviceId`, mirroring {@link
+   * switchMicrophone} exactly (fresh `getUserMedia` + `RTCRtpSender.replaceTrack`,
+   * no renegotiation). If currently {@link screenSharing}, there is no live
+   * camera track on the wire to swap — this just records the preference
+   * ({@link videoInputDeviceId}) for the camera {@link stopScreenShare} will
+   * reacquire, matching `DevicePicker`'s pre-M3 "records a preference" note
+   * for that case. A no-op if the call has no video at all ({@link hasVideo}
+   * `false`) or has already ended; failures report `onDeviceSwitchError`
+   * (same callback `switchMicrophone` uses — same failure class) without
+   * touching the call.
+   */
+  async switchCamera(deviceId: string): Promise<void> {
+    const epoch = this.epoch;
+    if (epoch == null || this.machine.isTerminal) return; // ended: silent no-op
+    if (!this.wantsVideo) {
+      this.reportDeviceSwitchError(new Error('switchCamera: this call has no video'));
+      return;
+    }
+    if (this.screenSharingState) {
+      // Nothing live to replace right now; stopScreenShare() reacquires with
+      // this deviceId when the camera comes back.
+      this.selectedVideoInputDeviceId = deviceId;
+      return;
+    }
+    const sender = this.videoSender;
+    if (sender == null) {
+      this.reportDeviceSwitchError(new Error('switchCamera: no active video sender yet'));
+      return;
+    }
+
+    let newStream: MediaStream;
+    try {
+      newStream = await this.factories.getUserMedia({
+        audio: false,
+        video: this.videoConstraintsFor(deviceId),
+      });
+    } catch (error) {
+      this.reportDeviceSwitchError(error);
+      return;
+    }
+    if (!this.ensureActive(epoch)) {
+      this.stopStream(newStream);
+      return;
+    }
+    const newTrack = newStream.getVideoTracks()[0];
+    if (newTrack == null) {
+      this.stopStream(newStream);
+      this.reportDeviceSwitchError(new Error('switchCamera: the new stream had no video track'));
+      return;
+    }
+
+    try {
+      await sender.replaceTrack(newTrack);
+    } catch (error) {
+      this.stopStream(newStream);
+      this.reportDeviceSwitchError(error);
+      return;
+    }
+    if (!this.ensureActive(epoch)) {
+      this.stopStream(newStream);
+      return;
+    }
+
+    this.swapLocalVideoTrack(newTrack);
+    this.selectedVideoInputDeviceId = deviceId;
+    this.callbacks.onLocalVideoTrackChanged?.(newTrack);
+  }
+
+  /**
+   * Start sharing the screen: `getDisplayMedia()` a capture stream and
+   * `RTCRtpSender.replaceTrack` it onto the EXISTING outgoing video sender
+   * (docs/calls.md M3: "getDisplayMedia() that replaces the outgoing camera
+   * track … so the remote sees it as the normal video track"). No
+   * renegotiation, no new m-line — same technique as {@link switchMicrophone}/
+   * {@link switchCamera} — so a `calls-webapp`-compatible peer sees this as an
+   * ordinary video-track update, nothing screen-share-protocol-specific.
+   *
+   * Requires the call to already carry video ({@link hasVideo}): there is no
+   * outgoing video m-line to hijack on an audio-only call, and adding one now
+   * would need a fresh offer/answer round-trip over DeltaChat messaging,
+   * which mid-call track changes deliberately avoid (see the class doc).
+   * Reports {@link AudioCallCallbacks.onScreenShareError} rather than
+   * throwing in every failure case (no video, capture factory missing, the
+   * user cancelled the browser's share picker, `replaceTrack` rejected) — the
+   * call is never torn down by a screen-share failure.
+   *
+   * The browser's own "Stop sharing" affordance ends the captured track out
+   * from under us; the track's `ended` listener below treats that exactly
+   * like an explicit {@link stopScreenShare}, so the UI's toggle state and
+   * the outgoing video (restored to camera) both recover automatically.
+   */
+  async startScreenShare(): Promise<void> {
+    const epoch = this.epoch;
+    if (epoch == null || this.machine.isTerminal) return; // ended: silent no-op
+    if (this.screenSharingState) return; // already sharing: no-op
+    const sender = this.videoSender;
+    if (sender == null) {
+      this.reportScreenShareError(
+        new Error('startScreenShare: this call has no outgoing video to replace')
+      );
+      return;
+    }
+    const getDisplayMedia = this.factories.getDisplayMedia;
+    if (getDisplayMedia == null) {
+      this.reportScreenShareError(new Error('startScreenShare: screen capture is not available'));
+      return;
+    }
+
+    let displayStream: MediaStream;
+    try {
+      displayStream = await getDisplayMedia({ video: true, audio: false });
+    } catch (error) {
+      // e.g. the user dismissed the browser's share-source picker — not a
+      // call-ending error, just "screen share didn't start".
+      this.reportScreenShareError(error);
+      return;
+    }
+    if (!this.ensureActive(epoch)) {
+      this.stopStream(displayStream);
+      return;
+    }
+    const screenTrack = displayStream.getVideoTracks()[0];
+    if (screenTrack == null) {
+      this.stopStream(displayStream);
+      this.reportScreenShareError(new Error('startScreenShare: capture had no video track'));
+      return;
+    }
+
+    try {
+      await sender.replaceTrack(screenTrack);
+    } catch (error) {
+      this.stopStream(displayStream);
+      this.reportScreenShareError(error);
+      return;
+    }
+    if (!this.ensureActive(epoch)) {
+      this.stopStream(displayStream);
+      return;
+    }
+
+    // The browser's native "Stop sharing" UI (or the OS revoking capture)
+    // ends this track out-of-band — treat it identically to the user
+    // pressing our own toggle-off control.
+    screenTrack.addEventListener('ended', () => {
+      void this.stopScreenShare();
+    });
+
+    this.swapLocalVideoTrack(screenTrack);
+    this.screenShareStream = displayStream;
+    this.screenSharingState = true;
+    this.callbacks.onScreenShareChanged?.(true);
+    this.callbacks.onLocalVideoTrackChanged?.(screenTrack);
+  }
+
+  /**
+   * Stop sharing the screen and restore the camera: re-acquires a fresh
+   * camera stream (the {@link videoInputDeviceId} selected before/during the
+   * share, if any) and `replaceTrack`s it back onto the outgoing video
+   * sender — mirrors {@link startScreenShare} exactly, so this is equally
+   * renegotiation-free. A no-op if not currently {@link screenSharing}.
+   *
+   * The screen capture is stopped regardless of what follows — screen
+   * sharing is a stronger privacy commitment than a frozen/black video tile,
+   * so a failed camera reacquisition does not leave the capture running;
+   * {@link AudioCallCallbacks.onScreenShareError} surfaces that failure so
+   * the UI can offer a retry (the outgoing video sender is left with no live
+   * track until one succeeds — same degrade-gracefully contract as a failed
+   * {@link switchMicrophone}/{@link switchCamera}).
+   */
+  async stopScreenShare(): Promise<void> {
+    if (!this.screenSharingState) return;
+    const epoch = this.epoch;
+    const sender = this.videoSender;
+    this.releaseScreenShareStream(); // stop the capture unconditionally
+    this.screenSharingState = false;
+    this.callbacks.onScreenShareChanged?.(false);
+    if (epoch == null || this.machine.isTerminal || sender == null) return;
+
+    let camStream: MediaStream;
+    try {
+      camStream = await this.factories.getUserMedia({
+        audio: false,
+        video: this.videoConstraintsFor(this.selectedVideoInputDeviceId),
+      });
+    } catch (error) {
+      this.reportScreenShareError(error);
+      return;
+    }
+    if (!this.ensureActive(epoch)) {
+      this.stopStream(camStream);
+      return;
+    }
+    const camTrack = camStream.getVideoTracks()[0];
+    if (camTrack == null) {
+      this.stopStream(camStream);
+      this.reportScreenShareError(new Error('stopScreenShare: could not reacquire the camera'));
+      return;
+    }
+
+    try {
+      await sender.replaceTrack(camTrack);
+    } catch (error) {
+      this.stopStream(camStream);
+      this.reportScreenShareError(error);
+      return;
+    }
+    if (!this.ensureActive(epoch)) {
+      this.stopStream(camStream);
+      return;
+    }
+
+    this.swapLocalVideoTrack(camTrack);
+    this.callbacks.onLocalVideoTrackChanged?.(camTrack);
+  }
+
+  /** Flip {@link screenSharing} (mirrors {@link toggleMuted}'s shape, but
+   * async since both directions do real capture/track work). */
+  async toggleScreenShare(): Promise<void> {
+    if (this.screenSharingState) {
+      await this.stopScreenShare();
+    } else {
+      await this.startScreenShare();
+    }
+  }
+
+  private releaseScreenShareStream(): void {
+    this.stopStream(this.screenShareStream);
+    this.screenShareStream = null;
+  }
+
+  /** Swap the live outgoing video track within `localStream` (mirrors
+   * `switchMicrophone`'s audio-track swap) so `localMediaStream` always
+   * reflects whichever source (camera or screen) is actually being sent. */
+  private swapLocalVideoTrack(newTrack: MediaStreamTrack): void {
+    const stream = this.localStream;
+    if (stream == null) return;
+    for (const oldTrack of stream.getVideoTracks()) {
+      stream.removeTrack(oldTrack);
+      oldTrack.stop();
+    }
+    stream.addTrack(newTrack);
+  }
+
+  private reportScreenShareError(error: unknown): void {
+    const normalized = error instanceof Error ? error : new Error(String(error));
+    this.callbacks.onScreenShareError?.(normalized);
+  }
+
+  /** Fire {@link AudioCallCallbacks.onLocalTrackChanged}/{@link
+   * AudioCallCallbacks.onLocalVideoTrackChanged} for `stream`'s first
+   * audio/video track, if any (a fresh initial `getUserMedia` stream has at
+   * most one of each). */
   private notifyLocalTrackChanged(stream: MediaStream): void {
     const track = stream.getAudioTracks()[0];
     if (track != null) this.callbacks.onLocalTrackChanged?.(track);
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack != null) this.callbacks.onLocalVideoTrackChanged?.(videoTrack);
+  }
+
+  /** `addTrack` every track of `stream` onto `pc` (audio + video, when
+   * present) and remember the resulting video sender for {@link
+   * switchCamera}/{@link startScreenShare}/{@link stopScreenShare} to
+   * `replaceTrack` on later. Shared by `placeCall`/`accept` (M1 only ever had
+   * an audio track here; M3 adds the video one when `hasVideo`). */
+  private addLocalTracks(pc: PeerConnectionLike, stream: MediaStream): void {
+    for (const track of stream.getAudioTracks()) {
+      pc.addTrack(track, stream);
+    }
+    for (const track of stream.getVideoTracks()) {
+      pc.addTrack(track, stream);
+    }
+    this.videoSender =
+      pc.getSenders().find((s) => s.track != null && s.track.kind === 'video') ?? null;
   }
 
   private reportDeviceSwitchError(error: unknown): void {
@@ -577,6 +964,14 @@ export class AudioCallEngine {
     // releases the closed pc it closes over (see gatherAbort).
     this.gatherAbort?.abort();
     this.gatherAbort = null;
+    // Release any in-progress screen capture (M3). Its track also lives
+    // inside `localStream` (see `swapLocalVideoTrack`), so `teardown()`'s
+    // `stopStream(localStream)` would stop it too — this is just belt and
+    // braces plus dropping our own `screenShareStream` reference, and
+    // stopping an already-stopped track is a harmless no-op either way.
+    this.releaseScreenShareStream();
+    this.screenSharingState = false;
+    this.videoSender = null;
     this.teardown();
   }
 
@@ -588,13 +983,24 @@ export class AudioCallEngine {
   // ── Internals ───────────────────────────────────────────────────────────────
 
   private mediaConstraints(): MediaStreamConstraints {
-    return { audio: this.audioConstraintsFor(this.selectedAudioInputDeviceId), video: false };
+    return {
+      audio: this.audioConstraintsFor(this.selectedAudioInputDeviceId),
+      video: this.wantsVideo ? this.videoConstraintsFor(this.selectedVideoInputDeviceId) : false,
+    };
   }
 
   /** Merge a preferred `deviceId` (if any) into the base audio constraints. */
   private audioConstraintsFor(deviceId: string | null): MediaTrackConstraints | boolean {
     if (deviceId == null) return this.audioConstraints;
     const base = typeof this.audioConstraints === 'object' ? this.audioConstraints : {};
+    return { ...base, deviceId: { exact: deviceId } };
+  }
+
+  /** Merge a preferred `deviceId` (if any) into the base video constraints —
+   * mirrors {@link audioConstraintsFor}. */
+  private videoConstraintsFor(deviceId: string | null): MediaTrackConstraints | boolean {
+    if (deviceId == null) return this.videoConstraints;
+    const base = typeof this.videoConstraints === 'object' ? this.videoConstraints : {};
     return { ...base, deviceId: { exact: deviceId } };
   }
 
