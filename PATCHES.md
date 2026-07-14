@@ -258,8 +258,6 @@ the full table with what re-enabling each one would take.
 - **Maps / location streaming** — no map UI ships (it's a webxdc upstream).
   When it lands, the plan is to adopt ArcaneChat's per-message POI location
   API so a shared pin is tappable (issue #36).
-- **Video calls** — the runtime hook is desktop-specific; opening the call
-  URL in a new tab would be low effort but hasn't been prioritized.
 - **HTML email viewing** — unimplemented in upstream's browser target too;
   needs a sandboxed viewer.
 - **Database encryption (sqlcipher)** — doesn't build for wasm32; OPFS

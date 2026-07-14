@@ -2,6 +2,63 @@
 
 ## Unreleased
 
+- M5 (content-free call analytics; ringtone/vibration; mobile layout): new
+  `packages/web-app/src/events.mjs`/`analytics.ts` `call` event (`direction`,
+  `has_video`, `result` — never who was on the call, its duration, or any
+  signaling/media payload); `packages/web-app/src/runtime.ts`'s `CallManager`
+  reports it exactly once per call via a new `reportCallOutcome`, at the one
+  choke point (`teardown`) every ending path already funnels through.
+  `connected` is tracked locally (`onState`, or the popup's own report — see
+  below); a hangup we initiate before connecting is an unambiguous local
+  `declined`/`cancelled`; a second incoming call while already on one is
+  auto-declined as `busy` (a purely local, this-device notion — core has no
+  such state) instead of being silently ignored as before. Everything else
+  (far end hung up first, a ring timed out, a pre-`placeOutgoingCall` setup
+  failure) is genuinely ambiguous, so it's resolved via the new
+  `rpc.callInfo(accountId, msgId)` (`CallsRpcClient`) and
+  `bridge/call-outcome.ts`'s `classifyCallOutcome` — the per-direction mapping
+  of core's `CallInfo.state` (`Missed`/`Declined`/`Canceled`, whose meaning
+  flips depending on which side placed the call — documented in that file)
+  onto `missed`/`declined`/`timeout`. Because M4's popup runs its OWN engine
+  (the opener's `onState` never fires in `mode: 'popup'`), the popup⇄opener
+  protocol (`popup-signaling.ts`) gained one optional field —
+  `PopupToOpenerMessage`'s `ended.reachedConnected` — so `call-popup.ts` can
+  tell the opener whether ITS engine ever connected; a missing/abrupt-close
+  value defaults to `false` (undercounts rather than fabricates). New
+  `bridge/ringtone.ts` (`RingtonePlayer`): a looping incoming-call ringtone
+  synthesized with a Web Audio oscillator (gated by a `GainNode`, no bundled
+  audio asset) plus a `navigator.vibrate` pattern, started the moment the
+  ring dialog shows and stopped on accept/decline/any teardown — best-effort
+  throughout (a browser with no Web Audio/vibrate just rings silently). New
+  `ui/useIsMobileViewport.ts` (a `matchMedia` `useSyncExternalStore` hook) and
+  `styles.ts`'s `*Mobile` tokens: below the phone breakpoint, `CallOverlay`/
+  `IncomingCallRing` go full-bleed (`env(safe-area-inset-*)`-aware) instead of
+  a small floating card, the video stage fills available height instead of a
+  fixed 4/3 ratio, and buttons get bigger touch targets — a ring or an in-call
+  video view is a full-attention moment on a phone, not a corner toast.
+- M5 (direct-vs-relay indicator; settings; privacy docs): new
+  `engine/connection-route.ts` — `getActiveConnectionRoute(pc)` inspects
+  `RTCPeerConnection.getStats()` for the currently-active candidate pair
+  (`nominated && succeeded`, or any `succeeded` pair as a fallback) and reports
+  `'direct'`/`'relay'`/`'unknown'` (relay if either side's `candidateType` is
+  `relay`); `ConnectionRouteMonitor` polls it (3s default, injectable timers)
+  and calls back only on an actual change, mirroring `level-meter.ts`'s
+  `TrackLevelMeter`. `AudioCallEngine.getConnectionRoute()` exposes it
+  (`getStats` added to `PeerConnectionLike`); `CallBridge` starts the monitor
+  on `connected`/stops it on `ended` and forwards changes via a new
+  `onConnectionRouteChanged` callback, wired into `CallsUiStore` by both the
+  overlay path (`runtime.ts`) and the popup path (`call-popup.ts`, M4) — one
+  seam covers both windowing modes. `CallOverlay` shows it as a small,
+  non-blocking dot + label + tooltip under the status line once `connected`;
+  purely informational, and NOT a forced-relay setting (none exists — see
+  issue #93). Un-gated the upstream `WhoCanCallMe` toggle in
+  `Notifications.tsx` for the browser target (folded into the existing
+  `patches/desktop/0047` un-gate patch alongside `ChatView.tsx`'s call button
+  — same one-line gate, same reason — so patch count stays unchanged). README
+  "Privacy & data protection" and the generated `privacy.html` now disclose
+  the STUN/TURN relay origin (the same chatmail relay `ice_servers()` already
+  uses), the no-forced-relay stance, and that media is DTLS-SRTP encrypted
+  end-to-end regardless of path.
 - M4 (detached popup window + overlay fallback): the active call now prefers a
   same-origin `window.open` popup that hosts the engine + UI and owns media +
   `RTCPeerConnection`, relaying SIGNALING ONLY to the opener; the opener

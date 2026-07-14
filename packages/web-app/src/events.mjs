@@ -92,6 +92,12 @@ export const EVENTS = [
     what: 'That a chat was exported, and whether a custom date range was selected.',
     props: 'custom_range = yes · no',
   },
+  {
+    name: 'call',
+    what: 'That a 1:1 call was placed or received, whether it carried video, and how it ended — never audio/video/screen content, and never who was on it.',
+    props:
+      'direction = outgoing · incoming; has_video = yes · no; result = connected · missed · busy · declined · timeout · cancelled · error',
+  },
 ]
 
 /**

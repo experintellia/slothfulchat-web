@@ -131,6 +131,10 @@ class FakePc implements PeerConnectionLike {
   addedTracks: unknown[] = [];
   senders: FakeSender[] = [];
   configuration: RTCConfiguration;
+  /** M5: what {@link getStats} resolves with — tests set this to a `Map` of
+   * `RtcStatsEntry`-shaped objects to drive `getConnectionRoute()`. Empty by
+   * default (no candidate-pair stats yet), matching a fresh/unconnected pc. */
+  statsReport: Map<string, { id: string; type: string; [key: string]: unknown }> = new Map();
   private connListeners = new Set<() => void>();
   private trackListeners = new Set<(e: { streams: ReadonlyArray<MediaStream> }) => void>();
 
@@ -177,6 +181,9 @@ class FakePc implements PeerConnectionLike {
   }
   getSenders(): FakeSender[] {
     return this.senders;
+  }
+  async getStats(): Promise<Map<string, { id: string; type: string; [key: string]: unknown }>> {
+    return this.statsReport;
   }
   close(): void {
     this.closed = true;
@@ -937,4 +944,78 @@ test('accept without an incoming call throws', async () => {
 test('receiveCall rejects an empty offer payload', () => {
   const { engine } = makeEngine();
   assert.throws(() => engine.receiveCall(''), /non-empty SDP/);
+});
+
+// ── Connection route (M5) ──────────────────────────────────────────────────────
+
+test('getConnectionRoute: unknown before any call is placed (no peer connection yet)', async () => {
+  const { engine } = makeEngine();
+  assert.equal(await engine.getConnectionRoute(), 'unknown');
+});
+
+test('getConnectionRoute: reflects the live pc\'s active candidate pair once connected', async () => {
+  const { engine, lastPc } = makeEngine();
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER_FROM_PEER');
+  const pc = lastPc();
+  pc.fireConnectionState('connected');
+
+  pc.statsReport = new Map([
+    ['local1', { id: 'local1', type: 'local-candidate', candidateType: 'relay' }],
+    ['remote1', { id: 'remote1', type: 'remote-candidate', candidateType: 'srflx' }],
+    [
+      'pair1',
+      {
+        id: 'pair1',
+        type: 'candidate-pair',
+        state: 'succeeded',
+        nominated: true,
+        localCandidateId: 'local1',
+        remoteCandidateId: 'remote1',
+      },
+    ],
+  ]);
+  assert.equal(await engine.getConnectionRoute(), 'relay');
+
+  pc.statsReport = new Map([
+    ['local1', { id: 'local1', type: 'local-candidate', candidateType: 'host' }],
+    ['remote1', { id: 'remote1', type: 'remote-candidate', candidateType: 'host' }],
+    [
+      'pair1',
+      {
+        id: 'pair1',
+        type: 'candidate-pair',
+        state: 'succeeded',
+        nominated: true,
+        localCandidateId: 'local1',
+        remoteCandidateId: 'remote1',
+      },
+    ],
+  ]);
+  assert.equal(await engine.getConnectionRoute(), 'direct');
+});
+
+test('getConnectionRoute: unknown again after the call ends (pc torn down)', async () => {
+  const { engine, lastPc } = makeEngine();
+  await engine.placeCall();
+  const pc = lastPc();
+  pc.statsReport = new Map([
+    ['local1', { id: 'local1', type: 'local-candidate', candidateType: 'host' }],
+    ['remote1', { id: 'remote1', type: 'remote-candidate', candidateType: 'host' }],
+    [
+      'pair1',
+      {
+        id: 'pair1',
+        type: 'candidate-pair',
+        state: 'succeeded',
+        nominated: true,
+        localCandidateId: 'local1',
+        remoteCandidateId: 'remote1',
+      },
+    ],
+  ]);
+  assert.equal(await engine.getConnectionRoute(), 'direct');
+
+  engine.end();
+  assert.equal(await engine.getConnectionRoute(), 'unknown', 'no live pc to query once ended');
 });

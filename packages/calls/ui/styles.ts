@@ -29,6 +29,32 @@ export const card: CSSProperties = {
   textAlign: 'center',
 }
 
+/**
+ * M5 mobile-viewport layout (docs/calls.md) — spread AFTER `card` (`{
+ * ...card, ...cardMobile }`, see `useIsMobileViewport`) below the phone
+ * breakpoint: full-bleed instead of a small floating panel, since an
+ * incoming ring or an in-call video view is a full-attention moment on a
+ * phone, not a corner toast. `env(safe-area-inset-*)` keeps controls clear of
+ * a notch/home-indicator on an installed PWA.
+ */
+export const cardMobile: CSSProperties = {
+  top: 0,
+  right: 0,
+  bottom: 0,
+  left: 0,
+  transform: 'none',
+  width: '100%',
+  height: '100%',
+  maxWidth: 'none',
+  borderRadius: 0,
+  justifyContent: 'center',
+  overflowY: 'auto',
+  paddingTop: 'max(20px, env(safe-area-inset-top))',
+  paddingBottom: 'max(20px, env(safe-area-inset-bottom))',
+  paddingLeft: 'max(18px, env(safe-area-inset-left))',
+  paddingRight: 'max(18px, env(safe-area-inset-right))',
+}
+
 export const title: CSSProperties = {
   fontSize: 16,
   fontWeight: 600,
@@ -59,6 +85,16 @@ export const videoStage: CSSProperties = {
   borderRadius: 10,
   overflow: 'hidden',
   background: '#000',
+}
+
+/** M5 mobile: a fixed 4/3 stage wastes most of a phone's (usually taller
+ * portrait) screen — let the video fill whatever vertical space `cardMobile`
+ * leaves above the controls instead of a fixed ratio. */
+export const videoStageMobile: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  width: '100%',
+  aspectRatio: 'auto',
 }
 
 export const remoteVideo: CSSProperties = {
@@ -120,6 +156,15 @@ export const button: CSSProperties = {
   color: '#fff',
 }
 
+/** M5 mobile: bigger touch targets (44px is the usual iOS/Android minimum
+ * tap-target guidance) — a mouse-sized button is an easy mis-tap on a phone
+ * for controls as consequential as hang-up/accept/decline. */
+export const buttonMobile: CSSProperties = {
+  padding: '14px 22px',
+  fontSize: 16,
+  minHeight: 48,
+}
+
 export const COLOR_ACCEPT = '#2ea043'
 export const COLOR_DECLINE = '#d13d3d'
 export const COLOR_NEUTRAL = '#333'
@@ -156,3 +201,29 @@ export const deviceSwitchError: CSSProperties = {
   ...errorText,
   fontSize: 12,
 }
+
+/** M5 direct-vs-relay indicator (docs/calls.md: "a non-blocking
+ * direct-vs-relay connection indicator") — small, muted text, never a
+ * dialog/alert; a colored dot does the "at a glance" job, the label + native
+ * `title` tooltip carry the detail. */
+export const connectionRoute: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  fontSize: 11,
+  color: '#8a8a8a',
+}
+
+export const connectionRouteDot: CSSProperties = {
+  display: 'inline-block',
+  width: 7,
+  height: 7,
+  borderRadius: '50%',
+  flexShrink: 0,
+}
+
+/** Direct = the normal/expected path (calm green); relay = still perfectly
+ * fine, just worth knowing (neutral amber, not an alarm color — this is
+ * troubleshooting info, not an error). */
+export const COLOR_ROUTE_DIRECT = '#2ea043'
+export const COLOR_ROUTE_RELAY = '#d4a72c'

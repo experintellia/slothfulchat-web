@@ -49,6 +49,7 @@ export function CallsRoot({ store, callbacks }: CallsRootProps) {
       error={snapshot.error}
       localLevel={snapshot.localLevel}
       remoteLevel={snapshot.remoteLevel}
+      connectionRoute={snapshot.connectionRoute}
       microphones={snapshot.microphones}
       cameras={snapshot.cameras}
       selectedMicrophoneId={snapshot.selectedMicrophoneId}

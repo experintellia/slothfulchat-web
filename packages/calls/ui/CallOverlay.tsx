@@ -30,12 +30,23 @@
  * audio track too. A screen-share toggle button sits next to mute, only
  * meaningful (and only shown) once there is a live outgoing video track to
  * hijack — same `connecting`/`connected` gate as mute/DevicePicker.
+ *
+ * M5 adds a small, non-blocking direct-vs-relay indicator (docs/calls.md:
+ * "active candidate pair is 'relay'") once `connected` — purely
+ * informational text, never a dialog/prompt, and there is no forced-relay
+ * setting for it to control (deferred to #93).
+ *
+ * M5 also adds mobile-viewport layout (docs/calls.md): below the phone
+ * breakpoint this goes full-bleed, the video stage fills the available
+ * height instead of a fixed 4/3 ratio, and controls get bigger touch targets
+ * (see `useIsMobileViewport`/`styles.ts`'s `*Mobile` tokens).
  */
 import { useEffect, useRef } from 'react'
-import type { CallDeviceInfo, CallDirection, CallState } from '../engine/index.ts'
+import type { CallDeviceInfo, CallDirection, CallState, ConnectionRoute } from '../engine/index.ts'
 import { DevicePicker } from './DevicePicker.tsx'
 import { SpeakingRing } from './SpeakingRing.tsx'
 import * as styles from './styles.ts'
+import { useIsMobileViewport } from './useIsMobileViewport.ts'
 
 export interface CallOverlayProps {
   direction: CallDirection
@@ -59,6 +70,9 @@ export interface CallOverlayProps {
   localLevel: number
   /** Smoothed 0..1 remote-peer level (M2 speaking ring). */
   remoteLevel: number
+  /** M5 direct-vs-relay indicator — `'unknown'` until `connected` and the
+   * first poll resolves; see the class doc above. */
+  connectionRoute: ConnectionRoute
   /** M2 device picker (see `DevicePicker.tsx`). */
   microphones: CallDeviceInfo[]
   cameras: CallDeviceInfo[]
@@ -86,6 +100,30 @@ function statusText(direction: CallDirection, state: CallState): string {
   }
 }
 
+/** M5: label + tooltip for the direct-vs-relay indicator. `null` for
+ * `'unknown'` — nothing to show rather than a confusing placeholder (still
+ * gathering stats, or the browser doesn't expose candidate-pair stats the
+ * way we expect). */
+function connectionRouteInfo(
+  route: ConnectionRoute
+): { label: string; title: string } | null {
+  switch (route) {
+    case 'direct':
+      return {
+        label: 'Direct connection',
+        title: 'Media is flowing directly between you and the other participant.',
+      }
+    case 'relay':
+      return {
+        label: 'Relayed connection',
+        title:
+          'Media is routed through a TURN relay server (common on restrictive networks/NAT). Call quality and privacy are unaffected — the relay only sees encrypted media, never its content.',
+      }
+    case 'unknown':
+      return null
+  }
+}
+
 export function CallOverlay({
   direction,
   state,
@@ -99,6 +137,7 @@ export function CallOverlay({
   error,
   localLevel,
   remoteLevel,
+  connectionRoute,
   microphones,
   cameras,
   selectedMicrophoneId,
@@ -160,11 +199,22 @@ export function CallOverlay({
   // store's level fields are simply 0, which SpeakingRing renders as a dark,
   // non-glowing ring rather than a misleading "definitely not talking" state.
 
+  const routeInfo = connectionRouteInfo(connectionRoute)
+  const routeDotColor =
+    connectionRoute === 'relay' ? styles.COLOR_ROUTE_RELAY : styles.COLOR_ROUTE_DIRECT
+
+  const isMobile = useIsMobileViewport()
+  const cardStyle = isMobile ? { ...styles.card, ...styles.cardMobile } : styles.card
+  const videoStageStyle = isMobile
+    ? { ...styles.videoStage, ...styles.videoStageMobile }
+    : styles.videoStage
+  const controlButtonStyle = isMobile ? { ...styles.button, ...styles.buttonMobile } : styles.button
+
   return (
-    <div role="dialog" aria-label="Call" style={styles.card}>
+    <div role="dialog" aria-label="Call" style={cardStyle}>
       <div style={styles.title}>{title}</div>
       {hasVideo ? (
-        <div style={styles.videoStage}>
+        <div style={videoStageStyle}>
           {/* eslint-disable-next-line jsx-a11y/media-has-caption -- remote peer video+audio, not user-facing captioned media */}
           <video ref={remoteVideoRef} autoPlay playsInline style={styles.remoteVideo} />
           {/* eslint-disable-next-line jsx-a11y/media-has-caption -- local self-preview, muted (no audio needed) */}
@@ -185,6 +235,15 @@ export function CallOverlay({
       <div style={error != null ? styles.errorText : styles.subtitle}>
         {error ?? statusText(direction, state)}
       </div>
+      {error == null && state === 'connected' && routeInfo != null && (
+        // Non-blocking troubleshooting hint (docs/calls.md M5) — plain text,
+        // not a dialog/prompt; there is no control here to act on (no
+        // forced-relay setting exists — see #93).
+        <div style={styles.connectionRoute} title={routeInfo.title}>
+          <span style={{ ...styles.connectionRouteDot, background: routeDotColor }} />
+          {routeInfo.label}
+        </div>
+      )}
       {screenShareError != null && error == null && (
         <div style={styles.deviceSwitchError}>{screenShareError}</div>
       )}
@@ -212,7 +271,7 @@ export function CallOverlay({
             aria-pressed={muted}
             aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}
             style={{
-              ...styles.button,
+              ...controlButtonStyle,
               background: muted ? styles.COLOR_NEUTRAL_ACTIVE : styles.COLOR_NEUTRAL,
             }}
           >
@@ -226,7 +285,7 @@ export function CallOverlay({
             aria-pressed={screenSharing}
             aria-label={screenSharing ? 'Stop sharing screen' : 'Share screen'}
             style={{
-              ...styles.button,
+              ...controlButtonStyle,
               background: screenSharing ? styles.COLOR_NEUTRAL_ACTIVE : styles.COLOR_NEUTRAL,
             }}
           >
@@ -236,7 +295,7 @@ export function CallOverlay({
         <button
           type="button"
           onClick={onHangup}
-          style={{ ...styles.button, background: styles.COLOR_DECLINE }}
+          style={{ ...controlButtonStyle, background: styles.COLOR_DECLINE }}
         >
           {error != null ? 'Close' : 'Hang up'}
         </button>

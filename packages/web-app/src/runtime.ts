@@ -11,6 +11,8 @@ import { startCore, type Core, type BaseDeltaChat } from '@slothfulchat/core-was
 import {
   CallBridge,
   CallPopupHost,
+  RingtonePlayer,
+  classifyCallOutcome,
   defaultMediaFactories,
   fetchIceServers,
   listInputDevices,
@@ -18,6 +20,7 @@ import {
   type CallBridgeCallbacks,
   type CallDirection,
   type CallPopupInit,
+  type CallResult,
   type CallsRpcClient,
   type CallState,
 } from '@slothfulchat/calls/bridge'
@@ -1714,7 +1717,29 @@ class CallManager {
      * ready" runtime event; the engine-level one, `onLocalTrackChanged`, is
      * consumed by the bridge's level-meter retap, not surfaced here). */
     devicesRefreshed: boolean
+    /** M5 call-outcome analytics (docs/calls.md: "missed/busy/timeout … via
+     * call_info"): whether this call's `CallState` was ever observed reaching
+     * `connected` — in EITHER mode: the overlay path sets it directly
+     * (`onState`); a popup-mode call sets it from the popup's own report
+     * (`CallPopupHost.onEnded`'s `reachedConnected`), since the popup owns the
+     * engine and this window's `onState`/`onError` are no-ops while
+     * `mode === 'popup'`. */
+    connectedOnce: boolean
+    /** Set the moment WE decide to end the call ourselves before it ever
+     * connected (`hangupCurrent`) — that is an unambiguous local
+     * declined/cancelled, never worth an extra `call_info` round-trip. */
+    locallyEnded: boolean
+    /** `reportCallOutcome` fires at most once per call; also set (without a
+     * result) when the outcome genuinely isn't this device's to report — the
+     * call was accepted on ANOTHER device (`IncomingCallAccepted{
+     * from_this_device:false}`), which is a real connect, just not one this
+     * session should claim. */
+    outcomeReported: boolean
   } | null = null
+  /** The shared ringtone/vibration for an incoming ring (M5, docs/calls.md).
+   * Ringing always renders in the main window regardless of popup preference
+   * (see the §Windowing note above), so one instance here covers every call. */
+  private readonly ringtone = new RingtonePlayer()
   /** M2: live device-list refresh while a call is up (e.g. a mic/camera is
    * plugged/unplugged mid-call) — registered in `startOutgoingCall`/
    * `openIncomingCall`, torn down in `teardown`. */
@@ -1762,6 +1787,12 @@ class CallManager {
       // Only meaningful while still ringing (main-window overlay, pre-accept);
       // in popup mode the call is already accepted here, so ignore.
       if (slot == null || slot.mode !== 'overlay') return
+      // M5 call-outcome analytics: this call WAS answered — just not by this
+      // device/session, so it is not this device's outcome to report (the
+      // device that actually accepted it reports 'connected' itself).
+      // Suppress before the eventual teardown (sync here, or async via
+      // `onState`'s 'ended' handling below) reaches `reportCallOutcome`.
+      slot.outcomeReported = true
       if (slot.bridge) {
         if (slot.bridge.state === 'ringing') slot.bridge.acceptedElsewhere()
       } else {
@@ -1814,6 +1845,9 @@ class CallManager {
       cancelled: false,
       errored: false,
       devicesRefreshed: false,
+      connectedOnce: false,
+      locallyEnded: false,
+      outcomeReported: false,
     }
     this.call = slot
     // M4: prefer a detached popup (window.open must run in this click gesture).
@@ -1863,6 +1897,9 @@ class CallManager {
       // shared store; CallOverlay's SpeakingRing tiles render them.
       onLocalLevel: level => this.ui.setLocalLevel(level),
       onRemoteLevel: level => this.ui.setRemoteLevel(level),
+      // M5: non-blocking direct-vs-relay indicator (docs/calls.md) — purely
+      // informational, forwarded straight into the shared store.
+      onConnectionRouteChanged: route => this.ui.setConnectionRoute(route),
       // M2 device picker: a failed switchMicrophone/switchCamera leaves the
       // call/old device untouched — surface it next to the picker, not as a
       // call-ending error (contrast onError above).
@@ -1885,7 +1922,18 @@ class CallManager {
     // Same call already showing (event + Message.tsx button both call in).
     if (this.slotForCall(accountId, callMessageId)) return
     if (this.call) {
-      this.log.warn('openIncomingCall: already in a call, ignoring incoming')
+      // M5 (docs/calls.md: "busy … via call_info"): we only ever run one call
+      // at a time, so a second incoming call is auto-declined rather than
+      // left to ring the caller out silently — real telephony "busy". There
+      // is no core call-state for this (core only knows the callee explicitly
+      // declined or let it time out); it is a purely local, this-device
+      // classification, reported immediately (no ambiguity to resolve via
+      // `call_info` — we caused the decline ourselves, right now).
+      this.log.warn('openIncomingCall: already in a call, declining as busy')
+      this.rpc.endCall(accountId, callMessageId).catch(() => {
+        /* best-effort — the caller's own ring timeout is the fallback */
+      })
+      analytics.trackCall({ direction: 'incoming', hasVideo, result: 'busy' })
       return
     }
     // Ringing ALWAYS renders in the main window (docs/calls.md §Windowing) — the
@@ -1907,8 +1955,12 @@ class CallManager {
       cancelled: false,
       errored: false,
       devicesRefreshed: false,
+      connectedOnce: false,
+      locallyEnded: false,
+      outcomeReported: false,
     }
     this.call = slot
+    this.ringtone.start()
     this.registerDeviceChangeListener(slot)
 
     void (async () => {
@@ -1952,6 +2004,9 @@ class CallManager {
   private acceptCurrent(): void {
     const c = this.call
     if (!c || c.direction !== 'incoming' || c.mode === 'popup') return
+    // The ring is answered — silence it regardless of which path (popup
+    // handoff or overlay) takes over from here.
+    this.ringtone.stop()
     // M4: prefer handing the accepted call to a detached popup. The accept
     // click is a user gesture, so window.open is allowed here.
     if (c.offerSdp != null && this.tryStartPopup(c)) {
@@ -1973,6 +2028,11 @@ class CallManager {
   private hangupCurrent(): void {
     const c = this.call
     if (!c) return
+    // M5 call-outcome analytics: a hangup we initiate ourselves — before ever
+    // connecting — is an unambiguous local decline/cancel (see
+    // `reportCallOutcome`), never worth a `call_info` round-trip. A call that
+    // already connected (or already errored) ignores this flag entirely.
+    c.locallyEnded = true
     if (c.mode === 'popup') {
       // Rare from the main window (it shows no in-call UI in popup mode), but
       // e.g. app teardown can reach here: end the call from the opener side.
@@ -2024,6 +2084,10 @@ class CallManager {
     // handoff) must not touch anything here.
     if (this.call !== slot || slot.mode !== 'overlay') return
     this.ui.setState(state)
+    // M5 call-outcome analytics: remember reaching `connected` at all, even if
+    // the call later ends for any reason — a call that connected is always
+    // reported as 'connected', never re-classified via `call_info`.
+    if (state === 'connected') slot.connectedOnce = true
     // M2 device picker: refresh once the local stream exists — i.e. once we
     // are past `ringing` for an outgoing call (mic acquired to build the
     // offer) or reach `connecting` for an incoming one (mic acquired on
@@ -2057,6 +2121,10 @@ class CallManager {
   private teardown(slot: NonNullable<CallManager['call']>): void {
     if (this.call !== slot) return
     this.call = null
+    // The ring (if any) is over one way or another — idempotent (a no-op if
+    // already stopped, e.g. by `acceptCurrent`).
+    this.ringtone.stop()
+    this.reportCallOutcome(slot)
     // M4: close the detached popup (idempotent — a popup that ended itself has
     // already torn its host down). Opener-initiated close does NOT re-send
     // endCall; the popup relayed its own on hangup, and remote/abrupt-close
@@ -2065,6 +2133,68 @@ class CallManager {
     slot.popup = null
     this.ui.clear()
     this.unregisterDeviceChangeListener()
+  }
+
+  /**
+   * M5 call-outcome analytics (docs/calls.md: "content-free call analytics …
+   * missed/busy/timeout via call_info"). The single choke point: every
+   * teardown path funnels through here exactly once per call
+   * (`outcomeReported` guards it), classifying WHY the call ended without
+   * ever recording anything but the fixed `CallResult` bucket:
+   *
+   *   1. Already reported, or explicitly suppressed (accepted on another
+   *      device — a real connect, just not this session's to claim): no-op.
+   *   2. Reached `connected` at any point — locally (overlay) or as reported
+   *      by the popup's own engine (`connectedOnce`, set from either path):
+   *      'connected', regardless of how (or how badly) it ended afterwards —
+   *      a later fatal error on an already-connected call is still a call
+   *      that connected, so this is checked BEFORE `errored`.
+   *   3. A local engine failure that tore the call down before it ever
+   *      connected (`slot.errored`): 'error'.
+   *   4. We ourselves ended it before connecting (`locallyEnded`): 'declined'
+   *      (incoming) or 'cancelled' (outgoing) — unambiguous, no `call_info`
+   *      needed.
+   *   5. Otherwise: something else ended it (far end, timeout, a setup
+   *      failure before any message existed) — the genuinely ambiguous case
+   *      this method exists for. If a call message exists, ask core via
+   *      `call_info` and classify with `classifyCallOutcome`; if not (the
+   *      call never even reached `placeOutgoingCall`), fall back to the same
+   *      safe per-direction default `classifyCallOutcome` would have picked.
+   */
+  private reportCallOutcome(slot: NonNullable<CallManager['call']>): void {
+    if (slot.outcomeReported) return
+    slot.outcomeReported = true
+    const { direction, hasVideo } = slot
+    const report = (result: CallResult) => analytics.trackCall({ direction, hasVideo, result })
+
+    if (slot.connectedOnce) {
+      report('connected')
+      return
+    }
+    if (slot.errored) {
+      report('error')
+      return
+    }
+    if (slot.locallyEnded) {
+      report(direction === 'incoming' ? 'declined' : 'cancelled')
+      return
+    }
+    const msgId = slot.callMessageId ?? slot.bridge?.callMessageId ?? slot.popup?.callMessageId ?? null
+    if (msgId == null) {
+      // Never reached core (e.g. the ICE fetch itself failed before
+      // `placeOutgoingCall`/an offer existed) — nothing for `call_info` to
+      // look up; use the same safe default it would classify an unexpected
+      // state as, for this direction.
+      report(direction === 'incoming' ? 'missed' : 'timeout')
+      return
+    }
+    this.rpc.callInfo(slot.accountId, msgId).then(
+      info => report(classifyCallOutcome(direction, info.state)),
+      err => {
+        this.log.warn('reportCallOutcome: call_info failed', err)
+        report(direction === 'incoming' ? 'missed' : 'timeout')
+      }
+    )
   }
 
   // ── M4: detached popup window (docs/calls.md §Windowing) ─────────────────────
@@ -2100,7 +2230,11 @@ class CallManager {
     const host = openCallPopup(init, {
       rpc: this.rpc,
       onReady: () => this.log.info('call popup ready'),
-      onEnded: () => {
+      onEnded: reachedConnected => {
+        // M5 call-outcome analytics: the popup's engine — not this window's
+        // (`onState` is a no-op while `mode === 'popup'`) — is the only place
+        // that knows whether the call actually connected; take its word for it.
+        if (reachedConnected) slot.connectedOnce = true
         if (this.call === slot) this.teardown(slot)
       },
       onFallback: reason => this.onPopupFallback(slot, reason),

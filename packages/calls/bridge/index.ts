@@ -17,10 +17,18 @@
  * `defaultMediaFactories` is the only piece that reaches for a real
  * `RTCPeerConnection`/`getUserMedia` — `engine/level-meter.ts` stays
  * DOM-import-free by taking an already-constructed analyser.
+ *
+ * M5 adds the direct-vs-relay indicator: `CallBridge` starts/stops an
+ * `engine/connection-route.ts` `ConnectionRouteMonitor` alongside the level
+ * meters (started on `connected`, stopped on `ended`), polling
+ * `AudioCallEngine.getConnectionRoute()` and forwarding changes via
+ * `onConnectionRouteChanged`. Purely informational — no forced-relay setting
+ * (deferred to #93); see docs/calls.md "Relay UX".
  */
 
 import {
   AudioCallEngine,
+  ConnectionRouteMonitor,
   TrackLevelMeter,
   enumerateInputDevices,
   type AnalyserLike,
@@ -28,10 +36,12 @@ import {
   type CallDirection,
   type CallState,
   type CallStateListener,
+  type ConnectionRoute,
   type DeviceEnumerator,
   type InputDevices,
   type PeerConnectionLike,
 } from '../engine/index.ts'
+import type { CallInfoResult } from './call-outcome.ts'
 
 export {
   AudioCallEngine,
@@ -41,6 +51,7 @@ export {
   type CallStateChange,
   type CallStateListener,
   type CallDeviceInfo,
+  type ConnectionRoute,
   type DeviceEnumerator,
   type InputDevices,
   shouldShowDevicePicker,
@@ -76,6 +87,17 @@ export {
 } from './popup-host.ts'
 export { connectCallPopup, type CallPopupConnection } from './popup-client.ts'
 
+// M5 — call-outcome classification (docs/calls.md: "missed/busy/timeout …
+// via call_info") and the incoming-call ringtone/vibration.
+export {
+  classifyCallOutcome,
+  type CallInfoResult,
+  type CallInfoState,
+  type CallResult,
+  type CoreCallStateKind,
+} from './call-outcome.ts'
+export { RingtonePlayer, vibratePattern, type RingtonePlayerOptions } from './ringtone.ts'
+
 /**
  * The subset of the generated jsonrpc `RawClient` the call bridge uses. The real
  * client (`getCore().dc.rpc`) is structurally assignable to this, so the runtime
@@ -103,6 +125,15 @@ export interface CallsRpcClient {
   endCall(accountId: number, msgId: number): Promise<void>
   /** `ice_servers(accountId) -> string` (JSON ICE list). */
   iceServers(accountId: number): Promise<string>
+  /**
+   * `call_info(accountId, msgId) -> CallInfo` (M5, docs/calls.md: "missed/
+   * busy/timeout … via call_info"). Unlike `iceServers`, core returns the
+   * typed object directly, not a JSON string (see
+   * `deltachat-jsonrpc/src/api.rs`'s `async fn call_info`). Used by the
+   * runtime's call manager, once a call ends without ever locally reaching
+   * `connected`, to classify *why* via {@link classifyCallOutcome}.
+   */
+  callInfo(accountId: number, msgId: number): Promise<CallInfoResult>
 }
 
 /**
@@ -270,6 +301,16 @@ export interface CallBridgeCallbacks {
    * control (a toast/inline note), not as the call-ending `onError`.
    */
   onScreenShareError?: (error: Error) => void
+  /**
+   * The direct-vs-relay connection indicator changed (M5, docs/calls.md: "a
+   * non-blocking direct-vs-relay connection indicator (active candidate pair
+   * is 'relay')"). Polled from `AudioCallEngine.getConnectionRoute()` only
+   * while `connected` (see {@link CallBridge}'s internal `routeMonitor`) —
+   * fires once with the first resolved reading, then again only on an actual
+   * change. Purely informational: never blocks the call, and unrelated to any
+   * forced-relay setting (there is none — deferred to issue #93).
+   */
+  onConnectionRouteChanged?: (route: ConnectionRoute) => void
 }
 
 /**
@@ -416,6 +457,12 @@ export class CallBridge {
   private remoteLevelMeter: TrackLevelMeter | null = null
   private remoteMeterTap: TrackAnalyserHandle | null = null
 
+  /** M5 direct-vs-relay indicator: polls `engine.getConnectionRoute()` while
+   * `connected` — there is nothing meaningful to poll before that (no active
+   * candidate pair yet). Started/stopped alongside the level meters, from the
+   * same wrapped `onStateChange` below. */
+  private routeMonitor: ConnectionRouteMonitor | null = null
+
   private constructor(init: {
     rpc: CallsRpcClient
     direction: CallDirection
@@ -453,8 +500,11 @@ export class CallBridge {
           // failure path — since ALL of them funnel through
           // AudioCallEngine.end(), which the state machine notifies exactly
           // once no matter which caller reached `ended` first.
-          if (state === 'ended') {
+          if (state === 'connected') {
+            this.startRouteMonitor()
+          } else if (state === 'ended') {
             this.stopLevelMeters()
+            this.stopRouteMonitor()
           }
         },
         onRemoteStream: (stream) => {
@@ -535,6 +585,27 @@ export class CallBridge {
     this.localMeterTap?.dispose()
     this.localMeterTap = null
     this.stopRemoteLevelMeter()
+  }
+
+  /** M5: begin polling the direct-vs-relay indicator now that the call is
+   * `connected` (an active candidate pair actually exists to inspect).
+   * Idempotent — `ConnectionRouteMonitor.start` is itself idempotent, and
+   * `onStateChange` only fires 'connected' once per call anyway. */
+  private startRouteMonitor(): void {
+    if (this.routeMonitor == null) {
+      this.routeMonitor = new ConnectionRouteMonitor({
+        poll: () => this.engine.getConnectionRoute(),
+        onRoute: (route) => this.callbacks.onConnectionRouteChanged?.(route),
+      })
+    }
+    this.routeMonitor.start()
+  }
+
+  /** Stop polling — called once, from the `ended` branch of the wrapped
+   * `onStateChange` above, alongside {@link stopLevelMeters}. */
+  private stopRouteMonitor(): void {
+    this.routeMonitor?.stop()
+    this.routeMonitor = null
   }
 
   static outgoing(
@@ -649,6 +720,14 @@ export class CallBridge {
    * the camera (M3). Always `false` for an audio-only call. */
   get screenSharing(): boolean {
     return this.engine.screenSharing
+  }
+
+  /** The direct-vs-relay connection indicator (M5) — the last value reported
+   * to `onConnectionRouteChanged`, or `'unknown'` before the monitor's first
+   * poll resolves / before the call reaches `connected`. Pull-based mirror of
+   * that callback, same pattern as {@link muted}/{@link screenSharing}. */
+  get connectionRoute(): ConnectionRoute {
+    return this.routeMonitor?.route ?? 'unknown'
   }
 
   /**

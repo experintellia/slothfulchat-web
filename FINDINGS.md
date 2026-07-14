@@ -543,3 +543,155 @@ finished every blob write, so `INFLIGHT` reflects the whole remaining queue and
 can't read a transient 0. Verified the shim compiles for `wasm32-unknown-unknown`
 and that a `#[wasm_bindgen]` async `&self` method (the `fs_flush` shape) builds;
 a full wasm/e2e build needs the vendored core submodule + toolchain.
+
+## Calls M5 (part): WhoCanCallMe setting, direct/relay indicator, privacy disclosure (2026-07-14)
+
+Three pieces of docs/calls.md's M5 milestone, kept independent of the CSP/
+Permissions-Policy and call-analytics work also slated for M5:
+
+- **`WhoCanCallMe` in settings.** Upstream's `Notifications.tsx` already has
+  the whole setting (a `SettingsSwitch` bound to
+  `SettingsStoreInstance.effect.setCoreSetting('who_can_call_me', …)`) — it was
+  just gated `target === 'electron'`, the exact same gate M0's patch removed
+  from `ChatView.tsx`'s call button
+  (https://github.com/deltachat/deltachat-desktop/pull/6044#issuecomment-3977395069).
+  Rather than add a second desktop patch (docs/calls.md's structure section
+  calls for "**exactly one** thin patch" un-gating the call entry points),
+  folded the one-line `|| target === 'browser'` gate widening into the
+  *existing* `patches/desktop/0047-*` commit (`build/desktop`: edit +
+  `git commit --amend`, then `scripts/update-patches.sh`) — patch count stays
+  at 47 (core stays at 16), and the patch now touches `ChatView.tsx` +
+  `Notifications.tsx`, both one-line target-check widenings for the same
+  reason. Verified `scripts/apply-patches.sh` reapplies the whole stack
+  cleanly from a fresh worktree afterwards.
+- **Non-blocking direct-vs-relay indicator** (docs/calls.md: "active candidate
+  pair is 'relay'"). New pure-TS `packages/calls/engine/connection-route.ts`:
+  `getActiveConnectionRoute(pc)` inspects `RTCPeerConnection.getStats()` for
+  the currently-active candidate pair (`nominated && succeeded`, falling back
+  to any `succeeded` pair) and reports `'relay'` if either side's
+  `candidateType` is `relay`, else `'direct'`; `ConnectionRouteMonitor` polls
+  it (default 3s) and calls back only on an actual change — same
+  injectable-timer/start-stop shape as `level-meter.ts`'s `TrackLevelMeter`.
+  `AudioCallEngine.getConnectionRoute()` exposes it (`'unknown'` with no live
+  pc); `CallBridge` starts the monitor on `connected` and stops it on `ended`,
+  forwarding to a new `onConnectionRouteChanged` callback that both the
+  overlay path (`runtime.ts`) and the popup path (`call-popup.ts`, M4) wire
+  into the shared `CallsUiStore` — one code path covers both windowing modes.
+  `CallOverlay` renders it as a small dot + label + tooltip under the status
+  line, only once `connected`, never a dialog/prompt. Deliberately **not** a
+  forced-relay setting — there isn't one; the indicator is read-only
+  troubleshooting info (issue #93 is the always-relay-mode discussion). 24 new
+  unit tests (`connection-route.test.ts` + additions to `audio-call.test.ts`)
+  cover the candidate-pair resolution rules, the overlap/late-resolution races
+  in the poller, and the engine-level `getConnectionRoute` lifecycle
+  (unknown → direct/relay → unknown after `end()`).
+- **Privacy disclosure** (README "Privacy & data protection" + the generated
+  `privacy.html`): a new paragraph/section states plainly that calls are
+  direct-preferred with automatic STUN/TURN relay fallback (via the same
+  chatmail relay `ice_servers()` already used for messaging, not a separate
+  third party), that there is no way to force relay-only routing and why
+  (bandwidth cost, threat-model fit), that call media is DTLS-SRTP encrypted
+  end-to-end regardless of path (so a relay sees connection metadata — that a
+  call happened, the participants' IPs — never content), and that the
+  existing Delta Chat call-privacy setting (Settings → Notifications →
+  "Calls", i.e. `WhoCanCallMe`) controls who may call at all. Added a
+  `privacyHtml` test asserting the section renders with the key disclosures
+  (STUN/TURN, no forced relay, DTLS-SRTP).
+
+**Deliberately out of scope here** (separate M5 items, not touched): the
+`connect-src`/`Permissions-Policy` CSP widening for STUN/TURN hosts (still
+TODO — `static/call-popup.html`'s CSP comment already flags it) and the
+content-free call analytics event in `analytics.ts`/`events.mjs` (a parallel,
+uncommitted change was already present in this checkout when this work
+started — left untouched).
+
+## Calls M5 (part): Playwright smoke test (2026-07-14)
+
+`scripts/test-calls-e2e.mjs` — docs/calls.md's M5 line item ("Playwright
+smoke: drive an outgoing call, assert `RTCPeerConnection` reaches
+`connected`"), modeled on the existing e2e scripts' conventions in this repo
+(`scripts/test-web-app-e2e.mjs`, `scripts/test-webimap.mjs`), not on upstream
+`deltachat-desktop/packages/e2e-tests` directly — that package's
+`@playwright/test` + two-`webServer`-instances harness is built around
+electron/target-browser's own multi-account-per-tab UI flows (account
+switcher in one tab); it doesn't fit calls, which need **two independent
+wasm cores** (see below), so the harness shape follows this repo's existing
+bare-`playwright`-plus-`node --test`-style scripts instead. The three fixed
+signaling/UI facts it drives against (non-trickle payload = raw SDP, ICE
+gather-then-send, `place_outgoing_call`/`accept_incoming_call`/event names)
+are the same ones `INTEROP.md`/M0 already nailed down from upstream
+`calls-webapp` source — nothing new to port from there.
+
+- **Fully offline**: no chatmail relay, no `ws-tcp-proxy`. Two accounts are
+  provisioned against the same in-process mock "webimap" mail server as
+  `test-webimap.mjs` (`webimapaccount:localhost:<port>` QR, trimmed of that
+  script's 404-tolerance-probe assertions — not relevant here). Necessary,
+  not just convenient: this sandbox's outbound HTTPS proxy 403s
+  `nine.testrun.org` outright, and even a reachable relay's `ice_servers()`
+  STUN/TURN wouldn't add anything here — both peers run on the same
+  machine, so host candidates alone connect them.
+- **Two `BrowserContext`s, not two accounts in one page.** `CallManager` in
+  `packages/web-app/src/runtime.ts` holds exactly one active-call slot for
+  the whole page (`this.call`); `openIncomingCall` explicitly declines as
+  busy while it's occupied. Placing a call from account A and receiving it
+  on account B **in the same tab/core** would therefore self-decline the
+  moment the caller's own outgoing slot is set, before the callee's
+  `IncomingCall` event ever gets a chance — verified by reading, not by
+  trial and error (would have been an infuriatingly flaky-looking failure).
+  Two separate contexts give two independent wasm cores/workers/OPFS
+  origins — i.e. two real "devices" — which is what "against a...second
+  core" in the task actually maps to.
+- **Account provisioning + the 1:1 encrypted chat are set up over the
+  `window.exp.rpc` devmode escape hatch** (upstream's `experimental.ts`,
+  same technique already used by `test-web-app-e2e.mjs`/`test-webimap.mjs`)
+  — incidental setup, not the thing under test. Provisioning via that
+  back door bypasses the frontend's own account-list state, so each page
+  gets one `reload()` afterwards to boot normally with the now-existing
+  account (same fix as `test-web-app-imex.mjs`'s restore-from-backup step).
+  The call itself is driven through the **real UI** both ways: the
+  `ChatView` call button's context menu (`Call` → `Audio Call`, un-gated by
+  `patches/desktop/0047-*` for `target === 'browser'`) places it; the
+  `IncomingCallRing`'s `Accept` button (`packages/calls/ui`) answers it.
+- **M4's detached-popup preference is real and had to be handled, not
+  ignored.** `CallManager.startOutgoingCall`/`acceptCurrent` both call
+  `tryStartPopup` synchronously inside the click handler and prefer a
+  detached `window.open` popup over the in-page overlay whenever it isn't
+  blocked (`popupPreferred` is hardcoded `true`, no override) — and a real
+  Playwright `.click()` dispatches genuine trusted input, so Chromium does
+  **not** block it. That means the call UI can land in a brand-new popup
+  `Page` rather than the main one on both the outgoing leg and the accept
+  leg. The test races a `context.waitForEvent('page', {timeout: 5000})`
+  against the click and, if a popup shows up, follows it instead of the
+  main page for the rest of that side's assertions — falling back to the
+  main page's overlay path automatically if no popup event fires. Since the
+  popup hosts the exact same `CallOverlay`/`IncomingCallRing` React
+  components (M4: "same engine, same components, different mount point"),
+  the dialog role/text selectors are identical either way; only the *page
+  object* they're queried against differs.
+- **Assertion**: waits for the real DOM to show the dialog
+  `role=dialog[name="Call"]` containing the literal text `"In call"` on
+  both sides. This is not a proxy for "`RTCPeerConnection` reached
+  `connected`" — it *is* that assertion, just observed the way a user would
+  rather than via a debug hook: `AudioCallEngine`'s
+  `connectionstatechange` listener (`packages/calls/engine/audio-call.ts`)
+  transitions the state machine to `'connected'` if and only if
+  `pc.connectionState === 'connected'`, and `CallOverlay` renders `"In
+  call"` if and only if `state === 'connected'` — read from source, not
+  assumed.
+
+**Not run to completion in this sandbox**: like `test-web-app-e2e.mjs`/
+`test-webimap.mjs`, this needs `packages/core-wasm` + `packages/web-app`
+built first (`pnpm assemble && pnpm build` in `packages/web-app`), which
+needs the full Rust/wasm toolchain — out of scope/time for the environment
+this was written in (mirrors M4's own note: "verified by CI/human, not in
+the headless build sandbox"). What *was* verified here: the script parses
+(`node --check`), the trimmed mock mail server's provision/send/long-poll
+round-trip works standalone (adapted inline and exercised against a real
+`fetch`), and every UI selector (call button `aria-label`/`title` =
+`"Call"`, context-menu items `"Audio Call"`/`"Video Call"`,
+`IncomingCallRing`'s `role="dialog" aria-label="Incoming call"` +
+`"Accept"` button, `CallOverlay`'s `role="dialog" aria-label="Call"` +
+`"In call"` status text) was matched against the actual current frontend
+source, not guessed. Not wired into `ci.yml`, matching
+`test-web-app-e2e.mjs`/`test-webimap.mjs`/`test-networking.mjs`, none of
+which are either.

@@ -48,11 +48,17 @@ function main(): void {
   let closing = false
   let devicesRefreshed = false
   let deviceChangeHandler: (() => void) | null = null
+  // M5 (docs/calls.md: content-free call analytics): whether THIS popup's
+  // engine ever reached `connected`. The popup has no analytics access of its
+  // own (its CSP deliberately omits the analytics origin — see
+  // `static/call-popup.html`), so this rides along on `reportEnded` and the
+  // opener (`CallManager.reportCallOutcome`) does the actual classification.
+  let reachedConnected = false
 
   const closeWindow = (): void => {
     if (closing) return
     closing = true
-    connection.reportEnded()
+    connection.reportEnded(reachedConnected)
     if (deviceChangeHandler != null) deviceChangeHandler()
     connection.close()
     // Give the relayed endCall a beat to flush before the window tears down.
@@ -109,6 +115,7 @@ function main(): void {
   let errored = false
   const onState = (state: CallState): void => {
     store.setState(state)
+    if (state === 'connected') reachedConnected = true
     if (!devicesRefreshed && (state === 'connecting' || state === 'connected')) {
       devicesRefreshed = true
       void refreshDevices(true)
@@ -134,6 +141,9 @@ function main(): void {
     onError: err => onError(err.message || 'Call failed'),
     onLocalLevel: level => store.setLocalLevel(level),
     onRemoteLevel: level => store.setRemoteLevel(level),
+    // M5: non-blocking direct-vs-relay indicator (docs/calls.md) — same
+    // wiring as the main-window overlay path (runtime.ts).
+    onConnectionRouteChanged: route => store.setConnectionRoute(route),
     onDeviceSwitchError: err => store.showDeviceSwitchError(err.message || 'Could not switch device'),
     onLocalVideoTrackChanged: () => store.setLocalStream(bridge?.localStream ?? null),
     onScreenShareChanged: sharing => store.setScreenSharing(sharing),
@@ -155,7 +165,7 @@ function main(): void {
   // Closing the window (X, Cmd-W) must hang up and notify the far end.
   window.addEventListener('pagehide', () => {
     bridge?.hangup()
-    connection.reportEnded()
+    connection.reportEnded(reachedConnected)
   })
 
   void connection.init

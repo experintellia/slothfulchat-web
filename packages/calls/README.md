@@ -16,7 +16,20 @@ video + screen share — `AudioCallEngine`'s `hasVideo`, `switchCamera`,
 (detached popup window + overlay fallback + popup⇄opener signaling relay —
 `bridge/popup-signaling.ts`/`popup-host.ts`/`popup-client.ts`/`window-port.ts`,
 with `packages/web-app/src/call-popup.ts` as the popup DOM entry) are landed.
-M5 (CSP/permissions/privacy/settings/polish) pending.
+M5 (CSP/permissions/privacy/settings/polish) **in progress**: the
+`WhoCanCallMe` settings toggle is un-gated for `browser`, the non-blocking
+direct-vs-relay indicator (`engine/connection-route.ts`,
+`ConnectionRouteMonitor`) is wired end to end (overlay + popup), README /
+the generated `privacy.html` disclose STUN/TURN relay routing, the
+content-free `call` analytics event (`direction`/`has_video`/`result`,
+classified via the new `bridge/call-outcome.ts` + `rpc.callInfo` for the
+missed/declined/timeout cases and locally for busy/cancelled/error/connected —
+see `packages/web-app/src/runtime.ts`'s `reportCallOutcome`) is wired, the
+incoming ring gets a synthesized ringtone + vibration (`bridge/ringtone.ts`),
+and `CallOverlay`/`IncomingCallRing` go full-bleed with bigger touch targets
+below a phone-ish viewport (`ui/useIsMobileViewport.ts`, `styles.ts`'s
+`*Mobile` tokens); the `connect-src`/`Permissions-Policy` CSP widening
+remains.
 
 ## Layout — an enforced split, not just a folder convention
 

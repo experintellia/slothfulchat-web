@@ -17,6 +17,10 @@
  * m-line/codec set is unchanged); per-track audio-level metering
  * (`level-meter.ts`, `TrackLevelMeter`) driving the UI's speaking rings
  * (local + remote).
+ *
+ * M5 surface: `connection-route.ts` — a non-blocking direct-vs-relay
+ * indicator (`getActiveConnectionRoute`/`ConnectionRouteMonitor`), purely
+ * informational (no forced-relay setting; see docs/calls.md).
  */
 
 export {
@@ -66,6 +70,17 @@ export {
   webappHashEncode,
   webappHashDecode,
 } from './signaling.ts';
+
+export {
+  type ConnectionRoute,
+  type RtcStatsEntry,
+  type StatsReportLike,
+  type StatsPeerConnectionLike,
+  type ConnectionRouteMonitorOptions,
+  getActiveConnectionRoute,
+  ConnectionRouteMonitor,
+  DEFAULT_CONNECTION_ROUTE_INTERVAL_MS,
+} from './connection-route.ts';
 
 export {
   type GatheringPeerConnection,

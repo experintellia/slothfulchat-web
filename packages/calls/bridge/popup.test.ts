@@ -74,6 +74,10 @@ function fakeRpc(overrides: Partial<CallsRpcClient> = {}): {
       calls.push({ method: 'iceServers', args: [a] })
       return '[]'
     },
+    callInfo: async (a, m) => {
+      calls.push({ method: 'callInfo', args: [a, m] })
+      return { sdpOffer: '', hasVideo: false, state: { kind: 'Missed' } }
+    },
     ...overrides,
   }
   return { rpc, calls }
@@ -180,14 +184,16 @@ test('host handshake hands over init; core events reach the popup', async () => 
 
   let ready = false
   let ended = false
+  let endedReachedConnected: boolean | null = null
   const host = new CallPopupHost(fakeWindow(), OUTGOING_INIT, {
     rpc,
     createPort: () => opener,
     onReady: () => {
       ready = true
     },
-    onEnded: () => {
+    onEnded: reachedConnected => {
       ended = true
+      endedReachedConnected = reachedConnected
     },
   })
 
@@ -202,9 +208,28 @@ test('host handshake hands over init; core events reach the popup', async () => 
   host.forwardRemoteEnded()
   assert.deepEqual(events, ['answer', 'remote-ended'])
 
-  // A clean popup-side end reaches the host's onEnded.
-  connection.reportEnded()
+  // A clean popup-side end reaches the host's onEnded, carrying whether the
+  // popup's engine ever reached `connected` (M5 call-outcome analytics).
+  connection.reportEnded(true)
   assert.equal(ended, true)
+  assert.equal(endedReachedConnected, true)
+})
+
+test('onEnded defaults reachedConnected to false when the popup omits it', async () => {
+  const [opener, popup] = createPortPair()
+  let endedReachedConnected: boolean | null = null
+  const host = new CallPopupHost(fakeWindow(), OUTGOING_INIT, {
+    rpc: fakeRpc().rpc,
+    createPort: () => opener,
+    onEnded: reachedConnected => {
+      endedReachedConnected = reachedConnected
+    },
+  })
+  const connection = connectCallPopup(popup)
+  await connection.init
+  connection.reportEnded() // no argument — the conservative "unknown" default
+  assert.equal(endedReachedConnected, false)
+  void host
 })
 
 test('answer event carries the accept_call_info payload', async () => {

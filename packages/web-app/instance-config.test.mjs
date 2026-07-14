@@ -132,6 +132,16 @@ test('privacyHtml: honest relay, e2e and provider-storage wording', () => {
   ok(noRelay.includes('no default relay configured'))
 })
 
+test('privacyHtml: calls disclose STUN/TURN relay routing and DTLS-SRTP encryption (M5)', () => {
+  const html = privacyHtml(buildConfig({}), {})
+  ok(html.includes('Calls (audio/video)'))
+  ok(html.includes('ice_servers()'))
+  ok(html.includes('STUN/TURN relay'))
+  ok(html.includes('no setting to force relay-only'))
+  ok(html.includes('DTLS-SRTP'))
+  ok(html.includes('WhoCanCallMe') || html.includes('Notifications'))
+})
+
 test('imprintHtml: qualified e2e claim', () => {
   const html = imprintHtml(buildConfig({}), {})
   ok(html.includes('chatmail-capable contacts'))
@@ -156,6 +166,26 @@ test('isCatalogEvent: enforces the closed catalogue', () => {
   ok(!isCatalogEvent('link_preview', { action: 'user@example.org' }))
   // props on an event that declares none
   ok(!isCatalogEvent('qr_scan', { action: 'accept' }))
+})
+
+test('isCatalogEvent: the M5 "call" event (content-free call analytics)', () => {
+  ok(isCatalogEvent('call', { direction: 'incoming', has_video: 'no', result: 'connected' }))
+  ok(isCatalogEvent('call', { direction: 'outgoing', has_video: 'yes', result: 'timeout' }))
+  for (const result of ['connected', 'missed', 'busy', 'declined', 'timeout', 'cancelled', 'error']) {
+    ok(isCatalogEvent('call', { direction: 'incoming', has_video: 'no', result }), result)
+  }
+  // unknown direction/result values are rejected — the vocabulary is closed
+  ok(!isCatalogEvent('call', { direction: 'sideways', has_video: 'no', result: 'connected' }))
+  ok(!isCatalogEvent('call', { direction: 'incoming', has_video: 'no', result: 'ringing' }))
+  // nothing beyond direction/has_video/result may ride along (e.g. no duration)
+  ok(
+    !isCatalogEvent('call', {
+      direction: 'incoming',
+      has_video: 'no',
+      result: 'connected',
+      duration: 42,
+    })
+  )
 })
 
 test('privacyHtml: analytics off has the no-analytics statement and no events', () => {

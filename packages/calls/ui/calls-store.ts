@@ -15,7 +15,7 @@
  * `mount.tsx`) trivially unit-testable and reusable from a future popup
  * window (M4) with no changes.
  */
-import type { CallDeviceInfo, CallDirection, CallState } from '../engine/index.ts'
+import type { CallDeviceInfo, CallDirection, CallState, ConnectionRoute } from '../engine/index.ts'
 
 /** Callbacks the mounted UI invokes on user action; supplied by whatever owns
  * the active call (the runtime's call manager). */
@@ -96,6 +96,13 @@ export type CallUiSnapshot =
        * on the previous mic; this is surfaced inline next to the picker, not
        * as the call-ending `error` above. */
       deviceSwitchError: string | null
+      /** M5 direct-vs-relay indicator (docs/calls.md: "a non-blocking
+       * direct-vs-relay connection indicator (active candidate pair is
+       * 'relay')") — from the bridge's `onConnectionRouteChanged`.
+       * `'unknown'` until the call is `connected` and the first poll
+       * resolves. Purely informational — never gates any control, and
+       * unrelated to any forced-relay setting (there is none; see #93). */
+      connectionRoute: ConnectionRoute
     }
 
 const INACTIVE_SNAPSHOT: CallUiSnapshot = { active: false }
@@ -140,6 +147,7 @@ export class CallsUiStore {
       selectedMicrophoneId: null,
       selectedCameraId: null,
       deviceSwitchError: null,
+      connectionRoute: 'unknown',
     }
     this.notify()
   }
@@ -203,6 +211,16 @@ export class CallsUiStore {
   showScreenShareError(message: string): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, screenShareError: message }
+    this.notify()
+  }
+
+  /** Mirror of `bridge`'s `onConnectionRouteChanged` (M5 direct-vs-relay
+   * indicator) — pushed only when the route actually changes (the bridge's
+   * `ConnectionRouteMonitor` already dedupes), same no-op-while-inactive guard
+   * as every other setter here. */
+  setConnectionRoute(route: ConnectionRoute): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, connectionRoute: route }
     this.notify()
   }
 

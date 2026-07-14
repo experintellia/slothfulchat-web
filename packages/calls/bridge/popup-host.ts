@@ -61,8 +61,11 @@ export interface CallPopupHostOptions {
   /** The popup handshaked and the call is now running in it. */
   onReady?: () => void
   /** The popup ended the call (clean `ended`, or an abrupt window close). After
-   * this the host is spent. */
-  onEnded?: () => void
+   * this the host is spent. `reachedConnected` (M5 call-outcome analytics):
+   * whether the popup's own engine ever reached `connected` — `false` for an
+   * abrupt close (we genuinely don't know; see `onPopupClosedAbruptly`) or an
+   * older popup page that never reported it. */
+  onEnded?: (reachedConnected: boolean) => void
   /** The popup could not be established (handshake timeout) — the caller should
    * fall back to the in-page overlay. Not called for the synchronous
    * popup-blocked case (that is signaled by {@link openCallPopup} returning
@@ -121,7 +124,7 @@ export class CallPopupHost {
 
     this.unsubscribeMessages = this.port.onMessage(message => {
       if (message.kind === 'ready') this.onReady()
-      else if (message.kind === 'ended') this.onPopupEnded()
+      else if (message.kind === 'ended') this.onPopupEnded(message.reachedConnected ?? false)
     })
     this.unsubscribeRpc = servePopupRpc(this.port, options.rpc, {
       onCallMessageId: id => {
@@ -195,12 +198,12 @@ export class CallPopupHost {
 
   // ── Teardown ────────────────────────────────────────────────────────────────
 
-  private onPopupEnded(): void {
+  private onPopupEnded(reachedConnected: boolean): void {
     if (this.done) return
     // The popup relayed its own endCall before posting this; no safety net.
     this.endedCleanly = true
     this.teardown()
-    this.options.onEnded?.()
+    this.options.onEnded?.(reachedConnected)
   }
 
   private onPopupClosedAbruptly(): void {
@@ -215,7 +218,9 @@ export class CallPopupHost {
         })
     }
     this.teardown()
-    this.options.onEnded?.()
+    // We have no report from the popup on an abrupt close — `false` is the
+    // conservative "unknown" default (see `onEnded`'s doc).
+    this.options.onEnded?.(false)
   }
 
   /**

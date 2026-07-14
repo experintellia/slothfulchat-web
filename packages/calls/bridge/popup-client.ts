@@ -29,8 +29,13 @@ export interface CallPopupConnection {
    * accepted-elsewhere); returns an unsubscribe fn. */
   onEvent(handler: (event: PopupCallEvent) => void): () => void
   /** Tell the opener the call ended here (hangup / unload) so it stops
-   * relaying — the opener will NOT then send a safety-net `endCall`. Idempotent. */
-  reportEnded(): void
+   * relaying — the opener will NOT then send a safety-net `endCall`. Idempotent.
+   * `reachedConnected` (M5): whether THIS popup's own engine ever reached
+   * `connected` — the opener uses it to classify the call outcome for
+   * analytics (the popup itself has no analytics access; see
+   * `PopupToOpenerMessage`'s `ended` doc). Defaults to `false` (unknown/never
+   * connected) for call sites that don't track it. */
+  reportEnded(reachedConnected?: boolean): void
   /** Release the relay (rejects any in-flight RPC). */
   close(): void
 }
@@ -75,10 +80,10 @@ export function connectCallPopup(port: SignalingPort): CallPopupConnection {
         eventHandlers.delete(handler)
       }
     },
-    reportEnded() {
+    reportEnded(reachedConnected = false) {
       if (ended) return
       ended = true
-      port.post({ protocol: CALL_POPUP_PROTOCOL, kind: 'ended' })
+      port.post({ protocol: CALL_POPUP_PROTOCOL, kind: 'ended', reachedConnected })
     },
     close() {
       eventHandlers.clear()

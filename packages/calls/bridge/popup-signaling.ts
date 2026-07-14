@@ -23,6 +23,7 @@
  */
 
 import type { CallDirection } from '../engine/index.ts'
+import type { CallInfoResult } from './call-outcome.ts'
 import type { CallsRpcClient } from './index.ts'
 
 /** Version-tagged discriminator on every message. Bump on a breaking wire
@@ -40,6 +41,7 @@ export type PopupRpcMethod =
   | 'acceptIncomingCall'
   | 'endCall'
   | 'iceServers'
+  | 'callInfo'
 
 /** The call parameters the opener hands the popup once it signals readiness —
  * everything the popup needs to construct its own `CallBridge` locally. The
@@ -80,7 +82,22 @@ export type OpenerToPopupMessage =
 export type PopupToOpenerMessage =
   | { protocol: typeof CALL_POPUP_PROTOCOL; kind: 'ready' }
   | { protocol: typeof CALL_POPUP_PROTOCOL; kind: 'rpc'; id: number; method: PopupRpcMethod; args: unknown[] }
-  | { protocol: typeof CALL_POPUP_PROTOCOL; kind: 'ended' }
+  | {
+      protocol: typeof CALL_POPUP_PROTOCOL
+      kind: 'ended'
+      /**
+       * M5 (docs/calls.md: content-free call analytics): whether the popup's
+       * OWN engine ever reached `connected`, so the opener — the only side
+       * with analytics access; the popup's CSP deliberately omits the
+       * analytics origin (see `static/call-popup.html`) — can classify the
+       * outcome without needing a whole call-state relay. Optional so an
+       * older cached popup page (pre-M5) that never sends it degrades safely:
+       * {@link CallPopupHost} treats a missing value as `false` — the
+       * conservative "we genuinely don't know" default, which undercounts
+       * `connected` rather than fabricating it.
+       */
+      reachedConnected?: boolean
+    }
 
 export type PopupMessage = OpenerToPopupMessage | PopupToOpenerMessage
 
@@ -186,6 +203,14 @@ export class PopupRpcClient implements CallsRpcClient {
     return this.call('iceServers', [accountId])
   }
 
+  /** Relayed for `CallsRpcClient` completeness (M5 call-outcome
+   * classification); the popup's own `CallBridge` never calls this itself —
+   * only the opener's `CallManager` does, against the REAL client, once a
+   * call it is directly driving (overlay mode) ends ambiguously. */
+  callInfo(accountId: number, msgId: number): Promise<CallInfoResult> {
+    return this.call('callInfo', [accountId, msgId])
+  }
+
   /** Reject every in-flight call and stop listening — called when the relay
    * tears down so a pending `await` never hangs forever. */
   dispose(): void {
@@ -249,6 +274,8 @@ function invokeRpc(rpc: CallsRpcClient, method: PopupRpcMethod, args: unknown[])
       return rpc.endCall(args[0] as number, args[1] as number)
     case 'iceServers':
       return rpc.iceServers(args[0] as number)
+    case 'callInfo':
+      return rpc.callInfo(args[0] as number, args[1] as number)
     default:
       return Promise.reject(new Error(`servePopupRpc: unknown method "${String(method)}"`))
   }

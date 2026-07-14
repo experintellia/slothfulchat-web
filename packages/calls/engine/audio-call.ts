@@ -33,6 +33,14 @@
  *
  * After `ended` the instance is spent; create a new one for the next call.
  *
+ * ── CONNECTION ROUTE (M5) ──────────────────────────────────────────────────────
+ *
+ * {@link getConnectionRoute} is a read-only, non-blocking peek at whether the
+ * live peer connection is routed direct or via a TURN relay (docs/calls.md:
+ * "a non-blocking direct-vs-relay connection indicator"). It never affects
+ * ICE behavior — standard ICE (direct-preferred, relay fallback) stays the
+ * only mode; there is no forced-relay setting (see `connection-route.ts`).
+ *
  * ── DEVICE HOT-SWITCHING (M2) ─────────────────────────────────────────────────
  *
  * {@link AudioCallEngine.switchMicrophone} lets the caller swap the outgoing
@@ -103,6 +111,11 @@ import {
   type CallState,
   type CallStateListener,
 } from './call-state.ts';
+import {
+  getActiveConnectionRoute,
+  type ConnectionRoute,
+  type StatsReportLike,
+} from './connection-route.ts';
 
 /**
  * The subset of `RTCRtpSender` {@link AudioCallEngine.switchMicrophone} needs.
@@ -129,6 +142,9 @@ export interface PeerConnectionLike extends GatheringPeerConnection {
   setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void>;
   addTrack(track: MediaStreamTrack, ...streams: MediaStream[]): unknown;
   getSenders(): RtpSenderLike[];
+  /** M5: feeds {@link AudioCallEngine.getConnectionRoute}'s direct-vs-relay
+   * indicator (docs/calls.md: "active candidate pair is 'relay'"). */
+  getStats(): Promise<StatsReportLike>;
   close(): void;
   // Overloads are NOT inherited/merged across `extends`: a subtype's
   // addEventListener must be assignable to the base's, so we must restate the
@@ -399,6 +415,26 @@ export class AudioCallEngine {
    * hijack in the first place). */
   get screenSharing(): boolean {
     return this.screenSharingState;
+  }
+
+  /**
+   * The direct-vs-relay connection indicator (M5, docs/calls.md: "a
+   * non-blocking direct-vs-relay connection indicator (active candidate pair
+   * is 'relay')"). Queries the live `RTCPeerConnection`'s `getStats()` for the
+   * currently-active candidate pair — see {@link getActiveConnectionRoute}
+   * for the exact resolution rule. Purely informational: never blocks call
+   * setup, never changes ICE behavior, and is unrelated to any forced-relay
+   * setting (there is none — deferred to issue #93).
+   *
+   * Resolves `'unknown'` before a peer connection exists (not yet
+   * placed/accepted) or after the call has ended (pc torn down) — a caller
+   * that polls this on an interval should stop once `state` leaves
+   * `connected`, matching how {@link switchMicrophone}'s callers stop on
+   * `ended`.
+   */
+  async getConnectionRoute(): Promise<ConnectionRoute> {
+    if (this.pc == null) return 'unknown';
+    return getActiveConnectionRoute(this.pc);
   }
 
   /**
