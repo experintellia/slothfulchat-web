@@ -160,20 +160,16 @@ overlay fallback; no core-access breakage.
   `camera; microphone; display-capture`. (No `frame-src` needed — no iframe.)
   Confirm `ice_servers()` returns hostnames the *browser* resolves (our WASM DNS
   is stubbed); host-side resolution is the only likely core-side snag.
-- Settings: expose `WhoCanCallMe`; overridable ICE/relay config.
-- Relay UX (**recommended; policy call to confirm**): **silent automatic ICE
-  fallback** is the default — no mid-call prompt (interrupting ringing is bad UX
-  and can't yield an informed choice). Rationale: relay is actually *more* private
-  toward the peer (it never sees your IP), and since the TURN server is your own
-  chatmail relay — which already terminates your IMAP/SMTP and knows your IP — it
-  leaks essentially nothing new; only the shared `turn.delta.chat` fallback is a
-  marginally new operator. The meaningful control is a **pre-set posture, not a
-  per-call ask**: a `WhoCanCallMe`-adjacent setting **"Hide my IP from contacts
-  during calls (always relay)"** → `iceTransportPolicy: 'relay'` (off by default
-  for quality; on for anonymity — mirrors upstream desktop forcing relay-only).
-  Plus a **non-blocking live indicator** of direct-vs-relay so power users can see
-  what happened. Forcing relay-only still interoperates (it only narrows our
-  candidate set).
+- Settings: expose `WhoCanCallMe`.
+- Relay UX (**decided**): **standard ICE** — direct-preferred with automatic relay
+  fallback, no mid-call prompt and **no forced-relay setting in the initial build**.
+  Rationale: DC's threat model is chatting with known contacts, not strangers
+  harvesting your IP, so an always-relay toggle buys little in the common case; and
+  forcing relay when direct would work burns relay egress bandwidth (a dominant cost
+  at scale). Instead: disclose TURN/relay routing in the **privacy policy**, and add
+  a **non-blocking direct-vs-relay indicator** (active candidate pair is `relay`) for
+  troubleshooting. An optional always-relay ("hide my IP from contacts") mode is
+  deferred for discussion in **#93**.
 - Privacy docs (`README`, generated `privacy.html`): disclose STUN/TURN origins and
   relay routing.
 - Content-free call analytics in `packages/web-app/src/analytics.ts` (matching the
@@ -212,9 +208,9 @@ overlay fallback; no core-access breakage.
 - **Interop format** — must match `calls-webapp`'s on-wire payload exactly, or real
   DC clients can't be called. Nailed down in M0 from source.
 - **Frontier churn** — upstream calls unreleased at our pin; keep the seam patch thin.
-- **Relay privacy UX** — recommended: silent ICE fallback + a "always relay / hide
-  IP from contacts" setting + a direct-vs-relay indicator (no mid-call prompt). A
-  privacy-policy call to confirm; configurable regardless. See M5.
+- **Relay privacy UX** — decided: standard ICE (direct-preferred, relay fallback),
+  privacy-policy disclosure, direct-vs-relay indicator; no forced-relay setting for
+  now. Optional always-relay mode deferred to #93. See M5.
 - **Popup ⇄ core IPC** — reason overlay is default; popup is enhancement (M4).
 - **`ice_servers()` on WASM** — verify it returns hostnames (browser resolves) not
   host-side DNS.
