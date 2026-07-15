@@ -692,6 +692,9 @@ round-trip works standalone (adapted inline and exercised against a real
 `IncomingCallRing`'s `role="dialog" aria-label="Incoming call"` +
 `"Accept"` button, `CallOverlay`'s `role="dialog" aria-label="Call"` +
 `"In call"` status text) was matched against the actual current frontend
-source, not guessed. Not wired into `ci.yml`, matching
-`test-web-app-e2e.mjs`/`test-webimap.mjs`/`test-networking.mjs`, none of
-which are either.
+source, not guessed. **Now wired into `ci.yml`'s `test` job** (after the
+web-app dist build, alongside the other headless Playwright e2e suites): it is
+fully offline (loopback host candidates, mock webimap, no relay/STUN/network),
+so it runs in CI the same as locally — unlike `test-web-app-e2e.mjs` /
+`test-webimap.mjs`, it needs no extra environment. Honors `CHROMIUM_EXECUTABLE`
+like the sibling e2e scripts.

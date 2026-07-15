@@ -278,3 +278,12 @@ jobs:
       # the CORS-blocked→unfurl fallback path.
       - name: E2E test — link-preview ghost UI
         run: node scripts/test-link-preview-e2e.mjs
+
+      # calls e2e (docs/calls.md M5, fully offline): two BrowserContexts == two
+      # wasm cores; place a real audio call from one to the other through the
+      # real ChatView call button + IncomingCallRing Accept, and assert both
+      # RTCPeerConnections reach 'connected' (loopback host candidates — no
+      # relay/STUN/network needed). Exercises engine + bridge + runtime + UI +
+      # the un-gate patch end to end.
+      - name: E2E test — calls (loopback audio call reaches connected)
+        run: node scripts/test-calls-e2e.mjs

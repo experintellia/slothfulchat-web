@@ -41,10 +41,10 @@
 //
 // Requires packages/web-app/dist to be built first (pnpm assemble && pnpm
 // build in packages/web-app, which also needs packages/core-wasm built) —
-// same prerequisite as scripts/smoke-web-app.mjs / test-web-app-e2e.mjs. Not
-// wired into CI (same reason test-web-app-e2e.mjs/test-webimap.mjs aren't:
-// meant to be run locally / by a human with the wasm toolchain built) — see
-// FINDINGS.md.
+// same prerequisite as scripts/smoke-web-app.mjs / test-web-app-e2e.mjs. Wired
+// into CI's `test` job (after the web-app dist is built), alongside the other
+// headless Playwright e2e suites — it needs no network (loopback host
+// candidates only), so it runs there the same as locally.
 //
 // Run:  node scripts/test-calls-e2e.mjs        (VERBOSE=1 for full page logs)
 import { createServer } from 'node:http'
@@ -219,6 +219,10 @@ try {
   // Standard headless-WebRTC-testing flags: synthetic mic/camera, no
   // permission-prompt UI (both peers are same-machine loopback anyway).
   browser = await chromium.launch({
+    // Honor CHROMIUM_EXECUTABLE like the other e2e scripts (test-relay-picker
+    // etc.) so this runs against a pre-installed browser locally and the
+    // playwright-installed one in CI.
+    executablePath: process.env.CHROMIUM_EXECUTABLE || undefined,
     args: [
       '--use-fake-device-for-media-stream',
       '--use-fake-ui-for-media-permissions',
