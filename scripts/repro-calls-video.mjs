@@ -10,7 +10,7 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { chromium } from 'playwright'
+import { chromium, firefox } from 'playwright'
 
 const here = p => fileURLToPath(new URL(p, import.meta.url))
 const workDir = mkdtempSync(join(tmpdir(), 'repro-calls-'))
@@ -30,21 +30,31 @@ await new Promise(r => server.listen(0, '127.0.0.1', r))
 const pageUrl = `http://127.0.0.1:${server.address().port}/`
 
 // 2. drive it
-const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_EXECUTABLE || undefined,
-  // headless:false + --headless=new = the FULL chromium run headlessly; the
-  // default headless shell has no media-capture support (getUserMedia ->
-  // NotSupportedError even with fake-device flags).
-  headless: false,
-  args: [
-    '--headless=new',
-    '--use-fake-device-for-media-stream',
-    '--use-fake-ui-for-media-permissions',
-    '--autoplay-policy=no-user-gesture-required',
-  ],
-})
+// BROWSER=firefox runs the same matrix in Firefox (fake media via prefs).
+const useFirefox = process.env.BROWSER === 'firefox'
+const browser = useFirefox
+  ? await firefox.launch({
+      firefoxUserPrefs: {
+        'media.navigator.streams.fake': true,
+        'media.navigator.permission.disabled': true,
+        'media.autoplay.default': 0,
+      },
+    })
+  : await chromium.launch({
+      executablePath: process.env.CHROMIUM_EXECUTABLE || undefined,
+      // headless:false + --headless=new = the FULL chromium run headlessly; the
+      // default headless shell has no media-capture support (getUserMedia ->
+      // NotSupportedError even with fake-device flags).
+      headless: false,
+      args: [
+        '--headless=new',
+        '--use-fake-device-for-media-stream',
+        '--use-fake-ui-for-media-permissions',
+        '--autoplay-policy=no-user-gesture-required',
+      ],
+    })
 const context = await browser.newContext()
-await context.grantPermissions(['microphone', 'camera'])
+if (!useFirefox) await context.grantPermissions(['microphone', 'camera'])
 const page = await context.newPage()
 page.on('console', m => console.log('[page]', m.text()))
 await page.goto(pageUrl)
@@ -84,6 +94,7 @@ async function runCase(name, opts, act, sendSide, recvSide) {
   // video receiver track joined the ontrack stream (a=msid association).
   const assoc = await ev(s => window.repro.streamAssociation(s), recvSide)
   console.log(`  ${recvSide} stream assoc:`, JSON.stringify(assoc))
+  console.log(`  route: A=${await ev(s => window.repro.route(s), 'A')} B=${await ev(s => window.repro.route(s), 'B')}`)
   const msidLines = await ev(() => window.repro.videoSection('offer'))
   console.log('  offer m=video key lines:\n' + msidLines.split('\n').map(l => '    ' + l).join('\n'))
   const associated = assoc.videoReceiverTrackInEngineStream === true

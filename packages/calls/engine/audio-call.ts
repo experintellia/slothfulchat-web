@@ -72,6 +72,10 @@ export interface RtpTransceiverLike {
   readonly currentDirection?: RTCRtpTransceiverDirection | null;
   readonly sender: RtpSenderLike;
   readonly receiver?: { readonly track: MediaStreamTrack | null };
+  /** Restrict the codecs this transceiver will negotiate (real
+   * `RTCRtpTransceiver.setCodecPreferences`). See {@link
+   * AudioCallOptions.videoCodecPreferences}. */
+  setCodecPreferences?(codecs: RTCRtpCodec[]): void;
 }
 
 /** The subset of `RTCDataChannel` the engine needs for the negotiated
@@ -243,6 +247,13 @@ export interface AudioCallOptions {
   videoConstraints?: MediaTrackConstraints | boolean;
   /** Preferred camera `deviceId`; mirrors {@link audioInputDeviceId}. */
   videoInputDeviceId?: string;
+  /**
+   * Codec preferences applied to the video transceiver before
+   * createOffer/createAnswer — lets the platform layer exclude codecs it cannot
+   * actually encode (Firefox negotiates H264 via the OpenH264 GMP plugin and
+   * sends nothing when it's unavailable — confirmed live vs DC iOS).
+   */
+  videoCodecPreferences?: RTCRtpCodec[];
 }
 
 type ConnectionListener = () => void;
@@ -266,6 +277,8 @@ export class AudioCallEngine {
   private readonly videoConstraints: MediaTrackConstraints | boolean;
   /** Current camera selection; `null` = browser default. */
   private selectedVideoInputDeviceId: string | null = null;
+  /** See {@link AudioCallOptions.videoCodecPreferences}. */
+  private readonly videoCodecPreferences: RTCRtpCodec[] | undefined;
 
   private direction: CallDirection | null = null;
   private pc: PeerConnectionLike | null = null;
@@ -336,6 +349,7 @@ export class AudioCallEngine {
     this.wantsVideo = options.hasVideo ?? false;
     this.videoConstraints = options.videoConstraints ?? true;
     this.selectedVideoInputDeviceId = options.videoInputDeviceId ?? null;
+    this.videoCodecPreferences = options.videoCodecPreferences;
     if (this.callbacks.onStateChange) {
       this.machine.subscribe(this.callbacks.onStateChange);
     }
@@ -998,6 +1012,7 @@ export class AudioCallEngine {
       this.videoSender =
         pc.getSenders().find((s) => s.track != null && s.track.kind === 'video') ?? null;
       this.cameraOnState = this.videoSender != null;
+      this.applyVideoCodecPreferences(pc);
       return;
     }
     // iOS/ssrc: attach a disabled black placeholder to the always-negotiated
@@ -1043,6 +1058,29 @@ export class AudioCallEngine {
       this.videoSender = null;
     }
     this.cameraOnState = false; // placeholder ≠ camera
+    this.applyVideoCodecPreferences(pc);
+  }
+
+  /**
+   * Apply {@link AudioCallOptions.videoCodecPreferences} to the transceiver
+   * owning {@link videoSender} (same matching as {@link
+   * promoteVideoTransceiverToSendrecv}: sender identity, then video-receiver
+   * fallback), before createOffer/createAnswer. A throwing preference set must
+   * never break the call — degrade to the default codec order.
+   */
+  private applyVideoCodecPreferences(pc: PeerConnectionLike): void {
+    const prefs = this.videoCodecPreferences;
+    const sender = this.videoSender;
+    if (prefs == null || sender == null) return;
+    const transceivers = pc.getTransceivers();
+    const transceiver =
+      transceivers.find((t) => t.sender === sender) ??
+      transceivers.find((t) => t.receiver?.track?.kind === 'video');
+    try {
+      transceiver?.setCodecPreferences?.(prefs);
+    } catch {
+      // best-effort — degrade to default codecs rather than failing the call
+    }
   }
 
   /** Lazily create the disabled placeholder video track from the injected

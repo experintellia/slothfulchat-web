@@ -321,6 +321,9 @@ export interface OutgoingCallParams {
   hasVideo: boolean
   /** Preferred camera `deviceId`, seeding the initial acquisition when `hasVideo`. */
   cameraInputDeviceId?: string
+  /** See {@link AudioCallOptions.videoCodecPreferences} — the platform layer
+   * excludes codecs it can't actually encode (Firefox/H264/OpenH264). */
+  videoCodecPreferences?: RTCRtpCodec[]
   iceServers: RTCIceServer[]
 }
 
@@ -337,6 +340,8 @@ export interface IncomingCallParams {
   hasVideo: boolean
   /** Preferred camera `deviceId`, seeding the initial acquisition when `hasVideo`. */
   cameraInputDeviceId?: string
+  /** See {@link OutgoingCallParams.videoCodecPreferences}. */
+  videoCodecPreferences?: RTCRtpCodec[]
   iceServers: RTCIceServer[]
 }
 
@@ -384,6 +389,7 @@ export class CallBridge {
     chatId: number
     hasVideo: boolean
     cameraInputDeviceId?: string
+    videoCodecPreferences?: RTCRtpCodec[]
     callMessageId: number | null
     pendingOfferSdp: string | null
     iceServers: RTCIceServer[]
@@ -405,6 +411,7 @@ export class CallBridge {
       gatherOptions: { overallTimeoutMs: DEFAULT_GATHER_TIMEOUT_MS },
       hasVideo: init.hasVideo,
       videoInputDeviceId: init.cameraInputDeviceId,
+      videoCodecPreferences: init.videoCodecPreferences,
       callbacks: {
         onStateChange: (state, change) => {
           init.callbacks.onStateChange?.(state, change)
@@ -519,6 +526,7 @@ export class CallBridge {
       chatId: params.chatId,
       hasVideo: params.hasVideo,
       cameraInputDeviceId: params.cameraInputDeviceId,
+      videoCodecPreferences: params.videoCodecPreferences,
       callMessageId: null,
       pendingOfferSdp: null,
       iceServers: params.iceServers,
@@ -540,6 +548,7 @@ export class CallBridge {
       chatId: params.chatId,
       hasVideo: params.hasVideo,
       cameraInputDeviceId: params.cameraInputDeviceId,
+      videoCodecPreferences: params.videoCodecPreferences,
       callMessageId: params.callMessageId,
       pendingOfferSdp: params.offerSdp,
       iceServers: params.iceServers,

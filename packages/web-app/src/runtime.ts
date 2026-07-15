@@ -1649,6 +1649,19 @@ function showWebxdcNotImplementedDialog() {
 // the shared `CallsUiStore` that the React tree mounted by `mountCallsUi`
 // observes.
 
+// Firefox negotiates H264 through the on-demand OpenH264 plugin and silently
+// encodes nothing when it's unavailable — prefer codecs Firefox encodes
+// natively (VP8/VP9/AV1). Chrome keeps hardware H264.
+const caps = typeof RTCRtpReceiver !== 'undefined' && RTCRtpReceiver.getCapabilities?.('video')
+const isFirefox = navigator.userAgent.includes('Firefox')
+const videoCodecPreferences: RTCRtpCodec[] | undefined =
+  isFirefox && caps
+    ? (() => {
+        const filtered = caps.codecs.filter((c) => !/h264/i.test(c.mimeType))
+        return filtered.length > 0 ? filtered : undefined
+      })()
+    : undefined
+
 /** `${accountId}` scoping is implicit (one call at a time). */
 class CallManager {
   private readonly log: Logger
@@ -1851,7 +1864,7 @@ class CallManager {
         if (slot.cancelled || slot.mode !== 'overlay') return
         const bridge = CallBridge.outgoing(
           this.rpc,
-          { accountId: slot.accountId, chatId: slot.chatId, hasVideo: slot.hasVideo, iceServers },
+          { accountId: slot.accountId, chatId: slot.chatId, hasVideo: slot.hasVideo, videoCodecPreferences, iceServers },
           this.factories,
           this.overlayBridgeCallbacks(slot)
         )
@@ -1978,6 +1991,7 @@ class CallManager {
         callMessageId: slot.callMessageId ?? 0,
         offerSdp: slot.offerSdp ?? '',
         hasVideo: slot.hasVideo,
+        videoCodecPreferences,
         iceServers,
       },
       this.factories,

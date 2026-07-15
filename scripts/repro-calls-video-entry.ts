@@ -129,6 +129,11 @@ async function setCameraEnabled(side: Side, enabled: boolean): Promise<void> {
   await sides[side]!.engine.setCameraEnabled(enabled);
 }
 
+/** The direct-vs-relay classifier (Firefox stats-shape check). */
+async function route(side: Side): Promise<string> {
+  return sides[side]!.engine.getConnectionRoute();
+}
+
 async function videoStats(side: Side): Promise<{
   out: Record<string, unknown> | null;
   inn: Record<string, unknown> | null;
@@ -263,6 +268,7 @@ function videoSection(which: 'offer' | 'answer', full = false): string {
   setupCall,
   states,
   setCameraEnabled,
+  route,
   videoStats,
   grabRemoteFrame,
   diag,

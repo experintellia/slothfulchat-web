@@ -120,6 +120,13 @@ Our port also treats `turns:` URLs as TURN (upstream only checks `turn:`).
   an SSRC it never saw signaled, so a mid-call `replaceTrack(camera)` on an
   audio-started call would otherwise render black on iOS (Chrome demuxes by MID
   and tolerates it). calls-webapp equivalently sends a disabled camera track.
+- Firefox H264 caveat: Firefox negotiates H264 through the on-demand OpenH264
+  GMP plugin and silently encodes **nothing** when it's unavailable/stuck (an
+  iOS peer answers preferring H264, so negotiation "succeeds" but Firefox sends
+  black — confirmed live vs DC iOS). The platform layer passes
+  `videoCodecPreferences` excluding H264 so Firefox negotiates VP8 (which it
+  encodes natively); the engine applies them to the video transceiver before
+  createOffer/createAnswer. Chrome keeps hardware H264 (unset preferences).
 - Negotiated data channels (fixed ids are part of the contract; both peers must
   declare identical `{negotiated:true, id}`):
   - `iceTrickling` **id 1** — post-connect ICE promotion (optional/later);

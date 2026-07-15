@@ -29,6 +29,19 @@ import {
 } from '@slothfulchat/calls/bridge'
 import { CallsUiStore, mountCallsUi } from '@slothfulchat/calls/ui'
 
+// Firefox negotiates H264 through the on-demand OpenH264 plugin and silently
+// encodes nothing when it's unavailable — prefer codecs Firefox encodes
+// natively (VP8/VP9/AV1). Chrome keeps hardware H264.
+const caps = typeof RTCRtpReceiver !== 'undefined' && RTCRtpReceiver.getCapabilities?.('video')
+const isFirefox = navigator.userAgent.includes('Firefox')
+const videoCodecPreferences: RTCRtpCodec[] | undefined =
+  isFirefox && caps
+    ? (() => {
+        const filtered = caps.codecs.filter((c) => !/h264/i.test(c.mimeType))
+        return filtered.length > 0 ? filtered : undefined
+      })()
+    : undefined
+
 function main(): void {
   const opener = window.opener as Window | null
   if (opener == null || opener.closed) {
@@ -215,7 +228,7 @@ function main(): void {
       if (init.direction === 'outgoing') {
         bridge = CallBridge.outgoing(
           connection.rpc,
-          { accountId: init.accountId, chatId: init.chatId, hasVideo: init.hasVideo, iceServers },
+          { accountId: init.accountId, chatId: init.chatId, hasVideo: init.hasVideo, videoCodecPreferences, iceServers },
           factories,
           callbacks(init)
         )
@@ -233,6 +246,7 @@ function main(): void {
             callMessageId: init.callMessageId,
             offerSdp: init.offerSdp,
             hasVideo: init.hasVideo,
+            videoCodecPreferences,
             iceServers,
           },
           factories,
