@@ -364,6 +364,9 @@ function makeEngine(
     /** Seed a trackless video sender on the answerer's `setRemoteDescription`
      * (see {@link FakePc.seedRemoteVideoSender}). */
     seedRemoteVideoSender?: boolean;
+    /** Opt-in `createPlaceholderVideoTrack` factory (iOS/ssrc). Left undefined
+     * by default so the existing trackless-transceiver tests stay unchanged. */
+    makePlaceholderTrack?: () => FakeTrack;
   } = {}
 ) {
   const events = {
@@ -391,6 +394,9 @@ function makeEngine(
     factories: {
       getUserMedia: overrides.getUserMedia ?? defaultGetUserMedia,
       getDisplayMedia: overrides.getDisplayMedia,
+      createPlaceholderVideoTrack: overrides.makePlaceholderTrack
+        ? () => overrides.makePlaceholderTrack!() as unknown as MediaStreamTrack
+        : undefined,
       createPeerConnection: (config) => {
         const pc = new FakePc(config);
         pc.seedRemoteVideoSender = overrides.seedRemoteVideoSender ?? false;
@@ -1726,4 +1732,108 @@ test('D diagnostic: silent on a normally negotiated call (sendrecv)', async (t) 
   pc.fireConnectionState('connected');
 
   assert.deepEqual(warns, []);
+});
+
+// ── iOS/ssrc: disabled placeholder video track ────────────────────────────────
+//
+// With a `createPlaceholderVideoTrack` factory the always-negotiated video
+// sender carries a disabled black track (so the SDP has a real a=ssrc) instead
+// of being trackless — WebKit can't demux RTP on an unsignaled SSRC. All tests
+// above run WITHOUT the factory (old trackless behavior) and must stay green.
+
+test('iOS/ssrc: audio-started OFFERER addTrack()s the placeholder (real a=ssrc), no addTransceiver, camera stays off', async () => {
+  const placeholder = new FakeTrack('video');
+  const { engine, lastPc } = makeEngine({ makePlaceholderTrack: () => placeholder });
+  await engine.placeCall();
+
+  const pc = lastPc();
+  assert.ok(
+    pc.addedTracks.includes(placeholder as unknown as MediaStreamTrack),
+    'the placeholder was addTrack()ed so the offer carries a real a=ssrc'
+  );
+  assert.equal(pc.addTransceiverCount, 0, 'addTrack replaced the trackless addTransceiver');
+  const videoSender = pc.senders.find(
+    (s) => s.track === (placeholder as unknown as MediaStreamTrack)
+  );
+  assert.ok(videoSender, 'the video sender carries the placeholder track');
+  assert.equal(engine.cameraEnabled, false, 'placeholder is not the camera');
+});
+
+test('iOS/ssrc: audio-started ANSWERER replaceTrack()s the placeholder onto the adopted sender before the answer', async () => {
+  const placeholder = new FakeTrack('video');
+  const { engine, lastPc } = makeEngine({
+    seedRemoteVideoSender: true,
+    makePlaceholderTrack: () => placeholder,
+  });
+  engine.receiveCall('OFFER_FROM_PEER');
+  await engine.accept();
+
+  const pc = lastPc();
+  assert.equal(pc.addTransceiverCount, 0, 'no addTransceiver on the answer side');
+  assert.deepEqual(
+    pc.seededVideoSender!.replaceTrackCalls,
+    [placeholder as unknown as MediaStreamTrack],
+    'placeholder replaced onto the adopted sender (before createAnswer)'
+  );
+  assert.deepEqual(
+    pc.seededVideoSender!.setStreamsCalls,
+    [[engine.localMediaStream]],
+    'still associates the local stream (msid) as before'
+  );
+});
+
+test('iOS/ssrc: setCameraEnabled(false) restores the placeholder (not null) and never stops it', async () => {
+  const placeholder = new FakeTrack('video');
+  const camera = new FakeTrack('video');
+  let call = 0;
+  const { engine, lastPc } = makeEngine({
+    makePlaceholderTrack: () => placeholder,
+    getUserMedia: async () => {
+      call += 1;
+      return (call === 1 ? micStream() : new FakeStream([camera])) as unknown as MediaStream;
+    },
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  const videoSender = pc.senders.find(
+    (s) => s.track === (placeholder as unknown as MediaStreamTrack)
+  )!;
+
+  await engine.setCameraEnabled(true);
+  assert.equal(videoSender.track, camera as unknown as MediaStreamTrack, 'camera on the sender');
+
+  await engine.setCameraEnabled(false);
+  assert.equal(
+    videoSender.replaceTrackCalls.at(-1),
+    placeholder as unknown as MediaStreamTrack,
+    'camera-off restores the placeholder, not null (keeps the a=ssrc signaled)'
+  );
+  assert.equal(placeholder.stopped, false, 'the placeholder is reused across swaps, never stopped');
+});
+
+test('iOS/ssrc: teardown stops the placeholder track', async () => {
+  const placeholder = new FakeTrack('video');
+  const { engine } = makeEngine({ makePlaceholderTrack: () => placeholder });
+  await engine.placeCall();
+  assert.equal(placeholder.stopped, false);
+
+  engine.hangup();
+
+  assert.equal(placeholder.stopped, true, 'the placeholder is released on teardown');
+});
+
+test('iOS/ssrc: a lone placeholder does not count as video in mutedState (videoEnabled stays false)', async () => {
+  const placeholder = new FakeTrack('video');
+  const { engine, mutedChannel } = makeEngine({ makePlaceholderTrack: () => placeholder });
+  await engine.placeCall();
+  const channel = mutedChannel();
+
+  channel.fireOpen();
+
+  assert.deepEqual(
+    JSON.parse(channel.sent[0]),
+    { audioEnabled: true, videoEnabled: false },
+    'placeholder alone (no camera/screen) reports videoEnabled false'
+  );
 });

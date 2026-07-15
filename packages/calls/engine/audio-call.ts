@@ -157,6 +157,16 @@ export interface AudioCallMediaFactories {
    * that never exercises screen share can omit it entirely.
    */
   getDisplayMedia?(constraints?: MediaStreamConstraints): Promise<MediaStream>;
+  /**
+   * A silent/black, DISABLED video track attached to the always-negotiated
+   * video sender so the SDP announces a real `a=ssrc` and that SSRC stays
+   * stable across `replaceTrack` — iOS WebKit can't demux RTP on an SSRC it
+   * never saw signaled (desktop Chrome demuxes by MID and tolerates it), so an
+   * audio-started call's mid-call camera would otherwise render black on iOS.
+   * calls-webapp equivalently sends a disabled camera track. Optional: absent =
+   * fall back to the old trackless video m-line (fine for Chrome-only tests).
+   */
+  createPlaceholderVideoTrack?(): MediaStreamTrack;
 }
 
 export interface AudioCallCallbacks {
@@ -265,6 +275,11 @@ export class AudioCallEngine {
    * `replaceTrack` on (see class doc); `null` only if the peer offered no
    * video m-line at all. */
   private videoSender: RtpSenderLike | null = null;
+  /** The disabled black placeholder on {@link videoSender} (see
+   * {@link AudioCallMediaFactories.createPlaceholderVideoTrack}); lazily made
+   * by {@link getPlaceholderTrack}. Kept out of `localStream` (not user media,
+   * preserves localHasVideo semantics); stopped only in {@link teardown}. */
+  private placeholderVideoTrack: MediaStreamTrack | null = null;
   /** The live `getDisplayMedia()` stream while screen-sharing. */
   private screenShareStream: MediaStream | null = null;
   private screenSharingState = false;
@@ -449,7 +464,8 @@ export class AudioCallEngine {
       // Attach the gather listeners BEFORE setLocalDescription so no candidate
       // is missed (see ice-gathering.ts CRITICAL ORDERING).
       const gathered = this.gather(pc, this.gatherOptionsWithSignal());
-      this.addLocalTracks(pc, stream, /* isOfferer */ true);
+      await this.addLocalTracks(pc, stream, /* isOfferer */ true);
+      if (!this.ensureActive(epoch)) return;
       const offer = await pc.createOffer();
       if (!this.ensureActive(epoch)) return;
       await pc.setLocalDescription(offer);
@@ -549,7 +565,8 @@ export class AudioCallEngine {
       const gathered = this.gather(pc, this.gatherOptionsWithSignal());
       await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
       if (!this.ensureActive(epoch)) return;
-      this.addLocalTracks(pc, stream, /* isOfferer */ false);
+      await this.addLocalTracks(pc, stream, /* isOfferer */ false);
+      if (!this.ensureActive(epoch)) return;
       const answer = await pc.createAnswer();
       if (!this.ensureActive(epoch)) return;
       await pc.setLocalDescription(answer);
@@ -742,7 +759,10 @@ export class AudioCallEngine {
 
     if (!enabled) {
       try {
-        await sender.replaceTrack(null);
+        // Restore the placeholder (not null) so the video m-line keeps its
+        // signaled a=ssrc for the next replaceTrack (iOS/ssrc — see
+        // addLocalTracks); null when no placeholder factory, as before.
+        await sender.replaceTrack(this.placeholderVideoTrack);
       } catch (error) {
         this.reportDeviceSwitchError(error);
         return;
@@ -884,7 +904,9 @@ export class AudioCallEngine {
     if (epoch == null || this.machine.isTerminal || sender == null) return;
 
     try {
-      await sender.replaceTrack(null);
+      // Restore the placeholder so the SSRC stays signaled (iOS/ssrc — see
+      // addLocalTracks); null when no placeholder factory, as before.
+      await sender.replaceTrack(this.placeholderVideoTrack);
     } catch (error) {
       this.reportScreenShareError(error);
       return;
@@ -962,11 +984,11 @@ export class AudioCallEngine {
    *    offered no video leaves `videoSender` null; camera/screen-share then
    *    degrade gracefully.
    */
-  private addLocalTracks(
+  private async addLocalTracks(
     pc: PeerConnectionLike,
     stream: MediaStream,
     isOfferer: boolean
-  ): void {
+  ): Promise<void> {
     for (const track of stream.getAudioTracks()) {
       pc.addTrack(track, stream);
     }
@@ -978,6 +1000,12 @@ export class AudioCallEngine {
       this.cameraOnState = this.videoSender != null;
       return;
     }
+    // iOS/ssrc: attach a disabled black placeholder to the always-negotiated
+    // video sender so the SDP carries a real a=ssrc; the later camera/screen
+    // replaceTrack then sends on a SIGNALED SSRC (WebKit can't demux unsignaled
+    // ones — audio-started calls otherwise render black on iOS). Null factory =
+    // keep the old trackless behavior.
+    const placeholderTrack = this.getPlaceholderTrack();
     // Audio-started: reuse the video sender the remote offer already created
     // (answerer — the sole trackless sender now that the mic is bound), or
     // negotiate our own video m-line (offerer).
@@ -996,16 +1024,36 @@ export class AudioCallEngine {
       // left that way, a later replaceTrack(camera/screen) sends NO media
       // (confirmed live). Promote to sendrecv BEFORE creating the answer.
       this.promoteVideoTransceiverToSendrecv(pc, existingTrackless);
+      // Attach the placeholder BEFORE createAnswer so the answer announces the
+      // a=ssrc (see rationale above).
+      if (placeholderTrack != null) await existingTrackless.replaceTrack(placeholderTrack);
     } else if (isOfferer) {
-      this.videoSender = pc.addTransceiver('video', {
-        direction: 'sendrecv',
-        streams: [stream],
-      }).sender;
+      if (placeholderTrack != null) {
+        // addTrack(placeholder, stream) gives msid + ssrc and stands in for the
+        // trackless addTransceiver below.
+        this.videoSender = pc.addTrack(placeholderTrack, stream) as RtpSenderLike;
+      } else {
+        this.videoSender = pc.addTransceiver('video', {
+          direction: 'sendrecv',
+          streams: [stream],
+        }).sender;
+      }
     } else {
       // Answerer whose peer offered no video m-line: nothing to hijack.
       this.videoSender = null;
     }
-    this.cameraOnState = false;
+    this.cameraOnState = false; // placeholder ≠ camera
+  }
+
+  /** Lazily create the disabled placeholder video track from the injected
+   * factory; `null` if no factory was provided (see {@link
+   * AudioCallMediaFactories.createPlaceholderVideoTrack}). */
+  private getPlaceholderTrack(): MediaStreamTrack | null {
+    if (this.placeholderVideoTrack != null) return this.placeholderVideoTrack;
+    const factory = this.factories.createPlaceholderVideoTrack;
+    if (factory == null) return null;
+    this.placeholderVideoTrack = factory();
+    return this.placeholderVideoTrack;
   }
 
   /** Set the video transceiver that owns `videoSender` to `sendrecv` (see
@@ -1388,5 +1436,14 @@ export class AudioCallEngine {
     this.localStream = null;
     this.remoteStream = null;
     this.pendingRemoteOffer = null;
+
+    // The placeholder is never stop()ed on a replaceTrack swap (it must be
+    // reusable); release it only here. Guard `stop` for fakes.
+    try {
+      this.placeholderVideoTrack?.stop?.();
+    } catch {
+      // best-effort
+    }
+    this.placeholderVideoTrack = null;
   }
 }

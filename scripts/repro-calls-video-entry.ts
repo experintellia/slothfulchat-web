@@ -37,6 +37,17 @@ function makeFactories(side: Side): AudioCallMediaFactories {
       return pc as unknown as PeerConnectionLike;
     },
     getDisplayMedia: (c) => navigator.mediaDevices.getDisplayMedia(c),
+    // Disabled 2x2 black placeholder so the video m-line carries a real a=ssrc
+    // (iOS/ssrc — matches the web-app factories).
+    createPlaceholderVideoTrack: () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 2;
+      canvas.height = 2;
+      canvas.getContext('2d')?.fillRect(0, 0, 2, 2);
+      const track = canvas.captureStream(1).getVideoTracks()[0]!;
+      track.enabled = false;
+      return track;
+    },
   };
 }
 

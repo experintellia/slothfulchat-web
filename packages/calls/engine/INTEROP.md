@@ -114,7 +114,12 @@ Our port also treats `turns:` URLs as TURN (upstream only checks `turn:`).
   `addTrack`, so the offer always carries both an audio and a video m-line even
   in an audio-only (audio-first) call. This lets the whole call complete in a
   single negotiation (calls-webapp does exactly one). Answerer just `addTrack` +
-  `createAnswer`.
+  `createAnswer`. The always-negotiated video sender carries a **disabled black
+  placeholder track** (`createPlaceholderVideoTrack`) rather than being
+  trackless, so the SDP announces a real `a=ssrc`: iOS WebKit can't demux RTP on
+  an SSRC it never saw signaled, so a mid-call `replaceTrack(camera)` on an
+  audio-started call would otherwise render black on iOS (Chrome demuxes by MID
+  and tolerates it). calls-webapp equivalently sends a disabled camera track.
 - Negotiated data channels (fixed ids are part of the contract; both peers must
   declare identical `{negotiated:true, id}`):
   - `iceTrickling` **id 1** — post-connect ICE promotion (optional/later);
