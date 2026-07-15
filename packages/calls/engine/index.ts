@@ -34,6 +34,7 @@ export {
 export {
   type PeerConnectionLike,
   type RtpSenderLike,
+  type RtpTransceiverLike,
   type AudioCallMediaFactories,
   type AudioCallCallbacks,
   type AudioCallOptions,

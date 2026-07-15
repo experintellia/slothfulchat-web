@@ -130,9 +130,23 @@ class FakePc implements PeerConnectionLike {
   closed = false;
   addedTracks: unknown[] = [];
   senders: FakeSender[] = [];
-  /** Video/audio transceivers established via `addTransceiver` (trackless
-   * senders) — the audio-only call's always-present video m-line (M3). */
-  transceivers: Array<{ kind: string; sender: FakeSender }> = [];
+  /** All transceivers on this pc, mirroring `RTCPeerConnection.getTransceivers()`:
+   * the audio-only call's always-present video m-line created via `addTransceiver`
+   * (M3), AND the recvonly video transceiver `setRemoteDescription(offer)` seeds
+   * on the answerer (see {@link seedRemoteVideoSender}). `direction` is settable
+   * so a test can assert the answerer promotes the recvonly one to `sendrecv`
+   * (BUG 1 / interop). */
+  transceivers: Array<{
+    kind: string;
+    sender: FakeSender;
+    direction: RTCRtpTransceiverDirection;
+    receiver: { track: MediaStreamTrack | null };
+  }> = [];
+  /** How many times `addTransceiver` was called — distinct from
+   * `transceivers.length`, which also counts the seeded recvonly one. An answer
+   * MUST NOT `addTransceiver` (it can't add an m-line the offer lacked), so
+   * tests assert this stays 0 on the answer side. */
+  addTransceiverCount = 0;
   configuration: RTCConfiguration;
   /** M5: what {@link getStats} resolves with — tests set this to a `Map` of
    * `RtcStatsEntry`-shaped objects to drive `getConnectionRoute()`. Empty by
@@ -184,9 +198,19 @@ class FakePc implements PeerConnectionLike {
   async setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void> {
     this.remoteDescription = description;
     if (this.seedRemoteVideoSender && description.type === 'offer') {
+      // Mimic the browser creating a sender AND a transceiver for the peer's
+      // always-present video m-line (upstream calls-webapp offers audio+video).
+      // The transceiver's direction defaults to `recvonly` — the answerer must
+      // promote it to `sendrecv` or web→peer video/screenshare never flows.
       const sender = new FakeSender(null);
       this.seededVideoSender = sender;
       this.senders.push(sender);
+      this.transceivers.push({
+        kind: 'video',
+        sender,
+        direction: 'recvonly',
+        receiver: { track: null },
+      });
     }
   }
   addTrack(track: MediaStreamTrack): unknown {
@@ -198,16 +222,35 @@ class FakePc implements PeerConnectionLike {
   /** Mirrors `RTCPeerConnection.addTransceiver(kind, init)` just enough for
    * `AudioCallEngine.addLocalTracks`: creates a trackless sender (an audio-only
    * call's always-present video m-line — see the M3 "always negotiate video"
-   * change) and returns `{ sender }`. Recorded in `getSenders()` so
-   * `switchMicrophone`/screen-share sender lookups see it. */
-  addTransceiver(kind: string): { sender: FakeSender } {
+   * change) and returns the transceiver (`{ sender, direction, ... }`).
+   * Recorded in `getSenders()`/`getTransceivers()` so `switchMicrophone`/
+   * screen-share sender lookups and the answerer's direction promotion see it. */
+  addTransceiver(
+    kind: string,
+    init?: { direction?: RTCRtpTransceiverDirection }
+  ): { kind: string; sender: FakeSender; direction: RTCRtpTransceiverDirection; receiver: { track: MediaStreamTrack | null } } {
+    this.addTransceiverCount += 1;
     const sender = new FakeSender(null);
-    this.transceivers.push({ kind, sender });
+    const transceiver = {
+      kind,
+      sender,
+      direction: init?.direction ?? ('sendrecv' as RTCRtpTransceiverDirection),
+      receiver: { track: null as MediaStreamTrack | null },
+    };
+    this.transceivers.push(transceiver);
     this.senders.push(sender);
-    return { sender };
+    return transceiver;
   }
   getSenders(): FakeSender[] {
     return this.senders;
+  }
+  getTransceivers(): Array<{
+    kind: string;
+    sender: FakeSender;
+    direction: RTCRtpTransceiverDirection;
+    receiver: { track: MediaStreamTrack | null };
+  }> {
+    return this.transceivers;
   }
   async getStats(): Promise<Map<string, { id: string; type: string; [key: string]: unknown }>> {
     return this.statsReport;
@@ -365,8 +408,18 @@ test('INTEROP: audio-started answerer adopts the peer-offered video sender (no d
   await engine.accept();
 
   const pc = lastPc();
-  assert.equal(pc.transceivers.length, 0, 'no addTransceiver on the answer side (would be an unmatched m-line)');
+  assert.equal(pc.addTransceiverCount, 0, 'no addTransceiver on the answer side (would be an unmatched m-line)');
   assert.ok(pc.seededVideoSender, 'the peer-offered video sender exists');
+  // BUG 1 / interop regression guard: the peer-offered video transceiver
+  // defaults to `recvonly`; the answerer MUST promote it to `sendrecv` before
+  // the answer is created, or web→peer video/screenshare never flows.
+  const videoTransceiver = pc.transceivers.find((t) => t.sender === pc.seededVideoSender);
+  assert.ok(videoTransceiver, 'the peer-offered video transceiver exists');
+  assert.equal(
+    videoTransceiver!.direction,
+    'sendrecv',
+    'answerer promoted the peer-offered recvonly video transceiver to sendrecv'
+  );
   assert.equal(engine.cameraEnabled, false, 'audio-started');
 
   await engine.setCameraEnabled(true);
@@ -376,6 +429,34 @@ test('INTEROP: audio-started answerer adopts the peer-offered video sender (no d
     pc.seededVideoSender!.track,
     camera as unknown as MediaStreamTrack,
     'camera replaced onto the ADOPTED peer video sender — reaches the peer'
+  );
+});
+
+test('INTEROP: audio-started answerer can screen-share to the peer (replaceTrack onto the promoted sendrecv sender)', async () => {
+  // Same interop scenario as above but via screen share (the live-confirmed
+  // broken path): the answer's video m-line must be sendrecv so getDisplayMedia
+  // → replaceTrack onto the adopted peer video sender actually reaches DC.
+  const screen = screenStream();
+  const { engine, events, lastPc } = makeEngine({
+    seedRemoteVideoSender: true,
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  engine.receiveCall('OFFER_FROM_PEER');
+  await engine.accept();
+
+  const pc = lastPc();
+  assert.equal(pc.addTransceiverCount, 0, 'no addTransceiver on the answer side');
+  const videoTransceiver = pc.transceivers.find((t) => t.sender === pc.seededVideoSender);
+  assert.equal(videoTransceiver!.direction, 'sendrecv', 'video m-line promoted to sendrecv');
+
+  await engine.startScreenShare();
+
+  assert.equal(engine.screenSharing, true);
+  assert.equal(events.screenShareErrors.length, 0);
+  assert.equal(
+    pc.seededVideoSender!.track,
+    screen.tracks[0] as unknown as MediaStreamTrack,
+    'screen track replaced onto the ADOPTED, now-sendrecv peer video sender — reaches DC'
   );
 });
 
@@ -572,6 +653,57 @@ test('hasVideo: accept adds a video track/sender alongside the mic', async () =>
   const pc = lastPc();
   assert.equal(pc.addedTracks.length, 2);
   assert.ok(pc.senders.some((s) => (s.track as unknown as { kind: string } | null)?.kind === 'video'));
+});
+
+test('BUG 3: a video-started call with no camera degrades to audio-only (non-fatal, call proceeds)', async () => {
+  let call = 0;
+  const gumConstraints: MediaStreamConstraints[] = [];
+  const { engine, events, lastPc } = makeEngine({
+    hasVideo: true,
+    getUserMedia: async (constraints) => {
+      call += 1;
+      gumConstraints.push(constraints);
+      // First acquisition (audio+video) fails — no camera. The audio-only
+      // retry succeeds, so the camera (not the mic) was the problem.
+      if (call === 1) throw new Error('NotFoundError: requested device not found');
+      return micStream() as unknown as MediaStream;
+    },
+  });
+
+  await engine.placeCall();
+
+  assert.equal(engine.state, 'ringing', 'a missing camera does NOT tear the call down');
+  assert.deepEqual(events.errors, [], 'no fatal onError');
+  assert.deepEqual(events.offers, ['OFFER_SDP'], 'the offer is still placed');
+  assert.equal(events.deviceSwitchErrors.length, 1, 'camera failure surfaced as a non-fatal device error');
+  assert.match(events.deviceSwitchErrors[0].message, /NotFoundError/);
+  assert.equal(engine.cameraEnabled, false, 'started audio-only (camera off)');
+  assert.notEqual(gumConstraints[0].video, false, 'first acquisition requested video');
+  assert.equal(gumConstraints[1].video, false, 'retry acquired audio only');
+  // The video m-line is still negotiated (offerer addTransceiver sendrecv), so
+  // the peer's video can still be RECEIVED and the screen can still be SHARED.
+  const pc = lastPc();
+  assert.equal(pc.transceivers.length, 1, 'a video sender is still negotiated despite no camera');
+  assert.equal(pc.transceivers[0].kind, 'video');
+});
+
+test('BUG 3: a video-started call whose MIC also fails still ends the call (onError)', async () => {
+  // Distinguishes camera failure (degrade) from mic failure (fatal): when BOTH
+  // the combined and the audio-only acquisitions fail, it is a mic/permission
+  // problem and the call must fail as before.
+  const { engine, events } = makeEngine({
+    hasVideo: true,
+    getUserMedia: async () => {
+      throw new Error('NotAllowedError: permission denied');
+    },
+  });
+
+  await engine.placeCall();
+
+  assert.equal(engine.state, 'ended', 'a mic failure still ends the call');
+  assert.equal(events.errors.length, 1, 'reported as a fatal onError');
+  assert.match(events.errors[0].message, /NotAllowedError/);
+  assert.equal(events.deviceSwitchErrors.length, 0, 'not a device-switch error — the call ended');
 });
 
 test('audio-started call (hasVideo false, default): no camera track/constraint, but a video sender IS negotiated', async () => {

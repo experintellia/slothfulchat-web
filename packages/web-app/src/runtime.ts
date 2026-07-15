@@ -1737,6 +1737,11 @@ class CallManager {
      * from_this_device:false}`), which is a real connect, just not one this
      * session should claim. */
     outcomeReported: boolean
+    /** BUG 2: removes the remote video track's mute/unmute/ended listeners
+     * (added by `watchRemoteVideo` to gate the remote tile on actual frame
+     * flow) so they don't outlive the call. Set once a remote stream arrives,
+     * invoked in `teardown`. */
+    remoteVideoCleanup?: (() => void) | null
   } | null = null
   /** The shared ringtone/vibration for an incoming ring (M5, docs/calls.md).
    * Ringing always renders in the main window regardless of popup preference
@@ -2128,6 +2133,8 @@ class CallManager {
    * `track.muted` reflects that. Listen for mute/unmute/ended so the remote
    * video tile appears/disappears as the peer toggles their camera. */
   private watchRemoteVideo(slot: NonNullable<CallManager['call']>, stream: MediaStream): void {
+    slot.remoteVideoCleanup?.() // drop any prior track's listeners on a stream swap
+    slot.remoteVideoCleanup = null
     const videoTrack = stream.getVideoTracks()[0] ?? null
     const apply = () => {
       if (this.call !== slot || slot.mode !== 'overlay') return
@@ -2138,6 +2145,11 @@ class CallManager {
       videoTrack.addEventListener('mute', apply)
       videoTrack.addEventListener('unmute', apply)
       videoTrack.addEventListener('ended', apply)
+      slot.remoteVideoCleanup = () => {
+        videoTrack.removeEventListener('mute', apply)
+        videoTrack.removeEventListener('unmute', apply)
+        videoTrack.removeEventListener('ended', apply)
+      }
     }
   }
 
@@ -2187,6 +2199,9 @@ class CallManager {
   private teardown(slot: NonNullable<CallManager['call']>): void {
     if (this.call !== slot) return
     this.call = null
+    // BUG 2: drop the remote video track's mute/unmute/ended listeners.
+    slot.remoteVideoCleanup?.()
+    slot.remoteVideoCleanup = null
     // The ring (if any) is over one way or another — idempotent (a no-op if
     // already stopped, e.g. by `acceptCurrent`).
     this.ringtone.stop()

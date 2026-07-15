@@ -132,6 +132,27 @@ export interface RtpSenderLike {
 }
 
 /**
+ * The subset of `RTCRtpTransceiver` the engine needs to fix the answerer's
+ * video direction (BUG 1 / interop). A real `RTCRtpTransceiver` (as returned
+ * by `RTCPeerConnection.getTransceivers()` / `addTransceiver()`) is
+ * structurally assignable to this, and so is a test fake.
+ *
+ * `direction` is settable: when web ANSWERS a call, `setRemoteDescription`
+ * auto-creates a transceiver for the peer's offered video m-line whose
+ * direction defaults to `recvonly`. Adopting only its SENDER (as
+ * {@link AudioCallEngine.addLocalTracks} used to) leaves the answer's video
+ * m-line `recvonly`, so a later `replaceTrack(camera/screen)` puts a track on
+ * a recvonly-negotiated sender and NO media flows to the peer. Promoting
+ * `direction = 'sendrecv'` BEFORE the answer is created makes the answer offer
+ * to send video too, so `replaceTrack` flows without renegotiation.
+ */
+export interface RtpTransceiverLike {
+  direction: RTCRtpTransceiverDirection;
+  readonly sender: RtpSenderLike;
+  readonly receiver?: { readonly track: MediaStreamTrack | null };
+}
+
+/**
  * The subset of `RTCPeerConnection` the engine drives. A real
  * `RTCPeerConnection` is structurally assignable to this, and so is a test
  * fake. Extends {@link GatheringPeerConnection} so the same object satisfies the
@@ -156,8 +177,17 @@ export interface PeerConnectionLike extends GatheringPeerConnection {
   addTransceiver(
     kind: 'audio' | 'video',
     init?: { direction?: RTCRtpTransceiverDirection }
-  ): { readonly sender: RtpSenderLike };
+  ): RtpTransceiverLike;
   getSenders(): RtpSenderLike[];
+  /**
+   * The peer connection's transceivers. Used by {@link
+   * AudioCallEngine.addLocalTracks} on the ANSWERER to find the video
+   * transceiver `setRemoteDescription` created (recvonly by default) and
+   * promote its `direction` to `sendrecv` so our answer offers to send video
+   * too (BUG 1 / interop — see {@link RtpTransceiverLike}). A real
+   * `RTCPeerConnection.getTransceivers()` is structurally assignable.
+   */
+  getTransceivers(): RtpTransceiverLike[];
   /** M5: feeds {@link AudioCallEngine.getConnectionRoute}'s direct-vs-relay
    * indicator (docs/calls.md: "active candidate pair is 'relay'"). */
   getStats(): Promise<StatsReportLike>;
@@ -366,6 +396,12 @@ export class AudioCallEngine {
   private mutedState = false;
   /** Incoming: the remote offer SDP, held until the user accepts. */
   private pendingRemoteOffer: string | null = null;
+  /** BUG 3: a video-started call whose camera acquisition failed (or no camera
+   * exists) degrades to audio-only rather than failing the whole call. The
+   * non-fatal camera error is held here by {@link acquireInitialLocalStream}
+   * and surfaced via `onDeviceSwitchError` (NOT the call-ending `onError`) once
+   * the call is set up — see {@link flushCameraStartError}. */
+  private pendingCameraStartError: Error | null = null;
   /** Epoch guard: a fresh object per call, nulled by {@link end}. */
   private epoch: object | null = null;
   /**
@@ -528,7 +564,7 @@ export class AudioCallEngine {
     this.machine.transition('ringing');
 
     try {
-      const stream = await this.factories.getUserMedia(this.mediaConstraints());
+      const stream = await this.acquireInitialLocalStream();
       if (!this.ensureActive(epoch)) {
         this.stopStream(stream); // resolved after hang up — stop it, don't adopt it
         return;
@@ -536,6 +572,7 @@ export class AudioCallEngine {
       this.localStream = stream;
       this.applyMutedToLocalStream();
       this.notifyLocalTrackChanged(stream);
+      this.flushCameraStartError(epoch); // BUG 3: surface a degraded-to-audio camera failure (non-fatal)
 
       const pc = this.createPeerConnection(epoch);
       // Attach the gather listeners BEFORE setLocalDescription so no candidate
@@ -627,7 +664,7 @@ export class AudioCallEngine {
     if (epoch == null) return;
 
     try {
-      const stream = await this.factories.getUserMedia(this.mediaConstraints());
+      const stream = await this.acquireInitialLocalStream();
       if (!this.ensureActive(epoch)) {
         this.stopStream(stream);
         return;
@@ -635,6 +672,7 @@ export class AudioCallEngine {
       this.localStream = stream;
       this.applyMutedToLocalStream();
       this.notifyLocalTrackChanged(stream);
+      this.flushCameraStartError(epoch); // BUG 3: surface a degraded-to-audio camera failure (non-fatal)
 
       const pc = this.createPeerConnection(epoch);
       const gathered = this.gather(pc, this.gatherOptionsWithSignal());
@@ -1166,6 +1204,15 @@ export class AudioCallEngine {
     const existingTrackless = pc.getSenders().find((s) => s.track == null) ?? null;
     if (existingTrackless != null) {
       this.videoSender = existingTrackless;
+      // BUG 1 / interop: the transceiver `setRemoteDescription(offer)` created
+      // for the peer's video m-line defaults to `recvonly`. Adopting only its
+      // sender leaves our answer's video m-line `recvonly`, so a later
+      // `replaceTrack(camera/screen)` would put a track on a recvonly-negotiated
+      // sender and NO media would reach the peer (confirmed live: web→DC video/
+      // screenshare was dead). Promote the transceiver to `sendrecv` BEFORE the
+      // answer is created so the answer offers to send video too and
+      // `setCameraEnabled`/`startScreenShare` flow with no renegotiation.
+      this.promoteVideoTransceiverToSendrecv(pc, existingTrackless);
     } else if (isOfferer) {
       this.videoSender = pc.addTransceiver('video', { direction: 'sendrecv' }).sender;
     } else {
@@ -1173,6 +1220,26 @@ export class AudioCallEngine {
       this.videoSender = null;
     }
     this.cameraOnState = false;
+  }
+
+  /**
+   * Set the video transceiver that owns `videoSender` to `sendrecv` (BUG 1 /
+   * interop). Matches the transceiver reliably by sender identity first (the
+   * trackless sender we just adopted), falling back to the transceiver whose
+   * receiver track is video — either way the ANSWERER's video m-line becomes
+   * `sendrecv` instead of the `recvonly` `setRemoteDescription` defaulted it to.
+   */
+  private promoteVideoTransceiverToSendrecv(
+    pc: PeerConnectionLike,
+    videoSender: RtpSenderLike
+  ): void {
+    const transceivers = pc.getTransceivers();
+    const transceiver =
+      transceivers.find((t) => t.sender === videoSender) ??
+      transceivers.find((t) => t.receiver?.track?.kind === 'video');
+    if (transceiver != null) {
+      transceiver.direction = 'sendrecv';
+    }
   }
 
   private reportDeviceSwitchError(error: unknown): void {
@@ -1221,6 +1288,53 @@ export class AudioCallEngine {
       audio: this.audioConstraintsFor(this.selectedAudioInputDeviceId),
       video: this.wantsVideo ? this.videoConstraintsFor(this.selectedVideoInputDeviceId) : false,
     };
+  }
+
+  /**
+   * Acquire the initial mic (+ camera when {@link wantsVideo}) stream for
+   * `placeCall`/`accept`. BUG 3: a VIDEO-started call whose camera is absent or
+   * unavailable must NOT fail the whole call — `getUserMedia({ video: true })`
+   * throws when there is no camera, but a video call with no camera should
+   * still work (start audio-only; the always-present video sender still lets us
+   * RECEIVE the peer's video and SHARE THE SCREEN — `getDisplayMedia` needs no
+   * camera). So if the combined audio+video acquisition fails, retry audio-only:
+   *  - the audio-only retry SUCCEEDS → the camera (not the mic) was the problem;
+   *    degrade gracefully, leaving the camera off, and remember the non-fatal
+   *    error to surface via `onDeviceSwitchError` (see {@link flushCameraStartError});
+   *  - the audio-only retry ALSO fails → it is a mic/permission problem; rethrow
+   *    so the caller's `try/catch` fails the call via `onError` as before.
+   * Audio-only calls take the single-acquisition fast path unchanged.
+   */
+  private async acquireInitialLocalStream(): Promise<MediaStream> {
+    const constraints = this.mediaConstraints();
+    if (constraints.video === false || constraints.video == null) {
+      return this.factories.getUserMedia(constraints);
+    }
+    try {
+      return await this.factories.getUserMedia(constraints);
+    } catch (cameraError) {
+      // May be the camera OR the mic. An audio-only retry disambiguates: if it
+      // succeeds the camera was at fault (degrade), otherwise the throw here
+      // fails the call (mic/permission problem).
+      const audioOnly = await this.factories.getUserMedia({
+        audio: this.audioConstraintsFor(this.selectedAudioInputDeviceId),
+        video: false,
+      });
+      this.pendingCameraStartError =
+        cameraError instanceof Error ? cameraError : new Error(String(cameraError));
+      return audioOnly;
+    }
+  }
+
+  /** Surface a deferred non-fatal camera-start failure (BUG 3) once the call is
+   * set up and still active — as `onDeviceSwitchError`, never the call-ending
+   * `onError`. A no-op when the camera acquired fine or the call already ended. */
+  private flushCameraStartError(epoch: object): void {
+    const error = this.pendingCameraStartError;
+    this.pendingCameraStartError = null;
+    if (error != null && this.ensureActive(epoch)) {
+      this.reportDeviceSwitchError(error);
+    }
   }
 
   /** Merge a preferred `deviceId` (if any) into the base audio constraints. */
