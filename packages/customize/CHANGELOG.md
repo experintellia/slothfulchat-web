@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-07-15
 
 - New `SLOTHFUL_RELAY_DIRECTORY` variable: relay-directory JSON for the
   onboarding relay picker (an https URL, or `off` to hide the picker; unset =
