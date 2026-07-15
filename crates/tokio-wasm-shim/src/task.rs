@@ -4,7 +4,6 @@
 //! and `block_in_place` run inline (a web-worker pool is the upgrade path if
 //! long PGP operations blocking the UI become a problem).
 
-use std::cell::Cell;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -122,7 +121,7 @@ where
 {
     let (tx, rx) = oneshot::channel();
     let (abort, _registration) = InnerAbortHandle::new_pair();
-    let _ = tx.send(run_timed(f));
+    let _ = tx.send(f());
     JoinHandle {
         rx,
         abort,
@@ -134,71 +133,14 @@ pub fn block_in_place<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    run_timed(f)
+    f()
 }
 
-// --- Step 0 profiling for issue #3 ------------------------------------------
-//
-// `spawn_blocking`/`block_in_place` run inline on the single core worker, so
-// their closures are exactly the CPU-heavy PGP paths (keygen, encrypt, decrypt)
-// that make other jsonrpc calls queue. Before building the worker-pool offload,
-// issue #3 asks to *profile first*: measure how much wall time these inline
-// closures actually eat. This wraps every such closure with a timer, keeps a
-// running total, and logs individually slow ones. All local, dev-facing.
-// (Surfacing `blocking_profile()` to the diagnostics panel needs a small RPC and
-// is left for the offload work itself.)
+// ponytail: the Step 0 inline-blocking profiler for issue #3 lived here
+// (BlockingProfile/blocking_profile/run_timed) but was never wired to a
+// consumer — removed as dead code. Reinstate from git history if the
+// worker-pool offload work needs the measurements.
 // https://github.com/experintellia/slothfulchat-web/issues/3
-
-thread_local! {
-    static BLOCKING_TOTAL_MS: Cell<f64> = Cell::new(0.0);
-    static BLOCKING_COUNT: Cell<u32> = Cell::new(0);
-    static BLOCKING_MAX_MS: Cell<f64> = Cell::new(0.0);
-}
-
-/// Aggregate wall time spent running inline blocking closures this session.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct BlockingProfile {
-    pub total_ms: f64,
-    pub count: u32,
-    pub max_ms: f64,
-}
-
-/// Snapshot the inline-blocking profile (issue #3, Step 0).
-pub fn blocking_profile() -> BlockingProfile {
-    BlockingProfile {
-        total_ms: BLOCKING_TOTAL_MS.with(Cell::get),
-        count: BLOCKING_COUNT.with(Cell::get),
-        max_ms: BLOCKING_MAX_MS.with(Cell::get),
-    }
-}
-
-// only log individually slow closures, to keep the console usable
-const SLOW_BLOCKING_MS: f64 = 4.0;
-
-/// Run a blocking closure inline, folding its wall time into the profile.
-fn run_timed<F, R>(f: F) -> R
-where
-    F: FnOnce() -> R,
-{
-    // Date::now() (ms) is coarse but ample for keygen/encrypt/decrypt, and
-    // needs no extra web-sys feature (performance.now() would).
-    let start = js_sys::Date::now();
-    let out = f();
-    let dur = js_sys::Date::now() - start;
-
-    BLOCKING_TOTAL_MS.with(|c| c.set(c.get() + dur));
-    BLOCKING_COUNT.with(|c| c.set(c.get() + 1));
-    BLOCKING_MAX_MS.with(|c| c.set(c.get().max(dur)));
-
-    if dur >= SLOW_BLOCKING_MS {
-        let total = BLOCKING_TOTAL_MS.with(Cell::get);
-        web_sys::console::debug_1(&wasm_bindgen::JsValue::from_str(&format!(
-            "sc:blocking {dur:.0}ms (session total {total:.0}ms)"
-        )));
-    }
-
-    out
-}
 
 pub async fn yield_now() {
     struct YieldNow(bool);

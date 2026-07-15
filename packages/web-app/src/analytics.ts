@@ -31,7 +31,7 @@
  */
 
 import * as session from './session'
-import { EVENTS, isCatalogEvent } from './events.mjs'
+import { isCatalogEvent } from './events.mjs'
 
 type Config = {
   analytics?: boolean
@@ -85,12 +85,6 @@ export function setConsent(consent: Consent): void {
 export function isEnabled(): boolean {
   return isConfigured() && getConsent() !== 'denied'
 }
-
-// --- the closed catalogue of what we may send --------------------------
-
-// Lives in events.mjs (plain JS) so instance-config.mjs can render it into
-// privacy.html at build time; re-exported here for the in-app consumers.
-export { EVENTS }
 
 // --- sending -----------------------------------------------------------
 
