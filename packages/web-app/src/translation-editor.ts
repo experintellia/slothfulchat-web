@@ -1,23 +1,34 @@
 /**
- * In-app translation editor overlay — Phase 1 of
- * docs/translation-editor-design.md.
+ * In-app translation editor + element inspector —
+ * docs/translation-editor-design.md, Phases 1 and 2.
  *
- * Edits the *currently active* locale's UI strings live, persists edits to a
- * per-locale localStorage overlay, and lets you review / export / revert them.
- * Everything hangs off the app's single translation chokepoint: strings come
- * from our own runtime.getLocaleData() (which now merges the overlay via
- * applyTxOverlay), and a live refresh reuses the app's own language-reload path
- * (runtime.onChooseLanguage) — so this needs no upstream patch and touches no
- * component.
+ * Phase 1 (editor): edits the *currently active* locale's UI strings live,
+ * persists edits to a per-locale localStorage overlay, and lets you review /
+ * export / revert them. Strings come from our own runtime.getLocaleData()
+ * (which merges the overlay via applyTxOverlay); a live refresh reuses the
+ * app's own language-reload path (runtime.onChooseLanguage) — so this needs no
+ * upstream patch and touches no component.
+ *
+ * Phase 2 (inspector): "Inspect" mode highlights elements under the cursor and
+ * shows which translation key produced the text, then jumps the editor to it.
+ * It resolves the key from a live registry of tx calls (result text -> keys),
+ * built by intercepting assignment to window.static_translate with a property
+ * setter — both the global tx and the React-context tx read that global, so one
+ * setter instruments every call site with no upstream patch. The React fiber on
+ * the hovered node (the DevTools trick) names the owning component to
+ * disambiguate identical text.
  *
  * ponytail: edits the active locale only (switch language in the panel to edit
  * another); a commit (blur / Enter) re-runs onChooseLanguage, which re-fetches
- * the locale JSON (cached) and re-renders the whole app. Ceiling: a re-fetch +
- * full re-render per commit; upgrade path is bumping I18nContext directly,
- * which would need a tiny upstream hook. Opened with Ctrl/Cmd+Shift+L or
+ * the locale JSON (cached) and re-renders the whole app. Ceilings: a re-fetch +
+ * full re-render per commit (upgrade path: bump I18nContext directly, needs a
+ * tiny upstream hook); the inspector only resolves strings rendered through tx
+ * (core stock strings and hardcoded text won't match); the design's zero-width
+ * exact mode is intentionally not built (YAGNI — the registry + fiber cover the
+ * common cases without contaminating the DOM). Opened with Ctrl/Cmd+Shift+L or
  * ?txedit — dev-gated, so it costs normal users nothing but the import.
  */
-import { mergeOverlay, toAndroidXml } from './translation-editor.mjs'
+import { matchKeys, mergeOverlay, toAndroidXml } from './translation-editor.mjs'
 
 type Entry = Record<string, string>
 type Overlay = Record<string, Record<string, Entry>>
@@ -158,8 +169,203 @@ let languages: Array<{ code: string; name: string }> = []
 let search = ''
 let listEl: HTMLElement | null = null
 let countEl: HTMLElement | null = null
+let searchInputEl: HTMLInputElement | null = null
+let inspectBtn: HTMLButtonElement | null = null
 
 const muted = { color: '#9aa', fontSize: '11px' }
+
+// ---- inspector (Phase 2) --------------------------------------------------
+
+/**
+ * Intercept assignment to window.static_translate so every tx call records its
+ * (result -> key) mapping. Both the global tx and the React-context tx read
+ * this global, so one setter instruments all call sites. Installed at startup,
+ * before the app first assigns static_translate. Returns the live registry.
+ */
+function installRegistry(): Map<string, Set<string>> {
+  const w = window as any
+  if (w.__txRegistry) return w.__txRegistry
+  const registry: Map<string, Set<string>> = new Map()
+  w.__txRegistry = registry
+  const wrap = (fn: any) => {
+    if (!fn || fn.__txWrapped) return fn
+    const wrapped = (key: string, subs?: unknown, opts?: unknown) => {
+      const result = fn(key, subs, opts)
+      if (typeof result === 'string' && result) {
+        let set = registry.get(result)
+        if (!set) registry.set(result, (set = new Set()))
+        set.add(key)
+      }
+      return result
+    }
+    wrapped.__txWrapped = true
+    return wrapped
+  }
+  let current = wrap(w.static_translate)
+  Object.defineProperty(window, 'static_translate', {
+    configurable: true,
+    get: () => current,
+    set: (fn: any) => {
+      current = wrap(fn)
+    },
+  })
+  return registry
+}
+
+/** Strings an element might have rendered from tx: its text and label-ish attrs. */
+function candidateStrings(el: Element): string[] {
+  const out: string[] = []
+  const own = Array.from(el.childNodes)
+    .filter(n => n.nodeType === Node.TEXT_NODE)
+    .map(n => n.textContent || '')
+    .join('')
+    .trim()
+  if (own) out.push(own)
+  const full = (el.textContent || '').trim()
+  if (full && full !== own) out.push(full)
+  for (const attr of ['title', 'aria-label', 'placeholder', 'alt']) {
+    const v = el.getAttribute(attr)
+    if (v && v.trim()) out.push(v.trim())
+  }
+  const value = (el as HTMLInputElement).value
+  if (typeof value === 'string' && value.trim()) out.push(value.trim())
+  return out
+}
+
+/** Nearest named React component owning `el`, via the fiber React stashes on the
+ *  DOM node (the DevTools trick). Best-effort: minified in production builds. */
+function fiberComponentName(el: Element): string {
+  const key = Object.keys(el).find(k => k.startsWith('__reactFiber$'))
+  let fiber: any = key ? (el as any)[key] : null
+  while (fiber) {
+    const type = fiber.type
+    if (typeof type === 'function') return type.displayName || type.name || ''
+    fiber = fiber.return
+  }
+  return ''
+}
+
+let inspecting = false
+let hlBox: HTMLElement | null = null
+let tip: HTMLElement | null = null
+
+function inThePanel(node: EventTarget | null): boolean {
+  return !!panel && node instanceof Node && panel.contains(node)
+}
+
+function onInspectMove(e: MouseEvent): void {
+  const target = e.target as Element | null
+  if (!target || !hlBox || !tip || inThePanel(target)) {
+    if (hlBox) hlBox.style.display = 'none'
+    if (tip) tip.style.display = 'none'
+    return
+  }
+  const rect = target.getBoundingClientRect()
+  Object.assign(hlBox.style, {
+    display: 'block',
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+  })
+  const matches = matchKeys((window as any).__txRegistry || new Map(), candidateStrings(target))
+  const comp = fiberComponentName(target)
+  tip.replaceChildren()
+  if (matches.length) {
+    for (const m of matches.slice(0, 3))
+      tip.append(h('div', { style: { color: '#ffd479' } }, m.keys.join(' / ')))
+  } else {
+    tip.append(h('div', { style: muted }, 'no tx key for this text'))
+  }
+  if (comp) tip.append(h('div', { style: muted }, `<${comp}>`))
+  tip.style.display = 'block'
+  tip.style.left = `${Math.min(e.clientX + 14, innerWidth - 340)}px`
+  // Flip above the cursor near the bottom edge so the tooltip stays on screen.
+  const below = e.clientY + 16
+  tip.style.top = `${
+    below + tip.offsetHeight > innerHeight - 4
+      ? Math.max(4, e.clientY - tip.offsetHeight - 12)
+      : below
+  }px`
+}
+
+function onInspectClick(e: MouseEvent): void {
+  if (inThePanel(e.target)) return // let panel buttons (incl. the toggle) work
+  e.preventDefault()
+  e.stopPropagation()
+  const matches = matchKeys(
+    (window as any).__txRegistry || new Map(),
+    candidateStrings(e.target as Element)
+  )
+  const key = matches[0]?.keys[0]
+  stopInspect()
+  if (key) openToKey(key)
+}
+
+function startInspect(): void {
+  if (inspecting) return
+  inspecting = true
+  hlBox = h('div', {
+    style: {
+      position: 'fixed',
+      pointerEvents: 'none',
+      zIndex: '2147483001',
+      border: '2px solid #ffd479',
+      background: 'rgba(255,212,121,0.15)',
+      borderRadius: '2px',
+    },
+  })
+  tip = h('div', {
+    style: {
+      position: 'fixed',
+      pointerEvents: 'none',
+      zIndex: '2147483002',
+      maxWidth: '320px',
+      background: '#000',
+      color: '#fff',
+      font: '12px system-ui, sans-serif',
+      padding: '4px 8px',
+      borderRadius: '4px',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+    },
+  })
+  document.body.append(hlBox, tip)
+  window.addEventListener('mousemove', onInspectMove, true)
+  window.addEventListener('click', onInspectClick, true)
+  document.body.style.cursor = 'crosshair'
+  updateInspectBtn()
+}
+
+function stopInspect(): void {
+  if (!inspecting) return
+  inspecting = false
+  hlBox?.remove()
+  tip?.remove()
+  hlBox = tip = null
+  window.removeEventListener('mousemove', onInspectMove, true)
+  window.removeEventListener('click', onInspectClick, true)
+  document.body.style.cursor = ''
+  updateInspectBtn()
+}
+
+function updateInspectBtn(): void {
+  if (!inspectBtn) return
+  inspectBtn.style.background = inspecting ? '#ffd479' : 'transparent'
+  inspectBtn.style.color = inspecting ? '#111' : '#ccc'
+  inspectBtn.setAttribute('aria-pressed', String(inspecting))
+}
+
+/** Open the panel (if needed) and filter it to a single key, ready to edit. */
+function openToKey(key: string): void {
+  const focus = () => {
+    search = key
+    if (searchInputEl) searchInputEl.value = key
+    renderList()
+    listEl?.querySelector('input')?.focus()
+  }
+  if (panel) focus()
+  else void open().then(focus)
+}
 
 /** Render the key rows: changed keys when the search box is empty (the change
  *  list), otherwise keys matching the query (capped — see ceiling below). */
@@ -343,6 +549,7 @@ function buildPanel(): HTMLElement {
       renderList()
     },
   })
+  searchInputEl = searchInput
 
   countEl = h('span', { style: muted }, '0 changes')
   listEl = h('div', {
@@ -401,6 +608,17 @@ function buildPanel(): HTMLElement {
     },
     h('strong', { style: { fontSize: '13px', flex: '1' } }, 'Translations'),
     select,
+    (inspectBtn = h(
+      'button',
+      {
+        style: btnStyle,
+        title: 'Inspect: click an element to find its translation key',
+        'aria-label': 'Inspect element',
+        'aria-pressed': 'false',
+        onclick: () => (inspecting ? stopInspect() : startInspect()),
+      },
+      '🎯'
+    )),
     h(
       'button',
       { style: btnStyle, title: 'Close (Esc)', 'aria-label': 'Close', onclick: close },
@@ -457,9 +675,10 @@ async function open(): Promise<void> {
 }
 
 function close(): void {
+  stopInspect()
   panel?.remove()
   panel = null
-  listEl = countEl = null
+  listEl = countEl = searchInputEl = inspectBtn = null
 }
 
 function toggle(): void {
@@ -467,14 +686,20 @@ function toggle(): void {
   else void open()
 }
 
-/** Register the dev-gated open shortcut. Call once at startup. */
+/** Install the tx registry and the dev-gated open shortcut. Call once at
+ *  startup — before the app first assigns window.static_translate, so every tx
+ *  call is captured for the inspector. */
 export function initTranslationEditor(): void {
+  installRegistry()
   window.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'l') {
       e.preventDefault()
       toggle()
     }
-    if (e.key === 'Escape' && panel) close()
+    if (e.key === 'Escape') {
+      if (inspecting) stopInspect()
+      else if (panel) close()
+    }
   })
   if (new URLSearchParams(location.search).has('txedit')) void open()
 }

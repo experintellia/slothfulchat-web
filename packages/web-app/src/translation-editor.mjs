@@ -53,6 +53,32 @@ export function escapeAndroid(s) {
 }
 
 /**
+ * Resolve which translation key(s) produced any of `strings`, from the live tx
+ * registry (rendered result text -> set of keys that produced it; populated by
+ * the inspector's wrap of window.static_translate). One row per candidate
+ * string that had a hit, longest text first (the most specific match), deduped.
+ * ponytail: identical text from different keys (e.g. "OK") yields multiple keys
+ * — the inspector shows them all rather than guessing; the fiber's component
+ * name is the tiebreaker a human uses. Upgrade path: the zero-width exact mode
+ * in the design doc, if this ambiguity ever bites.
+ * @param {Map<string, Set<string>>} registry
+ * @param {string[]} strings
+ * @returns {{ text: string, keys: string[] }[]}
+ */
+export function matchKeys(registry, strings) {
+  const out = []
+  const seen = new Set()
+  for (const s of strings) {
+    const text = (s || '').trim()
+    if (!text || seen.has(text)) continue
+    seen.add(text)
+    const keys = registry.get(text)
+    if (keys && keys.size) out.push({ text, keys: [...keys].sort() })
+  }
+  return out.sort((a, b) => b.text.length - a.text.length)
+}
+
+/**
  * Serialize a set of entries as a *partial* Android string-resources XML — only
  * the given keys, for a merge-by-key upload to Weblate/Transifex. Never use
  * Weblate's "Replace existing translation file" mode with a partial file: that

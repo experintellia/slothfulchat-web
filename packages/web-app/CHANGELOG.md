@@ -19,8 +19,10 @@
 - **In-app translation editor** (dev tool, `Ctrl/Cmd+Shift+L` or `?txedit`): a
   side panel to edit the current language's UI strings live, persisted in the
   browser, with a change list, revert, and export as partial Android XML or a
-  JSON changeset. Switching the app language now also refreshes the UI without a
-  manual reload (the browser build's `setLocale` was a stub).
+  JSON changeset. An "Inspect" mode (🎯) reveals which translation key produced
+  any on-screen text and jumps the editor to it. Switching the app language now
+  also refreshes the UI without a manual reload (the browser build's `setLocale`
+  was a stub).
 - **Backup import now persists its images before finishing**: after restoring
   from a backup you no longer have to reload several times for the pictures to
   show up. Imported blobs are written to the in-memory fs and mirrored to OPFS

@@ -4,9 +4,11 @@ A developer/translator overlay for editing UI translations live in the running
 app, persisting changes locally, reviewing/exporting/reverting them, and
 inspecting any on-screen element to find the translation key behind it.
 
-Status: **Phase 1 implemented** (editor + persistence + export/revert); Phase 2
-(inspector) still design-only. Built more compactly than the layout first
-sketched below — see "Module layout".
+Status: **Phases 1 and 2 implemented** — editor (live edit, persistence,
+export/revert) and element inspector (hover → translation key → jump to edit).
+Built more compactly than the layout first sketched below, and with no upstream
+patch (the inspector instruments `window.static_translate` via a property
+setter instead) — see "Module layout".
 
 ---
 
@@ -221,9 +223,14 @@ packages/web-app/src/
 - **Gating:** `Ctrl/Cmd+Shift+L` toggles the panel, `?txedit` auto-opens it —
   dev-only, so normal users pay only the (small) bundle import.
 
-Phase 2 (inspector) is unbuilt and still adds **one** upstream patch under
-`patches/desktop/` wrapping `translate()` for the call-registry + optional
-zero-width markers.
+Phase 2 (inspector) is in the same `translation-editor.ts`, plus `matchKeys()`
+in the `.mjs`. It shipped **without** the upstream patch the plan assumed:
+instead of patching `translate()`, `installRegistry()` intercepts assignment to
+`window.static_translate` with an `Object.defineProperty` setter that wraps the
+function so every call records `result -> key`. Both the global tx and the
+React-context tx read that global, so one setter covers all call sites. The
+zero-width exact mode is intentionally not built (YAGNI) — the registry plus the
+fiber component name resolve the common cases without contaminating the DOM.
 
 ---
 
@@ -243,8 +250,9 @@ Phase 1 touches **no upstream/patched code** and is the highest-value chunk.
 - [x] Export format → **partial Android XML** primary, JSON changeset for
       review. (Full-locale XML export not built yet — YAGNI until asked.)
 - [x] Dev-flag mechanism → `Ctrl/Cmd+Shift+L` shortcut + `?txedit` query param.
-- [ ] Inspector default → registry+fiber (recommended) vs. also ship zero-width
-      exact mode in the first cut. (Phase 2.)
+- [x] Inspector default → registry + fiber (built). Zero-width exact mode not
+      shipped (YAGNI); no upstream patch needed after all (property-setter
+      interception of `window.static_translate`).
 - [ ] Should `fork-local` overrides get a build step that bakes them into the
       shipped locales, or stay runtime-only? (Currently runtime-only; no
       `upstream` vs `fork-local` tagging built yet — every edit is exportable.)

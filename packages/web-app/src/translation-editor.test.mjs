@@ -1,10 +1,15 @@
 // Unit tests for the pure translation-editor helpers — dependency-free
 // (node:test), so they run in CI's lint job without pnpm install / submodules.
 //   node --test packages/web-app/src/translation-editor.test.mjs
-import { strictEqual } from 'node:assert'
+import { deepStrictEqual, strictEqual } from 'node:assert'
 import { test } from 'node:test'
 
-import { escapeAndroid, mergeOverlay, toAndroidXml } from './translation-editor.mjs'
+import {
+  escapeAndroid,
+  matchKeys,
+  mergeOverlay,
+  toAndroidXml,
+} from './translation-editor.mjs'
 
 test('mergeOverlay replaces edited keys, is lossless for plural forms, no mutation', () => {
   const messages = {
@@ -33,6 +38,26 @@ test('escapeAndroid mirrors the build converter round-trip', () => {
     escapeAndroid('Tom\'s <b> & "q"\nline'),
     'Tom\\\'s &lt;b&gt; &amp; \\"q\\"\\nline'
   )
+})
+
+test('matchKeys resolves candidates longest-first, dedups, keeps ambiguity', () => {
+  const registry = new Map([
+    ['OK', new Set(['ok', 'confirm'])],
+    ['Write a message…', new Set(['write_message_desktop'])],
+  ])
+  const rows = matchKeys(registry, [
+    'OK',
+    'Write a message…',
+    'OK', // duplicate candidate ignored
+    'not a translated string',
+  ])
+  strictEqual(rows.length, 2)
+  strictEqual(rows[0].text, 'Write a message…') // longest first
+  deepStrictEqual(rows[1].keys, ['confirm', 'ok']) // sorted, both kept
+})
+
+test('matchKeys returns nothing when no candidate is in the registry', () => {
+  deepStrictEqual(matchKeys(new Map(), ['x', '', '  ']), [])
 })
 
 test('toAndroidXml emits a sorted partial with strings and plurals', () => {
