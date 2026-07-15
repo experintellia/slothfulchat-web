@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Webxdc app icons in the title bar can't impersonate native controls**: the
+  last-used-app icons shown in a chat's title bar are app-supplied images. One
+  with transparency could be shaped to look like a native navbar control (a
+  fake three-dot menu, say). They now render on an opaque white tile, so
+  transparent areas never blend into the navbar and the icon always reads as a
+  distinct app. Their click target stays icon-sized — unlike the native navbar
+  buttons below, a stray tap won't launch an app.
 - **Bigger click targets for the chat title-bar buttons**: the apps, map and
   three-dot menu icons in a chat's title bar had a cramped 20×20&nbsp;px hit
   box sitting in a 50&nbsp;px-tall navbar, with an unclickable 12&nbsp;px gap
