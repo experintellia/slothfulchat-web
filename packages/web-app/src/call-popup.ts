@@ -28,7 +28,7 @@ import {
   type CallState,
 } from '@slothfulchat/calls/bridge'
 import { CallsUiStore, mountCallsUi } from '@slothfulchat/calls/ui'
-import { createPlaceholderVideoTrack, videoCodecPreferences } from './call-media'
+import { createPlaceholderVideoTrack } from './call-media'
 
 function main(): void {
   const opener = window.opener as Window | null
@@ -200,7 +200,7 @@ function main(): void {
       if (init.direction === 'outgoing') {
         bridge = CallBridge.outgoing(
           connection.rpc,
-          { accountId: init.accountId, chatId: init.chatId, hasVideo: init.hasVideo, videoCodecPreferences, iceServers },
+          { accountId: init.accountId, chatId: init.chatId, hasVideo: init.hasVideo, iceServers },
           factories,
           callbacks(init)
         )
@@ -218,7 +218,6 @@ function main(): void {
             callMessageId: init.callMessageId,
             offerSdp: init.offerSdp,
             hasVideo: init.hasVideo,
-            videoCodecPreferences,
             iceServers,
           },
           factories,
