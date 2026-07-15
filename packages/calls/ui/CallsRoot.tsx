@@ -47,6 +47,7 @@ export function CallsRoot({ store, callbacks }: CallsRootProps) {
       cameraOn={snapshot.cameraOn}
       localHasVideo={snapshot.localHasVideo}
       remoteHasVideo={snapshot.remoteHasVideo}
+      remoteAudioMuted={snapshot.remoteAudioMuted}
       remoteStream={snapshot.remoteStream}
       localStream={snapshot.localStream}
       screenSharing={snapshot.screenSharing}

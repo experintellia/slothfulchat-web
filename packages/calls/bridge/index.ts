@@ -292,6 +292,14 @@ export interface CallBridgeCallbacks {
    */
   onLocalVideoTrackChanged?: (track: MediaStreamTrack | null) => void
   /**
+   * The REMOTE side's video went live/away — deduped, engine-owned (peer
+   * `mutedState` messages, remote-track events as pre-message fallback).
+   * Show the remote video tile when `true`, the avatar when `false`.
+   */
+  onRemoteVideoActiveChanged?: (active: boolean) => void
+  /** The REMOTE side muted/unmuted its mic — deduped. Drives a mute badge. */
+  onRemoteAudioMutedChanged?: (muted: boolean) => void
+  /**
    * `AudioCallEngine.screenSharing` flipped (M3) — including the browser's
    * own "Stop sharing" affordance ending the capture out-of-band. Drives the
    * UI's screen-share toggle-button state.
@@ -536,6 +544,8 @@ export class CallBridge {
         // straight through, no bridge-level bookkeeping needed (unlike the
         // audio meter, nothing here taps a Web Audio graph).
         onLocalVideoTrackChanged: init.callbacks.onLocalVideoTrackChanged,
+        onRemoteVideoActiveChanged: init.callbacks.onRemoteVideoActiveChanged,
+        onRemoteAudioMutedChanged: init.callbacks.onRemoteAudioMutedChanged,
         onScreenShareChanged: init.callbacks.onScreenShareChanged,
         onScreenShareError: init.callbacks.onScreenShareError,
         onLocalOffer: (sdp) => {

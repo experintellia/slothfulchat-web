@@ -48,8 +48,6 @@ function main(): void {
   let closing = false
   let devicesRefreshed = false
   let deviceChangeHandler: (() => void) | null = null
-  // BUG 2: removes the remote video track's mute/unmute/ended listeners on teardown.
-  let remoteVideoCleanup: (() => void) | null = null
   // M5 (docs/calls.md: content-free call analytics): whether THIS popup's
   // engine ever reached `connected`. The popup has no analytics access of its
   // own (its CSP deliberately omits the analytics origin — see
@@ -61,8 +59,6 @@ function main(): void {
     if (closing) return
     closing = true
     connection.reportEnded(reachedConnected)
-    remoteVideoCleanup?.()
-    remoteVideoCleanup = null
     if (deviceChangeHandler != null) deviceChangeHandler()
     connection.close()
     // Give the relayed endCall a beat to flush before the window tears down.
@@ -121,26 +117,6 @@ function main(): void {
     store.setCameraOn(bridge?.cameraEnabled ?? false)
   }
 
-  /** Track whether the remote peer is actually sending video (M3, FIX 1) — the
-   * video m-line is always negotiated, so gate the remote tile on live flow. */
-  const watchRemoteVideo = (stream: MediaStream): void => {
-    remoteVideoCleanup?.() // drop any prior track's listeners on a stream swap
-    remoteVideoCleanup = null
-    const videoTrack = stream.getVideoTracks()[0] ?? null
-    const apply = () => store.setRemoteHasVideo(videoTrack != null && !videoTrack.muted)
-    apply()
-    if (videoTrack != null) {
-      videoTrack.addEventListener('mute', apply)
-      videoTrack.addEventListener('unmute', apply)
-      videoTrack.addEventListener('ended', apply)
-      remoteVideoCleanup = () => {
-        videoTrack.removeEventListener('mute', apply)
-        videoTrack.removeEventListener('unmute', apply)
-        videoTrack.removeEventListener('ended', apply)
-      }
-    }
-  }
-
   const refreshDevices = async (seedSelection: boolean): Promise<void> => {
     const devices = await listInputDevices()
     store.setDevices(devices)
@@ -177,10 +153,11 @@ function main(): void {
 
   const callbacks = (init: CallPopupInit): CallBridgeCallbacks => ({
     onStateChange: state => onState(state),
-    onRemoteStream: stream => {
-      store.attachRemoteStream(stream)
-      watchRemoteVideo(stream)
-    },
+    onRemoteStream: stream => store.attachRemoteStream(stream),
+    // Engine-owned remote camera/mic state (peer mutedState messages, track
+    // events as fallback) — deduped by the engine, just forward to the store.
+    onRemoteVideoActiveChanged: active => store.setRemoteHasVideo(active),
+    onRemoteAudioMutedChanged: muted => store.setRemoteAudioMuted(muted),
     onError: err => onError(err.message || 'Call failed'),
     onLocalLevel: level => store.setLocalLevel(level),
     onRemoteLevel: level => store.setRemoteLevel(level),
