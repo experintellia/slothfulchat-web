@@ -1,16 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-07-15
 
-- **Calls can run in a detached popup window (M4)**: an active 1:1 call now
-  prefers a separate `window.open` window (same origin) that hosts the WebRTC
-  engine and call UI, so the call keeps running while you use the rest of the
-  app. The popup owns the microphone/camera and peer connection and relays only
-  the SDP signaling back to this tab (which forwards it to the wasm core). If
-  the browser blocks the popup, or it fails to load, the call falls back
-  seamlessly to the in-page overlay — same controls, same engine. Ringing for
-  an incoming call always stays in the main window (it can never be
-  popup-blocked). New popup page: `/call-popup.html` (`src/call-popup.ts`).
+- **Native 1:1 calls — audio, video, and screen share**: place and receive
+  in-app calls, wire-compatible with real Delta Chat clients (raw-SDP
+  offer/answer carried over DeltaChat messages, non-trickle ICE). Includes
+  mic/camera selection with mid-call hot-switching, avatar speaking-ring
+  indicators, mute, a direct-vs-relay connection indicator, a synthesized
+  ringtone + vibration for incoming calls, content-free call analytics, and a
+  full-bleed mobile layout. An active call prefers a detached popup window
+  (same origin, `/call-popup.html`) so it keeps running while you use the rest
+  of the app, and falls back seamlessly to an in-page overlay if the popup is
+  blocked; ringing always stays in the main window so it can't be
+  popup-blocked. See [`docs/calls.md`](../../docs/calls.md).
 - **Webxdc app icons in the title bar can't impersonate native controls**: the
   last-used-app icons shown in a chat's title bar are app-supplied images. One
   with transparency could be shaped to look like a native navbar control (a

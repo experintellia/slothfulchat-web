@@ -41,6 +41,18 @@ exists:
 
 ## New features
 
+- **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
+  wire-compatible with real Delta Chat clients (which run
+  [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
+  offer/answer carried over DeltaChat messages, non-trickle ICE. Mic/camera
+  selection with mid-call hot-switching, avatar speaking rings, mute, a
+  direct-vs-relay indicator, ringtone/vibration, content-free call analytics,
+  and a mobile layout. An active call runs in a detached popup window when
+  allowed (falling back to an in-page overlay); ringing always stays in the main
+  window. Lives mostly in our own `packages/calls` (engine/ui/bridge split) and
+  `packages/web-app` wiring — see [`docs/calls.md`](docs/calls.md); the one
+  upstream change is un-gating the ChatView call button and the `WhoCanCallMe`
+  setting for the browser target. `desktop/0047`
 - **webimap transport (madmail)** — a second mail transport speaking
   [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at

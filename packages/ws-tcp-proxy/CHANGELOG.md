@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0 — 2026-07-15
+
+- Unfurl SSRF fix: the private-IP guard only recognized the dotted form of
+  IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`), so the hex-compressed form
+  (`::ffff:a9fe:a9fe`) was treated as public and a literal-IP target like
+  `http://[::ffff:a9fe:a9fe]/` could reach `169.254.169.254` (cloud metadata)
+  and other internal hosts through the `/unfurl` fetcher. The check now uses
+  `node:net` `BlockList`, which normalizes IPv4-mapped IPv6 against the IPv4
+  rules and closes every mapped form.
+
 ## 0.4.0 — 2026-07-10
 
 <!-- the two entries below shipped in the 0.4.0 tarball; the first was
