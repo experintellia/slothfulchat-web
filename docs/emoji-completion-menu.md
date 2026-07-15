@@ -1,7 +1,8 @@
 # Composer completion menu (`:emoji:`, mentions later)
 
-Status: **implemented** as `patches/desktop/0049` · Branch:
-`claude/emoji-completion-menu-ix4kdq`
+Status: **implemented** as `patches/desktop/0049`, gated behind an
+off-by-default experimental setting (`experimentalCompletionMenu`) by
+`patches/desktop/0050` · Branch: `claude/emoji-completion-menu-ix4kdq`
 
 ## What & why
 

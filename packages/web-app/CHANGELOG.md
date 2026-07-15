@@ -18,7 +18,8 @@
   cancelled out by negative margins so nothing moves visually.
 - **Emoji autocomplete in the composer**: type a colon and a couple of letters
   (e.g. `:sm`) to get a popup of matching emoji — arrow keys to move, Enter to
-  insert. Matches shortcodes, names and keywords.
+  insert. Matches shortcodes, names and keywords. Off by default; turn it on
+  under Settings → Advanced → Experimental features.
 - **Backup import now persists its images before finishing**: after restoring
   from a backup you no longer have to reload several times for the pictures to
   show up. Imported blobs are written to the in-memory fs and mirrored to OPFS
