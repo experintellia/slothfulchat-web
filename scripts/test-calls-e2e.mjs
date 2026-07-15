@@ -41,10 +41,13 @@
 //
 // Requires packages/web-app/dist to be built first (pnpm assemble && pnpm
 // build in packages/web-app, which also needs packages/core-wasm built) —
-// same prerequisite as scripts/smoke-web-app.mjs / test-web-app-e2e.mjs. Wired
-// into CI's `test` job (after the web-app dist is built), alongside the other
-// headless Playwright e2e suites — it needs no network (loopback host
-// candidates only), so it runs there the same as locally.
+// same prerequisite as scripts/smoke-web-app.mjs / test-web-app-e2e.mjs.
+// NOT wired into CI yet: it is fully offline (loopback host candidates, mock
+// webimap, no relay/STUN/network) and meant to run there, but currently times
+// out reaching the chat-list UI (#new-chat-button) after the provision→reload
+// step below — that path is untested (test-webimap.mjs drives via rpc only,
+// never reloads into the UI). Debug against a real wasm build before wiring in;
+// run locally for now.
 //
 // Run:  node scripts/test-calls-e2e.mjs        (VERBOSE=1 for full page logs)
 import { createServer } from 'node:http'

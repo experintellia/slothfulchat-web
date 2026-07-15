@@ -692,9 +692,13 @@ round-trip works standalone (adapted inline and exercised against a real
 `IncomingCallRing`'s `role="dialog" aria-label="Incoming call"` +
 `"Accept"` button, `CallOverlay`'s `role="dialog" aria-label="Call"` +
 `"In call"` status text) was matched against the actual current frontend
-source, not guessed. **Now wired into `ci.yml`'s `test` job** (after the
-web-app dist build, alongside the other headless Playwright e2e suites): it is
-fully offline (loopback host candidates, mock webimap, no relay/STUN/network),
-so it runs in CI the same as locally — unlike `test-web-app-e2e.mjs` /
-`test-webimap.mjs`, it needs no extra environment. Honors `CHROMIUM_EXECUTABLE`
-like the sibling e2e scripts.
+source, not guessed. Honors `CHROMIUM_EXECUTABLE` like the sibling e2e scripts.
+**Not wired into `ci.yml` yet:** a first attempt (CI run #29380045899) timed out
+waiting for the chat-list UI (`#new-chat-button`) after provisioning a webimap
+account and reloading. The webimap transport itself configures offline fine
+(`test-webimap.mjs` proves it), but that test only drives via rpc and never
+reloads into the UI — so this harness is the first to exercise
+provision→`reload()`→main-UI, and that path isn't yet solid (probable
+account-persist-before-reload race, or the reloaded app landing on onboarding
+instead of the chat list). Needs a run against a real wasm build to debug;
+kept as a local script (like `test-web-app-e2e.mjs`) until then.
