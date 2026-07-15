@@ -33,8 +33,8 @@ a second implementation.
 All under `packages/frontend/src/components/composer/` in `desktop/0047`:
 
 - `completion/types.ts` — the contract: `CompletionProvider` (`trigger`,
-  `minChars`, `boundaryBefore`, `query(term)`), `CompletionItem`
-  (`id`/`label`/`value`/`preview`), `ActiveToken`.
+  `minChars`, `query(term)`), `CompletionItem` (`id`/`label`/`value`/`preview`),
+  `ActiveToken`.
 - `completion/findActiveToken.ts` — pure caret token detector. Scans left from
   the caret for the trigger, stops at whitespace, enforces the boundary guard.
   Framework-free so it carries the unit check.
@@ -61,8 +61,6 @@ provider there.
 
 - `:` with <2 chars, or a whitespace/newline inside the term → no menu.
 - An already-closed `:shortcode:` (caret after the second colon) → no menu.
-- Async provider results are dropped if a newer query started (mentions will be
-  async); the emoji provider is synchronous.
 - A pure caret move within the same term keeps the highlight; changing the term
   resets it to the top.
 - Insertion accounts for multi-code-unit glyphs via the inserted string length.
@@ -89,5 +87,7 @@ provider there.
 
 - `@mention` provider — the reason this is a generic primitive. Adds a provider
   that queries chat members; the menu, detection and keyboard are reused as-is.
+  `query` is synchronous today (in-memory emoji scan); if member lookup is
+  async, widen it back to `Promise` and add a staleness guard then, not now.
 - Auto-replacing a fully-typed `:shortcode:` on space/send.
 - Caret-anchored positioning; frequently-used / recent-emoji ranking.

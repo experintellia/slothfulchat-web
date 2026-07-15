@@ -29,13 +29,13 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
  .../scss/composer/_completion-menu.scss       |  53 ++++
  .../frontend/scss/composer/_composer.scss     |   4 +
  packages/frontend/scss/manifest.scss          |   1 +
- .../composer/ComposerMessageInput.tsx         | 261 +++++++++++++++---
+ .../composer/ComposerMessageInput.tsx         | 247 +++++++++++++++---
  .../composer/completion/CompletionMenu.tsx    |  64 +++++
- .../composer/completion/emojiProvider.ts      |  74 +++++
+ .../composer/completion/emojiProvider.ts      |  73 ++++++
  .../composer/completion/findActiveToken.ts    |  31 +++
- .../components/composer/completion/types.ts   |  36 +++
- .../frontend/src/tests/completion.test.ts     |  66 +++++
- 9 files changed, 555 insertions(+), 35 deletions(-)
+ .../components/composer/completion/types.ts   |  31 +++
+ .../frontend/src/tests/completion.test.ts     |  65 +++++
+ 9 files changed, 534 insertions(+), 35 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_completion-menu.scss
  create mode 100644 packages/frontend/src/components/composer/completion/CompletionMenu.tsx
  create mode 100644 packages/frontend/src/components/composer/completion/emojiProvider.ts
@@ -130,7 +130,7 @@ index e76631775..b55d0ebbc 100644
  // Contact
  @use 'contact/_contact-list';
 diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
-index 0dca79d9a..4d0519b7d 100644
+index 0dca79d9a..1a8576cf3 100644
 --- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 +++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 @@ -4,12 +4,38 @@ import { ActionEmitter, KeybindAction } from '../../keybindings'
@@ -180,12 +180,10 @@ index 0dca79d9a..4d0519b7d 100644
  }
  
  export default class ComposerMessageInput extends React.Component<
-@@ -51,16 +78,26 @@ export default class ComposerMessageInput extends React.Component<
+@@ -51,16 +78,23 @@ export default class ComposerMessageInput extends React.Component<
    composerSize: number
    setCursorPosition: number | false
    textareaRef: React.RefObject<HTMLTextAreaElement | null>
-+  /** invalidates in-flight async completion queries when a newer one starts */
-+  completionReq: number
 +  /** a token dismissed with Escape; stays closed until the term changes */
 +  completionDismissed: { start: number; term: string } | null
    constructor(props: ComposerMessageInputProps) {
@@ -193,7 +191,6 @@ index 0dca79d9a..4d0519b7d 100644
  
 +    this.state = { completion: CLOSED_COMPLETION }
      this.composerSize = 48
-+    this.completionReq = 0
 +    this.completionDismissed = null
      this.setComposerSize = this.setComposerSize.bind(this)
      this.setCursorPosition = false
@@ -207,7 +204,7 @@ index 0dca79d9a..4d0519b7d 100644
  
      this.textareaRef = React.createRef()
      this.focus = this.focus.bind(this)
-@@ -141,6 +178,135 @@ export default class ComposerMessageInput extends React.Component<
+@@ -141,6 +175,124 @@ export default class ComposerMessageInput extends React.Component<
    onChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
      const text = e.target.value
      this.props.onChange(text)
@@ -221,7 +218,6 @@ index 0dca79d9a..4d0519b7d 100644
 +  }
 +
 +  refreshCompletion(text: string, caret: number) {
-+    const reqId = ++this.completionReq
 +    for (const provider of completionProviders) {
 +      const token = findActiveToken(text, caret, provider)
 +      if (!token) {
@@ -234,16 +230,7 @@ index 0dca79d9a..4d0519b7d 100644
 +        return
 +      }
 +      this.completionDismissed = null
-+      const result = provider.query(token.term)
-+      if (result instanceof Promise) {
-+        result.then(items => {
-+          if (reqId === this.completionReq) {
-+            this.applyCompletion(token, items)
-+          }
-+        })
-+      } else {
-+        this.applyCompletion(token, result)
-+      }
++      this.applyCompletion(token, provider.query(token.term))
 +      return
 +    }
 +    this.closeCompletion()
@@ -266,7 +253,6 @@ index 0dca79d9a..4d0519b7d 100644
 +  }
 +
 +  closeCompletion() {
-+    this.completionReq++ // drop any in-flight async result
 +    this.setState(prev =>
 +      prev.completion.open || prev.completion.token
 +        ? { completion: CLOSED_COMPLETION }
@@ -343,7 +329,7 @@ index 0dca79d9a..4d0519b7d 100644
    }
  
    keyEventToAction(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-@@ -156,6 +322,12 @@ export default class ComposerMessageInput extends React.Component<
+@@ -156,6 +308,12 @@ export default class ComposerMessageInput extends React.Component<
    }
  
    onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -356,7 +342,7 @@ index 0dca79d9a..4d0519b7d 100644
      const action = this.keyEventToAction(e)
  
      if (action === 'SEND') {
-@@ -234,44 +406,63 @@ export default class ComposerMessageInput extends React.Component<
+@@ -234,44 +392,63 @@ export default class ComposerMessageInput extends React.Component<
      if (this.props.hidden) {
        return null
      }
@@ -527,10 +513,10 @@ index 000000000..6af6517db
 +}
 diff --git a/packages/frontend/src/components/composer/completion/emojiProvider.ts b/packages/frontend/src/components/composer/completion/emojiProvider.ts
 new file mode 100644
-index 000000000..4e0cac42e
+index 000000000..be07e669b
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/completion/emojiProvider.ts
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,73 @@
 +import emojiData from '@emoji-mart/data'
 +
 +import type { CompletionItem, CompletionProvider } from './types'
@@ -582,7 +568,6 @@ index 000000000..4e0cac42e
 +export const emojiProvider: CompletionProvider = {
 +  trigger: ':',
 +  minChars: 2,
-+  boundaryBefore: true,
 +  query(rawTerm: string): CompletionItem[] {
 +    const term = rawTerm.toLowerCase()
 +    const aliasId = aliasToId[term] // an exact alias should rank at the very top
@@ -607,24 +592,24 @@ index 000000000..4e0cac42e
 +}
 diff --git a/packages/frontend/src/components/composer/completion/findActiveToken.ts b/packages/frontend/src/components/composer/completion/findActiveToken.ts
 new file mode 100644
-index 000000000..c9b5b9649
+index 000000000..558df3bdb
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/completion/findActiveToken.ts
 @@ -0,0 +1,31 @@
 +import type { ActiveToken, CompletionProvider } from './types'
 +
 +// Finds the completion token under the caret in a plain <textarea>. Pure and
-+// framework-free so it carries the unit check (findActiveToken.test.mjs).
++// framework-free so it carries the unit check (completion.test.ts).
 +//
 +// Scans left from the caret for the provider's trigger, stopping at any
-+// whitespace. Enforces a word boundary before the trigger (start-of-input or
++// whitespace. Requires a word boundary before the trigger (start-of-input or
 +// whitespace) so it never fires inside `http://host` or `12:30`.
 +export function findActiveToken(
 +  text: string,
 +  caret: number,
-+  provider: Pick<CompletionProvider, 'trigger' | 'minChars' | 'boundaryBefore'>
++  provider: Pick<CompletionProvider, 'trigger' | 'minChars'>
 +): ActiveToken | null {
-+  const { trigger, minChars, boundaryBefore = true } = provider
++  const { trigger, minChars } = provider
 +  let i = caret - 1
 +  for (; i >= 0; i--) {
 +    const ch = text[i]
@@ -633,7 +618,7 @@ index 000000000..c9b5b9649
 +  }
 +  if (i < 0 || text[i] !== trigger) return null // no trigger between caret and the last whitespace
 +
-+  if (boundaryBefore && i > 0) {
++  if (i > 0) {
 +    const prev = text[i - 1]
 +    if (prev !== ' ' && prev !== '\n' && prev !== '\t') return null // e.g. the `:` in http:// or 12:30
 +  }
@@ -644,10 +629,10 @@ index 000000000..c9b5b9649
 +}
 diff --git a/packages/frontend/src/components/composer/completion/types.ts b/packages/frontend/src/components/composer/completion/types.ts
 new file mode 100644
-index 000000000..7e1ee262a
+index 000000000..7b6a2a35e
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/completion/types.ts
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,31 @@
 +// Shared contract for the composer completion menu. The menu itself is generic;
 +// each trigger (`:` for emoji now, `@` for mentions later) is a provider.
 +
@@ -667,13 +652,8 @@ index 000000000..7e1ee262a
 +  trigger: string
 +  /** minimum chars after the trigger before the menu shows */
 +  minChars: number
-+  /**
-+   * require the trigger to sit at input start or after whitespace, so it never
-+   * fires inside `http://host` or `12:30`. Defaults to true.
-+   */
-+  boundaryBefore?: boolean
-+  /** matches for the typed term, best first (sync or async) */
-+  query: (term: string) => CompletionItem[] | Promise<CompletionItem[]>
++  /** matches for the typed term, best first */
++  query: (term: string) => CompletionItem[]
 +}
 +
 +export type ActiveToken = {
@@ -686,10 +666,10 @@ index 000000000..7e1ee262a
 +}
 diff --git a/packages/frontend/src/tests/completion.test.ts b/packages/frontend/src/tests/completion.test.ts
 new file mode 100644
-index 000000000..fc3e3860d
+index 000000000..39a5f9756
 --- /dev/null
 +++ b/packages/frontend/src/tests/completion.test.ts
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,65 @@
 +import { expect } from 'chai'
 +import { describe, it } from 'mocha'
 +
@@ -701,7 +681,6 @@ index 000000000..fc3e3860d
 +const emoji = {
 +  trigger: emojiProvider.trigger,
 +  minChars: emojiProvider.minChars,
-+  boundaryBefore: emojiProvider.boundaryBefore,
 +}
 +
 +// caret marker `|` in the input string keeps the cases readable
