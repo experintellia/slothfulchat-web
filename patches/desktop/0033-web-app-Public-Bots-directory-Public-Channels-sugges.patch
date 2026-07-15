@@ -409,7 +409,7 @@ index 000000000..4b7dd033d
 +      }
 +      return { url, description, admin, lang, name, addr }
 +    })
-+    .filter(bot => bot.url !== '' && bot.name !== '')
++    .filter(bot => bot.name !== '' && /^https:\/\/i\.delta\.chat\//i.test(bot.url))
 +
 +  const langs: { [key: string]: string } = {}
 +  if (typeof data.langs === 'object' && data.langs != null) {
