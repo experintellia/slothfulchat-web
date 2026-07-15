@@ -25,6 +25,7 @@ import {
   type CallState,
 } from '@slothfulchat/calls/bridge'
 import { CallsUiStore, mountCallsUi } from '@slothfulchat/calls/ui'
+import { createPlaceholderVideoTrack, videoCodecPreferences } from './call-media'
 import * as perf from './perf'
 import * as analytics from './analytics'
 import * as session from './session'
@@ -1649,41 +1650,12 @@ function showWebxdcNotImplementedDialog() {
 // the shared `CallsUiStore` that the React tree mounted by `mountCallsUi`
 // observes.
 
-// Firefox negotiates H264 through the on-demand OpenH264 plugin and silently
-// encodes nothing when it's unavailable — prefer codecs Firefox encodes
-// natively (VP8/VP9/AV1). Chrome keeps hardware H264.
-const caps = typeof RTCRtpReceiver !== 'undefined' && RTCRtpReceiver.getCapabilities?.('video')
-const isFirefox = navigator.userAgent.includes('Firefox')
-const videoCodecPreferences: RTCRtpCodec[] | undefined =
-  isFirefox && caps
-    ? (() => {
-        const filtered = caps.codecs.filter((c) => !/h264/i.test(c.mimeType))
-        return filtered.length > 0 ? filtered : undefined
-      })()
-    : undefined
-
 /** `${accountId}` scoping is implicit (one call at a time). */
 class CallManager {
   private readonly log: Logger
   /** Resolve a core blob path to a SW-served URL (call-UI avatars). */
   private readonly transformBlobURL: (path: string) => string
-  private readonly factories = {
-    ...defaultMediaFactories(),
-    // A disabled 2x2 black track for the always-negotiated video sender so our
-    // SDP carries a real a=ssrc — iOS WebKit can't demux RTP on an SSRC it
-    // never saw signaled, so a mid-call camera on an audio-started call would
-    // otherwise render black there. Lives here (not the bridge) because it
-    // needs `document`. calls-webapp equivalently sends a disabled camera.
-    createPlaceholderVideoTrack: () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = 2
-      canvas.height = 2
-      canvas.getContext('2d')?.fillRect(0, 0, 2, 2)
-      const track = canvas.captureStream(1).getVideoTracks()[0]!
-      track.enabled = false // encoder sends black keepalive frames, like calls-webapp's disabled camera
-      return track
-    },
-  }
+  private readonly factories = { ...defaultMediaFactories(), createPlaceholderVideoTrack }
   /** The single shared call-UI store; the React tree mounted by
    * `mountCallsUi` observes it and re-renders on every push below. */
   private readonly ui = new CallsUiStore()

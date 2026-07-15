@@ -272,7 +272,3 @@ export const knownIssueHint: CSSProperties = {
   color: '#8a8a8a',
   minHeight: 14,
 }
-
-export const knownIssueLink: CSSProperties = {
-  color: '#a8b8d8',
-}

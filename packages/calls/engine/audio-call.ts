@@ -1072,10 +1072,7 @@ export class AudioCallEngine {
     const prefs = this.videoCodecPreferences;
     const sender = this.videoSender;
     if (prefs == null || sender == null) return;
-    const transceivers = pc.getTransceivers();
-    const transceiver =
-      transceivers.find((t) => t.sender === sender) ??
-      transceivers.find((t) => t.receiver?.track?.kind === 'video');
+    const transceiver = findVideoTransceiver(pc, sender);
     try {
       transceiver?.setCodecPreferences?.(prefs);
     } catch {
@@ -1095,15 +1092,12 @@ export class AudioCallEngine {
   }
 
   /** Set the video transceiver that owns `videoSender` to `sendrecv` (see
-   * addLocalTracks). Matched by sender identity first, then by video receiver. */
+   * addLocalTracks). */
   private promoteVideoTransceiverToSendrecv(
     pc: PeerConnectionLike,
     videoSender: RtpSenderLike
   ): void {
-    const transceivers = pc.getTransceivers();
-    const transceiver =
-      transceivers.find((t) => t.sender === videoSender) ??
-      transceivers.find((t) => t.receiver?.track?.kind === 'video');
+    const transceiver = findVideoTransceiver(pc, videoSender);
     if (transceiver != null) {
       transceiver.direction = 'sendrecv';
     }
@@ -1484,4 +1478,17 @@ export class AudioCallEngine {
     }
     this.placeholderVideoTrack = null;
   }
+}
+
+/** The transceiver owning `sender` — matched by sender identity first, then by
+ * video receiver (covers fakes whose sender objects get replaced). */
+function findVideoTransceiver(
+  pc: PeerConnectionLike,
+  sender: RtpSenderLike
+): RtpTransceiverLike | undefined {
+  const transceivers = pc.getTransceivers();
+  return (
+    transceivers.find((t) => t.sender === sender) ??
+    transceivers.find((t) => t.receiver?.track?.kind === 'video')
+  );
 }

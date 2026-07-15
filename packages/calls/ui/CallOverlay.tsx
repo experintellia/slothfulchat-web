@@ -206,7 +206,8 @@ export function CallOverlay({
     background: remoteHasVideo ? '#000' : '#141414',
   }
   const controlButtonStyle = isMobile ? { ...styles.button, ...styles.buttonMobile } : styles.button
-  const disabledButtonStyle = controlsDisabled ? { opacity: 0.45, cursor: 'default' } : {}
+  const dim = (disabled: boolean) => (disabled ? { opacity: 0.45, cursor: 'default' as const } : {})
+  const disabledButtonStyle = dim(controlsDisabled)
   // Bigger avatar rings on the roomier centered desktop card.
   const ringSize = isMobile ? 72 : 104
 
@@ -294,7 +295,7 @@ export function CallOverlay({
           style={{
             ...controlButtonStyle,
             background: cameraOn ? styles.COLOR_NEUTRAL_ACTIVE : styles.COLOR_NEUTRAL,
-            ...(cameraDisabled ? { opacity: 0.45, cursor: 'default' as const } : {}),
+            ...dim(cameraDisabled),
           }}
         >
           {cameraOn ? 'Camera off' : 'Camera on'}
@@ -330,7 +331,7 @@ export function CallOverlay({
             href="https://github.com/experintellia/slothfulchat-web/issues/106"
             target="_blank"
             rel="noreferrer"
-            style={styles.knownIssueLink}
+            style={{ color: '#a8b8d8' }}
           >
             issue #106
           </a>

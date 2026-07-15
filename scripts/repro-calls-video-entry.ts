@@ -107,12 +107,7 @@ async function setupCall(opts: { aHasVideo?: boolean; bHasVideo?: boolean }): Pr
   });
 
   void a.engine.placeCall().catch((e) => collectError('A', 'placeCall', e));
-  // pc objects are created inside placeCall/accept; refresh refs lazily
-  const refresh = () => {
-    if (sides.A) sides.A.pc = pending.A ?? sides.A.pc;
-    if (sides.B) sides.B.pc = pending.B ?? sides.B.pc;
-  };
-  setInterval(refresh, 100);
+  // pc refs are refreshed in states(), which the driver polls before any read.
 }
 
 function states(): { a: string; b: string; errors: string[] } {
