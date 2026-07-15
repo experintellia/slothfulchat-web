@@ -477,10 +477,6 @@ impl ReadDir {
     pub async fn next_entry(&mut self) -> io::Result<Option<DirEntry>> {
         Ok(self.entries.next().map(|path| DirEntry { path }))
     }
-
-    pub fn poll_next_entry(&mut self, _cx: &mut Context<'_>) -> Poll<io::Result<Option<DirEntry>>> {
-        Poll::Ready(Ok(self.entries.next().map(|path| DirEntry { path })))
-    }
 }
 
 /// Drop-in replacement for `tokio_stream::wrappers::ReadDirStream` call sites.

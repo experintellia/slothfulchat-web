@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 15 Jul 2026 00:48:05 +0000
+Subject: [PATCH] chatlist: refresh a contact's 1:1 item when they become
+ recently seen
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Receiving a message from a contact updates their `last_seen` and can flip
+them into the "recently seen" state. That state is shown on the 1:1 chat's
+chatlist item (`was_seen_recently`), but `update_last_seen()` only emitted
+`ContactsChanged` and did not tell the UI to re-render that chatlist item.
+
+As a result, a message arriving in a *group* (or any chat other than the
+1:1 with the sender) left the sender's 1:1 chatlist item stale — the
+recently-seen indicator would not appear until some other event refreshed
+it. The reverse transition (becoming un-seen) already emits
+`emit_chatlist_item_changed_for_contact_chat` from the recently-seen
+scheduler loop, so this makes the into-seen transition symmetric.
+
+The extra event is emitted only inside the existing guard (last_seen
+actually advanced and the contact is within the recently-seen window),
+next to the `ContactsChanged` event that already fires there, so it adds at
+most one chat lookup per relevant incoming message.
+---
+ src/contact.rs                |  6 ++++++
+ src/events/chatlist_events.rs | 29 +++++++++++++++++++++++++++++
+ 2 files changed, 35 insertions(+)
+
+diff --git a/src/contact.rs b/src/contact.rs
+index 310600c96..2f739f943 100644
+--- a/src/contact.rs
++++ b/src/contact.rs
+@@ -1998,6 +1998,12 @@ pub(crate) async fn update_last_seen(
+         && timestamp > time() - SEEN_RECENTLY_SECONDS
+     {
+         context.emit_event(EventType::ContactsChanged(Some(contact_id)));
++        // The contact just became "recently seen", so the 1:1 chat's chatlist
++        // item (which shows this indicator) needs to be re-rendered. The reverse
++        // transition (becoming un-seen) already does this in the recently-seen
++        // scheduler loop; without it here, receiving a message from a contact in
++        // e.g. a group would not refresh their 1:1 chatlist item.
++        chatlist_events::emit_chatlist_item_changed_for_contact_chat(context, contact_id).await;
+         context
+             .scheduler
+             .interrupt_recently_seen(contact_id, timestamp)
+diff --git a/src/events/chatlist_events.rs b/src/events/chatlist_events.rs
+index ec909a12f..eb222088f 100644
+--- a/src/events/chatlist_events.rs
++++ b/src/events/chatlist_events.rs
+@@ -380,6 +380,35 @@ async fn test_change_chat_profile_image() -> Result<()> {
+         Ok(())
+     }
+ 
++    /// Receiving a message from a contact makes them "recently seen", which
++    /// changes the indicator on their 1:1 chat's chatlist item, so that item
++    /// has to be re-rendered even when the message itself landed in another chat
++    /// (here: a shared group).
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_recently_seen_updates_contact_chat_item() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = tcm.alice().await;
++        let bob = tcm.bob().await;
++
++        // Bob has a 1:1 chat with Alice.
++        let bob_alice_chat = bob.create_chat(&alice).await;
++
++        // Alice writes into a group that Bob is also part of.
++        let group = alice.create_group_with_members("My Group", &[&bob]).await;
++        let sent_msg = alice.send_text(group, "Hello group").await;
++
++        bob.evtracker.clear_events();
++        let received = bob.recv_msg(&sent_msg).await;
++        // The message went into the group, not the 1:1 chat.
++        assert_ne!(received.chat_id, bob_alice_chat.id);
++
++        // Still, the 1:1 chat's item has to update because Alice is now
++        // "recently seen".
++        wait_for_chatlist_specific_item(&bob, bob_alice_chat.id).await;
++
++        Ok(())
++    }
++
+     /// Receive group and receive name change
+     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+     async fn test_receiving_group_and_group_changes() -> Result<()> {

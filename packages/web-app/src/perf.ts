@@ -121,16 +121,6 @@ export function recordAction(name: string, ms: number): void {
   s.total += ms
 }
 
-/** Time a promise-returning action and fold its duration into recordAction. */
-export async function timeAction<T>(name: string, run: () => Promise<T>): Promise<T> {
-  const start = now()
-  try {
-    return await run()
-  } finally {
-    recordAction(name, now() - start)
-  }
-}
-
 /** Everything the diagnostics panel needs, computed on demand. */
 export function snapshot() {
   const marks = { ...bootMarks }
@@ -138,9 +128,6 @@ export function snapshot() {
     // spans between milestones; undefined when an endpoint is missing
     'worker→core': span(marks['worker-spawn'], marks['core-ready']),
     'core→ui': span(marks['core-ready'], marks['ui-ready']),
-    'nav→core': marks['core-ready'],
-    'nav→ui': marks['ui-ready'],
-    'nav→first-account': marks['first-account'],
   }
   const actionRows = Object.entries(actions).map(([name, s]) => ({
     name,

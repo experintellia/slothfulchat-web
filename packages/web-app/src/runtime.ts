@@ -627,6 +627,10 @@ class BrowserRuntime {
     this.uiReady = true
     this.flushPendingQrUrl()
     this.flushPendingSendToChat()
+    // fallback: the UI is fully up, so the welcome notice has necessarily been
+    // passed — release any held first-visit analytics if its 'welcome' hook
+    // somehow didn't fire (a no-op on warm starts and once already released).
+    analytics.releaseHeldEvents()
   }
   emitUIReady(): void {
     perf.boot('ui-ready')

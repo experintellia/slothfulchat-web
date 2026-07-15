@@ -205,6 +205,13 @@ export const configJs = config =>
 
 export const DEFAULT_NAME = 'SlothfulChat'
 
+// shared base CSS for the standalone imprint/privacy pages (privacy adds a few
+// .events rules of its own)
+const DOC_CSS = `  body { font: 16px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; color: #222; }
+  a { color: #2c8a68; }
+  h2 { font-size: 1.15rem; margin-top: 2rem; }
+  .meta { color: #666; font-size: 0.9rem; margin-top: 2.5rem; }`
+
 // quotes included: esc output also lands inside double-quoted href attributes
 const esc = s =>
   String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
@@ -263,10 +270,7 @@ and <code>SLOTHFUL_IMPRINT_EMAIL</code> at build time.</p>`
 <link rel="icon" type="image/png" href="./images/icon-256.png" />
 <title>Imprint — ${esc(config.instanceName || DEFAULT_NAME)}</title>
 <style>
-  body { font: 16px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; color: #222; }
-  a { color: #2c8a68; }
-  h2 { font-size: 1.15rem; margin-top: 2rem; }
-  .meta { color: #666; font-size: 0.9rem; margin-top: 2.5rem; }
+${DOC_CSS}
 </style>
 </head>
 <body>
@@ -366,12 +370,9 @@ no cookies, no tracking of any kind.</p>`
 <link rel="icon" type="image/png" href="./images/icon-256.png" />
 <title>Privacy Policy — ${esc(config.instanceName || DEFAULT_NAME)}</title>
 <style>
-  body { font: 16px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; color: #222; }
-  a { color: #2c8a68; }
-  h2 { font-size: 1.15rem; margin-top: 2rem; }
+${DOC_CSS}
   .events li { margin: 6px 0; }
   .events .props { color: #666; font-size: 0.85rem; }
-  .meta { color: #666; font-size: 0.9rem; margin-top: 2.5rem; }
 </style>
 </head>
 <body>

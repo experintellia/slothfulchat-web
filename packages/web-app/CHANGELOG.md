@@ -11,6 +11,20 @@
   seamlessly to the in-page overlay — same controls, same engine. Ringing for
   an incoming call always stays in the main window (it can never be
   popup-blocked). New popup page: `/call-popup.html` (`src/call-popup.ts`).
+- **Webxdc app icons in the title bar can't impersonate native controls**: the
+  last-used-app icons shown in a chat's title bar are app-supplied images. One
+  with transparency could be shaped to look like a native navbar control (a
+  fake three-dot menu, say). They now render on an opaque white tile, so
+  transparent areas never blend into the navbar and the icon always reads as a
+  distinct app. Their click target stays icon-sized — unlike the native navbar
+  buttons below, a stray tap won't launch an app.
+- **Bigger click targets for the chat title-bar buttons**: the apps, map and
+  three-dot menu icons in a chat's title bar had a cramped 20×20&nbsp;px hit
+  box sitting in a 50&nbsp;px-tall navbar, with an unclickable 12&nbsp;px gap
+  between them, so it was easy to miss them. Each button's clickable area now
+  fills the navbar's vertical dead space and the inter-button gap. The icons
+  and the navbar height are pixel-for-pixel unchanged — only the hit box grew,
+  cancelled out by negative margins so nothing moves visually.
 - **Backup import now persists its images before finishing**: after restoring
   from a backup you no longer have to reload several times for the pictures to
   show up. Imported blobs are written to the in-memory fs and mirrored to OPFS

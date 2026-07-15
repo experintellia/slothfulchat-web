@@ -1,0 +1,40 @@
+From 6141e65c9d7862d7e2a33e2f47e4ffc6594ea448 Mon Sep 17 00:00:00 2001
+From: slothfulchat <dev@slothfulchat.local>
+Date: Wed, 15 Jul 2026 02:07:50 +0000
+Subject: [PATCH] web-app: opaque white background on webxdc navbar app icons
+
+The last-used-app icons shown in a chat's title bar are app-supplied,
+untrusted images. A transparent icon could be crafted to impersonate a
+native navbar control (e.g. a fake three-dot menu) by leaving pixels
+transparent where the real icon has them. Give the icon tile an opaque
+white background so transparent areas never blend into the navbar; the
+tile always reads as a distinct app icon rather than chrome. Their hit
+target stays icon-sized (the button keeps padding: 0), unlike the native
+navbar buttons.
+---
+ .../frontend/src/components/ChatView/styles.module.scss  | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/packages/frontend/src/components/ChatView/styles.module.scss b/packages/frontend/src/components/ChatView/styles.module.scss
+index 28e5e10..00b2179 100644
+--- a/packages/frontend/src/components/ChatView/styles.module.scss
++++ b/packages/frontend/src/components/ChatView/styles.module.scss
+@@ -96,6 +96,15 @@
+     height: 25px;
+     cursor: pointer;
+     border-radius: 3px;
++    // App-supplied icons are untrusted content. Without a backdrop, an icon
++    // that is transparent where a native navbar control has pixels could be
++    // drawn to impersonate one (e.g. a fake three-dot menu). Force an opaque
++    // white tile so transparent areas never blend into the navbar — the icon
++    // always reads as a distinct app tile, not chrome.
++    background-color: #fff;
++    // Unlike the native navbar buttons, these user-content tiles deliberately
++    // keep a hit target no larger than the icon itself (the button sets
++    // `padding: 0`), so a stray tap can't launch an app.
+   }
+ }
+ 
+-- 
+2.43.0
+
