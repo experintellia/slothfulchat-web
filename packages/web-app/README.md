@@ -100,6 +100,7 @@ node scripts/test-web-app-e2e.mjs   # UI login, send, account switch, receive
 node scripts/test-web-app-imex.mjs  # backup export → download → restore
 node scripts/test-persistence.mjs   # account + message survive reload
 node scripts/test-export-chat-html.mjs  # chat → zip export: html viewer/txt/json/media (offline)
+node scripts/test-calls-e2e.mjs     # outgoing audio call vs. a second local core; asserts connected (offline)
 ```
 
 ## Deployment (GitHub Pages)

@@ -32,6 +32,10 @@
 
 import * as session from './session'
 import { isCatalogEvent } from './events.mjs'
+// Type-only: no runtime dependency on @slothfulchat/calls from this generic
+// analytics module — just the single source of truth for the outcome
+// vocabulary, so it can't drift from what packages/calls actually classifies.
+import type { CallResult } from '@slothfulchat/calls/bridge'
 
 type Config = {
   analytics?: boolean
@@ -204,6 +208,44 @@ export function pageview(): void {
   afterNoticeShown(() =>
     event('pageview', { mode: session.visitorMode(), display: session.displayMode() })
   )
+}
+
+/**
+ * How a call ended (docs/calls.md M5: "content-free call analytics … missed/
+ * busy/timeout via call_info"). Never anything about *who* was on the call or
+ * how long it ran. See `packages/calls/bridge/call-outcome.ts` (the single
+ * source of truth for this vocabulary, re-exported as the `CallResult` type
+ * imported above) for the full per-value breakdown and the core `call_info`
+ * mapping table:
+ *
+ *   connected — the peer connection reached `connected` at least once.
+ *   missed    — an incoming call that rang out unanswered, or the caller hung
+ *               up before we accepted.
+ *   busy      — a second incoming call arrived while this device was already
+ *               in one and was auto-declined (purely local — no core state).
+ *   declined  — explicitly rejected before connecting (either side).
+ *   timeout   — an outgoing call that rang out with no answer.
+ *   cancelled — we hung up an outgoing call ourselves before it connected.
+ *   error     — the call tore down from a local failure, never connecting.
+ */
+export type { CallResult }
+
+/** Record a call outcome. Content-free: direction, whether it carried video,
+ * and the fixed `CallResult` bucket above — never the chat/contact, never a
+ * duration, never any signaling/media payload. Called by the runtime's call
+ * manager (`packages/web-app/src/runtime.ts`) at the one point a call's
+ * lifecycle is finished (see `reportCallOutcome`), so this fires at most once
+ * per call regardless of how many ways a call can end. */
+export function trackCall(params: {
+  direction: 'outgoing' | 'incoming'
+  hasVideo: boolean
+  result: CallResult
+}): void {
+  event('call', {
+    direction: params.direction,
+    has_video: params.hasVideo ? 'yes' : 'no',
+    result: params.result,
+  })
 }
 
 let startupSent = false

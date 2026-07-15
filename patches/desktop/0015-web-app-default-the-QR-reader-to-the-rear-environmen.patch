@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 8 Jul 2026 23:01:08 +0000
-Subject: [PATCH 15/42] web-app: default the QR reader to the rear
+Subject: [PATCH 15/47] web-app: default the QR reader to the rear
  (environment) camera
 
 Front camera made no sense as the default: users scan someone else's

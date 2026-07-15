@@ -1,0 +1,27 @@
+{
+  "name": "@slothfulchat/calls",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Native 1:1 WebRTC calls, our own peer wire-compatible with deltachat/calls-webapp. engine/ (pure TS, zero React/DOM imports) + ui/ (React) + bridge/ (runtime glue). See docs/calls.md.",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/experintellia/slothfulchat-web.git",
+    "directory": "packages/calls"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p engine/tsconfig.json && tsc --noEmit -p ui/tsconfig.json && tsc --noEmit -p bridge/tsconfig.json",
+    "test": "node --test engine/*.test.ts bridge/*.test.ts"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "typescript": "^5.8.0"
+  }
+}

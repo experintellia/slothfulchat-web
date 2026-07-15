@@ -60,6 +60,14 @@ jobs:
       - name: Unit-test instance-config (parsePublicBridges etc.)
         run: node --test packages/web-app/instance-config.test.mjs
 
+      # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —
+      # Node's built-in type-stripping test runner needs no pnpm install, only
+      # "erasable" TS syntax (see packages/calls/tsconfig.base.json). bridge/
+      # imports only node builtins + local .ts (no react/DOM value imports), so
+      # it runs here too; this covers the popup-signaling IPC tests (M4).
+      - name: Unit-test packages/calls engine + bridge (interop, ICE, popup IPC)
+        run: node --test packages/calls/engine/*.test.ts packages/calls/bridge/*.test.ts
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -165,6 +173,13 @@ jobs:
       - name: Install workspace deps
         run: pnpm install
 
+      # packages/calls (docs/calls.md M0): per-subfolder typecheck now that
+      # real @types/node / @types/react / react are installed — engine/'s
+      # narrower tsconfig (no "jsx", see engine/tsconfig.json) is what actually
+      # enforces the type-level half of the React/DOM import boundary.
+      - name: Typecheck packages/calls (engine/ui/bridge)
+        run: pnpm --filter @slothfulchat/calls build
+
       # Playwright chromium for the headless smoke suites (--with-deps pulls the
       # runner's shared libs). Uses the pinned playwright from the lockfile.
       # Browser downloads are cached; `playwright install` skips the download
@@ -258,3 +273,11 @@ jobs:
       # the CORS-blocked→unfurl fallback path.
       - name: E2E test — link-preview ghost UI
         run: node scripts/test-link-preview-e2e.mjs
+
+      # NOTE: scripts/test-calls-e2e.mjs (loopback audio call) is intentionally
+      # NOT wired in yet. It is designed to run offline in CI, but currently
+      # times out reaching the chat-list UI (#new-chat-button) after provisioning
+      # a webimap account and reloading — the provision→reload→UI path is
+      # untested (test-webimap.mjs only ever drives via rpc, never reloads into
+      # the UI), likely an accounts-persist-before-reload race. Needs debugging
+      # against a real wasm build before it can be a CI gate; run locally for now.

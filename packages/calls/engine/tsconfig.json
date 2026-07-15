@@ -1,0 +1,10 @@
+{
+  // engine/ is pure TS with ZERO React/DOM *imports* (docs/calls.md). The
+  // "DOM" lib is still needed: RTCPeerConnection/MediaStream etc. are ambient
+  // globals, not imports. "jsx" is deliberately omitted — no JSX in engine/.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["."]
+}
