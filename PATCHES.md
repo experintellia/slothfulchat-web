@@ -225,6 +225,15 @@ contribution intended.
 - Prompt dialogs with a single text input (profile display name, contact
   name, account tag) confirm on Enter like a native `prompt()` would.
   `desktop/0028`
+- The chat title-bar icon buttons (apps, map, three-dot menu) had a cramped
+  20×20 px hit box in a 50 px-tall navbar with an unclickable 12 px gap
+  between them; each button's click target now fills that vertical dead space
+  and the gap. Compensating negative margins keep the icons and navbar height
+  pixel-for-pixel unchanged. `desktop/0047`
+- Webxdc last-used-app icons in the chat title bar (app-supplied, untrusted
+  images) render on an opaque white tile, so a transparent icon can't blend
+  into the navbar to impersonate a native control; their hit target stays
+  icon-sized, unlike the enlarged native buttons. `desktop/0048`
 
 ## Different decisions than upstream
 
