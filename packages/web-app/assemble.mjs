@@ -96,22 +96,15 @@ for (const file of await readdir(join(dist, 'themes'))) {
   if (!file.endsWith('.css') || file.startsWith('_')) continue
   const id = basename(file, '.css')
   const address = 'dc:' + id
+  const is_prototype = file.startsWith(HIDDEN_THEME_PREFIX)
+  let name = address + ' [Invalid Meta]'
+  let description = '[missing description]'
   try {
-    const meta = parseThemeMetaData(await readFile(join(dist, 'themes', file), 'utf-8'))
-    themes.push({
-      name: meta.name,
-      description: meta.description,
-      address,
-      is_prototype: file.startsWith(HIDDEN_THEME_PREFIX),
-    })
+    ;({ name, description } = parseThemeMetaData(await readFile(join(dist, 'themes', file), 'utf-8')))
   } catch {
-    themes.push({
-      name: address + ' [Invalid Meta]',
-      description: '[missing description]',
-      address,
-      is_prototype: file.startsWith(HIDDEN_THEME_PREFIX),
-    })
+    // keep the invalid-meta placeholders
   }
+  themes.push({ name, description, address, is_prototype })
 }
 await writeFile(join(dist, 'themes.json'), JSON.stringify(themes, null, 2))
 
