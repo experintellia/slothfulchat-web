@@ -25,7 +25,7 @@ import {
   type CallState,
 } from '@slothfulchat/calls/bridge'
 import { CallsUiStore, mountCallsUi } from '@slothfulchat/calls/ui'
-import { createPlaceholderVideoTrack, videoCodecPreferences } from './call-media'
+import { createPlaceholderVideoTrack } from './call-media'
 import * as perf from './perf'
 import * as analytics from './analytics'
 import * as session from './session'
@@ -1840,7 +1840,7 @@ class CallManager {
         if (slot.cancelled || slot.mode !== 'overlay') return
         const bridge = CallBridge.outgoing(
           this.rpc,
-          { accountId: slot.accountId, chatId: slot.chatId, hasVideo: slot.hasVideo, videoCodecPreferences, iceServers },
+          { accountId: slot.accountId, chatId: slot.chatId, hasVideo: slot.hasVideo, iceServers },
           this.factories,
           this.overlayBridgeCallbacks(slot)
         )
@@ -1967,7 +1967,6 @@ class CallManager {
         callMessageId: slot.callMessageId ?? 0,
         offerSdp: slot.offerSdp ?? '',
         hasVideo: slot.hasVideo,
-        videoCodecPreferences,
         iceServers,
       },
       this.factories,
