@@ -104,6 +104,12 @@ export function event(name: string, props?: Props): void {
     if (c.devmode) console.warn('[analytics] dropped non-catalogue event:', name, props)
     return
   }
+  // Delayed opt-out: the WelcomeScreen mounting fires this event, which means
+  // the opt-out checkbox is now on screen — release the first-visit pageview +
+  // startup held for it (see afterNoticeShown). Runs before this event sends;
+  // reentrant event() calls from the queue are fine.
+  if (name === 'onboarding' && (props as Props | undefined)?.step === 'welcome')
+    releaseHeldForNotice()
   const body = {
     name,
     // Plausible needs a domain (its "site" id) and a url. We deliberately send
@@ -127,6 +133,36 @@ export function event(name: string, props?: Props): void {
   } catch {
     // fetch can throw synchronously if the URL is malformed; ignore
   }
+}
+
+// --- delayed opt-out: hold the first-visit burst until the notice is shown ---
+//
+// On a COLD start (onboarding) the WelcomeScreen — which shows the opt-out
+// checkbox — has not rendered when the core first answers, so sending the
+// pageview + startup sample there would transmit them before the user could
+// see or act on the notice. Hold them until the WelcomeScreen mounts (it fires
+// the 'onboarding'/'welcome' event, which calls releaseHeldForNotice) so
+// nothing leaves pre-notice. WARM starts (returning users who already saw the
+// notice during a previous onboarding) send immediately. Opting out before the
+// release just drops the held events, since event() re-checks isEnabled() at
+// send time. Still opt-out: non-interaction leaves the user enabled once the
+// notice is on screen.
+let noticeReleased = false
+const heldForNotice: Array<() => void> = []
+function afterNoticeShown(run: () => void): void {
+  if (noticeReleased || session.startupMode() === 'warm') return run()
+  heldForNotice.push(run)
+}
+function releaseHeldForNotice(): void {
+  if (noticeReleased) return
+  noticeReleased = true
+  for (const run of heldForNotice.splice(0)) run()
+}
+/** Fallback release once the UI is fully up (runtime.emitUIFullyReady): by then
+ * the user has necessarily passed the welcome notice, so the held first-visit
+ * events are never stranded if the WelcomeScreen 'welcome' hook didn't fire. */
+export function releaseHeldEvents(): void {
+  releaseHeldForNotice()
 }
 
 /** Count a click on one of the tracked info links (imprint / github /
@@ -161,24 +197,34 @@ export function trackLink(href: string): void {
 /** The single pageview for this visit, tagged with coarse (non-identifying)
  * context: whether an account already existed (retention proxy) and whether
  * this is the installed PWA or a browser tab. */
+let pageviewQueued = false
 export function pageview(): void {
-  event('pageview', { mode: session.visitorMode(), display: session.displayMode() })
+  if (pageviewQueued) return // once per visit, even before the notice releases it
+  pageviewQueued = true
+  afterNoticeShown(() =>
+    event('pageview', { mode: session.visitorMode(), display: session.displayMode() })
+  )
 }
 
 let startupSent = false
+let startupQueued = false
 /** Turn a startup duration (ms) into one of the fixed buckets and send it,
  * tagged cold (onboarding) vs warm (had an account). Fires at most once, and
  * waits until the cold/warm mode is known (callers invoke it both when the UI
  * becomes ready and when account state resolves — whichever satisfies both
- * conditions sends it). Bucketing keeps it non-identifying. */
+ * conditions sends it). Bucketing keeps it non-identifying. On a cold start the
+ * send is held until the welcome notice is shown (see afterNoticeShown). */
 export function trackStartup(ms: number | null): void {
-  if (startupSent || ms == null) return
+  if (startupSent || startupQueued || ms == null) return
   const mode = session.startupMode()
   if (mode === 'unknown') return // account state not known yet — try again later
-  startupSent = true
   const bucket =
     ms < 500 ? '<0.5s' : ms < 1000 ? '0.5-1s' : ms < 2000 ? '1-2s' : ms < 4000 ? '2-4s' : '>4s'
-  event('startup', { bucket, mode })
+  startupQueued = true
+  afterNoticeShown(() => {
+    startupSent = true
+    event('startup', { bucket, mode })
+  })
 }
 
 // build a stable, param-free url for Plausible: origin + path only — never
