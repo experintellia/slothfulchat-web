@@ -2,47 +2,27 @@
  * Non-trickle ICE gathering, ported faithfully from upstream
  * `deltachat/calls-webapp` `gatheredEnoughIce()` (`src/lib/calls.ts`).
  *
- * WHY non-trickle: the offer/answer travels as a (slow, store-and-forward)
- * DeltaChat message, so there is no live channel to trickle candidates over
- * before connecting. We must therefore embed candidates INTO the SDP before
- * sending it. We don't wait for gathering to fully complete (that can hang on
- * bad networks); we send as soon as we have "enough".
- *
- * "Enough" (a `Promise.race`, first to settle wins):
- *   1. gotRelayCandidate  — first `icecandidate` with `type === "relay"` (TURN),
- *      then a `RELAY_CANDIDATE_SETTLE_MS` (0ms) tick. Because of
- *      `bundlePolicy: "max-bundle"` only one relay candidate is expected, and a
- *      relay candidate essentially guarantees connectivity. This is the happy
- *      path when a TURN server is configured (Delta Chat's `ice_servers()`
- *      always returns a chatmail TURN relay).
- *   2. gotSrflxCandidate  — first `srflx` (STUN) candidate + a
- *      `SRFLX_CANDIDATE_SETTLE_MS` (150ms) settle. ONLY entered into the race
- *      when NO TURN server is configured. "Fail fast / succeed fast".
- *   3. iceGatheringComplete — `iceGatheringState === "complete"`. This is the
- *      "or timeout" fallback: upstream has NO wall-clock timer; the natural end
- *      of gathering is the backstop. (An optional `overallTimeoutMs` escape
- *      hatch is offered below; it defaults OFF so behavior matches upstream.)
+ * WHY non-trickle: the offer/answer travels as a store-and-forward DeltaChat
+ * message — no live channel to trickle over — so candidates must be embedded
+ * INTO the SDP before sending. We don't wait for gathering to fully complete
+ * (can hang on bad networks); we send once we have "enough", a `Promise.race`:
+ *   1. first `relay` (TURN) candidate + 0ms settle — only one expected under
+ *      max-bundle, and a relay candidate essentially guarantees connectivity;
+ *   2. first `srflx` (STUN) candidate + 150ms settle — ONLY raced when no
+ *      TURN server is configured;
+ *   3. `iceGatheringState === "complete"` as the natural backstop (upstream
+ *      has no wall-clock timer; `overallTimeoutMs` is an opt-in extra).
  *
  * CRITICAL ORDERING: call this BEFORE `setLocalDescription`, so the candidate
- * listeners are attached before candidates start flowing. Upstream warns about
- * exactly this and does:
- *      const gatheredEnoughIceP = gatheredEnoughIce(pc);
- *      ... addTrack ...
- *      pc.setLocalDescription(await pc.createOffer());
- *      await gatheredEnoughIceP;
- *      const offer = pc.localDescription!.sdp;
+ * listeners are attached before candidates start flowing (upstream warns
+ * about exactly this).
  *
- * Pure module: no DOM/React imports. WebRTC types are ambient (erased at
- * runtime); the function operates on a minimal structural `pc` so it is
- * unit-testable with a fake.
+ * Pure module, no DOM imports; operates on a structural `pc` for testability.
  */
 
 import { RELAY_CANDIDATE_SETTLE_MS, SRFLX_CANDIDATE_SETTLE_MS } from './constants.ts';
 
-/**
- * The subset of `RTCPeerConnection` that {@link gatherUntilEnoughIce} touches.
- * A real `RTCPeerConnection` is assignable to this; so is a test fake.
- */
+/** The subset of `RTCPeerConnection` that {@link gatherUntilEnoughIce} touches. */
 export interface GatheringPeerConnection {
   readonly iceGatheringState: RTCIceGatheringState;
   getConfiguration(): RTCConfiguration;
@@ -59,26 +39,15 @@ export interface GatheringPeerConnection {
 }
 
 export interface GatherOptions {
-  /**
-   * OPTIONAL, defaults to disabled to stay byte-identical with upstream. A hard
-   * wall-clock cap (ms): if neither a satisfying candidate nor gathering
-   * completion happens in time, resolve anyway with whatever is in the SDP.
-   * Use only as a safety net on pathological networks.
-   */
+  /** Opt-in hard wall-clock cap (ms); defaults OFF to match upstream. On
+   * expiry, resolve with whatever is already in the SDP. */
   overallTimeoutMs?: number;
   /** Injectable timers for deterministic tests. Default: global set/clear. */
   setTimeoutFn?: (cb: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
-  /**
-   * Optional abort. When it fires, gathering resolves immediately and every
-   * candidate/state listener is detached. Without this, a caller that tears the
-   * call down while parked at `await gatherUntilEnoughIce(pc)` would wait
-   * forever: a closed `pc` emits no further `icecandidate` /
-   * `icegatheringstatechange` events and never reaches `iceGatheringState ===
-   * "complete"`, so none of the racers below would ever settle — leaking this
-   * promise and the (closed) `pc` it closes over. The engine wires this to its
-   * teardown (see audio-call.ts).
-   */
+  /** Optional abort: resolves immediately and detaches all listeners. Needed
+   * because a closed `pc` emits no further events, so teardown while awaiting
+   * this would otherwise hang forever. Wired to engine teardown (audio-call.ts). */
   signal?: AbortSignal;
 }
 
@@ -95,10 +64,9 @@ export function hasTurnServer(configuration: RTCConfiguration | undefined): bool
 }
 
 /**
- * Resolves once "enough" ICE has been gathered to send the local description.
- * See the module doc for the exact heuristic. Faithful to upstream, with the
- * `turns:` URL also treated as TURN (upstream only checks `turn:`) and an
- * opt-in overall timeout.
+ * Resolves once "enough" ICE has been gathered to send the local description
+ * (heuristic in the module doc). Faithful to upstream, except `turns:` is also
+ * treated as TURN (upstream only checks `turn:`) plus the opt-in timeout.
  */
 export function gatherUntilEnoughIce(
   pc: GatheringPeerConnection,

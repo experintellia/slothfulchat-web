@@ -1,56 +1,35 @@
 /**
- * A participant's avatar with a glowing ring that reacts to voice level (M2,
- * docs/calls.md: "a glowing ring around each participant avatar that reacts
- * to their voice level (Discord/Jitsi style)"). Purely presentational: `level`
- * is whatever the bridge's Web-Audio meter (`engine/level-meter.ts`'s
- * `TrackLevelMeter`, already smoothed there via an exponential moving
- * average) last reported for this participant's track — this component does
- * no metering itself, it only renders the number, so it needs no
- * `useEffect`/timers of its own and re-renders exactly as often as
- * `CallsUiStore` pushes a new level (~10x/sec while a call is connected).
- *
- * No avatar-image plumbing lives here on purpose: `avatarUrl` is an optional
- * prop so a caller that *does* have one (the runtime's existing blob/avatar
- * path, docs/calls.md: "Existing blob/avatar path… for avatars in call UI")
- * can pass it straight through; without one this falls back to an initial
- * letter, which is enough to demonstrate/troubleshoot "is this participant's
- * mic actually picking anything up" even before that wiring lands.
+ * A participant's avatar with a glowing ring that reacts to voice level
+ * (Discord/Jitsi style). Purely presentational: `level` is already smoothed
+ * by the bridge's Web-Audio meter (`engine/level-meter.ts`), so this does no
+ * metering and needs no effects/timers of its own — it re-renders exactly as
+ * often as `CallsUiStore` pushes a new level (~10x/sec while connected).
  */
 import type { CSSProperties } from 'react'
 
 export interface SpeakingRingProps {
-  /** Shown as the fallback initial and as the accessible name; also the
-   * caption rendered under the ring by the caller (this component does not
-   * render its own caption, so the same label isn't duplicated visually). */
+  /** Fallback initial + accessible name (the caller renders any caption). */
   label: string
-  /** Smoothed 0..1 voice level. `null` (not metered yet — e.g. an incoming
-   * call still ringing, mic not yet acquired) renders the same as `0`, a
-   * dark/non-glowing ring, so there is no "flash of wrong state". */
+  /** Smoothed 0..1 voice level. `null` (not metered yet, e.g. still ringing)
+   * renders the same as `0` — a dark, non-glowing ring. */
   level: number | null
   /** Optional avatar image URL. Falls back to an initial-letter tile. */
   avatarUrl?: string | null
-  /** Local participant only: dim the ring and mute the glow — a muted mic
-   * cannot be "speaking" no matter what the (stale, pre-mute) analyser reads,
-   * since track.enabled=false silences the signal at the source too, but
-   * dimming explicitly avoids depending on that timing. */
+  /** Local participant only: dim the ring and force the glow off — a muted
+   * mic cannot be "speaking", regardless of what a stale pre-mute analyser
+   * reading says. */
   muted?: boolean
-  /** Diameter in px. Default 72 (fits comfortably in the existing
-   * `styles.card` width, `min(340px, 92vw)`, two-up). */
+  /** Diameter in px. */
   size?: number
 }
 
 const DEFAULT_SIZE = 72
-/** Discord/Jitsi-style speaking-ring color — reuses the same green as the
- * incoming-ring Accept button (`styles.COLOR_ACCEPT`) so "glowing" reads as
- * one consistent "good/active" color across this package's UI rather than
- * introducing a second green. Not imported from styles.ts to keep this
- * component's only dependency to `react` — see its literal value there. */
+/** Same green as `styles.COLOR_ACCEPT`, kept as a literal so this
+ * component's only dependency stays `react`. */
 const RING_COLOR_RGB = '46, 160, 67'
-/** Neutral resting ring color — a subtle grey shown at level 0 so an idle
- * participant reads as "present but not speaking", NOT green (green at rest is
- * confusing: it looks like sound is being picked up when there is none). The
- * border lerps from this grey toward {@link RING_COLOR_RGB} as the voice level
- * rises, and the green glow only appears with actual voice (see below). */
+/** Neutral resting ring color — grey at level 0, so an idle participant
+ * reads as "present but not speaking"; green at rest would look like sound
+ * is being picked up when there is none. */
 const NEUTRAL_RING_RGB = '128, 128, 136'
 
 /** Linear interpolate one 0..255 channel from `a` to `b` by `t` (0..1). */
@@ -72,17 +51,10 @@ export function SpeakingRing({
 }: SpeakingRingProps) {
   const clampedLevel = Math.min(1, Math.max(0, level ?? 0))
   const effectiveLevel = muted ? 0 : clampedLevel
-  // At level 0 the ring is a subtle NEUTRAL grey (present, but clearly not
-  // speaking — no green at rest). As the voice level rises the border lerps
-  // from grey toward the speaking green AND a green glow grows from nothing —
-  // both scale from 0 at level 0, so there is zero green when there is no
-  // input, up to a clear glow + slight pulse-scale with real voice.
-  // Perceptual curve: raw voice level is small even at a normal speaking
-  // volume, so map it through a sqrt-ish response that strongly lifts the
-  // low-mid range — the ring lights up SOONER and more visibly as soon as you
-  // start talking. Still exactly 0 at level 0 (Math.pow(0, .5) === 0), so
-  // there is no green at rest and no ambient-noise glow (the meter's noise
-  // gate already floored silence to 0 upstream).
+  // Perceptual curve: raw voice level is small even at normal speaking
+  // volume, so a sqrt response lifts the low-mid range — the ring lights up
+  // as soon as you start talking. Still exactly 0 at level 0, so no green at
+  // rest (the meter's noise gate already floors silence upstream).
   const shaped = Math.pow(effectiveLevel, 0.5)
   const [gr, gg, gb] = NEUTRAL_RING_RGB.split(',').map(v => Number(v.trim()))
   const [sr, sg, sb] = RING_COLOR_RGB.split(',').map(v => Number(v.trim()))
@@ -109,10 +81,8 @@ export function SpeakingRing({
         ? `0 0 ${glowSpread}px ${glowSpread / 2}px rgba(${RING_COLOR_RGB}, ${glowAlpha})`
         : 'none',
     transform: `scale(${scale})`,
-    // Short, linear transition: the meter already ticks ~10x/sec (100ms) with
-    // its own EMA smoothing, so this only smooths the *rendering* between
-    // those ticks rather than re-introducing a second, competing smoothing
-    // curve on top of the engine's.
+    // Short, linear transition: just smooths rendering between the meter's
+    // ~100ms ticks — the meter already does its own EMA smoothing.
     transition: 'box-shadow 90ms linear, transform 90ms linear, border-color 90ms linear',
     background: '#2a2a2a',
     color: '#eee',

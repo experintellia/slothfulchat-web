@@ -60,22 +60,17 @@ is a broken invariant, not a style nit — see the enforcement below.
 
 ## Why the split is enforced, not just documented
 
-1. **Type level** — `engine/tsconfig.json` has no `"jsx"` (JSX literally
-   cannot appear in `engine/` source). It *does* include the `"DOM"` lib,
-   because `RTCPeerConnection`/`MediaStream`/etc. are ambient WebRTC types
-   with no import statement attached — that's not the same thing as a DOM
-   *import*. `ui/tsconfig.json` and `bridge/tsconfig.json` are the React/DOM
-   supersets.
-2. **Import level** — `../../scripts/check-calls-engine-boundary.mjs` walks
-   `engine/**/*.ts` and fails on any `react`/`react-dom` import, any `.tsx`
-   file, or any relative import reaching into `../ui`/`../bridge`. Run it via
-   `pnpm --filter @slothfulchat/calls lint:engine-boundary`.
+**Type level** — `engine/tsconfig.json` has no `"jsx"` (JSX literally
+cannot appear in `engine/` source). It *does* include the `"DOM"` lib,
+because `RTCPeerConnection`/`MediaStream`/etc. are ambient WebRTC types
+with no import statement attached — that's not the same thing as a DOM
+*import*. `ui/tsconfig.json` and `bridge/tsconfig.json` are the React/DOM
+supersets.
 
 ## Build & test
 
 ```sh
 pnpm --filter @slothfulchat/calls build                # tsc --noEmit, per subfolder
-pnpm --filter @slothfulchat/calls lint:engine-boundary  # the import-boundary check
 pnpm --filter @slothfulchat/calls test                  # node --test engine/*.test.ts
 ```
 

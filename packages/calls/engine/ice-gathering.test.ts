@@ -13,12 +13,8 @@ class FakePc implements GatheringPeerConnection {
   private stateListeners = new Set<() => void>();
   private configuration: RTCConfiguration;
   // Plain field + assignment, not a constructor parameter property: Node's
-  // built-in type-stripping test runner (`node --test *.test.ts`, no build
-  // step) only erases type syntax, it can't lower parameter properties (they
-  // require an actual code transform, not just stripping) — see
-  // scripts/check-calls-engine-boundary.mjs's sibling note and
-  // engine/tsconfig.json's `erasableSyntaxOnly`, which now catches this class
-  // of bug at typecheck time too.
+  // type-stripping test runner can't lower parameter properties — see
+  // `erasableSyntaxOnly` in tsconfig.base.json.
   constructor(configuration: RTCConfiguration) {
     this.configuration = configuration;
   }

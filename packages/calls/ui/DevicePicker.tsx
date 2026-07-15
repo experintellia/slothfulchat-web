@@ -1,18 +1,10 @@
 /**
- * Mic/camera picker (M2, docs/calls.md: "when more than one mic/camera
- * exists, let the user choose (and switch mid-call)"). Purely presentational
- * and driven by `engine/devices.ts`'s {@link shouldShowDevicePicker}: each
- * `<select>` row is only rendered when its kind actually has more than one
- * device, so a typical single-mic/no-camera laptop shows nothing extra at
- * all — no picker for a choice of one.
- *
- * Both selects hot-switch mid-call via `AudioCallEngine.switchMicrophone`/
- * `switchCamera` + `RTCRtpSender.replaceTrack` (wired by the runtime's
- * `CallManager`, not here — this component only reports the user's choice
- * via `onSelectMicrophone`/`onSelectCamera`). The camera row shows whenever
- * there is more than one camera, even while the camera is off — picking then
- * just records the preference, which `setCameraEnabled(true)` uses on the
- * next enable (see `AudioCallEngine.switchCamera`).
+ * Mic/camera picker. Purely presentational — only reports the user's choice
+ * via `onSelectMicrophone`/`onSelectCamera` (the runtime wires the actual
+ * hot-switch). Each row is only rendered when its kind has more than one
+ * device — no picker for a choice of one. The camera row shows even while
+ * the camera is off: picking then records the preference used on the next
+ * enable (see `AudioCallEngine.switchCamera`).
  */
 import type { CallDeviceInfo } from '../engine/index.ts'
 import * as styles from './styles.ts'
@@ -22,9 +14,7 @@ export interface DevicePickerProps {
   cameras: CallDeviceInfo[]
   selectedMicrophoneId: string | null
   selectedCameraId: string | null
-  /** Set if the last `onSelectMicrophone` hot-switch failed
-   * (`AudioCallEngine`'s `onDeviceSwitchError`) — the call keeps running on
-   * the previous mic; this is just an inline note next to the picker. */
+  /** Non-fatal mic hot-switch failure, shown inline next to the picker. */
   deviceSwitchError: string | null
   onSelectMicrophone(deviceId: string): void
   onSelectCamera(deviceId: string): void

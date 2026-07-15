@@ -64,8 +64,9 @@ when it sets `location.hash`, and calls-webapp reverses it with
 not use the webapp, so this base64/url step is not part of our path.** Applying
 it to `place_call_info`/`accept_call_info` would make us wire-INCOMPATIBLE.
 
-`signaling.ts` exposes `webappHash{Encode,Decode}` ONLY to drive/interop-test a
-real calls-webapp instance — never for the DeltaChat message payload.
+(A `webappHash{Encode,Decode}` codec for driving a real calls-webapp instance
+once lived in `signaling.ts` — never part of the DeltaChat message payload;
+see git history.)
 
 ## 2. Serializer contract (`signaling.ts`)
 

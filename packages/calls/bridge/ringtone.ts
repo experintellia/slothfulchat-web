@@ -1,23 +1,13 @@
 /**
- * bridge/ringtone.ts — incoming-call ringtone + vibration (M5, docs/calls.md).
- * Rings ONLY for an incoming call while it is in the `ringing` state — ringing
- * always renders in the main window (docs/calls.md §Windowing), so this is
- * the one call-manager path that ever needs it; an outgoing call's own
- * "Calling…" state has no ringtone (the callee's device rings, not ours).
+ * Incoming-call ringtone + vibration, used only while an incoming call is in
+ * the `ringing` state (docs/calls.md §Windowing).
  *
- * No bundled audio asset: the tone is synthesized with a Web Audio
- * oscillator (gated by a `GainNode` on/off, not by starting/stopping the
- * oscillator itself — an `OscillatorNode` can only be started once, ever), so
- * there is nothing to fetch, license, or add to the CSP's `media-src`. This
- * mirrors `createTrackAnalyser` in `bridge/index.ts` — the only other place in
- * this package that touches a real `AudioContext`.
- *
- * Best-effort throughout, matching the rest of `packages/calls`: a browser
- * with no Web Audio, no `navigator.vibrate`, or a suspended/blocked
- * `AudioContext` just rings silently rather than breaking the incoming-call
- * dialog. `stop()` is always safe to call (including before `start()`, and
- * more than once) so every call-manager teardown path can call it
- * unconditionally.
+ * The tone is synthesized with a Web Audio oscillator — nothing to fetch,
+ * license, or add to the CSP's `media-src` — gated by a `GainNode` on/off, not
+ * by starting/stopping the oscillator (an `OscillatorNode` can only be started
+ * once, ever). Best-effort throughout: missing Web Audio / `navigator.vibrate`
+ * or a blocked `AudioContext` rings silently rather than breaking the dialog,
+ * and `stop()` is unconditionally safe so every teardown path can call it.
  */
 
 const RING_ON_MS = 1000
@@ -25,36 +15,32 @@ const RING_OFF_MS = 1000
 const RING_FREQ_HZ = 440 // classic single-tone approximation of a ring cadence
 const RING_GAIN = 0.15 // quiet — a notification cue, not a loud alarm
 
-/** How many [vibrate, pause] pairs to arm at once. `navigator.vibrate` has no
- * "loop" option — a pattern array is played once and stops — so a long
- * incoming ring is approximated by re-arming a fresh pattern periodically
- * (see {@link RingtonePlayer.start}) rather than by one unbounded array.
- * Exported (and kept pure/parameter-driven) so it is unit-testable without
- * `navigator.vibrate`. */
+/** Build a [vibrate, pause] pattern of `repeats` pairs. `navigator.vibrate`
+ * has no loop option — a pattern plays once and stops — so a long ring is
+ * approximated by re-arming a fresh pattern periodically. */
 export function vibratePattern(repeats: number): number[] {
   const pattern: number[] = []
   for (let i = 0; i < repeats; i++) pattern.push(RING_ON_MS, RING_OFF_MS)
   return pattern
 }
 
-/** One re-arm covers this many [on, off] pairs (~30s) before {@link
- * RingtonePlayer.start}'s interval re-arms another. */
+/** [on, off] pairs per arm (~30s) before the interval re-arms another. */
 const VIBRATE_REPEATS_PER_ARM = 15
 const VIBRATE_REARM_MS = VIBRATE_REPEATS_PER_ARM * (RING_ON_MS + RING_OFF_MS)
 
 export interface RingtonePlayerOptions {
   /** Injectable for tests. Defaults to `() => new AudioContext()`. */
   createAudioContext?: () => AudioContext
-  /** Injectable for tests. Defaults to `navigator.vibrate`, or a no-op `false`
-   * when unavailable (older/embedded browsers, desktop). */
+  /** Injectable for tests. Defaults to `navigator.vibrate`, or a no-op when
+   * unavailable. */
   vibrate?: (pattern: number[]) => boolean
 }
 
 /**
  * A looping ring tone + vibration for the incoming-call dialog. `start()` is
- * idempotent (a second call while already ringing is a no-op); `stop()` fully
- * tears down the audio graph and cancels any in-flight vibration, and is safe
- * to call any number of times, including before `start()`.
+ * idempotent; `stop()` tears down the audio graph, cancels any in-flight
+ * vibration, and is safe to call any number of times, including before
+ * `start()`.
  */
 export class RingtonePlayer {
   private readonly createAudioContext: () => AudioContext
@@ -92,10 +78,9 @@ export class RingtonePlayer {
     try {
       const ctx = this.createAudioContext()
       if (ctx.state === 'suspended') {
-        // Best-effort: the ring starts the moment an IncomingCall event
-        // arrives, which is not itself a user gesture, so resume() can
-        // legitimately fail here — the tone just doesn't sound and vibration
-        // (below) still tries.
+        // Best-effort: the ring is triggered by an IncomingCall event, not a
+        // user gesture, so autoplay policy may block resume() — the tone just
+        // doesn't sound and vibration still tries.
         void ctx.resume().catch(() => {})
       }
       const gain = ctx.createGain()

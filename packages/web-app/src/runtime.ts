@@ -645,11 +645,9 @@ class BrowserRuntime {
     _callCounterFunction: (label: string) => void
   ): BaseDeltaChat<any> {
     const dc = getCore().dc
-    // Bring the call manager up as soon as the connection exists so it is
-    // subscribed to IncomingCall on the in-page emitter and can ring for
-    // incoming calls without the user having opened any call UI first. Guarded:
-    // a fault in the (prototype) call subsystem must never break the core
-    // connection the whole app depends on.
+    // Bring the call manager up as soon as the connection exists so it can
+    // ring for incoming calls without any call UI having been opened.
+    // Guarded: a call-subsystem fault must never break the core connection.
     try {
       getCallManager(this.log, this.transformBlobURL.bind(this))
     } catch (err) {
@@ -674,15 +672,9 @@ class BrowserRuntime {
     this.log.critical('Method not implemented.')
   }
   /**
-   * Place an outgoing 1:1 call. `startWithCameraEnabled` (M3) is the upstream
-   * `ChatView` call button's own audio-vs-video choice ("start_audio_call" vs
-   * "start_video_call" in its context menu, both already calling this exact
-   * method/signature) — `true` acquires the camera alongside the mic and
-   * advertises `has_video` to the peer. The whole call — mic/camera
-   * acquisition, non-trickle ICE, offer, ringing, connect, hangup — is
-   * conducted by the call manager against the wasm core's jsonrpc client.
-   * Runs inside the call-button click gesture, so the mic/camera-permission
-   * prompt is allowed.
+   * Place an outgoing 1:1 call. `startWithCameraEnabled` is the upstream
+   * ChatView call button's audio-vs-video choice. Runs inside the call-button
+   * click gesture, so the mic/camera-permission prompt is allowed.
    */
   startOutgoingVideoCall(
     accountId: number,
@@ -692,13 +684,10 @@ class BrowserRuntime {
     getCallManager(this.log, this.transformBlobURL.bind(this)).startOutgoingCall(accountId, chatId, param?.startWithCameraEnabled ?? false)
   }
   /**
-   * Show the incoming-call ring and, on accept, answer the call. Called both
-   * from the IncomingCall event subscription and from the chat log's
-   * accept/redial buttons (Message.tsx). `startWithCameraEnabled` (M3) mirrors
-   * the CALLER's own `has_video` (the `IncomingCall` event's `has_video`) — we
-   * add our own camera track to the answer so both sides carry video, per
-   * ordinary WebRTC offer/answer symmetry (see `IncomingCallParams.hasVideo`'s
-   * doc in `@slothfulchat/calls/bridge`).
+   * Show the incoming-call ring and, on accept, answer the call. Called from
+   * the IncomingCall event subscription and the chat log's accept/redial
+   * buttons. `startWithCameraEnabled` mirrors the caller's `has_video` (see
+   * `IncomingCallParams.hasVideo`).
    */
   async openIncomingVideoCallWindow(params: {
     accountId: number
@@ -1652,27 +1641,18 @@ function showWebxdcNotImplementedDialog() {
   overlay.showModal()
 }
 
-// --- Native 1:1 calls (audio, M1) ------------------------------------------
+// --- Native 1:1 calls -------------------------------------------------------
 // The runtime side of packages/calls: subscribe to the core's call events on
-// the in-page emitter (getCore().dc), and drive the engine (via the bridge)
-// against the typed jsonrpc client. Ringing + in-call UI is our own React
-// tree from packages/calls/ui — the incoming-ring dialog and the in-page call
-// overlay (hangup, mute) — mounted once (`mountCallsUi`) into the main window
-// (docs/calls.md: "Ringing always renders in the main window … can never be
-// popup-blocked"). `CallManager` below owns no DOM itself: it only pushes
-// state into the shared `CallsUiStore` that the mounted React tree observes —
-// including, as of M2, the `onLocalLevel`/`onRemoteLevel` Web-Audio meter
-// callbacks that drive the per-participant speaking rings in `CallOverlay`,
-// and the mic/camera `DevicePicker` (enumerate once the local stream exists,
-// hot-switch the mic mid-call via `CallBridge.switchMicrophone` ->
-// `RTCRtpSender.replaceTrack` — no renegotiation, see `AudioCallEngine`'s
-// "DEVICE HOT-SWITCHING" doc). The detached popup window + signaling IPC (M4)
-// builds on top of this same seam later.
+// the in-page emitter (getCore().dc) and drive the engine via CallBridge.
+// Ringing always renders in the main window (can never be popup-blocked,
+// docs/calls.md §Windowing); `CallManager` owns no DOM — it pushes state into
+// the shared `CallsUiStore` that the React tree mounted by `mountCallsUi`
+// observes.
 
-/** `${accountId}` scoping is implicit (one call at a time in M1). */
+/** `${accountId}` scoping is implicit (one call at a time). */
 class CallManager {
   private readonly log: Logger
-  /** Resolve a core blob path to a SW-served URL (FIX 2 avatars). */
+  /** Resolve a core blob path to a SW-served URL (call-UI avatars). */
   private readonly transformBlobURL: (path: string) => string
   private readonly factories = defaultMediaFactories()
   /** The single shared call-UI store; the React tree mounted by
@@ -1682,69 +1662,54 @@ class CallManager {
     // The real generated RawClient is structurally a CallsRpcClient.
     return getCore().dc.rpc as unknown as CallsRpcClient
   }
-  /** Whether to prefer a detached popup window for the active call (M4). The
-   * ring always stays in the main window regardless; this only governs where
-   * the *in-call* engine+UI live. Popup failures fall back to the overlay, so
-   * this stays `true` — a hook for a future "always overlay" setting. */
+  /** Prefer a detached popup for the in-call UI (the ring always stays in the
+   * main window). Popup failures fall back to the overlay, so this stays
+   * `true` — a hook for a future "always overlay" setting. */
   private readonly popupPreferred = true
-  /** The single active call (M1: one at a time). */
+  /** The single active call. */
   private call: {
     accountId: number
     chatId: number
-    /** M4: outgoing vs incoming — needed by the popup handoff / fallback,
-     * which (unlike the M1 overlay path) can re-derive the call from the slot. */
     direction: CallDirection
     hasVideo: boolean
     /** Best-effort chat/contact name (resolved by `decorateCallInfo`). */
     title: string
-    /** Incoming: the caller's raw-SDP offer, retained so an accept can build a
-     * `CallBridge` (overlay) or hand it to the popup (`CallPopupInit.offerSdp`). */
+    /** Incoming: the caller's raw-SDP offer, retained so an accept can build
+     * a `CallBridge` (overlay) or hand it to the popup. */
     offerSdp: string | null
-    /** Incoming: the info-message id (known from the `IncomingCall` event, so
-     * events route even before the ringing bridge exists). Outgoing: `null`
-     * until placed — then read off `bridge`/`popup` instead. */
+    /** Incoming: the info-message id (known up front, so events route even
+     * before the ringing bridge exists). Outgoing: `null` until placed —
+     * then read off `bridge`/`popup` instead. */
     callMessageId: number | null
-    /** M4: where the in-call engine+UI live. `overlay` = main-window `CallBridge`
-     * + `CallsUiStore` (M1 path); `popup` = a detached `CallPopupHost` relays
-     * signaling to the popup's own engine (this window shows nothing). */
+    /** Where the in-call engine+UI live: main-window overlay, or a detached
+     * popup that relays signaling (this window shows nothing then). */
     mode: 'overlay' | 'popup'
     bridge: CallBridge | null
-    /** M4: set in `popup` mode — the opener-side relay to the detached window. */
+    /** Set in `popup` mode — the opener-side relay to the detached window. */
     popup: CallPopupHost | null
     cancelled: boolean
     /** Set when a fatal error is being shown, to keep the UI up. */
     errored: boolean
-    /** M2: guards `refreshDevices` running more than once per call — it's
-     * driven off every `onState` tick (there is no dedicated "local stream
-     * ready" runtime event; the engine-level one, `onLocalTrackChanged`, is
-     * consumed by the bridge's level-meter retap, not surfaced here). */
+    /** Guards `refreshDevices` running more than once per call (driven off
+     * every `onState` tick). */
     devicesRefreshed: boolean
-    /** M5 call-outcome analytics (docs/calls.md: "missed/busy/timeout … via
-     * call_info"): whether this call's `CallState` was ever observed reaching
-     * `connected` — in EITHER mode: the overlay path sets it directly
-     * (`onState`); a popup-mode call sets it from the popup's own report
-     * (`CallPopupHost.onEnded`'s `reachedConnected`), since the popup owns the
-     * engine and this window's `onState`/`onError` are no-ops while
-     * `mode === 'popup'`. */
+    /** Call-outcome analytics: ever reached `connected`, in either mode (the
+     * popup reports it via `onEnded`, since this window's `onState` is a
+     * no-op while `mode === 'popup'`). */
     connectedOnce: boolean
-    /** Set the moment WE decide to end the call ourselves before it ever
-     * connected (`hangupCurrent`) — that is an unambiguous local
-     * declined/cancelled, never worth an extra `call_info` round-trip. */
+    /** We ended it ourselves before it connected — an unambiguous local
+     * declined/cancelled, no `call_info` round-trip needed. */
     locallyEnded: boolean
     /** `reportCallOutcome` fires at most once per call; also set (without a
-     * result) when the outcome genuinely isn't this device's to report — the
-     * call was accepted on ANOTHER device (`IncomingCallAccepted{
-     * from_this_device:false}`), which is a real connect, just not one this
-     * session should claim. */
+     * result) when the call was accepted on ANOTHER device — a real connect,
+     * just not this session's to claim. */
     outcomeReported: boolean
   } | null = null
-  /** The shared ringtone/vibration for an incoming ring (M5, docs/calls.md).
-   * Ringing always renders in the main window regardless of popup preference
-   * (see the §Windowing note above), so one instance here covers every call. */
+  /** The shared ringtone/vibration; ringing is always main-window, so one
+   * instance covers every call. */
   private readonly ringtone = new RingtonePlayer()
-  /** M2: live device-list refresh while a call is up (e.g. a mic/camera is
-   * plugged/unplugged mid-call) — registered in `startOutgoingCall`/
-   * `openIncomingCall`, torn down in `teardown`. */
+  /** Live device-list refresh while a call is up (mic/camera hotplug);
+   * torn down in `teardown`. */
   private deviceChangeHandler: (() => void) | null = null
 
   constructor(log: Logger, transformBlobURL: (path: string) => string) {
@@ -1791,11 +1756,8 @@ class CallManager {
       // Only meaningful while still ringing (main-window overlay, pre-accept);
       // in popup mode the call is already accepted here, so ignore.
       if (slot == null || slot.mode !== 'overlay') return
-      // M5 call-outcome analytics: this call WAS answered — just not by this
-      // device/session, so it is not this device's outcome to report (the
-      // device that actually accepted it reports 'connected' itself).
-      // Suppress before the eventual teardown (sync here, or async via
-      // `onState`'s 'ended' handling below) reaches `reportCallOutcome`.
+      // Answered on another device — not this device's outcome to report;
+      // suppress before teardown reaches `reportCallOutcome`.
       slot.outcomeReported = true
       if (slot.bridge) {
         if (slot.bridge.state === 'ringing') slot.bridge.acceptedElsewhere()
@@ -1854,14 +1816,14 @@ class CallManager {
       outcomeReported: false,
     }
     this.call = slot
-    // M4: prefer a detached popup (window.open must run in this click gesture).
+    // Prefer a detached popup (window.open must run in this click gesture).
     // A synchronous popup-block returns false → fall straight through to the
     // in-page overlay while still gesture-authorized for getUserMedia.
     if (this.tryStartPopup(slot)) return
     this.startOutgoingOverlay(slot)
   }
 
-  /** Outgoing call in the main-window overlay (M1 path): fetch ICE, build the
+  /** Outgoing call in the main-window overlay: fetch ICE, build the
    * `CallBridge`, place the offer. Used when the popup is blocked/unavailable. */
   private startOutgoingOverlay(slot: NonNullable<CallManager['call']>): void {
     slot.mode = 'overlay'
@@ -1894,8 +1856,6 @@ class CallManager {
     return {
       onStateChange: state => this.onState(slot, state),
       onRemoteStream: stream => this.ui.attachRemoteStream(stream),
-      // Engine-owned remote camera/mic state (peer mutedState messages, track
-      // events as fallback) — deduped by the engine, just forward to the store.
       onRemoteVideoActiveChanged: active => {
         if (this.call !== slot || slot.mode !== 'overlay') return
         this.ui.setRemoteHasVideo(active)
@@ -1907,20 +1867,13 @@ class CallManager {
       // Event routing reads the message id off bridge/popup/slot (set the
       // moment placeOutgoingCall resolves), so no onCallMessageId indexing.
       onError: err => this.onError(slot, err),
-      // M2 speaking rings: forward the bridge's Web-Audio meters into the
-      // shared store; CallOverlay's SpeakingRing tiles render them.
       onLocalLevel: level => this.ui.setLocalLevel(level),
       onRemoteLevel: level => this.ui.setRemoteLevel(level),
-      // M5: non-blocking direct-vs-relay indicator (docs/calls.md) — purely
-      // informational, forwarded straight into the shared store.
       onConnectionRouteChanged: route => this.ui.setConnectionRoute(route),
-      // M2 device picker: a failed switchMicrophone/switchCamera leaves the
-      // call/old device untouched — surface it next to the picker, not as a
-      // call-ending error (contrast onError above).
+      // A failed device switch leaves the call untouched — surface next to
+      // the picker, not as a call-ending error.
       onDeviceSwitchError: err => this.ui.showDeviceSwitchError(err.message || 'Could not switch device'),
-      // M3: local video preview + camera/screen-share toggle state. Fires on
-      // the initial camera, a switchCamera, camera on/off, and screen-share
-      // start/stop (track may be null when video goes away) — re-sync all the
+      // Track may be null when video goes away — re-sync all the
       // local-video-derived store fields from the bridge each time.
       onLocalVideoTrackChanged: () => this.syncLocalVideo(slot),
       onScreenShareChanged: sharing => {
@@ -1942,13 +1895,9 @@ class CallManager {
     // Same call already showing (event + Message.tsx button both call in).
     if (this.slotForCall(accountId, callMessageId)) return
     if (this.call) {
-      // M5 (docs/calls.md: "busy … via call_info"): we only ever run one call
-      // at a time, so a second incoming call is auto-declined rather than
-      // left to ring the caller out silently — real telephony "busy". There
-      // is no core call-state for this (core only knows the callee explicitly
-      // declined or let it time out); it is a purely local, this-device
-      // classification, reported immediately (no ambiguity to resolve via
-      // `call_info` — we caused the decline ourselves, right now).
+      // One call at a time: auto-decline a second incoming call ("busy")
+      // rather than letting it ring the caller out. Purely local
+      // classification (core has no busy state), reported immediately.
       this.log.warn('openIncomingCall: already in a call, declining as busy')
       this.rpc.endCall(accountId, callMessageId).catch(() => {
         /* best-effort — the caller's own ring timeout is the fallback */
@@ -1956,10 +1905,9 @@ class CallManager {
       analytics.trackCall({ direction: 'incoming', hasVideo, result: 'busy' })
       return
     }
-    // Ringing ALWAYS renders in the main window (docs/calls.md §Windowing) — the
-    // popup is only opened on accept (see acceptCurrent). The ringing engine
-    // lives in the overlay bridge; it holds no media/pc yet (mic is untouched
-    // until accept), so handing it off to a popup later is cheap.
+    // Ringing ALWAYS renders in the main window — the popup only opens on
+    // accept. The ringing engine holds no media/pc yet (mic untouched until
+    // accept), so a later popup handoff is cheap.
     this.ui.showCall({ direction: 'incoming', title: 'Call', hasVideo })
     const slot: NonNullable<CallManager['call']> = {
       accountId,
@@ -2024,11 +1972,10 @@ class CallManager {
   private acceptCurrent(): void {
     const c = this.call
     if (!c || c.direction !== 'incoming' || c.mode === 'popup') return
-    // The ring is answered — silence it regardless of which path (popup
-    // handoff or overlay) takes over from here.
+    // The ring is answered — silence it regardless of which path takes over.
     this.ringtone.stop()
-    // M4: prefer handing the accepted call to a detached popup. The accept
-    // click is a user gesture, so window.open is allowed here.
+    // Prefer handing the accepted call to a detached popup; the accept click
+    // is a user gesture, so window.open is allowed here.
     if (c.offerSdp != null && this.tryStartPopup(c)) {
       // Discard the main-window ringing engine (no media/pc/accept sent yet);
       // slot.mode is now 'popup', so its 'ended' state change is ignored.
@@ -2048,11 +1995,7 @@ class CallManager {
   private hangupCurrent(): void {
     const c = this.call
     if (!c) return
-    // M5 call-outcome analytics: a hangup we initiate ourselves — before ever
-    // connecting — is an unambiguous local decline/cancel (see
-    // `reportCallOutcome`), never worth a `call_info` round-trip. A call that
-    // already connected (or already errored) ignores this flag entirely.
-    c.locallyEnded = true
+    c.locallyEnded = true // unambiguous local decline/cancel if never connected
     if (c.mode === 'popup') {
       // Rare from the main window (it shows no in-call UI in popup mode), but
       // e.g. app teardown can reach here: end the call from the opener side.
@@ -2078,15 +2021,10 @@ class CallManager {
     this.ui.setMuted(c.bridge.toggleMuted())
   }
 
-  /** Toggle screen sharing (M3) — local-only, no core RPC (same
-   * `replaceTrack`, no-renegotiation reasoning as mute/device switching); see
-   * `AudioCallEngine.startScreenShare`/`stopScreenShare`. The store's
-   * `screenSharing`/`screenShareError` fields are kept live by the bridge's
-   * `onScreenShareChanged`/`onScreenShareError` callbacks (wired in
-   * `startOutgoingCall`/`openIncomingCall`), not by this method's return
-   * value — `toggleScreenShare` does real async capture/track work, so the
-   * store must reflect the eventual outcome, not an optimistic guess.
-   */
+  /** Toggle screen sharing — local-only, no core RPC. The store is kept live
+   * by the bridge's onScreenShareChanged/Error callbacks, not by this
+   * method's result: the store must reflect the eventual async outcome,
+   * not an optimistic guess. */
   private toggleScreenShareCurrent(): void {
     const c = this.call
     if (!c?.bridge) return
@@ -2095,13 +2033,9 @@ class CallManager {
     })
   }
 
-  /** Toggle the local camera (M3, FIX 1) — available on ANY call, since the
-   * outgoing video sender is always negotiated (see
-   * `AudioCallEngine.setCameraEnabled`). Local-only, no core RPC. The store's
-   * camera/local-video fields are kept live by the engine's
-   * `onLocalVideoTrackChanged` (wired to `syncLocalVideo`), but we also sync
-   * once the toggle resolves in case it failed via `onDeviceSwitchError`
-   * (which fires no track-changed event). */
+  /** Toggle the local camera — local-only, no core RPC. Also syncs once the
+   * toggle resolves in case it failed via `onDeviceSwitchError` (which fires
+   * no track-changed event). */
   private toggleCameraCurrent(): void {
     const c = this.call
     if (!c?.bridge) return
@@ -2114,10 +2048,9 @@ class CallManager {
     )
   }
 
-  /** Re-sync every store field derived from the local outgoing video (M3, FIX
-   * 1): the preview stream, whether a local video track is actually flowing
-   * (camera on OR screen sharing → show the local tile), and the camera-on
-   * flag that drives the camera button + device picker. */
+  /** Re-sync every store field derived from the local outgoing video: the
+   * preview stream, whether video is flowing (camera OR screen share), and
+   * the camera-on flag. */
   private syncLocalVideo(slot: NonNullable<CallManager['call']>): void {
     if (this.call !== slot || slot.mode !== 'overlay') return
     const stream = slot.bridge?.localStream ?? null
@@ -2135,16 +2068,11 @@ class CallManager {
     // handoff) must not touch anything here.
     if (this.call !== slot || slot.mode !== 'overlay') return
     this.ui.setState(state)
-    // M5 call-outcome analytics: remember reaching `connected` at all, even if
-    // the call later ends for any reason — a call that connected is always
-    // reported as 'connected', never re-classified via `call_info`.
+    // A call that ever connected is always reported 'connected', never
+    // re-classified via `call_info`.
     if (state === 'connected') slot.connectedOnce = true
-    // M2 device picker: refresh once the local stream exists — i.e. once we
-    // are past `ringing` for an outgoing call (mic acquired to build the
-    // offer) or reach `connecting` for an incoming one (mic acquired on
-    // accept). `devicesRefreshed` makes this a one-shot per call; a
-    // `devicechange` event (see `registerDeviceChangeListener`) re-enumerates
-    // later without touching the one-shot selected-device seeding below.
+    // Device picker: refresh once the local stream exists (one-shot per call;
+    // `devicechange` re-enumerates later without re-seeding the selection).
     if (!slot.devicesRefreshed && (state === 'connecting' || state === 'connected')) {
       slot.devicesRefreshed = true
       void this.refreshDevices(slot, { seedSelectedMicrophone: true })
@@ -2176,10 +2104,8 @@ class CallManager {
     // already stopped, e.g. by `acceptCurrent`).
     this.ringtone.stop()
     this.reportCallOutcome(slot)
-    // M4: close the detached popup (idempotent — a popup that ended itself has
-    // already torn its host down). Opener-initiated close does NOT re-send
-    // endCall; the popup relayed its own on hangup, and remote/abrupt-close
-    // paths are handled inside CallPopupHost.
+    // Close the detached popup (idempotent). Does NOT re-send endCall — the
+    // popup relayed its own; remote/abrupt-close paths live in CallPopupHost.
     slot.popup?.close()
     slot.popup = null
     this.ui.clear()
@@ -2187,30 +2113,13 @@ class CallManager {
   }
 
   /**
-   * M5 call-outcome analytics (docs/calls.md: "content-free call analytics …
-   * missed/busy/timeout via call_info"). The single choke point: every
-   * teardown path funnels through here exactly once per call
-   * (`outcomeReported` guards it), classifying WHY the call ended without
-   * ever recording anything but the fixed `CallResult` bucket:
-   *
-   *   1. Already reported, or explicitly suppressed (accepted on another
-   *      device — a real connect, just not this session's to claim): no-op.
-   *   2. Reached `connected` at any point — locally (overlay) or as reported
-   *      by the popup's own engine (`connectedOnce`, set from either path):
-   *      'connected', regardless of how (or how badly) it ended afterwards —
-   *      a later fatal error on an already-connected call is still a call
-   *      that connected, so this is checked BEFORE `errored`.
-   *   3. A local engine failure that tore the call down before it ever
-   *      connected (`slot.errored`): 'error'.
-   *   4. We ourselves ended it before connecting (`locallyEnded`): 'declined'
-   *      (incoming) or 'cancelled' (outgoing) — unambiguous, no `call_info`
-   *      needed.
-   *   5. Otherwise: something else ended it (far end, timeout, a setup
-   *      failure before any message existed) — the genuinely ambiguous case
-   *      this method exists for. If a call message exists, ask core via
-   *      `call_info` and classify with `classifyCallOutcome`; if not (the
-   *      call never even reached `placeOutgoingCall`), fall back to the same
-   *      safe per-direction default `classifyCallOutcome` would have picked.
+   * Call-outcome analytics choke point: every teardown funnels through here
+   * exactly once per call, recording only the fixed `CallResult` bucket.
+   * Order matters: `connectedOnce` wins over `errored` (a fatal error on an
+   * already-connected call still connected), then `locallyEnded` (unambiguous
+   * declined/cancelled), and only the genuinely ambiguous remainder (far end,
+   * timeout) asks core via `call_info`/`classifyCallOutcome` — or falls back
+   * to the same per-direction default when no call message ever existed.
    */
   private reportCallOutcome(slot: NonNullable<CallManager['call']>): void {
     if (slot.outcomeReported) return
@@ -2232,10 +2141,7 @@ class CallManager {
     }
     const msgId = slot.callMessageId ?? slot.bridge?.callMessageId ?? slot.popup?.callMessageId ?? null
     if (msgId == null) {
-      // Never reached core (e.g. the ICE fetch itself failed before
-      // `placeOutgoingCall`/an offer existed) — nothing for `call_info` to
-      // look up; use the same safe default it would classify an unexpected
-      // state as, for this direction.
+      // Never reached core — nothing for `call_info` to look up.
       report(direction === 'incoming' ? 'missed' : 'timeout')
       return
     }
@@ -2260,12 +2166,10 @@ class CallManager {
   }
 
   /**
-   * Try to open the detached call popup for `slot`. Returns `true` if the popup
-   * window opened (we're now in popup mode — the popup runs the engine+UI and
-   * relays signaling here); `false` if popups are disabled or `window.open` was
-   * blocked (the caller falls back to the overlay synchronously, still inside
-   * the user gesture). A popup that opens but never handshakes triggers
-   * `onFallback` → {@link onPopupFallback} asynchronously.
+   * Try to open the detached call popup. `true` = popup mode now; `false` =
+   * popups disabled or window.open blocked (caller falls back to the overlay
+   * synchronously, still inside the user gesture). A popup that opens but
+   * never handshakes triggers {@link onPopupFallback} asynchronously.
    */
   private tryStartPopup(slot: NonNullable<CallManager['call']>): boolean {
     if (!this.popupEnabled()) return false
@@ -2282,9 +2186,7 @@ class CallManager {
       rpc: this.rpc,
       onReady: () => this.log.info('call popup ready'),
       onEnded: reachedConnected => {
-        // M5 call-outcome analytics: the popup's engine — not this window's
-        // (`onState` is a no-op while `mode === 'popup'`) — is the only place
-        // that knows whether the call actually connected; take its word for it.
+        // Only the popup's engine knows whether the call actually connected.
         if (reachedConnected) slot.connectedOnce = true
         if (this.call === slot) this.teardown(slot)
       },
@@ -2301,10 +2203,9 @@ class CallManager {
   }
 
   /**
-   * The popup opened but never handshaked (blank/failed page) — recover by
-   * running the call in the main-window overlay instead. Best-effort: by now
-   * the original gesture is stale, but a granted mic permission does not need a
-   * fresh gesture on most browsers.
+   * The popup opened but never handshaked — recover in the main-window
+   * overlay. The original gesture is stale by now, but a granted mic
+   * permission needs no fresh gesture on most browsers.
    */
   private onPopupFallback(slot: NonNullable<CallManager['call']>, reason: string): void {
     if (this.call !== slot) return
@@ -2316,11 +2217,9 @@ class CallManager {
   }
 
   /**
-   * Resume an already-accepted incoming call in the overlay (popup fallback):
-   * re-show the call UI, build the incoming bridge, and go straight to building
-   * the answer — the user accepted in the ring, so there is no second prompt.
-   * Ordered so the ringing→connecting transitions land synchronously and the
-   * accept/decline dialog never flashes.
+   * Resume an already-accepted incoming call in the overlay (popup fallback)
+   * — no second accept prompt. Ordered so ringing→connecting lands
+   * synchronously and the accept/decline dialog never flashes.
    */
   private startIncomingOverlayAccept(slot: NonNullable<CallManager['call']>): void {
     slot.mode = 'overlay'
@@ -2348,12 +2247,10 @@ class CallManager {
   }
 
   /**
-   * M2 device picker: enumerate mic/camera options and push them into the
-   * store. `seedSelectedMicrophone` additionally reads the ACTUAL device in
-   * use off the local track's `getSettings().deviceId` (real browser default
-   * selection, e.g. "communications" device — not necessarily
-   * `microphones[0]`) so the `<select>` opens pre-selected on the right
-   * option rather than defaulting to the first enumerated entry.
+   * Enumerate mic/camera options into the store. `seedSelectedMicrophone`
+   * reads the ACTUAL in-use device off the track's `getSettings().deviceId`
+   * (browser default isn't necessarily `microphones[0]`) so the picker opens
+   * pre-selected correctly.
    */
   private async refreshDevices(
     slot: NonNullable<CallManager['call']>,
@@ -2365,32 +2262,25 @@ class CallManager {
     if (options.seedSelectedMicrophone) {
       const activeDeviceId = slot.bridge?.localStream?.getAudioTracks()[0]?.getSettings().deviceId
       if (activeDeviceId) this.ui.setSelectedMicrophone(activeDeviceId)
-      // M3: seed the camera picker the same way, only when this call
-      // actually has a live video track to read a deviceId off.
       const activeCameraId = slot.bridge?.localStream?.getVideoTracks()[0]?.getSettings().deviceId
       if (activeCameraId) this.ui.setSelectedCamera(activeCameraId)
     }
   }
 
-  /** Hot-switch the mic (M2) — see `AudioCallEngine.switchMicrophone` for the
-   * `RTCRtpSender.replaceTrack` mechanics and failure semantics (the call
-   * keeps running on the old mic; `onDeviceSwitchError` surfaces the error). */
+  /** Hot-switch the mic — see `AudioCallEngine.switchMicrophone`. */
   private selectMicrophone(deviceId: string): void {
     const c = this.call
     if (!c?.bridge) return
     const bridge = c.bridge
     void bridge.switchMicrophone(deviceId).then(() => {
       if (this.call !== c) return // call ended/replaced while switching
-      // A failure leaves `audioInputDeviceId` unchanged (still the old
-      // device); only reflect the pick in the store once it actually took —
-      // the onDeviceSwitchError callback above already surfaced the failure.
+      // Only reflect the pick once it actually took; a failure was already
+      // surfaced via onDeviceSwitchError.
       if (bridge.audioInputDeviceId === deviceId) this.ui.setSelectedMicrophone(deviceId)
     })
   }
 
-  /** Hot-switch the camera (M3) — see `AudioCallEngine.switchCamera` (mirrors
-   * `selectMicrophone` exactly, including its "while screen-sharing this
-   * just records a preference" no-op-on-the-wire case). */
+  /** Hot-switch the camera — mirrors `selectMicrophone`. */
   private selectCamera(deviceId: string): void {
     const c = this.call
     if (!c?.bridge) return
@@ -2401,9 +2291,8 @@ class CallManager {
     })
   }
 
-  /** Re-enumerate on `devicechange` (e.g. a mic/camera plugged/unplugged
-   * mid-call) so the picker's option list stays live, not just a one-shot
-   * snapshot from call start. Does not touch the current selection. */
+  /** Re-enumerate on `devicechange` so the picker stays live mid-call.
+   * Does not touch the current selection. */
   private registerDeviceChangeListener(slot: NonNullable<CallManager['call']>): void {
     this.unregisterDeviceChangeListener()
     const handler = () => {
@@ -2421,15 +2310,11 @@ class CallManager {
   }
 
   /**
-   * Best-effort: resolve the real chat/contact name, avatar and theme color for
-   * the call UI (FIX 2), plus the self-account avatar for the local "You" ring.
-   * `getBasicChatInfo` returns camelCase `{ name, profileImage, color }` (the
-   * pinned core serializes `BasicChat` with `#[serde(rename_all="camelCase")]`);
-   * the avatar `profileImage` is a core blob path resolved through the existing
-   * SW blob route via {@link transformBlobURL}. Each lookup guards on the call
-   * still being the active one so a slow RPC that resolves after teardown/replace
-   * doesn't paint a stale name/avatar. Falls back silently to the generic title
-   * + initial-letter rings on any failure. */
+   * Best-effort: resolve the chat/contact name, avatar and theme color for
+   * the call UI, plus the self-account avatar. Each lookup guards on the call
+   * still being active so a slow RPC never paints a stale name/avatar; falls
+   * back silently to the generic title + initial-letter rings.
+   */
   private async decorateCallInfo(slot: NonNullable<CallManager['call']>): Promise<void> {
     try {
       const chat = await getCore().dc.rpc.getBasicChatInfo(slot.accountId, slot.chatId)
@@ -2458,9 +2343,7 @@ class CallManager {
 
 let callManager: CallManager | null = null
 /** Lazily create the single call manager (subscribes to call events on first
- * use). `transformBlobURL` is threaded in so the call UI can resolve real chat/
- * contact avatars via the existing blob path (docs/calls.md: "Existing blob/
- * avatar path … for avatars in call UI"). */
+ * use); `transformBlobURL` lets the call UI resolve avatars via the SW blob path. */
 function getCallManager(log: Logger, transformBlobURL: (path: string) => string): CallManager {
   if (!callManager) callManager = new CallManager(log, transformBlobURL)
   return callManager

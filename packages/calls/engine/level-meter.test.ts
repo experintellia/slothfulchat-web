@@ -133,7 +133,6 @@ test('TrackLevelMeter.start takes an immediate sample without waiting for a tick
   const harness = fakeIntervalHarness();
   const meter = new TrackLevelMeter({
     analyser,
-    smoothing: 0, // no smoothing — exercise the raw sample directly
     setIntervalFn: harness.setIntervalFn,
     clearIntervalFn: harness.clearIntervalFn,
   });
@@ -142,13 +141,12 @@ test('TrackLevelMeter.start takes an immediate sample without waiting for a tick
   assert.ok(meter.level > 0, 'start() takes a synchronous first sample');
 });
 
-test('TrackLevelMeter: level rises and falls as the underlying signal changes (smoothing=0)', () => {
+test('TrackLevelMeter: level rises and falls as the underlying signal changes', () => {
   const analyser = new FakeAnalyser(32, 128);
   const harness = fakeIntervalHarness();
   const levels: number[] = [];
   const meter = new TrackLevelMeter({
     analyser,
-    smoothing: 0,
     onLevel: (level) => levels.push(level),
     setIntervalFn: harness.setIntervalFn,
     clearIntervalFn: harness.clearIntervalFn,
@@ -163,8 +161,10 @@ test('TrackLevelMeter: level rises and falls as the underlying signal changes (s
 
   analyser.setAmplitude(0);
   harness.tick();
-  assert.equal(meter.level, 0, 'back to silence with no smoothing carry-over');
-  assert.ok(levels.length === 3);
+  assert.ok(meter.level < loudLevel, 'silence brings the level back down');
+  harness.tick(30); // let the EMA decay
+  assert.ok(meter.level < 0.001, 'decays to ~0 on sustained silence');
+  assert.ok(levels.length >= 3);
   assert.ok(loudLevel > 0);
 });
 
@@ -173,7 +173,6 @@ test('TrackLevelMeter: smoothing dampens an instantaneous jump (EMA, not a raw p
   const harness = fakeIntervalHarness();
   const meter = new TrackLevelMeter({
     analyser,
-    smoothing: 0.5,
     setIntervalFn: harness.setIntervalFn,
     clearIntervalFn: harness.clearIntervalFn,
   });

@@ -1,25 +1,10 @@
 /**
- * popup-signaling.ts — the popup⇄opener IPC protocol (M4, docs/calls.md
- * §Windowing). The detached call popup owns media + `RTCPeerConnection` and
- * relays SIGNALING ONLY to the opener, which forwards it to the core Worker
- * (the Worker is owned by the main tab and can't be shared — OPFS/dedicated
- * worker constraint). This module is the pure wire format + a transport seam:
- *
- *   - {@link SignalingPort}: a minimal post/onMessage/close seam. In production
- *     it wraps `window.postMessage` between the two same-origin windows (see
- *     `window-port.ts`); in tests it is an in-memory pair, so the whole relay
- *     is unit-testable with no DOM.
- *   - The message union ({@link OpenerToPopupMessage} / {@link
- *     PopupToOpenerMessage}) and a validating {@link parsePopupMessage} — every
- *     inbound `postMessage` is untrusted (any page can post to a window), so
- *     messages are tagged with {@link CALL_POPUP_PROTOCOL} and structurally
- *     checked before use.
- *   - The RPC relay: {@link PopupRpcClient} (popup side — a `CallsRpcClient`
- *     whose calls travel over the port) and {@link servePopupRpc} (opener side —
- *     receives those calls and drives the REAL typed jsonrpc client).
- *
- * No DOM/React imports here (only ambient `RTCIceServer` etc. via the shared
- * `CallsRpcClient` type) — the DOM `postMessage` port lives in `window-port.ts`.
+ * popup⇄opener IPC protocol for the detached call popup (docs/calls.md
+ * §Windowing). The popup owns media + `RTCPeerConnection` and relays signaling
+ * only; the opener forwards it to the core Worker, which is owned by the main
+ * tab and can't be shared (OPFS/dedicated-worker constraint). Pure wire format
+ * + transport seam ({@link SignalingPort}); the DOM `postMessage` port lives
+ * in `window-port.ts`, so the relay is unit-testable with an in-memory pair.
  */
 
 import type { CallDirection } from '../engine/index.ts'
@@ -27,15 +12,12 @@ import type { CallInfoResult } from './call-outcome.ts'
 import type { CallsRpcClient } from './index.ts'
 
 /** Version-tagged discriminator on every message. Bump on a breaking wire
- * change so an opener and a popup served from mismatched builds (e.g. a stale
- * cached popup page after a deploy) reject each other cleanly instead of
- * mis-parsing. */
+ * change so mismatched builds (e.g. a stale cached popup page after a deploy)
+ * reject each other cleanly instead of mis-parsing. */
 export const CALL_POPUP_PROTOCOL = 'slothfulchat-call-popup/1'
 
-/** The RPC methods the popup relays to the opener — the SIGNALING subset of
- * {@link CallsRpcClient} (nothing that touches the DOM or media; those stay in
- * the popup). Kept as a string union so {@link servePopupRpc} can exhaustively
- * dispatch. */
+/** The RPC methods the popup relays to the opener — the signaling subset of
+ * {@link CallsRpcClient}. */
 export type PopupRpcMethod =
   | 'placeOutgoingCall'
   | 'acceptIncomingCall'
@@ -43,17 +25,13 @@ export type PopupRpcMethod =
   | 'iceServers'
   | 'callInfo'
 
-/** The call parameters the opener hands the popup once it signals readiness —
- * everything the popup needs to construct its own `CallBridge` locally. The
- * popup fetches its own ICE servers over the RPC relay ({@link
- * PopupRpcClient.iceServers}), so they are NOT included here: keeping ICE
- * fetching popup-side means the opener only ever forwards, matching "relays
- * signaling only". */
+/** The call parameters the opener hands the popup once it signals readiness.
+ * ICE servers are deliberately NOT included — the popup fetches its own over
+ * the RPC relay, so the opener only ever forwards. */
 export interface CallPopupInit {
   direction: CallDirection
   accountId: number
   chatId: number
-  /** Whether this call carries video (M3 `has_video`). */
   hasVideo: boolean
   /** Incoming: the info-message id (from the `IncomingCall` event), needed for
    * `acceptIncomingCall`/`endCall`. Outgoing: `null` — the popup learns its own
@@ -65,9 +43,8 @@ export interface CallPopupInit {
   title: string
 }
 
-/** Core call events the opener relays into the popup (the popup owns the engine
- * that consumes them). Mirrors the runtime's `OutgoingCallAccepted` /
- * `CallEnded` / `IncomingCallAccepted{from_this_device:false}` handling. */
+/** Core call events the opener relays into the popup (the popup owns the
+ * engine that consumes them). */
 export type PopupCallEvent =
   | { type: 'answer'; acceptCallInfo: string }
   | { type: 'remote-ended' }
@@ -86,15 +63,11 @@ export type PopupToOpenerMessage =
       protocol: typeof CALL_POPUP_PROTOCOL
       kind: 'ended'
       /**
-       * M5 (docs/calls.md: content-free call analytics): whether the popup's
-       * OWN engine ever reached `connected`, so the opener — the only side
-       * with analytics access; the popup's CSP deliberately omits the
-       * analytics origin (see `static/call-popup.html`) — can classify the
-       * outcome without needing a whole call-state relay. Optional so an
-       * older cached popup page (pre-M5) that never sends it degrades safely:
-       * {@link CallPopupHost} treats a missing value as `false` — the
-       * conservative "we genuinely don't know" default, which undercounts
-       * `connected` rather than fabricating it.
+       * Whether the popup's own engine ever reached `connected` — the opener
+       * classifies the call outcome for analytics (the popup's CSP deliberately
+       * omits the analytics origin; see `static/call-popup.html`). Optional so
+       * an older cached popup page degrades safely: missing is treated as
+       * `false` (undercounts `connected` rather than fabricating it).
        */
       reachedConnected?: boolean
     }
@@ -115,11 +88,10 @@ export interface SignalingPort {
 }
 
 /**
- * Validate an untrusted inbound value as one of our protocol messages. Returns
- * the narrowed message or `null` (wrong/foreign message — ignore it). Only the
- * shape needed to dispatch is checked; the payload fields (`init`, `args`, …)
- * are trusted structurally once the `protocol`+`kind` tag matches, since the
- * only sender of tagged messages is our own same-origin peer window.
+ * Validate an untrusted inbound value (any page can post to a window) as a
+ * protocol message; `null` = foreign, ignore. Only the dispatch shape is
+ * checked — payload fields are trusted once the `protocol`+`kind` tag matches,
+ * since the only tagged sender is our own same-origin peer window.
  */
 export function parsePopupMessage(value: unknown): PopupMessage | null {
   if (value == null || typeof value !== 'object') return null
@@ -145,11 +117,9 @@ export function parsePopupMessage(value: unknown): PopupMessage | null {
 }
 
 /**
- * The popup-side {@link CallsRpcClient}: every method posts an `rpc` message and
- * resolves when the matching `rpc-result` comes back. This is what the popup's
- * `CallBridge` is constructed with instead of the real jsonrpc client — so the
- * engine/media stay in the popup while the SDP-bearing calls travel to the
- * opener and on to the core Worker.
+ * The popup-side {@link CallsRpcClient}: every method posts an `rpc` message
+ * and resolves when the matching `rpc-result` comes back. The popup's
+ * `CallBridge` is constructed with this instead of the real jsonrpc client.
  */
 export class PopupRpcClient implements CallsRpcClient {
   private readonly port: SignalingPort
@@ -203,16 +173,14 @@ export class PopupRpcClient implements CallsRpcClient {
     return this.call('iceServers', [accountId])
   }
 
-  /** Relayed for `CallsRpcClient` completeness (M5 call-outcome
-   * classification); the popup's own `CallBridge` never calls this itself —
-   * only the opener's `CallManager` does, against the REAL client, once a
-   * call it is directly driving (overlay mode) ends ambiguously. */
+  /** Relayed for `CallsRpcClient` completeness; the popup's own `CallBridge`
+   * never calls this itself. */
   callInfo(accountId: number, msgId: number): Promise<CallInfoResult> {
     return this.call('callInfo', [accountId, msgId])
   }
 
-  /** Reject every in-flight call and stop listening — called when the relay
-   * tears down so a pending `await` never hangs forever. */
+  /** Reject every in-flight call and stop listening, so a pending `await`
+   * never hangs after the relay tears down. */
   dispose(): void {
     this.closed = true
     this.unsubscribe()
@@ -223,12 +191,10 @@ export class PopupRpcClient implements CallsRpcClient {
 }
 
 /**
- * The opener-side RPC responder: receives the popup's `rpc` messages, invokes
- * the REAL typed jsonrpc client, and posts the `rpc-result` back. Returns an
- * unsubscribe fn. `onCallMessageId` fires with the msg id the moment a relayed
- * `placeOutgoingCall` resolves — the opener needs it to route the subsequent
- * `OutgoingCallAccepted`/`CallEnded` core events back to this popup (the popup
- * itself learns the same id from the very same result).
+ * Opener-side RPC responder: invokes the real jsonrpc client for the popup's
+ * `rpc` messages and posts `rpc-result` back. Returns an unsubscribe fn.
+ * `onCallMessageId` fires when a relayed `placeOutgoingCall` resolves — the
+ * opener needs the id to route subsequent core events back to this popup.
  */
 export function servePopupRpc(
   port: SignalingPort,

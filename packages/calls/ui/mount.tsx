@@ -1,14 +1,8 @@
 /**
- * DOM entry point: mounts `CallsRoot` once into a dedicated container
- * appended to `document.body`, "always mounted in the main window" per
- * docs/calls.md §Windowing (so the incoming-ring dialog can render the
- * instant a call arrives, and can never be popup-blocked). The runtime calls
- * `mountCallsUi` exactly once, at startup, alongside `createDeltaChatConnection`
- * — see `packages/web-app/src/runtime.ts`.
- *
- * The only file in this package that touches `document`/`react-dom/client`
- * directly — everything else (`CallsRoot`, the dialogs, `CallsUiStore`) is
- * plain React/data and stays trivially testable without a DOM.
+ * DOM entry point: mounts `CallsRoot` once into a container appended to
+ * `document.body`, always mounted in the main window so the incoming-ring
+ * dialog can never be popup-blocked (docs/calls.md §Windowing). The only
+ * file in this package that touches `document`/`react-dom/client` directly.
  */
 import { createRoot, type Root } from 'react-dom/client'
 import { CallsRoot } from './CallsRoot.tsx'

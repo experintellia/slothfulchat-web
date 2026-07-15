@@ -1,17 +1,8 @@
 /**
- * The incoming-ring dialog. Always reachable from the always-mounted root
- * (`mount.tsx`/`CallsRoot`) — see docs/calls.md §Windowing ("ringing always
- * renders in the main window … so it can never be popup-blocked"). Rendered
- * only while `CallUiSnapshot` is `{ active: true, direction: 'incoming',
- * state: 'ringing' }` (see `CallsRoot`); the mic is deliberately not touched
- * until the user presses Accept (the engine mirrors this — see
- * `AudioCallEngine.receiveCall`/`accept`).
- *
- * M5 adds mobile-viewport layout (docs/calls.md): below the phone breakpoint
- * this goes full-bleed with bigger accept/decline touch targets, matching
- * how a native phone's incoming-call screen takes the whole display rather
- * than floating in a corner (see `useIsMobileViewport`/`styles.ts`'s
- * `*Mobile` tokens).
+ * The incoming-ring dialog. Rendered only for an incoming, still-ringing
+ * call (see `CallsRoot`); it renders in the always-mounted main window so
+ * it can never be popup-blocked (docs/calls.md §Windowing). The mic is
+ * deliberately not touched until the user presses Accept.
  */
 import { useIsMobileViewport } from './useIsMobileViewport.ts'
 import * as styles from './styles.ts'

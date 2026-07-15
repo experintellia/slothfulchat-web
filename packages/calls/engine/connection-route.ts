@@ -1,36 +1,24 @@
 /**
- * Direct-vs-relay connection route detection (M5, docs/calls.md: "a
- * non-blocking direct-vs-relay connection indicator (active candidate pair is
- * 'relay')"). Purely a troubleshooting/transparency aid — it never blocks or
- * changes call behavior, and it is NOT a forced-relay setting (that toggle is
- * explicitly deferred to issue #93; see docs/calls.md "Relay UX").
+ * Direct-vs-relay connection route detection (is the active candidate pair
+ * going through TURN?). Purely informational — never blocks or changes call
+ * behavior, and NOT a forced-relay setting (deferred to issue #93; see
+ * docs/calls.md "Relay UX").
  *
- * Pure TS, no DOM/React imports: `RTCStatsReport`/`RTCIceCandidatePairStats`
- * are ambient WebRTC lib *types* only (same discipline as the rest of
- * engine/, e.g. `ice-gathering.ts`) — {@link getActiveConnectionRoute} takes
- * anything structurally shaped like a `getStats()`-returning peer connection,
- * so it is unit-testable against a hand-built fake stats report with no real
- * `RTCPeerConnection` involved. {@link ConnectionRouteMonitor} mirrors
- * `level-meter.ts`'s `TrackLevelMeter`: an injectable-timer poller that calls
- * back only when the route actually changes.
+ * Pure TS, no DOM imports: operates on anything structurally shaped like a
+ * `getStats()`-returning peer connection, so it's testable with a fake report.
  */
 
 export type ConnectionRoute = 'direct' | 'relay' | 'unknown';
 
-/**
- * One entry of an `RTCStatsReport` this module cares about — a structural
- * subset of `RTCIceCandidatePairStats`/`RTCIceCandidateStats` (real stats
- * objects carry many more fields than these; only the ones read below are
- * declared).
- */
+/** One `RTCStatsReport` entry — structural subset of the candidate-pair/
+ * candidate stats; only the fields read below are declared. */
 export interface RtcStatsEntry {
   readonly id: string;
   readonly type: string;
   readonly [key: string]: unknown;
 }
 
-/** A real `RTCStatsReport` is (structurally) a `Map<string, RTCStats>` — it
- * has `.values()`. A hand-built `Map` in tests satisfies this exactly. */
+/** Structural `RTCStatsReport`; a plain `Map` in tests satisfies it. */
 export interface StatsReportLike {
   values(): IterableIterator<RtcStatsEntry>;
 }
@@ -41,26 +29,12 @@ export interface StatsPeerConnectionLike {
 }
 
 /**
- * Inspect the CURRENTLY ACTIVE candidate pair — the one WebRTC's own stats
- * mark as in use — and report whether either side of it is a `relay` (TURN)
- * candidate.
- *
- * Resolution order for "the active pair", most to least specific:
- *   1. `nominated === true && state === 'succeeded'` — the ICE-spec-correct
- *      definition of "this is the pair actually carrying media".
- *   2. Any `state === 'succeeded'` pair, if none is marked `nominated` (some
- *      browsers omit `nominated` on the stats object even though only one
- *      pair is realistically in use for a 1:1 call).
- *   3. None found (still connecting/gathering, or a browser that doesn't
- *      populate candidate-pair stats the way we expect) → `'unknown'`.
- *
- * A pair is reported as `'relay'` if EITHER its local or its remote candidate
- * has `candidateType === 'relay'` — either side routing through a TURN relay
- * means the media path is relayed, not a direct peer-to-peer route.
- *
- * Never throws: a `getStats()` rejection (or a malformed report) resolves to
- * `'unknown'` rather than propagating, since this is a best-effort UI hint,
- * never on the call-setup critical path.
+ * Report whether the currently active candidate pair is relayed (TURN).
+ * Active pair = `nominated && state === 'succeeded'`, falling back to any
+ * `succeeded` pair (some browsers omit `nominated` in stats), else
+ * `'unknown'`. Either side being a `relay` candidate means the path is
+ * relayed. Never throws: a `getStats()` failure or malformed report resolves
+ * to `'unknown'` — this is a best-effort UI hint, not on the call-setup path.
  */
 export async function getActiveConnectionRoute(
   pc: StatsPeerConnectionLike
@@ -98,21 +72,17 @@ export async function getActiveConnectionRoute(
   return 'unknown';
 }
 
-/** Default poll interval (docs/calls.md: "non-blocking" — slow enough that
- * polling `getStats()` is cheap for the whole call, fast enough to notice a
- * route change without perceptible lag on the indicator). */
+/** Default poll interval — slow enough that polling `getStats()` is cheap,
+ * fast enough to notice a route change without perceptible lag. */
 export const DEFAULT_CONNECTION_ROUTE_INTERVAL_MS = 3000;
 
 export interface ConnectionRouteMonitorOptions {
-  /** Take one reading. Typically `() => engine.getConnectionRoute()` (bridge
-   * layer) or `() => getActiveConnectionRoute(pc)` (direct engine use) — kept
-   * as an injected function rather than a `pc` reference so this class stays
-   * decoupled from *how* a route is computed, mirroring how `TrackLevelMeter`
-   * takes an already-wired `AnalyserLike` rather than constructing one. */
+  /** Take one reading, e.g. `() => getActiveConnectionRoute(pc)`. Injected
+   * function (not a `pc`) so the monitor stays decoupled from how a route is
+   * computed. */
   poll(): Promise<ConnectionRoute>;
-  /** Called only when the route actually changes (no redundant UI churn
-   * every tick) — including the very first successful poll, which always
-   * "changes" from the implicit initial `'unknown'`. */
+  /** Called only on an actual route change — including the first successful
+   * poll, which "changes" from the implicit initial `'unknown'`. */
   onRoute(route: ConnectionRoute): void;
   /** Poll interval in ms. Default {@link DEFAULT_CONNECTION_ROUTE_INTERVAL_MS}. */
   intervalMs?: number;
@@ -125,9 +95,7 @@ export interface ConnectionRouteMonitorOptions {
 /**
  * Polls {@link ConnectionRouteMonitorOptions.poll} on an interval and calls
  * `onRoute` only on an actual change. Not started automatically: call
- * {@link start} once the call is `connected` (there is nothing to poll
- * before then) and {@link stop} on teardown — mirrors `TrackLevelMeter`'s
- * start/stop discipline so a torn-down call can't leave a poll loop running.
+ * {@link start} once the call is `connected` and {@link stop} on teardown.
  */
 export class ConnectionRouteMonitor {
   private readonly pollFn: () => Promise<ConnectionRoute>;
@@ -137,10 +105,9 @@ export class ConnectionRouteMonitor {
   private readonly clearIntervalFn: (handle: unknown) => void;
 
   private handle: unknown = null;
-  /** True whenever `stop()` has run since the last `start()` — guards a
-   * `poll()` that resolves AFTER `stop()` from still reporting a route into
-   * a torn-down call (same race the rest of engine/ guards against via the
-   * epoch pattern; this is the analogous guard for this standalone poller). */
+  /** True since the last `stop()` — guards a `poll()` that resolves AFTER
+   * `stop()` from reporting a route into a torn-down call (analogous to the
+   * engine's epoch pattern). */
   private stopped = true;
   private polling = false;
   private lastRoute: ConnectionRoute = 'unknown';
@@ -164,9 +131,8 @@ export class ConnectionRouteMonitor {
     return this.handle != null;
   }
 
-  /** Begin polling. Idempotent (a second call while already running is a
-   * no-op). Takes one sample immediately (async — `poll()` returns a
-   * Promise) rather than waiting for the first interval tick. */
+  /** Begin polling. Idempotent. Takes one sample immediately rather than
+   * waiting for the first interval tick. */
   start(): void {
     if (this.handle != null) return;
     this.stopped = false;
@@ -174,9 +140,8 @@ export class ConnectionRouteMonitor {
     this.handle = this.setIntervalFn(() => void this.tick(), this.intervalMs);
   }
 
-  /** Stop polling. Idempotent; safe to call even if never started. A `poll()`
-   * already in flight is left to resolve but its result is discarded (see
-   * `stopped` guard in {@link tick}). */
+  /** Stop polling. Idempotent. An in-flight `poll()` result is discarded
+   * (see `stopped` guard in {@link tick}). */
   stop(): void {
     this.stopped = true;
     if (this.handle != null) {
@@ -186,9 +151,7 @@ export class ConnectionRouteMonitor {
   }
 
   private async tick(): Promise<void> {
-    // Overlap guard: poll() is async (a real getStats() round-trip) and the
-    // interval may fire again before a slow call resolves — never run two
-    // concurrent samples.
+    // Overlap guard: the interval can fire again before a slow poll() resolves.
     if (this.polling) return;
     this.polling = true;
     try {

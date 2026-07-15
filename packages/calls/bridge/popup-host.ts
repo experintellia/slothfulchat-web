@@ -1,28 +1,15 @@
 /**
- * popup-host.ts — the OPENER side of the detached call popup (M4, docs/calls.md
- * §Windowing). The opener owns the core Worker; this host opens the popup
- * window, performs the readiness handshake, forwards the popup's relayed RPC to
- * the real jsonrpc client ({@link servePopupRpc}), and pushes core call events
- * into the popup. The engine + media + `RTCPeerConnection` live in the POPUP;
- * this side only relays signaling.
+ * Opener side of the detached call popup (protocol: `popup-signaling.ts`).
+ * Engine + media + `RTCPeerConnection` live in the popup; this side only
+ * relays signaling to the real jsonrpc client.
  *
- * FALLBACK (the whole reason the overlay is the safe default): opening can fail
- * two ways —
- *   1. `window.open` returns `null` (popup blocked) — detected SYNCHRONOUSLY by
- *      {@link openCallPopup}, which returns `null` so the caller can mount the
- *      in-page overlay while still inside the user's click gesture (so the
- *      overlay's own `getUserMedia` is still gesture-authorized).
- *   2. The window opens but never handshakes (blank/failed page, slow load) —
- *      detected by the readiness timeout, which closes the popup and calls
- *      `onFallback`; the caller then mounts the overlay (best-effort — the
- *      original gesture is stale by then, but a granted mic permission does not
- *      require a fresh gesture on most browsers).
- *
- * TEARDOWN: the popup relays `endCall` itself on hangup, then posts `ended`. But
- * if the user closes the popup window abruptly (window "X"), its relay can't
- * flush — so this host polls `popup.closed` and, on an unexpected close, sends
- * `endCall` for the tracked message id as a safety net before reporting
- * `onEnded`.
+ * Fallback: `window.open` returning `null` (popup blocked) is detected
+ * synchronously so the caller can mount the in-page overlay while still inside
+ * the user's click gesture (keeping `getUserMedia` gesture-authorized); a
+ * window that opens but never handshakes is caught by the readiness timeout
+ * (`onFallback`). Teardown: an abrupt window close ("X") means the popup's own
+ * `endCall` relay can't flush, so this host polls `popup.closed` and sends a
+ * safety-net `endCall`.
  */
 
 import {
@@ -35,8 +22,7 @@ import {
 import { windowSignalingPort } from './window-port.ts'
 import type { CallsRpcClient } from './index.ts'
 
-/** Default handshake budget: how long to wait for the popup page to load and
- * post `ready` before giving up and falling back to the overlay. */
+/** How long to wait for the popup to post `ready` before falling back. */
 export const DEFAULT_POPUP_READY_TIMEOUT_MS = 4_000
 /** How often to check `popup.closed` (there is no reliable cross-window
  * "closed" event for a same-origin popup). */
@@ -45,15 +31,12 @@ const POPUP_CLOSED_POLL_MS = 500
 export interface CallPopupHostOptions {
   /** The real typed jsonrpc client (`getCore().dc.rpc`) the relay drives. */
   rpc: CallsRpcClient
-  /** Opens the popup window. Default: `window.open(url, target, features)`.
-   * Injectable for tests / to customize window features. MUST be called inside
-   * the user gesture by the caller (it is invoked synchronously here). */
+  /** Opens the popup window (injectable for tests). Invoked synchronously, so
+   * it MUST be called inside the user gesture by the caller. */
   openWindow?: () => Window | null
   /** Handshake timeout (ms). Default {@link DEFAULT_POPUP_READY_TIMEOUT_MS}. */
   readyTimeoutMs?: number
-  /** How often to poll `popup.closed` (ms). Default {@link POPUP_CLOSED_POLL_MS}.
-   * Injectable mainly so tests can drive the abrupt-close path with a short
-   * real interval instead of a faked clock. */
+  /** How often to poll `popup.closed` (ms). Injectable for tests. */
   closedPollMs?: number
   /** Build the signaling port over the opened window. Default: postMessage
    * (`windowSignalingPort`). Injectable so tests drive an in-memory pair. */
@@ -61,23 +44,20 @@ export interface CallPopupHostOptions {
   /** The popup handshaked and the call is now running in it. */
   onReady?: () => void
   /** The popup ended the call (clean `ended`, or an abrupt window close). After
-   * this the host is spent. `reachedConnected` (M5 call-outcome analytics):
-   * whether the popup's own engine ever reached `connected` — `false` for an
-   * abrupt close (we genuinely don't know; see `onPopupClosedAbruptly`) or an
-   * older popup page that never reported it. */
+   * this the host is spent. `reachedConnected`: whether the popup's engine ever
+   * reached `connected` — `false` for an abrupt close (unknown) or an older
+   * popup page that never reported it. */
   onEnded?: (reachedConnected: boolean) => void
-  /** The popup could not be established (handshake timeout) — the caller should
-   * fall back to the in-page overlay. Not called for the synchronous
-   * popup-blocked case (that is signaled by {@link openCallPopup} returning
-   * `null`). */
+  /** Handshake timed out — caller should fall back to the in-page overlay. Not
+   * called for the synchronous popup-blocked case ({@link openCallPopup}
+   * returns `null` for that). */
   onFallback?: (reason: string) => void
 }
 
 /**
- * Try to open the detached call popup. Returns a live {@link CallPopupHost}, or
- * `null` if `window.open` was blocked (the caller falls back to the overlay
- * synchronously). A returned host is not yet handshaked — `onReady` fires when
- * it is, `onFallback` if the handshake times out.
+ * Try to open the detached call popup. Returns `null` if `window.open` was
+ * blocked (caller falls back to the overlay synchronously). A returned host is
+ * not yet handshaked — `onReady` / `onFallback` report the outcome.
  */
 export function openCallPopup(
   init: CallPopupInit,
@@ -89,12 +69,11 @@ export function openCallPopup(
   return new CallPopupHost(popup, init, options)
 }
 
-/** Same-origin path the popup loads (served by the web-app build alongside
- * main.html — see `packages/web-app/assemble.mjs`). Relative so it works under
- * any base path (GitHub Pages subpath, custom domain). */
+/** Same-origin popup page (see `packages/web-app/assemble.mjs`). Relative so
+ * it works under any base path. */
 export const CALL_POPUP_URL = 'call-popup.html'
-/** A fresh window per call (unique name) rather than reusing one — an in-flight
- * call must never have its window silently reused by the next `window.open`. */
+/** Fresh window per call — an in-flight call's window must never be silently
+ * reused by the next `window.open`. */
 export const CALL_POPUP_TARGET = '_blank'
 export const CALL_POPUP_FEATURES = 'popup=yes,width=480,height=640'
 

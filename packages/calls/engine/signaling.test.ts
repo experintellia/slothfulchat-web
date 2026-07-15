@@ -4,18 +4,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-  serializeCallInfo,
   serializeOffer,
   serializeAnswer,
   deserializeOffer,
   deserializeAnswer,
-  webappHashEncode,
-  webappHashDecode,
 } from './signaling.ts';
 
 const here = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
 // Read as latin1 to preserve exact bytes (CRLF, trailing CRLF) — these are real
-// Chromium offer/answer SDPs, see fixtures/README + scripts/gen-calls-fixtures.mjs.
+// Chromium offer/answer SDPs, see fixtures/README.
 const REAL_OFFER_SDP = readFileSync(here('./fixtures/offer.sdp'), 'latin1');
 const REAL_ANSWER_SDP = readFileSync(here('./fixtures/answer.sdp'), 'latin1');
 
@@ -32,8 +29,8 @@ test('fixtures look like real gathered SDP (sanity)', () => {
   assert.ok(REAL_ANSWER_SDP.startsWith('v=0\r\n') && REAL_ANSWER_SDP.endsWith('\r\n'));
 });
 
-test('serializeCallInfo returns the raw SDP verbatim (no base64/JSON/url-encoding)', () => {
-  const offerWire = serializeCallInfo({ type: 'offer', sdp: REAL_OFFER_SDP });
+test('serializeOffer returns the raw SDP verbatim (no base64/JSON/url-encoding)', () => {
+  const offerWire = serializeOffer({ type: 'offer', sdp: REAL_OFFER_SDP });
   // The single most important interop assertion: byte-for-byte identity.
   assert.equal(offerWire, REAL_OFFER_SDP);
   // Not accidentally JSON-wrapped or base64'd.
@@ -74,7 +71,7 @@ test('full offer/answer exchange preserves both SDPs exactly', () => {
   assert.equal(calleeAnswerAsSeenByCaller.sdp, REAL_ANSWER_SDP);
 });
 
-test('serializeCallInfo accepts a real-ish RTCSessionDescription shape', () => {
+test('serializeOffer accepts a real-ish RTCSessionDescription shape', () => {
   // pc.localDescription is { type, sdp, toJSON } — extra props must be fine.
   const localDescriptionLike = {
     type: 'offer' as const,
@@ -83,31 +80,16 @@ test('serializeCallInfo accepts a real-ish RTCSessionDescription shape', () => {
       return { type: this.type, sdp: this.sdp };
     },
   };
-  assert.equal(serializeCallInfo(localDescriptionLike), REAL_OFFER_SDP);
+  assert.equal(serializeOffer(localDescriptionLike), REAL_OFFER_SDP);
 });
 
 test('type guards reject mismatches and empty payloads', () => {
   assert.throws(() => serializeOffer({ type: 'answer', sdp: 'x' }), /expected an offer/);
   assert.throws(() => serializeAnswer({ type: 'offer', sdp: 'x' }), /expected an answer/);
-  assert.throws(() => serializeCallInfo({ type: 'offer', sdp: '' }), /non-empty SDP/);
+  assert.throws(() => serializeOffer({ type: 'offer', sdp: '' }), /non-empty SDP/);
   // @ts-expect-error deliberately wrong type
-  assert.throws(() => serializeCallInfo({ type: 'pranswer', sdp: 'x' }), /offer.*answer/);
+  assert.throws(() => serializeOffer({ type: 'pranswer', sdp: 'x' }), /expected an offer/);
   assert.throws(() => deserializeOffer(''), /non-empty SDP/);
   // @ts-expect-error deliberately wrong type
   assert.throws(() => deserializeAnswer(null), /non-empty SDP/);
-});
-
-test('webapp URL-hash codec round-trips base64 + url-encoding (NOT the wire format)', () => {
-  const encoded = webappHashEncode(REAL_OFFER_SDP);
-  // base64 padding + '+' and '/' must be url-escaped for a valid URL fragment.
-  assert.ok(!encoded.includes('='), '"=" padding must be url-encoded (%3D)');
-  assert.ok(!encoded.includes('+') && !encoded.includes('/'), 'base64 +// must be escaped');
-  assert.equal(webappHashDecode(encoded), REAL_OFFER_SDP);
-
-  // Also decodes the plain-btoa form deltachat-desktop's preload actually emits
-  // (no url-encoding). Build it the same way: btoa(sdp).
-  const plainBtoa = (globalThis.btoa ?? ((s: string) => Buffer.from(s, 'binary').toString('base64')))(
-    REAL_OFFER_SDP
-  );
-  assert.equal(webappHashDecode(plainBtoa), REAL_OFFER_SDP);
 });

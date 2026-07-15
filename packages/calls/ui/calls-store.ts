@@ -1,19 +1,10 @@
 /**
- * `CallsUiStore` — the tiny observable snapshot the React components in this
- * folder render from (docs/calls.md: ui/ "consumes the engine's observable
- * call state"). It is NOT the engine's `CallStateMachine` itself — one
- * `CallsUiStore` instance lives for the lifetime of the page (mounted once,
- * "always mounted in the main window" per docs/calls.md §Windowing) and is
- * driven, one call at a time, by whichever object owns the active
- * `CallBridge`/`AudioCallEngine` (the runtime's call manager): it forwards
- * `engine.subscribe(...)`/`onRemoteStream`/mute changes into this store via
- * the imperative setters below, and the store exists purely so the React tree
- * has something to `useSyncExternalStore` against without re-rendering the
- * whole app on every engine tick.
- *
- * No DOM manipulation here — that is what makes this file (unlike
- * `mount.tsx`) trivially unit-testable and reusable from a future popup
- * window (M4) with no changes.
+ * `CallsUiStore` — the observable snapshot the React components in this
+ * folder render from. One instance lives for the lifetime of the page,
+ * driven one call at a time by whatever owns the active
+ * `CallBridge`/`AudioCallEngine` via the imperative setters below; it exists
+ * so the React tree has something to `useSyncExternalStore` against.
+ * No DOM here — trivially unit-testable, unlike `mount.tsx`.
  */
 import type { CallDeviceInfo, CallDirection, CallState, ConnectionRoute } from '../engine/index.ts'
 
@@ -26,23 +17,17 @@ export interface CallsUiCallbacks {
   onHangup(): void
   /** Toggle local mic mute. */
   onToggleMute(): void
-  /** M2 device picker: the user picked a different mic — hot-switches
-   * mid-call via `AudioCallEngine.switchMicrophone`/`replaceTrack`. */
+  /** Hot-switch mic mid-call (`AudioCallEngine.switchMicrophone`). */
   onSelectMicrophone(deviceId: string): void
-  /** M2 device picker: the user picked a different camera — hot-switches
-   * mid-call via `AudioCallEngine.switchCamera`/`replaceTrack` (M3; a no-op
-   * beyond recording the preference while screen-sharing — see that
-   * method's doc). */
+  /** Hot-switch camera mid-call (`AudioCallEngine.switchCamera`; only
+   * records the preference while screen-sharing — see that method's doc). */
   onSelectCamera(deviceId: string): void
-  /** M3: toggle screen sharing on/off — `AudioCallEngine.startScreenShare`/
-   * `stopScreenShare` via `RTCRtpSender.replaceTrack` on the outgoing video
-   * sender. Available on any connected/connecting call (the video sender is
-   * always negotiated — see `AudioCallEngine.addLocalTracks`). */
+  /** Toggle screen sharing (`AudioCallEngine.startScreenShare`/
+   * `stopScreenShare`). Available on any connected/connecting call — the
+   * video sender is always negotiated. */
   onToggleScreenShare(): void
-  /** M3 camera toggle: turn the local camera on/off mid-call via
-   * `AudioCallEngine.setCameraEnabled` (`RTCRtpSender.replaceTrack` onto the
-   * always-present video sender). Available on ANY call, not just ones started
-   * with the camera on. */
+  /** Toggle the local camera mid-call (`AudioCallEngine.setCameraEnabled`).
+   * Available on ANY call, not just ones started with the camera on. */
   onToggleCamera(): void
 }
 
@@ -57,81 +42,62 @@ export type CallUiSnapshot =
       state: CallState
       /** Chat/contact name, best-effort ("Call" until resolved). */
       title: string
-      /** Remote participant's avatar image URL (resolved via the runtime's
-       * blob path), or `null` for the initial-letter fallback (FIX 2). */
+      /** Remote avatar URL, or `null` for the initial-letter fallback. */
       remoteAvatarUrl: string | null
-      /** Local ("You") avatar image URL — the self-account's profile image if
-       * available, else `null` (initial-letter fallback). */
+      /** Local ("You") avatar URL, or `null` for the initial-letter fallback. */
       localAvatarUrl: string | null
-      /** The chat's theme color (hex), used as an accent where an avatar is
-       * absent. `null` until resolved. */
+      /** The chat's theme color (hex); `null` until resolved. */
       avatarColor: string | null
       muted: boolean
-      /** Whether this call STARTED with the camera on (the caller's
-       * audio-vs-video choice / the incoming offer's `has_video`). This only
-       * seeds the initial camera state now — it does NOT gate the camera/
-       * screen-share controls (both are available on any call, since the video
-       * sender is always negotiated). Use `localHasVideo`/`remoteHasVideo` to
-       * decide whether to render video tiles. */
+      /** Whether this call STARTED with the camera on. Only seeds the initial
+       * camera state — does NOT gate the camera/screen-share controls (the
+       * video sender is always negotiated). Use `localHasVideo`/
+       * `remoteHasVideo` to decide whether to render video tiles. */
       hasVideo: boolean
-      /** Whether the local camera is currently ON (M3 camera toggle) — drives
-       * the camera button's pressed state. Starts equal to `hasVideo`. */
+      /** Whether the local camera is currently ON — camera button pressed
+       * state. Starts equal to `hasVideo`. */
       cameraOn: boolean
-      /** Whether a local video track is actually flowing (camera on OR screen
-       * sharing) — gates the local video tile. */
+      /** A local video track is flowing (camera OR screen share) — gates the
+       * local video tile. */
       localHasVideo: boolean
-      /** Whether a remote video track is actually flowing — gates the remote
-       * video tile (else the remote speaking ring). */
+      /** A remote video track is flowing — gates remote video tile vs. ring. */
       remoteHasVideo: boolean
-      /** Whether the peer reports its mic muted (the `mutedState` data
-       * channel's `audioEnabled: false`) — drives the remote muted-mic badge. */
+      /** Peer reports its mic muted (`mutedState` data channel) — drives the
+       * remote muted-mic badge. */
       remoteAudioMuted: boolean
-      /** Set once the peer's audio (or audio+video, when `hasVideo`) track
-       * arrives (`onRemoteStream`). */
+      /** Set once the peer's stream arrives (`onRemoteStream`). */
       remoteStream: MediaStream | null
-      /** The local mic/camera `MediaStream` (M3: local video preview tile).
-       * `null` while an incoming call is still ringing (nothing acquired yet). */
+      /** Local mic/camera stream; `null` while an incoming call is still
+       * ringing (nothing acquired yet). */
       localStream: MediaStream | null
-      /** Whether the outgoing video is currently a screen capture rather
-       * than the camera (M3). Always `false` when `!hasVideo`. */
+      /** Whether the outgoing video is currently a screen capture. */
       screenSharing: boolean
-      /** Set if the last screen-share start/stop failed
-       * (`AudioCallEngine`'s `onScreenShareError`) — the call keeps running
-       * on whatever video was flowing before; surfaced inline next to the
-       * screen-share control, not as the call-ending `error` below. */
+      /** Non-fatal screen-share failure; the call keeps running on whatever
+       * video was flowing before (contrast the call-ending `error` below). */
       screenShareError: string | null
       /** Set on a fatal error; the call is already torn down at the engine
        * level, but the UI stays up (with a Close button) so the message is
        * readable instead of just vanishing. */
       error: string | null
-      /** Smoothed 0..1 voice level for the local mic (M2 speaking rings),
-       * from the bridge's `onLocalLevel`. 0 until the local stream exists
-       * (an incoming call still ringing has no mic yet). */
+      /** Smoothed 0..1 local-mic level; 0 until the local stream exists. */
       localLevel: number
-      /** Smoothed 0..1 voice level for the remote peer, from `onRemoteLevel`.
-       * 0 until `remoteStream` arrives. */
+      /** Smoothed 0..1 remote-peer level; 0 until `remoteStream` arrives. */
       remoteLevel: number
-      /** M2 device picker options — only populated once enumeration
-       * resolves (needs a `getUserMedia` grant for real labels; the runtime
-       * enumerates right after the local stream is acquired). Empty until
-       * then, which `DevicePicker` treats the same as "nothing to pick from". */
+      /** Device picker options — empty until enumeration resolves (real
+       * labels need a `getUserMedia` grant first), which `DevicePicker`
+       * treats the same as "nothing to pick from". */
       microphones: CallDeviceInfo[]
       cameras: CallDeviceInfo[]
       /** Currently-selected mic/camera `deviceId`, or `null` before any
        * explicit selection (browser default in use). */
       selectedMicrophoneId: string | null
       selectedCameraId: string | null
-      /** Set if the last `switchMicrophone` hot-switch failed
-       * (`AudioCallEngine`'s `onDeviceSwitchError`) — the call keeps running
-       * on the previous mic; this is surfaced inline next to the picker, not
-       * as the call-ending `error` above. */
+      /** Non-fatal `switchMicrophone` failure; the previous mic keeps
+       * flowing (contrast the call-ending `error` above). */
       deviceSwitchError: string | null
-      /** M5 direct-vs-relay indicator (docs/calls.md: "a non-blocking
-       * direct-vs-relay connection indicator (active candidate pair is
-       * 'relay')") — from the bridge's `onConnectionRouteChanged`.
-       * `'unknown'` until the call is `connected` and the first poll
-       * resolves. Purely informational — never gates any control, and
-       * unrelated to any forced-relay setting (there is none; see #93). */
+      /** Direct-vs-relay indicator, from the bridge's
+       * `onConnectionRouteChanged`. `'unknown'` until connected + first poll.
+       * Purely informational — never gates any control (see #93). */
       connectionRoute: ConnectionRoute
     }
 
@@ -155,8 +121,7 @@ export class CallsUiStore {
   getSnapshot = (): CallUiSnapshot => this.snapshot
 
   /** Begin rendering a call: incoming ring or outgoing "calling…". Replaces
-   * any previous snapshot outright (one call at a time, M1). `hasVideo`
-   * (M3) defaults to `false` — audio-only, matching the M1/M2 shape. */
+   * any previous snapshot outright (one call at a time). */
   showCall(init: { direction: CallDirection; title: string; hasVideo?: boolean }): void {
     const hasVideo = init.hasVideo ?? false
     this.snapshot = {
@@ -190,9 +155,9 @@ export class CallsUiStore {
     this.notify()
   }
 
-  /** Mirror of `engine.subscribe`/`CallState` — call from the state-change
-   * callback. A no-op if no call is showing (e.g. a stray late callback after
-   * `clear()`). */
+  /** Mirror of `engine.subscribe`/`CallState`. Like every setter here, a
+   * no-op while inactive — a stray late callback after `clear()` (e.g. a
+   * meter tick mid-teardown) must not resurrect a cleared snapshot. */
   setState(state: CallState): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, state }
@@ -206,9 +171,7 @@ export class CallsUiStore {
     this.notify()
   }
 
-  /** Remote participant's avatar URL + theme color, resolved from
-   * `getBasicChatInfo` (FIX 2). Fresh-snapshot + notify, same pattern as the
-   * others. */
+  /** Remote avatar URL + theme color, resolved from `getBasicChatInfo`. */
   setRemoteAvatar(avatar: { url: string | null; color?: string | null }): void {
     if (!this.snapshot.active) return
     this.snapshot = {
@@ -226,31 +189,28 @@ export class CallsUiStore {
     this.notify()
   }
 
-  /** Mirror of `engine.cameraEnabled` after a camera toggle (M3). */
+  /** Mirror of `engine.cameraEnabled` after a camera toggle. */
   setCameraOn(cameraOn: boolean): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, cameraOn }
     this.notify()
   }
 
-  /** Whether a local video track is actually flowing (camera on OR screen
-   * sharing) — gates the local video tile. */
+  /** Whether a local video track is flowing (camera OR screen share). */
   setLocalHasVideo(localHasVideo: boolean): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, localHasVideo }
     this.notify()
   }
 
-  /** Whether a remote video track is actually flowing — gates the remote
-   * video tile vs. the remote speaking ring. */
+  /** Whether a remote video track is flowing. */
   setRemoteHasVideo(remoteHasVideo: boolean): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, remoteHasVideo }
     this.notify()
   }
 
-  /** Mirror of the engine's `onRemoteAudioMutedChanged` (the peer's
-   * `mutedState` message) — drives the remote muted-mic badge. */
+  /** Mirror of the engine's `onRemoteAudioMutedChanged`. */
   setRemoteAudioMuted(remoteAudioMuted: boolean): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, remoteAudioMuted }
@@ -264,100 +224,88 @@ export class CallsUiStore {
     this.notify()
   }
 
-  /** The peer's audio (or audio+video) stream arrived (`onRemoteStream`); the
-   * overlay attaches it to its `<audio>`/`<video>` sink. */
+  /** The peer's stream arrived (`onRemoteStream`); the overlay attaches it
+   * to its `<audio>`/`<video>` sink. */
   attachRemoteStream(stream: MediaStream): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, remoteStream: stream }
     this.notify()
   }
 
-  /** Mirror of `bridge.localStream` (M3: local video preview) — pushed
-   * whenever the local mic/camera track (re)establishes, since the stream
-   * *reference* stays stable across a hot-switch/screen-share swap (see
-   * `AudioCallEngine`'s `onLocalTrackChanged`/`onLocalVideoTrackChanged`) but
-   * a plain reference-equality check wouldn't notice the *track* underneath
-   * changed — so callers push explicitly rather than relying on React
-   * re-rendering off an unchanged object identity. */
+  /** Mirror of `bridge.localStream` — pushed whenever a local track
+   * (re)establishes: the stream *reference* stays stable across a
+   * hot-switch/screen-share swap, so React would never notice the *track*
+   * underneath changed; callers push explicitly instead. */
   setLocalStream(stream: MediaStream | null): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, localStream: stream }
     this.notify()
   }
 
-  /** Mirror of `bridge.screenSharing`/`engine`'s `onScreenShareChanged` (M3) —
-   * also clears any stale `screenShareError`, same pattern as
-   * `setSelectedMicrophone` clearing `deviceSwitchError`. */
+  /** Mirror of the engine's `onScreenShareChanged` — also clears any stale
+   * `screenShareError` (a successful toggle supersedes it). */
   setScreenSharing(sharing: boolean): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, screenSharing: sharing, screenShareError: null }
     this.notify()
   }
 
-  /** `AudioCallEngine`'s `onScreenShareError` (M3) — a screen-share
-   * start/stop failed; the call keeps running on whatever video was flowing
-   * before (contrast `showError`, which is call-ending). */
+  /** `AudioCallEngine`'s `onScreenShareError` — non-fatal; the call keeps
+   * running on whatever video was flowing before (contrast `showError`). */
   showScreenShareError(message: string): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, screenShareError: message }
     this.notify()
   }
 
-  /** Mirror of `bridge`'s `onConnectionRouteChanged` (M5 direct-vs-relay
-   * indicator) — pushed only when the route actually changes (the bridge's
-   * `ConnectionRouteMonitor` already dedupes), same no-op-while-inactive guard
-   * as every other setter here. */
+  /** Mirror of the bridge's `onConnectionRouteChanged` (already deduped by
+   * `ConnectionRouteMonitor`). */
   setConnectionRoute(route: ConnectionRoute): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, connectionRoute: route }
     this.notify()
   }
 
-  /** Mirror of `bridge`'s `onLocalLevel` (M2 speaking rings) — smoothed 0..1
-   * local mic level, ~10x/sec once the local stream exists. A no-op once the
-   * call is no longer active, same guard as every other setter here (a stray
-   * late tick from a meter mid-teardown must not resurrect a cleared snapshot). */
+  /** Mirror of the bridge's `onLocalLevel` — smoothed 0..1 local mic level,
+   * ~10x/sec once the local stream exists. */
   setLocalLevel(level: number): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, localLevel: level }
     this.notify()
   }
 
-  /** Mirror of `bridge`'s `onRemoteLevel` — smoothed 0..1 remote-peer level. */
+  /** Mirror of the bridge's `onRemoteLevel` — smoothed 0..1 remote level. */
   setRemoteLevel(level: number): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, remoteLevel: level }
     this.notify()
   }
 
-  /** M2 device picker: replace the enumerated mic/camera lists (e.g. once
-   * enumeration resolves, or on a `devicechange` event mid-call). */
+  /** Replace the enumerated mic/camera lists (initial enumeration or a
+   * mid-call `devicechange`). */
   setDevices(devices: { microphones: CallDeviceInfo[]; cameras: CallDeviceInfo[] }): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, microphones: devices.microphones, cameras: devices.cameras }
     this.notify()
   }
 
-  /** Mirror of `bridge.audioInputDeviceId`/`engine.audioInputDeviceId` after
-   * a successful `switchMicrophone` (or the initial selection). Also clears
-   * any stale `deviceSwitchError` — a successful switch supersedes it. */
+  /** Mirror of `engine.audioInputDeviceId` after a successful
+   * `switchMicrophone`. Also clears any stale `deviceSwitchError`. */
   setSelectedMicrophone(deviceId: string): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, selectedMicrophoneId: deviceId, deviceSwitchError: null }
     this.notify()
   }
 
-  /** The user's camera preference (M2 picker; no live track to switch until
-   * M3's video calling lands — see `CallsUiCallbacks.onSelectCamera`). */
+  /** The user's camera preference (see `CallsUiCallbacks.onSelectCamera`). */
   setSelectedCamera(deviceId: string): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, selectedCameraId: deviceId }
     this.notify()
   }
 
-  /** `AudioCallEngine`'s `onDeviceSwitchError` — a `switchMicrophone` call
-   * failed; the previous mic keeps flowing untouched (contrast `showError`,
-   * which is call-ending). */
+  /** `AudioCallEngine`'s `onDeviceSwitchError` — non-fatal; the previous
+   * mic keeps flowing (contrast `showError`). */
   showDeviceSwitchError(message: string): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, deviceSwitchError: message }
@@ -365,8 +313,7 @@ export class CallsUiStore {
   }
 
   /** A fatal error tore the call down at the engine level; keep the UI up
-   * with the message + a Close button (call `clear()` from the Close
-   * handler, same as a normal hangup). */
+   * with the message + a Close button (Close calls `clear()`). */
   showError(message: string): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, error: message }

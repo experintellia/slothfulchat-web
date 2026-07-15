@@ -1,10 +1,8 @@
 /**
- * The single React tree mounted by the runtime (docs/calls.md: "the whole
- * call experience can be our own React tree mounted by the runtime"). Renders
- * nothing while no call is active; switches between the incoming-ring dialog
- * and the in-call overlay purely off `CallsUiStore`'s snapshot — no local
- * state of its own, so it is safe to mount exactly once for the page's
- * lifetime (`mount.tsx`) and just keep observing.
+ * The single React tree mounted by the runtime. Renders nothing while no
+ * call is active; switches between the incoming-ring dialog and the in-call
+ * overlay purely off `CallsUiStore`'s snapshot — no local state, so it is
+ * safe to mount once for the page's lifetime (`mount.tsx`).
  */
 import { useSyncExternalStore } from 'react'
 import { CallOverlay } from './CallOverlay.tsx'
@@ -22,8 +20,7 @@ export function CallsRoot({ store, callbacks }: CallsRootProps) {
   if (!snapshot.active) return null
 
   // Only an *incoming, still-ringing* call gets the accept/decline ring;
-  // every other moment of an active call (including outgoing "calling…")
-  // renders the overlay.
+  // everything else (including outgoing "calling…") renders the overlay.
   if (snapshot.direction === 'incoming' && snapshot.state === 'ringing') {
     return (
       <IncomingCallRing

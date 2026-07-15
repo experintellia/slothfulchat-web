@@ -1,15 +1,8 @@
 /**
- * popup-client.ts — the POPUP side of the detached call popup (M4). Runs INSIDE
- * the detached window (`packages/web-app/src/call-popup.ts` is the DOM entry
- * that uses this). It owns nothing of the core: it gets a {@link
- * PopupRpcClient} whose calls are relayed to the opener, waits for the opener's
- * {@link CallPopupInit} handoff, and surfaces the relayed core events for the
- * popup's local `CallBridge` to consume.
- *
- * Handshake: on construction it posts `ready`; the opener replies with `init`.
- * On hangup / window unload the popup calls {@link reportEnded} so the opener
- * tears its host down cleanly (vs. the abrupt-close safety net in
- * `popup-host.ts`).
+ * Popup side of the detached call popup — runs inside the detached window
+ * (DOM entry: `packages/web-app/src/call-popup.ts`). Protocol and relay live
+ * in `popup-signaling.ts`. Posts `ready` on construction; the opener replies
+ * with `init`.
  */
 
 import {
@@ -25,26 +18,20 @@ export interface CallPopupConnection {
   readonly rpc: PopupRpcClient
   /** Resolves with the opener's call parameters once it posts `init`. */
   readonly init: Promise<CallPopupInit>
-  /** Subscribe to relayed core events (answer / remote-ended /
-   * accepted-elsewhere); returns an unsubscribe fn. */
+  /** Subscribe to relayed core events; returns an unsubscribe fn. */
   onEvent(handler: (event: PopupCallEvent) => void): () => void
-  /** Tell the opener the call ended here (hangup / unload) so it stops
-   * relaying — the opener will NOT then send a safety-net `endCall`. Idempotent.
-   * `reachedConnected` (M5): whether THIS popup's own engine ever reached
-   * `connected` — the opener uses it to classify the call outcome for
-   * analytics (the popup itself has no analytics access; see
-   * `PopupToOpenerMessage`'s `ended` doc). Defaults to `false` (unknown/never
-   * connected) for call sites that don't track it. */
+  /** Tell the opener the call ended here (hangup / unload) so it skips its
+   * abrupt-close safety-net `endCall`. Idempotent. `reachedConnected`: whether
+   * this popup's engine ever reached `connected` (opener-side outcome
+   * analytics; see `PopupToOpenerMessage`'s `ended` doc). Default `false`. */
   reportEnded(reachedConnected?: boolean): void
   /** Release the relay (rejects any in-flight RPC). */
   close(): void
 }
 
 /**
- * Connect the popup to its opener over `port`. Immediately posts `ready`; the
- * returned {@link CallPopupConnection.init} promise resolves when the opener
- * replies. Foreign / malformed messages are already filtered by the port
- * ({@link parsePopupMessage}) — handlers here only see valid protocol messages.
+ * Connect the popup to its opener over `port`. Foreign / malformed messages
+ * are already filtered by the port ({@link parsePopupMessage}).
  */
 export function connectCallPopup(port: SignalingPort): CallPopupConnection {
   const rpc = new PopupRpcClient(port)

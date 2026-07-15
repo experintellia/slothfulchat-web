@@ -1,29 +1,9 @@
 /**
- * bridge/ — the thin glue that connects the framework-agnostic engine/ WebRTC
- * state machine ({@link AudioCallEngine}) to the typed jsonrpc client
- * (`rpc.placeOutgoingCall` / `acceptIncomingCall` / `endCall` / `iceServers`)
- * and the browser platform (getUserMedia + RTCPeerConnection). It is consumed by
- * `packages/web-app/src/runtime.ts`, which owns the call event subscriptions and
- * the ring/in-call UI (docs/calls.md §Architecture).
- *
- * The popup⇄opener signaling relay (docs/calls.md §Windowing) is M4 and not part
- * of this M1 surface — the engine runs in the main-window overlay for now.
- *
- * DOM lib is available here (for `navigator`/`RTCPeerConnection`), but there are
- * no React or DOM-tree (`document`) dependencies: this is glue, not UI.
- *
- * M2 also adds the level-metering tap (`createTrackAnalyser` below): the only
- * piece of this file that reaches for a real `AudioContext`, mirroring how
- * `defaultMediaFactories` is the only piece that reaches for a real
- * `RTCPeerConnection`/`getUserMedia` — `engine/level-meter.ts` stays
- * DOM-import-free by taking an already-constructed analyser.
- *
- * M5 adds the direct-vs-relay indicator: `CallBridge` starts/stops an
- * `engine/connection-route.ts` `ConnectionRouteMonitor` alongside the level
- * meters (started on `connected`, stopped on `ended`), polling
- * `AudioCallEngine.getConnectionRoute()` and forwarding changes via
- * `onConnectionRouteChanged`. Purely informational — no forced-relay setting
- * (deferred to #93); see docs/calls.md "Relay UX".
+ * bridge/ — the glue connecting the framework-agnostic engine/ to the typed
+ * jsonrpc client and the browser platform (getUserMedia, RTCPeerConnection,
+ * AudioContext). Consumed by `packages/web-app/src/runtime.ts`, which owns
+ * the call event subscriptions and the ring/in-call UI (docs/calls.md).
+ * DOM lib is available here, but no React or `document` dependencies.
  */
 
 import {
@@ -57,11 +37,7 @@ export {
   shouldShowDevicePicker,
 } from '../engine/index.ts'
 
-// M4 — the detached call popup ⇄ opener signaling relay (docs/calls.md
-// §Windowing). The opener uses `openCallPopup`/`CallPopupHost`; the popup entry
-// (`packages/web-app/src/call-popup.ts`) uses `connectCallPopup` +
-// `windowSignalingPort`. Pure protocol + relay live in `popup-signaling.ts`
-// (unit-tested, DOM-free); the postMessage transport is `window-port.ts`.
+// The detached call popup ⇄ opener signaling relay — see popup-signaling.ts.
 export {
   CALL_POPUP_PROTOCOL,
   PopupRpcClient,
@@ -87,8 +63,7 @@ export {
 } from './popup-host.ts'
 export { connectCallPopup, type CallPopupConnection } from './popup-client.ts'
 
-// M5 — call-outcome classification (docs/calls.md: "missed/busy/timeout …
-// via call_info") and the incoming-call ringtone/vibration.
+// Call-outcome classification and the incoming-call ringtone/vibration.
 export {
   classifyCallOutcome,
   type CallInfoResult,
@@ -125,14 +100,8 @@ export interface CallsRpcClient {
   endCall(accountId: number, msgId: number): Promise<void>
   /** `ice_servers(accountId) -> string` (JSON ICE list). */
   iceServers(accountId: number): Promise<string>
-  /**
-   * `call_info(accountId, msgId) -> CallInfo` (M5, docs/calls.md: "missed/
-   * busy/timeout … via call_info"). Unlike `iceServers`, core returns the
-   * typed object directly, not a JSON string (see
-   * `deltachat-jsonrpc/src/api.rs`'s `async fn call_info`). Used by the
-   * runtime's call manager, once a call ends without ever locally reaching
-   * `connected`, to classify *why* via {@link classifyCallOutcome}.
-   */
+  /** `call_info(accountId, msgId) -> CallInfo` — a typed object, NOT a JSON
+   * string like `iceServers`. Feeds {@link classifyCallOutcome}. */
   callInfo(accountId: number, msgId: number): Promise<CallInfoResult>
 }
 
@@ -185,12 +154,8 @@ export function parseIceServers(iceServersJson: string): RTCIceServer[] {
 /**
  * Fetch and parse the account's ICE servers. Best-effort: on RPC failure or a
  * malformed payload it warns and resolves to `[]` so the call still proceeds
- * (host/LAN candidates only) rather than the whole call throwing.
- *
- * NOTE (docs/calls.md risk): `ice_servers()` may resolve TURN hostnames
- * host-side; on the WASM core that DNS path is stubbed, which would surface as
- * an empty/failed result here at M1 verify — a core-side concern to escalate.
- * We surface it (console.warn) instead of papering over it, but do not crash.
+ * (host/LAN candidates only). NOTE: the WASM core's stubbed DNS path can make
+ * `ice_servers()` fail/return empty — surfaced via console.warn, never a crash.
  */
 export async function fetchIceServers(
   rpc: CallsRpcClient,
@@ -216,11 +181,8 @@ export function defaultMediaFactories(): AudioCallMediaFactories {
     // only bridges TS's narrowed event-listener overloads in the interface.
     createPeerConnection: (configuration) =>
       new RTCPeerConnection(configuration) as unknown as PeerConnectionLike,
-    // M3 screen share: `getDisplayMedia` is not universally available (e.g.
-    // some embedded/older browser contexts) — feature-detect rather than
-    // reference it unconditionally, so `defaultMediaFactories()` itself never
-    // throws just because the platform lacks it. `AudioCallEngine.startScreenShare`
-    // already handles an absent `getDisplayMedia` gracefully (`onScreenShareError`).
+    // getDisplayMedia is not universally available — feature-detect so this
+    // factory never throws; the engine handles its absence gracefully.
     getDisplayMedia:
       typeof navigator.mediaDevices.getDisplayMedia === 'function'
         ? (constraints) => navigator.mediaDevices.getDisplayMedia(constraints)
@@ -228,23 +190,15 @@ export function defaultMediaFactories(): AudioCallMediaFactories {
   }
 }
 
-/**
- * The real platform seam for M2 device enumeration: `enumerateDevices` bound
- * to `navigator.mediaDevices`. Tests inject a fake {@link DeviceEnumerator}
- * instead (see `engine/devices.test.ts`).
- */
+/** The real platform seam for device enumeration; tests inject a fake. */
 export function defaultDeviceEnumerator(): DeviceEnumerator {
   return {
     enumerateDevices: () => navigator.mediaDevices.enumerateDevices(),
   }
 }
 
-/**
- * Enumerate the mic/camera picker options using the real platform seam. A
- * thin convenience wrapper over `engine`'s {@link enumerateInputDevices} so
- * `packages/web-app/src/runtime.ts` doesn't need to import `engine/` directly
- * just for this one call (docs/calls.md: engine/ is consumed via `ui`/`bridge`).
- */
+/** Enumerate the mic/camera picker options — wraps {@link enumerateInputDevices}
+ * so the runtime never imports engine/ directly. */
 export function listInputDevices(): Promise<InputDevices> {
   return enumerateInputDevices(defaultDeviceEnumerator())
 }
@@ -262,34 +216,18 @@ export interface CallBridgeCallbacks {
   onCallMessageId?: (callMessageId: number) => void
   /** A fatal error tore the call down; the engine is already ended. */
   onError?: (error: Error) => void
-  /**
-   * Smoothed local-mic level, 0..1 (M2 speaking rings, docs/calls.md:
-   * "Web-Audio level meters driving avatar rings"). Starts firing (~10x/sec)
-   * as soon as the local stream exists — i.e. once `state` is `ringing`
-   * (outgoing, mic already acquired to build the offer) or `connecting`
-   * (incoming, mic acquired on accept). Never fires for an incoming call
-   * still ringing (mic deliberately untouched — see `AudioCallEngine.receiveCall`).
-   */
+  /** Smoothed local-mic level, 0..1 (~10x/sec), once the local stream exists.
+   * Never fires for an incoming call still ringing (mic not yet acquired). */
   onLocalLevel?: (level: number) => void
   /** Smoothed remote-peer level, 0..1, same cadence, starting once
    * `onRemoteStream` has fired. */
   onRemoteLevel?: (level: number) => void
-  /**
-   * `AudioCallEngine.switchMicrophone`/`switchCamera` failed (M2/M3 device
-   * selection) — the previous device keeps flowing untouched; surface this
-   * next to the device picker (a toast/inline note), not as a call-ending
-   * error.
-   */
+  /** A mic/camera switch failed — the previous device keeps flowing; surface
+   * inline, not as a call-ending error. */
   onDeviceSwitchError?: (error: Error) => void
-  /**
-   * The outgoing local VIDEO track was (re)established — initial camera
-   * acquisition, a `switchCamera`, or a screen-share start/stop (M3). Attach
-   * to a local-preview `<video>` element's `srcObject` on this event rather
-   * than assuming `localStream`'s video track never changes identity (mirrors
-   * why `onLocalLevel`'s meter re-taps on the analogous audio event). `null`
-   * means the local video went away (camera turned off, or a screen share
-   * stopped on an audio-started call) — drop the preview.
-   */
+  /** The outgoing local VIDEO track was (re)established — re-attach the local
+   * preview's `srcObject` on this event (the track identity changes even
+   * though the stream is stable). `null` = video went away, drop the preview. */
   onLocalVideoTrackChanged?: (track: MediaStreamTrack | null) => void
   /**
    * The REMOTE side's video went live/away — deduped, engine-owned (peer
@@ -299,38 +237,20 @@ export interface CallBridgeCallbacks {
   onRemoteVideoActiveChanged?: (active: boolean) => void
   /** The REMOTE side muted/unmuted its mic — deduped. Drives a mute badge. */
   onRemoteAudioMutedChanged?: (muted: boolean) => void
-  /**
-   * `AudioCallEngine.screenSharing` flipped (M3) — including the browser's
-   * own "Stop sharing" affordance ending the capture out-of-band. Drives the
-   * UI's screen-share toggle-button state.
-   */
+  /** `screenSharing` flipped — including the browser's own "Stop sharing"
+   * affordance ending the capture out-of-band. */
   onScreenShareChanged?: (sharing: boolean) => void
-  /**
-   * A screen-share start/stop failed (M3) — the call keeps running on
-   * whatever video was flowing before; surface this next to the screen-share
-   * control (a toast/inline note), not as the call-ending `onError`.
-   */
+  /** A screen-share start/stop failed — the call keeps running; surface
+   * inline, not as the call-ending `onError`. */
   onScreenShareError?: (error: Error) => void
-  /**
-   * The direct-vs-relay connection indicator changed (M5, docs/calls.md: "a
-   * non-blocking direct-vs-relay connection indicator (active candidate pair
-   * is 'relay')"). Polled from `AudioCallEngine.getConnectionRoute()` only
-   * while `connected` (see {@link CallBridge}'s internal `routeMonitor`) —
-   * fires once with the first resolved reading, then again only on an actual
-   * change. Purely informational: never blocks the call, and unrelated to any
-   * forced-relay setting (there is none — deferred to issue #93).
-   */
+  /** The direct-vs-relay indicator changed. Polled only while `connected`;
+   * fires on the first reading, then only on change. Purely informational. */
   onConnectionRouteChanged?: (route: ConnectionRoute) => void
 }
 
-/**
- * Lazily-created `AudioContext` shared by every level-metering tap on the
- * page (M2). One instance rather than one per track: browsers cap the number
- * of concurrent `AudioContext`s, and there is nothing to gain from separate
- * contexts here — each tap is just its own `MediaStreamAudioSourceNode` →
- * `AnalyserNode` chain hung off the same clock. Created on first use (not at
- * module load) so a page that never places/receives a call never pays for one.
- */
+/** Lazily-created `AudioContext` shared by every level-metering tap: browsers
+ * cap concurrent AudioContexts, and each tap is just its own source→analyser
+ * chain off the same clock. */
 let sharedMeterAudioContext: AudioContext | null = null
 
 function getSharedMeterAudioContext(): AudioContext {
@@ -338,10 +258,8 @@ function getSharedMeterAudioContext(): AudioContext {
     sharedMeterAudioContext = new AudioContext()
   }
   if (sharedMeterAudioContext.state === 'suspended') {
-    // Best-effort: by the time a track exists to meter, the call started from
-    // a user gesture (call button / Accept click), so this is expected to
-    // succeed; if it doesn't, the meter just reads a flat 0 until it does
-    // rather than throwing.
+    // Best-effort: the call started from a user gesture so resume() should
+    // succeed; if not, the meter reads a flat 0 rather than throwing.
     void sharedMeterAudioContext.resume().catch(() => {})
   }
   return sharedMeterAudioContext
@@ -355,18 +273,12 @@ export interface TrackAnalyserHandle {
 }
 
 /**
- * Wire a real Web Audio `AnalyserNode` to one live audio track, for
- * `engine/level-meter.ts`'s `TrackLevelMeter` to poll (M2 speaking rings).
- * The only file in `packages/calls` that constructs a real `AudioContext` —
- * everything downstream (`TrackLevelMeter`) only sees the structural
- * {@link AnalyserLike}.
- *
- * The analyser is routed through a zero-gain node to the shared context's
- * `destination`: not to be heard (gain 0 = silent — the actual remote-audio
- * playback is the separate `<audio>` element in `CallOverlay`), but because a
- * Web Audio node with no path to `destination` is not guaranteed to keep
- * being pulled/processed in every browser, which would silently stop the
- * meter from producing fresh samples.
+ * Wire a real Web Audio `AnalyserNode` to one live audio track for
+ * `TrackLevelMeter` to poll — the only place in `packages/calls` that
+ * constructs a real `AudioContext`. The analyser is routed through a
+ * zero-gain node to `destination` (silent): a node with no path to
+ * `destination` is not guaranteed to keep being processed in every browser,
+ * which would silently freeze the meter.
  */
 export function createTrackAnalyser(track: MediaStreamTrack): TrackAnalyserHandle {
   const context = getSharedMeterAudioContext()
@@ -381,9 +293,7 @@ export function createTrackAnalyser(track: MediaStreamTrack): TrackAnalyserHandl
   return {
     analyser,
     dispose: () => {
-      // best-effort: disconnecting an already-disconnected/torn-down node is
-      // harmless, but guard anyway since dispose() must never throw into a
-      // teardown path.
+      // guards: dispose() must never throw into a teardown path.
       try {
         source.disconnect()
       } catch {
@@ -406,15 +316,10 @@ export function createTrackAnalyser(track: MediaStreamTrack): TrackAnalyserHandl
 export interface OutgoingCallParams {
   accountId: number
   chatId: number
-  /**
-   * Whether we advertise video (M3: the caller's choice, e.g. upstream
-   * `ChatView`'s "start_video_call" context-menu entry vs. "start_audio_call" —
-   * both already call `startOutgoingVideoCall(accountId, chatId, {
-   * startWithCameraEnabled })`). `true` acquires the camera alongside the mic
-   * and is also what is sent as `has_video` to `rpc.placeOutgoingCall`.
-   */
+  /** The caller's choice; `true` acquires the camera alongside the mic and is
+   * sent as `has_video` to `rpc.placeOutgoingCall`. */
   hasVideo: boolean
-  /** Preferred camera `deviceId` (M3), seeding the initial acquisition when `hasVideo`. */
+  /** Preferred camera `deviceId`, seeding the initial acquisition when `hasVideo`. */
   cameraInputDeviceId?: string
   iceServers: RTCIceServer[]
 }
@@ -426,15 +331,11 @@ export interface IncomingCallParams {
   callMessageId: number
   /** The caller's raw-SDP offer (`place_call_info`). */
   offerSdp: string
-  /**
-   * Whether the CALLER's offer included video (the `IncomingCall` event's
-   * `has_video`; M3). We mirror it — acquiring our own camera and adding a
-   * video track to the answer — because a peer that sent a video m-line
-   * expects one back (ordinary WebRTC offer/answer symmetry); `accept_incoming_call`
-   * itself has no separate `has_video` RPC parameter, so this is the only lever.
-   */
+  /** Mirrors the `IncomingCall` event's `has_video`: a peer that sent a video
+   * m-line expects one back (offer/answer symmetry) — `accept_incoming_call`
+   * has no `has_video` RPC parameter, so this is the only lever. */
   hasVideo: boolean
-  /** Preferred camera `deviceId` (M3), seeding the initial acquisition when `hasVideo`. */
+  /** Preferred camera `deviceId`, seeding the initial acquisition when `hasVideo`. */
   cameraInputDeviceId?: string
   iceServers: RTCIceServer[]
 }
@@ -459,18 +360,15 @@ export class CallBridge {
   private readonly callbacks: CallBridgeCallbacks
   private readonly pendingOfferSdp: string | null
 
-  /** M2 speaking-ring metering (local + remote), lazily created once each
-   * stream exists — see {@link ensureLocalLevelMeter}/{@link startRemoteLevelMeter}
-   * and torn down together in {@link stopLevelMeters}. */
+  /** Speaking-ring metering (local + remote), lazily created once each stream
+   * exists; torn down together in {@link stopLevelMeters}. */
   private localLevelMeter: TrackLevelMeter | null = null
   private localMeterTap: TrackAnalyserHandle | null = null
   private remoteLevelMeter: TrackLevelMeter | null = null
   private remoteMeterTap: TrackAnalyserHandle | null = null
 
-  /** M5 direct-vs-relay indicator: polls `engine.getConnectionRoute()` while
-   * `connected` — there is nothing meaningful to poll before that (no active
-   * candidate pair yet). Started/stopped alongside the level meters, from the
-   * same wrapped `onStateChange` below. */
+  /** Direct-vs-relay indicator: polls `engine.getConnectionRoute()` only
+   * while `connected` (no active candidate pair exists before that). */
   private routeMonitor: ConnectionRouteMonitor | null = null
 
   /** Guards `rpc.endCall` against being sent more than once — a double hangup,
@@ -510,12 +408,9 @@ export class CallBridge {
       callbacks: {
         onStateChange: (state, change) => {
           init.callbacks.onStateChange?.(state, change)
-          // Centralizing on the state machine (rather than also hooking
-          // hangup()/remoteEnded()/acceptedElsewhere() directly) covers every
-          // teardown path uniformly — including the engine's own internal
-          // failure path — since ALL of them funnel through
-          // AudioCallEngine.end(), which the state machine notifies exactly
-          // once no matter which caller reached `ended` first.
+          // Hooking the state machine (not hangup/remoteEnded/etc. directly)
+          // covers every teardown path uniformly — all funnel through
+          // AudioCallEngine.end(), which notifies exactly once.
           if (state === 'connected') {
             this.startRouteMonitor()
           } else if (state === 'ended') {
@@ -529,20 +424,12 @@ export class CallBridge {
         },
         onError: init.callbacks.onError,
         onDeviceSwitchError: init.callbacks.onDeviceSwitchError,
-        // Fires for the FIRST mic acquisition (placeCall/accept) AND every
-        // successful `switchMicrophone` (M2 device selection) — one precise
-        // "local track (re)ready" seam, so the local meter always listens to
-        // whatever device is actually live rather than assuming
-        // `localMediaStream`'s first audio track never changes identity
-        // (`switchMicrophone` mutates the stream's tracks in place via
-        // `removeTrack`/`addTrack`, so the *stream* reference is stable but
-        // the *track* underneath it is not).
+        // Fires on the first mic acquisition AND every successful switch —
+        // the meter must re-tap whichever track is actually live (see the
+        // engine's onLocalTrackChanged doc).
         onLocalTrackChanged: (track) => {
           this.retapLocalLevelMeter(track)
         },
-        // M3: local video preview + screen-share toggle state — passed
-        // straight through, no bridge-level bookkeeping needed (unlike the
-        // audio meter, nothing here taps a Web Audio graph).
         onLocalVideoTrackChanged: init.callbacks.onLocalVideoTrackChanged,
         onRemoteVideoActiveChanged: init.callbacks.onRemoteVideoActiveChanged,
         onRemoteAudioMutedChanged: init.callbacks.onRemoteAudioMutedChanged,
@@ -558,10 +445,8 @@ export class CallBridge {
     })
   }
 
-  /** (Re)start metering the local mic on `track` — used both for the initial
-   * mic and every subsequent {@link switchMicrophone}, via
-   * `onLocalTrackChanged` above. Disposes any previous tap/meter first so a
-   * mid-call switch doesn't leak the old device's analyser. */
+  /** (Re)start metering the local mic on `track`, disposing any previous
+   * tap/meter first so a mid-call switch doesn't leak the old analyser. */
   private retapLocalLevelMeter(track: MediaStreamTrack): void {
     this.localLevelMeter?.stop()
     this.localMeterTap?.dispose()
@@ -595,8 +480,8 @@ export class CallBridge {
     this.remoteMeterTap = null
   }
 
-  /** Stop and dispose both meters — called once, from the `ended` branch of
-   * the wrapped `onStateChange` above, covering every teardown path. */
+  /** Stop and dispose both meters — from the `ended` branch of the wrapped
+   * `onStateChange`, covering every teardown path. */
   private stopLevelMeters(): void {
     this.localLevelMeter?.stop()
     this.localLevelMeter = null
@@ -605,10 +490,7 @@ export class CallBridge {
     this.stopRemoteLevelMeter()
   }
 
-  /** M5: begin polling the direct-vs-relay indicator now that the call is
-   * `connected` (an active candidate pair actually exists to inspect).
-   * Idempotent — `ConnectionRouteMonitor.start` is itself idempotent, and
-   * `onStateChange` only fires 'connected' once per call anyway. */
+  /** Begin polling the direct-vs-relay indicator once `connected`. Idempotent. */
   private startRouteMonitor(): void {
     if (this.routeMonitor == null) {
       this.routeMonitor = new ConnectionRouteMonitor({
@@ -619,8 +501,6 @@ export class CallBridge {
     this.routeMonitor.start()
   }
 
-  /** Stop polling — called once, from the `ended` branch of the wrapped
-   * `onStateChange` above, alongside {@link stopLevelMeters}. */
   private stopRouteMonitor(): void {
     this.routeMonitor?.stop()
     this.routeMonitor = null
@@ -676,12 +556,9 @@ export class CallBridge {
     return this.engine.remoteMediaStream
   }
 
-  /** The local mic's `MediaStream` (M2: lets the runtime read the ACTUAL
-   * in-use device off `getAudioTracks()[0].getSettings().deviceId` to seed
-   * the device picker's initial selection — see `AudioCallEngine.localMediaStream`
-   * for why the *stream* reference stays stable across a `switchMicrophone`
-   * hot-swap while the *track* underneath it doesn't). `null` while an
-   * incoming call is still ringing (mic not yet acquired). */
+  /** The local mic's `MediaStream` (stable reference across device switches;
+   * the runtime reads the in-use device off its track's settings). `null`
+   * while an incoming call is still ringing. */
   get localStream(): MediaStream | null {
     return this.engine.localMediaStream
   }
@@ -701,58 +578,37 @@ export class CallBridge {
     return this.engine.toggleMuted()
   }
 
-  /** The mic `deviceId` currently in use, or `null` if none was ever
-   * explicitly selected (browser default). See {@link switchMicrophone}. */
+  /** The mic `deviceId` currently in use; `null` = browser default. */
   get audioInputDeviceId(): string | null {
     return this.engine.audioInputDeviceId
   }
 
-  /**
-   * Hot-switch the outgoing mic mid-call (M2 device selection) — see
-   * `AudioCallEngine.switchMicrophone`. A failure reports
-   * `callbacks.onDeviceSwitchError` and leaves the call/previous mic
-   * untouched; it never ends the call.
-   */
+  /** Hot-switch the outgoing mic — see `AudioCallEngine.switchMicrophone`. */
   async switchMicrophone(deviceId: string): Promise<void> {
     await this.engine.switchMicrophone(deviceId)
   }
 
-  /** The camera `deviceId` currently selected (M3), or `null` if none was
-   * ever explicitly selected. See {@link switchCamera}. */
+  /** The camera `deviceId` currently selected; `null` = never selected. */
   get videoInputDeviceId(): string | null {
     return this.engine.videoInputDeviceId
   }
 
-  /**
-   * Hot-switch the outgoing camera mid-call (M3), mirroring {@link
-   * switchMicrophone} — see `AudioCallEngine.switchCamera` for the
-   * `RTCRtpSender.replaceTrack` mechanics, including its "while screen
-   * sharing this just records the preference" case. A failure reports
-   * `callbacks.onDeviceSwitchError`; it never ends the call.
-   */
+  /** Hot-switch the outgoing camera — see `AudioCallEngine.switchCamera`. */
   async switchCamera(deviceId: string): Promise<void> {
     await this.engine.switchCamera(deviceId)
   }
 
-  /** Whether the outgoing video is currently a screen capture rather than
-   * the camera (M3). Always `false` for an audio-only call. */
+  /** Whether the outgoing video is currently a screen capture. */
   get screenSharing(): boolean {
     return this.engine.screenSharing
   }
 
-  /** Whether the local camera is currently on (M3 camera toggle) — a live
-   * camera track is the outgoing video. See {@link setCameraEnabled}. */
+  /** Whether the local camera is currently on. */
   get cameraEnabled(): boolean {
     return this.engine.cameraEnabled
   }
 
-  /**
-   * Turn the local camera on or off mid-call (M3) — available on ANY call, not
-   * just ones started with the camera on (the outgoing video sender is always
-   * negotiated). See `AudioCallEngine.setCameraEnabled` for the
-   * `RTCRtpSender.replaceTrack` mechanics; a failure reports
-   * `callbacks.onDeviceSwitchError` and never ends the call.
-   */
+  /** Turn the local camera on/off — see `AudioCallEngine.setCameraEnabled`. */
   async setCameraEnabled(enabled: boolean): Promise<void> {
     await this.engine.setCameraEnabled(enabled)
   }
@@ -764,28 +620,18 @@ export class CallBridge {
     return next
   }
 
-  /** The direct-vs-relay connection indicator (M5) — the last value reported
-   * to `onConnectionRouteChanged`, or `'unknown'` before the monitor's first
-   * poll resolves / before the call reaches `connected`. Pull-based mirror of
-   * that callback, same pattern as {@link muted}/{@link screenSharing}. */
+  /** The last direct-vs-relay value reported to `onConnectionRouteChanged`;
+   * `'unknown'` before the first poll resolves. */
   get connectionRoute(): ConnectionRoute {
     return this.routeMonitor?.route ?? 'unknown'
   }
 
-  /**
-   * Start sharing the screen (M3) — see `AudioCallEngine.startScreenShare`
-   * for the `getDisplayMedia()` + `RTCRtpSender.replaceTrack` mechanics. A
-   * failure (no video on this call, capture unavailable, the user cancelled
-   * the browser's share picker) reports `callbacks.onScreenShareError` and
-   * never ends the call.
-   */
+  /** Start sharing the screen — see `AudioCallEngine.startScreenShare`. */
   async startScreenShare(): Promise<void> {
     await this.engine.startScreenShare()
   }
 
-  /** Stop sharing the screen and restore the camera (M3) — see
-   * `AudioCallEngine.stopScreenShare`. Also triggered automatically when the
-   * browser's own "Stop sharing" affordance ends the capture. */
+  /** Stop sharing and restore the camera — see `AudioCallEngine.stopScreenShare`. */
   async stopScreenShare(): Promise<void> {
     await this.engine.stopScreenShare()
   }

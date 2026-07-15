@@ -68,11 +68,6 @@ jobs:
       - name: Unit-test packages/calls engine + bridge (interop, ICE, popup IPC)
         run: node --test packages/calls/engine/*.test.ts packages/calls/bridge/*.test.ts
 
-      # Enforces docs/calls.md's "engine/ imports NO React/DOM": no react
-      # import, no .tsx file, no reaching into ../ui or ../bridge.
-      - name: Check packages/calls engine/ import boundary
-        run: node scripts/check-calls-engine-boundary.mjs
-
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:

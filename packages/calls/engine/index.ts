@@ -1,26 +1,9 @@
 /**
- * `packages/calls` — engine layer (framework-agnostic, pure TS, ZERO DOM/React
- * imports; WebRTC lib types are ambient only). See `INTEROP.md` for the wire
- * format spec this implements.
- *
- * M0 surface: the calls-webapp-compatible signaling (de)serializer + the
- * non-trickle ICE gathering policy + the shared RTC constants.
- *
- * M1 surface: the audio-only WebRTC engine (getUserMedia, RTCPeerConnection
- * lifecycle, non-trickle offer/answer orchestration, clean teardown) and the
- * observable call-state machine that backs it. `replaceTrack`, device
- * enumeration and audio metering land in later milestones and import from here.
- *
- * M2 surface: mic/camera enumeration (`devices.ts`) and mid-call microphone
- * hot-switching (`AudioCallEngine.switchMicrophone`, via
- * `RTCRtpSender.replaceTrack` — no renegotiation needed since the audio
- * m-line/codec set is unchanged); per-track audio-level metering
- * (`level-meter.ts`, `TrackLevelMeter`) driving the UI's speaking rings
- * (local + remote).
- *
- * M5 surface: `connection-route.ts` — a non-blocking direct-vs-relay
- * indicator (`getActiveConnectionRoute`/`ConnectionRouteMonitor`), purely
- * informational (no forced-relay setting; see docs/calls.md).
+ * `packages/calls` engine layer — public export surface: signaling, ICE
+ * gathering, call engine/state machine, devices, level metering, route
+ * detection, constants. Framework-agnostic pure TS, ZERO DOM/React imports
+ * (WebRTC lib types are ambient only). Wire format: `INTEROP.md`; overview:
+ * the package `README.md`.
  */
 
 export {
@@ -64,13 +47,10 @@ export {
 export {
   type CallSdpType,
   type CallSessionDescription,
-  serializeCallInfo,
   serializeOffer,
   serializeAnswer,
   deserializeOffer,
   deserializeAnswer,
-  webappHashEncode,
-  webappHashDecode,
 } from './signaling.ts';
 
 export {
