@@ -1,8 +1,24 @@
 # Calls (native WebRTC 1:1 audio/video) — our own, better-integrated implementation
 
-Status: **in progress** — M0 (interop spec + scaffold + un-gate patch), M1 (audio call happy path), M2 (mic/camera device selection + hot-switching, avatar speaking-rings), M3 (camera video + screen share), and M4 (detached popup window + overlay fallback) landed; M5 pending. M3: `AudioCallEngine`'s `hasVideo` adds a camera track/m-line alongside the mic (mirrored on the answer side per the caller's own `has_video`); `startScreenShare`/`stopScreenShare` take over that SAME outgoing video sender via `getDisplayMedia()` + `RTCRtpSender.replaceTrack` — no renegotiation, so a `calls-webapp` peer sees an ordinary track change, not a screen-share-specific protocol; the browser's native "Stop sharing" auto-restores the camera the same way. M4: the active call prefers a detached same-origin `window.open` popup (`packages/web-app/src/call-popup.ts` + `dist/call-popup.html`) that hosts the engine + UI and owns media + `RTCPeerConnection`, relaying SIGNALING ONLY to the opener over `postMessage` (`packages/calls/bridge/popup-*.ts`); the opener forwards to the core Worker. A synchronous popup-block (`window.open` → `null`) or a handshake timeout falls back seamlessly to the in-page overlay (same engine, same components); ringing always stays in the main window. **M5 is PARTIAL:** the WhoCanCallMe setting, direct-vs-relay indicator, privacy disclosure, content-free analytics, ringtone/vibration, missed/busy/timeout outcomes, mobile layout, and a Playwright e2e harness have landed — but the **CSP `connect-src` widening is BLOCKED** on a core finding (see next paragraph) and no core patch has been added. The real two-way-audio/video gate against a live Delta Chat client / `chatmail/calls-echobot`, and the live popup/overlay-fallback UX, are verified by CI/human, not in the headless build sandbox. · Branch: `claude/calls-impl-m0-9t3ote`
+Status: **in progress** — M0 (interop spec + scaffold + un-gate patch), M1 (audio call happy path), M2 (mic/camera device selection + hot-switching, avatar speaking-rings), M3 (camera video + screen share), and M4 (detached popup window + overlay fallback) landed; M5 pending. M3: `AudioCallEngine`'s `hasVideo` adds a camera track/m-line alongside the mic (mirrored on the answer side per the caller's own `has_video`); `startScreenShare`/`stopScreenShare` take over that SAME outgoing video sender via `getDisplayMedia()` + `RTCRtpSender.replaceTrack` — no renegotiation, so a `calls-webapp` peer sees an ordinary track change, not a screen-share-specific protocol; the browser's native "Stop sharing" auto-restores the camera the same way. M4: the active call prefers a detached same-origin `window.open` popup (`packages/web-app/src/call-popup.ts` + `dist/call-popup.html`) that hosts the engine + UI and owns media + `RTCPeerConnection`, relaying SIGNALING ONLY to the opener over `postMessage` (`packages/calls/bridge/popup-*.ts`); the opener forwards to the core Worker. A synchronous popup-block (`window.open` → `null`) or a handshake timeout falls back seamlessly to the in-page overlay (same engine, same components); ringing always stays in the main window. **M5 landed:** the WhoCanCallMe setting, direct-vs-relay indicator, privacy disclosure, content-free analytics, ringtone/vibration, missed/busy/timeout outcomes, mobile layout, and a Playwright e2e harness. The CSP `connect-src` widening turned out to be a **no-op** (see next paragraph) and **no core patch was needed**. The real two-way-audio/video gate against a live Delta Chat client / `chatmail/calls-echobot`, and the live popup/overlay-fallback UX, are verified by CI/human, not in the headless build sandbox. · Branch: `claude/calls-impl-m0-9t3ote`
 
-> **⚠ Open blocker (needs a human decision — no core patch added yet).** `ice_servers()` (core `src/calls.rs`) resolves STUN/TURN DNS **host-side** and emits IP addresses; on the WASM build `tokio`'s `lookup_host` is stubbed (our `patches/core/0001`), so it returns `"[]"` — the browser gets **no STUN/TURN**, so calls only reach same-LAN/loopback peers, not real clients across NAT. Until this is resolved the `connect-src` widening has no hosts to add and the privacy page's "relay fallback" description reflects the *design*, not current runtime behaviour. Two paths: **(A)** a minimal wasm-gated core patch that emits unresolved `turn:`/`stun:` hostnames for the browser to resolve (per-account relay from METADATA; +1 core patch → 17); **(B)** inject the public fallback ICE list (`turn.delta.chat`, from core's own `create_fallback_ice_servers()`) in `packages/calls`, no core patch but a shared public relay. Decision pending.
+> **✔ Resolved (investigated 2026-07 — no core patch, no CSP hosts needed).** An
+> earlier draft flagged `ice_servers()` as a blocker on the theory that it returns
+> `"[]"` on WASM because DNS is stubbed. That was a **misread**. `ice_servers()` →
+> `resolve_ice_servers()` → `dns.rs::lookup_host_with_cache` does **not** use the
+> stubbed `tokio::net::lookup_host` on wasm — `patches/core/0005` rewired `dns.rs`
+> (its `#[cfg(target_arch="wasm32")]` branch) to resolve through the WS-TCP proxy's
+> `/dns/{host}` endpoint, the same path IMAP/SMTP already use (and `imap.rs` falls
+> back to `create_fallback_ice_servers()` — `turn.delta.chat` — when the relay
+> advertises none). So `ice_servers()` returns real relay servers on the browser
+> build; no calls-specific core change is needed. **And CSP never needed the relay
+> hosts anyway:** WebRTC STUN/TURN/media are *not* governed by `connect-src` (they
+> don't go through Fetch) — only by the binary `webrtc` directive (default `allow`).
+> Verified empirically on Chromium under this repo's exact `default-src 'none'` CSP:
+> a `fetch()` to a TURN host is `connect-src`-blocked while an `RTCPeerConnection`
+> to the same host is not, gathering with zero CSP violations. The one thing the
+> headless sandbox can't prove is a live *relay hop* (outbound UDP is blocked here)
+> — that rides the same human/CI live-call gate as everything else.
 
 ## What & why
 
@@ -161,11 +177,16 @@ gracefully from popup-block. **Verify**: call in popup; block popups → seamles
 overlay fallback; no core-access breakage.
 
 **M5 — CSP, permissions, privacy, settings, polish.**
-- CSP: add `connect-src` for the STUN/TURN hosts from `ice_servers()` (browsers
-  gate ICE via `connect-src`); `Permissions-Policy` / element `allow` for
-  `camera; microphone; display-capture`. (No `frame-src` needed — no iframe.)
-  Confirm `ice_servers()` returns hostnames the *browser* resolves (our WASM DNS
-  is stubbed); host-side resolution is the only likely core-side snag.
+- CSP (**resolved — a no-op**, see the ✔ note near the top): do **not** add
+  STUN/TURN hosts to `connect-src` — WebRTC ICE/media are not `connect-src`-gated
+  (verified on Chromium). No `Permissions-Policy` / element `allow` needed either:
+  both call surfaces (main-window overlay + `window.open` popup) are top-level
+  same-origin, not iframes, so `camera; microphone; display-capture` default to
+  `self`. The only WebRTC CSP knob is the binary `webrtc` directive (default
+  `allow`), left off for now (barely implemented → "unrecognized directive"
+  warnings); to be added as `webrtc 'allow'` here + `webrtc 'block'` on the future
+  webxdc sandbox once it ships. `ice_servers()` resolves fine on WASM via the
+  WS-TCP proxy `/dns/` path — no core snag, no core patch.
 - Settings: expose `WhoCanCallMe`.
 - Relay UX (**decided**): **standard ICE** — direct-preferred with automatic relay
   fallback, no mid-call prompt and **no forced-relay setting in the initial build**.
@@ -218,9 +239,12 @@ overlay fallback; no core-access breakage.
   privacy-policy disclosure, direct-vs-relay indicator; no forced-relay setting for
   now. Optional always-relay mode deferred to #93. See M5.
 - **Popup ⇄ core IPC** — reason overlay is default; popup is enhancement (M4).
-- **`ice_servers()` on WASM** — verify it returns hostnames (browser resolves) not
-  host-side DNS.
-- **CSP widening** vs. the repo's single-origin privacy stance — documented decision (M5).
+- **`ice_servers()` on WASM** — ✔ resolved: returns real relay servers via the
+  WS-TCP proxy `/dns/` path (same as IMAP/SMTP); no core patch. Live relay hop
+  still rides the human/CI call gate (sandbox blocks outbound UDP).
+- **CSP widening** — ✔ resolved: none needed. WebRTC ICE/media are not
+  `connect-src`-gated (verified on Chromium); only the binary `webrtc` directive
+  applies (default `allow`). No change to the single-origin `connect-src`.
 - **Signaling latency** — offer/answer ride DeltaChat messages; ring/connect delay is
   inherent to DC; set UX expectations (timeouts, "calling…").
 

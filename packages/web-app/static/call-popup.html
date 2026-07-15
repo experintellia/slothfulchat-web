@@ -11,13 +11,16 @@
       to the core Worker. No core Worker, no service worker, no wasm here.
 
       CSP mirrors main.html's stance (single-origin, script-src 'self') minus
-      the app-only pins (analytics / relay-directory). The STUN/TURN
-      connect-src widening the RTCPeerConnection needs for relay candidates is
-      the SAME cross-cutting change M5 makes for the main window's overlay path
-      (docs/calls.md M5: "add connect-src for the STUN/TURN hosts from
-      ice_servers()"); host/LAN candidates work without it. No Permissions-Policy
-      / element `allow` is needed: this is a TOP-LEVEL same-origin window (not an
-      iframe), so a granted camera/microphone permission applies directly.
+      the app-only pins (analytics / relay-directory). The RTCPeerConnection's
+      STUN/TURN relay candidates need NOTHING added to connect-src: WebRTC ICE
+      is not governed by connect-src (it does not pass through Fetch), so the
+      `ice_servers()` relay hosts are not checked here — verified on Chromium
+      under this policy (see main.html's CSP note for the test). The only WebRTC
+      CSP knob is the binary `webrtc` directive (default 'allow'), omitted for
+      now; when it ships widely this popup gets `webrtc 'allow'`. No
+      Permissions-Policy / element `allow` is needed: this is a TOP-LEVEL
+      same-origin window (not an iframe), so a granted camera/microphone
+      permission applies directly.
     -->
     <meta
       http-equiv="Content-Security-Policy"

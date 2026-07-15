@@ -32,6 +32,17 @@
       SLOTHFUL_PLAUSIBLE_DOMAIN, so keep the values here in sync with the base
       list + default pin there.
       * style-src 'unsafe-inline' is needed for theming and the virtual list.
+      * Calls (WebRTC, docs/calls.md) need NOTHING added here. STUN/TURN and the
+        media/ICE traffic are NOT governed by connect-src — WebRTC does not pass
+        through Fetch — so the (dynamic, per-relay) hosts `ice_servers()` returns
+        must NOT be listed; they would never be checked. Verified on Chromium
+        under this exact policy: a fetch() to a TURN host is connect-src-blocked,
+        while an RTCPeerConnection to the SAME host is not, and gathers with zero
+        CSP violations. The only WebRTC CSP knob is the binary `webrtc` directive
+        ('allow' | 'block'), default 'allow'; it is intentionally omitted for now
+        (barely implemented — emitting it just warns "unrecognized directive").
+        When it ships widely, add `webrtc 'allow'` here and `webrtc 'block'` on
+        the future webxdc sandbox document (a webxdc app must not open calls).
     -->
     <meta
       http-equiv="Content-Security-Policy"
