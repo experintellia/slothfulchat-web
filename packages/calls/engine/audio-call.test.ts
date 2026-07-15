@@ -132,12 +132,16 @@ function screenStream(): FakeStream {
 class FakeSender implements RtpSenderLike {
   track: MediaStreamTrack | null;
   replaceTrackCalls: Array<MediaStreamTrack | null> = [];
+  setStreamsCalls: MediaStream[][] = [];
   constructor(track: MediaStreamTrack | null) {
     this.track = track;
   }
   async replaceTrack(track: MediaStreamTrack | null): Promise<void> {
     this.replaceTrackCalls.push(track);
     this.track = track;
+  }
+  setStreams(...streams: MediaStream[]): void {
+    this.setStreamsCalls.push(streams);
   }
 }
 
@@ -211,6 +215,7 @@ class FakePc implements PeerConnectionLike {
    * MUST NOT `addTransceiver` (it can't add an m-line the offer lacked), so
    * tests assert this stays 0 on the answer side. */
   addTransceiverCount = 0;
+  transceiverInits: Array<{ direction?: RTCRtpTransceiverDirection; streams?: MediaStream[] } | undefined> = [];
   configuration: RTCConfiguration;
   /** M5: what {@link getStats} resolves with — tests set this to a `Map` of
    * `RtcStatsEntry`-shaped objects to drive `getConnectionRoute()`. Empty by
@@ -225,7 +230,9 @@ class FakePc implements PeerConnectionLike {
   /** The sender seeded by {@link seedRemoteVideoSender}, for assertions. */
   seededVideoSender: FakeSender | null = null;
   private connListeners = new Set<() => void>();
-  private trackListeners = new Set<(e: { streams: ReadonlyArray<MediaStream> }) => void>();
+  private trackListeners = new Set<
+    (e: { streams: ReadonlyArray<MediaStream>; track: MediaStreamTrack }) => void
+  >();
 
   constructor(configuration: RTCConfiguration) {
     this.configuration = configuration;
@@ -291,9 +298,10 @@ class FakePc implements PeerConnectionLike {
    * screen-share sender lookups and the answerer's direction promotion see it. */
   addTransceiver(
     kind: string,
-    init?: { direction?: RTCRtpTransceiverDirection }
+    init?: { direction?: RTCRtpTransceiverDirection; streams?: MediaStream[] }
   ): FakeTransceiver {
     this.addTransceiverCount += 1;
+    this.transceiverInits.push(init);
     const sender = new FakeSender(null);
     const transceiver: FakeTransceiver = {
       kind,
@@ -332,7 +340,12 @@ class FakePc implements PeerConnectionLike {
     for (const l of [...this.connListeners]) l();
   }
   fireTrack(stream: MediaStream): void {
-    for (const l of [...this.trackListeners]) l({ streams: [stream] });
+    const track = (stream as unknown as FakeStream).getTracks()[0] as unknown as MediaStreamTrack;
+    for (const l of [...this.trackListeners]) l({ streams: [stream], track });
+  }
+  /** ontrack for an m-line with no stream association (a=msid:- ...). */
+  fireStreamlessTrack(track: MediaStreamTrack): void {
+    for (const l of [...this.trackListeners]) l({ streams: [], track });
   }
   listenerCount(): number {
     return this.connListeners.size + this.trackListeners.size;
@@ -537,6 +550,51 @@ test('INTEROP: audio-started answerer can screen-share to the peer (replaceTrack
     screen.tracks[0] as unknown as MediaStreamTrack,
     'screen track replaced onto the ADOPTED, now-sendrecv peer video sender — reaches DC'
   );
+});
+
+test('INTEROP: audio-started offerer associates the local stream with the video m-line (msid)', async () => {
+  // A trackless addTransceiver yields `a=msid:- ...` — the peer's ontrack then
+  // fires with empty event.streams and stream-based consumers (calls-webapp)
+  // never see the later replaceTrack'd camera: RTP flows but renders black.
+  const { engine, lastPc } = makeEngine();
+  await engine.placeCall();
+  const pc = lastPc();
+  assert.equal(pc.transceiverInits.length, 1);
+  assert.deepEqual(
+    pc.transceiverInits[0]?.streams,
+    [engine.localMediaStream],
+    'video transceiver carries the local stream so the offer has a real a=msid'
+  );
+});
+
+test('INTEROP: audio-started answerer associates the local stream via setStreams (msid)', async () => {
+  const { engine, lastPc } = makeEngine({ seedRemoteVideoSender: true });
+  engine.receiveCall('OFFER_FROM_PEER');
+  await engine.accept();
+  const pc = lastPc();
+  assert.deepEqual(
+    pc.seededVideoSender!.setStreamsCalls,
+    [[engine.localMediaStream]],
+    'adopted trackless video sender got setStreams(localStream) before the answer'
+  );
+});
+
+test('streamless ontrack folds the track into the existing remote stream', async () => {
+  // A peer whose video m-line has no msid (e.g. an old build offering a bare
+  // trackless transceiver) fires ontrack with empty event.streams — the track
+  // must still land in remoteStream for the UI to render it.
+  const { engine, events, lastPc } = makeEngine();
+  await engine.placeCall();
+  const remote = micStream() as unknown as MediaStream;
+  lastPc().fireTrack(remote);
+  const strayVideo = new FakeTrack('video') as unknown as MediaStreamTrack;
+  lastPc().fireStreamlessTrack(strayVideo);
+  assert.equal(engine.remoteMediaStream, remote, 'same remote stream kept');
+  assert.ok(
+    (remote as unknown as FakeStream).getTracks().includes(strayVideo as unknown as FakeTrack),
+    'streamless video track folded into the remote stream'
+  );
+  assert.equal(events.remoteStreams.length, 2, 'onRemoteStream re-fired with the updated stream');
 });
 
 // ── Mute ──────────────────────────────────────────────────────────────────────

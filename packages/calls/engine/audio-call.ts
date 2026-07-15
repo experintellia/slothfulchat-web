@@ -53,6 +53,10 @@ import {
 export interface RtpSenderLike {
   readonly track: MediaStreamTrack | null;
   replaceTrack(track: MediaStreamTrack | null): Promise<void>;
+  /** Associates streams for the a=msid line without needing a track (real
+   * `RTCRtpSender.setStreams`). Needed by the audio-started answerer — see
+   * {@link AudioCallEngine.addLocalTracks}'s msid note. */
+  setStreams?(...streams: MediaStream[]): void;
 }
 
 /**
@@ -98,7 +102,7 @@ export interface PeerConnectionLike extends GatheringPeerConnection {
    * how an audio-started offerer still negotiates a video m-line. */
   addTransceiver(
     kind: 'audio' | 'video',
-    init?: { direction?: RTCRtpTransceiverDirection }
+    init?: { direction?: RTCRtpTransceiverDirection; streams?: MediaStream[] }
   ): RtpTransceiverLike;
   getSenders(): RtpSenderLike[];
   /** Used by the answerer to find and promote the recvonly video transceiver
@@ -125,7 +129,7 @@ export interface PeerConnectionLike extends GatheringPeerConnection {
   addEventListener(type: 'connectionstatechange', listener: () => void): void;
   addEventListener(
     type: 'track',
-    listener: (event: { readonly streams: ReadonlyArray<MediaStream> }) => void
+    listener: (event: { readonly streams: ReadonlyArray<MediaStream>; readonly track: MediaStreamTrack }) => void
   ): void;
   removeEventListener(
     type: 'icecandidate',
@@ -135,7 +139,7 @@ export interface PeerConnectionLike extends GatheringPeerConnection {
   removeEventListener(type: 'connectionstatechange', listener: () => void): void;
   removeEventListener(
     type: 'track',
-    listener: (event: { readonly streams: ReadonlyArray<MediaStream> }) => void
+    listener: (event: { readonly streams: ReadonlyArray<MediaStream>; readonly track: MediaStreamTrack }) => void
   ): void;
 }
 
@@ -232,7 +236,10 @@ export interface AudioCallOptions {
 }
 
 type ConnectionListener = () => void;
-type TrackListener = (event: { readonly streams: ReadonlyArray<MediaStream> }) => void;
+type TrackListener = (event: {
+  readonly streams: ReadonlyArray<MediaStream>;
+  readonly track: MediaStreamTrack;
+}) => void;
 
 export class AudioCallEngine {
   private readonly machine = new CallStateMachine();
@@ -974,15 +981,26 @@ export class AudioCallEngine {
     // Audio-started: reuse the video sender the remote offer already created
     // (answerer — the sole trackless sender now that the mic is bound), or
     // negotiate our own video m-line (offerer).
+    //
+    // Interop (msid): the trackless video m-line MUST be associated with the
+    // local stream (a=msid:<stream> …, not a=msid:- …), or the peer's ontrack
+    // fires with empty `event.streams` and stream-based consumers (calls-webapp,
+    // our own trackListener) never see the later replaceTrack'd camera/screen —
+    // RTP flows but the peer renders black/avatar (confirmed via
+    // scripts/repro-calls-video.mjs).
     const existingTrackless = pc.getSenders().find((s) => s.track == null) ?? null;
     if (existingTrackless != null) {
       this.videoSender = existingTrackless;
+      existingTrackless.setStreams?.(stream);
       // Interop: setRemoteDescription's transceiver defaults to `recvonly`;
       // left that way, a later replaceTrack(camera/screen) sends NO media
       // (confirmed live). Promote to sendrecv BEFORE creating the answer.
       this.promoteVideoTransceiverToSendrecv(pc, existingTrackless);
     } else if (isOfferer) {
-      this.videoSender = pc.addTransceiver('video', { direction: 'sendrecv' }).sender;
+      this.videoSender = pc.addTransceiver('video', {
+        direction: 'sendrecv',
+        streams: [stream],
+      }).sender;
     } else {
       // Answerer whose peer offered no video m-line: nothing to hijack.
       this.videoSender = null;
@@ -1167,8 +1185,14 @@ export class AudioCallEngine {
     };
     const trackListener: TrackListener = (event) => {
       if (!this.ensureActive(epoch)) return;
-      const stream = event.streams[0];
-      if (stream == null) return;
+      let stream = event.streams[0];
+      if (stream == null) {
+        // The peer's m-line had no stream association (a=msid:- …, e.g. a
+        // trackless-transceiver offer) — fold the track into our remote
+        // stream so stream-based consumers still see it.
+        stream = this.remoteStream ?? new MediaStream();
+        if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track);
+      }
       this.remoteStream = stream;
       this.callbacks.onRemoteStream?.(stream);
       this.watchRemoteVideoTrack(stream);
