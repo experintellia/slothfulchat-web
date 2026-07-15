@@ -44,14 +44,22 @@ export interface AnalyserLike {
   getByteTimeDomainData(array: Uint8Array): void;
 }
 
-/** Perceptual gain applied to raw RMS before clamping to 0..1. Speech RMS on
- * a raw 0..255 time-domain buffer is typically small (a normal-volume voice
- * rarely pushes the full-scale RMS much past ~0.15-0.2), so an un-boosted
- * ring would look almost dark during normal talking; this multiplier is
- * tuned so normal speaking volume reads as a clearly-lit ring while near
- * silence stays dark. Exposed as a constant (not hardcoded inline) so a
- * future tuning pass has one place to change it. */
-export const DEFAULT_LEVEL_GAIN = 4;
+/** Perceptual gain applied to raw RMS before the noise gate + clamp to 0..1.
+ * Speech RMS on a raw 0..255 time-domain buffer is typically small (a
+ * normal-volume voice rarely pushes the full-scale RMS much past ~0.15-0.2),
+ * so an un-boosted ring would look almost dark during normal talking; this
+ * multiplier is tuned so normal speaking volume reads as a clearly-lit ring
+ * while near silence stays dark. Exposed as a constant (not hardcoded inline)
+ * so a future tuning pass has one place to change it. */
+export const DEFAULT_LEVEL_GAIN = 6;
+
+/** Noise gate applied AFTER {@link DEFAULT_LEVEL_GAIN} (in the same boosted
+ * 0..1 space): ambient room noise/self-noise reads as a small but non-zero
+ * boosted level, which would light the ring green even when nobody is talking.
+ * Anything at or below this floor is forced to exactly 0 ("no green at rest"),
+ * and everything above is rescaled `(x - gate)/(1 - gate)` so real speech still
+ * spans the full range rather than being uniformly dimmed by the subtraction. */
+export const DEFAULT_LEVEL_NOISE_GATE = 0.06;
 
 /** Default poll interval. 10Hz is smooth enough for a CSS-animated ring and
  * cheap enough to run per-track for the lifetime of a call. */
@@ -64,15 +72,21 @@ export const DEFAULT_LEVEL_SMOOTHING = 0.5;
 /**
  * Pure RMS-based level computation from a Web-Audio time-domain byte buffer
  * (values 0..255, silence centered on 128 per the Web Audio spec). Returns a
- * value in `[0, 1]`: 0 is silence, 1 is "at or above the tuned loud
- * threshold" (see {@link DEFAULT_LEVEL_GAIN}), not "digital full scale".
+ * value in `[0, 1]`: 0 is silence (or ambient noise below {@link
+ * DEFAULT_LEVEL_NOISE_GATE}), 1 is "at or above the tuned loud threshold" (see
+ * {@link DEFAULT_LEVEL_GAIN}), not "digital full scale".
+ *
+ * The pipeline is: RMS → `× gain` → noise gate (below the gate → 0, above →
+ * rescaled to `[0, 1]`) → clamp. The gate is what keeps a resting ring truly
+ * dark rather than faintly lit by ambient noise.
  *
  * An empty buffer (a degenerate/misconfigured analyser) returns 0 rather
  * than throwing or dividing by zero.
  */
 export function computeRmsLevel(
   timeDomainData: Uint8Array,
-  gain: number = DEFAULT_LEVEL_GAIN
+  gain: number = DEFAULT_LEVEL_GAIN,
+  noiseGate: number = DEFAULT_LEVEL_NOISE_GATE
 ): number {
   const { length } = timeDomainData;
   if (length === 0) return 0;
@@ -82,7 +96,13 @@ export function computeRmsLevel(
     sumSquares += normalized * normalized;
   }
   const rms = Math.sqrt(sumSquares / length);
-  return Math.min(1, Math.max(0, rms * gain));
+  const boosted = rms * gain;
+  // Noise gate: below the floor is silence; above it, rescale so real speech
+  // still reaches 1 instead of being uniformly dimmed by the subtraction.
+  const gate = Math.min(Math.max(noiseGate, 0), 0.999);
+  if (boosted <= gate) return 0;
+  const rescaled = (boosted - gate) / (1 - gate);
+  return Math.min(1, Math.max(0, rescaled));
 }
 
 export interface TrackLevelMeterOptions {
@@ -92,6 +112,8 @@ export interface TrackLevelMeterOptions {
   intervalMs?: number;
   /** Gain forwarded to {@link computeRmsLevel}. Default {@link DEFAULT_LEVEL_GAIN}. */
   gain?: number;
+  /** Noise gate forwarded to {@link computeRmsLevel}. Default {@link DEFAULT_LEVEL_NOISE_GATE}. */
+  noiseGate?: number;
   /** EMA smoothing factor, see {@link DEFAULT_LEVEL_SMOOTHING}. Default that. */
   smoothing?: number;
   /** Called with the smoothed 0..1 level on every sample, including the
@@ -118,6 +140,7 @@ export class TrackLevelMeter {
   private readonly buffer: Uint8Array;
   private readonly intervalMs: number;
   private readonly gain: number;
+  private readonly noiseGate: number;
   private readonly smoothing: number;
   private readonly onLevelCb: ((level: number) => void) | undefined;
   private readonly setIntervalFn: (cb: () => void, ms: number) => unknown;
@@ -136,6 +159,7 @@ export class TrackLevelMeter {
     this.buffer = new Uint8Array(size);
     this.intervalMs = options.intervalMs ?? DEFAULT_LEVEL_INTERVAL_MS;
     this.gain = options.gain ?? DEFAULT_LEVEL_GAIN;
+    this.noiseGate = options.noiseGate ?? DEFAULT_LEVEL_NOISE_GATE;
     this.smoothing = options.smoothing ?? DEFAULT_LEVEL_SMOOTHING;
     this.onLevelCb = options.onLevel;
     this.setIntervalFn = options.setIntervalFn ?? ((cb, ms) => setInterval(cb, ms));
@@ -179,7 +203,7 @@ export class TrackLevelMeter {
    */
   sample(): number {
     this.analyser.getByteTimeDomainData(this.buffer);
-    const raw = computeRmsLevel(this.buffer, this.gain);
+    const raw = computeRmsLevel(this.buffer, this.gain, this.noiseGate);
     this.currentLevel = this.currentLevel * this.smoothing + raw * (1 - this.smoothing);
     this.onLevelCb?.(this.currentLevel);
     return this.currentLevel;

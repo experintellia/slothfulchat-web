@@ -651,7 +651,7 @@ class BrowserRuntime {
     // a fault in the (prototype) call subsystem must never break the core
     // connection the whole app depends on.
     try {
-      getCallManager(this.log)
+      getCallManager(this.log, this.transformBlobURL.bind(this))
     } catch (err) {
       this.log.error('failed to initialize call manager', err)
     }
@@ -689,7 +689,7 @@ class BrowserRuntime {
     chatId: number,
     param?: { startWithCameraEnabled: boolean }
   ): void {
-    getCallManager(this.log).startOutgoingCall(accountId, chatId, param?.startWithCameraEnabled ?? false)
+    getCallManager(this.log, this.transformBlobURL.bind(this)).startOutgoingCall(accountId, chatId, param?.startWithCameraEnabled ?? false)
   }
   /**
    * Show the incoming-call ring and, on accept, answer the call. Called both
@@ -707,7 +707,7 @@ class BrowserRuntime {
     callerWebrtcOffer: string
     startWithCameraEnabled: boolean
   }): Promise<void> {
-    getCallManager(this.log).openIncomingCall(params)
+    getCallManager(this.log, this.transformBlobURL.bind(this)).openIncomingCall(params)
   }
   async saveBackgroundImage(
     _file: string,
@@ -1672,6 +1672,8 @@ function showWebxdcNotImplementedDialog() {
 /** `${accountId}` scoping is implicit (one call at a time in M1). */
 class CallManager {
   private readonly log: Logger
+  /** Resolve a core blob path to a SW-served URL (FIX 2 avatars). */
+  private readonly transformBlobURL: (path: string) => string
   private readonly factories = defaultMediaFactories()
   /** The single shared call-UI store; the React tree mounted by
    * `mountCallsUi` observes it and re-renders on every push below. */
@@ -1693,7 +1695,7 @@ class CallManager {
      * which (unlike the M1 overlay path) can re-derive the call from the slot. */
     direction: CallDirection
     hasVideo: boolean
-    /** Best-effort chat/contact name (resolved by `decorateTitle`). */
+    /** Best-effort chat/contact name (resolved by `decorateCallInfo`). */
     title: string
     /** Incoming: the caller's raw-SDP offer, retained so an accept can build a
      * `CallBridge` (overlay) or hand it to the popup (`CallPopupInit.offerSdp`). */
@@ -1745,8 +1747,9 @@ class CallManager {
    * `openIncomingCall`, torn down in `teardown`. */
   private deviceChangeHandler: (() => void) | null = null
 
-  constructor(log: Logger) {
+  constructor(log: Logger, transformBlobURL: (path: string) => string) {
     this.log = log
+    this.transformBlobURL = transformBlobURL
     mountCallsUi(this.ui, {
       onAccept: () => this.acceptCurrent(),
       onHangup: () => this.hangupCurrent(),
@@ -1754,6 +1757,7 @@ class CallManager {
       onSelectMicrophone: deviceId => this.selectMicrophone(deviceId),
       onSelectCamera: deviceId => this.selectCamera(deviceId),
       onToggleScreenShare: () => this.toggleScreenShareCurrent(),
+      onToggleCamera: () => this.toggleCameraCurrent(),
     })
     this.subscribe()
   }
@@ -1874,7 +1878,7 @@ class CallManager {
           this.overlayBridgeCallbacks(slot)
         )
         slot.bridge = bridge
-        void this.decorateTitle(slot.accountId, slot.chatId) // fire-and-forget (cosmetic)
+        void this.decorateCallInfo(slot) // fire-and-forget (cosmetic)
         await bridge.start()
       } catch (err) {
         this.log.error('startOutgoingCall failed', err)
@@ -1889,7 +1893,13 @@ class CallManager {
   private overlayBridgeCallbacks(slot: NonNullable<CallManager['call']>): CallBridgeCallbacks {
     return {
       onStateChange: state => this.onState(slot, state),
-      onRemoteStream: stream => this.ui.attachRemoteStream(stream),
+      onRemoteStream: stream => {
+        this.ui.attachRemoteStream(stream)
+        // FIX 1: video tiles render off ACTUAL video flow, not the initial
+        // hasVideo — a video sender is always negotiated, so the remote stream
+        // may carry a (initially muted) video track even on an audio call.
+        this.watchRemoteVideo(slot, stream)
+      },
       // Event routing reads the message id off bridge/popup/slot (set the
       // moment placeOutgoingCall resolves), so no onCallMessageId indexing.
       onError: err => this.onError(slot, err),
@@ -1904,9 +1914,15 @@ class CallManager {
       // call/old device untouched — surface it next to the picker, not as a
       // call-ending error (contrast onError above).
       onDeviceSwitchError: err => this.ui.showDeviceSwitchError(err.message || 'Could not switch device'),
-      // M3: local video preview + screen-share toggle state.
-      onLocalVideoTrackChanged: () => this.ui.setLocalStream(slot.bridge?.localStream ?? null),
-      onScreenShareChanged: sharing => this.ui.setScreenSharing(sharing),
+      // M3: local video preview + camera/screen-share toggle state. Fires on
+      // the initial camera, a switchCamera, camera on/off, and screen-share
+      // start/stop (track may be null when video goes away) — re-sync all the
+      // local-video-derived store fields from the bridge each time.
+      onLocalVideoTrackChanged: () => this.syncLocalVideo(slot),
+      onScreenShareChanged: sharing => {
+        this.ui.setScreenSharing(sharing)
+        this.syncLocalVideo(slot)
+      },
       onScreenShareError: err => this.ui.showScreenShareError(err.message || 'Could not share screen'),
     }
   }
@@ -1971,7 +1987,7 @@ class CallManager {
         if (slot.cancelled || slot.mode !== 'overlay') return
         const bridge = this.newIncomingBridge(slot, iceServers)
         slot.bridge = bridge
-        void this.decorateTitle(accountId, chatId) // fire-and-forget (cosmetic)
+        void this.decorateCallInfo(slot) // fire-and-forget (cosmetic)
         await bridge.start()
       } catch (err) {
         this.log.error('openIncomingCall failed', err)
@@ -2073,6 +2089,56 @@ class CallManager {
     c.bridge.toggleScreenShare().catch(err => {
       this.log.error('toggleScreenShare failed', err)
     })
+  }
+
+  /** Toggle the local camera (M3, FIX 1) — available on ANY call, since the
+   * outgoing video sender is always negotiated (see
+   * `AudioCallEngine.setCameraEnabled`). Local-only, no core RPC. The store's
+   * camera/local-video fields are kept live by the engine's
+   * `onLocalVideoTrackChanged` (wired to `syncLocalVideo`), but we also sync
+   * once the toggle resolves in case it failed via `onDeviceSwitchError`
+   * (which fires no track-changed event). */
+  private toggleCameraCurrent(): void {
+    const c = this.call
+    if (!c?.bridge) return
+    const bridge = c.bridge
+    bridge.toggleCamera().then(
+      () => {
+        if (this.call === c) this.syncLocalVideo(c)
+      },
+      err => this.log.error('toggleCamera failed', err)
+    )
+  }
+
+  /** Re-sync every store field derived from the local outgoing video (M3, FIX
+   * 1): the preview stream, whether a local video track is actually flowing
+   * (camera on OR screen sharing → show the local tile), and the camera-on
+   * flag that drives the camera button + device picker. */
+  private syncLocalVideo(slot: NonNullable<CallManager['call']>): void {
+    if (this.call !== slot || slot.mode !== 'overlay') return
+    const stream = slot.bridge?.localStream ?? null
+    this.ui.setLocalStream(stream)
+    this.ui.setLocalHasVideo((stream?.getVideoTracks().length ?? 0) > 0)
+    this.ui.setCameraOn(slot.bridge?.cameraEnabled ?? false)
+  }
+
+  /** Track whether the REMOTE peer is actually sending video (M3, FIX 1). The
+   * video m-line is always negotiated, so the remote stream may hold a video
+   * track that is muted (no data) until the peer enables their camera —
+   * `track.muted` reflects that. Listen for mute/unmute/ended so the remote
+   * video tile appears/disappears as the peer toggles their camera. */
+  private watchRemoteVideo(slot: NonNullable<CallManager['call']>, stream: MediaStream): void {
+    const videoTrack = stream.getVideoTracks()[0] ?? null
+    const apply = () => {
+      if (this.call !== slot || slot.mode !== 'overlay') return
+      this.ui.setRemoteHasVideo(videoTrack != null && !videoTrack.muted)
+    }
+    apply()
+    if (videoTrack != null) {
+      videoTrack.addEventListener('mute', apply)
+      videoTrack.addEventListener('unmute', apply)
+      videoTrack.addEventListener('ended', apply)
+    }
   }
 
   private onState(
@@ -2281,7 +2347,7 @@ class CallManager {
         this.ui.showCall({ direction: 'incoming', title: slot.title, hasVideo: slot.hasVideo })
         const bridge = this.newIncomingBridge(slot, iceServers)
         slot.bridge = bridge
-        void this.decorateTitle(slot.accountId, slot.chatId)
+        void this.decorateCallInfo(slot)
         // start() (sync: register offer, ringing) then accept() (sync: →
         // connecting, then async mic) run back-to-back so the store is already
         // past 'ringing' before React paints — no incoming-ring flash.
@@ -2369,21 +2435,49 @@ class CallManager {
     this.deviceChangeHandler = null
   }
 
-  /** Best-effort: label the UI with the chat name. */
-  private async decorateTitle(accountId: number, chatId: number): Promise<void> {
+  /**
+   * Best-effort: resolve the real chat/contact name, avatar and theme color for
+   * the call UI (FIX 2), plus the self-account avatar for the local "You" ring.
+   * `getBasicChatInfo` returns camelCase `{ name, profileImage, color }` (the
+   * pinned core serializes `BasicChat` with `#[serde(rename_all="camelCase")]`);
+   * the avatar `profileImage` is a core blob path resolved through the existing
+   * SW blob route via {@link transformBlobURL}. Each lookup guards on the call
+   * still being the active one so a slow RPC that resolves after teardown/replace
+   * doesn't paint a stale name/avatar. Falls back silently to the generic title
+   * + initial-letter rings on any failure. */
+  private async decorateCallInfo(slot: NonNullable<CallManager['call']>): Promise<void> {
     try {
-      const chat = await getCore().dc.rpc.getBasicChatInfo(accountId, chatId)
-      if (chat?.name) this.ui.setTitle(chat.name)
+      const chat = await getCore().dc.rpc.getBasicChatInfo(slot.accountId, slot.chatId)
+      if (this.call !== slot) return
+      if (chat?.name) {
+        slot.title = chat.name
+        this.ui.setTitle(chat.name)
+      }
+      const avatarPath = chat?.profileImage
+      const avatarUrl = avatarPath ? this.transformBlobURL(avatarPath) : null
+      this.ui.setRemoteAvatar({ url: avatarUrl || null, color: chat?.color ?? null })
+    } catch (err) {
+      this.log.warn('decorateCallInfo: getBasicChatInfo failed', err)
+    }
+    // Self-account avatar for the local "You" ring — independent best-effort.
+    try {
+      const account = await getCore().dc.rpc.getAccountInfo(slot.accountId)
+      if (this.call !== slot) return
+      const selfImage = account?.kind === 'Configured' ? account.profileImage : null
+      this.ui.setLocalAvatar(selfImage ? this.transformBlobURL(selfImage) : null)
     } catch {
-      /* keep the generic title */
+      /* fall back to the initial letter for the local ring */
     }
   }
 }
 
 let callManager: CallManager | null = null
-/** Lazily create the single call manager (subscribes to call events on first use). */
-function getCallManager(log: Logger): CallManager {
-  if (!callManager) callManager = new CallManager(log)
+/** Lazily create the single call manager (subscribes to call events on first
+ * use). `transformBlobURL` is threaded in so the call UI can resolve real chat/
+ * contact avatars via the existing blob path (docs/calls.md: "Existing blob/
+ * avatar path … for avatars in call UI"). */
+function getCallManager(log: Logger, transformBlobURL: (path: string) => string): CallManager {
+  if (!callManager) callManager = new CallManager(log, transformBlobURL)
   return callManager
 }
 

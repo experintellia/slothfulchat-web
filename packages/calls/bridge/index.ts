@@ -286,9 +286,11 @@ export interface CallBridgeCallbacks {
    * acquisition, a `switchCamera`, or a screen-share start/stop (M3). Attach
    * to a local-preview `<video>` element's `srcObject` on this event rather
    * than assuming `localStream`'s video track never changes identity (mirrors
-   * why `onLocalLevel`'s meter re-taps on the analogous audio event).
+   * why `onLocalLevel`'s meter re-taps on the analogous audio event). `null`
+   * means the local video went away (camera turned off, or a screen share
+   * stopped on an audio-started call) — drop the preview.
    */
-  onLocalVideoTrackChanged?: (track: MediaStreamTrack) => void
+  onLocalVideoTrackChanged?: (track: MediaStreamTrack | null) => void
   /**
    * `AudioCallEngine.screenSharing` flipped (M3) — including the browser's
    * own "Stop sharing" affordance ending the capture out-of-band. Drives the
@@ -726,6 +728,30 @@ export class CallBridge {
    * the camera (M3). Always `false` for an audio-only call. */
   get screenSharing(): boolean {
     return this.engine.screenSharing
+  }
+
+  /** Whether the local camera is currently on (M3 camera toggle) — a live
+   * camera track is the outgoing video. See {@link setCameraEnabled}. */
+  get cameraEnabled(): boolean {
+    return this.engine.cameraEnabled
+  }
+
+  /**
+   * Turn the local camera on or off mid-call (M3) — available on ANY call, not
+   * just ones started with the camera on (the outgoing video sender is always
+   * negotiated). See `AudioCallEngine.setCameraEnabled` for the
+   * `RTCRtpSender.replaceTrack` mechanics; a failure reports
+   * `callbacks.onDeviceSwitchError` and never ends the call.
+   */
+  async setCameraEnabled(enabled: boolean): Promise<void> {
+    await this.engine.setCameraEnabled(enabled)
+  }
+
+  /** Flip {@link cameraEnabled} and return the intended new value. */
+  async toggleCamera(): Promise<boolean> {
+    const next = !this.engine.cameraEnabled
+    await this.engine.setCameraEnabled(next)
+    return next
   }
 
   /** The direct-vs-relay connection indicator (M5) — the last value reported

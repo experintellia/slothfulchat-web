@@ -10,10 +10,11 @@
  * `switchCamera` + `RTCRtpSender.replaceTrack` (wired by the runtime's
  * `CallManager`, not here — this component only reports the user's choice
  * via `onSelectMicrophone`/`onSelectCamera`). The camera select only has a
- * live track to switch on a call that carries video (`hasVideo`, M3), so it is
- * shown ONLY on a video call — on an audio-only call there is nothing to
- * switch (a call's video-ness is fixed at placement/accept), so no camera row
- * appears at all.
+ * live track to switch while the camera is actually on (`cameraActive`, M3) —
+ * the camera can be toggled on/off on ANY call now (the video sender is always
+ * negotiated), so this follows the live camera state rather than the call's
+ * initial audio-vs-video choice; while the camera is off there is nothing to
+ * switch, so no camera row appears.
  */
 import type { CallDeviceInfo } from '../engine/index.ts'
 import * as styles from './styles.ts'
@@ -21,10 +22,10 @@ import * as styles from './styles.ts'
 export interface DevicePickerProps {
   microphones: CallDeviceInfo[]
   cameras: CallDeviceInfo[]
-  /** Whether this call carries video (M3). The camera picker is hidden on an
-   * audio-only call — there is no live video track to hot-switch, so offering
-   * the choice would only lead to a dead selection. */
-  hasVideo: boolean
+  /** Whether the local camera is currently on (M3). The camera picker is
+   * hidden while the camera is off — there is no live video track to
+   * hot-switch, so offering the choice would only lead to a dead selection. */
+  cameraActive: boolean
   selectedMicrophoneId: string | null
   selectedCameraId: string | null
   /** Set if the last `onSelectMicrophone` hot-switch failed
@@ -38,7 +39,7 @@ export interface DevicePickerProps {
 export function DevicePicker({
   microphones,
   cameras,
-  hasVideo,
+  cameraActive,
   selectedMicrophoneId,
   selectedCameraId,
   deviceSwitchError,
@@ -46,7 +47,7 @@ export function DevicePicker({
   onSelectCamera,
 }: DevicePickerProps) {
   const showMicPicker = microphones.length > 1
-  const showCameraPicker = hasVideo && cameras.length > 1
+  const showCameraPicker = cameraActive && cameras.length > 1
   if (!showMicPicker && !showCameraPicker) return null
 
   return (

@@ -36,8 +36,14 @@ export interface CallsUiCallbacks {
   onSelectCamera(deviceId: string): void
   /** M3: toggle screen sharing on/off — `AudioCallEngine.startScreenShare`/
    * `stopScreenShare` via `RTCRtpSender.replaceTrack` on the outgoing video
-   * sender. Only meaningful (and only shown) when `hasVideo`. */
+   * sender. Available on any connected/connecting call (the video sender is
+   * always negotiated — see `AudioCallEngine.addLocalTracks`). */
   onToggleScreenShare(): void
+  /** M3 camera toggle: turn the local camera on/off mid-call via
+   * `AudioCallEngine.setCameraEnabled` (`RTCRtpSender.replaceTrack` onto the
+   * always-present video sender). Available on ANY call, not just ones started
+   * with the camera on. */
+  onToggleCamera(): void
 }
 
 /** What the UI renders. `active: false` means nothing is mounted-visible
@@ -51,11 +57,32 @@ export type CallUiSnapshot =
       state: CallState
       /** Chat/contact name, best-effort ("Call" until resolved). */
       title: string
+      /** Remote participant's avatar image URL (resolved via the runtime's
+       * blob path), or `null` for the initial-letter fallback (FIX 2). */
+      remoteAvatarUrl: string | null
+      /** Local ("You") avatar image URL — the self-account's profile image if
+       * available, else `null` (initial-letter fallback). */
+      localAvatarUrl: string | null
+      /** The chat's theme color (hex), used as an accent where an avatar is
+       * absent. `null` until resolved. */
+      avatarColor: string | null
       muted: boolean
-      /** Whether this call carries video (M3) — gates whether `CallOverlay`
-       * renders video tiles at all vs. the M1/M2 audio-only speaking rings,
-       * and whether the screen-share control is shown. */
+      /** Whether this call STARTED with the camera on (the caller's
+       * audio-vs-video choice / the incoming offer's `has_video`). This only
+       * seeds the initial camera state now — it does NOT gate the camera/
+       * screen-share controls (both are available on any call, since the video
+       * sender is always negotiated). Use `localHasVideo`/`remoteHasVideo` to
+       * decide whether to render video tiles. */
       hasVideo: boolean
+      /** Whether the local camera is currently ON (M3 camera toggle) — drives
+       * the camera button's pressed state. Starts equal to `hasVideo`. */
+      cameraOn: boolean
+      /** Whether a local video track is actually flowing (camera on OR screen
+       * sharing) — gates the local video tile. */
+      localHasVideo: boolean
+      /** Whether a remote video track is actually flowing — gates the remote
+       * video tile (else the remote speaking ring). */
+      remoteHasVideo: boolean
       /** Set once the peer's audio (or audio+video, when `hasVideo`) track
        * arrives (`onRemoteStream`). */
       remoteStream: MediaStream | null
@@ -128,13 +155,20 @@ export class CallsUiStore {
    * any previous snapshot outright (one call at a time, M1). `hasVideo`
    * (M3) defaults to `false` — audio-only, matching the M1/M2 shape. */
   showCall(init: { direction: CallDirection; title: string; hasVideo?: boolean }): void {
+    const hasVideo = init.hasVideo ?? false
     this.snapshot = {
       active: true,
       direction: init.direction,
       state: 'ringing',
       title: init.title,
+      remoteAvatarUrl: null,
+      localAvatarUrl: null,
+      avatarColor: null,
       muted: false,
-      hasVideo: init.hasVideo ?? false,
+      hasVideo,
+      cameraOn: hasVideo,
+      localHasVideo: hasVideo,
+      remoteHasVideo: false,
       remoteStream: null,
       localStream: null,
       screenSharing: false,
@@ -165,6 +199,49 @@ export class CallsUiStore {
   setTitle(title: string): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, title }
+    this.notify()
+  }
+
+  /** Remote participant's avatar URL + theme color, resolved from
+   * `getBasicChatInfo` (FIX 2). Fresh-snapshot + notify, same pattern as the
+   * others. */
+  setRemoteAvatar(avatar: { url: string | null; color?: string | null }): void {
+    if (!this.snapshot.active) return
+    this.snapshot = {
+      ...this.snapshot,
+      remoteAvatarUrl: avatar.url,
+      avatarColor: avatar.color ?? this.snapshot.avatarColor,
+    }
+    this.notify()
+  }
+
+  /** Local ("You") avatar URL — the self-account's profile image, if any. */
+  setLocalAvatar(url: string | null): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, localAvatarUrl: url }
+    this.notify()
+  }
+
+  /** Mirror of `engine.cameraEnabled` after a camera toggle (M3). */
+  setCameraOn(cameraOn: boolean): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, cameraOn }
+    this.notify()
+  }
+
+  /** Whether a local video track is actually flowing (camera on OR screen
+   * sharing) — gates the local video tile. */
+  setLocalHasVideo(localHasVideo: boolean): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, localHasVideo }
+    this.notify()
+  }
+
+  /** Whether a remote video track is actually flowing — gates the remote
+   * video tile vs. the remote speaking ring. */
+  setRemoteHasVideo(remoteHasVideo: boolean): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, remoteHasVideo }
     this.notify()
   }
 

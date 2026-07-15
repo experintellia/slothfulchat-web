@@ -99,7 +99,36 @@ function main(): void {
     onToggleScreenShare: () => {
       bridge?.toggleScreenShare().catch(err => console.error('popup screen share failed', err))
     },
+    onToggleCamera: () => {
+      const b = bridge
+      if (b == null) return
+      b.toggleCamera().then(
+        () => syncLocalVideo(),
+        err => console.error('popup camera toggle failed', err)
+      )
+    },
   })
+
+  /** Re-sync the local-video-derived store fields from the bridge (M3, FIX 1). */
+  const syncLocalVideo = (): void => {
+    const stream = bridge?.localStream ?? null
+    store.setLocalStream(stream)
+    store.setLocalHasVideo((stream?.getVideoTracks().length ?? 0) > 0)
+    store.setCameraOn(bridge?.cameraEnabled ?? false)
+  }
+
+  /** Track whether the remote peer is actually sending video (M3, FIX 1) — the
+   * video m-line is always negotiated, so gate the remote tile on live flow. */
+  const watchRemoteVideo = (stream: MediaStream): void => {
+    const videoTrack = stream.getVideoTracks()[0] ?? null
+    const apply = () => store.setRemoteHasVideo(videoTrack != null && !videoTrack.muted)
+    apply()
+    if (videoTrack != null) {
+      videoTrack.addEventListener('mute', apply)
+      videoTrack.addEventListener('unmute', apply)
+      videoTrack.addEventListener('ended', apply)
+    }
+  }
 
   const refreshDevices = async (seedSelection: boolean): Promise<void> => {
     const devices = await listInputDevices()
@@ -137,7 +166,10 @@ function main(): void {
 
   const callbacks = (init: CallPopupInit): CallBridgeCallbacks => ({
     onStateChange: state => onState(state),
-    onRemoteStream: stream => store.attachRemoteStream(stream),
+    onRemoteStream: stream => {
+      store.attachRemoteStream(stream)
+      watchRemoteVideo(stream)
+    },
     onError: err => onError(err.message || 'Call failed'),
     onLocalLevel: level => store.setLocalLevel(level),
     onRemoteLevel: level => store.setRemoteLevel(level),
@@ -145,8 +177,11 @@ function main(): void {
     // wiring as the main-window overlay path (runtime.ts).
     onConnectionRouteChanged: route => store.setConnectionRoute(route),
     onDeviceSwitchError: err => store.showDeviceSwitchError(err.message || 'Could not switch device'),
-    onLocalVideoTrackChanged: () => store.setLocalStream(bridge?.localStream ?? null),
-    onScreenShareChanged: sharing => store.setScreenSharing(sharing),
+    onLocalVideoTrackChanged: () => syncLocalVideo(),
+    onScreenShareChanged: sharing => {
+      store.setScreenSharing(sharing)
+      syncLocalVideo()
+    },
     onScreenShareError: err => store.showScreenShareError(err.message || 'Could not share screen'),
     // For an outgoing call the opener already learns the message id from the
     // relayed placeOutgoingCall result; nothing extra to do popup-side.

@@ -5,6 +5,7 @@ import {
   computeRmsLevel,
   TrackLevelMeter,
   DEFAULT_LEVEL_GAIN,
+  DEFAULT_LEVEL_NOISE_GATE,
   type AnalyserLike,
 } from './level-meter.ts';
 
@@ -47,6 +48,40 @@ test('computeRmsLevel: never negative and never exceeds 1 for arbitrary bytes', 
     const level = computeRmsLevel(buf, DEFAULT_LEVEL_GAIN * 10 /* stress the clamp */);
     assert.ok(level >= 0 && level <= 1, `level ${level} out of [0,1] for fill ${fillValue}`);
   }
+});
+
+// ── Noise gate + sensitivity (FIX 3) ──────────────────────────────────────────
+
+test('computeRmsLevel: near-silence / ambient noise below the gate reads as exactly 0 (no green at rest)', () => {
+  // Constant fill(128 + a) has RMS = a/128 exactly. a=1 → boosted ≈ 0.047,
+  // below the 0.06 default gate.
+  const nearSilence = new Uint8Array(32).fill(128 + 1);
+  assert.equal(computeRmsLevel(nearSilence), 0);
+});
+
+test('computeRmsLevel: a signal just above the noise gate is a small positive level', () => {
+  const justAbove = new Uint8Array(32).fill(128 + 2); // boosted ≈ 0.094 > 0.06
+  const level = computeRmsLevel(justAbove);
+  assert.ok(level > 0 && level < 0.2, `expected a small positive level, got ${level}`);
+});
+
+test('computeRmsLevel: loud speech reads high thanks to the boosted gain', () => {
+  const loud = new Uint8Array(32).fill(128 + 100);
+  assert.ok(computeRmsLevel(loud) > 0.9);
+});
+
+test('computeRmsLevel: the noise-gate boundary is exact (at/below → 0, just above → >0)', () => {
+  // With gain 1 the boosted value equals the RMS, so a constant fill lands
+  // exactly at a chosen gate: fill(128+13) → RMS = 13/128 ≈ 0.1016.
+  const atGate = new Uint8Array(8).fill(128 + 13);
+  assert.equal(computeRmsLevel(atGate, 1, 0.1016), 0, 'at-or-below the gate → 0');
+  assert.ok(computeRmsLevel(atGate, 1, 0.09) > 0, 'above the gate → positive');
+});
+
+test('computeRmsLevel: rescaling above the gate still reaches full scale for loud input', () => {
+  // The (x - gate)/(1 - gate) rescale must not permanently cap the max below 1.
+  const loud = new Uint8Array(16).fill(128 + 120);
+  assert.equal(computeRmsLevel(loud, DEFAULT_LEVEL_GAIN, DEFAULT_LEVEL_NOISE_GATE), 1);
 });
 
 // ── TrackLevelMeter ───────────────────────────────────────────────────────────

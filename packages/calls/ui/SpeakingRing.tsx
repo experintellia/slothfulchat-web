@@ -46,6 +46,17 @@ const DEFAULT_SIZE = 72
  * introducing a second green. Not imported from styles.ts to keep this
  * component's only dependency to `react` — see its literal value there. */
 const RING_COLOR_RGB = '46, 160, 67'
+/** Neutral resting ring color — a subtle grey shown at level 0 so an idle
+ * participant reads as "present but not speaking", NOT green (green at rest is
+ * confusing: it looks like sound is being picked up when there is none). The
+ * border lerps from this grey toward {@link RING_COLOR_RGB} as the voice level
+ * rises, and the green glow only appears with actual voice (see below). */
+const NEUTRAL_RING_RGB = '128, 128, 136'
+
+/** Linear interpolate one 0..255 channel from `a` to `b` by `t` (0..1). */
+function lerpChannel(a: number, b: number, t: number): number {
+  return Math.round(a + (b - a) * t)
+}
 
 function initialLetter(label: string): string {
   const trimmed = label.trim()
@@ -61,10 +72,18 @@ export function SpeakingRing({
 }: SpeakingRingProps) {
   const clampedLevel = Math.min(1, Math.max(0, level ?? 0))
   const effectiveLevel = muted ? 0 : clampedLevel
-  // A faint ring is always visible (even at level 0) so the tile doesn't look
-  // "broken" between words; it grows into a real glow + slight pulse-scale as
-  // level rises toward 1 — the "reacts to voice level" look.
-  const borderAlpha = 0.18 + effectiveLevel * 0.65
+  // At level 0 the ring is a subtle NEUTRAL grey (present, but clearly not
+  // speaking — no green at rest). As the voice level rises the border lerps
+  // from grey toward the speaking green AND a green glow grows from nothing —
+  // both scale from 0 at level 0, so there is zero green when there is no
+  // input, up to a clear glow + slight pulse-scale with real voice.
+  const [gr, gg, gb] = NEUTRAL_RING_RGB.split(',').map(v => Number(v.trim()))
+  const [sr, sg, sb] = RING_COLOR_RGB.split(',').map(v => Number(v.trim()))
+  const borderR = lerpChannel(gr, sr, effectiveLevel)
+  const borderG = lerpChannel(gg, sg, effectiveLevel)
+  const borderB = lerpChannel(gb, sb, effectiveLevel)
+  // Grey base is always faintly visible; brightens as it greens.
+  const borderAlpha = muted ? 0.28 : 0.38 + effectiveLevel * 0.5
   const glowAlpha = effectiveLevel * 0.55
   const glowSpread = 2 + effectiveLevel * 10
   const scale = 1 + effectiveLevel * 0.08
@@ -77,7 +96,7 @@ export function SpeakingRing({
     alignItems: 'center',
     justifyContent: 'center',
     boxSizing: 'border-box',
-    border: `2px solid rgba(${RING_COLOR_RGB}, ${muted ? 0.12 : borderAlpha})`,
+    border: `2px solid rgba(${borderR}, ${borderG}, ${borderB}, ${borderAlpha})`,
     boxShadow:
       glowAlpha > 0
         ? `0 0 ${glowSpread}px ${glowSpread / 2}px rgba(${RING_COLOR_RGB}, ${glowAlpha})`

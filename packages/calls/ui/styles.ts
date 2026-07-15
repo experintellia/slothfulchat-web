@@ -118,6 +118,19 @@ export const localVideo: CSSProperties = {
   background: '#111',
 }
 
+/** M3: when the video stage is shown because the LOCAL camera/screen is on but
+ * the remote is not sending video, the remote occupies the stage as a centered
+ * speaking ring (with its avatar) instead of a black frame. */
+export const remoteRingInStage: CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
+}
+
 export const participantColumn: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',

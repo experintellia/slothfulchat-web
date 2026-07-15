@@ -130,11 +130,22 @@ class FakePc implements PeerConnectionLike {
   closed = false;
   addedTracks: unknown[] = [];
   senders: FakeSender[] = [];
+  /** Video/audio transceivers established via `addTransceiver` (trackless
+   * senders) — the audio-only call's always-present video m-line (M3). */
+  transceivers: Array<{ kind: string; sender: FakeSender }> = [];
   configuration: RTCConfiguration;
   /** M5: what {@link getStats} resolves with — tests set this to a `Map` of
    * `RtcStatsEntry`-shaped objects to drive `getConnectionRoute()`. Empty by
    * default (no candidate-pair stats yet), matching a fresh/unconnected pc. */
   statsReport: Map<string, { id: string; type: string; [key: string]: unknown }> = new Map();
+  /** When true, `setRemoteDescription({type:'offer'})` seeds a trackless video
+   * sender — mimicking the browser creating a sender for the peer's
+   * always-present video m-line (upstream calls-webapp offers audio+video).
+   * Lets a test exercise the answerer adopting that sender instead of adding a
+   * duplicate m-line. */
+  seedRemoteVideoSender = false;
+  /** The sender seeded by {@link seedRemoteVideoSender}, for assertions. */
+  seededVideoSender: FakeSender | null = null;
   private connListeners = new Set<() => void>();
   private trackListeners = new Set<(e: { streams: ReadonlyArray<MediaStream> }) => void>();
 
@@ -172,12 +183,28 @@ class FakePc implements PeerConnectionLike {
   }
   async setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void> {
     this.remoteDescription = description;
+    if (this.seedRemoteVideoSender && description.type === 'offer') {
+      const sender = new FakeSender(null);
+      this.seededVideoSender = sender;
+      this.senders.push(sender);
+    }
   }
   addTrack(track: MediaStreamTrack): unknown {
     this.addedTracks.push(track);
     const sender = new FakeSender(track);
     this.senders.push(sender);
     return sender;
+  }
+  /** Mirrors `RTCPeerConnection.addTransceiver(kind, init)` just enough for
+   * `AudioCallEngine.addLocalTracks`: creates a trackless sender (an audio-only
+   * call's always-present video m-line — see the M3 "always negotiate video"
+   * change) and returns `{ sender }`. Recorded in `getSenders()` so
+   * `switchMicrophone`/screen-share sender lookups see it. */
+  addTransceiver(kind: string): { sender: FakeSender } {
+    const sender = new FakeSender(null);
+    this.transceivers.push({ kind, sender });
+    this.senders.push(sender);
+    return { sender };
   }
   getSenders(): FakeSender[] {
     return this.senders;
@@ -211,6 +238,9 @@ function makeEngine(
     getDisplayMedia?: (constraints?: MediaStreamConstraints) => Promise<MediaStream>;
     gather?: AudioCallOptions['gather'];
     hasVideo?: boolean;
+    /** Seed a trackless video sender on the answerer's `setRemoteDescription`
+     * (see {@link FakePc.seedRemoteVideoSender}). */
+    seedRemoteVideoSender?: boolean;
   } = {}
 ) {
   const events = {
@@ -221,7 +251,7 @@ function makeEngine(
     errors: [] as Error[],
     deviceSwitchErrors: [] as Error[],
     localTrackChanges: [] as MediaStreamTrack[],
-    localVideoTrackChanges: [] as MediaStreamTrack[],
+    localVideoTrackChanges: [] as Array<MediaStreamTrack | null>,
     screenShareChanges: [] as boolean[],
     screenShareErrors: [] as Error[],
   };
@@ -238,6 +268,7 @@ function makeEngine(
       getDisplayMedia: overrides.getDisplayMedia,
       createPeerConnection: (config) => {
         const pc = new FakePc(config);
+        pc.seedRemoteVideoSender = overrides.seedRemoteVideoSender ?? false;
         pcs.push(pc);
         return pc;
       },
@@ -317,6 +348,37 @@ test('incoming happy path: receive -> ring (no mic) -> accept -> answer -> conne
   assert.equal(engine.state, 'connected');
 });
 
+test('INTEROP: audio-started answerer adopts the peer-offered video sender (no duplicate m-line), so camera works', async () => {
+  // The peer (calls-webapp) always offers audio+video; the browser creates a
+  // trackless video sender for that m-line on setRemoteDescription. The
+  // answerer must ADOPT it, not addTransceiver a duplicate an answer can't add.
+  const camera = new FakeTrack('video');
+  let call = 0;
+  const { engine, lastPc } = makeEngine({
+    seedRemoteVideoSender: true,
+    getUserMedia: async () => {
+      call += 1;
+      return (call === 1 ? micStream() : new FakeStream([camera])) as unknown as MediaStream;
+    },
+  });
+  engine.receiveCall('OFFER_FROM_PEER');
+  await engine.accept();
+
+  const pc = lastPc();
+  assert.equal(pc.transceivers.length, 0, 'no addTransceiver on the answer side (would be an unmatched m-line)');
+  assert.ok(pc.seededVideoSender, 'the peer-offered video sender exists');
+  assert.equal(engine.cameraEnabled, false, 'audio-started');
+
+  await engine.setCameraEnabled(true);
+
+  assert.equal(engine.cameraEnabled, true);
+  assert.equal(
+    pc.seededVideoSender!.track,
+    camera as unknown as MediaStreamTrack,
+    'camera replaced onto the ADOPTED peer video sender — reaches the peer'
+  );
+});
+
 // ── Mute ──────────────────────────────────────────────────────────────────────
 
 test('setMuted toggles track.enabled on the local audio track', async () => {
@@ -371,7 +433,9 @@ test('switchMicrophone replaces the sender track via RTCRtpSender.replaceTrack, 
 
   await engine.switchMicrophone('mic-2');
 
-  assert.equal(pc.senders.length, 1, 'no new sender/renegotiation — same sender, track replaced');
+  // Two senders now: the audio sender (senders[0]) plus the always-present
+  // video transceiver (senders[1]); switchMicrophone must not add a THIRD.
+  assert.equal(pc.senders.length, 2, 'no new sender/renegotiation — same sender, track replaced');
   assert.equal(pc.senders[0].replaceTrackCalls.length, 1);
   assert.notEqual(pc.senders[0].track, originalTrack, 'sender now carries the new track');
   assert.equal((originalTrack as unknown as FakeTrack).stopped, true, 'old track stopped');
@@ -510,7 +574,7 @@ test('hasVideo: accept adds a video track/sender alongside the mic', async () =>
   assert.ok(pc.senders.some((s) => (s.track as unknown as { kind: string } | null)?.kind === 'video'));
 });
 
-test('audio-only call (hasVideo false, default): no video sender, no video getUserMedia constraint', async () => {
+test('audio-started call (hasVideo false, default): no camera track/constraint, but a video sender IS negotiated', async () => {
   const gumCalls: MediaStreamConstraints[] = [];
   const { engine, lastPc } = makeEngine({
     getUserMedia: async (constraints) => {
@@ -519,10 +583,18 @@ test('audio-only call (hasVideo false, default): no video sender, no video getUs
     },
   });
   await engine.placeCall();
-  assert.equal(gumCalls[0].video, false, 'M1/M2 behavior unchanged: video never requested');
+  assert.equal(gumCalls[0].video, false, 'no camera acquired at start (audio-vs-video is only what is ENABLED)');
   const pc = lastPc();
-  assert.equal(pc.addedTracks.length, 1, 'audio only');
-  assert.equal(engine.hasVideo, false);
+  assert.equal(pc.addedTracks.length, 1, 'only the mic is addTrack-ed');
+  assert.equal(engine.hasVideo, false, 'started audio-only');
+  assert.equal(engine.cameraEnabled, false, 'camera is off at start');
+  // Upstream calls-webapp always negotiates BOTH m-lines; we mirror that with a
+  // trackless video transceiver so camera/screen-share can turn on with no
+  // renegotiation. Senders: audio (addTrack) + video (addTransceiver).
+  assert.equal(pc.senders.length, 2, 'a video sender exists even on an audio call');
+  assert.equal(pc.transceivers.length, 1, 'the trackless video m-line was negotiated');
+  assert.equal(pc.transceivers[0].kind, 'video');
+  assert.equal(pc.transceivers[0].sender.track, null, 'no camera track on the video sender yet');
 });
 
 test('startScreenShare replaces the video sender track via replaceTrack — no renegotiation', async () => {
@@ -617,17 +689,26 @@ test('the browser\'s native "Stop sharing" (track ended) auto-restores the camer
   assert.deepEqual(events.screenShareChanges, [true, false]);
 });
 
-test('startScreenShare on an audio-only call reports onScreenShareError, does not throw', async () => {
-  const { engine, events } = makeEngine(); // hasVideo defaults to false
+test('startScreenShare works on an audio-STARTED call (the video sender is always present)', async () => {
+  const screen = screenStream();
+  const { engine, events, lastPc } = makeEngine({
+    // hasVideo defaults to false — audio-started call
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
   await engine.placeCall();
   await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  // The always-present (trackless) video sender the audio call negotiated.
+  const videoSender = pc.transceivers[0].sender;
+  assert.equal(videoSender.track, null, 'trackless before sharing');
 
   await engine.startScreenShare();
 
-  assert.equal(engine.screenSharing, false);
-  assert.equal(events.screenShareErrors.length, 1);
-  assert.match(events.screenShareErrors[0].message, /no outgoing video/);
-  assert.equal(engine.state, 'connecting', 'call is untouched by the failure');
+  assert.equal(engine.screenSharing, true, 'screen share works on an audio-started call');
+  assert.equal(events.screenShareErrors.length, 0);
+  assert.equal(videoSender.replaceTrackCalls.length, 1, 'screen track replaced onto the video sender');
+  assert.equal(videoSender.track, screen.tracks[0] as unknown as MediaStreamTrack);
+  assert.deepEqual(events.screenShareChanges, [true]);
 });
 
 test('startScreenShare when getDisplayMedia is not provided reports onScreenShareError', async () => {
@@ -742,14 +823,119 @@ test('switchCamera while screen sharing only records the preference (nothing liv
   assert.equal(engine.screenSharing, true, 'still sharing');
 });
 
-test('switchCamera on an audio-only call reports onDeviceSwitchError', async () => {
-  const { engine, events } = makeEngine(); // hasVideo: false
+test('switchCamera works on an audio-STARTED call, turning the camera on via the always-present sender', async () => {
+  let call = 0;
+  const { engine, events, lastPc } = makeEngine({
+    // hasVideo: false — first getUserMedia is the mic; the switch acquires a camera.
+    getUserMedia: async () => {
+      call += 1;
+      return (call === 1 ? micStream() : new FakeStream([new FakeTrack('video')])) as unknown as MediaStream;
+    },
+  });
   await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  const videoSender = pc.transceivers[0].sender;
+  assert.equal(engine.cameraEnabled, false);
 
   await engine.switchCamera('cam-2');
 
-  assert.equal(events.deviceSwitchErrors.length, 1);
-  assert.match(events.deviceSwitchErrors[0].message, /no video/);
+  assert.equal(events.deviceSwitchErrors.length, 0);
+  assert.equal(videoSender.replaceTrackCalls.length, 1, 'camera track replaced onto the video sender');
+  assert.equal((videoSender.track as unknown as FakeTrack).kind, 'video');
+  assert.equal(engine.videoInputDeviceId, 'cam-2');
+  assert.equal(engine.cameraEnabled, true, 'the camera is now on');
+});
+
+// ── Camera toggle (M3: setCameraEnabled on any call) ──────────────────────────
+
+test('setCameraEnabled(true) on an audio-started call attaches a camera track to the always-present video sender', async () => {
+  const camera = new FakeTrack('video');
+  let call = 0;
+  const { engine, events, lastPc } = makeEngine({
+    getUserMedia: async () => {
+      call += 1;
+      return (call === 1 ? micStream() : new FakeStream([camera])) as unknown as MediaStream;
+    },
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  const videoSender = pc.transceivers[0].sender;
+  assert.equal(engine.cameraEnabled, false);
+
+  await engine.setCameraEnabled(true);
+
+  assert.equal(engine.cameraEnabled, true);
+  assert.equal(videoSender.replaceTrackCalls.length, 1);
+  assert.equal(videoSender.track, camera as unknown as MediaStreamTrack, 'camera on the video sender');
+  assert.equal(events.localVideoTrackChanges.at(-1), camera as unknown as MediaStreamTrack);
+  // No renegotiation — same two senders as before (audio + video).
+  assert.equal(pc.senders.length, 2);
+});
+
+test('setCameraEnabled(false) removes the camera track and fires onLocalVideoTrackChanged(null)', async () => {
+  const { engine, events, lastPc } = makeEngine({ hasVideo: true });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  const videoSender = pc.senders.find((s) => (s.track as unknown as FakeTrack | null)?.kind === 'video');
+  assert.ok(videoSender);
+  assert.equal(engine.cameraEnabled, true, 'video call starts with the camera on');
+  const cameraTrack = videoSender!.track as unknown as FakeTrack;
+
+  await engine.setCameraEnabled(false);
+
+  assert.equal(engine.cameraEnabled, false);
+  assert.equal(videoSender!.replaceTrackCalls.at(-1), null, 'replaceTrack(null) clears the outgoing video');
+  assert.equal(cameraTrack.stopped, true, 'the camera track is stopped');
+  assert.equal(engine.localMediaStream!.getVideoTracks().length, 0, 'no video track left on the local stream');
+  assert.equal(events.localVideoTrackChanges.at(-1), null, 'onLocalVideoTrackChanged(null) fired');
+});
+
+test('setCameraEnabled while screen sharing only records the intent (screen keeps the sender)', async () => {
+  const screen = screenStream();
+  const { engine, lastPc } = makeEngine({
+    hasVideo: true,
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  await engine.startScreenShare();
+  const pc = lastPc();
+  const videoSender = pc.senders.find((s) => s.track === (screen.tracks[0] as unknown as MediaStreamTrack));
+  const replaceCallsBefore = videoSender!.replaceTrackCalls.length;
+
+  await engine.setCameraEnabled(false); // intent only — screen still on the wire
+
+  assert.equal(engine.cameraEnabled, false, 'intent recorded');
+  assert.equal(engine.screenSharing, true, 'still sharing');
+  assert.equal(videoSender!.replaceTrackCalls.length, replaceCallsBefore, 'screen track untouched');
+});
+
+test('RACE: setCameraEnabled(true) in flight when hang up lands — new stream stopped, not adopted', async () => {
+  const gum = deferred<MediaStream>();
+  let call = 0;
+  const { engine, lastPc } = makeEngine({
+    getUserMedia: async () => {
+      call += 1;
+      return call === 1 ? (micStream() as unknown as MediaStream) : gum.promise;
+    },
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  const videoSender = pc.transceivers[0].sender;
+
+  const enabling = engine.setCameraEnabled(true);
+  engine.hangup(); // torn down while the camera getUserMedia is in flight
+  const lateCamera = new FakeStream([new FakeTrack('video')]);
+  gum.resolve(lateCamera as unknown as MediaStream);
+  await enabling;
+
+  assert.equal(engine.state, 'ended');
+  assert.equal(videoSender.replaceTrackCalls.length, 0, 'replaceTrack never called after hang up');
+  assert.equal(lateCamera.tracks[0].stopped, true, 'the orphaned camera stream is stopped');
 });
 
 test('RACE: screen share ending after hang up is a silent no-op', async () => {
