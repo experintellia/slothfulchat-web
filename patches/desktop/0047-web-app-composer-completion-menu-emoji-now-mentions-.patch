@@ -1,0 +1,758 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Wed, 15 Jul 2026 02:25:41 +0000
+Subject: [PATCH] web-app: composer completion menu (:emoji: now, mentions
+ later)
+
+A scrollable, keyboard-navigable menu that pops up over the composer and
+completes what you're typing. First consumer is :colon-emoji: completion;
+built as a generic primitive so a future @mention menu is just another
+provider.
+
+- completion/findActiveToken.ts: pure caret token detector with a
+  start/whitespace boundary guard, so it never fires inside http:// or 12:30.
+- completion/emojiProvider.ts: reuses the already-bundled @emoji-mart/data
+  (no new dependency), ranking exact/prefix shortcodes first and matching
+  keywords; inserts the Unicode glyph.
+- completion/CompletionMenu.tsx: generic presentational list (active-row
+  highlight, scroll-into-view, click/hover), emoji-agnostic.
+- ComposerMessageInput.tsx: detects the token on change/caret-move, drives
+  arrow-nav (wrap) + Enter-select + Escape-dismiss, and replaces the :token
+  with the emoji via the existing caret-restore path. While the menu is open
+  it owns Arrow/Enter/Escape, so Enter=send and ArrowUp=edit-last don't fire.
+- Menu floats above the composer, anchored to .lower-bar (now position:
+  relative); the emoji/app pickers are siblings and unaffected.
+- tests/completion.test.ts: mocha/chai check for the token detector + provider.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ .../scss/composer/_completion-menu.scss       |  53 ++++
+ .../frontend/scss/composer/_composer.scss     |   4 +
+ packages/frontend/scss/manifest.scss          |   1 +
+ .../composer/ComposerMessageInput.tsx         | 261 +++++++++++++++---
+ .../composer/completion/CompletionMenu.tsx    |  64 +++++
+ .../composer/completion/emojiProvider.ts      |  74 +++++
+ .../composer/completion/findActiveToken.ts    |  31 +++
+ .../components/composer/completion/types.ts   |  36 +++
+ .../frontend/src/tests/completion.test.ts     |  66 +++++
+ 9 files changed, 555 insertions(+), 35 deletions(-)
+ create mode 100644 packages/frontend/scss/composer/_completion-menu.scss
+ create mode 100644 packages/frontend/src/components/composer/completion/CompletionMenu.tsx
+ create mode 100644 packages/frontend/src/components/composer/completion/emojiProvider.ts
+ create mode 100644 packages/frontend/src/components/composer/completion/findActiveToken.ts
+ create mode 100644 packages/frontend/src/components/composer/completion/types.ts
+ create mode 100644 packages/frontend/src/tests/completion.test.ts
+
+diff --git a/packages/frontend/scss/composer/_completion-menu.scss b/packages/frontend/scss/composer/_completion-menu.scss
+new file mode 100644
+index 000000000..130faa3a9
+--- /dev/null
++++ b/packages/frontend/scss/composer/_completion-menu.scss
+@@ -0,0 +1,53 @@
++@use 'sass:map';
++@use '../variables';
++
++// Floats above the composer, left-aligned to the textarea. Anchored to
++// `.lower-bar` (which is `position: relative`) rather than the caret, so no
++// per-character pixel measuring is needed.
++//
++// ponytail: an ancestor with `overflow: hidden` could clip the top of a tall
++// list. Ceiling: fine for the chat layout today (the composer column doesn't
++// clip vertically). Upgrade path: portal to <body> + fixed at the textarea's
++// getBoundingClientRect.
++.completion-menu {
++  position: absolute;
++  bottom: calc(100% + 4px);
++  inset-inline-start: 8px;
++  z-index: map.get(variables.$z-index, emoji-sticker-picker);
++
++  width: min(320px, calc(100% - 16px));
++  max-height: 240px;
++  overflow-y: auto;
++
++  background-color: var(--bgPrimary);
++  color: var(--textPrimary);
++  border: 1px solid var(--separatorColor);
++  border-radius: 8px;
++  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
++
++  .completion-menu-item {
++    display: flex;
++    align-items: center;
++    gap: 10px;
++    padding: 7px 12px;
++    cursor: default;
++
++    &.active {
++      background-color: var(--chatListItemSelectedBg);
++      color: var(--chatListItemSelectedText, var(--textPrimary));
++    }
++  }
++
++  .completion-menu-preview {
++    font-size: 20px;
++    width: 22px;
++    text-align: center;
++    flex: 0 0 auto;
++  }
++
++  .completion-menu-label {
++    overflow: hidden;
++    text-overflow: ellipsis;
++    white-space: nowrap;
++  }
++}
+diff --git a/packages/frontend/scss/composer/_composer.scss b/packages/frontend/scss/composer/_composer.scss
+index aa19e1b74..b24bd54a8 100644
+--- a/packages/frontend/scss/composer/_composer.scss
++++ b/packages/frontend/scss/composer/_composer.scss
+@@ -64,6 +64,10 @@
+     align-items: flex-end;
+     background-color: var(--composerBg);
+     padding: 2px 0;
++    // Positioning context for the completion menu (see _completion-menu.scss).
++    // Only affects the menu + textarea; the emoji/app pickers are siblings of
++    // `.lower-bar`, so they are unchanged.
++    position: relative;
+ 
+     .attachment-button,
+     .emoji-button {
+diff --git a/packages/frontend/scss/manifest.scss b/packages/frontend/scss/manifest.scss
+index e76631775..b55d0ebbc 100644
+--- a/packages/frontend/scss/manifest.scss
++++ b/packages/frontend/scss/manifest.scss
+@@ -18,6 +18,7 @@
+ // Composer
+ @use 'composer/_composer';
+ @use 'composer/_emoji-sticker-picker';
++@use 'composer/_completion-menu';
+ 
+ // Contact
+ @use 'contact/_contact-list';
+diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
+index 0dca79d9a..4d0519b7d 100644
+--- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
++++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
+@@ -4,12 +4,38 @@ import { ActionEmitter, KeybindAction } from '../../keybindings'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { DialogContext } from '../../contexts/DialogContext'
+ import { I18nContext } from '../../contexts/I18nContext'
++import { CompletionMenu } from './completion/CompletionMenu'
++import { findActiveToken } from './completion/findActiveToken'
++import { emojiProvider } from './completion/emojiProvider'
++
++import type {
++  ActiveToken,
++  CompletionItem,
++  CompletionProvider,
++} from './completion/types'
+ 
+ const log = getLogger('renderer/composer/ComposerMessageInput')
+ 
+ const browserSupportsCSSFieldSizing = CSS.supports('field-sizing', 'content')
+ const maxLines = 9
+ 
++// Completion providers, tried in order. Emoji now; a future @mention provider
++// slots in here with no other change.
++const completionProviders: CompletionProvider[] = [emojiProvider]
++
++type CompletionState = {
++  open: boolean
++  items: CompletionItem[]
++  active: number
++  token: ActiveToken | null
++}
++const CLOSED_COMPLETION: CompletionState = {
++  open: false,
++  items: [],
++  active: 0,
++  token: null,
++}
++
+ type ComposerMessageInputProps = {
+   text: string
+   /**
+@@ -39,6 +65,7 @@ type ComposerMessageInputProps = {
+ 
+ type ComposerMessageInputState = {
+   // error?:boolean|Error
++  completion: CompletionState
+ }
+ 
+ export default class ComposerMessageInput extends React.Component<
+@@ -51,16 +78,26 @@ export default class ComposerMessageInput extends React.Component<
+   composerSize: number
+   setCursorPosition: number | false
+   textareaRef: React.RefObject<HTMLTextAreaElement | null>
++  /** invalidates in-flight async completion queries when a newer one starts */
++  completionReq: number
++  /** a token dismissed with Escape; stays closed until the term changes */
++  completionDismissed: { start: number; term: string } | null
+   constructor(props: ComposerMessageInputProps) {
+     super(props)
+ 
++    this.state = { completion: CLOSED_COMPLETION }
+     this.composerSize = 48
++    this.completionReq = 0
++    this.completionDismissed = null
+     this.setComposerSize = this.setComposerSize.bind(this)
+     this.setCursorPosition = false
+     this.onKeyDown = this.onKeyDown.bind(this)
+     this.onChange = this.onChange.bind(this)
+     this.insertStringAtCursorPosition =
+       this.insertStringAtCursorPosition.bind(this)
++    this.onCaretMove = this.onCaretMove.bind(this)
++    this.selectCompletion = this.selectCompletion.bind(this)
++    this.closeCompletion = this.closeCompletion.bind(this)
+ 
+     this.textareaRef = React.createRef()
+     this.focus = this.focus.bind(this)
+@@ -141,6 +178,135 @@ export default class ComposerMessageInput extends React.Component<
+   onChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+     const text = e.target.value
+     this.props.onChange(text)
++    this.refreshCompletion(text, e.target.selectionStart ?? text.length)
++  }
++
++  /** Re-evaluate the completion token after the text or caret changed. */
++  onCaretMove(e: React.SyntheticEvent<HTMLTextAreaElement>) {
++    const el = e.currentTarget
++    this.refreshCompletion(el.value, el.selectionStart ?? el.value.length)
++  }
++
++  refreshCompletion(text: string, caret: number) {
++    const reqId = ++this.completionReq
++    for (const provider of completionProviders) {
++      const token = findActiveToken(text, caret, provider)
++      if (!token) {
++        continue
++      }
++      // stay closed on an Escape-dismissed token until its term changes
++      const d = this.completionDismissed
++      if (d && d.start === token.start && d.term === token.term) {
++        this.closeCompletion()
++        return
++      }
++      this.completionDismissed = null
++      const result = provider.query(token.term)
++      if (result instanceof Promise) {
++        result.then(items => {
++          if (reqId === this.completionReq) {
++            this.applyCompletion(token, items)
++          }
++        })
++      } else {
++        this.applyCompletion(token, result)
++      }
++      return
++    }
++    this.closeCompletion()
++  }
++
++  private applyCompletion(token: ActiveToken, items: CompletionItem[]) {
++    this.setState(prev => {
++      const p = prev.completion
++      // a pure caret move within the same term keeps the highlight;
++      // a changed term (typing) resets to the top.
++      const sameTerm =
++        p.token != null &&
++        p.token.start === token.start &&
++        p.token.term === token.term
++      const active = sameTerm
++        ? Math.min(p.active, Math.max(items.length - 1, 0))
++        : 0
++      return { completion: { open: items.length > 0, items, active, token } }
++    })
++  }
++
++  closeCompletion() {
++    this.completionReq++ // drop any in-flight async result
++    this.setState(prev =>
++      prev.completion.open || prev.completion.token
++        ? { completion: CLOSED_COMPLETION }
++        : null
++    )
++  }
++
++  private moveCompletionActive(delta: number) {
++    this.setState(prev => {
++      const n = prev.completion.items.length
++      if (n === 0) {
++        return null
++      }
++      const active = (prev.completion.active + delta + n) % n
++      return { completion: { ...prev.completion, active } }
++    })
++  }
++
++  selectCompletion(item: CompletionItem) {
++    const { token } = this.state.completion
++    if (!token) {
++      return
++    }
++    const text = this.props.text
++    const updated = text.slice(0, token.start) + item.value + text.slice(token.end)
++    // reuse the existing caret-restore path (componentDidUpdate)
++    this.setCursorPosition = token.start + item.value.length
++    this.closeCompletion()
++    this.props.onChange(updated)
++  }
++
++  /** Handle the keys the open menu owns. Returns true if the event was consumed. */
++  private onCompletionKeyDown(
++    e: React.KeyboardEvent<HTMLTextAreaElement>
++  ): boolean {
++    const { open, items, active } = this.state.completion
++    if (!open) {
++      return false
++    }
++    switch (e.key) {
++      case 'ArrowDown':
++        e.preventDefault()
++        e.stopPropagation()
++        this.moveCompletionActive(1)
++        return true
++      case 'ArrowUp':
++        e.preventDefault()
++        e.stopPropagation()
++        this.moveCompletionActive(-1)
++        return true
++      case 'Enter':
++        if (e.shiftKey) {
++          return false // Shift+Enter stays a newline
++        }
++        e.preventDefault()
++        e.stopPropagation()
++        if (items[active]) {
++          this.selectCompletion(items[active])
++        }
++        return true
++      case 'Escape': {
++        e.preventDefault()
++        e.stopPropagation()
++        const token = this.state.completion.token
++        if (token) {
++          this.completionDismissed = { start: token.start, term: token.term }
++        }
++        this.closeCompletion()
++        return true
++      }
++      default:
++        return false
++    }
+   }
+ 
+   keyEventToAction(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+@@ -156,6 +322,12 @@ export default class ComposerMessageInput extends React.Component<
+   }
+ 
+   onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
++    // While the completion menu is open it owns Arrow/Enter/Escape, so the
++    // composer's Enter=send and ArrowUp=edit-last never fire.
++    if (this.onCompletionKeyDown(e)) {
++      return
++    }
++
+     const action = this.keyEventToAction(e)
+ 
+     if (action === 'SEND') {
+@@ -234,44 +406,63 @@ export default class ComposerMessageInput extends React.Component<
+     if (this.props.hidden) {
+       return null
+     }
++    const { completion } = this.state
+     return (
+       <I18nContext.Consumer>
+         {({ writingDirection }) => (
+-          <textarea
+-            className={
+-              'create-or-edit-message-input' +
+-              (browserSupportsCSSFieldSizing
+-                ? ' use-field-sizing-css-prop'
+-                : '')
+-            }
+-            style={{ '--maxLines': maxLines } as React.CSSProperties}
+-            id={
+-              this.props.isMessageEditingMode
+-                ? 'composer-textarea-edit'
+-                : 'composer-textarea-non-edit'
+-            }
+-            ref={this.textareaRef}
+-            rows={1}
+-            // intent={this.state.error ? 'danger' : 'none'}
+-            // large
+-            value={this.props.text}
+-            onKeyDown={this.onKeyDown}
+-            onChange={this.onChange}
+-            onPaste={this.props.onPaste}
+-            placeholder={
+-              this.props.isMessageEditingMode
+-                ? window.static_translate('edit_message')
+-                : window.static_translate('write_message_desktop')
+-            }
+-            disabled={this.props.loadingDraft}
+-            dir={
+-              writingDirection === 'rtl'
+-                ? 'rtl'
+-                : 'auto' /* auto is based on content but defaults to ltr */
+-            }
+-            spellCheck={true}
+-            aria-keyshortcuts='Control+M'
+-          />
++          <>
++            {completion.open && (
++              <CompletionMenu
++                ariaLabel={window.static_translate('emoji')}
++                items={completion.items}
++                active={completion.active}
++                onSelect={this.selectCompletion}
++                onHover={i =>
++                  this.setState(prev => ({
++                    completion: { ...prev.completion, active: i },
++                  }))
++                }
++              />
++            )}
++            <textarea
++              className={
++                'create-or-edit-message-input' +
++                (browserSupportsCSSFieldSizing
++                  ? ' use-field-sizing-css-prop'
++                  : '')
++              }
++              style={{ '--maxLines': maxLines } as React.CSSProperties}
++              id={
++                this.props.isMessageEditingMode
++                  ? 'composer-textarea-edit'
++                  : 'composer-textarea-non-edit'
++              }
++              ref={this.textareaRef}
++              rows={1}
++              // intent={this.state.error ? 'danger' : 'none'}
++              // large
++              value={this.props.text}
++              onKeyDown={this.onKeyDown}
++              onKeyUp={this.onCaretMove}
++              onClick={this.onCaretMove}
++              onBlur={this.closeCompletion}
++              onChange={this.onChange}
++              onPaste={this.props.onPaste}
++              placeholder={
++                this.props.isMessageEditingMode
++                  ? window.static_translate('edit_message')
++                  : window.static_translate('write_message_desktop')
++              }
++              disabled={this.props.loadingDraft}
++              dir={
++                writingDirection === 'rtl'
++                  ? 'rtl'
++                  : 'auto' /* auto is based on content but defaults to ltr */
++              }
++              spellCheck={true}
++              aria-keyshortcuts='Control+M'
++            />
++          </>
+         )}
+       </I18nContext.Consumer>
+     )
+diff --git a/packages/frontend/src/components/composer/completion/CompletionMenu.tsx b/packages/frontend/src/components/composer/completion/CompletionMenu.tsx
+new file mode 100644
+index 000000000..6af6517db
+--- /dev/null
++++ b/packages/frontend/src/components/composer/completion/CompletionMenu.tsx
+@@ -0,0 +1,64 @@
++import React, { useEffect, useRef } from 'react'
++
++import type { CompletionItem } from './types'
++
++// Generic, presentational completion list. Emoji-agnostic: it renders items,
++// highlights the active row, keeps it scrolled into view, and reports
++// click/hover. Keyboard handling and data live in ComposerMessageInput so a
++// future @mention menu reuses this untouched.
++
++type Props = {
++  ariaLabel?: string
++  items: CompletionItem[]
++  active: number
++  onSelect: (item: CompletionItem) => void
++  onHover: (index: number) => void
++}
++
++export function CompletionMenu({
++  ariaLabel,
++  items,
++  active,
++  onSelect,
++  onHover,
++}: Props) {
++  const listRef = useRef<HTMLDivElement>(null)
++
++  useEffect(() => {
++    const row = listRef.current?.children[active] as HTMLElement | undefined
++    row?.scrollIntoView({ block: 'nearest' })
++  }, [active])
++
++  if (items.length === 0) {
++    return null
++  }
++
++  return (
++    <div
++      className='completion-menu'
++      role='listbox'
++      aria-label={ariaLabel}
++      ref={listRef}
++    >
++      {items.map((it, i) => (
++        <div
++          key={it.id}
++          role='option'
++          aria-selected={i === active}
++          className={'completion-menu-item' + (i === active ? ' active' : '')}
++          onMouseEnter={() => onHover(i)}
++          // mousedown (not click) so the textarea keeps focus and no blur fires
++          onMouseDown={e => {
++            e.preventDefault()
++            onSelect(it)
++          }}
++        >
++          {it.preview && (
++            <span className='completion-menu-preview'>{it.preview}</span>
++          )}
++          <span className='completion-menu-label'>{it.label}</span>
++        </div>
++      ))}
++    </div>
++  )
++}
+diff --git a/packages/frontend/src/components/composer/completion/emojiProvider.ts b/packages/frontend/src/components/composer/completion/emojiProvider.ts
+new file mode 100644
+index 000000000..4e0cac42e
+--- /dev/null
++++ b/packages/frontend/src/components/composer/completion/emojiProvider.ts
+@@ -0,0 +1,74 @@
++import emojiData from '@emoji-mart/data'
++
++import type { CompletionItem, CompletionProvider } from './types'
++
++// Emoji completion — the first consumer of the generic menu. Reuses the
++// already-bundled @emoji-mart/data (same dataset the picker uses); no new
++// dependency and no external search index to depend on.
++
++type RawEmoji = {
++  id: string
++  name: string
++  keywords?: string[]
++  skins: { native: string }[]
++}
++const data = emojiData as unknown as {
++  emojis: Record<string, RawEmoji>
++  aliases?: Record<string, string>
++}
++
++type Indexed = { id: string; native: string; name: string; keywords: string[] }
++
++// Flatten the dataset once at module load.
++const index: Indexed[] = Object.values(data.emojis)
++  .map(e => ({
++    id: e.id,
++    native: e.skins?.[0]?.native ?? '',
++    name: e.name.toLowerCase(),
++    keywords: e.keywords ?? [],
++  }))
++  .filter(e => e.native !== '')
++const aliasToId = data.aliases ?? {}
++
++// Lower score = better match: exact id, id prefix, exact keyword, name prefix,
++// then substrings. Infinity = no match.
++function score(e: Indexed, term: string): number {
++  if (e.id === term) return 0
++  if (e.id.startsWith(term)) return 1
++  if (e.keywords.some(k => k === term)) return 2
++  if (e.name.startsWith(term)) return 3
++  if (e.id.includes(term)) return 4
++  if (e.keywords.some(k => k.startsWith(term))) return 5
++  if (e.name.includes(term)) return 6
++  return Infinity
++}
++
++// ponytail: linear scan of ~1900 in-memory rows per keystroke. Ceiling: trivial
++// at this size; if the dataset grows or mentions add a big list, precompute a
++// prefix trie or debounce the query.
++export const emojiProvider: CompletionProvider = {
++  trigger: ':',
++  minChars: 2,
++  boundaryBefore: true,
++  query(rawTerm: string): CompletionItem[] {
++    const term = rawTerm.toLowerCase()
++    const aliasId = aliasToId[term] // an exact alias should rank at the very top
++    const scored: { e: Indexed; s: number }[] = []
++    for (const e of index) {
++      const s = aliasId && e.id === aliasId ? 0 : score(e, term)
++      if (s !== Infinity) scored.push({ e, s })
++    }
++    scored.sort(
++      (a, b) =>
++        a.s - b.s ||
++        a.e.id.length - b.e.id.length ||
++        a.e.id.localeCompare(b.e.id)
++    )
++    return scored.slice(0, 30).map(({ e }) => ({
++      id: e.id,
++      label: `:${e.id}:`,
++      value: e.native,
++      preview: e.native,
++    }))
++  },
++}
+diff --git a/packages/frontend/src/components/composer/completion/findActiveToken.ts b/packages/frontend/src/components/composer/completion/findActiveToken.ts
+new file mode 100644
+index 000000000..c9b5b9649
+--- /dev/null
++++ b/packages/frontend/src/components/composer/completion/findActiveToken.ts
+@@ -0,0 +1,31 @@
++import type { ActiveToken, CompletionProvider } from './types'
++
++// Finds the completion token under the caret in a plain <textarea>. Pure and
++// framework-free so it carries the unit check (findActiveToken.test.mjs).
++//
++// Scans left from the caret for the provider's trigger, stopping at any
++// whitespace. Enforces a word boundary before the trigger (start-of-input or
++// whitespace) so it never fires inside `http://host` or `12:30`.
++export function findActiveToken(
++  text: string,
++  caret: number,
++  provider: Pick<CompletionProvider, 'trigger' | 'minChars' | 'boundaryBefore'>
++): ActiveToken | null {
++  const { trigger, minChars, boundaryBefore = true } = provider
++  let i = caret - 1
++  for (; i >= 0; i--) {
++    const ch = text[i]
++    if (ch === trigger) break
++    if (ch === ' ' || ch === '\n' || ch === '\t') return null // whitespace before a trigger → no token
++  }
++  if (i < 0 || text[i] !== trigger) return null // no trigger between caret and the last whitespace
++
++  if (boundaryBefore && i > 0) {
++    const prev = text[i - 1]
++    if (prev !== ' ' && prev !== '\n' && prev !== '\t') return null // e.g. the `:` in http:// or 12:30
++  }
++
++  const term = text.slice(i + 1, caret)
++  if (term.length < minChars) return null // lone `:` or `:s` stays quiet until 2 chars
++  return { trigger, term, start: i, end: caret }
++}
+diff --git a/packages/frontend/src/components/composer/completion/types.ts b/packages/frontend/src/components/composer/completion/types.ts
+new file mode 100644
+index 000000000..7e1ee262a
+--- /dev/null
++++ b/packages/frontend/src/components/composer/completion/types.ts
+@@ -0,0 +1,36 @@
++// Shared contract for the composer completion menu. The menu itself is generic;
++// each trigger (`:` for emoji now, `@` for mentions later) is a provider.
++
++export type CompletionItem = {
++  /** stable key, e.g. the emoji shortcode id */
++  id: string
++  /** text shown on the row, e.g. `:smile:` */
++  label: string
++  /** what gets inserted into the draft, e.g. the Unicode glyph */
++  value: string
++  /** optional glyph/preview rendered at the start of the row */
++  preview?: string
++}
++
++export type CompletionProvider = {
++  /** the character that opens this provider, e.g. ':' */
++  trigger: string
++  /** minimum chars after the trigger before the menu shows */
++  minChars: number
++  /**
++   * require the trigger to sit at input start or after whitespace, so it never
++   * fires inside `http://host` or `12:30`. Defaults to true.
++   */
++  boundaryBefore?: boolean
++  /** matches for the typed term, best first (sync or async) */
++  query: (term: string) => CompletionItem[] | Promise<CompletionItem[]>
++}
++
++export type ActiveToken = {
++  trigger: string
++  term: string
++  /** offset of the trigger char in the text */
++  start: number
++  /** caret offset (end of the term) */
++  end: number
++}
+diff --git a/packages/frontend/src/tests/completion.test.ts b/packages/frontend/src/tests/completion.test.ts
+new file mode 100644
+index 000000000..fc3e3860d
+--- /dev/null
++++ b/packages/frontend/src/tests/completion.test.ts
+@@ -0,0 +1,66 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import { findActiveToken } from '../components/composer/completion/findActiveToken.js'
++import { emojiProvider } from '../components/composer/completion/emojiProvider.js'
++
++import type { CompletionItem } from '../components/composer/completion/types.js'
++
++const emoji = {
++  trigger: emojiProvider.trigger,
++  minChars: emojiProvider.minChars,
++  boundaryBefore: emojiProvider.boundaryBefore,
++}
++
++// caret marker `|` in the input string keeps the cases readable
++const at = (s: string) => s.indexOf('|')
++const tok = (s: string) => findActiveToken(s.replace('|', ''), at(s), emoji)
++
++describe('composer completion / findActiveToken', () => {
++  it('fires after the trigger + 2 chars and reports the term + range', () => {
++    expect(tok('hi :sm|')).to.deep.equal({
++      trigger: ':',
++      term: 'sm',
++      start: 3,
++      end: 6,
++    })
++  })
++
++  it('stays quiet for a lone trigger or a single char', () => {
++    expect(tok(':|')).to.equal(null)
++    expect(tok('go :s|')).to.equal(null)
++  })
++
++  it('does not fire inside URLs or times (boundary guard)', () => {
++    expect(tok('see http://ho|st')).to.equal(null)
++    expect(tok('at 12:30|')).to.equal(null)
++  })
++
++  it('treats start-of-input as a valid boundary', () => {
++    expect(tok(':sm|')).to.deep.equal({
++      trigger: ':',
++      term: 'sm',
++      start: 0,
++      end: 3,
++    })
++  })
++
++  it('ends the token at whitespace and at an already-closed shortcode', () => {
++    expect(tok('hi :sm |')).to.equal(null)
++    expect(tok('hi :smile:|')).to.equal(null)
++  })
++})
++
++describe('composer completion / emojiProvider', () => {
++  it('ranks the exact/prefix shortcode first and inserts the Unicode glyph', () => {
++    const items = emojiProvider.query('smile') as CompletionItem[]
++    expect(items[0].id).to.equal('smile')
++    expect(items[0].label).to.equal(':smile:')
++    expect(items[0].value).to.equal('😄')
++  })
++
++  it('matches on keywords, not just the shortcode', () => {
++    const items = emojiProvider.query('happy') as CompletionItem[]
++    expect(items.some(i => i.id === 'smile')).to.equal(true)
++  })
++})
