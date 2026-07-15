@@ -18,13 +18,14 @@ export const card: CSSProperties = {
   boxSizing: 'border-box',
   padding: '16px 18px',
   borderRadius: 12,
+  border: '1px solid rgba(255,255,255,.08)',
   background: '#1e1e1e',
   color: '#eee',
   font: '14px/1.5 system-ui, sans-serif',
   boxShadow: '0 8px 40px rgba(0,0,0,.5)',
   display: 'flex',
   flexDirection: 'column',
-  gap: 10,
+  gap: 12,
   alignItems: 'center',
   textAlign: 'center',
 }
@@ -68,7 +69,9 @@ export const cardMobile: CSSProperties = {
 export const cardDesktop: CSSProperties = {
   top: '50%',
   transform: 'translate(-50%, -50%)',
-  width: 'min(460px, 90vw)',
+  // ONE fixed width for audio and video alike — the card must not resize
+  // when video starts/stops mid-call (stable-layout, F).
+  width: 'min(720px, 92vw)',
   maxHeight: '92vh',
   overflowY: 'auto',
   padding: '24px 28px',
@@ -76,17 +79,9 @@ export const cardDesktop: CSSProperties = {
   boxShadow: '0 16px 56px rgba(0,0,0,.55), 0 0 0 100vmax rgba(0,0,0,.55)',
 }
 
-/** Desktop + a live video call: widen so the video stage below can be large
- * (a video call should fill the space, unlike an audio call's compact card). */
-export const cardDesktopVideo: CSSProperties = {
-  width: 'min(960px, 94vw)',
-}
-
-/** Desktop video stage: a fixed 4/3 box is small on a wide monitor — let it
- * grow to a large share of the viewport height instead. */
+/** Desktop stage: fixed height so toggling video never resizes the card. */
 export const videoStageDesktop: CSSProperties = {
-  aspectRatio: 'auto',
-  height: 'min(64vh, 640px)',
+  height: 'min(52vh, 520px)',
 }
 
 export const title: CSSProperties = {
@@ -97,38 +92,29 @@ export const title: CSSProperties = {
 export const subtitle: CSSProperties = {
   fontSize: 13,
   color: '#a8a8a8',
+  // Reserve one line so an empty status ('idle'/'ended') doesn't collapse
+  // the row (stable-layout, F).
+  minHeight: '1.5em',
 }
 
-/** M2 speaking rings: the row holding the local + remote `SpeakingRing`
- * tiles. Only rendered for an audio-only call (`!hasVideo`, M3) — a video
- * call renders `videoStage` below instead, since the video frame itself is
- * the participant tile. */
-export const participantsRow: CSSProperties = {
-  display: 'flex',
-  gap: 24,
-  justifyContent: 'center',
-  margin: '2px 0',
-}
-
-/** M3 video call: the remote video frame with a small local self-preview
- * picture-in-picture, replacing `participantsRow` when `hasVideo`. */
+/** The single persistent participant stage: remote video OR the remote
+ * speaking ring, with the local self-view always in the corner PiP slot —
+ * one fixed-size box regardless of who is sending video (stable-layout, F).
+ * `background` is overridden inline: `#000` behind video, `#141414` behind
+ * the ring. */
 export const videoStage: CSSProperties = {
   position: 'relative',
   width: '100%',
-  aspectRatio: '4 / 3',
   borderRadius: 10,
   overflow: 'hidden',
-  background: '#000',
+  background: '#141414',
 }
 
-/** M5 mobile: a fixed 4/3 stage wastes most of a phone's (usually taller
- * portrait) screen — let the video fill whatever vertical space `cardMobile`
- * leaves above the controls instead of a fixed ratio. */
+/** M5 mobile: fill whatever vertical space `cardMobile` leaves above the
+ * controls instead of a fixed height. */
 export const videoStageMobile: CSSProperties = {
   flex: 1,
   minHeight: 0,
-  width: '100%',
-  aspectRatio: 'auto',
 }
 
 export const remoteVideo: CSSProperties = {
@@ -139,12 +125,18 @@ export const remoteVideo: CSSProperties = {
   background: '#000',
 }
 
-export const localVideo: CSSProperties = {
+/** The always-present local self-view slot in the stage corner — holds the
+ * local `<video>` while local video flows, else the small local speaking
+ * ring, so the local participant never mounts/unmounts (stable-layout, F). */
+export const localPip: CSSProperties = {
   position: 'absolute',
   right: 8,
   bottom: 8,
-  width: '28%',
-  maxWidth: 110,
+}
+
+export const localVideo: CSSProperties = {
+  display: 'block',
+  width: 110,
   aspectRatio: '4 / 3',
   objectFit: 'cover',
   borderRadius: 6,
@@ -152,9 +144,9 @@ export const localVideo: CSSProperties = {
   background: '#111',
 }
 
-/** M3: when the video stage is shown because the LOCAL camera/screen is on but
- * the remote is not sending video, the remote occupies the stage as a centered
- * speaking ring (with its avatar) instead of a black frame. */
+/** The remote participant as a centered speaking ring (with avatar) whenever
+ * the remote isn't sending video — same stage, no subtree swap. Its audio
+ * rides the always-mounted hidden `<audio>` sink. */
 export const remoteRingInStage: CSSProperties = {
   position: 'absolute',
   inset: 0,
@@ -163,14 +155,6 @@ export const remoteRingInStage: CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   gap: 8,
-}
-
-export const participantColumn: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  gap: 6,
-  maxWidth: 110,
 }
 
 export const participantLabel: CSSProperties = {
@@ -189,18 +173,21 @@ export const errorText: CSSProperties = {
 
 export const buttonRow: CSSProperties = {
   display: 'flex',
-  gap: 10,
+  gap: 8,
   justifyContent: 'center',
   marginTop: 4,
 }
 
 export const button: CSSProperties = {
-  padding: '9px 18px',
-  borderRadius: 8,
+  padding: '8px 14px',
+  borderRadius: 6,
   border: 'none',
   cursor: 'pointer',
-  fontSize: 14,
+  fontSize: 13,
   color: '#fff',
+  // Wide enough for the longer of each toggle's labels (Mute↔Unmute,
+  // Share↔Stop) so a state flip never resizes the row (stable-layout, F).
+  minWidth: 110,
 }
 
 /** M5 mobile: bigger touch targets (44px is the usual iOS/Android minimum
@@ -216,6 +203,33 @@ export const COLOR_ACCEPT = '#2ea043'
 export const COLOR_DECLINE = '#d13d3d'
 export const COLOR_NEUTRAL = '#333'
 export const COLOR_NEUTRAL_ACTIVE = '#555'
+
+/** Small muted-mic badge overlaid on a participant tile/ring (remote when
+ * the peer reports muted, local PiP when locally muted). Absolutely
+ * positioned by the caller — zero layout impact (stable-layout, F). */
+export const muteBadge: CSSProperties = {
+  position: 'absolute',
+  width: 18,
+  height: 18,
+  borderRadius: '50%',
+  background: COLOR_DECLINE,
+  color: '#fff',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  boxShadow: '0 1px 4px rgba(0,0,0,.4)',
+  pointerEvents: 'none',
+}
+
+/** One always-rendered fixed-height slot below the status line: the M5
+ * route indicator once connected, an inline screen-share error when set,
+ * else empty — so neither appearing/vanishing shifts the layout. */
+export const infoSlot: CSSProperties = {
+  minHeight: 18,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+}
 
 /** M2 device picker (docs/calls.md: "when more than one mic/camera exists,
  * let the user choose"). One row per kind, each only rendered when

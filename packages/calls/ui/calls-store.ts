@@ -83,6 +83,9 @@ export type CallUiSnapshot =
       /** Whether a remote video track is actually flowing — gates the remote
        * video tile (else the remote speaking ring). */
       remoteHasVideo: boolean
+      /** Whether the peer reports its mic muted (the `mutedState` data
+       * channel's `audioEnabled: false`) — drives the remote muted-mic badge. */
+      remoteAudioMuted: boolean
       /** Set once the peer's audio (or audio+video, when `hasVideo`) track
        * arrives (`onRemoteStream`). */
       remoteStream: MediaStream | null
@@ -169,6 +172,7 @@ export class CallsUiStore {
       cameraOn: hasVideo,
       localHasVideo: hasVideo,
       remoteHasVideo: false,
+      remoteAudioMuted: false,
       remoteStream: null,
       localStream: null,
       screenSharing: false,
@@ -242,6 +246,14 @@ export class CallsUiStore {
   setRemoteHasVideo(remoteHasVideo: boolean): void {
     if (!this.snapshot.active) return
     this.snapshot = { ...this.snapshot, remoteHasVideo }
+    this.notify()
+  }
+
+  /** Mirror of the engine's `onRemoteAudioMutedChanged` (the peer's
+   * `mutedState` message) — drives the remote muted-mic badge. */
+  setRemoteAudioMuted(remoteAudioMuted: boolean): void {
+    if (!this.snapshot.active) return
+    this.snapshot = { ...this.snapshot, remoteAudioMuted }
     this.notify()
   }
 
