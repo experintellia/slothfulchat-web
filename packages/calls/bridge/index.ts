@@ -631,7 +631,7 @@ export class CallBridge {
     await this.engine.startScreenShare()
   }
 
-  /** Stop sharing and restore the camera — see `AudioCallEngine.stopScreenShare`. */
+  /** Stop sharing — video goes off, no camera restore. See `AudioCallEngine.stopScreenShare`. */
   async stopScreenShare(): Promise<void> {
     await this.engine.stopScreenShare()
   }

@@ -832,15 +832,38 @@ test('startScreenShare replaces the video sender track via replaceTrack — no r
   assert.equal(events.localVideoTrackChanges.at(-1), screen.tracks[0]);
 });
 
-test('stopScreenShare reacquires the camera and replaceTrack-restores it', async () => {
+test('startScreenShare while the camera is on turns the camera OFF (mutually exclusive) and sends videoEnabled true', async () => {
+  const screen = screenStream();
+  const { engine, mutedChannel } = makeEngine({
+    hasVideo: true,
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  assert.equal(engine.cameraEnabled, true, 'video call starts with the camera on');
+  const channel = mutedChannel();
+  channel.fireOpen();
+  channel.sent.length = 0;
+
+  await engine.startScreenShare();
+
+  assert.equal(engine.screenSharing, true);
+  assert.equal(engine.cameraEnabled, false, 'camera is OFF for real — the share owns the sender');
+  assert.deepEqual(
+    channel.sent.map((s) => JSON.parse(s)),
+    [{ audioEnabled: true, videoEnabled: true }],
+    'one send: video stays enabled (screen replaced camera)'
+  );
+});
+
+test('stopScreenShare clears the outgoing video — never auto-restores the camera', async () => {
   const screen = screenStream();
   let cameraCalls = 0;
-  const restoredCamera = new FakeTrack('video');
   const { engine, events, lastPc } = makeEngine({
     hasVideo: true,
     getUserMedia: async () => {
       cameraCalls += 1;
-      return (cameraCalls === 1 ? avStream() : new FakeStream([restoredCamera])) as unknown as MediaStream;
+      return avStream() as unknown as MediaStream;
     },
     getDisplayMedia: async () => screen as unknown as MediaStream,
   });
@@ -854,9 +877,12 @@ test('stopScreenShare reacquires the camera and replaceTrack-restores it', async
   await engine.stopScreenShare();
 
   assert.equal(engine.screenSharing, false);
-  assert.equal(videoSender!.track, restoredCamera as unknown as MediaStreamTrack, 'camera restored onto the SAME sender');
+  assert.equal(engine.cameraEnabled, false, 'camera stays off — no auto-restore');
+  assert.equal(videoSender!.track, null, 'the sender is cleared, not restored');
+  assert.equal(cameraCalls, 1, 'no camera reacquisition (only the initial one)');
   assert.equal(screen.tracks[0].stopped, true, 'the screen-capture track is stopped');
   assert.deepEqual(events.screenShareChanges, [true, false]);
+  assert.equal(events.localVideoTrackChanges.at(-1), null);
 });
 
 test('toggleScreenShare flips between camera and screen', async () => {
@@ -874,15 +900,14 @@ test('toggleScreenShare flips between camera and screen', async () => {
   assert.equal(engine.screenSharing, false);
 });
 
-test('the browser\'s native "Stop sharing" (track ended) auto-restores the camera', async () => {
+test('the browser\'s native "Stop sharing" (track ended) ends with video off — no camera restore', async () => {
   const screen = screenStream();
-  const restoredCamera = new FakeTrack('video');
   let cameraCalls = 0;
   const { engine, events, lastPc } = makeEngine({
     hasVideo: true,
     getUserMedia: async () => {
       cameraCalls += 1;
-      return (cameraCalls === 1 ? avStream() : new FakeStream([restoredCamera])) as unknown as MediaStream;
+      return avStream() as unknown as MediaStream;
     },
     getDisplayMedia: async () => screen as unknown as MediaStream,
   });
@@ -896,7 +921,9 @@ test('the browser\'s native "Stop sharing" (track ended) auto-restores the camer
   await new Promise((r) => setTimeout(r, 0)); // let the fire-and-forget stopScreenShare() settle
 
   assert.equal(engine.screenSharing, false);
-  assert.equal(videoSender!.track, restoredCamera as unknown as MediaStreamTrack);
+  assert.equal(engine.cameraEnabled, false, 'camera stays off');
+  assert.equal(videoSender!.track, null, 'video cleared, not restored');
+  assert.equal(cameraCalls, 1, 'no camera reacquisition');
   assert.deepEqual(events.screenShareChanges, [true, false]);
 });
 
@@ -1114,7 +1141,7 @@ test('setCameraEnabled(false) removes the camera track and fires onLocalVideoTra
   assert.equal(events.localVideoTrackChanges.at(-1), null, 'onLocalVideoTrackChanged(null) fired');
 });
 
-test('setCameraEnabled while screen sharing only records the intent (screen keeps the sender)', async () => {
+test('setCameraEnabled(false) while screen sharing is a no-op (camera is already off)', async () => {
   const screen = screenStream();
   const { engine, lastPc } = makeEngine({
     hasVideo: true,
@@ -1127,11 +1154,39 @@ test('setCameraEnabled while screen sharing only records the intent (screen keep
   const videoSender = pc.senders.find((s) => s.track === (screen.tracks[0] as unknown as MediaStreamTrack));
   const replaceCallsBefore = videoSender!.replaceTrackCalls.length;
 
-  await engine.setCameraEnabled(false); // intent only — screen still on the wire
+  await engine.setCameraEnabled(false);
 
-  assert.equal(engine.cameraEnabled, false, 'intent recorded');
+  assert.equal(engine.cameraEnabled, false);
   assert.equal(engine.screenSharing, true, 'still sharing');
   assert.equal(videoSender!.replaceTrackCalls.length, replaceCallsBefore, 'screen track untouched');
+});
+
+test('setCameraEnabled(true) while screen sharing stops the share and turns the camera on', async () => {
+  const screen = screenStream();
+  let call = 0;
+  const camera = new FakeTrack('video');
+  const { engine, events, lastPc } = makeEngine({
+    hasVideo: true,
+    getUserMedia: async () => {
+      call += 1;
+      return (call === 1 ? avStream() : new FakeStream([camera])) as unknown as MediaStream;
+    },
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  await engine.startScreenShare();
+  const pc = lastPc();
+  const videoSender = pc.senders.find((s) => s.track === (screen.tracks[0] as unknown as MediaStreamTrack));
+  assert.ok(videoSender);
+
+  await engine.setCameraEnabled(true);
+
+  assert.equal(engine.screenSharing, false, 'share stopped — mutually exclusive');
+  assert.equal(engine.cameraEnabled, true);
+  assert.equal(videoSender!.track, camera as unknown as MediaStreamTrack, 'camera on the SAME sender');
+  assert.equal(screen.tracks[0].stopped, true, 'the capture is released');
+  assert.deepEqual(events.screenShareChanges, [true, false]);
 });
 
 test('RACE: setCameraEnabled(true) in flight when hang up lands — new stream stopped, not adopted', async () => {
@@ -1486,20 +1541,20 @@ test('every mute/camera/screen-share flip pushes the new state over mutedState',
 
   engine.setMuted(true);
   await engine.setCameraEnabled(true);
-  await engine.startScreenShare();
-  await engine.stopScreenShare(); // camera was on → restored, video stays enabled
+  await engine.startScreenShare(); // camera flips OFF (mutually exclusive)
+  await engine.stopScreenShare(); // no camera restore — video goes off
   engine.setMuted(false);
-  await engine.setCameraEnabled(false);
+  await engine.setCameraEnabled(true);
 
   assert.deepEqual(
     channel.sent.map((s) => JSON.parse(s)),
     [
       { audioEnabled: false, videoEnabled: false }, // muted
       { audioEnabled: false, videoEnabled: true }, // camera on
-      { audioEnabled: false, videoEnabled: true }, // screen share started
-      { audioEnabled: false, videoEnabled: true }, // share stopped, camera restored
-      { audioEnabled: true, videoEnabled: true }, // unmuted
-      { audioEnabled: true, videoEnabled: false }, // camera off
+      { audioEnabled: false, videoEnabled: true }, // share started (screen replaced camera)
+      { audioEnabled: false, videoEnabled: false }, // share stopped — video off, no restore
+      { audioEnabled: true, videoEnabled: false }, // unmuted
+      { audioEnabled: true, videoEnabled: true }, // camera back on explicitly
     ]
   );
 });

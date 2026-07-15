@@ -247,7 +247,7 @@ export class AudioCallEngine {
   /** See {@link AudioCallOptions.hasVideo}. */
   private readonly wantsVideo: boolean;
   private readonly videoConstraints: MediaTrackConstraints | boolean;
-  /** Current camera selection; also what {@link stopScreenShare} reacquires. */
+  /** Current camera selection; `null` = browser default. */
   private selectedVideoInputDeviceId: string | null = null;
 
   private direction: CallDirection | null = null;
@@ -261,9 +261,9 @@ export class AudioCallEngine {
   /** The live `getDisplayMedia()` stream while screen-sharing. */
   private screenShareStream: MediaStream | null = null;
   private screenSharingState = false;
-  /** Whether a live camera track is the current outgoing video. Independent
-   * of {@link screenSharingState}; read by {@link stopScreenShare} to decide
-   * whether to restore the camera or clear the sender. */
+  /** Whether a live camera track is the current outgoing video. Mutually
+   * exclusive with {@link screenSharingState} — they share the one video
+   * sender, so at most one is true. */
   private cameraOnState = false;
   /** Local mute intent; re-applied whenever `localStream` is (re)assigned so
    * it survives ringing → connected. */
@@ -361,7 +361,7 @@ export class AudioCallEngine {
   }
 
   /** The camera `deviceId` currently selected — kept even while screen-sharing
-   * (it's what {@link stopScreenShare} reacquires). `null` = never selected. */
+   * (used by the next camera acquisition). `null` = never selected. */
   get videoInputDeviceId(): string | null {
     return this.selectedVideoInputDeviceId;
   }
@@ -649,8 +649,8 @@ export class AudioCallEngine {
     const epoch = this.epoch;
     if (epoch == null || this.machine.isTerminal) return; // ended: silent no-op
     if (this.screenSharingState) {
-      // Nothing live to replace right now; stopScreenShare() reacquires with
-      // this deviceId when the camera comes back.
+      // Nothing live to replace right now; the next setCameraEnabled(true)
+      // acquisition uses this deviceId.
       this.selectedVideoInputDeviceId = deviceId;
       return;
     }
@@ -710,9 +710,9 @@ export class AudioCallEngine {
   /**
    * Turn the local camera on/off mid-call — works on ANY call since the video
    * sender always exists. Enabling acquires a camera and `replaceTrack`s it;
-   * disabling `replaceTrack(null)`s and stops the track. While screen-sharing
-   * (the screen owns the sender) this only records the intent for when the
-   * share stops.
+   * disabling `replaceTrack(null)`s and stops the track. Camera and screen
+   * share are mutually exclusive: enabling while screen-sharing stops the
+   * share first, then puts the camera on the sender.
    */
   async setCameraEnabled(enabled: boolean): Promise<void> {
     const epoch = this.epoch;
@@ -723,11 +723,14 @@ export class AudioCallEngine {
       this.reportDeviceSwitchError(new Error('setCameraEnabled: no active video sender'));
       return;
     }
-    if (enabled === this.cameraOnState && !this.screenSharingState) return; // already there
+    // While sharing cameraOnState is false, so this also makes
+    // setCameraEnabled(false) during a share a no-op.
+    if (enabled === this.cameraOnState) return; // already there
     if (this.screenSharingState) {
-      // Screen owns the sender right now — just remember the intent.
-      this.cameraOnState = enabled;
-      return;
+      // Mutually exclusive — stop the share (clears the sender, notifies the
+      // peer/UI), then fall through to the normal camera acquisition.
+      await this.stopScreenShare();
+      if (!this.ensureActive(epoch)) return;
     }
 
     if (!enabled) {
@@ -785,10 +788,11 @@ export class AudioCallEngine {
   /**
    * Start sharing the screen: `getDisplayMedia()` + `replaceTrack` onto the
    * existing video sender, so the peer sees an ordinary video-track change,
-   * not a screen-share protocol. Failures report `onScreenShareError` and
-   * never tear the call down. The browser's own "Stop sharing" affordance
-   * ends the track out-of-band; its `ended` listener below treats that like
-   * an explicit {@link stopScreenShare}.
+   * not a screen-share protocol. The share takes the single video sender, so
+   * the camera turns OFF for real (state + UI). Failures report
+   * `onScreenShareError` and never tear the call down. The browser's own
+   * "Stop sharing" affordance ends the track out-of-band; its `ended`
+   * listener below treats that like an explicit {@link stopScreenShare}.
    */
   async startScreenShare(): Promise<void> {
     const epoch = this.epoch;
@@ -846,20 +850,21 @@ export class AudioCallEngine {
       void this.stopScreenShare();
     });
 
-    this.swapLocalVideoTrack(screenTrack);
+    this.swapLocalVideoTrack(screenTrack); // stops the camera track if live
     this.screenShareStream = displayStream;
     this.screenSharingState = true;
+    this.cameraOnState = false; // mutually exclusive: the share owns the sender
     this.sendLocalMutedState();
     this.callbacks.onScreenShareChanged?.(true);
     this.callbacks.onLocalVideoTrackChanged?.(screenTrack);
   }
 
   /**
-   * Stop sharing and restore the camera (if it was on). The capture is
-   * stopped unconditionally FIRST: screen sharing is a stronger privacy
-   * commitment than a black video tile, so a failed camera reacquisition
-   * must not leave the capture running — it reports `onScreenShareError`
-   * and leaves the sender trackless until a retry succeeds.
+   * Stop sharing and clear the outgoing video — never auto-restores the
+   * camera (camera and screen share are mutually exclusive, so the camera is
+   * off by now; turning it back on is an explicit {@link setCameraEnabled}).
+   * The capture is stopped unconditionally FIRST: screen sharing is a
+   * stronger privacy commitment than a black video tile.
    */
   async stopScreenShare(): Promise<void> {
     if (!this.screenSharingState) return;
@@ -867,63 +872,19 @@ export class AudioCallEngine {
     const sender = this.videoSender;
     this.releaseScreenShareStream(); // stop the capture unconditionally
     this.screenSharingState = false;
-    // cameraOnState is already final here, so one send covers both the
-    // restore-camera and clear-video branches below.
     this.sendLocalMutedState();
     this.callbacks.onScreenShareChanged?.(false);
     if (epoch == null || this.machine.isTerminal || sender == null) return;
 
-    // If the camera was not on around the share (e.g. an audio-started call
-    // that shared the screen, or the user turned the camera off first), do NOT
-    // force it on — just clear the outgoing video.
-    if (!this.cameraOnState) {
-      try {
-        await sender.replaceTrack(null);
-      } catch (error) {
-        this.reportScreenShareError(error);
-        return;
-      }
-      if (!this.ensureActive(epoch)) return;
-      this.removeLocalVideoTracks();
-      this.callbacks.onLocalVideoTrackChanged?.(null);
-      return;
-    }
-
-    let camStream: MediaStream;
     try {
-      camStream = await this.factories.getUserMedia({
-        audio: false,
-        video: this.videoConstraintsFor(this.selectedVideoInputDeviceId),
-      });
+      await sender.replaceTrack(null);
     } catch (error) {
       this.reportScreenShareError(error);
       return;
     }
-    if (!this.ensureActive(epoch)) {
-      this.stopStream(camStream);
-      return;
-    }
-    const camTrack = camStream.getVideoTracks()[0];
-    if (camTrack == null) {
-      this.stopStream(camStream);
-      this.reportScreenShareError(new Error('stopScreenShare: could not reacquire the camera'));
-      return;
-    }
-
-    try {
-      await sender.replaceTrack(camTrack);
-    } catch (error) {
-      this.stopStream(camStream);
-      this.reportScreenShareError(error);
-      return;
-    }
-    if (!this.ensureActive(epoch)) {
-      this.stopStream(camStream);
-      return;
-    }
-
-    this.swapLocalVideoTrack(camTrack);
-    this.callbacks.onLocalVideoTrackChanged?.(camTrack);
+    if (!this.ensureActive(epoch)) return;
+    this.removeLocalVideoTracks();
+    this.callbacks.onLocalVideoTrackChanged?.(null);
   }
 
   /** Flip {@link screenSharing}. */
