@@ -174,7 +174,7 @@ exists:
   Matches shortcode, name and keywords over the already-bundled
   `@emoji-mart/data` (no new dependency); a boundary guard keeps it from firing
   inside `http://` or `12:30`. Built as a generic `CompletionProvider` primitive
-  so a future `@mention` menu reuses the same machinery. `desktop/0047`
+  so a future `@mention` menu reuses the same machinery. `desktop/0049`
 
 ## Bugfixes
 
