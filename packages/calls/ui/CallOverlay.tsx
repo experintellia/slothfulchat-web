@@ -184,6 +184,13 @@ export function CallOverlay({
   // The three media toggles stay mounted from the first render so the button
   // row never changes size — just disabled + dimmed until they can work.
   const controlsDisabled = !canMute || error != null
+  // "Enumerated, no camera found" — `microphones.length > 0` distinguishes
+  // that from "not yet enumerated" (both lists are [] until the async
+  // enumeration on the connecting transition lands; a live call implies a
+  // mic, so a populated mic list means the camera list is authoritative).
+  // Hotplug re-enumeration (`devicechange`) clears this automatically.
+  const noCamera = microphones.length > 0 && cameras.length === 0
+  const cameraDisabled = controlsDisabled || noCamera
 
   const routeInfo = connectionRouteInfo(connectionRoute)
   const routeDotColor =
@@ -238,6 +245,8 @@ export function CallOverlay({
       <div style={styles.infoSlot}>
         {error == null && screenShareError != null ? (
           <span style={styles.deviceSwitchError}>{screenShareError}</span>
+        ) : error == null && noCamera ? (
+          <span style={styles.connectionRoute}>No camera detected</span>
         ) : error == null && state === 'connected' && routeInfo != null ? (
           // Non-blocking troubleshooting hint — plain text, never a dialog
           // (no forced-relay setting exists to act on — see #93).
@@ -278,13 +287,14 @@ export function CallOverlay({
         <button
           type="button"
           onClick={onToggleCamera}
-          disabled={controlsDisabled}
+          disabled={cameraDisabled}
           aria-pressed={cameraOn}
-          aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'}
+          aria-label={noCamera ? 'No camera detected' : cameraOn ? 'Turn camera off' : 'Turn camera on'}
+          title={noCamera ? 'No camera detected' : undefined}
           style={{
             ...controlButtonStyle,
             background: cameraOn ? styles.COLOR_NEUTRAL_ACTIVE : styles.COLOR_NEUTRAL,
-            ...disabledButtonStyle,
+            ...(cameraDisabled ? { opacity: 0.45, cursor: 'default' as const } : {}),
           }}
         >
           {cameraOn ? 'Camera off' : 'Camera on'}
