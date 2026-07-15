@@ -231,11 +231,20 @@ export function CallOverlay({
     connectionRoute === 'relay' ? styles.COLOR_ROUTE_RELAY : styles.COLOR_ROUTE_DIRECT
 
   const isMobile = useIsMobileViewport()
-  const cardStyle = isMobile ? { ...styles.card, ...styles.cardMobile } : styles.card
+  const cardStyle = isMobile
+    ? { ...styles.card, ...styles.cardMobile }
+    : {
+        ...styles.card,
+        ...styles.cardDesktop,
+        ...(showVideoStage ? styles.cardDesktopVideo : {}),
+      }
   const videoStageStyle = isMobile
     ? { ...styles.videoStage, ...styles.videoStageMobile }
-    : styles.videoStage
+    : { ...styles.videoStage, ...styles.videoStageDesktop }
   const controlButtonStyle = isMobile ? { ...styles.button, ...styles.buttonMobile } : styles.button
+  // Bigger avatar rings on desktop — the compact 72px tile suits a phone/toast,
+  // but on the roomier centered desktop card it should feel more present.
+  const ringSize = isMobile ? 72 : 104
 
   return (
     <div role="dialog" aria-label="Call" style={cardStyle}>
@@ -262,11 +271,11 @@ export function CallOverlay({
       ) : (
         <div style={styles.participantsRow}>
           <div style={styles.participantColumn}>
-            <SpeakingRing label="You" level={localLevel} muted={muted} avatarUrl={localAvatarUrl} />
+            <SpeakingRing label="You" level={localLevel} muted={muted} avatarUrl={localAvatarUrl} size={ringSize} />
             <div style={styles.participantLabel}>You</div>
           </div>
           <div style={styles.participantColumn}>
-            <SpeakingRing label={title} level={remoteLevel} avatarUrl={remoteAvatarUrl} />
+            <SpeakingRing label={title} level={remoteLevel} avatarUrl={remoteAvatarUrl} size={ringSize} />
             <div style={styles.participantLabel}>{title}</div>
           </div>
         </div>

@@ -55,6 +55,40 @@ export const cardMobile: CSSProperties = {
   paddingRight: 'max(18px, env(safe-area-inset-right))',
 }
 
+/**
+ * Desktop layout — spread AFTER `card` on a non-mobile viewport. The base
+ * `card` is a small top-anchored panel (fine on a phone / as a ring toast);
+ * on a desktop window that leaves the call as a tiny corner widget in a sea of
+ * empty space. This centers it in the viewport, enlarges it, and paints a
+ * full-viewport dim behind it (the `0 0 0 100vmax` box-shadow trick — no extra
+ * DOM node) so an active call reads as a focused surface that uses the space,
+ * not a notification. The dim is visual only (box-shadow doesn't capture
+ * pointer events), so the app behind stays usable during a call.
+ */
+export const cardDesktop: CSSProperties = {
+  top: '50%',
+  transform: 'translate(-50%, -50%)',
+  width: 'min(460px, 90vw)',
+  maxHeight: '92vh',
+  overflowY: 'auto',
+  padding: '24px 28px',
+  gap: 16,
+  boxShadow: '0 16px 56px rgba(0,0,0,.55), 0 0 0 100vmax rgba(0,0,0,.55)',
+}
+
+/** Desktop + a live video call: widen so the video stage below can be large
+ * (a video call should fill the space, unlike an audio call's compact card). */
+export const cardDesktopVideo: CSSProperties = {
+  width: 'min(960px, 94vw)',
+}
+
+/** Desktop video stage: a fixed 4/3 box is small on a wide monitor — let it
+ * grow to a large share of the viewport height instead. */
+export const videoStageDesktop: CSSProperties = {
+  aspectRatio: 'auto',
+  height: 'min(64vh, 640px)',
+}
+
 export const title: CSSProperties = {
   fontSize: 16,
   fontWeight: 600,

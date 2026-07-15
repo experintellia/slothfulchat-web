@@ -51,15 +51,19 @@ export interface AnalyserLike {
  * multiplier is tuned so normal speaking volume reads as a clearly-lit ring
  * while near silence stays dark. Exposed as a constant (not hardcoded inline)
  * so a future tuning pass has one place to change it. */
-export const DEFAULT_LEVEL_GAIN = 6;
+export const DEFAULT_LEVEL_GAIN = 9;
 
 /** Noise gate applied AFTER {@link DEFAULT_LEVEL_GAIN} (in the same boosted
  * 0..1 space): ambient room noise/self-noise reads as a small but non-zero
  * boosted level, which would light the ring green even when nobody is talking.
  * Anything at or below this floor is forced to exactly 0 ("no green at rest"),
  * and everything above is rescaled `(x - gate)/(1 - gate)` so real speech still
- * spans the full range rather than being uniformly dimmed by the subtraction. */
-export const DEFAULT_LEVEL_NOISE_GATE = 0.06;
+ * spans the full range rather than being uniformly dimmed by the subtraction.
+ * Scaled with {@link DEFAULT_LEVEL_GAIN} so the *silence floor* (the raw RMS
+ * below which the ring stays dark) is held constant as the gain rises — gate /
+ * gain ≈ 0.01 raw RMS either way, so bumping the gain makes the ring more
+ * sensitive ABOVE the floor without letting ambient noise back in. */
+export const DEFAULT_LEVEL_NOISE_GATE = 0.09;
 
 /** Default poll interval. 10Hz is smooth enough for a CSS-animated ring and
  * cheap enough to run per-track for the lifetime of a call. */

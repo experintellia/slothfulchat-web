@@ -77,16 +77,23 @@ export function SpeakingRing({
   // from grey toward the speaking green AND a green glow grows from nothing —
   // both scale from 0 at level 0, so there is zero green when there is no
   // input, up to a clear glow + slight pulse-scale with real voice.
+  // Perceptual curve: raw voice level is small even at a normal speaking
+  // volume, so map it through a sqrt-ish response that strongly lifts the
+  // low-mid range — the ring lights up SOONER and more visibly as soon as you
+  // start talking. Still exactly 0 at level 0 (Math.pow(0, .5) === 0), so
+  // there is no green at rest and no ambient-noise glow (the meter's noise
+  // gate already floored silence to 0 upstream).
+  const shaped = Math.pow(effectiveLevel, 0.5)
   const [gr, gg, gb] = NEUTRAL_RING_RGB.split(',').map(v => Number(v.trim()))
   const [sr, sg, sb] = RING_COLOR_RGB.split(',').map(v => Number(v.trim()))
-  const borderR = lerpChannel(gr, sr, effectiveLevel)
-  const borderG = lerpChannel(gg, sg, effectiveLevel)
-  const borderB = lerpChannel(gb, sb, effectiveLevel)
+  const borderR = lerpChannel(gr, sr, shaped)
+  const borderG = lerpChannel(gg, sg, shaped)
+  const borderB = lerpChannel(gb, sb, shaped)
   // Grey base is always faintly visible; brightens as it greens.
-  const borderAlpha = muted ? 0.28 : 0.38 + effectiveLevel * 0.5
-  const glowAlpha = effectiveLevel * 0.55
-  const glowSpread = 2 + effectiveLevel * 10
-  const scale = 1 + effectiveLevel * 0.08
+  const borderAlpha = muted ? 0.28 : 0.38 + shaped * 0.55
+  const glowAlpha = shaped * 0.72
+  const glowSpread = 2 + shaped * 15
+  const scale = 1 + shaped * 0.12
 
   const ringStyle: CSSProperties = {
     width: size,
