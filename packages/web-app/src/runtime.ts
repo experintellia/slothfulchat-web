@@ -14,6 +14,7 @@ import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
 import { initDiagnostics } from './diagnostics'
+import { applyTxOverlay, initTranslationEditor } from './translation-editor'
 
 // earliest boot milestone we control: our runtime bundle has finished loading
 perf.boot('runtime-eval')
@@ -669,7 +670,7 @@ class BrowserRuntime {
     if (!locale) {
       return {
         locale: 'en',
-        messages: { ...messagesEnglish, ...untranslated },
+        messages: applyTxOverlay('en', { ...messagesEnglish, ...untranslated }),
         dir: 'ltr',
       }
     }
@@ -702,12 +703,16 @@ class BrowserRuntime {
     }
     return {
       locale,
-      messages: { ...localeMessages, ...untranslated },
+      messages: applyTxOverlay(locale, { ...localeMessages, ...untranslated }),
       dir: 'ltr',
     }
   }
-  setLocale(_locale: string): Promise<void> {
-    throw new Error('Method not implemented.')
+  // Persist the chosen locale (upstream's browser runtime leaves this
+  // unimplemented, which makes the frontend's onChooseLanguage reject before it
+  // reloads). Storing it here makes language switching actually take effect and
+  // lets the translation editor refresh the app live after an edit.
+  async setLocale(locale: string): Promise<void> {
+    await this.setDesktopSetting('locale', locale)
   }
 
   async getDesktopSettings(): Promise<DesktopSettings> {
@@ -2099,4 +2104,6 @@ if (typeof window !== 'undefined') {
     openDialog: showBridgeDialog,
     reachable: () => bridgeReachable,
   }
+  // Dev-gated translation editor overlay (Ctrl/Cmd+Shift+L or ?txedit).
+  initTranslationEditor()
 }

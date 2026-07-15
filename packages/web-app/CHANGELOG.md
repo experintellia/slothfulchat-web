@@ -16,6 +16,11 @@
   fills the navbar's vertical dead space and the inter-button gap. The icons
   and the navbar height are pixel-for-pixel unchanged — only the hit box grew,
   cancelled out by negative margins so nothing moves visually.
+- **In-app translation editor** (dev tool, `Ctrl/Cmd+Shift+L` or `?txedit`): a
+  side panel to edit the current language's UI strings live, persisted in the
+  browser, with a change list, revert, and export as partial Android XML or a
+  JSON changeset. Switching the app language now also refreshes the UI without a
+  manual reload (the browser build's `setLocale` was a stub).
 - **Backup import now persists its images before finishing**: after restoring
   from a backup you no longer have to reload several times for the pictures to
   show up. Imported blobs are written to the in-memory fs and mirrored to OPFS

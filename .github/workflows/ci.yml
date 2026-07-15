@@ -56,9 +56,13 @@ jobs:
                      -not -path '*/node_modules/*' -not -path '*/dist/*')
           exit $fail
 
-      # dependency-free node:test suite for the pure config templating
-      - name: Unit-test instance-config (parsePublicBridges etc.)
-        run: node --test packages/web-app/instance-config.test.mjs
+      # dependency-free node:test suites for pure logic (config templating,
+      # translation-editor serialization)
+      - name: Unit-test pure helpers
+        run: >-
+          node --test
+          packages/web-app/instance-config.test.mjs
+          packages/web-app/src/translation-editor.test.mjs
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable

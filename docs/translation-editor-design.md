@@ -4,8 +4,9 @@ A developer/translator overlay for editing UI translations live in the running
 app, persisting changes locally, reviewing/exporting/reverting them, and
 inspecting any on-screen element to find the translation key behind it.
 
-Status: **design / not yet implemented.** This document is the plan agreed
-before writing code.
+Status: **Phase 1 implemented** (editor + persistence + export/revert); Phase 2
+(inspector) still design-only. Built more compactly than the layout first
+sketched below — see "Module layout".
 
 ---
 
@@ -195,27 +196,34 @@ upstream patch (routine here — the project already carries 40+ desktop patches
 
 ## 6. Module layout
 
-Self-contained, mostly in the web-app layer:
+As built (Phase 1) — two source files, not the seven first sketched. The
+seven-file split was speculative abstraction; everything fits in one browser
+module plus a pure, unit-tested `.mjs`, matching the repo's existing
+`analytics.ts` + `events.mjs` pattern:
 
 ```
 packages/web-app/src/
-  translation-editor/
-    overlay-store.ts     # IndexedDB: load/save/list/revert, diff vs original
-    messages-live.ts     # apply edits to window.localeData + refresh
-    export-xml.ts        # reverse of the XML<->JSON converter (partial + full)
-    export-json.ts       # changeset + import
-    sidebar.ts(x)        # the UI (own root outside the app tree)
-    inspector.ts         # Phase 2: registry + fiber walk + zero-width mode
-    index.ts             # dev-toggle wiring (shortcut / query flag)
+  translation-editor.mjs       # pure: mergeOverlay, escapeAndroid, toAndroidXml
+  translation-editor.ts        # UI + localStorage overlay + live refresh + export/revert
+  translation-editor.test.mjs  # node:test for the pure helpers (wired into CI)
 ```
 
-- `getLocaleData()` in `runtime.ts` gains the overlay merge (Section 3).
-- Phase 2 adds **one** upstream patch under `patches/desktop/` wrapping
-  `translate()` for the call-registry + optional zero-width markers.
+- `getLocaleData()` in `runtime.ts` merges the overlay via `applyTxOverlay()`
+  (Section 3) — the only persistence hook, in code we own.
+- `runtime.ts` `setLocale()` is implemented (was a throwing stub): it persists
+  the locale, which unbreaks the app's own `onChooseLanguage` reload — the path
+  the editor reuses for live refresh, and a real bug fix in its own right.
+- **Storage:** the overlay lives in `localStorage` under
+  `slothfulchat.txOverlay` (`{ locale: { key: entry } }`), not IndexedDB — the
+  changeset is small (edited keys only) and `localStorage` is already the
+  runtime's settings store. Revisit only if a full-locale translation effort
+  outgrows the ~5 MB quota.
+- **Gating:** `Ctrl/Cmd+Shift+L` toggles the panel, `?txedit` auto-opens it —
+  dev-only, so normal users pay only the (small) bundle import.
 
-Gating: the whole feature is behind a dev flag (e.g. `?translate-editor=1` or a
-keyboard shortcut) so it never loads for normal users and adds no cost to the
-default bundle.
+Phase 2 (inspector) is unbuilt and still adds **one** upstream patch under
+`patches/desktop/` wrapping `translate()` for the call-registry + optional
+zero-width markers.
 
 ---
 
@@ -233,12 +241,12 @@ Phase 1 touches **no upstream/patched code** and is the highest-value chunk.
 ## 8. Open questions / decisions
 
 - [x] Export format → **partial Android XML** primary, JSON changeset for
-      review, full XML behind a flag.
+      review. (Full-locale XML export not built yet — YAGNI until asked.)
+- [x] Dev-flag mechanism → `Ctrl/Cmd+Shift+L` shortcut + `?txedit` query param.
 - [ ] Inspector default → registry+fiber (recommended) vs. also ship zero-width
-      exact mode in the first cut.
-- [ ] Dev-flag mechanism → query param, keyboard shortcut, or reuse the
-      existing "experimental features" gate (cf. desktop patch 0040).
+      exact mode in the first cut. (Phase 2.)
 - [ ] Should `fork-local` overrides get a build step that bakes them into the
-      shipped locales, or stay runtime-only?
+      shipped locales, or stay runtime-only? (Currently runtime-only; no
+      `upstream` vs `fork-local` tagging built yet — every edit is exportable.)
 - [ ] Where the sidebar mounts on mobile viewports (full-screen sheet vs. side
       panel), given the app already full-screens big dialogs on mobile.
