@@ -190,23 +190,7 @@ type FakeTransceiver = {
    * video diagnostics. */
   currentDirection?: RTCRtpTransceiverDirection | null;
   receiver: { track: MediaStreamTrack | null };
-  /** Records every `setCodecPreferences` call so tests can assert the engine
-   * applied `videoCodecPreferences` to the video transceiver. */
-  setCodecPreferencesCalls?: RTCRtpCodec[][];
-  setCodecPreferences?(codecs: RTCRtpCodec[]): void;
 };
-
-/** Attach a recording `setCodecPreferences` to a fake transceiver in place;
- * `throwOnSet` makes it record then throw (real browsers throw on an
- * unsupported/empty preference list — the engine must degrade, not die). */
-function withCodecPrefRecording(t: FakeTransceiver, throwOnSet = false): FakeTransceiver {
-  t.setCodecPreferencesCalls = [];
-  t.setCodecPreferences = (codecs) => {
-    t.setCodecPreferencesCalls!.push(codecs);
-    if (throwOnSet) throw new Error('setCodecPreferences: unsupported codecs');
-  };
-  return t;
-}
 
 /** A controllable fake peer connection satisfying PeerConnectionLike. */
 class FakePc implements PeerConnectionLike {
@@ -245,9 +229,6 @@ class FakePc implements PeerConnectionLike {
   seedRemoteVideoSender = false;
   /** The sender seeded by {@link seedRemoteVideoSender}, for assertions. */
   seededVideoSender: FakeSender | null = null;
-  /** When true, every video transceiver's `setCodecPreferences` throws — so a
-   * test can prove a throwing preference set never breaks the call. */
-  throwOnSetCodecPreferences = false;
   private connListeners = new Set<() => void>();
   private trackListeners = new Set<
     (e: { streams: ReadonlyArray<MediaStream>; track: MediaStreamTrack }) => void
@@ -295,17 +276,12 @@ class FakePc implements PeerConnectionLike {
       const sender = new FakeSender(null);
       this.seededVideoSender = sender;
       this.senders.push(sender);
-      this.transceivers.push(
-        withCodecPrefRecording(
-          {
-            kind: 'video',
-            sender,
-            direction: 'recvonly',
-            receiver: { track: null },
-          },
-          this.throwOnSetCodecPreferences
-        )
-      );
+      this.transceivers.push({
+        kind: 'video',
+        sender,
+        direction: 'recvonly',
+        receiver: { track: null },
+      });
     }
   }
   addTrack(track: MediaStreamTrack): unknown {
@@ -316,17 +292,12 @@ class FakePc implements PeerConnectionLike {
     // video so the sender-identity lookups (codec preferences, diagnostics)
     // find a matching transceiver on the camera-at-start path.
     if ((track as unknown as FakeTrack).kind === 'video') {
-      this.transceivers.push(
-        withCodecPrefRecording(
-          {
-            kind: 'video',
-            sender,
-            direction: 'sendrecv',
-            receiver: { track: null },
-          },
-          this.throwOnSetCodecPreferences
-        )
-      );
+      this.transceivers.push({
+        kind: 'video',
+        sender,
+        direction: 'sendrecv',
+        receiver: { track: null },
+      });
     }
     return sender;
   }
@@ -343,15 +314,12 @@ class FakePc implements PeerConnectionLike {
     this.addTransceiverCount += 1;
     this.transceiverInits.push(init);
     const sender = new FakeSender(null);
-    const transceiver: FakeTransceiver = withCodecPrefRecording(
-      {
-        kind,
-        sender,
-        direction: init?.direction ?? 'sendrecv',
-        receiver: { track: null },
-      },
-      this.throwOnSetCodecPreferences
-    );
+    const transceiver: FakeTransceiver = {
+      kind,
+      sender,
+      direction: init?.direction ?? 'sendrecv',
+      receiver: { track: null },
+    };
     this.transceivers.push(transceiver);
     this.senders.push(sender);
     return transceiver;
@@ -410,10 +378,6 @@ function makeEngine(
     /** Opt-in `createPlaceholderVideoTrack` factory (iOS/ssrc). Left undefined
      * by default so the existing trackless-transceiver tests stay unchanged. */
     makePlaceholderTrack?: () => FakeTrack;
-    /** Codec preferences applied to the video transceiver (Firefox/H264). */
-    videoCodecPreferences?: RTCRtpCodec[];
-    /** Make every video transceiver's `setCodecPreferences` throw. */
-    throwOnSetCodecPreferences?: boolean;
   } = {}
 ) {
   const events = {
@@ -438,7 +402,6 @@ function makeEngine(
     iceServers: ICE_SERVERS,
     gather: overrides.gather ?? (async () => {}),
     hasVideo: overrides.hasVideo,
-    videoCodecPreferences: overrides.videoCodecPreferences,
     factories: {
       getUserMedia: overrides.getUserMedia ?? defaultGetUserMedia,
       getDisplayMedia: overrides.getDisplayMedia,
@@ -448,7 +411,6 @@ function makeEngine(
       createPeerConnection: (config) => {
         const pc = new FakePc(config);
         pc.seedRemoteVideoSender = overrides.seedRemoteVideoSender ?? false;
-        pc.throwOnSetCodecPreferences = overrides.throwOnSetCodecPreferences ?? false;
         pcs.push(pc);
         return pc;
       },
@@ -1885,87 +1847,4 @@ test('iOS/ssrc: a lone placeholder does not count as video in mutedState (videoE
     { audioEnabled: true, videoEnabled: false },
     'placeholder alone (no camera/screen) reports videoEnabled false'
   );
-});
-
-// ── Firefox/H264: videoCodecPreferences ───────────────────────────────────────
-//
-// Firefox negotiates H264 via the on-demand OpenH264 GMP plugin and silently
-// encodes nothing when it's unavailable — the platform layer passes codec
-// preferences that exclude H264 so negotiation lands on VP8. The engine applies
-// them to the video transceiver before createOffer/createAnswer.
-
-const VIDEO_CODEC_PREFS: RTCRtpCodec[] = [
-  { mimeType: 'video/VP8', clockRate: 90000 },
-];
-
-test('videoCodecPreferences: audio-started OFFERER applies them to the video transceiver (trackless path)', async () => {
-  const { engine, lastPc } = makeEngine({ videoCodecPreferences: VIDEO_CODEC_PREFS });
-  await engine.placeCall();
-
-  const pc = lastPc();
-  const videoTransceiver = pc.transceivers.find((t) => t.kind === 'video');
-  assert.ok(videoTransceiver, 'the video transceiver exists');
-  assert.deepEqual(
-    videoTransceiver!.setCodecPreferencesCalls,
-    [VIDEO_CODEC_PREFS],
-    'preferences applied to the video transceiver before the offer'
-  );
-});
-
-test('videoCodecPreferences: audio-started ANSWERER applies them to the adopted sender before the answer', async () => {
-  const { engine, lastPc } = makeEngine({
-    seedRemoteVideoSender: true,
-    videoCodecPreferences: VIDEO_CODEC_PREFS,
-  });
-  engine.receiveCall('OFFER_FROM_PEER');
-  await engine.accept();
-
-  const pc = lastPc();
-  const videoTransceiver = pc.transceivers.find((t) => t.sender === pc.seededVideoSender);
-  assert.ok(videoTransceiver, 'the adopted peer-offered video transceiver exists');
-  assert.deepEqual(
-    videoTransceiver!.setCodecPreferencesCalls,
-    [VIDEO_CODEC_PREFS],
-    'preferences applied to the adopted video transceiver before the answer'
-  );
-  assert.deepEqual(pc.localDescription, { type: 'answer', sdp: 'ANSWER_SDP' }, 'answer still produced');
-});
-
-test('videoCodecPreferences: camera-at-start applies them to the video transceiver', async () => {
-  const { engine, lastPc } = makeEngine({
-    hasVideo: true,
-    videoCodecPreferences: VIDEO_CODEC_PREFS,
-  });
-  await engine.placeCall();
-
-  const pc = lastPc();
-  const videoTransceiver = pc.transceivers.find((t) => t.kind === 'video');
-  assert.ok(videoTransceiver, 'the camera video transceiver exists');
-  assert.deepEqual(videoTransceiver!.setCodecPreferencesCalls, [VIDEO_CODEC_PREFS]);
-});
-
-test('videoCodecPreferences: absent — setCodecPreferences is never called', async () => {
-  const { engine, lastPc } = makeEngine(); // no videoCodecPreferences
-  await engine.placeCall();
-
-  const pc = lastPc();
-  const videoTransceiver = pc.transceivers.find((t) => t.kind === 'video');
-  assert.deepEqual(
-    videoTransceiver!.setCodecPreferencesCalls,
-    [],
-    'nothing applied when the option is unset'
-  );
-});
-
-test('videoCodecPreferences: a throwing setCodecPreferences never breaks the call', async () => {
-  const { engine, events } = makeEngine({
-    videoCodecPreferences: VIDEO_CODEC_PREFS,
-    throwOnSetCodecPreferences: true,
-  });
-
-  await engine.placeCall();
-
-  assert.equal(engine.state, 'ringing', 'call still reaches ringing despite the throw');
-  assert.deepEqual(events.offers, ['OFFER_SDP'], 'the offer is still produced');
-  assert.deepEqual(events.errors, [], 'not reported as a fatal error');
 });
