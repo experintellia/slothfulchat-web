@@ -199,6 +199,12 @@ contribution intended.
   before calling `preventDefault`, so it fired too late for the web build
   (Electron has no native menu, so upstream never saw it). `preventDefault`
   now runs synchronously before the await. `desktop/0036`
+- Receiving a message from a contact left that contact's 1:1 chatlist item
+  stale: becoming "recently seen" updates the item's indicator, but the event
+  that tells the UI to re-render it was only emitted for the reverse
+  (un-seen) transition. A message arriving in a shared group therefore never
+  refreshed the sender's 1:1 item; the into-seen transition now emits the
+  chatlist-item event too, mirroring the un-seen path. `core/0017`
 
 ## UI & mobile polish
 
