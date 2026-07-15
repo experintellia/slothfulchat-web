@@ -463,6 +463,12 @@ export class CallBridge {
    * same wrapped `onStateChange` below. */
   private routeMonitor: ConnectionRouteMonitor | null = null
 
+  /** Guards `rpc.endCall` against being sent more than once — a double hangup,
+   * or a hangup landing after the call already ended remotely / was accepted on
+   * another device. The engine's teardown is already idempotent; this makes the
+   * far-side RPC idempotent too. */
+  private endCallSent = false
+
   private constructor(init: {
     rpc: CallsRpcClient
     direction: CallDirection
@@ -787,15 +793,21 @@ export class CallBridge {
   hangup(): void {
     const msgId = this.callMessageId
     this.engine.end()
-    if (msgId != null) {
-      this.rpc.endCall(this.accountId, msgId).catch(() => {
-        /* best-effort; local teardown already done */
-      })
-    }
+    if (msgId != null) this.sendEndCall(msgId)
+  }
+
+  /** Send `rpc.endCall` at most once (see {@link endCallSent}). */
+  private sendEndCall(msgId: number): void {
+    if (this.endCallSent) return
+    this.endCallSent = true
+    this.rpc.endCall(this.accountId, msgId).catch(() => {
+      /* best-effort; local teardown already done */
+    })
   }
 
   /** A `CallEnded` event arrived — tear down locally WITHOUT re-sending endCall. */
   remoteEnded(): void {
+    this.endCallSent = true // far end already ended it; a late hangup must not echo
     this.engine.end()
   }
 
@@ -804,6 +816,7 @@ export class CallBridge {
    * picked up on another device. Stop ringing here; do NOT send `endCall`.
    */
   acceptedElsewhere(): void {
+    this.endCallSent = true // this device isn't in the call; never send endCall
     this.engine.end()
   }
 
@@ -817,9 +830,10 @@ export class CallBridge {
       )
       this.callMessageId = msgId
       // Hung up during the (message round-trip) placeOutgoingCall await: cancel
-      // the call we just placed so we don't leave the far end ringing.
+      // the call we just placed so we don't leave the far end ringing. (hangup()
+      // ran with a null msgId, so it couldn't send endCall itself — we do it now.)
       if (this.engine.state === 'ended') {
-        this.rpc.endCall(this.accountId, msgId).catch(() => {})
+        this.sendEndCall(msgId)
         return
       }
       this.callbacks.onCallMessageId?.(msgId)
