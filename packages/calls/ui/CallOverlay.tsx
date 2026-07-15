@@ -321,9 +321,29 @@ export function CallOverlay({
           {error != null ? 'Close' : 'Hang up'}
         </button>
       </div>
+      {IS_FIREFOX && (
+        // Known-issue hint (constant height, Firefox only): video to iOS can
+        // render black on some Firefox setups; mobile browsers are untested.
+        <div style={styles.knownIssueHint}>
+          Firefox note: video to iOS may not work (
+          <a
+            href="https://github.com/experintellia/slothfulchat-web/issues/106"
+            target="_blank"
+            rel="noreferrer"
+            style={styles.knownIssueLink}
+          >
+            issue #106
+          </a>
+          ); calls from mobile browsers are untested.
+        </div>
+      )}
     </div>
   )
 }
+
+/** UA sniff for the known-issue hint only — never for behavior (the codec
+ * workaround lives in the web-app layer). */
+const IS_FIREFOX = typeof navigator !== 'undefined' && navigator.userAgent.includes('Firefox')
 
 /** Muted-mic badge (inline SVG) — absolutely positioned by the caller on the
  * corner of a participant tile/ring. */

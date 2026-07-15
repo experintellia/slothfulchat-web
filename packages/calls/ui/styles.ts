@@ -265,3 +265,14 @@ export const connectionRouteDot: CSSProperties = {
  * troubleshooting info, not an error. */
 export const COLOR_ROUTE_DIRECT = '#2ea043'
 export const COLOR_ROUTE_RELAY = '#d4a72c'
+
+/** Firefox-only known-issue hint under the controls (see CallOverlay). */
+export const knownIssueHint: CSSProperties = {
+  fontSize: 11,
+  color: '#8a8a8a',
+  minHeight: 14,
+}
+
+export const knownIssueLink: CSSProperties = {
+  color: '#a8b8d8',
+}
