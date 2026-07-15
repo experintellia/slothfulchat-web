@@ -1,6 +1,6 @@
 /**
  * In-app translation editor + element inspector —
- * docs/translation-editor-design.md, Phases 1 and 2.
+ * docs/design/translation-editor-design.md, Phases 1 and 2.
  *
  * Phase 1 (editor): edits the *currently active* locale's UI strings live,
  * persists edits to a per-locale localStorage overlay, and lets you review /

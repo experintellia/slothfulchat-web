@@ -1,6 +1,6 @@
 /**
  * Pure serialization/merge helpers for the in-app translation editor
- * (translation-editor.ts holds the UI; docs/translation-editor-design.md the
+ * (translation-editor.ts holds the UI; docs/design/translation-editor-design.md the
  * design). Plain .mjs with JSDoc types — no browser globals — so CI's lint job
  * unit-tests it with node:test and translation-editor.ts imports it back, the
  * same split events.mjs / analytics.ts already use.
