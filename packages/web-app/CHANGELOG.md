@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Bigger click targets for the chat title-bar buttons**: the apps, map and
+  three-dot menu icons in a chat's title bar had a cramped 20×20&nbsp;px hit
+  box sitting in a 50&nbsp;px-tall navbar, with an unclickable 12&nbsp;px gap
+  between them, so it was easy to miss them. Each button's clickable area now
+  fills the navbar's vertical dead space and the inter-button gap. The icons
+  and the navbar height are pixel-for-pixel unchanged — only the hit box grew,
+  cancelled out by negative margins so nothing moves visually.
 - **Backup import now persists its images before finishing**: after restoring
   from a backup you no longer have to reload several times for the pictures to
   show up. Imported blobs are written to the in-memory fs and mirrored to OPFS

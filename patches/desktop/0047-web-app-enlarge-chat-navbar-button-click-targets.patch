@@ -1,0 +1,55 @@
+From 3e310f786f6cc0c79332a49831537b234de23d37 Mon Sep 17 00:00:00 2001
+From: slothfulchat <dev@slothfulchat.local>
+Date: Wed, 15 Jul 2026 01:11:05 +0000
+Subject: [PATCH] web-app: enlarge chat navbar button click targets
+
+The chat title-bar icon buttons (apps, map, three-dot menu) had a 20x20px
+click target sitting in a 50px-tall navbar with a 12px dead gap between
+them, so most of the bar was unclickable. Grow each button's hit box to
+fill the vertical dead space and the inter-button gap, and cancel the
+growth with negative margins so the icons and navbar height stay
+pixel-for-pixel identical.
+---
+ .../components/ChatView/styles.module.scss    | 19 +++++++++++++++----
+ 1 file changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/packages/frontend/src/components/ChatView/styles.module.scss b/packages/frontend/src/components/ChatView/styles.module.scss
+index c81615c..28e5e10 100644
+--- a/packages/frontend/src/components/ChatView/styles.module.scss
++++ b/packages/frontend/src/components/ChatView/styles.module.scss
+@@ -62,17 +62,28 @@
+ 
+     :global(.navbar-button) {
+       padding: 0;
+-      width: 20px;
+-      height: 20px;
++      // Enlarge the click target without changing anything visible: the icon
++      // stays centered in a bigger box and negative margins cancel out the
++      // added size, so icon positions and the navbar height are pixel-for-pixel
++      // identical to before. Previously the box was only 20x20 inside a 50px
++      // navbar, with a 12px (dead, unclickable) gap between buttons.
++      $hit-width: 32px; // reclaims the 12px inter-button gap (6px each side)
++      $hit-height: 40px; // reclaims the 50px navbar's vertical dead space
++      width: $hit-width;
++      height: $hit-height;
++      // Keep the icon exactly where it was and the row footprint unchanged:
++      // shift the wider box back by half the growth, and shrink the trailing
++      // gap by the same amount (12px stays the icon-to-icon spacing).
++      margin-inline-start: calc((20px - #{$hit-width}) / 2);
++      margin-inline-end: calc(12px + (20px - #{$hit-width}) / 2);
+       border-radius: 0;
+-      margin-inline-end: 12px;
+       &:hover {
+         background-color: var(--navBarButtonHover);
+       }
+     }
+ 
+     :global(#three-dot-menu-button) {
+-      height: 20px;
++      height: 40px;
+     }
+   }
+ }
+-- 
+2.43.0
+
