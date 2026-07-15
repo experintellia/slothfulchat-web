@@ -35,27 +35,46 @@ class FakeTrack {
   stopped = false;
   /** Mirrors real `MediaStreamTrack.enabled`, which defaults to `true`. */
   enabled = true;
-  private endedListeners = new Set<() => void>();
+  /** Mirrors real `MediaStreamTrack.muted` (defaults to `false`). */
+  muted = false;
+  private listeners = new Map<string, Set<() => void>>();
   constructor(kind = 'audio') {
     this.kind = kind;
   }
   stop(): void {
     this.stopped = true;
   }
-  /** Mirrors just enough of `MediaStreamTrack.addEventListener('ended', …)`
-   * for `AudioCallEngine.startScreenShare`'s native "Stop sharing" handling
-   * (M3) — the only event this fake track needs to support. */
+  /** Mirrors just enough of `MediaStreamTrack.addEventListener` for the
+   * engine's 'ended' (screen share, M3) and 'mute'/'unmute'/'ended' (remote
+   * video fallback) listeners. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   addEventListener(type: string, listener: any): void {
-    if (type === 'ended') this.endedListeners.add(listener);
+    let set = this.listeners.get(type);
+    if (set == null) {
+      set = new Set();
+      this.listeners.set(type, set);
+    }
+    set.add(listener);
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   removeEventListener(type: string, listener: any): void {
-    if (type === 'ended') this.endedListeners.delete(listener);
+    this.listeners.get(type)?.delete(listener);
   }
-  /** Test driver helper: simulate the browser's native "Stop sharing" button. */
+  private fire(type: string): void {
+    for (const l of [...(this.listeners.get(type) ?? [])]) l();
+  }
+  /** Test driver helper: simulate the browser's native "Stop sharing" button
+   * (local screen track) or a remote video track going away. */
   fireEnded(): void {
-    for (const l of [...this.endedListeners]) l();
+    this.fire('ended');
+  }
+  fireMute(): void {
+    this.muted = true;
+    this.fire('mute');
+  }
+  fireUnmute(): void {
+    this.muted = false;
+    this.fire('unmute');
   }
 }
 
@@ -122,6 +141,53 @@ class FakeSender implements RtpSenderLike {
   }
 }
 
+/** A controllable fake negotiated data channel satisfying DataChannelLike. */
+class FakeDataChannel {
+  label: string;
+  options: { negotiated?: boolean; id?: number } | undefined;
+  readyState: RTCDataChannelState = 'connecting';
+  /** Everything `send()` was called with — deliberately recorded even while
+   * not 'open', so a missing readyState guard in the engine shows up here. */
+  sent: string[] = [];
+  private openListeners = new Set<() => void>();
+  private messageListeners = new Set<(event: { data: unknown }) => void>();
+  constructor(label: string, options?: { negotiated?: boolean; id?: number }) {
+    this.label = label;
+    this.options = options;
+  }
+  send(data: string): void {
+    this.sent.push(data);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  addEventListener(type: string, listener: any): void {
+    if (type === 'open') this.openListeners.add(listener);
+    else if (type === 'message') this.messageListeners.add(listener);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  removeEventListener(type: string, listener: any): void {
+    if (type === 'open') this.openListeners.delete(listener);
+    else if (type === 'message') this.messageListeners.delete(listener);
+  }
+  // Test driver helpers.
+  fireOpen(): void {
+    this.readyState = 'open';
+    for (const l of [...this.openListeners]) l();
+  }
+  fireMessage(data: unknown): void {
+    for (const l of [...this.messageListeners]) l({ data });
+  }
+}
+
+type FakeTransceiver = {
+  kind: string;
+  sender: FakeSender;
+  direction: RTCRtpTransceiverDirection;
+  /** The NEGOTIATED direction — settable so tests can drive the post-connect
+   * video diagnostics. */
+  currentDirection?: RTCRtpTransceiverDirection | null;
+  receiver: { track: MediaStreamTrack | null };
+};
+
 /** A controllable fake peer connection satisfying PeerConnectionLike. */
 class FakePc implements PeerConnectionLike {
   connectionState: RTCPeerConnectionState = 'new';
@@ -136,12 +202,10 @@ class FakePc implements PeerConnectionLike {
    * on the answerer (see {@link seedRemoteVideoSender}). `direction` is settable
    * so a test can assert the answerer promotes the recvonly one to `sendrecv`
    * (BUG 1 / interop). */
-  transceivers: Array<{
-    kind: string;
-    sender: FakeSender;
-    direction: RTCRtpTransceiverDirection;
-    receiver: { track: MediaStreamTrack | null };
-  }> = [];
+  transceivers: FakeTransceiver[] = [];
+  /** Every channel `createDataChannel` produced, in creation order (the
+   * engine creates iceTrickling then mutedState). */
+  dataChannels: FakeDataChannel[] = [];
   /** How many times `addTransceiver` was called — distinct from
    * `transceivers.length`, which also counts the seeded recvonly one. An answer
    * MUST NOT `addTransceiver` (it can't add an m-line the offer lacked), so
@@ -228,28 +292,31 @@ class FakePc implements PeerConnectionLike {
   addTransceiver(
     kind: string,
     init?: { direction?: RTCRtpTransceiverDirection }
-  ): { kind: string; sender: FakeSender; direction: RTCRtpTransceiverDirection; receiver: { track: MediaStreamTrack | null } } {
+  ): FakeTransceiver {
     this.addTransceiverCount += 1;
     const sender = new FakeSender(null);
-    const transceiver = {
+    const transceiver: FakeTransceiver = {
       kind,
       sender,
-      direction: init?.direction ?? ('sendrecv' as RTCRtpTransceiverDirection),
-      receiver: { track: null as MediaStreamTrack | null },
+      direction: init?.direction ?? 'sendrecv',
+      receiver: { track: null },
     };
     this.transceivers.push(transceiver);
     this.senders.push(sender);
     return transceiver;
   }
+  createDataChannel(
+    label: string,
+    options?: { negotiated?: boolean; id?: number }
+  ): FakeDataChannel {
+    const channel = new FakeDataChannel(label, options);
+    this.dataChannels.push(channel);
+    return channel;
+  }
   getSenders(): FakeSender[] {
     return this.senders;
   }
-  getTransceivers(): Array<{
-    kind: string;
-    sender: FakeSender;
-    direction: RTCRtpTransceiverDirection;
-    receiver: { track: MediaStreamTrack | null };
-  }> {
+  getTransceivers(): FakeTransceiver[] {
     return this.transceivers;
   }
   async getStats(): Promise<Map<string, { id: string; type: string; [key: string]: unknown }>> {
@@ -297,6 +364,8 @@ function makeEngine(
     localVideoTrackChanges: [] as Array<MediaStreamTrack | null>,
     screenShareChanges: [] as boolean[],
     screenShareErrors: [] as Error[],
+    remoteVideoActive: [] as boolean[],
+    remoteAudioMuted: [] as boolean[],
   };
   const pcs: FakePc[] = [];
   const defaultGetUserMedia = async () =>
@@ -327,9 +396,19 @@ function makeEngine(
       onLocalVideoTrackChanged: (t) => events.localVideoTrackChanges.push(t),
       onScreenShareChanged: (sharing) => events.screenShareChanges.push(sharing),
       onScreenShareError: (e) => events.screenShareErrors.push(e),
+      onRemoteVideoActiveChanged: (active) => events.remoteVideoActive.push(active),
+      onRemoteAudioMutedChanged: (muted) => events.remoteAudioMuted.push(muted),
     },
   });
-  return { engine, events, pcs, lastPc: () => pcs[pcs.length - 1] };
+  return {
+    engine,
+    events,
+    pcs,
+    lastPc: () => pcs[pcs.length - 1],
+    /** The last pc's `mutedState` channel (the engine always creates it). */
+    mutedChannel: () =>
+      pcs[pcs.length - 1].dataChannels.find((c) => c.label === 'mutedState')!,
+  };
 }
 
 // ── Outgoing ──────────────────────────────────────────────────────────────────
@@ -955,28 +1034,38 @@ test('switchCamera while screen sharing only records the preference (nothing liv
   assert.equal(engine.screenSharing, true, 'still sharing');
 });
 
-test('switchCamera works on an audio-STARTED call, turning the camera on via the always-present sender', async () => {
+test('switchCamera while the camera is off records the preference only (no getUserMedia); setCameraEnabled(true) then uses it', async () => {
+  const gumCalls: MediaStreamConstraints[] = [];
   let call = 0;
   const { engine, events, lastPc } = makeEngine({
-    // hasVideo: false — first getUserMedia is the mic; the switch acquires a camera.
-    getUserMedia: async () => {
+    // hasVideo: false — audio-started call, camera off.
+    getUserMedia: async (constraints) => {
       call += 1;
+      gumCalls.push(constraints);
       return (call === 1 ? micStream() : new FakeStream([new FakeTrack('video')])) as unknown as MediaStream;
     },
   });
   await engine.placeCall();
   await engine.provideAnswer('ANSWER');
-  const pc = lastPc();
-  const videoSender = pc.transceivers[0].sender;
+  const videoSender = lastPc().transceivers[0].sender;
   assert.equal(engine.cameraEnabled, false);
 
   await engine.switchCamera('cam-2');
 
   assert.equal(events.deviceSwitchErrors.length, 0);
-  assert.equal(videoSender.replaceTrackCalls.length, 1, 'camera track replaced onto the video sender');
-  assert.equal((videoSender.track as unknown as FakeTrack).kind, 'video');
-  assert.equal(engine.videoInputDeviceId, 'cam-2');
-  assert.equal(engine.cameraEnabled, true, 'the camera is now on');
+  assert.equal(engine.videoInputDeviceId, 'cam-2', 'preference recorded');
+  assert.equal(engine.cameraEnabled, false, 'camera NOT turned on as a side effect');
+  assert.equal(gumCalls.length, 1, 'no camera getUserMedia — only the initial mic');
+  assert.equal(videoSender.replaceTrackCalls.length, 0, 'nothing put on the wire');
+
+  await engine.setCameraEnabled(true);
+
+  assert.equal(engine.cameraEnabled, true);
+  assert.deepEqual(
+    (gumCalls[1].video as MediaTrackConstraints).deviceId,
+    { exact: 'cam-2' },
+    'enabling the camera acquires the recorded device'
+  );
 });
 
 // ── Camera toggle (M3: setCameraEnabled on any call) ──────────────────────────
@@ -1336,4 +1425,192 @@ test('getConnectionRoute: unknown again after the call ends (pc torn down)', asy
 
   engine.end();
   assert.equal(await engine.getConnectionRoute(), 'unknown', 'no live pc to query once ended');
+});
+
+// ── mutedState / iceTrickling data channels ───────────────────────────────────
+
+test('the negotiated data channels are created with ids 1 and 3 on the OFFER path', async () => {
+  const { engine, lastPc } = makeEngine();
+  await engine.placeCall();
+
+  assert.deepEqual(
+    lastPc().dataChannels.map((c) => [c.label, c.options]),
+    [
+      ['iceTrickling', { negotiated: true, id: 1 }],
+      ['mutedState', { negotiated: true, id: 3 }],
+    ]
+  );
+});
+
+test('the negotiated data channels are created with ids 1 and 3 on the ANSWER path', async () => {
+  const { engine, lastPc } = makeEngine();
+  engine.receiveCall('OFFER_FROM_PEER');
+  await engine.accept();
+
+  assert.deepEqual(
+    lastPc().dataChannels.map((c) => [c.label, c.options]),
+    [
+      ['iceTrickling', { negotiated: true, id: 1 }],
+      ['mutedState', { negotiated: true, id: 3 }],
+    ]
+  );
+});
+
+test('mutedState open sends the current local state (nothing sent while the channel is not open)', async () => {
+  const { engine, mutedChannel } = makeEngine();
+  await engine.placeCall();
+  engine.setMuted(true); // channel not open yet — must not send (or throw)
+  const channel = mutedChannel();
+  assert.deepEqual(channel.sent, [], 'no send before the channel opens');
+
+  channel.fireOpen();
+
+  assert.deepEqual(JSON.parse(channel.sent[0]), { audioEnabled: false, videoEnabled: false });
+});
+
+test('every mute/camera/screen-share flip pushes the new state over mutedState', async () => {
+  const screen = screenStream();
+  let call = 0;
+  const { engine, mutedChannel } = makeEngine({
+    getUserMedia: async () => {
+      call += 1;
+      return (call === 1 ? micStream() : new FakeStream([new FakeTrack('video')])) as unknown as MediaStream;
+    },
+    getDisplayMedia: async () => screen as unknown as MediaStream,
+  });
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const channel = mutedChannel();
+  channel.fireOpen();
+  channel.sent.length = 0; // drop the on-open snapshot
+
+  engine.setMuted(true);
+  await engine.setCameraEnabled(true);
+  await engine.startScreenShare();
+  await engine.stopScreenShare(); // camera was on → restored, video stays enabled
+  engine.setMuted(false);
+  await engine.setCameraEnabled(false);
+
+  assert.deepEqual(
+    channel.sent.map((s) => JSON.parse(s)),
+    [
+      { audioEnabled: false, videoEnabled: false }, // muted
+      { audioEnabled: false, videoEnabled: true }, // camera on
+      { audioEnabled: false, videoEnabled: true }, // screen share started
+      { audioEnabled: false, videoEnabled: true }, // share stopped, camera restored
+      { audioEnabled: true, videoEnabled: true }, // unmuted
+      { audioEnabled: true, videoEnabled: false }, // camera off
+    ]
+  );
+});
+
+test('incoming mutedState messages drive onRemoteVideoActiveChanged/onRemoteAudioMutedChanged, deduped; malformed ignored', async () => {
+  const { engine, events, mutedChannel } = makeEngine();
+  await engine.placeCall();
+  const channel = mutedChannel();
+
+  channel.fireMessage('{not json');
+  channel.fireMessage('42'); // valid JSON but not an object
+  channel.fireMessage('null');
+  channel.fireMessage(12345); // non-string data
+  assert.deepEqual(events.remoteVideoActive, [], 'malformed payloads are ignored');
+  assert.deepEqual(events.remoteAudioMuted, []);
+
+  channel.fireMessage(JSON.stringify({ audioEnabled: true, videoEnabled: true }));
+  channel.fireMessage(JSON.stringify({ audioEnabled: true, videoEnabled: true })); // duplicate
+  channel.fireMessage(JSON.stringify({ audioEnabled: false, videoEnabled: false }));
+
+  assert.deepEqual(events.remoteVideoActive, [true, false], 'deduped');
+  assert.deepEqual(events.remoteAudioMuted, [false, true], 'muted = !audioEnabled, deduped');
+});
+
+// ── Remote-video signal: track fallback vs mutedState precedence ──────────────
+
+test('remote video track events are the pre-message fallback; mutedState messages override them once received', async () => {
+  const { engine, events, lastPc, mutedChannel } = makeEngine();
+  await engine.placeCall();
+  const remoteVideo = new FakeTrack('video');
+  const remote = new FakeStream([new FakeTrack('audio'), remoteVideo]);
+  lastPc().fireTrack(remote as unknown as MediaStream);
+  assert.deepEqual(events.remoteVideoActive, [true], 'initialized from the live unmuted track');
+
+  remoteVideo.fireMute();
+  remoteVideo.fireUnmute();
+  assert.deepEqual(events.remoteVideoActive, [true, false, true], 'track events drive the fallback');
+
+  mutedChannel().fireMessage(JSON.stringify({ audioEnabled: true, videoEnabled: false }));
+  assert.deepEqual(events.remoteVideoActive, [true, false, true, false], 'message is authoritative');
+
+  remoteVideo.fireUnmute(); // messages own the signal now — ignored
+  remoteVideo.fireMute();
+  assert.deepEqual(events.remoteVideoActive, [true, false, true, false]);
+});
+
+test('remote video track "ended" clears the fallback signal; an audio-only remote stream initializes it inactive', async () => {
+  const { engine, events, lastPc } = makeEngine();
+  await engine.placeCall();
+  const pc = lastPc();
+  pc.fireTrack(micStream() as unknown as MediaStream);
+  assert.deepEqual(events.remoteVideoActive, [false], 'no remote video track → inactive');
+
+  const remoteVideo = new FakeTrack('video');
+  pc.fireTrack(new FakeStream([remoteVideo]) as unknown as MediaStream);
+  assert.deepEqual(events.remoteVideoActive, [false, true]);
+
+  remoteVideo.fireEnded();
+  assert.deepEqual(events.remoteVideoActive, [false, true, false]);
+});
+
+// ── D diagnostics (post-connect video negotiation observability) ──────────────
+
+test('D diagnostic: warns once when the peer negotiated no video m-line (videoSender null)', async (t) => {
+  const warns: string[] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => {
+    warns.push(args.map(String).join(' '));
+  });
+  // Audio-started ANSWERER whose peer offered no video m-line: no seeded
+  // sender to adopt, and an answer cannot add one → videoSender stays null.
+  const { engine, lastPc } = makeEngine();
+  engine.receiveCall('OFFER_FROM_PEER');
+  await engine.accept();
+
+  lastPc().fireConnectionState('connected');
+  lastPc().fireConnectionState('connected'); // once per call, not per event
+
+  assert.equal(warns.length, 1);
+  assert.match(warns[0], /no video m-line/);
+});
+
+test('D diagnostic: warns when the negotiated video direction excludes send (recvonly)', async (t) => {
+  const warns: string[] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => {
+    warns.push(args.map(String).join(' '));
+  });
+  const { engine, lastPc } = makeEngine({ seedRemoteVideoSender: true });
+  engine.receiveCall('OFFER_FROM_PEER');
+  await engine.accept();
+  const pc = lastPc();
+  // Despite our sendrecv ask, negotiation left the m-line recvonly.
+  pc.transceivers.find((tr) => tr.sender === pc.seededVideoSender)!.currentDirection = 'recvonly';
+
+  pc.fireConnectionState('connected');
+
+  assert.equal(warns.length, 1);
+  assert.match(warns[0], /no send direction/);
+});
+
+test('D diagnostic: silent on a normally negotiated call (sendrecv)', async (t) => {
+  const warns: unknown[] = [];
+  t.mock.method(console, 'warn', (...args: unknown[]) => {
+    warns.push(args);
+  });
+  const { engine, lastPc } = makeEngine();
+  await engine.placeCall();
+  await engine.provideAnswer('ANSWER');
+  const pc = lastPc();
+  pc.transceivers[0].currentDirection = 'sendrecv';
+
+  pc.fireConnectionState('connected');
+
+  assert.deepEqual(warns, []);
 });

@@ -97,7 +97,11 @@
  *      *after* hang up), it is stopped on the spot so nothing leaks.
  */
 
-import { CALLS_WEBAPP_RTC_CONFIGURATION } from './constants.ts';
+import {
+  CALLS_WEBAPP_RTC_CONFIGURATION,
+  ICE_TRICKLING_DATA_CHANNEL,
+  MUTED_STATE_DATA_CHANNEL,
+} from './constants.ts';
 import {
   gatherUntilEnoughIce,
   type GatherOptions,
@@ -148,8 +152,26 @@ export interface RtpSenderLike {
  */
 export interface RtpTransceiverLike {
   direction: RTCRtpTransceiverDirection;
+  /** The NEGOTIATED direction (`null` until negotiation completes). Read only
+   * by the post-connect video diagnostics (see {@link AudioCallEngine}). */
+  readonly currentDirection?: RTCRtpTransceiverDirection | null;
   readonly sender: RtpSenderLike;
   readonly receiver?: { readonly track: MediaStreamTrack | null };
+}
+
+/**
+ * The subset of `RTCDataChannel` the engine needs for the negotiated
+ * `iceTrickling`/`mutedState` channels (see `constants.ts`). A real
+ * `RTCDataChannel` (as returned by `RTCPeerConnection.createDataChannel`) is
+ * structurally assignable to this, and so is a test fake.
+ */
+export interface DataChannelLike {
+  readonly readyState: RTCDataChannelState;
+  send(data: string): void;
+  addEventListener(type: 'open', listener: () => void): void;
+  addEventListener(type: 'message', listener: (event: { data: unknown }) => void): void;
+  removeEventListener(type: 'open', listener: () => void): void;
+  removeEventListener(type: 'message', listener: (event: { data: unknown }) => void): void;
 }
 
 /**
@@ -188,6 +210,13 @@ export interface PeerConnectionLike extends GatheringPeerConnection {
    * `RTCPeerConnection.getTransceivers()` is structurally assignable.
    */
   getTransceivers(): RtpTransceiverLike[];
+  /** The calls-webapp contract's negotiated data channels (`iceTrickling` id 1,
+   * `mutedState` id 3 — see `constants.ts`); both peers declare the identical
+   * `{ negotiated, id }` so the channel opens without in-band negotiation. */
+  createDataChannel(
+    label: string,
+    options?: { negotiated?: boolean; id?: number }
+  ): DataChannelLike;
   /** M5: feeds {@link AudioCallEngine.getConnectionRoute}'s direct-vs-relay
    * indicator (docs/calls.md: "active candidate pair is 'relay'"). */
   getStats(): Promise<StatsReportLike>;
@@ -297,6 +326,17 @@ export interface AudioCallCallbacks {
    * call-ending `onError`.
    */
   onScreenShareError?(error: Error): void;
+  /**
+   * The REMOTE side's video went live/away — deduped. Driven by the peer's
+   * `mutedState` data-channel messages (`videoEnabled`, authoritative once the
+   * first valid one arrives) with the remote video track's mute/unmute/ended
+   * events as the pre-message fallback. The UI should show the remote video
+   * tile when `true` and the avatar when `false`.
+   */
+  onRemoteVideoActiveChanged?(active: boolean): void;
+  /** The REMOTE side muted/unmuted its mic (`!audioEnabled` from the peer's
+   * `mutedState` data-channel messages) — deduped. Drives a mute badge. */
+  onRemoteAudioMutedChanged?(muted: boolean): void;
 }
 
 export interface AudioCallOptions {
@@ -414,6 +454,26 @@ export class AudioCallEngine {
   private gatherAbort: AbortController | null = null;
   private pcConnectionListener: ConnectionListener | null = null;
   private pcTrackListener: TrackListener | null = null;
+  /** The `mutedState` negotiated data channel (id 3) — outgoing mute/camera
+   * state rides it; incoming messages drive the onRemote* callbacks. */
+  private mutedStateChannel: DataChannelLike | null = null;
+  private mutedStateOpenListener: (() => void) | null = null;
+  private mutedStateMessageListener: ((event: { data: unknown }) => void) | null = null;
+  /** The `iceTrickling` negotiated data channel (id 1) — created only so our
+   * SDP carries the m=application section the wire contract expects. */
+  private iceTricklingChannel: DataChannelLike | null = null;
+  /** Once the first valid `mutedState` message arrives, messages are the
+   * authoritative remote-video signal; the track-event fallback is ignored. */
+  private remoteMutedStateReceived = false;
+  /** Last emitted onRemoteVideoActiveChanged / onRemoteAudioMutedChanged
+   * values, for dedupe. `null` = never emitted. */
+  private remoteVideoActive: boolean | null = null;
+  private remoteAudioMuted: boolean | null = null;
+  /** The remote video track being watched (fallback signal) + its cleanup. */
+  private remoteVideoTrack: MediaStreamTrack | null = null;
+  private remoteVideoTrackCleanup: (() => void) | null = null;
+  /** The D diagnostics ran (once per call, on reaching connected). */
+  private videoDiagnosticsLogged = false;
 
   constructor(options: AudioCallOptions) {
     this.factories = options.factories;
@@ -519,15 +579,16 @@ export class AudioCallEngine {
 
   /**
    * Mute/unmute the local mic by toggling `track.enabled` on every local
-   * audio track — a local-only operation (stops sending audio, not a
-   * signaling message), so it needs no core RPC and works identically before
-   * or after `connected`. Safe to call at any time, including before a local
-   * stream exists (incoming call still ringing): the intent is recorded and
-   * applied as soon as {@link accept}/{@link placeCall} acquires the mic.
+   * audio track — no core RPC involved (stops sending audio, not a DeltaChat
+   * message); the new state is also pushed to the peer over the `mutedState`
+   * data channel, best-effort. Safe to call at any time, including before a
+   * local stream exists (incoming call still ringing): the intent is recorded
+   * and applied as soon as {@link accept}/{@link placeCall} acquires the mic.
    */
   setMuted(muted: boolean): void {
     this.mutedState = muted;
     this.applyMutedToLocalStream();
+    this.sendLocalMutedState();
   }
 
   /** Flip {@link muted} and return the new value. */
@@ -787,15 +848,13 @@ export class AudioCallEngine {
   /**
    * Hot-switch the outgoing camera to `deviceId`, mirroring {@link
    * switchMicrophone} exactly (fresh `getUserMedia` + `RTCRtpSender.replaceTrack`,
-   * no renegotiation). Works on ANY call — the video sender is always present
-   * (see {@link addLocalTracks}) — and turns the camera on as a side effect if
-   * it was off. If currently {@link screenSharing}, there is no live camera
-   * track on the wire to swap — this just records the preference ({@link
-   * videoInputDeviceId}) for the camera {@link stopScreenShare} will reacquire,
-   * matching `DevicePicker`'s "records a preference" note for that case. A
-   * no-op if the call has already ended; failures report `onDeviceSwitchError`
-   * (same callback `switchMicrophone` uses — same failure class) without
-   * touching the call.
+   * no renegotiation). Only swaps a LIVE camera track: while the camera is off
+   * or {@link screenSharing} owns the sender, this just records the preference
+   * ({@link videoInputDeviceId}) that the next {@link setCameraEnabled}`(true)`/
+   * {@link stopScreenShare} acquisition uses — it never turns the camera on as
+   * a side effect. A no-op if the call has already ended; failures report
+   * `onDeviceSwitchError` (same callback `switchMicrophone` uses — same
+   * failure class) without touching the call.
    */
   async switchCamera(deviceId: string): Promise<void> {
     const epoch = this.epoch;
@@ -803,6 +862,12 @@ export class AudioCallEngine {
     if (this.screenSharingState) {
       // Nothing live to replace right now; stopScreenShare() reacquires with
       // this deviceId when the camera comes back.
+      this.selectedVideoInputDeviceId = deviceId;
+      return;
+    }
+    if (!this.cameraOnState) {
+      // Camera is off: record the preference for the next setCameraEnabled(true)
+      // acquisition — picking a device must not turn the camera on.
       this.selectedVideoInputDeviceId = deviceId;
       return;
     }
@@ -847,7 +912,9 @@ export class AudioCallEngine {
 
     this.swapLocalVideoTrack(newTrack);
     this.selectedVideoInputDeviceId = deviceId;
+    const cameraWasOff = !this.cameraOnState;
     this.cameraOnState = true; // a live camera track is now on the wire
+    if (cameraWasOff) this.sendLocalMutedState(); // defensive; camera-off returns early above
     this.callbacks.onLocalVideoTrackChanged?.(newTrack);
   }
 
@@ -894,6 +961,7 @@ export class AudioCallEngine {
       if (!this.ensureActive(epoch)) return;
       this.removeLocalVideoTracks();
       this.cameraOnState = false;
+      this.sendLocalMutedState();
       this.callbacks.onLocalVideoTrackChanged?.(null);
       return;
     }
@@ -931,6 +999,7 @@ export class AudioCallEngine {
     }
     this.swapLocalVideoTrack(newTrack);
     this.cameraOnState = true;
+    this.sendLocalMutedState();
     this.callbacks.onLocalVideoTrackChanged?.(newTrack);
   }
 
@@ -1015,6 +1084,7 @@ export class AudioCallEngine {
     this.swapLocalVideoTrack(screenTrack);
     this.screenShareStream = displayStream;
     this.screenSharingState = true;
+    this.sendLocalMutedState();
     this.callbacks.onScreenShareChanged?.(true);
     this.callbacks.onLocalVideoTrackChanged?.(screenTrack);
   }
@@ -1040,6 +1110,9 @@ export class AudioCallEngine {
     const sender = this.videoSender;
     this.releaseScreenShareStream(); // stop the capture unconditionally
     this.screenSharingState = false;
+    // cameraOnState is already final here, so one send covers both the
+    // restore-camera and clear-video branches below.
+    this.sendLocalMutedState();
     this.callbacks.onScreenShareChanged?.(false);
     if (epoch == null || this.machine.isTerminal || sender == null) return;
 
@@ -1377,11 +1450,39 @@ export class AudioCallEngine {
     const pc = this.factories.createPeerConnection(configuration);
     this.pc = pc;
 
+    // The calls-webapp contract's negotiated data channels (see constants.ts).
+    // Creating them (before the offer/answer) is also what puts the
+    // m=application section into our SDP, matching what real peers produce.
+    // ponytail: iceTrickling is create-and-ignore — post-connect ICE candidate
+    // promotion over it is out of scope; the channel only has to exist.
+    this.iceTricklingChannel = pc.createDataChannel(
+      ICE_TRICKLING_DATA_CHANNEL.label,
+      ICE_TRICKLING_DATA_CHANNEL.options
+    );
+    const mutedChannel = pc.createDataChannel(
+      MUTED_STATE_DATA_CHANNEL.label,
+      MUTED_STATE_DATA_CHANNEL.options
+    );
+    this.mutedStateChannel = mutedChannel;
+    const mutedOpenListener = () => {
+      if (!this.ensureActive(epoch)) return;
+      this.sendLocalMutedState();
+    };
+    const mutedMessageListener = (event: { data: unknown }) => {
+      if (!this.ensureActive(epoch)) return;
+      this.handleRemoteMutedState(event.data);
+    };
+    mutedChannel.addEventListener('open', mutedOpenListener);
+    mutedChannel.addEventListener('message', mutedMessageListener);
+    this.mutedStateOpenListener = mutedOpenListener;
+    this.mutedStateMessageListener = mutedMessageListener;
+
     const connectionListener: ConnectionListener = () => {
       if (!this.ensureActive(epoch)) return;
       const cs = pc.connectionState;
       if (cs === 'connected') {
         this.machine.transition('connected');
+        this.logVideoNegotiationDiagnostics(pc);
       } else if (cs === 'failed' || cs === 'closed') {
         this.end();
       }
@@ -1393,6 +1494,7 @@ export class AudioCallEngine {
       if (stream == null) return;
       this.remoteStream = stream;
       this.callbacks.onRemoteStream?.(stream);
+      this.watchRemoteVideoTrack(stream);
     };
     pc.addEventListener('connectionstatechange', connectionListener);
     pc.addEventListener('track', trackListener);
@@ -1401,9 +1503,127 @@ export class AudioCallEngine {
     return pc;
   }
 
+  /**
+   * Best-effort push of the local `{ audioEnabled, videoEnabled }` state over
+   * the `mutedState` channel — called on channel open and after every
+   * successful mute/camera/screen-share flip. Silently a no-op while the
+   * channel is absent or not yet open (the open handler re-sends).
+   */
+  private sendLocalMutedState(): void {
+    const channel = this.mutedStateChannel;
+    if (channel == null || channel.readyState !== 'open') return;
+    try {
+      channel.send(
+        JSON.stringify({
+          audioEnabled: !this.mutedState,
+          videoEnabled: this.cameraOnState || this.screenSharingState,
+        })
+      );
+    } catch {
+      // best-effort — a failed status send never affects the call
+    }
+  }
+
+  /** Consume a peer `mutedState` message. Malformed/non-object payloads are
+   * ignored; the first valid one makes messages authoritative over the
+   * remote-video-track fallback (see {@link watchRemoteVideoTrack}). */
+  private handleRemoteMutedState(data: unknown): void {
+    if (typeof data !== 'string') return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (typeof parsed !== 'object' || parsed == null) return;
+    const { audioEnabled, videoEnabled } = parsed as {
+      audioEnabled?: unknown;
+      videoEnabled?: unknown;
+    };
+    this.remoteMutedStateReceived = true;
+    this.emitRemoteVideoActive(Boolean(videoEnabled));
+    this.emitRemoteAudioMuted(!audioEnabled);
+  }
+
+  private emitRemoteVideoActive(active: boolean): void {
+    if (this.remoteVideoActive === active) return;
+    this.remoteVideoActive = active;
+    this.callbacks.onRemoteVideoActiveChanged?.(active);
+  }
+
+  private emitRemoteAudioMuted(muted: boolean): void {
+    if (this.remoteAudioMuted === muted) return;
+    this.remoteAudioMuted = muted;
+    this.callbacks.onRemoteAudioMutedChanged?.(muted);
+  }
+
+  /**
+   * Watch the remote stream's video track (mute/unmute/ended) as the
+   * PRE-MESSAGE fallback for {@link AudioCallCallbacks.onRemoteVideoActiveChanged}
+   * — unreliable on its own (a sendrecv m-line with no RTP can leave
+   * `muted === false` on a black frame), so it is ignored once the first
+   * valid `mutedState` message arrives.
+   */
+  private watchRemoteVideoTrack(stream: MediaStream): void {
+    const track = stream.getVideoTracks()[0] ?? null;
+    if (track !== this.remoteVideoTrack) {
+      this.remoteVideoTrackCleanup?.();
+      this.remoteVideoTrackCleanup = null;
+      this.remoteVideoTrack = track;
+      if (track != null) {
+        const update = () => {
+          if (this.remoteMutedStateReceived) return;
+          this.emitRemoteVideoActive(!track.muted);
+        };
+        const onEnded = () => {
+          if (this.remoteMutedStateReceived) return;
+          this.emitRemoteVideoActive(false);
+        };
+        track.addEventListener('mute', update);
+        track.addEventListener('unmute', update);
+        track.addEventListener('ended', onEnded);
+        this.remoteVideoTrackCleanup = () => {
+          track.removeEventListener('mute', update);
+          track.removeEventListener('unmute', update);
+          track.removeEventListener('ended', onEnded);
+        };
+      }
+    }
+    if (!this.remoteMutedStateReceived) {
+      this.emitRemoteVideoActive(track != null && !track.muted);
+    }
+  }
+
+  /**
+   * D observability: once per call, after reaching `connected`, warn when
+   * outgoing camera/screen-share can never reach the peer — either no video
+   * m-line was negotiated at all ({@link videoSender} is null) or the peer's
+   * answer granted us no send direction. Log-only; renegotiation is not in
+   * the wire contract.
+   */
+  private logVideoNegotiationDiagnostics(pc: PeerConnectionLike): void {
+    if (this.videoDiagnosticsLogged) return;
+    this.videoDiagnosticsLogged = true;
+    if (this.videoSender == null) {
+      console.warn(
+        'calls: peer negotiated no video m-line; outgoing camera/screenshare will not flow'
+      );
+      return;
+    }
+    const sender = this.videoSender;
+    const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
+    const dir = transceiver?.currentDirection;
+    if (dir === 'recvonly' || dir === 'inactive') {
+      console.warn(
+        `calls: peer's answer granted no send direction for video (currentDirection "${dir}"); outgoing camera/screenshare will not flow`
+      );
+    }
+  }
+
   private maybePromoteConnected(epoch: object, pc: PeerConnectionLike): void {
     if (this.ensureActive(epoch) && pc.connectionState === 'connected') {
       this.machine.transition('connected');
+      this.logVideoNegotiationDiagnostics(pc);
     }
   }
 
@@ -1428,6 +1648,23 @@ export class AudioCallEngine {
   }
 
   private teardown(): void {
+    this.remoteVideoTrackCleanup?.();
+    this.remoteVideoTrackCleanup = null;
+    this.remoteVideoTrack = null;
+    const mutedChannel = this.mutedStateChannel;
+    if (mutedChannel != null) {
+      if (this.mutedStateOpenListener != null) {
+        mutedChannel.removeEventListener('open', this.mutedStateOpenListener);
+      }
+      if (this.mutedStateMessageListener != null) {
+        mutedChannel.removeEventListener('message', this.mutedStateMessageListener);
+      }
+    }
+    this.mutedStateChannel = null;
+    this.mutedStateOpenListener = null;
+    this.mutedStateMessageListener = null;
+    this.iceTricklingChannel = null;
+
     const pc = this.pc;
     this.pc = null;
     if (pc != null) {

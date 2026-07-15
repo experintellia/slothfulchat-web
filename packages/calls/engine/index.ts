@@ -33,6 +33,7 @@ export {
 
 export {
   type PeerConnectionLike,
+  type DataChannelLike,
   type RtpSenderLike,
   type RtpTransceiverLike,
   type AudioCallMediaFactories,

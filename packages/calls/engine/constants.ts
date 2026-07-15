@@ -38,20 +38,16 @@ export const CALLS_WEBAPP_RTC_CONFIGURATION: RTCConfiguration = {
  * Negotiated data channels calls-webapp opens in its `CallsManager`
  * constructor. Because they are negotiated with fixed ids, BOTH peers must
  * declare the identical `{ negotiated, id }` for the channel to open — the ids
- * here match upstream so they line up WHEN implemented.
+ * here match upstream. `AudioCallEngine.createPeerConnection` creates both.
  *
- * NOTE: reference constants only — neither channel is created yet (nothing in
- * this package calls `createDataChannel`). Both are deferred, optional
- * enhancements, not required for a call to connect (base audio/video is
- * ICE/DTLS-driven and the SCTP m-line auto-answers):
+ * `iceTrickling` (id 1): created for wire-contract SDP shape only — upstream
+ * carries `JSON.stringify(candidate.toJSON())` / literal `null` for
+ * end-of-candidates on it; our post-connect ICE promotion is out of scope, so
+ * the engine ignores its traffic.
  *
- * `iceTrickling` (id 1): post-connection ICE candidate promotion (optional,
- * later per docs/calls.md). Would carry `JSON.stringify(candidate.toJSON())` or
- * the literal `null` for end-of-candidates.
- *
- * `mutedState` (id 3): would carry `JSON.stringify({ audioEnabled, videoEnabled })`
- * to reflect the peer's mute state in the UI. Until it exists, `setMuted` is
- * local-only (stops sending audio) and is not signaled to the far end.
+ * `mutedState` (id 3): carries `JSON.stringify({ audioEnabled, videoEnabled })`
+ * — sent on every local mute/camera/screen-share flip, consumed to drive
+ * `onRemoteVideoActiveChanged`/`onRemoteAudioMutedChanged`.
  */
 export const ICE_TRICKLING_DATA_CHANNEL = {
   label: 'iceTrickling',
