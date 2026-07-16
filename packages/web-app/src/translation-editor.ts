@@ -51,29 +51,21 @@ function loadDirs(): Record<string, 'ltr' | 'rtl'> {
   }
 }
 
-// RTL languages by primary subtag. This is the robust source: Intl.Locale's
-// direction info (getTextInfo/textInfo) isn't available in every browser, so
-// relying on it alone silently made every locale ltr where it's missing.
+// RTL languages by primary subtag. A static set is the robust source:
+// Intl.Locale's direction info (getTextInfo/textInfo) isn't available in every
+// browser, so relying on it made every locale ltr wherever it's missing.
 const RTL_LANGS = new Set([
   'ar', 'arc', 'bqi', 'ckb', 'dv', 'fa', 'glk', 'he', 'iw', 'ji', 'ks', 'lrc',
   'mzn', 'nqo', 'pnb', 'prs', 'ps', 'sd', 'syr', 'ug', 'ur', 'yi',
 ])
 
 /** Writing direction for a locale: an explicit choice made in the editor wins,
- *  else a known RTL language set (browser-independent), else Intl if available,
- *  else ltr. Exported so runtime.getLocaleData() renders RTL the right way. */
+ *  else the known RTL set (a created RTL code that isn't in the set stores its
+ *  own choice). Exported so runtime.getLocaleData() renders RTL the right way. */
 export function localeDir(locale: string): 'ltr' | 'rtl' {
   const stored = loadDirs()[locale]
   if (stored === 'rtl' || stored === 'ltr') return stored
-  if (RTL_LANGS.has(locale.toLowerCase().split(/[-_]/)[0])) return 'rtl'
-  try {
-    const loc = new Intl.Locale(locale.replace('_', '-')) as any
-    const info = loc.getTextInfo ? loc.getTextInfo() : loc.textInfo
-    if (info && info.direction === 'rtl') return 'rtl'
-  } catch {
-    /* unknown code — fall through to ltr */
-  }
-  return 'ltr'
+  return RTL_LANGS.has(locale.toLowerCase().split(/[-_]/)[0]) ? 'rtl' : 'ltr'
 }
 
 function setLocaleDir(locale: string, dir: 'ltr' | 'rtl'): void {
@@ -265,7 +257,6 @@ let expBtn: HTMLButtonElement | null = null
 let revertBtn: HTMLButtonElement | null = null
 let langBtn: HTMLButtonElement | null = null
 let langMenu: HTMLElement | null = null
-let newLangDir: 'ltr' | 'rtl' = 'ltr' // pending direction in the create-language form
 
 const muted = { color: '#9aa', fontSize: '11px' }
 
@@ -588,22 +579,7 @@ function badge(kind: 'experimental' | 'en'): HTMLElement {
           title: 'Experimental string (English-only) — excluded from the normal language export; use "Export experimental"' }
       : { bg: '#243244', fg: '#8cf', label: 'untranslated',
           title: 'No translation for this language yet — showing the English source' }
-  return h(
-    'span',
-    {
-      title: spec.title,
-      style: {
-        background: spec.bg,
-        color: spec.fg,
-        borderRadius: '8px',
-        padding: '0 6px',
-        fontSize: '10px',
-        lineHeight: '15px',
-        whiteSpace: 'nowrap',
-      },
-    },
-    spec.label
-  )
+  return tagPill(spec.label, spec.bg, spec.fg, spec.title)
 }
 
 function row(key: string, overlay: Record<string, Entry>): HTMLElement {
@@ -752,21 +728,7 @@ function updateFooter(): void {
 // ---- custom language chooser (e) ------------------------------------------
 
 function countBadge(n: number): HTMLElement {
-  return h(
-    'span',
-    {
-      title: `${n} edited key${n === 1 ? '' : 's'}`,
-      style: {
-        background: '#3a3a2a',
-        color: '#ffd479',
-        borderRadius: '8px',
-        padding: '0 6px',
-        fontSize: '10px',
-        lineHeight: '15px',
-      },
-    },
-    String(n)
-  )
+  return tagPill(String(n), '#3a3a2a', '#ffd479', `${n} edited key${n === 1 ? '' : 's'}`)
 }
 
 const ellipsis = {
@@ -774,10 +736,6 @@ const ellipsis = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
-}
-
-function langLabel(code: string): string {
-  return `${languages.find(l => l.code === code)?.name || code} (${code})`
 }
 
 /** Native language name for a bare code (for locales not in _languages.json). */
@@ -841,7 +799,8 @@ function buildLanguages(shown: Array<{ code: string; name: string }>): Lang[] {
 
 function updateLangButton(): void {
   if (!langBtn) return
-  langBtn.replaceChildren(h('span', { style: ellipsis }, langLabel(currentLocale)))
+  const name = languages.find(l => l.code === currentLocale)?.name || currentLocale
+  langBtn.replaceChildren(h('span', { style: ellipsis }, `${name} (${currentLocale})`))
   const n = changeCount(currentLocale)
   if (n) langBtn.append(countBadge(n))
   langBtn.append(h('span', { style: { color: '#9aa' } }, '▾'))
@@ -859,6 +818,7 @@ function openLangMenu(): void {
     const n = changeCount(l.code)
     const pct = completion(l.code)
     const tag = statusTag(l.status)
+    const dir = localeDir(l.code)
     const selected = l.code === currentLocale
     return h(
       'button',
@@ -874,7 +834,7 @@ function openLangMenu(): void {
         onclick: () => void selectLocale(l.code),
       },
       h('span', { style: ellipsis }, `${l.name} (${l.code})`),
-      dirIndicator(localeDir(l.code)),
+      h('span', { title: `text direction: ${dir}`, style: { ...muted, whiteSpace: 'nowrap' } }, dir),
       ...(pct != null ? [h('span', { style: { ...muted, whiteSpace: 'nowrap' } }, `${pct}%`)] : []),
       ...(tag ? [tag] : []),
       ...(n ? [countBadge(n)] : [])
@@ -899,12 +859,6 @@ async function selectLocale(code: string): Promise<void> {
   renderList()
 }
 
-/** A locale's writing-direction indicator, shown per row (where the create
- *  form's direction toggle sits for a new language). */
-function dirIndicator(dir: 'ltr' | 'rtl'): HTMLElement {
-  return h('span', { title: `text direction: ${dir}`, style: { ...muted, whiteSpace: 'nowrap' } }, dir)
-}
-
 /** Add a language from the create form (code + chosen direction) and switch to
  *  it. Its edits persist and export; with the English base in getLocaleData it
  *  now renders live too, showing English for keys you haven't translated yet. */
@@ -922,7 +876,7 @@ function submitNewLanguage(code: string, dir: 'ltr' | 'rtl'): void {
 
 /** The create-language row: a code field, an LTR/RTL toggle, and Add. */
 function buildCreateForm(): HTMLElement {
-  newLangDir = 'ltr'
+  let newLangDir: 'ltr' | 'rtl' = 'ltr'
   const codeInput = h('input', {
     type: 'text',
     placeholder: 'new code, e.g. pt-BR',

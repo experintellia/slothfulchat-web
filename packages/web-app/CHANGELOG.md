@@ -16,39 +16,13 @@
   fills the navbar's vertical dead space and the inter-button gap. The icons
   and the navbar height are pixel-for-pixel unchanged — only the hit box grew,
   cancelled out by negative margins so nothing moves visually.
-- **In-app translation editor** (`Ctrl/Cmd+Shift+L`, in every build): a **popup
-  window** to edit the current language's UI strings live, persisted in the
-  browser, with a change list and revert. A key is badged **untranslated** when
-  the language has no translation yet (showing the English source) or
-  **experimental** when it's an English-only app string; experimental strings
-  are kept out of the normal export (partial Android XML / JSON changeset) and
-  get their own **Export experimental** button. Export/revert buttons disable
-  when there's nothing to act on. Toggle **filters** under the search box —
-  untranslated, experimental, or stockstrings (strings from the core library,
-  extracted at build time). A custom **language chooser** shows each language's
-  completion (% of English keys translated), text direction, and how many keys
-  you've edited in each, surfaces languages too incomplete to appear in the app
-  (tagged `hidden`), and can create a new language on the fly (code + LTR/RTL
-  toggle) to translate/export — created languages persist across reloads (like
-  edits) and are listed at the end of the chooser in creation order. Editing or creating a language now renders it
-  **live** — `getLocaleData` keeps an English base under every locale, so
-  untranslated keys show English instead of raw keys, an unknown/new locale is
-  no longer coerced to English, and RTL locales render right-to-left (the
-  browser build previously forced `dir: ltr`). Direction is set on `<html>` (so
-  RTL also reaches body-portaled dialogs and vanilla overlays, not just the
-  React subtree) and comes from a browser-independent RTL language set rather
-  than `Intl.Locale`'s direction info, which isn't available in every browser —
-  so RTL languages read `rtl` everywhere, not only where `Intl` supports it. Value fields are auto-growing
-  textareas, so multi-line strings (e.g. the donation text) are fully editable
-  and grammar add-ons like LanguageTool attach to them; **Enter** saves,
-  **Shift+Enter** adds a newline. An "Inspect" mode (🎯) reveals which
-  translation key produced any on-screen text and jumps the editor to it — its
-  highlight and tooltip render in the top layer, so they work over the app's
-  modal dialogs too. Editing a string or switching the app language refreshes
-  the UI without a manual reload (the browser build's `setLocale` was a stub,
-  and the editor was reading the runtime handle the frontend had already
-  deleted, so live refresh silently did nothing).
-  See [`docs/translation-editor.md`](../../docs/translation-editor.md).
+- **In-app translation editor** (`Ctrl/Cmd+Shift+L`, in every build): a popup
+  window to edit the current language's UI strings live, with badges for
+  untranslated / experimental keys, category filters, per-language completion,
+  Android-XML / JSON export, and an element inspector (🎯) that finds a string's
+  translation key. You can create languages on the fly (with an LTR/RTL toggle);
+  edits and created languages persist in the browser. RTL languages now render
+  right-to-left. See [`docs/translation-editor.md`](../../docs/translation-editor.md).
 - **Backup import now persists its images before finishing**: after restoring
   from a backup you no longer have to reload several times for the pictures to
   show up. Imported blobs are written to the in-memory fs and mirrored to OPFS
