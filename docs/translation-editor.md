@@ -15,7 +15,8 @@ helpers).
 ## How to open it
 
 Press **`Ctrl+Shift+L`** (Linux/Windows) or **`Cmd+Shift+L`** (macOS) — this
-toggles the editor open/closed, in any build.
+toggles the editor open/closed, in any build. It's also listed in the app's
+keyboard-shortcuts cheat sheet (`Ctrl/Cmd+/`).
 
 The editor opens in a **separate popup window** so the app's modal dialogs can
 never cover it. If your browser blocks the popup, allow popups for the site and
