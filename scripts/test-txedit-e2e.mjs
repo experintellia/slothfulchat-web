@@ -71,6 +71,13 @@ try {
     throw new Error('editor panel is not inside the popup window')
   console.log('OK (a): editor opened in a separate popup window')
 
+  // (d) Nothing edited yet → every export/revert button is disabled.
+  for (const name of ['Export XML', 'Export JSON', 'Export experimental', 'Revert all']) {
+    if (!(await popup.getByRole('button', { name }).isDisabled()))
+      throw new Error(`"${name}" should be disabled before any edit`)
+  }
+  console.log('OK (d): export/revert buttons disabled with no changes')
+
   // (c) Edit that key in the popup; the app must live-refresh.
   await popup.getByRole('searchbox').fill(picked.key)
   const input = popup.locator(`input[aria-label="${picked.key}"]`).first()
@@ -85,6 +92,43 @@ try {
   )
   await page.locator(sel).filter({ hasText: SENTINEL }).first().waitFor({ state: 'visible', timeout: 15_000 })
   console.log('OK (c): edit live-applied — static_translate + on-screen text updated')
+
+  // (d) A normal (translatable) edit enables the normal exports + Revert all,
+  // but not the experimental export.
+  const enabled = async name => !(await popup.getByRole('button', { name }).isDisabled())
+  if (!(await enabled('Export XML')) || !(await enabled('Export JSON')) || !(await enabled('Revert all')))
+    throw new Error('translatable edit did not enable Export XML/JSON/Revert all')
+  if (await enabled('Export experimental'))
+    throw new Error('Export experimental should stay disabled for a translatable-only edit')
+  console.log('OK (d): a translatable edit enables the normal exports, not experimental')
+
+  // (e) Custom language chooser opens a listbox and shows per-language counts.
+  await popup.getByRole('button', { name: 'Language' }).click()
+  await popup.getByRole('listbox').waitFor({ state: 'visible', timeout: 5_000 })
+  if ((await popup.getByRole('option').count()) < 2)
+    throw new Error('language chooser has too few options')
+  if ((await popup.locator('[role=option] span[title*="edited key"]').count()) < 1)
+    throw new Error('language chooser does not show a per-language change count')
+  await popup.keyboard.press('Escape') // close the menu
+  console.log('OK (e): custom language chooser lists languages with change counts')
+
+  // (c) Experimental strings: badged, and edited ones export on their own button.
+  const expKey = await page.evaluate(async () => {
+    const r = await fetch('locales/_untranslated_en.json')
+    return Object.keys(await r.json())[0]
+  })
+  await popup.getByRole('searchbox').fill(expKey)
+  const expInput = popup.locator(`input[aria-label="${expKey}"]`).first()
+  await expInput.waitFor({ state: 'visible', timeout: 10_000 })
+  if ((await popup.getByText('experimental', { exact: true }).count()) < 1)
+    throw new Error(`experimental key ${expKey} is not badged experimental`)
+  await expInput.fill('SLOTHTX_EXP_1')
+  await expInput.blur()
+  await popup.waitForFunction(() => {
+    const b = [...document.querySelectorAll('button')].find(x => x.textContent === 'Export experimental')
+    return b && !b.disabled
+  }, null, { timeout: 10_000 })
+  console.log('OK (c): experimental key badged + Export experimental enabled')
 
   // (a2) The inspect highlight must draw ABOVE the app's modal (top-layer)
   // dialogs — a plain high z-index can't, so it must join the top layer.
@@ -115,6 +159,16 @@ try {
     try { return hl.matches(':popover-open') } catch { return false }
   }, null, { timeout: 10_000 })
   console.log('OK (a2): inspect highlight is in the top layer, above a modal dialog')
+
+  // (a) The "Revert all" confirm must appear in the editor's own popup window.
+  let confirmOnPopup = false, confirmOnPage = false
+  popup.on('dialog', d => { confirmOnPopup = true; d.accept() })
+  page.on('dialog', d => { confirmOnPage = true; d.accept() })
+  await popup.getByRole('button', { name: 'Revert all' }).click()
+  await page.waitForFunction(([k, s]) => window.static_translate(k) !== s, [picked.key, SENTINEL], { timeout: 15_000 })
+  if (!confirmOnPopup) throw new Error('Revert-all confirm did not appear on the popup window')
+  if (confirmOnPage) throw new Error('Revert-all confirm appeared on the main window, not the popup')
+  console.log('OK (a): Revert-all confirm shown in the popup, not the main window')
 
   console.log('\nPASS: translation editor e2e')
 } catch (e) {

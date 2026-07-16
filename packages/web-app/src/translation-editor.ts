@@ -25,10 +25,10 @@
  * tiny upstream hook); the inspector only resolves strings rendered through tx
  * (core stock strings and hardcoded text won't match); the design's zero-width
  * exact mode is intentionally not built (YAGNI — the registry + fiber cover the
- * common cases without contaminating the DOM). Opened with Ctrl/Cmd+Shift+L or
- * ?txedit in any build (dev or release); it's inert until opened, so normal
- * users only pay the small bundle import. The panel lives in a separate popup
- * window so the app's modal (top-layer) dialogs never cover it; the inspector's
+ * common cases without contaminating the DOM). Opened with Ctrl/Cmd+Shift+L in
+ * any build (dev or release); it's inert until opened, so normal users only pay
+ * the small bundle import. The panel lives in a separate popup window so the
+ * app's modal (top-layer) dialogs never cover it; the inspector's
  * highlight/tooltip stay in the app window.
  */
 import { matchKeys, mergeOverlay, toAndroidXml } from './translation-editor.mjs'
@@ -116,13 +116,11 @@ async function fetchJson(path: string): Promise<Record<string, Entry>> {
   return res.json()
 }
 
-/** The pristine (un-overlaid) messages for a locale, matching getLocaleData. */
-async function loadPristine(locale: string): Promise<Record<string, Entry>> {
-  const untranslated = await fetchJson('locales/_untranslated_en.json')
-  const base = await fetchJson(
-    locale === 'en' ? 'locales/en.json' : `locales/${locale}.json`
-  )
-  return { ...base, ...untranslated }
+/** A locale's OWN translation catalogue (en.json for en, <locale>.json else) —
+ *  the translatable strings that go to Weblate/Transifex. Does NOT include the
+ *  experimental (_untranslated_en) strings; those are loaded separately. */
+async function loadCatalogue(locale: string): Promise<Record<string, Entry>> {
+  return fetchJson(locale === 'en' ? 'locales/en.json' : `locales/${locale}.json`)
 }
 
 async function loadLanguages(): Promise<Array<{ code: string; name: string }>> {
@@ -182,16 +180,46 @@ let win: Window | null = null
 // The app runtime, captured at init before the frontend deletes window.r.
 let appRuntime: any = null
 let currentLocale = 'en'
-let sourceEn: Record<string, Entry> = {}
-let pristine: Record<string, Entry> = {}
+let sourceEn: Record<string, Entry> = {} // en.json catalogue (English)
+let localeOwn: Record<string, Entry> = {} // current locale's own catalogue
+let experimental: Record<string, Entry> = {} // _untranslated_en.json (English-only)
+let experimentalKeys = new Set<string>()
 let languages: Array<{ code: string; name: string }> = []
 let search = ''
 let listEl: HTMLElement | null = null
 let countEl: HTMLElement | null = null
 let searchInputEl: HTMLInputElement | null = null
 let inspectBtn: HTMLButtonElement | null = null
+let xmlBtn: HTMLButtonElement | null = null
+let jsonBtn: HTMLButtonElement | null = null
+let expBtn: HTMLButtonElement | null = null
+let revertBtn: HTMLButtonElement | null = null
+let langBtn: HTMLButtonElement | null = null
+let langMenu: HTMLElement | null = null
 
 const muted = { color: '#9aa', fontSize: '11px' }
+
+// ---- key classification (experimental / English fallback) -----------------
+
+/** The base (un-overlaid) value shown/edited for a key: the locale's own
+ *  translation if any, else the experimental string, else the English source. */
+function pristineFor(key: string): Entry {
+  return localeOwn[key] || experimental[key] || sourceEn[key] || { message: '' }
+}
+
+/** How a key relates to the current locale, for its badge and export bucket.
+ *  'experimental' — English-only app string, excluded from the normal export.
+ *  'en'           — no translation for this locale yet; shows the English text. */
+function classify(key: string): 'experimental' | 'en' | null {
+  if (experimentalKeys.has(key)) return 'experimental'
+  if (currentLocale !== 'en' && !(key in localeOwn)) return 'en'
+  return null
+}
+
+/** Every editable key: the English catalogue plus the experimental strings. */
+function allKeys(): string[] {
+  return [...new Set([...Object.keys(sourceEn), ...experimentalKeys])]
+}
 
 // ---- inspector (Phase 2) --------------------------------------------------
 
@@ -421,6 +449,8 @@ function openToKey(key: string): void {
 /** Render the key rows: changed keys when the search box is empty (the change
  *  list), otherwise keys matching the query (capped — see ceiling below). */
 function renderList(): void {
+  updateFooter()
+  updateLangButton() // keep the chooser's current-language count in sync
   if (!listEl || !countEl) return
   const overlay = overlayFor(currentLocale)
   const changedKeys = Object.keys(overlay)
@@ -434,10 +464,10 @@ function renderList(): void {
   if (!term) {
     keys = changedKeys.sort()
   } else {
-    const all = Object.keys(sourceEn).sort()
+    const all = allKeys().sort()
     keys = all.filter(k => {
       if (k.toLowerCase().includes(term)) return true
-      const cur = overlay[k] || pristine[k] || sourceEn[k] || {}
+      const cur = overlay[k] || pristineFor(k)
       return Object.values(cur).some(v => v.toLowerCase().includes(term))
     })
     // ponytail: cap the rendered rows — the catalogue is ~1000 keys and a
@@ -470,21 +500,49 @@ function renderList(): void {
     )
 }
 
+function badge(kind: 'experimental' | 'en'): HTMLElement {
+  const spec =
+    kind === 'experimental'
+      ? { bg: '#3a2a4a', fg: '#c9a6ff', label: 'experimental',
+          title: 'Experimental string (English-only) — excluded from the normal language export; use "Export experimental"' }
+      : { bg: '#243244', fg: '#8cf', label: 'untranslated',
+          title: 'No translation for this language yet — showing the English source' }
+  return h(
+    'span',
+    {
+      title: spec.title,
+      style: {
+        background: spec.bg,
+        color: spec.fg,
+        borderRadius: '8px',
+        padding: '0 6px',
+        fontSize: '10px',
+        lineHeight: '15px',
+        whiteSpace: 'nowrap',
+      },
+    },
+    spec.label
+  )
+}
+
 function row(key: string, overlay: Record<string, Entry>): HTMLElement {
-  const base: Entry = pristine[key] || sourceEn[key] || { message: '' }
+  const base: Entry = pristineFor(key)
   const current: Entry = overlay[key] || base
   const isPlural = typeof base.message !== 'string'
   const fields = isPlural ? Object.keys(base) : ['message']
   const changed = key in overlay
+  const kind = classify(key)
 
   const header = h(
     'div',
-    { style: { display: 'flex', justifyContent: 'space-between', gap: '6px' } },
+    { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
     h(
       'code',
       { style: { fontSize: '11px', color: changed ? '#ffd479' : '#8cf' } },
       key
     ),
+    ...(kind ? [badge(kind)] : []),
+    h('span', { style: { flex: '1' } }),
     changed
       ? h(
           'button',
@@ -504,7 +562,8 @@ function row(key: string, overlay: Record<string, Entry>): HTMLElement {
   )
 
   const inputs = fields.map(field => {
-    const enRef = (sourceEn[key] || {})[field] ?? (sourceEn[key] || {}).message
+    const enSrc = experimental[key] || sourceEn[key] || {}
+    const enRef = enSrc[field] ?? enSrc.message
     const input = h('input', {
       value: current[field] ?? '',
       'aria-label': `${key}${isPlural ? ' ' + field : ''}`,
@@ -534,8 +593,9 @@ function row(key: string, overlay: Record<string, Entry>): HTMLElement {
     if (isPlural)
       wrap.append(h('span', { style: { ...muted, marginRight: '4px' } }, field))
     wrap.append(input)
-    // Show the English source under a non-English locale for context.
-    if (currentLocale !== 'en' && enRef)
+    // Show the English source under a non-English locale for context, unless the
+    // value already is that English string (experimental / untranslated keys).
+    if (currentLocale !== 'en' && enRef && enRef !== (current[field] ?? ''))
       wrap.append(h('div', { style: muted }, enRef))
     return wrap
   })
@@ -558,28 +618,160 @@ const btnStyle = {
   padding: '1px 6px',
 }
 
-function buildPanel(): HTMLElement {
-  const select = h(
-    'select',
+// ---- export buckets + footer enable/disable (d) ---------------------------
+
+/** Number of edited keys stored for a locale (across normal + experimental). */
+function changeCount(code: string): number {
+  return Object.keys(loadOverlay()[code] || {}).length
+}
+
+/** Split the current locale's edits: experimental keys export separately from
+ *  the normal (translatable) catalogue keys. */
+function changeBuckets(): { normal: Record<string, Entry>; experimental: Record<string, Entry> } {
+  const normal: Record<string, Entry> = {}
+  const exp: Record<string, Entry> = {}
+  for (const [k, v] of Object.entries(overlayFor(currentLocale)))
+    (experimentalKeys.has(k) ? exp : normal)[k] = v
+  return { normal, experimental: exp }
+}
+
+function setDisabled(btn: HTMLButtonElement | null, disabled: boolean): void {
+  if (!btn) return
+  btn.disabled = disabled
+  btn.style.opacity = disabled ? '0.4' : '1'
+  btn.style.cursor = disabled ? 'default' : 'pointer'
+}
+
+/** Enable each export/revert button only when it has something to act on. */
+function updateFooter(): void {
+  const { normal, experimental: exp } = changeBuckets()
+  const nNormal = Object.keys(normal).length
+  const nExp = Object.keys(exp).length
+  setDisabled(xmlBtn, nNormal === 0)
+  setDisabled(jsonBtn, nNormal === 0)
+  setDisabled(expBtn, nExp === 0)
+  setDisabled(revertBtn, nNormal + nExp === 0)
+}
+
+// ---- custom language chooser (e) ------------------------------------------
+
+function countBadge(n: number): HTMLElement {
+  return h(
+    'span',
     {
-      'aria-label': 'Language',
-      style: { ...btnStyle, maxWidth: '160px' },
-      onchange: async (e: Event) => {
-        currentLocale = (e.target as HTMLSelectElement).value
-        await refreshApp(currentLocale)
-        try {
-          pristine =
-            currentLocale === 'en' ? sourceEn : await loadPristine(currentLocale)
-        } catch {
-          pristine = {}
-        }
-        renderList()
+      title: `${n} edited key${n === 1 ? '' : 's'}`,
+      style: {
+        background: '#3a3a2a',
+        color: '#ffd479',
+        borderRadius: '8px',
+        padding: '0 6px',
+        fontSize: '10px',
+        lineHeight: '15px',
       },
     },
-    ...languages.map(l =>
-      h('option', { value: l.code, selected: l.code === currentLocale }, `${l.name} (${l.code})`)
-    )
+    String(n)
   )
+}
+
+const ellipsis = {
+  flex: '1',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+function langLabel(code: string): string {
+  return `${languages.find(l => l.code === code)?.name || code} (${code})`
+}
+
+function updateLangButton(): void {
+  if (!langBtn) return
+  langBtn.replaceChildren(h('span', { style: ellipsis }, langLabel(currentLocale)))
+  const n = changeCount(currentLocale)
+  if (n) langBtn.append(countBadge(n))
+  langBtn.append(h('span', { style: { color: '#9aa' } }, '▾'))
+}
+
+function closeLangMenu(): void {
+  if (langMenu) langMenu.style.display = 'none'
+  langBtn?.setAttribute('aria-expanded', 'false')
+}
+
+function openLangMenu(): void {
+  if (!langMenu) return
+  // Rebuild rows each open so per-language change counts stay current.
+  langMenu.replaceChildren(
+    ...languages.map(l => {
+      const n = changeCount(l.code)
+      const selected = l.code === currentLocale
+      return h(
+        'button',
+        {
+          role: 'option',
+          'aria-selected': String(selected),
+          style: {
+            display: 'flex', alignItems: 'center', gap: '6px', width: '100%',
+            textAlign: 'left', background: selected ? '#2a2a1a' : 'transparent',
+            color: '#eee', border: '0', borderBottom: '1px solid #222',
+            padding: '5px 8px', fontSize: '12px', cursor: 'pointer',
+          },
+          onclick: () => void selectLocale(l.code),
+        },
+        h('span', { style: ellipsis }, `${l.name} (${l.code})`),
+        ...(n ? [countBadge(n)] : [])
+      )
+    })
+  )
+  langMenu.style.display = 'block'
+  langBtn?.setAttribute('aria-expanded', 'true')
+}
+
+async function selectLocale(code: string): Promise<void> {
+  closeLangMenu()
+  if (code === currentLocale) return
+  currentLocale = code
+  await refreshApp(code)
+  try {
+    localeOwn = code === 'en' ? sourceEn : await loadCatalogue(code)
+  } catch {
+    localeOwn = {}
+  }
+  updateLangButton()
+  renderList()
+}
+
+/** Close the language menu when a click lands outside it (popup document). */
+function onDocClick(e: MouseEvent): void {
+  if (!langMenu || langMenu.style.display === 'none') return
+  const t = e.target as Node
+  if (langBtn?.contains(t) || langMenu.contains(t)) return
+  closeLangMenu()
+}
+
+function buildLangChooser(): HTMLElement {
+  langBtn = h('button', {
+    'aria-haspopup': 'listbox',
+    'aria-expanded': 'false',
+    'aria-label': 'Language',
+    style: { ...btnStyle, display: 'flex', alignItems: 'center', gap: '6px', width: '180px' },
+    onclick: () =>
+      langMenu && langMenu.style.display !== 'none' ? closeLangMenu() : openLangMenu(),
+  })
+  langMenu = h('div', {
+    role: 'listbox',
+    style: {
+      display: 'none', position: 'absolute', top: '100%', right: '0', marginTop: '2px',
+      width: '220px', maxHeight: '320px', overflowY: 'auto', zIndex: '10',
+      background: '#1c1c1c', border: '1px solid #444', borderRadius: '4px',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+    },
+  })
+  updateLangButton()
+  return h('div', { style: { position: 'relative' } }, langBtn, langMenu)
+}
+
+function buildPanel(): HTMLElement {
+  const langChooser = buildLangChooser()
 
   const searchInput = h('input', {
     type: 'search',
@@ -608,7 +800,35 @@ function buildPanel(): HTMLElement {
   })
 
   const footerBtn = (label: string, title: string, onclick: () => void) =>
-    h('button', { style: btnStyle, title, onclick }, label)
+    h('button', { style: btnStyle, title, onclick }, label) as HTMLButtonElement
+
+  // Normal exports carry only the translatable (non-experimental) edits;
+  // experimental strings export on their own button (c).
+  xmlBtn = footerBtn('Export XML', 'Download translatable edits as partial Android XML', () => {
+    const { normal } = changeBuckets()
+    if (Object.keys(normal).length)
+      download(`${currentLocale}.partial.xml`, toAndroidXml(normal), 'application/xml')
+  })
+  jsonBtn = footerBtn('Export JSON', 'Download translatable edits as a JSON changeset', () => {
+    const { normal } = changeBuckets()
+    if (Object.keys(normal).length)
+      download(`${currentLocale}.changeset.json`, JSON.stringify(normal, null, 2), 'application/json')
+  })
+  expBtn = footerBtn('Export experimental', 'Download edited experimental (English-only) keys as JSON', () => {
+    const { experimental: exp } = changeBuckets()
+    if (Object.keys(exp).length)
+      download(`${currentLocale}.experimental.json`, JSON.stringify(exp, null, 2), 'application/json')
+  })
+  revertBtn = footerBtn('Revert all', 'Discard all edits for this language', async () => {
+    if (!Object.keys(overlayFor(currentLocale)).length) return
+    // (a) confirm inside the editor's own window, not the main app window.
+    const c = (win || window).confirm.bind(win || window)
+    if (!c(`Discard all translation edits for ${currentLocale}?`)) return
+    revertAll(currentLocale)
+    await refreshApp(currentLocale)
+    updateLangButton()
+    renderList()
+  })
 
   const footer = h(
     'div',
@@ -623,27 +843,10 @@ function buildPanel(): HTMLElement {
       },
     },
     countEl,
-    footerBtn('Export XML', 'Download changed keys as partial Android XML', () => {
-      const entries = overlayFor(currentLocale)
-      if (Object.keys(entries).length)
-        download(`${currentLocale}.partial.xml`, toAndroidXml(entries), 'application/xml')
-    }),
-    footerBtn('Export JSON', 'Download changed keys as a JSON changeset', () => {
-      const entries = overlayFor(currentLocale)
-      if (Object.keys(entries).length)
-        download(
-          `${currentLocale}.changeset.json`,
-          JSON.stringify(entries, null, 2),
-          'application/json'
-        )
-    }),
-    footerBtn('Revert all', 'Discard all edits for this language', async () => {
-      if (!Object.keys(overlayFor(currentLocale)).length) return
-      if (!confirm(`Discard all translation edits for ${currentLocale}?`)) return
-      revertAll(currentLocale)
-      await refreshApp(currentLocale)
-      renderList()
-    })
+    xmlBtn,
+    jsonBtn,
+    expBtn,
+    revertBtn
   )
 
   const header = h(
@@ -658,7 +861,7 @@ function buildPanel(): HTMLElement {
       },
     },
     h('strong', { style: { fontSize: '13px', flex: '1' } }, 'Translations'),
-    select,
+    langChooser,
     (inspectBtn = h(
       'button',
       {
@@ -709,13 +912,23 @@ async function open(): Promise<void> {
   }
   currentLocale = (window as any).localeData?.locale || 'en'
   try {
-    sourceEn = await loadPristine('en')
-    pristine = currentLocale === 'en' ? sourceEn : await loadPristine(currentLocale)
+    sourceEn = await loadCatalogue('en')
     languages = await loadLanguages()
   } catch (err) {
     console.error('[translation-editor] failed to load locale data', err)
     alert('Translation editor: could not load locale data (see console).')
     return
+  }
+  try {
+    experimental = await fetchJson('locales/_untranslated_en.json')
+  } catch {
+    experimental = {}
+  }
+  experimentalKeys = new Set(Object.keys(experimental))
+  try {
+    localeOwn = currentLocale === 'en' ? sourceEn : await loadCatalogue(currentLocale)
+  } catch {
+    localeOwn = {}
   }
   const w = window.open('', 'slothfulchat-tx', 'popup=yes,width=460,height=820')
   if (!w) {
@@ -732,6 +945,7 @@ async function open(): Promise<void> {
   w.document.body.appendChild(panel)
   w.addEventListener('keydown', onPopupKeydown)
   w.addEventListener('pagehide', teardown)
+  w.document.addEventListener('click', onDocClick, true) // close lang menu on outside click
   renderList()
 }
 
@@ -742,6 +956,7 @@ function teardown(): void {
   win = null
   panel = null
   listEl = countEl = searchInputEl = inspectBtn = null
+  xmlBtn = jsonBtn = expBtn = revertBtn = langBtn = langMenu = null
   h = makeH(document)
 }
 
@@ -759,7 +974,8 @@ function onPopupKeydown(e: KeyboardEvent): void {
     e.preventDefault()
     close()
   } else if (e.key === 'Escape') {
-    if (inspecting) stopInspect()
+    if (langMenu && langMenu.style.display !== 'none') closeLangMenu()
+    else if (inspecting) stopInspect()
     else close()
   }
 }
@@ -769,10 +985,11 @@ function toggle(): void {
   else void open()
 }
 
-/** Install the tx registry and the open shortcut. Call once at startup —
- *  before the app first assigns window.static_translate, so every tx call is
- *  captured for the inspector. `runtime` is the app runtime (window.r), captured
- *  here because the frontend deletes window.r right after importing it. */
+/** Install the tx registry and the open shortcut (Ctrl/Cmd+Shift+L). Call once
+ *  at startup — before the app first assigns window.static_translate, so every
+ *  tx call is captured for the inspector. `runtime` is the app runtime
+ *  (window.r), captured here because the frontend deletes window.r right after
+ *  importing it. */
 export function initTranslationEditor(runtime?: any): void {
   appRuntime = runtime ?? (window as any).r ?? null
   installRegistry()
@@ -788,13 +1005,4 @@ export function initTranslationEditor(runtime?: any): void {
   })
   // Close the popup if the app window unloads so it doesn't orphan.
   window.addEventListener('pagehide', () => win?.close())
-  if (new URLSearchParams(location.search).has('txedit')) {
-    // A load-time window.open() is popup-blocked (no user gesture), so open on
-    // the first interaction instead — ?txedit still works, just on first click.
-    const once = () => {
-      document.removeEventListener('pointerdown', once, true)
-      void open()
-    }
-    document.addEventListener('pointerdown', once, true)
-  }
 }

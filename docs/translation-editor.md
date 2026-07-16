@@ -14,36 +14,44 @@ helpers).
 
 ## How to open it
 
-Two ways, both work in any build:
-
-- **Keyboard:** `Ctrl+Shift+L` (Linux/Windows) or `Cmd+Shift+L` (macOS) — toggles
-  the editor open/closed. This is the reliable way.
-- **URL flag:** add `?txedit` to the app URL (e.g.
-  `https://…/main.html?txedit`). Because browsers block popups that aren't
-  opened from a user action, this opens the editor on your **first click**
-  anywhere in the app, not instantly on load.
+Press **`Ctrl+Shift+L`** (Linux/Windows) or **`Cmd+Shift+L`** (macOS) — this
+toggles the editor open/closed, in any build.
 
 The editor opens in a **separate popup window** so the app's modal dialogs can
-never cover it. If your browser blocks the popup, allow popups for the site (or
-just use the keyboard shortcut, which counts as a user action).
+never cover it. If your browser blocks the popup, allow popups for the site and
+press the shortcut again.
 
-Press `Esc` to close it (or to leave inspect mode first).
+Press `Esc` to close it (or to leave inspect mode / close the language menu
+first).
 
 ## What you can do
 
 - **Edit the active language.** The panel lists your changes; type in a key's
-  field to change its text. Switch languages with the dropdown to edit another —
-  under a non-English language each field shows the English source for context.
+  field to change its text. Under a non-English language each field shows the
+  English source for context.
+- **Switch languages** with the **language chooser** (top-right). Each language
+  shows a badge with how many keys you've edited in it, so you can see at a
+  glance where you have unsaved work.
+- **Per-key badges** tell you where a key stands for the current language:
+  - **`untranslated`** — no translation yet in this language; the editor shows
+    the English source, which is what the app currently renders.
+  - **`experimental`** — an English-only app string (from
+    `_untranslated_en.json`) that isn't part of the translatable catalogue. It
+    renders in English in every language and is **excluded from the normal
+    export** (see below).
 - **Live refresh.** Every edit (and language switch) immediately re-renders the
   app in the current window, so you see the result without reloading.
 - **Persistence.** Edits are saved per-language in `localStorage` and merged
   back on every reload, so they survive refreshes and language switches. They
   are local to your browser only — nothing is uploaded.
 - **Revert.** Revert one key (`↺`) or all edits for the language.
-- **Export.**
-  - **Export XML** — a *partial* Android `strings.xml` containing only the keys
+- **Export** (buttons are disabled when there's nothing to export):
+  - **Export XML** — a *partial* Android `strings.xml` of the translatable keys
     you changed, ready for a merge-by-key upload to Weblate / Transifex.
-  - **Export JSON** — the raw changeset (`{ key: { message } }`).
+    Experimental keys are left out.
+  - **Export JSON** — the same translatable changeset as raw JSON.
+  - **Export experimental** — only the experimental keys you changed, as JSON.
+    These don't belong in the translation catalogue, so they get their own file.
 
 ## Element inspector (🎯)
 

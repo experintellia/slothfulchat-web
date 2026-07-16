@@ -16,18 +16,22 @@
   fills the navbar's vertical dead space and the inter-button gap. The icons
   and the navbar height are pixel-for-pixel unchanged — only the hit box grew,
   cancelled out by negative margins so nothing moves visually.
-- **In-app translation editor** (`Ctrl/Cmd+Shift+L` or `?txedit`, in every
-  build): a **popup window** to edit the current language's UI strings live,
-  persisted in the browser, with a change list, revert, and export as partial
-  Android XML or a JSON changeset. It opens in its own window so the app's modal
-  dialogs never cover it. An "Inspect" mode (🎯) reveals which translation key
-  produced any on-screen text and jumps the editor to it — its highlight and
-  tooltip render in the top layer, so they work over the app's modal dialogs
-  too. Editing a string or
-  switching the app language now refreshes the UI without a manual reload (the
-  browser build's `setLocale` was a stub, and the editor was reading the runtime
-  handle the frontend had already deleted, so live refresh silently did
-  nothing). See [`docs/translation-editor.md`](../../docs/translation-editor.md).
+- **In-app translation editor** (`Ctrl/Cmd+Shift+L`, in every build): a **popup
+  window** to edit the current language's UI strings live, persisted in the
+  browser, with a change list and revert. A key is badged **untranslated** when
+  the language has no translation yet (showing the English source) or
+  **experimental** when it's an English-only app string; experimental strings
+  are kept out of the normal export (partial Android XML / JSON changeset) and
+  get their own **Export experimental** button. Export/revert buttons disable
+  when there's nothing to act on. A custom **language chooser** shows how many
+  keys you've edited in each language. An "Inspect" mode (🎯) reveals which
+  translation key produced any on-screen text and jumps the editor to it — its
+  highlight and tooltip render in the top layer, so they work over the app's
+  modal dialogs too. Editing a string or switching the app language refreshes
+  the UI without a manual reload (the browser build's `setLocale` was a stub,
+  and the editor was reading the runtime handle the frontend had already
+  deleted, so live refresh silently did nothing).
+  See [`docs/translation-editor.md`](../../docs/translation-editor.md).
 - **Backup import now persists its images before finishing**: after restoring
   from a backup you no longer have to reload several times for the pictures to
   show up. Imported blobs are written to the in-memory fs and mirrored to OPFS
