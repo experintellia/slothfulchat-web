@@ -188,6 +188,11 @@ exists:
   inside `http://` or `12:30`. Built as a generic `CompletionProvider` primitive
   so a future `@mention` menu reuses the same machinery. `desktop/0049`
 
+- **Translation editor in the keyboard-shortcuts cheat sheet** — lists the
+  in-app translation editor (`Ctrl/Cmd+Shift+L`, implemented in `web-app`'s
+  `runtime.ts`) in the shortcuts dialog so it's discoverable. One entry in
+  `getKeybindings`. `desktop/0051`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not
@@ -225,6 +230,17 @@ contribution intended.
   (un-seen) transition. A message arriving in a shared group therefore never
   refreshed the sender's 1:1 item; the into-seen transition now emits the
   chatlist-item event too, mirroring the un-seen path. `core/0017`
+- Switching the UI language left already-rendered text stale until a reload:
+  `setStockStrings` updated the shared core stock strings but emitted no
+  events, so cached chatlist message summaries, the self/device contact
+  names and the connectivity view kept the old language. A new
+  `stock_str::emit_events_for_updated_stock_strings()` is now called once
+  for the selected account after the strings change, emitting
+  `ChatlistItemChanged`, `ContactsChanged` (SELF and DEVICE) and
+  `ConnectivityChanged` so the UI refetches automatically. Backport of the
+  closed chatmail/core#7719 by Simon Laux / deltachat-desktop#5403 (the
+  upstream import hunk was de-duplicated and the call site adapted to the
+  pinned core). `core/0018`
 
 ## UI & mobile polish
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **In-app translation editor** (`Ctrl/Cmd+Shift+L`, in every build): a popup
+  window to edit the current language's UI strings live, with badges for
+  untranslated / experimental keys, category filters, per-language completion,
+  Android-XML / JSON export, and an element inspector (🎯) that finds a string's
+  translation key. You can create languages on the fly (with an LTR/RTL toggle);
+  edits and created languages persist in the browser. RTL languages now render
+  right-to-left. See [`docs/translation-editor.md`](../../docs/translation-editor.md).
+
 ## 0.6.0 — 2026-07-15
 
 - **Native 1:1 calls — audio, video, and screen share**: place and receive
