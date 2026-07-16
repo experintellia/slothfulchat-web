@@ -180,6 +180,14 @@ exists:
   on the draft; off by default (experimental), enableable in Settings → Advanced.
   `desktop/0041`
 
+- **Composer completion menu (`:emoji:`)** — typing a colon shortcode plus two
+  characters opens a scrollable, keyboard-navigable menu above the composer
+  (↑/↓ to move, Enter to pick, Esc to dismiss) that inserts the Unicode emoji.
+  Matches shortcode, name and keywords over the already-bundled
+  `@emoji-mart/data` (no new dependency); a boundary guard keeps it from firing
+  inside `http://` or `12:30`. Built as a generic `CompletionProvider` primitive
+  so a future `@mention` menu reuses the same machinery. `desktop/0049`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not
