@@ -447,7 +447,7 @@ function openToKey(key: string): void {
     if (searchInputEl) searchInputEl.value = key
     renderList()
     win?.focus()
-    listEl?.querySelector('input')?.focus()
+    listEl?.querySelector('textarea')?.focus()
   }
   if (win && !win.closed) focus()
   else void open().then(focus)
@@ -500,6 +500,8 @@ function renderList(): void {
     return
   }
   for (const key of keys) listEl.append(row(key, overlay))
+  // Size textareas once they're in the DOM (scrollHeight needs layout).
+  listEl.querySelectorAll('textarea').forEach(autoGrow)
   if (capped)
     listEl.append(
       h(
@@ -508,6 +510,12 @@ function renderList(): void {
         'Showing first 200 matches — narrow the search to see more.'
       )
     )
+}
+
+/** Fit a value textarea to its content (so multi-line strings show in full). */
+function autoGrow(el: HTMLTextAreaElement): void {
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
 }
 
 function badge(kind: 'experimental' | 'en'): HTMLElement {
@@ -574,9 +582,12 @@ function row(key: string, overlay: Record<string, Entry>): HTMLElement {
   const inputs = fields.map(field => {
     const enSrc = experimental[key] || sourceEn[key] || {}
     const enRef = enSrc[field] ?? enSrc.message
-    const input = h('input', {
+    // A textarea (not <input>): multi-line strings (e.g. the donation text) stay
+    // editable, and grammar add-ons like LanguageTool attach to textareas.
+    const input = h('textarea', {
       value: current[field] ?? '',
       'aria-label': `${key}${isPlural ? ' ' + field : ''}`,
+      rows: 1,
       style: {
         width: '100%',
         boxSizing: 'border-box',
@@ -586,13 +597,18 @@ function row(key: string, overlay: Record<string, Entry>): HTMLElement {
         borderRadius: '3px',
         padding: '3px 5px',
         fontSize: '12px',
+        fontFamily: 'inherit',
+        lineHeight: '1.3',
+        resize: 'vertical',
+        overflow: 'hidden',
       },
+      oninput: (e: Event) => autoGrow(e.target as HTMLTextAreaElement),
       onchange: async (e: Event) => {
         editValue(
           currentLocale,
           key,
           field,
-          (e.target as HTMLInputElement).value,
+          (e.target as HTMLTextAreaElement).value,
           base
         )
         await refreshApp(currentLocale)

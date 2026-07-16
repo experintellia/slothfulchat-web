@@ -28,8 +28,10 @@
   extracted at build time). A custom **language chooser** shows each language's
   completion (% of English keys translated) and how many keys you've edited in
   it, surfaces languages too incomplete to appear in the app (tagged `hidden`),
-  and can create a new language on the fly to translate/export. An "Inspect"
-  mode (🎯) reveals which
+  and can create a new language on the fly to translate/export. Value fields are
+  auto-growing textareas, so multi-line strings (e.g. the donation text) are
+  fully editable and grammar add-ons like LanguageTool attach to them. An
+  "Inspect" mode (🎯) reveals which
   translation key produced any on-screen text and jumps the editor to it — its
   highlight and tooltip render in the top layer, so they work over the app's
   modal dialogs too. Editing a string or switching the app language refreshes

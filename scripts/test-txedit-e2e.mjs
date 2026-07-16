@@ -93,7 +93,7 @@ try {
 
   // (c) Edit that key in the popup; the app must live-refresh.
   await popup.getByRole('searchbox').fill(picked.key)
-  const input = popup.locator(`input[aria-label="${picked.key}"]`).first()
+  const input = popup.locator(`textarea[aria-label="${picked.key}"]`).first()
   await input.waitFor({ state: 'visible', timeout: 10_000 })
   await input.fill(SENTINEL)
   await input.blur() // fires onchange -> editValue + refreshApp
@@ -138,7 +138,7 @@ try {
     return Object.keys(await r.json())[0]
   })
   await popup.getByRole('searchbox').fill(expKey)
-  const expInput = popup.locator(`input[aria-label="${expKey}"]`).first()
+  const expInput = popup.locator(`textarea[aria-label="${expKey}"]`).first()
   await expInput.waitFor({ state: 'visible', timeout: 10_000 })
   if ((await popup.getByText('experimental', { exact: true }).count()) < 1)
     throw new Error(`experimental key ${expKey} is not badged experimental`)
@@ -165,7 +165,7 @@ try {
   await chip('experimental').click() // off
   await chip('stockstrings').click() // on
   await popup.getByRole('searchbox').fill('self')
-  if ((await popup.locator('input[aria-label="self"]').count()) < 1)
+  if ((await popup.locator('textarea[aria-label="self"]').count()) < 1)
     throw new Error('stockstrings filter hid the core key "self"')
   await chip('stockstrings').click() // off
   await popup.getByRole('searchbox').fill('')
