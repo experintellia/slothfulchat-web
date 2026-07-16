@@ -26,7 +26,10 @@
  * (core stock strings and hardcoded text won't match); the design's zero-width
  * exact mode is intentionally not built (YAGNI — the registry + fiber cover the
  * common cases without contaminating the DOM). Opened with Ctrl/Cmd+Shift+L or
- * ?txedit — dev-gated, so it costs normal users nothing but the import.
+ * ?txedit in any build (dev or release); it's inert until opened, so normal
+ * users only pay the small bundle import. The panel lives in a separate popup
+ * window so the app's modal (top-layer) dialogs never cover it; the inspector's
+ * highlight/tooltip stay in the app window.
  */
 import { matchKeys, mergeOverlay, toAndroidXml } from './translation-editor.mjs'
 
@@ -99,9 +102,11 @@ function revertAll(locale: string): void {
 
 // ---- live refresh + data loading ----------------------------------------
 
-/** Re-run the app's own language reload so edits render immediately. */
+/** Re-run the app's own language reload so edits render immediately. Uses the
+ *  runtime captured at init: the frontend deletes window.r after importing it,
+ *  so reading it here would find nothing and the refresh would silently no-op. */
 async function refreshApp(locale: string): Promise<void> {
-  const runtime = (window as any).r
+  const runtime = appRuntime || (window as any).r
   if (runtime?.onChooseLanguage) await runtime.onChooseLanguage(locale)
 }
 
@@ -142,26 +147,40 @@ function download(filename: string, text: string, type: string): void {
 
 // ---- tiny DOM helper (el() in runtime.ts isn't exported) ------------------
 
-function h<K extends keyof HTMLElementTagNameMap>(
+type H = <K extends keyof HTMLElementTagNameMap>(
   tag: K,
-  props: Record<string, any> = {},
+  props?: Record<string, any>,
   ...children: (Node | string)[]
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag)
-  for (const [k, v] of Object.entries(props)) {
-    if (k === 'style') Object.assign(node.style, v)
-    else if (k.startsWith('on') && typeof v === 'function')
-      (node as any)[k.toLowerCase()] = v
-    else if (k in node) (node as any)[k] = v
-    else node.setAttribute(k, String(v))
+) => HTMLElementTagNameMap[K]
+
+/** An h() bound to a specific document. The panel is built in the popup
+ *  window's document; the inspector overlay stays in the app document. */
+function makeH(doc: Document): H {
+  const h: H = (tag, props = {}, ...children) => {
+    const node = doc.createElement(tag)
+    for (const [k, v] of Object.entries(props)) {
+      if (k === 'style') Object.assign(node.style, v)
+      else if (k.startsWith('on') && typeof v === 'function')
+        (node as any)[k.toLowerCase()] = v
+      else if (k in node) (node as any)[k] = v
+      else node.setAttribute(k, String(v))
+    }
+    for (const c of children) node.append(c)
+    return node
   }
-  for (const c of children) node.append(c)
-  return node
+  return h
 }
+
+// Rebound to the popup document in open(); the inspector always uses hApp.
+let h: H = makeH(document)
+const hApp: H = makeH(document)
 
 // ---- panel ----------------------------------------------------------------
 
 let panel: HTMLElement | null = null
+let win: Window | null = null
+// The app runtime, captured at init before the frontend deletes window.r.
+let appRuntime: any = null
 let currentLocale = 'en'
 let sourceEn: Record<string, Entry> = {}
 let pristine: Record<string, Entry> = {}
@@ -273,11 +292,11 @@ function onInspectMove(e: MouseEvent): void {
   tip.replaceChildren()
   if (matches.length) {
     for (const m of matches.slice(0, 3))
-      tip.append(h('div', { style: { color: '#ffd479' } }, m.keys.join(' / ')))
+      tip.append(hApp('div', { style: { color: '#ffd479' } }, m.keys.join(' / ')))
   } else {
-    tip.append(h('div', { style: muted }, 'no tx key for this text'))
+    tip.append(hApp('div', { style: muted }, 'no tx key for this text'))
   }
-  if (comp) tip.append(h('div', { style: muted }, `<${comp}>`))
+  if (comp) tip.append(hApp('div', { style: muted }, `<${comp}>`))
   tip.style.display = 'block'
   tip.style.left = `${Math.min(e.clientX + 14, innerWidth - 340)}px`
   // Flip above the cursor near the bottom edge so the tooltip stays on screen.
@@ -305,7 +324,7 @@ function onInspectClick(e: MouseEvent): void {
 function startInspect(): void {
   if (inspecting) return
   inspecting = true
-  hlBox = h('div', {
+  hlBox = hApp('div', {
     style: {
       position: 'fixed',
       pointerEvents: 'none',
@@ -315,7 +334,7 @@ function startInspect(): void {
       borderRadius: '2px',
     },
   })
-  tip = h('div', {
+  tip = hApp('div', {
     style: {
       position: 'fixed',
       pointerEvents: 'none',
@@ -361,9 +380,10 @@ function openToKey(key: string): void {
     search = key
     if (searchInputEl) searchInputEl.value = key
     renderList()
+    win?.focus()
     listEl?.querySelector('input')?.focus()
   }
-  if (panel) focus()
+  if (win && !win.closed) focus()
   else void open().then(focus)
 }
 
@@ -449,7 +469,7 @@ function row(key: string, overlay: Record<string, Entry>): HTMLElement {
           },
           '↺'
         )
-      : document.createTextNode('')
+      : ''
   )
 
   const inputs = fields.map(field => {
@@ -631,22 +651,16 @@ function buildPanel(): HTMLElement {
     {
       role: 'dialog',
       'aria-label': 'Translation editor',
-      // ponytail: a plain fixed panel, not a native <dialog> — it must stay
-      // non-modal so the app underneath updates live while you edit. It sits
-      // below any showModal() top-layer dialog, which is fine for a dev tool.
+      // Fills its own popup window (see open()). Lives in a separate window so
+      // the app's showModal() top-layer dialogs can never cover it — the reason
+      // it isn't an in-page panel.
       style: {
-        position: 'fixed',
-        top: '0',
-        right: '0',
-        width: 'min(400px, 100vw)',
-        height: '100vh',
-        zIndex: '2147483000',
+        position: 'absolute',
+        inset: '0',
         display: 'flex',
         flexDirection: 'column',
         background: '#141414',
         color: '#eee',
-        borderLeft: '1px solid #333',
-        boxShadow: '-4px 0 16px rgba(0,0,0,0.5)',
         font: '13px system-ui, sans-serif',
       },
     },
@@ -658,7 +672,10 @@ function buildPanel(): HTMLElement {
 }
 
 async function open(): Promise<void> {
-  if (panel) return
+  if (win && !win.closed) {
+    win.focus()
+    return
+  }
   currentLocale = (window as any).localeData?.locale || 'en'
   try {
     sourceEn = await loadPristine('en')
@@ -669,37 +686,84 @@ async function open(): Promise<void> {
     alert('Translation editor: could not load locale data (see console).')
     return
   }
+  const w = window.open('', 'slothfulchat-tx', 'popup=yes,width=460,height=820')
+  if (!w) {
+    alert(
+      'Translation editor: the popup was blocked. Allow popups for this site, then press Ctrl/Cmd+Shift+L again.'
+    )
+    return
+  }
+  win = w
+  w.document.title = 'Translation editor'
+  Object.assign(w.document.body.style, { margin: '0', background: '#141414' })
+  h = makeH(w.document)
   panel = buildPanel()
-  document.body.appendChild(panel)
+  w.document.body.appendChild(panel)
+  w.addEventListener('keydown', onPopupKeydown)
+  w.addEventListener('pagehide', teardown)
   renderList()
 }
 
-function close(): void {
+/** Shared cleanup: stop inspecting and drop panel/window references. Does not
+ *  close the window itself (called from its own pagehide, and from close()). */
+function teardown(): void {
   stopInspect()
-  panel?.remove()
+  win = null
   panel = null
   listEl = countEl = searchInputEl = inspectBtn = null
+  h = makeH(document)
+}
+
+function close(): void {
+  const w = win
+  teardown()
+  if (w && !w.closed) {
+    w.removeEventListener('pagehide', teardown)
+    w.close()
+  }
+}
+
+function onPopupKeydown(e: KeyboardEvent): void {
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'l') {
+    e.preventDefault()
+    close()
+  } else if (e.key === 'Escape') {
+    if (inspecting) stopInspect()
+    else close()
+  }
 }
 
 function toggle(): void {
-  if (panel) close()
+  if (win && !win.closed) close()
   else void open()
 }
 
-/** Install the tx registry and the dev-gated open shortcut. Call once at
- *  startup — before the app first assigns window.static_translate, so every tx
- *  call is captured for the inspector. */
-export function initTranslationEditor(): void {
+/** Install the tx registry and the open shortcut. Call once at startup —
+ *  before the app first assigns window.static_translate, so every tx call is
+ *  captured for the inspector. `runtime` is the app runtime (window.r), captured
+ *  here because the frontend deletes window.r right after importing it. */
+export function initTranslationEditor(runtime?: any): void {
+  appRuntime = runtime ?? (window as any).r ?? null
   installRegistry()
   window.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'l') {
       e.preventDefault()
       toggle()
     }
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' && (win || inspecting)) {
       if (inspecting) stopInspect()
-      else if (panel) close()
+      else close()
     }
   })
-  if (new URLSearchParams(location.search).has('txedit')) void open()
+  // Close the popup if the app window unloads so it doesn't orphan.
+  window.addEventListener('pagehide', () => win?.close())
+  if (new URLSearchParams(location.search).has('txedit')) {
+    // A load-time window.open() is popup-blocked (no user gesture), so open on
+    // the first interaction instead — ?txedit still works, just on first click.
+    const once = () => {
+      document.removeEventListener('pointerdown', once, true)
+      void open()
+    }
+    document.addEventListener('pointerdown', once, true)
+  }
 }

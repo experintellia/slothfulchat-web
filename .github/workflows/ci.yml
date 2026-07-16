@@ -232,6 +232,11 @@ jobs:
       - name: Smoke test — frontend boots on the wasm core
         run: pnpm --filter @slothfulchat/web-app test
 
+      # translation editor e2e (offline, onboarding screen): the editor opens in
+      # a separate popup window and editing a string live-refreshes the app.
+      - name: E2E test — translation editor popup + live refresh
+        run: node scripts/test-txedit-e2e.mjs
+
       # bridge picker e2e (no proxy, no core boot): option list from an
       # injected instance config, preselection, localStorage save semantics
       - name: E2E test — bridge picker dialog

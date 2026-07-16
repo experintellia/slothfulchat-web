@@ -1370,7 +1370,11 @@ class BrowserRuntime {
   }
 }
 
-;(window as any).r = new BrowserRuntime()
+// Keep a stable reference: the frontend deletes `window.r` right after it
+// imports it (build/desktop .../runtime/runtime.ts), so anything that needs the
+// runtime later (the translation editor's live refresh) must capture it here.
+const browserRuntime = new BrowserRuntime()
+;(window as any).r = browserRuntime
 
 // --- WS→TCP bridge reachability notice -------------------------------------
 // The wasm core can only send/receive through a reachable WS→TCP bridge
@@ -2104,6 +2108,8 @@ if (typeof window !== 'undefined') {
     openDialog: showBridgeDialog,
     reachable: () => bridgeReachable,
   }
-  // Dev-gated translation editor overlay (Ctrl/Cmd+Shift+L or ?txedit).
-  initTranslationEditor()
+  // Translation editor (Ctrl/Cmd+Shift+L or ?txedit) — available in every
+  // build; inert until opened. Pass the runtime so its live refresh survives
+  // the frontend deleting window.r.
+  initTranslationEditor(browserRuntime)
 }

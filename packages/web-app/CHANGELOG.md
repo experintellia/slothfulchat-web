@@ -16,13 +16,16 @@
   fills the navbar's vertical dead space and the inter-button gap. The icons
   and the navbar height are pixel-for-pixel unchanged — only the hit box grew,
   cancelled out by negative margins so nothing moves visually.
-- **In-app translation editor** (dev tool, `Ctrl/Cmd+Shift+L` or `?txedit`): a
-  side panel to edit the current language's UI strings live, persisted in the
-  browser, with a change list, revert, and export as partial Android XML or a
-  JSON changeset. An "Inspect" mode (🎯) reveals which translation key produced
-  any on-screen text and jumps the editor to it. Switching the app language now
-  also refreshes the UI without a manual reload (the browser build's `setLocale`
-  was a stub).
+- **In-app translation editor** (`Ctrl/Cmd+Shift+L` or `?txedit`, in every
+  build): a **popup window** to edit the current language's UI strings live,
+  persisted in the browser, with a change list, revert, and export as partial
+  Android XML or a JSON changeset. It opens in its own window so the app's modal
+  dialogs never cover it. An "Inspect" mode (🎯) reveals which translation key
+  produced any on-screen text and jumps the editor to it. Editing a string or
+  switching the app language now refreshes the UI without a manual reload (the
+  browser build's `setLocale` was a stub, and the editor was reading the runtime
+  handle the frontend had already deleted, so live refresh silently did
+  nothing). See [`docs/translation-editor.md`](../../docs/translation-editor.md).
 - **Backup import now persists its images before finishing**: after restoring
   from a backup you no longer have to reload several times for the pictures to
   show up. Imported blobs are written to the in-memory fs and mirrored to OPFS
