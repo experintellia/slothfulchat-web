@@ -25,10 +25,10 @@ const appServer = spawn('node', [script('../packages/web-app/serve.mjs')], {
 const cleanup = () => appServer.kill()
 process.on('exit', cleanup)
 const watchdog = setTimeout(() => {
-  console.error('FAIL: watchdog (4 min) — test hung')
+  console.error('FAIL: watchdog (6 min) — test hung')
   cleanup()
   process.exit(1)
-}, 240_000)
+}, 360_000)
 await new Promise(r => setTimeout(r, 600)) // let the server bind
 
 const browser = await chromium.launch()
@@ -244,6 +244,30 @@ try {
     { timeout: 10_000 }
   )
   console.log('OK (e): created an RTL language on the fly — app renders it live (html dir=rtl)')
+
+  // Created languages go at the END of the chooser (after the sorted shipped ones).
+  await popup.getByRole('button', { name: 'Language' }).click()
+  await popup.getByRole('listbox').waitFor({ state: 'visible', timeout: 5_000 })
+  if (!/\(xytest\)/.test((await popup.getByRole('option').last().textContent()) || ''))
+    throw new Error('created language is not at the end of the chooser')
+  console.log('OK (e): created language appended at the end of the list')
+
+  // ...and persist across a reload, like edits.
+  await page.reload()
+  await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
+  await page.locator(sel).first().waitFor({ state: 'visible', timeout: 90_000 })
+  const [popup2] = await Promise.all([
+    context.waitForEvent('page'),
+    page.keyboard.press('Control+Shift+L'),
+  ])
+  await popup2.waitForLoadState('domcontentloaded')
+  await popup2.getByRole('button', { name: 'Language' }).click()
+  await popup2.getByRole('listbox').waitFor({ state: 'visible', timeout: 5_000 })
+  if ((await popup2.getByRole('option').filter({ hasText: '(xytest)' }).count()) < 1)
+    throw new Error('created language did not persist across reload')
+  if (!/\(xytest\)/.test((await popup2.getByRole('option').last().textContent()) || ''))
+    throw new Error('persisted created language is not at the end after reload')
+  console.log('OK (e): created language persists across reload, still at the end')
 
   console.log('\nPASS: translation editor e2e')
 } catch (e) {

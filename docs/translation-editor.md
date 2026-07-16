@@ -41,7 +41,9 @@ first).
   the English source, so even a brand-new language previews immediately.
 - **Create a language on the fly** from the chooser's bottom row: type a code
   (e.g. `pt-BR`), pick its direction with the **LTR/RTL** toggle, and press
-  **Add**. You can then translate and export it like any other.
+  **Add**. You can then translate and export it like any other. Created
+  languages are **persisted** (like your edits) and listed at the **end** of the
+  chooser, in creation order.
 - **Filter** the list with the toggles under the search box —
   **untranslated** (no translation in this language yet), **experimental**, and
   **stockstrings** (strings that come from the core library). Combine with the

@@ -38,6 +38,7 @@ type Overlay = Record<string, Record<string, Entry>>
 
 const OVERLAY_KEY = 'slothfulchat.txOverlay'
 const DIR_KEY = 'slothfulchat.txLangDir'
+const NEWLANG_KEY = 'slothfulchat.txNewLangs'
 const BASE = new URL('.', location.href).pathname
 
 // ---- text direction (per-locale; for RTL preview + the chooser) -----------
@@ -79,6 +80,25 @@ function setLocaleDir(locale: string, dir: 'ltr' | 'rtl'): void {
   const m = loadDirs()
   m[locale] = dir
   localStorage.setItem(DIR_KEY, JSON.stringify(m))
+}
+
+// Languages created in the editor — persisted (like edits) so they survive
+// reloads, and kept in creation order (appended at the end of the chooser).
+function loadNewLangs(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(NEWLANG_KEY) || '[]')
+    return Array.isArray(v) ? v : []
+  } catch {
+    return []
+  }
+}
+
+function saveNewLang(code: string): void {
+  const list = loadNewLangs()
+  if (!list.includes(code)) {
+    list.push(code)
+    localStorage.setItem(NEWLANG_KEY, JSON.stringify(list))
+  }
 }
 
 // ---- persistence overlay -------------------------------------------------
@@ -798,25 +818,25 @@ function statusTag(status: Lang['status']): HTMLElement | null {
   return null
 }
 
-/** Chooser entries: the app's shown languages, every locale with a file, and any
- *  locale you've edited or created here — deduped, named, sorted. */
+/** Chooser entries. Shipped + hidden languages (those with a locale file) come
+ *  first, sorted by name; languages created/edited here follow at the end, in
+ *  creation order — persisted, so they survive reloads like your edits. */
 function buildLanguages(shown: Array<{ code: string; name: string }>): Lang[] {
   const shownMap = new Map(shown.map(l => [l.code, l.name]))
-  const codes = new Set<string>([
-    ...shownMap.keys(),
-    ...Object.keys(catalogue),
-    ...Object.keys(loadOverlay()),
-    currentLocale,
-  ])
-  return [...codes]
+  const known = new Set<string>([...shownMap.keys(), ...Object.keys(catalogue)])
+  const base = [...known]
     .map(
       (code): Lang => ({
         code,
         name: shownMap.get(code) || displayName(code),
-        status: shownMap.has(code) ? 'shown' : code in catalogue ? 'hidden' : 'new',
+        status: shownMap.has(code) ? 'shown' : 'hidden',
       })
     )
     .sort((a, b) => a.name.localeCompare(b.name))
+  const extra = [...new Set([...loadNewLangs(), ...Object.keys(loadOverlay()), currentLocale])]
+    .filter(code => !known.has(code))
+    .map((code): Lang => ({ code, name: displayName(code), status: 'new' }))
+  return [...base, ...extra]
 }
 
 function updateLangButton(): void {
@@ -893,8 +913,9 @@ function submitNewLanguage(code: string, dir: 'ltr' | 'rtl'): void {
   if (!code) return
   setLocaleDir(code, dir)
   if (!languages.some(l => l.code === code)) {
-    const entry: Lang = { code, name: displayName(code), status: code in catalogue ? 'hidden' : 'new' }
-    languages = [...languages, entry].sort((a, b) => a.name.localeCompare(b.name))
+    saveNewLang(code) // persist so it survives reloads, like edits
+    // Append at the end — created languages sit after the sorted shipped ones.
+    languages = [...languages, { code, name: displayName(code), status: 'new' }]
   }
   void selectLocale(code)
 }

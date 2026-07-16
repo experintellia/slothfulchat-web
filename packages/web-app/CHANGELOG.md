@@ -29,7 +29,8 @@
   completion (% of English keys translated), text direction, and how many keys
   you've edited in each, surfaces languages too incomplete to appear in the app
   (tagged `hidden`), and can create a new language on the fly (code + LTR/RTL
-  toggle) to translate/export. Editing or creating a language now renders it
+  toggle) to translate/export — created languages persist across reloads (like
+  edits) and are listed at the end of the chooser in creation order. Editing or creating a language now renders it
   **live** — `getLocaleData` keeps an English base under every locale, so
   untranslated keys show English instead of raw keys, an unknown/new locale is
   no longer coerced to English, and RTL locales render right-to-left (the
