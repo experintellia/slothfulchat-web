@@ -1,0 +1,14 @@
+{
+  // Whole-package view for editors. The real enforcement is per-subfolder —
+  // engine/tsconfig.json, ui/tsconfig.json, bridge/tsconfig.json (see
+  // "build" in package.json, which type-checks each separately so engine/'s
+  // narrower config actually gets exercised). This root config just needs to
+  // be a superset (DOM + JSX) so the editor doesn't red-squiggle ui/bridge
+  // files when a file in another subfolder is open.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
+  },
+  "include": ["engine", "ui", "bridge"]
+}

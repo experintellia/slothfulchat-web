@@ -1,0 +1,10 @@
+{
+  // bridge/ connects engine/ to the typed jsonrpc client and the popup<->opener
+  // signaling relay (postMessage/BroadcastChannel, docs/calls.md). DOM lib for
+  // that, but no JSX — it is glue, not React.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["."]
+}

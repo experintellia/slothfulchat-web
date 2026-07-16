@@ -41,6 +41,18 @@ exists:
 
 ## New features
 
+- **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
+  wire-compatible with real Delta Chat clients (which run
+  [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
+  offer/answer carried over DeltaChat messages, non-trickle ICE. Mic/camera
+  selection with mid-call hot-switching, avatar speaking rings, mute, a
+  direct-vs-relay indicator, ringtone/vibration, content-free call analytics,
+  and a mobile layout. An active call runs in a detached popup window when
+  allowed (falling back to an in-page overlay); ringing always stays in the main
+  window. Lives mostly in our own `packages/calls` (engine/ui/bridge split) and
+  `packages/web-app` wiring — see [`docs/calls.md`](docs/calls.md); the one
+  upstream change is un-gating the ChatView call button and the `WhoCanCallMe`
+  setting for the browser target. `desktop/0047`
 - **webimap transport (madmail)** — a second mail transport speaking
   [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at
@@ -168,6 +180,14 @@ exists:
   on the draft; off by default (experimental), enableable in Settings → Advanced.
   `desktop/0041`
 
+- **Composer completion menu (`:emoji:`)** — typing a colon shortcode plus two
+  characters opens a scrollable, keyboard-navigable menu above the composer
+  (↑/↓ to move, Enter to pick, Esc to dismiss) that inserts the Unicode emoji.
+  Matches shortcode, name and keywords over the already-bundled
+  `@emoji-mart/data` (no new dependency); a boundary guard keeps it from firing
+  inside `http://` or `12:30`. Built as a generic `CompletionProvider` primitive
+  so a future `@mention` menu reuses the same machinery. `desktop/0049`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not
@@ -284,8 +304,6 @@ the full table with what re-enabling each one would take.
 - **Maps / location streaming** — no map UI ships (it's a webxdc upstream).
   When it lands, the plan is to adopt ArcaneChat's per-message POI location
   API so a shared pin is tappable (issue #36).
-- **Video calls** — the runtime hook is desktop-specific; opening the call
-  URL in a new tab would be low effort but hasn't been prioritized.
 - **HTML email viewing** — unimplemented in upstream's browser target too;
   needs a sandboxed viewer.
 - **Database encryption (sqlcipher)** — doesn't build for wasm32; OPFS

@@ -1,6 +1,6 @@
 {
   "name": "@slothfulchat/ws-tcp-proxy",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "WebSocket→TCP bridge for slothfulchat-web: tunnels the browser wasm core's IMAP/SMTP (ciphertext only) and DNS. Optional chatmail-server allowlist and opt-in link-preview unfurl endpoint.",
   "license": "Unlicense",
   "repository": {

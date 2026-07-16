@@ -34,7 +34,7 @@ Upstream desktop facts that shape the design:
 2. **Networking is phased**: `get_system_info` needs zero networking, so M1 stubs all net. Real IMAP/SMTP comes in M3 via a ~100-line local Node WS→TCP proxy; TLS (rustls/ring) still terminates at the mail server inside wasm, so the proxy only ever sees ciphertext.
 3. **No DB encryption in browser build** (sqlcipher/OpenSSL won't build; OPFS is origin-sandboxed anyway).
 4. **Storage memory-first, persistent later**: DB via sqlite-wasm-rs (its OPFS VFS if it drops in early, else memory), blobs in-memory FS shim. **Persistent storage (OPFS) is wanted and planned as M5** — just not required for the first build.
-5. **In scope** (beyond basic chat): **multiaccount** (core is account-manager based — nearly free) and **file-based IMEX** (backup export/import + key import/export via `<input type=file>` upload and blob-URL download; needs the FS shim to hold the backup file). **Descoped**: webxdc, HTML email, video calls, sqlcipher, iroh backup *transfer* (QR/LAN). (Stickers are now supported — static and animated Lottie/`.tgs` rendering, plus the composer sticker picker; see FINDINGS.) Descope list is documented in `DESCOPED.md` in the repo, each entry with reason + what re-enabling would take.
+5. **In scope** (beyond basic chat): **multiaccount** (core is account-manager based — nearly free) and **file-based IMEX** (backup export/import + key import/export via `<input type=file>` upload and blob-URL download; needs the FS shim to hold the backup file). **Descoped**: webxdc, HTML email, sqlcipher, iroh backup *transfer* (QR/LAN). (Stickers are now supported — static and animated Lottie/`.tgs` rendering, plus the composer sticker picker; see FINDINGS. **Calls** — native 1:1 WebRTC audio/video — are no longer descoped; see [`docs/calls.md`](docs/calls.md) for the design and milestone plan.) Descope list is documented in `DESCOPED.md` in the repo, each entry with reason + what re-enabling would take.
 6. **Iroh stubbed on wasm** (feature-gate/stub crate): browser iroh only speaks via WS relays — no LAN node connectivity — so DC's LAN-restricted backup transfer can't work; webxdc isn't in the browser edition anyway. Postponed, not rejected.
 7. Licenses: core MPL-2.0, desktop GPL-3.0 — fine for a private prototype; web app is GPL-3 if ever distributed.
 
@@ -96,7 +96,7 @@ DB on sqlite-wasm-rs OPFS VFS (worker requirement already met); blob FS shim bac
 
 ## Postponed (documented in DESCOPED.md, not rejected)
 - **iroh**: webxdc realtime + P2P backup transfer. Browser iroh (0.32+) works relay-only — no LAN node connectivity — so DC's LAN-restricted backup transfer can't function; revisit if upstream lifts the LAN restriction or webxdc lands in the browser edition. File-based IMEX covers backup needs meanwhile.
-- webxdc, HTML email, video calls (also missing in upstream's browser edition). Stickers — including animated Lottie/`.tgs` — render and send, and the composer sticker picker works.
+- webxdc, HTML email (also missing in upstream's browser edition). Stickers — including animated Lottie/`.tgs` — render and send, and the composer sticker picker works. Video calls were previously descoped here; they are now in progress under [`docs/calls.md`](docs/calls.md) (own `packages/calls` + a thin desktop patch), not this PLAN's milestone track.
 - sqlcipher / DB encryption in browser.
 
 ## Verification (overall)

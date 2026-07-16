@@ -10,10 +10,26 @@
     // src/events.mjs is plain JS (shared with instance-config.mjs at build
     // time) — let tsc type-check it via its JSDoc annotation
     "allowJs": true,
-    // core-wasm ships no .d.ts (esbuild build) — resolve types from its source.
+    // packages/calls is source-consumed (see the "paths" note below) and its
+    // engine/ui/bridge modules import each other with explicit ".ts"/".tsx"
+    // specifiers (required by Node's type-stripping test runner). When
+    // runtime.ts imports @slothfulchat/calls/bridge, tsc follows those source
+    // imports, so it must accept the extension here too. Safe under noEmit;
+    // esbuild honors the extensions regardless.
+    "allowImportingTsExtensions": true,
+    // packages/calls/ui is React (docs/calls.md: the call UI is "our own React
+    // tree mounted by the runtime", unrelated to upstream desktop's own React
+    // build). No JSX in src/ yet (M0: runtime.ts still stubs the call hooks),
+    // but the option must be here before M1 adds any.
+    "jsx": "react-jsx",
+    // core-wasm ships no .d.ts (esbuild build); packages/calls ships no dist
+    // at all (private, source-consumed only) — resolve both from source.
     // esbuild honors these paths too, so the bundle also builds from source.
     "paths": {
-      "@slothfulchat/core-wasm": ["../core-wasm/src/index.ts"]
+      "@slothfulchat/core-wasm": ["../core-wasm/src/index.ts"],
+      "@slothfulchat/calls/engine": ["../calls/engine/index.ts"],
+      "@slothfulchat/calls/ui": ["../calls/ui/index.tsx"],
+      "@slothfulchat/calls/bridge": ["../calls/bridge/index.ts"]
     }
   },
   "include": ["src"]

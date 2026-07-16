@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-07-15
 
 - Backup-import durability: new `flush` fs side-channel op and `Core.fsFlush()`
   (backed by `DeltaChat::fs_flush` → the shim's `tokio::fs::flush_pending`),

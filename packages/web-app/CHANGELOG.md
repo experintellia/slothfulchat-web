@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **In-app translation editor** (`Ctrl/Cmd+Shift+L`, in every build): a popup
+  window to edit the current language's UI strings live, with badges for
+  untranslated / experimental keys, category filters, per-language completion,
+  Android-XML / JSON export, and an element inspector (🎯) that finds a string's
+  translation key. You can create languages on the fly (with an LTR/RTL toggle);
+  edits and created languages persist in the browser. RTL languages now render
+  right-to-left. See [`docs/translation-editor.md`](../../docs/translation-editor.md).
+
+## 0.6.0 — 2026-07-15
+
+- **Native 1:1 calls — audio, video, and screen share**: place and receive
+  in-app calls, wire-compatible with real Delta Chat clients (raw-SDP
+  offer/answer carried over DeltaChat messages, non-trickle ICE). Includes
+  mic/camera selection with mid-call hot-switching, avatar speaking-ring
+  indicators, mute, a direct-vs-relay connection indicator, a synthesized
+  ringtone + vibration for incoming calls, content-free call analytics, and a
+  full-bleed mobile layout. An active call prefers a detached popup window
+  (same origin, `/call-popup.html`) so it keeps running while you use the rest
+  of the app, and falls back seamlessly to an in-page overlay if the popup is
+  blocked; ringing always stays in the main window so it can't be
+  popup-blocked. See [`docs/calls.md`](../../docs/calls.md).
 - **Webxdc app icons in the title bar can't impersonate native controls**: the
   last-used-app icons shown in a chat's title bar are app-supplied images. One
   with transparency could be shaped to look like a native navbar control (a
@@ -16,13 +37,10 @@
   fills the navbar's vertical dead space and the inter-button gap. The icons
   and the navbar height are pixel-for-pixel unchanged — only the hit box grew,
   cancelled out by negative margins so nothing moves visually.
-- **In-app translation editor** (`Ctrl/Cmd+Shift+L`, in every build): a popup
-  window to edit the current language's UI strings live, with badges for
-  untranslated / experimental keys, category filters, per-language completion,
-  Android-XML / JSON export, and an element inspector (🎯) that finds a string's
-  translation key. You can create languages on the fly (with an LTR/RTL toggle);
-  edits and created languages persist in the browser. RTL languages now render
-  right-to-left. See [`docs/translation-editor.md`](../../docs/translation-editor.md).
+- **Emoji autocomplete in the composer**: type a colon and a couple of letters
+  (e.g. `:sm`) to get a popup of matching emoji — arrow keys to move, Enter to
+  insert. Matches shortcodes, names and keywords. Off by default; turn it on
+  under Settings → Advanced → Experimental features.
 - **Backup import now persists its images before finishing**: after restoring
   from a backup you no longer have to reload several times for the pictures to
   show up. Imported blobs are written to the in-memory fs and mirrored to OPFS

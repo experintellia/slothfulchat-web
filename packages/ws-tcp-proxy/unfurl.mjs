@@ -18,7 +18,7 @@
 import { get as httpGet } from 'node:http';
 import { get as httpsGet } from 'node:https';
 import { lookup } from 'node:dns';
-import { isIP } from 'node:net';
+import { isIP, BlockList } from 'node:net';
 
 const ALLOW_PRIVATE = process.env.UNFURL_ALLOW_PRIVATE === '1';
 const MAX_PAGE_BYTES = 1 * 1024 * 1024;
@@ -27,19 +27,26 @@ const FETCH_TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 5;
 const RATE_LIMIT = 30; // requests per client per minute
 
-const isPrivateV4 = (ip) => {
-  const [a, b] = ip.split('.').map(Number);
-  return a === 0 || a === 10 || a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
-};
+// SSRF guard: reject loopback / private / link-local / CGNAT targets. Built on
+// node:net BlockList rather than a hand-rolled regex because BlockList matches
+// IPv4-mapped IPv6 (both ::ffff:127.0.0.1 AND the hex-compressed ::ffff:7f00:1)
+// against the IPv4 rules — the previous regex only caught the dotted form, so
+// `[::ffff:a9fe:a9fe]` reached 169.254.169.254 (cloud metadata) unblocked.
+const PRIVATE_IPS = new BlockList();
+PRIVATE_IPS.addSubnet('0.0.0.0', 8, 'ipv4');
+PRIVATE_IPS.addSubnet('10.0.0.0', 8, 'ipv4');
+PRIVATE_IPS.addSubnet('100.64.0.0', 10, 'ipv4'); // CGNAT
+PRIVATE_IPS.addSubnet('127.0.0.0', 8, 'ipv4');
+PRIVATE_IPS.addSubnet('169.254.0.0', 16, 'ipv4'); // link-local incl. cloud metadata
+PRIVATE_IPS.addSubnet('172.16.0.0', 12, 'ipv4');
+PRIVATE_IPS.addSubnet('192.168.0.0', 16, 'ipv4');
+PRIVATE_IPS.addAddress('::', 'ipv6');
+PRIVATE_IPS.addAddress('::1', 'ipv6');
+PRIVATE_IPS.addSubnet('fc00::', 7, 'ipv6'); // unique-local
+PRIVATE_IPS.addSubnet('fe80::', 10, 'ipv6'); // link-local
 const isPrivateIp = (ip) => {
-  if (isIP(ip) === 4) return isPrivateV4(ip);
-  const v6 = ip.toLowerCase();
-  const mapped = v6.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped) return isPrivateV4(mapped[1]);
-  return v6 === '::' || v6 === '::1' ||
-    /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6); // unique-local fc00::/7, link-local fe80::/10
+  const fam = isIP(ip);
+  return fam !== 0 && PRIVATE_IPS.check(ip, fam === 4 ? 'ipv4' : 'ipv6');
 };
 
 // *.localhost is loopback by spec (RFC 6761), never sent to the resolver.

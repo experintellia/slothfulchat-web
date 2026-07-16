@@ -205,6 +205,13 @@ export const configJs = config =>
 
 export const DEFAULT_NAME = 'SlothfulChat'
 
+// shared base CSS for the standalone imprint/privacy pages (privacy adds a few
+// .events rules of its own)
+const DOC_CSS = `  body { font: 16px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; color: #222; }
+  a { color: #2c8a68; }
+  h2 { font-size: 1.15rem; margin-top: 2rem; }
+  .meta { color: #666; font-size: 0.9rem; margin-top: 2.5rem; }`
+
 // quotes included: esc output also lands inside double-quoted href attributes
 const esc = s =>
   String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
@@ -263,10 +270,7 @@ and <code>SLOTHFUL_IMPRINT_EMAIL</code> at build time.</p>`
 <link rel="icon" type="image/png" href="./images/icon-256.png" />
 <title>Imprint — ${esc(config.instanceName || DEFAULT_NAME)}</title>
 <style>
-  body { font: 16px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; color: #222; }
-  a { color: #2c8a68; }
-  h2 { font-size: 1.15rem; margin-top: 2rem; }
-  .meta { color: #666; font-size: 0.9rem; margin-top: 2.5rem; }
+${DOC_CSS}
 </style>
 </head>
 <body>
@@ -366,12 +370,9 @@ no cookies, no tracking of any kind.</p>`
 <link rel="icon" type="image/png" href="./images/icon-256.png" />
 <title>Privacy Policy — ${esc(config.instanceName || DEFAULT_NAME)}</title>
 <style>
-  body { font: 16px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; color: #222; }
-  a { color: #2c8a68; }
-  h2 { font-size: 1.15rem; margin-top: 2rem; }
+${DOC_CSS}
   .events li { margin: 6px 0; }
   .events .props { color: #666; font-size: 0.85rem; }
-  .meta { color: #666; font-size: 0.9rem; margin-top: 2.5rem; }
 </style>
 </head>
 <body>
@@ -417,6 +418,27 @@ messages or account data.${
 of your account and of your contacts' accounts. Those are separate services
 run by their own operators, with their own privacy policies — the operator of
 this site is not them. Check the policies of the providers you use.</p>
+
+<h2>Calls (audio/video)</h2>
+<p>A call connects <strong>directly, peer-to-peer</strong> between you and the
+other participant whenever your networks allow it (standard WebRTC ICE,
+direct-preferred). When a direct path isn't possible — NAT or firewalls on
+either side — the call <strong>automatically falls back to a STUN/TURN relay
+server</strong>, whose address is returned by your chatmail relay
+(<code>ice_servers()</code>) — the same relay your messages already use, not
+a separate third party. There is <strong>no setting to force relay-only
+routing</strong>: direct is always attempted first, and forcing relay when a
+direct path would work would only burn that relay's bandwidth for no privacy
+benefit against Delta Chat's usual threat model (calling people you already
+know, not strangers). Whichever path is used, call audio/video is end-to-end
+DTLS-SRTP encrypted the same way any WebRTC call is, so a relay
+<strong>never sees or can decrypt call content</strong> — only that a call
+took place and the participants' IP addresses, i.e. the same kind of
+connection metadata the relay already sees for messaging (see above). The
+in-call screen shows a small, non-blocking "direct"/"relayed" indicator for
+troubleshooting; it has no effect on the call itself. Who is allowed to call
+you at all is controlled by the ordinary Delta Chat privacy setting (Settings
+→ Notifications → "Calls").</p>
 
 <h2>Links you open and link previews</h2>
 <p>When you open a link from a message, your browser contacts that site

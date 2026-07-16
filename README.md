@@ -52,6 +52,23 @@ own Plausible to self-host analytics) are set in CI. Leave them unset for a
 fully private instance. The per-instance imprint (`imprint.html`) documents this
 automatically. See [`packages/web-app`](packages/web-app/README.md) for details.
 
+**Calls (audio/video)** connect **directly, peer-to-peer, whenever a network
+path allows it** (standard WebRTC ICE, direct-preferred). When a direct route
+isn't possible — NAT/firewalls on either side — the call **automatically falls
+back to relaying through a STUN/TURN server**, returned by your chatmail
+relay's `ice_servers()` (the same relay your messages already use). There is
+**no setting to force relay-only routing** — direct is always tried first, and
+forcing relay when direct would work would just burn the relay's egress
+bandwidth for no privacy gain in Delta Chat's usual threat model (calling
+known contacts, not strangers). Regardless of the path, call media is
+DTLS-SRTP end-to-end encrypted the same way any WebRTC call is, so **a relay
+never sees call content** — only that a call is happening and the IP addresses
+of the two participants, the same connection metadata any relay/bridge you use
+already sees for messaging. The in-call UI shows a small, non-blocking
+indicator of whether the active call is **direct** or **relayed**, purely for
+troubleshooting. **Who is allowed to call you at all** is controlled by the
+existing Delta Chat privacy setting (Settings → Notifications → "Calls").
+
 ## Layout
 
 - `vendor/core`, `vendor/deltachat-desktop` — submodules pinned at upstream commits (never modified in place)

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Thu, 9 Jul 2026 13:49:59 +0000
-Subject: [PATCH 19/42] web-app: buttonify About dialog links with
+Subject: [PATCH 19/47] web-app: buttonify About dialog links with
  settings-style buttons
 
 Replace the plain text links and footer actions in the About dialog with

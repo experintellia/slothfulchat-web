@@ -31,7 +31,11 @@
  */
 
 import * as session from './session'
-import { EVENTS, isCatalogEvent } from './events.mjs'
+import { isCatalogEvent } from './events.mjs'
+// Type-only: no runtime dependency on @slothfulchat/calls from this generic
+// analytics module — just the single source of truth for the outcome
+// vocabulary, so it can't drift from what packages/calls actually classifies.
+import type { CallResult } from '@slothfulchat/calls/bridge'
 
 type Config = {
   analytics?: boolean
@@ -86,12 +90,6 @@ export function isEnabled(): boolean {
   return isConfigured() && getConsent() !== 'denied'
 }
 
-// --- the closed catalogue of what we may send --------------------------
-
-// Lives in events.mjs (plain JS) so instance-config.mjs can render it into
-// privacy.html at build time; re-exported here for the in-app consumers.
-export { EVENTS }
-
 // --- sending -----------------------------------------------------------
 
 type Props = Record<string, string | number | boolean>
@@ -110,6 +108,12 @@ export function event(name: string, props?: Props): void {
     if (c.devmode) console.warn('[analytics] dropped non-catalogue event:', name, props)
     return
   }
+  // Delayed opt-out: the WelcomeScreen mounting fires this event, which means
+  // the opt-out checkbox is now on screen — release the first-visit pageview +
+  // startup held for it (see afterNoticeShown). Runs before this event sends;
+  // reentrant event() calls from the queue are fine.
+  if (name === 'onboarding' && (props as Props | undefined)?.step === 'welcome')
+    releaseHeldForNotice()
   const body = {
     name,
     // Plausible needs a domain (its "site" id) and a url. We deliberately send
@@ -133,6 +137,36 @@ export function event(name: string, props?: Props): void {
   } catch {
     // fetch can throw synchronously if the URL is malformed; ignore
   }
+}
+
+// --- delayed opt-out: hold the first-visit burst until the notice is shown ---
+//
+// On a COLD start (onboarding) the WelcomeScreen — which shows the opt-out
+// checkbox — has not rendered when the core first answers, so sending the
+// pageview + startup sample there would transmit them before the user could
+// see or act on the notice. Hold them until the WelcomeScreen mounts (it fires
+// the 'onboarding'/'welcome' event, which calls releaseHeldForNotice) so
+// nothing leaves pre-notice. WARM starts (returning users who already saw the
+// notice during a previous onboarding) send immediately. Opting out before the
+// release just drops the held events, since event() re-checks isEnabled() at
+// send time. Still opt-out: non-interaction leaves the user enabled once the
+// notice is on screen.
+let noticeReleased = false
+const heldForNotice: Array<() => void> = []
+function afterNoticeShown(run: () => void): void {
+  if (noticeReleased || session.startupMode() === 'warm') return run()
+  heldForNotice.push(run)
+}
+function releaseHeldForNotice(): void {
+  if (noticeReleased) return
+  noticeReleased = true
+  for (const run of heldForNotice.splice(0)) run()
+}
+/** Fallback release once the UI is fully up (runtime.emitUIFullyReady): by then
+ * the user has necessarily passed the welcome notice, so the held first-visit
+ * events are never stranded if the WelcomeScreen 'welcome' hook didn't fire. */
+export function releaseHeldEvents(): void {
+  releaseHeldForNotice()
 }
 
 /** Count a click on one of the tracked info links (imprint / github /
@@ -167,24 +201,72 @@ export function trackLink(href: string): void {
 /** The single pageview for this visit, tagged with coarse (non-identifying)
  * context: whether an account already existed (retention proxy) and whether
  * this is the installed PWA or a browser tab. */
+let pageviewQueued = false
 export function pageview(): void {
-  event('pageview', { mode: session.visitorMode(), display: session.displayMode() })
+  if (pageviewQueued) return // once per visit, even before the notice releases it
+  pageviewQueued = true
+  afterNoticeShown(() =>
+    event('pageview', { mode: session.visitorMode(), display: session.displayMode() })
+  )
+}
+
+/**
+ * How a call ended (docs/calls.md M5: "content-free call analytics … missed/
+ * busy/timeout via call_info"). Never anything about *who* was on the call or
+ * how long it ran. See `packages/calls/bridge/call-outcome.ts` (the single
+ * source of truth for this vocabulary, re-exported as the `CallResult` type
+ * imported above) for the full per-value breakdown and the core `call_info`
+ * mapping table:
+ *
+ *   connected — the peer connection reached `connected` at least once.
+ *   missed    — an incoming call that rang out unanswered, or the caller hung
+ *               up before we accepted.
+ *   busy      — a second incoming call arrived while this device was already
+ *               in one and was auto-declined (purely local — no core state).
+ *   declined  — explicitly rejected before connecting (either side).
+ *   timeout   — an outgoing call that rang out with no answer.
+ *   cancelled — we hung up an outgoing call ourselves before it connected.
+ *   error     — the call tore down from a local failure, never connecting.
+ */
+export type { CallResult }
+
+/** Record a call outcome. Content-free: direction, whether it carried video,
+ * and the fixed `CallResult` bucket above — never the chat/contact, never a
+ * duration, never any signaling/media payload. Called by the runtime's call
+ * manager (`packages/web-app/src/runtime.ts`) at the one point a call's
+ * lifecycle is finished (see `reportCallOutcome`), so this fires at most once
+ * per call regardless of how many ways a call can end. */
+export function trackCall(params: {
+  direction: 'outgoing' | 'incoming'
+  hasVideo: boolean
+  result: CallResult
+}): void {
+  event('call', {
+    direction: params.direction,
+    has_video: params.hasVideo ? 'yes' : 'no',
+    result: params.result,
+  })
 }
 
 let startupSent = false
+let startupQueued = false
 /** Turn a startup duration (ms) into one of the fixed buckets and send it,
  * tagged cold (onboarding) vs warm (had an account). Fires at most once, and
  * waits until the cold/warm mode is known (callers invoke it both when the UI
  * becomes ready and when account state resolves — whichever satisfies both
- * conditions sends it). Bucketing keeps it non-identifying. */
+ * conditions sends it). Bucketing keeps it non-identifying. On a cold start the
+ * send is held until the welcome notice is shown (see afterNoticeShown). */
 export function trackStartup(ms: number | null): void {
-  if (startupSent || ms == null) return
+  if (startupSent || startupQueued || ms == null) return
   const mode = session.startupMode()
   if (mode === 'unknown') return // account state not known yet — try again later
-  startupSent = true
   const bucket =
     ms < 500 ? '<0.5s' : ms < 1000 ? '0.5-1s' : ms < 2000 ? '1-2s' : ms < 4000 ? '2-4s' : '>4s'
-  event('startup', { bucket, mode })
+  startupQueued = true
+  afterNoticeShown(() => {
+    startupSent = true
+    event('startup', { bucket, mode })
+  })
 }
 
 // build a stable, param-free url for Plausible: origin + path only — never

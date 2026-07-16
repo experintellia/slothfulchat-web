@@ -12,7 +12,7 @@ import initWasm, { init } from '../wasm-dist/deltachat_wasm.js'
 interface FsRequest {
   type: 'fs'
   id: number
-  op: 'read' | 'write' | 'remove' | 'exists' | 'mkdirp' | 'flush'
+  op: 'read' | 'write' | 'remove' | 'exists' | 'flush'
   path: string
   data?: Uint8Array
 }
@@ -170,9 +170,6 @@ scope.onmessage = async (event: MessageEvent<string | FsRequest | ConfigMessage>
         break
       case 'exists':
         response.exists = dc.fs_exists(msg.path)
-        break
-      case 'mkdirp':
-        dc.fs_mkdirp(msg.path)
         break
       case 'flush':
         // awaits until every queued OPFS write-through is durable (backup

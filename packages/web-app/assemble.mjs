@@ -116,22 +116,15 @@ for (const file of await readdir(join(dist, 'themes'))) {
   if (!file.endsWith('.css') || file.startsWith('_')) continue
   const id = basename(file, '.css')
   const address = 'dc:' + id
+  const is_prototype = file.startsWith(HIDDEN_THEME_PREFIX)
+  let name = address + ' [Invalid Meta]'
+  let description = '[missing description]'
   try {
-    const meta = parseThemeMetaData(await readFile(join(dist, 'themes', file), 'utf-8'))
-    themes.push({
-      name: meta.name,
-      description: meta.description,
-      address,
-      is_prototype: file.startsWith(HIDDEN_THEME_PREFIX),
-    })
+    ;({ name, description } = parseThemeMetaData(await readFile(join(dist, 'themes', file), 'utf-8')))
   } catch {
-    themes.push({
-      name: address + ' [Invalid Meta]',
-      description: '[missing description]',
-      address,
-      is_prototype: file.startsWith(HIDDEN_THEME_PREFIX),
-    })
+    // keep the invalid-meta placeholders
   }
+  themes.push({ name, description, address, is_prototype })
 }
 await writeFile(join(dist, 'themes.json'), JSON.stringify(themes, null, 2))
 
@@ -177,6 +170,12 @@ await writeFile(
   patchBootError(await readFile(join(here, 'static/boot-error.js'), 'utf-8'), config.instanceName)
 )
 await cp(join(here, 'static/viewport-keyboard.js'), join(dist, 'viewport-keyboard.js'))
+// Detached call window (docs/calls.md §Windowing, M4): a standalone same-origin
+// page the main tab opens with window.open. Its bundle (dist/call-popup.js) is
+// emitted by esbuild in `pnpm build`, alongside runtime.js. Self-contained CSP
+// (baked into the file), so — unlike main.html — it needs no assemble-time
+// rewrite.
+await cp(join(here, 'static/call-popup.html'), join(dist, 'call-popup.html'))
 await writeFile(join(dist, '.nojekyll'), '')
 
 // imprint.html + privacy.html — standalone pages, templates in instance-config.mjs.
