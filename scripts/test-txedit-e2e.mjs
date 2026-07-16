@@ -71,6 +71,19 @@ try {
     throw new Error('editor panel is not inside the popup window')
   console.log('OK (a): editor opened in a separate popup window')
 
+  // (f) No close button — you close the popup window itself.
+  if ((await popup.getByRole('button', { name: 'Close' }).count()) !== 0)
+    throw new Error('editor still has a Close button')
+  console.log('OK (f): no in-panel close button')
+
+  // All editor dialogs are raised on the popup; fail if any hits the main window.
+  let confirmOnPopup = false, confirmOnPage = false
+  popup.on('dialog', async d => {
+    if (d.type() === 'confirm') confirmOnPopup = true
+    await d.accept(d.type() === 'prompt' ? 'xytest' : undefined)
+  })
+  page.on('dialog', async d => { confirmOnPage = true; await d.dismiss() })
+
   // (d) Nothing edited yet → every export/revert button is disabled.
   for (const name of ['Export XML', 'Export JSON', 'Export experimental', 'Revert all']) {
     if (!(await popup.getByRole('button', { name }).isDisabled()))
@@ -102,15 +115,22 @@ try {
     throw new Error('Export experimental should stay disabled for a translatable-only edit')
   console.log('OK (d): a translatable edit enables the normal exports, not experimental')
 
-  // (e) Custom language chooser opens a listbox and shows per-language counts.
+  // (e/f) Custom chooser: per-language counts, completion %, hidden-language
+  // tag, and a "create language" row.
   await popup.getByRole('button', { name: 'Language' }).click()
   await popup.getByRole('listbox').waitFor({ state: 'visible', timeout: 5_000 })
-  if ((await popup.getByRole('option').count()) < 2)
-    throw new Error('language chooser has too few options')
+  if ((await popup.getByRole('option').count()) < 10)
+    throw new Error('language chooser has too few options (hidden locales missing?)')
   if ((await popup.locator('[role=option] span[title*="edited key"]').count()) < 1)
-    throw new Error('language chooser does not show a per-language change count')
+    throw new Error('chooser does not show a per-language change count')
+  if ((await popup.locator('[role=option]').filter({ hasText: '%' }).count()) < 1)
+    throw new Error('chooser does not show completion percentages')
+  if ((await popup.getByText('hidden', { exact: true }).count()) < 1)
+    throw new Error('chooser does not tag hidden (incomplete) languages')
+  if ((await popup.getByText('+ New language…').count()) !== 1)
+    throw new Error('chooser is missing the create-language row')
   await popup.keyboard.press('Escape') // close the menu
-  console.log('OK (e): custom language chooser lists languages with change counts')
+  console.log('OK (e/f): chooser shows counts, completion %, hidden tag, create row')
 
   // (c) Experimental strings: badged, and edited ones export on their own button.
   const expKey = await page.evaluate(async () => {
@@ -129,6 +149,27 @@ try {
     return b && !b.disabled
   }, null, { timeout: 10_000 })
   console.log('OK (c): experimental key badged + Export experimental enabled')
+
+  // (g) Category filters under the search bar. With the experimental filter on
+  // (and no search term), every listed row must be an experimental key.
+  const chip = name => popup.getByRole('button', { name, exact: true })
+  await popup.getByRole('searchbox').fill('')
+  await chip('experimental').click()
+  await popup.locator('[role=dialog] code').first().waitFor({ state: 'visible', timeout: 5_000 })
+  const expRows = await popup.locator('[role=dialog] code').count()
+  // one "experimental" badge per row, plus the chip button's own label
+  const expBadges = await popup.getByText('experimental', { exact: true }).count()
+  if (expRows < 5 || expBadges < expRows)
+    throw new Error(`experimental filter leaked non-experimental rows (${expBadges} badges / ${expRows} rows)`)
+  // Switch to the stockstrings filter: a known core key must appear.
+  await chip('experimental').click() // off
+  await chip('stockstrings').click() // on
+  await popup.getByRole('searchbox').fill('self')
+  if ((await popup.locator('input[aria-label="self"]').count()) < 1)
+    throw new Error('stockstrings filter hid the core key "self"')
+  await chip('stockstrings').click() // off
+  await popup.getByRole('searchbox').fill('')
+  console.log('OK (g): untranslated/experimental/stockstrings filters work')
 
   // (a2) The inspect highlight must draw ABOVE the app's modal (top-layer)
   // dialogs — a plain high z-index can't, so it must join the top layer.
@@ -160,15 +201,23 @@ try {
   }, null, { timeout: 10_000 })
   console.log('OK (a2): inspect highlight is in the top layer, above a modal dialog')
 
-  // (a) The "Revert all" confirm must appear in the editor's own popup window.
-  let confirmOnPopup = false, confirmOnPage = false
-  popup.on('dialog', d => { confirmOnPopup = true; d.accept() })
-  page.on('dialog', d => { confirmOnPage = true; d.accept() })
+  // (a) The "Revert all" confirm must appear in the editor's own popup window
+  // (dialog handlers registered up top; the confirm/page flags are set there).
   await popup.getByRole('button', { name: 'Revert all' }).click()
   await page.waitForFunction(([k, s]) => window.static_translate(k) !== s, [picked.key, SENTINEL], { timeout: 15_000 })
   if (!confirmOnPopup) throw new Error('Revert-all confirm did not appear on the popup window')
   if (confirmOnPage) throw new Error('Revert-all confirm appeared on the main window, not the popup')
   console.log('OK (a): Revert-all confirm shown in the popup, not the main window')
+
+  // (e) Create a language on the fly (the prompt is auto-answered 'xytest' by the
+  // popup dialog handler) → the chooser switches to it.
+  await popup.getByRole('button', { name: 'Language' }).click()
+  await popup.getByText('+ New language…').click()
+  await popup.waitForFunction(() => {
+    const b = document.querySelector('button[aria-label=Language]')
+    return b && /\(xytest\)/.test(b.textContent || '')
+  }, null, { timeout: 10_000 })
+  console.log('OK (e): created a new language on the fly')
 
   console.log('\nPASS: translation editor e2e')
 } catch (e) {

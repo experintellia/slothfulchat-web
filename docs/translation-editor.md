@@ -30,8 +30,17 @@ first).
   field to change its text. Under a non-English language each field shows the
   English source for context.
 - **Switch languages** with the **language chooser** (top-right). Each language
-  shows a badge with how many keys you've edited in it, so you can see at a
-  glance where you have unsaved work.
+  shows its **completion** (% of English keys translated, experimental strings
+  excluded) and a badge with how many keys you've edited in it. The list also
+  includes languages **too incomplete to be offered in the app** (tagged
+  `hidden`), and a **+ New language…** row to start translating a language on
+  the fly — pick a code (e.g. `pt-BR`) and edit/export it. (A brand-new language
+  with no locale file can't be previewed live, so its preview shows English; its
+  edits still persist and export.)
+- **Filter** the list with the toggles under the search box —
+  **untranslated** (no translation in this language yet), **experimental**, and
+  **stockstrings** (strings that come from the core library). Combine with the
+  search box to narrow further.
 - **Per-key badges** tell you where a key stands for the current language:
   - **`untranslated`** — no translation yet in this language; the editor shows
     the English source, which is what the app currently renders.

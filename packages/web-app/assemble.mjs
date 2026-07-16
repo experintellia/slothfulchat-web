@@ -68,6 +68,26 @@ for (const file of await readdir(locales)) {
   }
 }
 
+// Manifests for the in-app translation editor: _catalogue.json maps each
+// translatable locale (<code>.json, skipping the _-prefixed meta files like
+// _languages.json) to its key count, and _stockstrings.json lists the keys
+// core's stockStrings.ts hardcodes — the editor uses both to show progress
+// and flag which strings ship from core rather than the locale files.
+const catalogue = {}
+for (const file of await readdir(locales)) {
+  if (!file.endsWith('.json') || file.startsWith('_')) continue
+  const code = basename(file, '.json')
+  catalogue[code] = Object.keys(JSON.parse(await readFile(join(locales, file), 'utf-8'))).length
+}
+await writeFile(join(dist, 'locales/_catalogue.json'), JSON.stringify(catalogue))
+
+let stockStrings = []
+try {
+  const src = await readFile(join(repo, 'build/desktop/packages/frontend/src/stockStrings.ts'), 'utf-8')
+  stockStrings = [...new Set([...src.matchAll(/tx\(\s*'([^']+)'/g)].map(m => m[1]))]
+} catch {}
+await writeFile(join(dist, 'locales/_stockstrings.json'), JSON.stringify(stockStrings))
+
 // our themes: compile themes/*.scss against upstream's _themebase and drop
 // them into dist/themes/ — the themes.json scan below picks them up, so
 // adding/changing a theme never touches patches/.

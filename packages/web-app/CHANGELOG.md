@@ -23,8 +23,13 @@
   **experimental** when it's an English-only app string; experimental strings
   are kept out of the normal export (partial Android XML / JSON changeset) and
   get their own **Export experimental** button. Export/revert buttons disable
-  when there's nothing to act on. A custom **language chooser** shows how many
-  keys you've edited in each language. An "Inspect" mode (🎯) reveals which
+  when there's nothing to act on. Toggle **filters** under the search box —
+  untranslated, experimental, or stockstrings (strings from the core library,
+  extracted at build time). A custom **language chooser** shows each language's
+  completion (% of English keys translated) and how many keys you've edited in
+  it, surfaces languages too incomplete to appear in the app (tagged `hidden`),
+  and can create a new language on the fly to translate/export. An "Inspect"
+  mode (🎯) reveals which
   translation key produced any on-screen text and jumps the editor to it — its
   highlight and tooltip render in the top layer, so they work over the app's
   modal dialogs too. Editing a string or switching the app language refreshes

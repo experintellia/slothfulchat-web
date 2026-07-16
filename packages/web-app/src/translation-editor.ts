@@ -184,7 +184,14 @@ let sourceEn: Record<string, Entry> = {} // en.json catalogue (English)
 let localeOwn: Record<string, Entry> = {} // current locale's own catalogue
 let experimental: Record<string, Entry> = {} // _untranslated_en.json (English-only)
 let experimentalKeys = new Set<string>()
-let languages: Array<{ code: string; name: string }> = []
+// 'shown'  — in the app's _languages.json
+// 'hidden' — has a locale file but is too incomplete to be offered in the app
+// 'new'    — created here on the fly; no locale file yet
+type Lang = { code: string; name: string; status: 'shown' | 'hidden' | 'new' }
+let languages: Lang[] = []
+let catalogue: Record<string, number> = {} // per-locale key counts (build manifest)
+let stockKeys = new Set<string>() // core stock-string keys (build manifest)
+let filters = { untranslated: false, experimental: false, stock: false }
 let search = ''
 let listEl: HTMLElement | null = null
 let countEl: HTMLElement | null = null
@@ -459,17 +466,20 @@ function renderList(): void {
   }`
 
   const term = search.trim().toLowerCase()
+  const matchesTerm = (k: string): boolean => {
+    if (!term) return true
+    if (k.toLowerCase().includes(term)) return true
+    const cur = overlay[k] || pristineFor(k)
+    return Object.values(cur).some(v => v.toLowerCase().includes(term))
+  }
   let keys: string[]
   let capped = false
-  if (!term) {
+  if (!term && !anyFilter()) {
     keys = changedKeys.sort()
   } else {
-    const all = allKeys().sort()
-    keys = all.filter(k => {
-      if (k.toLowerCase().includes(term)) return true
-      const cur = overlay[k] || pristineFor(k)
-      return Object.values(cur).some(v => v.toLowerCase().includes(term))
-    })
+    keys = allKeys()
+      .sort()
+      .filter(k => matchesTerm(k) && matchesFilter(k))
     // ponytail: cap the rendered rows — the catalogue is ~1000 keys and a
     // stray short query would render them all. Narrow the search to see more.
     if (keys.length > 200) {
@@ -484,7 +494,7 @@ function renderList(): void {
       h(
         'div',
         { style: { ...muted, padding: '12px' } },
-        term ? 'No matching keys.' : 'No changes yet — search a key to edit.'
+        term || anyFilter() ? 'No matching keys.' : 'No changes yet — search a key to edit.'
       )
     )
     return
@@ -684,6 +694,65 @@ function langLabel(code: string): string {
   return `${languages.find(l => l.code === code)?.name || code} (${code})`
 }
 
+/** Native language name for a bare code (for locales not in _languages.json). */
+function displayName(code: string): string {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'language' }).of(code.replace('_', '-')) || code
+  } catch {
+    return code
+  }
+}
+
+/** Percent of the English keys a locale translates (build manifest), ignoring
+ *  experimental strings. null = unknown (e.g. a language created here, no file). */
+function completion(code: string): number | null {
+  const en = catalogue['en']
+  const n = catalogue[code]
+  if (!en || n == null) return null
+  return Math.min(100, Math.round((n / en) * 100))
+}
+
+function tagPill(label: string, bg: string, fg: string, title: string): HTMLElement {
+  return h(
+    'span',
+    {
+      title,
+      style: { background: bg, color: fg, borderRadius: '8px', padding: '0 6px', fontSize: '10px', lineHeight: '15px', whiteSpace: 'nowrap' },
+    },
+    label
+  )
+}
+
+/** The "why isn't this in the app" tag for hidden / newly-created languages. */
+function statusTag(status: Lang['status']): HTMLElement | null {
+  if (status === 'hidden')
+    return tagPill('hidden', '#4a2a2a', '#f0a0a0', 'Too incomplete to be offered in the app — you can still edit/export it here')
+  if (status === 'new')
+    return tagPill('new', '#2a3a2a', '#a0f0a0', 'Created here on the fly — no locale file yet')
+  return null
+}
+
+/** Chooser entries: the app's shown languages, every locale with a file, and any
+ *  locale you've edited or created here — deduped, named, sorted. */
+function buildLanguages(shown: Array<{ code: string; name: string }>): Lang[] {
+  const shownMap = new Map(shown.map(l => [l.code, l.name]))
+  const codes = new Set<string>([
+    ...shownMap.keys(),
+    ...Object.keys(catalogue),
+    ...Object.keys(loadOverlay()),
+    currentLocale,
+  ])
+  return [...codes]
+    .map(
+      (code): Lang => ({
+        code,
+        name: shownMap.get(code) || displayName(code),
+        status: shownMap.has(code) ? 'shown' : code in catalogue ? 'hidden' : 'new',
+      })
+    )
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
 function updateLangButton(): void {
   if (!langBtn) return
   langBtn.replaceChildren(h('span', { style: ellipsis }, langLabel(currentLocale)))
@@ -699,29 +768,43 @@ function closeLangMenu(): void {
 
 function openLangMenu(): void {
   if (!langMenu) return
-  // Rebuild rows each open so per-language change counts stay current.
-  langMenu.replaceChildren(
-    ...languages.map(l => {
-      const n = changeCount(l.code)
-      const selected = l.code === currentLocale
-      return h(
-        'button',
-        {
-          role: 'option',
-          'aria-selected': String(selected),
-          style: {
-            display: 'flex', alignItems: 'center', gap: '6px', width: '100%',
-            textAlign: 'left', background: selected ? '#2a2a1a' : 'transparent',
-            color: '#eee', border: '0', borderBottom: '1px solid #222',
-            padding: '5px 8px', fontSize: '12px', cursor: 'pointer',
-          },
-          onclick: () => void selectLocale(l.code),
+  // Rebuild rows each open so per-language counts/completion stay current.
+  const rows = languages.map(l => {
+    const n = changeCount(l.code)
+    const pct = completion(l.code)
+    const tag = statusTag(l.status)
+    const selected = l.code === currentLocale
+    return h(
+      'button',
+      {
+        role: 'option',
+        'aria-selected': String(selected),
+        style: {
+          display: 'flex', alignItems: 'center', gap: '6px', width: '100%',
+          textAlign: 'left', background: selected ? '#2a2a1a' : 'transparent',
+          color: '#eee', border: '0', borderBottom: '1px solid #222',
+          padding: '5px 8px', fontSize: '12px', cursor: 'pointer',
         },
-        h('span', { style: ellipsis }, `${l.name} (${l.code})`),
-        ...(n ? [countBadge(n)] : [])
-      )
-    })
+        onclick: () => void selectLocale(l.code),
+      },
+      h('span', { style: ellipsis }, `${l.name} (${l.code})`),
+      ...(pct != null ? [h('span', { style: { ...muted, whiteSpace: 'nowrap' } }, `${pct}%`)] : []),
+      ...(tag ? [tag] : []),
+      ...(n ? [countBadge(n)] : [])
+    )
+  })
+  const createRow = h(
+    'button',
+    {
+      style: {
+        width: '100%', textAlign: 'left', background: 'transparent', color: '#8cf',
+        border: '0', padding: '6px 8px', fontSize: '12px', cursor: 'pointer',
+      },
+      onclick: createLanguage,
+    },
+    '+ New language…'
   )
+  langMenu.replaceChildren(...rows, createRow)
   langMenu.style.display = 'block'
   langBtn?.setAttribute('aria-expanded', 'true')
 }
@@ -738,6 +821,20 @@ async function selectLocale(code: string): Promise<void> {
   }
   updateLangButton()
   renderList()
+}
+
+/** Start translating a language that isn't offered in the app (or a brand-new
+ *  one): prompt for a code, add it to the chooser, and switch to it. Its edits
+ *  persist in the overlay and can be exported; if it has no locale file the app
+ *  can't render it live, so the preview falls back to English. */
+function createLanguage(): void {
+  const code = ((win || window).prompt('New language code (e.g. sl, pt-BR):') || '').trim()
+  if (!code) return
+  if (!languages.some(l => l.code === code)) {
+    const entry: Lang = { code, name: displayName(code), status: code in catalogue ? 'hidden' : 'new' }
+    languages = [...languages, entry].sort((a, b) => a.name.localeCompare(b.name))
+  }
+  void selectLocale(code)
 }
 
 /** Close the language menu when a click lands outside it (popup document). */
@@ -770,6 +867,46 @@ function buildLangChooser(): HTMLElement {
   return h('div', { style: { position: 'relative' } }, langBtn, langMenu)
 }
 
+// ---- category filters under the search bar (g) ----------------------------
+
+function chipStyle(on: boolean): Record<string, string> {
+  return { ...btnStyle, fontSize: '11px', background: on ? '#ffd479' : 'transparent', color: on ? '#111' : '#ccc' }
+}
+
+function filterChip(label: string, key: keyof typeof filters): HTMLButtonElement {
+  const btn = h(
+    'button',
+    {
+      'aria-pressed': String(filters[key]),
+      title: `Show only ${label} strings`,
+      style: chipStyle(filters[key]),
+      onclick: () => {
+        filters[key] = !filters[key]
+        btn.setAttribute('aria-pressed', String(filters[key]))
+        Object.assign(btn.style, chipStyle(filters[key]))
+        renderList()
+      },
+    },
+    label
+  ) as HTMLButtonElement
+  return btn
+}
+
+function anyFilter(): boolean {
+  return filters.untranslated || filters.experimental || filters.stock
+}
+
+/** A key passes when it's in at least one enabled category (untranslated for
+ *  this locale / experimental / used by core). No filters → everything passes. */
+function matchesFilter(key: string): boolean {
+  if (!anyFilter()) return true
+  return (
+    (filters.untranslated && classify(key) === 'en') ||
+    (filters.experimental && experimentalKeys.has(key)) ||
+    (filters.stock && stockKeys.has(key))
+  )
+}
+
 function buildPanel(): HTMLElement {
   const langChooser = buildLangChooser()
 
@@ -793,6 +930,15 @@ function buildPanel(): HTMLElement {
     },
   })
   searchInputEl = searchInput
+
+  const filterRow = h(
+    'div',
+    { style: { display: 'flex', gap: '6px', alignItems: 'center', padding: '0 12px 6px', flexWrap: 'wrap' } },
+    h('span', { style: muted }, 'Filter:'),
+    filterChip('untranslated', 'untranslated'),
+    filterChip('experimental', 'experimental'),
+    filterChip('stockstrings', 'stock')
+  )
 
   countEl = h('span', { style: muted }, '0 changes')
   listEl = h('div', {
@@ -872,12 +1018,7 @@ function buildPanel(): HTMLElement {
         onclick: () => (inspecting ? stopInspect() : startInspect()),
       },
       '🎯'
-    )),
-    h(
-      'button',
-      { style: btnStyle, title: 'Close (Esc)', 'aria-label': 'Close', onclick: close },
-      '✕'
-    )
+    ))
   )
 
   return h(
@@ -900,6 +1041,7 @@ function buildPanel(): HTMLElement {
     },
     header,
     h('div', { style: { padding: '0 12px' } }, searchInput),
+    filterRow,
     listEl,
     footer
   )
@@ -911,9 +1053,10 @@ async function open(): Promise<void> {
     return
   }
   currentLocale = (window as any).localeData?.locale || 'en'
+  let shown: Array<{ code: string; name: string }>
   try {
     sourceEn = await loadCatalogue('en')
-    languages = await loadLanguages()
+    shown = await loadLanguages()
   } catch (err) {
     console.error('[translation-editor] failed to load locale data', err)
     alert('Translation editor: could not load locale data (see console).')
@@ -925,11 +1068,23 @@ async function open(): Promise<void> {
     experimental = {}
   }
   experimentalKeys = new Set(Object.keys(experimental))
+  // Build manifests (best-effort — the editor degrades gracefully without them).
+  try {
+    catalogue = (await fetchJson('locales/_catalogue.json')) as unknown as Record<string, number>
+  } catch {
+    catalogue = {}
+  }
+  try {
+    stockKeys = new Set((await (await fetch(BASE + 'locales/_stockstrings.json')).json()) as string[])
+  } catch {
+    stockKeys = new Set()
+  }
   try {
     localeOwn = currentLocale === 'en' ? sourceEn : await loadCatalogue(currentLocale)
   } catch {
     localeOwn = {}
   }
+  languages = buildLanguages(shown)
   const w = window.open('', 'slothfulchat-tx', 'popup=yes,width=460,height=820')
   if (!w) {
     alert(
@@ -957,6 +1112,7 @@ function teardown(): void {
   panel = null
   listEl = countEl = searchInputEl = inspectBtn = null
   xmlBtn = jsonBtn = expBtn = revertBtn = langBtn = langMenu = null
+  filters = { untranslated: false, experimental: false, stock: false }
   h = makeH(document)
 }
 
