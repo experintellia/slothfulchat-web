@@ -86,6 +86,36 @@ try {
   await page.locator(sel).filter({ hasText: SENTINEL }).first().waitFor({ state: 'visible', timeout: 15_000 })
   console.log('OK (c): edit live-applied — static_translate + on-screen text updated')
 
+  // (a2) The inspect highlight must draw ABOVE the app's modal (top-layer)
+  // dialogs — a plain high z-index can't, so it must join the top layer.
+  await popup.getByRole('button', { name: 'Inspect element' }).click()
+  const at = await page.evaluate(() => {
+    const dlg = document.createElement('dialog')
+    Object.assign(dlg.style, {
+      margin: '0', padding: '0', border: '0',
+      width: '100vw', height: '100vh', maxWidth: '100vw', maxHeight: '100vh',
+      background: '#000',
+    })
+    const inner = document.createElement('div')
+    Object.assign(inner.style, {
+      position: 'absolute', left: '200px', top: '200px', width: '120px', height: '40px',
+    })
+    dlg.append(inner)
+    document.body.append(dlg)
+    dlg.showModal()
+    const r = inner.getBoundingClientRect()
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+  })
+  await page.mouse.move(at.x, at.y)
+  await page.mouse.move(at.x + 1, at.y) // nudge to fire a mousemove over the dialog
+  await page.waitForFunction(() => {
+    const hl = document.querySelector('[data-txedit=highlight]')
+    if (!hl || !document.querySelector('dialog[open]')) return false
+    if (getComputedStyle(hl).display === 'none') return false
+    try { return hl.matches(':popover-open') } catch { return false }
+  }, null, { timeout: 10_000 })
+  console.log('OK (a2): inspect highlight is in the top layer, above a modal dialog')
+
   console.log('\nPASS: translation editor e2e')
 } catch (e) {
   failed = true

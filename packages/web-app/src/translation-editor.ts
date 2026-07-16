@@ -272,21 +272,39 @@ function inThePanel(node: EventTarget | null): boolean {
   return !!panel && node instanceof Node && panel.contains(node)
 }
 
+/** Show/hide an overlay node, keeping it in the top layer above app dialogs.
+ *  Re-promoting on show puts it above any dialog opened since inspect started;
+ *  `display` is the fallback for browsers without the Popover API. */
+function raise(el: HTMLElement | null, on: boolean): void {
+  if (!el) return
+  el.style.display = on ? 'block' : 'none'
+  try {
+    if (on) {
+      if ((el as any).matches?.(':popover-open')) (el as any).hidePopover()
+      ;(el as any).showPopover?.()
+    } else if ((el as any).matches?.(':popover-open')) {
+      ;(el as any).hidePopover()
+    }
+  } catch {
+    /* no Popover API or over-constrained state — display fallback covers it */
+  }
+}
+
 function onInspectMove(e: MouseEvent): void {
   const target = e.target as Element | null
   if (!target || !hlBox || !tip || inThePanel(target)) {
-    if (hlBox) hlBox.style.display = 'none'
-    if (tip) tip.style.display = 'none'
+    raise(hlBox, false)
+    raise(tip, false)
     return
   }
   const rect = target.getBoundingClientRect()
   Object.assign(hlBox.style, {
-    display: 'block',
     left: `${rect.left}px`,
     top: `${rect.top}px`,
     width: `${rect.width}px`,
     height: `${rect.height}px`,
   })
+  raise(hlBox, true)
   const matches = matchKeys((window as any).__txRegistry || new Map(), candidateStrings(target))
   const comp = fiberComponentName(target)
   tip.replaceChildren()
@@ -297,7 +315,8 @@ function onInspectMove(e: MouseEvent): void {
     tip.append(hApp('div', { style: muted }, 'no tx key for this text'))
   }
   if (comp) tip.append(hApp('div', { style: muted }, `<${comp}>`))
-  tip.style.display = 'block'
+  // Raise tip after hlBox so the tooltip sits above the highlight, then measure.
+  raise(tip, true)
   tip.style.left = `${Math.min(e.clientX + 14, innerWidth - 340)}px`
   // Flip above the cursor near the bottom edge so the tooltip stays on screen.
   const below = e.clientY + 16
@@ -324,9 +343,17 @@ function onInspectClick(e: MouseEvent): void {
 function startInspect(): void {
   if (inspecting) return
   inspecting = true
+  // popover:'manual' promotes these into the top layer, so they draw ABOVE the
+  // app's showModal() dialogs (which a plain high z-index can't). inset/margin
+  // reset undoes the UA popover centering; we position via left/top ourselves.
   hlBox = hApp('div', {
+    popover: 'manual',
+    'data-txedit': 'highlight',
     style: {
+      display: 'none',
       position: 'fixed',
+      inset: 'auto',
+      margin: '0',
       pointerEvents: 'none',
       zIndex: '2147483001',
       border: '2px solid #ffd479',
@@ -335,8 +362,12 @@ function startInspect(): void {
     },
   })
   tip = hApp('div', {
+    popover: 'manual',
     style: {
+      display: 'none',
       position: 'fixed',
+      inset: 'auto',
+      margin: '0',
       pointerEvents: 'none',
       zIndex: '2147483002',
       maxWidth: '320px',

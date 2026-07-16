@@ -21,7 +21,9 @@
   persisted in the browser, with a change list, revert, and export as partial
   Android XML or a JSON changeset. It opens in its own window so the app's modal
   dialogs never cover it. An "Inspect" mode (🎯) reveals which translation key
-  produced any on-screen text and jumps the editor to it. Editing a string or
+  produced any on-screen text and jumps the editor to it — its highlight and
+  tooltip render in the top layer, so they work over the app's modal dialogs
+  too. Editing a string or
   switching the app language now refreshes the UI without a manual reload (the
   browser build's `setLocale` was a stub, and the editor was reading the runtime
   handle the frontend had already deleted, so live refresh silently did

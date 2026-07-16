@@ -50,7 +50,8 @@ Press `Esc` to close it (or to leave inspect mode first).
 Click **🎯** in the panel, then hover any element in the app window: a tooltip
 shows the translation key(s) that produced its text and the owning React
 component. Click the element to jump the editor straight to that key. `Esc`
-leaves inspect mode.
+leaves inspect mode. The highlight and tooltip draw in the browser's top layer,
+so they work over the app's modal dialogs too.
 
 It resolves keys from a live registry of `tx()` calls (result text → key), so it
 only matches text rendered through the translation system — core "stock strings"
