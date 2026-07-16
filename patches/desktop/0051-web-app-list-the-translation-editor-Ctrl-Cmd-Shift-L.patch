@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <experintellia@users.noreply.github.com>
+Date: Thu, 16 Jul 2026 02:54:51 +0000
+Subject: [PATCH] web-app: list the translation editor (Ctrl/Cmd+Shift+L) in
+ the keyboard shortcuts cheat sheet
+
+---
+ packages/frontend/src/components/KeyboardShortcutHint.tsx | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/packages/frontend/src/components/KeyboardShortcutHint.tsx b/packages/frontend/src/components/KeyboardShortcutHint.tsx
+index 7da2c3720..5c5ea4269 100644
+--- a/packages/frontend/src/components/KeyboardShortcutHint.tsx
++++ b/packages/frontend/src/components/KeyboardShortcutHint.tsx
+@@ -202,6 +202,12 @@ export function getKeybindings(
+         title: tx('force_refresh_network'),
+         keyBindings: [['F5']],
+       },
++      {
++        // SlothfulChat: the in-app translation editor (runtime.ts), available in
++        // every build. No catalogue string for this dev/translator tool.
++        title: 'Translation editor',
++        keyBindings: [[ctrl, 'Shift', 'L']],
++      },
+     ].map(Shortcut),
+     {
+       title: tx('message_input_shortcut_section'),

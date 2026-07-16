@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 15 Jul 2026 12:00:00 +0000
+Subject: [PATCH] jsonrpc: emit events when stockstrings change so language
+ switch is seamless
+
+set_stock_strings updated the shared stock translations but emitted no
+events, so already-rendered, cached UI text that embeds stock strings
+(chatlist message summaries, self/device contact names, connectivity
+view) stayed in the old language until a full reload. This is the
+"language switch doesn't refresh the UI" bug.
+
+Add stock_str::emit_events_for_updated_stock_strings() and call it once
+for the selected account after the stock strings are applied, emitting
+ChatlistItemChanged, ContactsChanged(SELF/DEVICE) and ConnectivityChanged
+so the UI refetches the affected data automatically.
+
+Backport of chatmail/core#7719 by Simon Laux (closed unmerged) /
+deltachat-desktop#5403, ported to the pinned core (the upstream import
+hunk was de-duplicated and the call site adapted to this tree's
+set_stock_strings).
+---
+ deltachat-jsonrpc/src/api.rs |  6 +++++-
+ src/stock_str.rs             | 15 +++++++++++++++
+ 2 files changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
+index bf1b29c..7a1fa64 100644
+--- a/deltachat-jsonrpc/src/api.rs
++++ b/deltachat-jsonrpc/src/api.rs
+@@ -34,7 +34,7 @@
+ use deltachat::qr_code_generator::{create_qr_svg, generate_backup_qr, get_securejoin_qr_svg};
+ use deltachat::reaction::{get_msg_reactions, send_reaction};
+ use deltachat::securejoin;
+-use deltachat::stock_str::StockMessage;
++use deltachat::stock_str::{emit_events_for_updated_stock_strings, StockMessage};
+ use deltachat::storage_usage::{get_blobdir_storage_usage, get_storage_usage};
+ use deltachat::webxdc::StatusUpdateSerial;
+ use deltachat::EventEmitter;
+@@ -476,6 +476,10 @@ async fn set_stock_strings(&self, strings: HashMap<u32, String>) -> Result<()> {
+                 accounts.set_stock_translation(stock_id, stock_message)?;
+             }
+         }
++        // In the existing clients only one account is visible at a time.
++        if let Some(context) = accounts.get_selected_account() {
++            emit_events_for_updated_stock_strings(&context);
++        }
+         Ok(())
+     }
+ 
+diff --git a/src/stock_str.rs b/src/stock_str.rs
+index 886f57b..75f87db 100644
+--- a/src/stock_str.rs
++++ b/src/stock_str.rs
+@@ -1253,6 +1253,21 @@ pub(crate) async fn update_device_chats(&self) -> Result<()> {
+     }
+ }
+ 
++/// Emits events to invalidate cached data which contains core translated content
++///
++/// Only call this once after updating all your stockstrings,
++/// NOT after every single call to set_stock_translation, just once in the end.
++pub fn emit_events_for_updated_stock_strings(ctx: &Context) {
++    // update chatlist, which can contain all kinds of stockstrings in the message summary
++    ctx.emit_event(crate::EventType::ChatlistItemChanged { chat_id: None });
++    // And to update contact name [StockMessage::SelfMsg]
++    ctx.emit_event(crate::EventType::ContactsChanged(Some(ContactId::SELF)));
++    // To update bio/status [StockMessage::DeviceMessagesHint]
++    ctx.emit_event(crate::EventType::ContactsChanged(Some(ContactId::DEVICE)));
++    // reload connectivity view, which contains various stock stings
++    ctx.emit_event(crate::EventType::ConnectivityChanged);
++}
++
+ impl Accounts {
+     /// Set the stock string for the [StockMessage].
+     ///

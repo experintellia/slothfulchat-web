@@ -32,6 +32,7 @@ import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
 import { initDiagnostics } from './diagnostics'
+import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
 
 // earliest boot milestone we control: our runtime bundle has finished loading
 perf.boot('runtime-eval')
@@ -718,48 +719,55 @@ class BrowserRuntime {
       await fetch(BASE + 'locales/_untranslated_en.json')
     ).json()
 
-    if (!locale) {
-      return {
-        locale: 'en',
-        messages: { ...messagesEnglish, ...untranslated },
-        dir: 'ltr',
-      }
-    }
+    locale = locale || 'en'
 
-    let localeMessages: object
-    try {
-      localeMessages = await (await fetch(`${BASE}locales/${locale}.json`)).json()
-    } catch (error1) {
-      // dialect fallback: de-CH -> de
+    // The locale's own catalogue, laid over an English base. Keeping English
+    // underneath means untranslated keys (and locales we have no file for — e.g.
+    // one created on the fly in the translation editor) render in English rather
+    // than as raw keys, and we never coerce the requested locale to 'en' — so an
+    // arbitrary/new locale still renders live, showing your overlay edits.
+    let localeMessages: object = {}
+    if (locale !== 'en') {
       try {
+        localeMessages = await (await fetch(`${BASE}locales/${locale}.json`)).json()
+      } catch (error1) {
+        // dialect fallback: de-CH borrows de.json's strings. Keep the requested
+        // locale as the identity, though — coercing it to the base would apply
+        // the overlay/direction of the wrong code and, for a hyphenated locale
+        // created in the editor (e.g. pt-BR), never render its own edits.
         if (locale.indexOf('-') !== -1) {
-          const base_locale = (locale = locale.split('-')[0])
-          localeMessages = await (
-            await fetch(`${BASE}locales/${base_locale}.json`)
-          ).json()
-        } else {
-          throw new Error(
-            'language load failed, even alternative of base language failed.'
-          )
+          const base_locale = locale.split('-')[0]
+          try {
+            localeMessages = await (
+              await fetch(`${BASE}locales/${base_locale}.json`)
+            ).json()
+          } catch (error2) {
+            this.log.error(`No messages for ${locale}; using English base`, error2)
+          }
         }
-      } catch (error2) {
-        this.log.error(
-          `Could not load messages for ${locale}, falling back to english`,
-          error1,
-          error2
-        )
-        locale = 'en'
-        localeMessages = messagesEnglish
       }
     }
+    const dir = localeDir(locale)
+    // The frontend only sets dir on an inner wrapper <div>; also set it on
+    // <html> so RTL reaches body-portaled dialogs and our own vanilla-DOM
+    // overlays (e.g. the bridge toast), not just the React subtree.
+    if (typeof document !== 'undefined') document.documentElement.dir = dir
     return {
       locale,
-      messages: { ...localeMessages, ...untranslated },
-      dir: 'ltr',
+      messages: applyTxOverlay(locale, {
+        ...messagesEnglish,
+        ...localeMessages,
+        ...untranslated,
+      }),
+      dir,
     }
   }
-  setLocale(_locale: string): Promise<void> {
-    throw new Error('Method not implemented.')
+  // Persist the chosen locale (upstream's browser runtime leaves this
+  // unimplemented, which makes the frontend's onChooseLanguage reject before it
+  // reloads). Storing it here makes language switching actually take effect and
+  // lets the translation editor refresh the app live after an edit.
+  async setLocale(locale: string): Promise<void> {
+    await this.setDesktopSetting('locale', locale)
   }
 
   async getDesktopSettings(): Promise<DesktopSettings> {
@@ -1417,7 +1425,11 @@ class BrowserRuntime {
   }
 }
 
-;(window as any).r = new BrowserRuntime()
+// Keep a stable reference: the frontend deletes `window.r` right after it
+// imports it (build/desktop .../runtime/runtime.ts), so anything that needs the
+// runtime later (the translation editor's live refresh) must capture it here.
+const browserRuntime = new BrowserRuntime()
+;(window as any).r = browserRuntime
 
 // --- WS→TCP bridge reachability notice -------------------------------------
 // The wasm core can only send/receive through a reachable WS→TCP bridge
@@ -2859,4 +2871,8 @@ if (typeof window !== 'undefined') {
     openDialog: showBridgeDialog,
     reachable: () => bridgeReachable,
   }
+  // Translation editor (Ctrl/Cmd+Shift+L) — available in every
+  // build; inert until opened. Pass the runtime so its live refresh survives
+  // the frontend deleting window.r.
+  initTranslationEditor(browserRuntime)
 }
