@@ -26,12 +26,17 @@
   when there's nothing to act on. Toggle **filters** under the search box —
   untranslated, experimental, or stockstrings (strings from the core library,
   extracted at build time). A custom **language chooser** shows each language's
-  completion (% of English keys translated) and how many keys you've edited in
-  it, surfaces languages too incomplete to appear in the app (tagged `hidden`),
-  and can create a new language on the fly to translate/export. Value fields are
-  auto-growing textareas, so multi-line strings (e.g. the donation text) are
-  fully editable and grammar add-ons like LanguageTool attach to them. An
-  "Inspect" mode (🎯) reveals which
+  completion (% of English keys translated), text direction, and how many keys
+  you've edited in each, surfaces languages too incomplete to appear in the app
+  (tagged `hidden`), and can create a new language on the fly (code + LTR/RTL
+  toggle) to translate/export. Editing or creating a language now renders it
+  **live** — `getLocaleData` keeps an English base under every locale, so
+  untranslated keys show English instead of raw keys, an unknown/new locale is
+  no longer coerced to English, and RTL locales render right-to-left (the
+  browser build previously forced `dir: ltr`). Value fields are auto-growing
+  textareas, so multi-line strings (e.g. the donation text) are fully editable
+  and grammar add-ons like LanguageTool attach to them; **Enter** saves,
+  **Shift+Enter** adds a newline. An "Inspect" mode (🎯) reveals which
   translation key produced any on-screen text and jumps the editor to it — its
   highlight and tooltip render in the top layer, so they work over the app's
   modal dialogs too. Editing a string or switching the app language refreshes

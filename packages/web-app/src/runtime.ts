@@ -14,7 +14,7 @@ import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
 import { initDiagnostics } from './diagnostics'
-import { applyTxOverlay, initTranslationEditor } from './translation-editor'
+import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
 
 // earliest boot milestone we control: our runtime bundle has finished loading
 perf.boot('runtime-eval')
@@ -667,44 +667,40 @@ class BrowserRuntime {
       await fetch(BASE + 'locales/_untranslated_en.json')
     ).json()
 
-    if (!locale) {
-      return {
-        locale: 'en',
-        messages: applyTxOverlay('en', { ...messagesEnglish, ...untranslated }),
-        dir: 'ltr',
-      }
-    }
+    locale = locale || 'en'
 
-    let localeMessages: object
-    try {
-      localeMessages = await (await fetch(`${BASE}locales/${locale}.json`)).json()
-    } catch (error1) {
-      // dialect fallback: de-CH -> de
+    // The locale's own catalogue, laid over an English base. Keeping English
+    // underneath means untranslated keys (and locales we have no file for — e.g.
+    // one created on the fly in the translation editor) render in English rather
+    // than as raw keys, and we never coerce the requested locale to 'en' — so an
+    // arbitrary/new locale still renders live, showing your overlay edits.
+    let localeMessages: object = {}
+    if (locale !== 'en') {
       try {
+        localeMessages = await (await fetch(`${BASE}locales/${locale}.json`)).json()
+      } catch (error1) {
+        // dialect fallback: de-CH -> de (adopt the base locale's identity too).
         if (locale.indexOf('-') !== -1) {
-          const base_locale = (locale = locale.split('-')[0])
-          localeMessages = await (
-            await fetch(`${BASE}locales/${base_locale}.json`)
-          ).json()
-        } else {
-          throw new Error(
-            'language load failed, even alternative of base language failed.'
-          )
+          const base_locale = locale.split('-')[0]
+          try {
+            localeMessages = await (
+              await fetch(`${BASE}locales/${base_locale}.json`)
+            ).json()
+            locale = base_locale
+          } catch (error2) {
+            this.log.error(`No messages for ${locale}; using English base`, error2)
+          }
         }
-      } catch (error2) {
-        this.log.error(
-          `Could not load messages for ${locale}, falling back to english`,
-          error1,
-          error2
-        )
-        locale = 'en'
-        localeMessages = messagesEnglish
       }
     }
     return {
       locale,
-      messages: applyTxOverlay(locale, { ...localeMessages, ...untranslated }),
-      dir: 'ltr',
+      messages: applyTxOverlay(locale, {
+        ...messagesEnglish,
+        ...localeMessages,
+        ...untranslated,
+      }),
+      dir: localeDir(locale),
     }
   }
   // Persist the chosen locale (upstream's browser runtime leaves this

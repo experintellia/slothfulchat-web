@@ -96,7 +96,7 @@ try {
   const input = popup.locator(`textarea[aria-label="${picked.key}"]`).first()
   await input.waitFor({ state: 'visible', timeout: 10_000 })
   await input.fill(SENTINEL)
-  await input.blur() // fires onchange -> editValue + refreshApp
+  await input.press('Enter') // Enter saves (commits via blur -> onchange)
 
   await page.waitForFunction(
     ([k, s]) => window.static_translate(k) === s,
@@ -104,7 +104,16 @@ try {
     { timeout: 15_000 }
   )
   await page.locator(sel).filter({ hasText: SENTINEL }).first().waitFor({ state: 'visible', timeout: 15_000 })
-  console.log('OK (c): edit live-applied — static_translate + on-screen text updated')
+  console.log('OK (c): Enter saves — live-applied to static_translate + on-screen text')
+
+  // (2) Shift+Enter inserts a newline instead of saving.
+  const ta = popup.locator(`textarea[aria-label="${picked.key}"]`).first()
+  await ta.focus()
+  await ta.press('End')
+  await ta.press('Shift+Enter')
+  if (!(await ta.inputValue()).includes('\n'))
+    throw new Error('Shift+Enter did not insert a newline')
+  console.log('OK (2): Shift+Enter inserts a newline')
 
   // (d) A normal (translatable) edit enables the normal exports + Revert all,
   // but not the experimental export.
@@ -127,10 +136,16 @@ try {
     throw new Error('chooser does not show completion percentages')
   if ((await popup.getByText('hidden', { exact: true }).count()) < 1)
     throw new Error('chooser does not tag hidden (incomplete) languages')
-  if ((await popup.getByText('+ New language…').count()) !== 1)
-    throw new Error('chooser is missing the create-language row')
+  // Existing languages show their text direction (rtl exists, e.g. Arabic).
+  if ((await popup.locator('[role=option]').filter({ hasText: 'rtl' }).count()) < 1)
+    throw new Error('chooser does not show per-language text direction')
+  // Create form: code field + direction toggle + Add.
+  if ((await popup.getByLabel('New language code').count()) !== 1)
+    throw new Error('chooser is missing the create-language form')
+  if ((await popup.getByRole('button', { name: 'Toggle text direction for the new language' }).count()) !== 1)
+    throw new Error('create form is missing the direction toggle')
   await popup.keyboard.press('Escape') // close the menu
-  console.log('OK (e/f): chooser shows counts, completion %, hidden tag, create row')
+  console.log('OK (e/f): chooser shows counts, completion %, hidden tag, direction, create form')
 
   // (c) Experimental strings: badged, and edited ones export on their own button.
   const expKey = await page.evaluate(async () => {
@@ -209,15 +224,19 @@ try {
   if (confirmOnPage) throw new Error('Revert-all confirm appeared on the main window, not the popup')
   console.log('OK (a): Revert-all confirm shown in the popup, not the main window')
 
-  // (e) Create a language on the fly (the prompt is auto-answered 'xytest' by the
-  // popup dialog handler) → the chooser switches to it.
+  // (e) Create an RTL language on the fly via the form. Thanks to the
+  // getLocaleData English-base fix the app actually switches to the created
+  // locale (previously it fell back to English) and picks up the RTL direction.
   await popup.getByRole('button', { name: 'Language' }).click()
-  await popup.getByText('+ New language…').click()
-  await popup.waitForFunction(() => {
-    const b = document.querySelector('button[aria-label=Language]')
-    return b && /\(xytest\)/.test(b.textContent || '')
-  }, null, { timeout: 10_000 })
-  console.log('OK (e): created a new language on the fly')
+  await popup.getByLabel('New language code').fill('xytest')
+  await popup.getByRole('button', { name: 'Toggle text direction for the new language' }).click() // ltr -> rtl
+  await popup.getByRole('button', { name: '+ Add' }).click()
+  await page.waitForFunction(
+    () => window.localeData && window.localeData.locale === 'xytest' && window.localeData.dir === 'rtl',
+    null,
+    { timeout: 10_000 }
+  )
+  console.log('OK (e): created an RTL language on the fly — app renders it live')
 
   console.log('\nPASS: translation editor e2e')
 } catch (e) {

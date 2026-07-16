@@ -29,14 +29,19 @@ first).
 - **Edit the active language.** The panel lists your changes; type in a key's
   field to change its text. Under a non-English language each field shows the
   English source for context.
+- **Editing.** Each value is an auto-growing textarea (so multi-line strings
+  edit in full and grammar add-ons like LanguageTool attach to it). **Enter
+  saves**; **Shift+Enter** inserts a newline.
 - **Switch languages** with the **language chooser** (top-right). Each language
   shows its **completion** (% of English keys translated, experimental strings
-  excluded) and a badge with how many keys you've edited in it. The list also
-  includes languages **too incomplete to be offered in the app** (tagged
-  `hidden`), and a **+ New language…** row to start translating a language on
-  the fly — pick a code (e.g. `pt-BR`) and edit/export it. (A brand-new language
-  with no locale file can't be previewed live, so its preview shows English; its
-  edits still persist and export.)
+  excluded), its **text direction** (`ltr`/`rtl`), and a badge with how many
+  keys you've edited in it. The list also includes languages **too incomplete to
+  be offered in the app** (tagged `hidden`). Editing or creating a language
+  renders it **live** in the app — for keys you haven't translated yet it shows
+  the English source, so even a brand-new language previews immediately.
+- **Create a language on the fly** from the chooser's bottom row: type a code
+  (e.g. `pt-BR`), pick its direction with the **LTR/RTL** toggle, and press
+  **Add**. You can then translate and export it like any other.
 - **Filter** the list with the toggles under the search box —
   **untranslated** (no translation in this language yet), **experimental**, and
   **stockstrings** (strings that come from the core library). Combine with the

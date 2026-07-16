@@ -37,7 +37,40 @@ type Entry = Record<string, string>
 type Overlay = Record<string, Record<string, Entry>>
 
 const OVERLAY_KEY = 'slothfulchat.txOverlay'
+const DIR_KEY = 'slothfulchat.txLangDir'
 const BASE = new URL('.', location.href).pathname
+
+// ---- text direction (per-locale; for RTL preview + the chooser) -----------
+
+function loadDirs(): Record<string, 'ltr' | 'rtl'> {
+  try {
+    return JSON.parse(localStorage.getItem(DIR_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+/** Writing direction for a locale: an explicit choice made in the editor wins,
+ *  else the script's native direction (Intl), else ltr. Exported so
+ *  runtime.getLocaleData() can render new/RTL languages the right way round. */
+export function localeDir(locale: string): 'ltr' | 'rtl' {
+  const stored = loadDirs()[locale]
+  if (stored === 'rtl' || stored === 'ltr') return stored
+  try {
+    const loc = new Intl.Locale(locale.replace('_', '-')) as any
+    const info = loc.getTextInfo ? loc.getTextInfo() : loc.textInfo
+    if (info && info.direction === 'rtl') return 'rtl'
+  } catch {
+    /* unknown code — fall through to ltr */
+  }
+  return 'ltr'
+}
+
+function setLocaleDir(locale: string, dir: 'ltr' | 'rtl'): void {
+  const m = loadDirs()
+  m[locale] = dir
+  localStorage.setItem(DIR_KEY, JSON.stringify(m))
+}
 
 // ---- persistence overlay -------------------------------------------------
 
@@ -203,6 +236,7 @@ let expBtn: HTMLButtonElement | null = null
 let revertBtn: HTMLButtonElement | null = null
 let langBtn: HTMLButtonElement | null = null
 let langMenu: HTMLElement | null = null
+let newLangDir: 'ltr' | 'rtl' = 'ltr' // pending direction in the create-language form
 
 const muted = { color: '#9aa', fontSize: '11px' }
 
@@ -603,6 +637,13 @@ function row(key: string, overlay: Record<string, Entry>): HTMLElement {
         overflow: 'hidden',
       },
       oninput: (e: Event) => autoGrow(e.target as HTMLTextAreaElement),
+      // Enter saves (commits via blur -> onchange); Shift+Enter inserts a newline.
+      onkeydown: (e: KeyboardEvent) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault()
+          ;(e.target as HTMLTextAreaElement).blur()
+        }
+      },
       onchange: async (e: Event) => {
         editValue(
           currentLocale,
@@ -804,23 +845,13 @@ function openLangMenu(): void {
         onclick: () => void selectLocale(l.code),
       },
       h('span', { style: ellipsis }, `${l.name} (${l.code})`),
+      dirIndicator(localeDir(l.code)),
       ...(pct != null ? [h('span', { style: { ...muted, whiteSpace: 'nowrap' } }, `${pct}%`)] : []),
       ...(tag ? [tag] : []),
       ...(n ? [countBadge(n)] : [])
     )
   })
-  const createRow = h(
-    'button',
-    {
-      style: {
-        width: '100%', textAlign: 'left', background: 'transparent', color: '#8cf',
-        border: '0', padding: '6px 8px', fontSize: '12px', cursor: 'pointer',
-      },
-      onclick: createLanguage,
-    },
-    '+ New language…'
-  )
-  langMenu.replaceChildren(...rows, createRow)
+  langMenu.replaceChildren(...rows, buildCreateForm())
   langMenu.style.display = 'block'
   langBtn?.setAttribute('aria-expanded', 'true')
 }
@@ -839,18 +870,66 @@ async function selectLocale(code: string): Promise<void> {
   renderList()
 }
 
-/** Start translating a language that isn't offered in the app (or a brand-new
- *  one): prompt for a code, add it to the chooser, and switch to it. Its edits
- *  persist in the overlay and can be exported; if it has no locale file the app
- *  can't render it live, so the preview falls back to English. */
-function createLanguage(): void {
-  const code = ((win || window).prompt('New language code (e.g. sl, pt-BR):') || '').trim()
+/** A locale's writing-direction indicator, shown per row (where the create
+ *  form's direction toggle sits for a new language). */
+function dirIndicator(dir: 'ltr' | 'rtl'): HTMLElement {
+  return h('span', { title: `text direction: ${dir}`, style: { ...muted, whiteSpace: 'nowrap' } }, dir)
+}
+
+/** Add a language from the create form (code + chosen direction) and switch to
+ *  it. Its edits persist and export; with the English base in getLocaleData it
+ *  now renders live too, showing English for keys you haven't translated yet. */
+function submitNewLanguage(code: string, dir: 'ltr' | 'rtl'): void {
+  code = code.trim()
   if (!code) return
+  setLocaleDir(code, dir)
   if (!languages.some(l => l.code === code)) {
     const entry: Lang = { code, name: displayName(code), status: code in catalogue ? 'hidden' : 'new' }
     languages = [...languages, entry].sort((a, b) => a.name.localeCompare(b.name))
   }
   void selectLocale(code)
+}
+
+/** The create-language row: a code field, an LTR/RTL toggle, and Add. */
+function buildCreateForm(): HTMLElement {
+  newLangDir = 'ltr'
+  const codeInput = h('input', {
+    type: 'text',
+    placeholder: 'new code, e.g. pt-BR',
+    'aria-label': 'New language code',
+    style: { flex: '1', minWidth: '0', background: '#1c1c1c', color: '#eee', border: '1px solid #444', borderRadius: '3px', padding: '3px 5px', fontSize: '12px' },
+    onkeydown: (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        submitNewLanguage(codeInput.value, newLangDir)
+      }
+    },
+  }) as HTMLInputElement
+  const dirToggle = h(
+    'button',
+    {
+      'aria-label': 'Toggle text direction for the new language',
+      title: 'Text direction (LTR / RTL)',
+      style: { ...btnStyle, fontSize: '11px', width: '40px' },
+      onclick: () => {
+        newLangDir = newLangDir === 'ltr' ? 'rtl' : 'ltr'
+        dirToggle.textContent = newLangDir
+      },
+    },
+    newLangDir
+  )
+  const addBtn = h(
+    'button',
+    { style: btnStyle, title: 'Create this language', onclick: () => submitNewLanguage(codeInput.value, newLangDir) },
+    '+ Add'
+  )
+  return h(
+    'div',
+    { style: { display: 'flex', gap: '6px', alignItems: 'center', padding: '6px 8px', borderTop: '2px solid #333' } },
+    codeInput,
+    dirToggle,
+    addBtn
+  )
 }
 
 /** Close the language menu when a click lands outside it (popup document). */
