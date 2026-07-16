@@ -76,11 +76,18 @@ try {
     throw new Error('editor still has a Close button')
   console.log('OK (f): no in-panel close button')
 
+  // Escape in the app window must not destroy the editor popup (it only exits
+  // inspect mode); the popup handles its own Escape.
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(150)
+  if (popup.isClosed()) throw new Error('Escape in the app window closed the editor popup')
+  console.log('OK: Escape in the app window leaves the editor open')
+
   // All editor dialogs are raised on the popup; fail if any hits the main window.
   let confirmOnPopup = false, confirmOnPage = false
   popup.on('dialog', async d => {
     if (d.type() === 'confirm') confirmOnPopup = true
-    await d.accept(d.type() === 'prompt' ? 'xytest' : undefined)
+    await d.accept(d.type() === 'prompt' ? 'pt-BR' : undefined)
   })
   page.on('dialog', async d => { confirmOnPage = true; await d.dismiss() })
 
@@ -231,13 +238,13 @@ try {
   // getLocaleData English-base fix the app actually switches to the created
   // locale (previously it fell back to English) and picks up the RTL direction.
   await popup.getByRole('button', { name: 'Language' }).click()
-  await popup.getByLabel('New language code').fill('xytest')
+  await popup.getByLabel('New language code').fill('pt-BR')
   await popup.getByRole('button', { name: 'Toggle text direction for the new language' }).click() // ltr -> rtl
   await popup.getByRole('button', { name: '+ Add' }).click()
   await page.waitForFunction(
     () =>
       window.localeData &&
-      window.localeData.locale === 'xytest' &&
+      window.localeData.locale === 'pt-BR' &&
       window.localeData.dir === 'rtl' &&
       document.documentElement.dir === 'rtl', // RTL reaches <html>, not just the wrapper div
     null,
@@ -248,7 +255,7 @@ try {
   // Created languages go at the END of the chooser (after the sorted shipped ones).
   await popup.getByRole('button', { name: 'Language' }).click()
   await popup.getByRole('listbox').waitFor({ state: 'visible', timeout: 5_000 })
-  if (!/\(xytest\)/.test((await popup.getByRole('option').last().textContent()) || ''))
+  if (!/\(pt-BR\)/.test((await popup.getByRole('option').last().textContent()) || ''))
     throw new Error('created language is not at the end of the chooser')
   console.log('OK (e): created language appended at the end of the list')
 
@@ -263,9 +270,9 @@ try {
   await popup2.waitForLoadState('domcontentloaded')
   await popup2.getByRole('button', { name: 'Language' }).click()
   await popup2.getByRole('listbox').waitFor({ state: 'visible', timeout: 5_000 })
-  if ((await popup2.getByRole('option').filter({ hasText: '(xytest)' }).count()) < 1)
+  if ((await popup2.getByRole('option').filter({ hasText: '(pt-BR)' }).count()) < 1)
     throw new Error('created language did not persist across reload')
-  if (!/\(xytest\)/.test((await popup2.getByRole('option').last().textContent()) || ''))
+  if (!/\(pt-BR\)/.test((await popup2.getByRole('option').last().textContent()) || ''))
     throw new Error('persisted created language is not at the end after reload')
   console.log('OK (e): created language persists across reload, still at the end')
 

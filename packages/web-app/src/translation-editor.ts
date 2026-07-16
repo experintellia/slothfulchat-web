@@ -26,9 +26,10 @@
  * (core stock strings and hardcoded text won't match); the design's zero-width
  * exact mode is intentionally not built (YAGNI — the registry + fiber cover the
  * common cases without contaminating the DOM). Opened with Ctrl/Cmd+Shift+L in
- * any build (dev or release); it's inert until opened, so normal users only pay
- * the small bundle import. The panel lives in a separate popup window so the
- * app's modal (top-layer) dialogs never cover it; the inspector's
+ * any build (dev or release); the panel is inert until opened. The one always-on
+ * cost is the inspector's tx registry (see installRegistry) — a thin wrapper on
+ * static_translate, ~23 ns/call. The panel lives in a separate popup window so
+ * the app's modal (top-layer) dialogs never cover it; the inspector's
  * highlight/tooltip stay in the app window.
  */
 import { matchKeys, mergeOverlay, toAndroidXml } from './translation-editor.mjs'
@@ -231,6 +232,7 @@ const hApp: H = makeH(document)
 
 let panel: HTMLElement | null = null
 let win: Window | null = null
+let opening = false // guards open() against a double-trigger during its awaits
 // The app runtime, captured at init before the frontend deletes window.r.
 let appRuntime: any = null
 let currentLocale = 'en'
@@ -289,6 +291,12 @@ function allKeys(): string[] {
  * (result -> key) mapping. Both the global tx and the React-context tx read
  * this global, so one setter instruments all call sites. Installed at startup,
  * before the app first assigns static_translate. Returns the live registry.
+ *
+ * ponytail: always-on (not lazy) so the inspector can resolve text rendered
+ * before the editor was ever opened. Ceiling: the Map keeps every distinct
+ * result string — including substituted ones (names, counts) — so it grows over
+ * a very long session. Upgrade path: cap the Map, or drop substituted results,
+ * if that ever shows up in a profile.
  */
 function installRegistry(): Map<string, Set<string>> {
   const w = window as any
@@ -585,8 +593,10 @@ function badge(kind: 'experimental' | 'en'): HTMLElement {
 function row(key: string, overlay: Record<string, Entry>): HTMLElement {
   const base: Entry = pristineFor(key)
   const current: Entry = overlay[key] || base
-  const isPlural = typeof base.message !== 'string'
-  const fields = isPlural ? Object.keys(base) : ['message']
+  // Shape from the actual entry (an overlaid plural whose catalogue key is gone
+  // would look like a string via the empty pristine fallback otherwise).
+  const isPlural = typeof current.message !== 'string'
+  const fields = isPlural ? Object.keys(current) : ['message']
   const changed = key in overlay
   const kind = classify(key)
 
@@ -850,11 +860,14 @@ async function selectLocale(code: string): Promise<void> {
   if (code === currentLocale) return
   currentLocale = code
   await refreshApp(code)
+  let own: Record<string, Entry> = {}
   try {
-    localeOwn = code === 'en' ? sourceEn : await loadCatalogue(code)
+    own = code === 'en' ? sourceEn : await loadCatalogue(code)
   } catch {
-    localeOwn = {}
+    own = {}
   }
+  if (currentLocale !== code) return // a newer switch superseded this one
+  localeOwn = own
   updateLangButton()
   renderList()
 }
@@ -1131,6 +1144,8 @@ async function open(): Promise<void> {
     win.focus()
     return
   }
+  if (opening) return // a second trigger while the first open() is still awaiting
+  opening = true
   currentLocale = (window as any).localeData?.locale || 'en'
   let shown: Array<{ code: string; name: string }>
   try {
@@ -1139,6 +1154,7 @@ async function open(): Promise<void> {
   } catch (err) {
     console.error('[translation-editor] failed to load locale data', err)
     alert('Translation editor: could not load locale data (see console).')
+    opening = false
     return
   }
   try {
@@ -1169,9 +1185,11 @@ async function open(): Promise<void> {
     alert(
       'Translation editor: the popup was blocked. Allow popups for this site, then press Ctrl/Cmd+Shift+L again.'
     )
+    opening = false
     return
   }
   win = w
+  opening = false
   w.document.title = 'Translation editor'
   Object.assign(w.document.body.style, { margin: '0', background: '#141414' })
   h = makeH(w.document)
@@ -1192,6 +1210,7 @@ function teardown(): void {
   listEl = countEl = searchInputEl = inspectBtn = null
   xmlBtn = jsonBtn = expBtn = revertBtn = langBtn = langMenu = null
   filters = { untranslated: false, experimental: false, stock: false }
+  search = ''
   h = makeH(document)
 }
 
@@ -1233,10 +1252,10 @@ export function initTranslationEditor(runtime?: any): void {
       e.preventDefault()
       toggle()
     }
-    if (e.key === 'Escape' && (win || inspecting)) {
-      if (inspecting) stopInspect()
-      else close()
-    }
+    // Escape in the app window only exits inspect mode; the popup handles its
+    // own Escape (close menu / editor), so a stray Esc in the app — e.g.
+    // dismissing a dialog — doesn't also destroy the editor.
+    if (e.key === 'Escape' && inspecting) stopInspect()
   })
   // Close the popup if the app window unloads so it doesn't orphan.
   window.addEventListener('pagehide', () => win?.close())

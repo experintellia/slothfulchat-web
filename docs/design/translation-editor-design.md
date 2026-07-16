@@ -220,8 +220,8 @@ packages/web-app/src/
   changeset is small (edited keys only) and `localStorage` is already the
   runtime's settings store. Revisit only if a full-locale translation effort
   outgrows the ~5 MB quota.
-- **Gating:** `Ctrl/Cmd+Shift+L` toggles the panel, `?txedit` auto-opens it —
-  dev-only, so normal users pay only the (small) bundle import.
+- **Gating:** `Ctrl/Cmd+Shift+L` toggles the panel — inert until opened, so
+  normal users pay only the (small) bundle import.
 
 Phase 2 (inspector) is in the same `translation-editor.ts`, plus `matchKeys()`
 in the `.mjs`. It shipped **without** the upstream patch the plan assumed:
@@ -249,7 +249,7 @@ Phase 1 touches **no upstream/patched code** and is the highest-value chunk.
 
 - [x] Export format → **partial Android XML** primary, JSON changeset for
       review. (Full-locale XML export not built yet — YAGNI until asked.)
-- [x] Dev-flag mechanism → `Ctrl/Cmd+Shift+L` shortcut + `?txedit` query param.
+- [x] Dev-flag mechanism → `Ctrl/Cmd+Shift+L` shortcut.
 - [x] Inspector default → registry + fiber (built). Zero-width exact mode not
       shipped (YAGNI); no upstream patch needed after all (property-setter
       interception of `window.static_translate`).

@@ -25,7 +25,12 @@ export function mergeOverlay(overlayForLocale, messages) {
   if (!overlayForLocale) return messages
   const out = { ...messages }
   for (const key of Object.keys(overlayForLocale)) {
-    out[key] = { ...out[key], ...overlayForLocale[key] }
+    const entry = overlayForLocale[key]
+    // Skip anything that isn't an entry object: a corrupted or old-format
+    // localStorage value (e.g. a bare string) would otherwise spread into
+    // indexed characters and garble that key's message app-wide.
+    if (entry && typeof entry === 'object' && !Array.isArray(entry))
+      out[key] = { ...out[key], ...entry }
   }
   return out
 }

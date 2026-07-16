@@ -731,14 +731,16 @@ class BrowserRuntime {
       try {
         localeMessages = await (await fetch(`${BASE}locales/${locale}.json`)).json()
       } catch (error1) {
-        // dialect fallback: de-CH -> de (adopt the base locale's identity too).
+        // dialect fallback: de-CH borrows de.json's strings. Keep the requested
+        // locale as the identity, though — coercing it to the base would apply
+        // the overlay/direction of the wrong code and, for a hyphenated locale
+        // created in the editor (e.g. pt-BR), never render its own edits.
         if (locale.indexOf('-') !== -1) {
           const base_locale = locale.split('-')[0]
           try {
             localeMessages = await (
               await fetch(`${BASE}locales/${base_locale}.json`)
             ).json()
-            locale = base_locale
           } catch (error2) {
             this.log.error(`No messages for ${locale}; using English base`, error2)
           }
@@ -2869,7 +2871,7 @@ if (typeof window !== 'undefined') {
     openDialog: showBridgeDialog,
     reachable: () => bridgeReachable,
   }
-  // Translation editor (Ctrl/Cmd+Shift+L or ?txedit) — available in every
+  // Translation editor (Ctrl/Cmd+Shift+L) — available in every
   // build; inert until opened. Pass the runtime so its live refresh survives
   // the frontend deleting window.r.
   initTranslationEditor(browserRuntime)

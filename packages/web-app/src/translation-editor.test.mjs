@@ -33,6 +33,14 @@ test('mergeOverlay with no overlay returns messages unchanged', () => {
   strictEqual(mergeOverlay(undefined, m), m)
 })
 
+test('mergeOverlay ignores malformed (non-object) overlay entries', () => {
+  const messages = { a: { message: 'OK' } }
+  // a corrupted/old-format value must not spread a string into indexed chars
+  const out = mergeOverlay({ a: 'garbage', b: null }, messages)
+  deepStrictEqual(out.a, { message: 'OK' })
+  strictEqual('b' in out, false)
+})
+
 test('escapeAndroid mirrors the build converter round-trip', () => {
   strictEqual(
     escapeAndroid('Tom\'s <b> & "q"\nline'),
