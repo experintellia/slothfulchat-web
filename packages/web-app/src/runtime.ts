@@ -693,6 +693,11 @@ class BrowserRuntime {
         }
       }
     }
+    const dir = localeDir(locale)
+    // The frontend only sets dir on an inner wrapper <div>; also set it on
+    // <html> so RTL reaches body-portaled dialogs and our own vanilla-DOM
+    // overlays (e.g. the bridge toast), not just the React subtree.
+    if (typeof document !== 'undefined') document.documentElement.dir = dir
     return {
       locale,
       messages: applyTxOverlay(locale, {
@@ -700,7 +705,7 @@ class BrowserRuntime {
         ...localeMessages,
         ...untranslated,
       }),
-      dir: localeDir(locale),
+      dir,
     }
   }
   // Persist the chosen locale (upstream's browser runtime leaves this

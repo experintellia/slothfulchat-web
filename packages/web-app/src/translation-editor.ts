@@ -50,12 +50,21 @@ function loadDirs(): Record<string, 'ltr' | 'rtl'> {
   }
 }
 
+// RTL languages by primary subtag. This is the robust source: Intl.Locale's
+// direction info (getTextInfo/textInfo) isn't available in every browser, so
+// relying on it alone silently made every locale ltr where it's missing.
+const RTL_LANGS = new Set([
+  'ar', 'arc', 'bqi', 'ckb', 'dv', 'fa', 'glk', 'he', 'iw', 'ji', 'ks', 'lrc',
+  'mzn', 'nqo', 'pnb', 'prs', 'ps', 'sd', 'syr', 'ug', 'ur', 'yi',
+])
+
 /** Writing direction for a locale: an explicit choice made in the editor wins,
- *  else the script's native direction (Intl), else ltr. Exported so
- *  runtime.getLocaleData() can render new/RTL languages the right way round. */
+ *  else a known RTL language set (browser-independent), else Intl if available,
+ *  else ltr. Exported so runtime.getLocaleData() renders RTL the right way. */
 export function localeDir(locale: string): 'ltr' | 'rtl' {
   const stored = loadDirs()[locale]
   if (stored === 'rtl' || stored === 'ltr') return stored
+  if (RTL_LANGS.has(locale.toLowerCase().split(/[-_]/)[0])) return 'rtl'
   try {
     const loc = new Intl.Locale(locale.replace('_', '-')) as any
     const info = loc.getTextInfo ? loc.getTextInfo() : loc.textInfo

@@ -33,7 +33,11 @@
   **live** — `getLocaleData` keeps an English base under every locale, so
   untranslated keys show English instead of raw keys, an unknown/new locale is
   no longer coerced to English, and RTL locales render right-to-left (the
-  browser build previously forced `dir: ltr`). Value fields are auto-growing
+  browser build previously forced `dir: ltr`). Direction is set on `<html>` (so
+  RTL also reaches body-portaled dialogs and vanilla overlays, not just the
+  React subtree) and comes from a browser-independent RTL language set rather
+  than `Intl.Locale`'s direction info, which isn't available in every browser —
+  so RTL languages read `rtl` everywhere, not only where `Intl` supports it. Value fields are auto-growing
   textareas, so multi-line strings (e.g. the donation text) are fully editable
   and grammar add-ons like LanguageTool attach to them; **Enter** saves,
   **Shift+Enter** adds a newline. An "Inspect" mode (🎯) reveals which

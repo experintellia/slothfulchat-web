@@ -136,9 +136,12 @@ try {
     throw new Error('chooser does not show completion percentages')
   if ((await popup.getByText('hidden', { exact: true }).count()) < 1)
     throw new Error('chooser does not tag hidden (incomplete) languages')
-  // Existing languages show their text direction (rtl exists, e.g. Arabic).
-  if ((await popup.locator('[role=option]').filter({ hasText: 'rtl' }).count()) < 1)
-    throw new Error('chooser does not show per-language text direction')
+  // Existing languages show their text direction; Arabic must read rtl (this is
+  // the browser-independent RTL set, not Intl which isn't always available).
+  const arRow = popup.getByRole('option').filter({ hasText: '(ar)' })
+  if ((await arRow.count()) < 1) throw new Error('chooser is missing the Arabic row')
+  if ((await arRow.filter({ hasText: 'rtl' }).count()) < 1)
+    throw new Error('Arabic is not shown as rtl in the chooser')
   // Create form: code field + direction toggle + Add.
   if ((await popup.getByLabel('New language code').count()) !== 1)
     throw new Error('chooser is missing the create-language form')
@@ -232,11 +235,15 @@ try {
   await popup.getByRole('button', { name: 'Toggle text direction for the new language' }).click() // ltr -> rtl
   await popup.getByRole('button', { name: '+ Add' }).click()
   await page.waitForFunction(
-    () => window.localeData && window.localeData.locale === 'xytest' && window.localeData.dir === 'rtl',
+    () =>
+      window.localeData &&
+      window.localeData.locale === 'xytest' &&
+      window.localeData.dir === 'rtl' &&
+      document.documentElement.dir === 'rtl', // RTL reaches <html>, not just the wrapper div
     null,
     { timeout: 10_000 }
   )
-  console.log('OK (e): created an RTL language on the fly — app renders it live')
+  console.log('OK (e): created an RTL language on the fly — app renders it live (html dir=rtl)')
 
   console.log('\nPASS: translation editor e2e')
 } catch (e) {
