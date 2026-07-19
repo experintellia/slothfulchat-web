@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Links lose their tracking**: known tracking parameters (`utm_*`, YouTube
+  `si=`, click ids, Amazon affiliate refs, …) are now removed when you open a
+  link and when you paste one into the composer — pasting shows a quiet
+  "Tracking removed from link" note with Undo. On by default; switch it off in
+  Settings → Chats and Media.
+
 - **In-app translation editor** (`Ctrl/Cmd+Shift+L`, in every build): a popup
   window to edit the current language's UI strings live, with badges for
   untranslated / experimental keys, category filters, per-language completion,

@@ -193,6 +193,15 @@ exists:
   `runtime.ts`) in the shortcuts dialog so it's discoverable. One entry in
   `getKeybindings`. `desktop/0051`
 
+- **Tracking-parameter removal from links** — known trackers (`utm_*`,
+  `fbclid`/`gclid` click ids, YouTube `si=`, Instagram `igsh=`, X `s=`/`t=`,
+  Spotify `si=`, Amazon affiliate refs) are stripped from an allowlist, never
+  "all query params". Two automatic intervention points: clicked links are
+  cleaned silently before opening, and pasting a link with tracking rewrites
+  the draft and shows an undoable "Tracking removed from link" chip in the
+  composer (same slot as the link-preview ghost). One switch in Settings →
+  Chats and Media, on by default. `desktop/0052`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not
