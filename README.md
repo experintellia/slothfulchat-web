@@ -4,6 +4,28 @@ Feasibility prototype: a DeltaChat client running **fully in the browser** — c
 
 See [SELFHOSTING.md](SELFHOSTING.md) to run your own instance, [PLAN.md](PLAN.md) for the full plan, [PATCHES.md](PATCHES.md) for a human-readable summary of what we changed compared to upstream, [DESCOPED.md](DESCOPED.md) for deliberate omissions, [FINDINGS.md](FINDINGS.md) for the feasibility log.
 
+## Highlights
+
+- 📞 **Calls in the browser** — audio, video and screen share with our own
+  WebRTC engine, wire-compatible with Delta Chat's calls (upstream ships
+  calls on Electron only)
+- 📮 **Works with your existing account** — any normal email or chatmail
+  account connects through the WebSocket bridge; madmail servers even work
+  without any bridge, over plain HTTPS
+- 🧹 **Tracking stripped from links** — `utm_*`, click-ids and friends
+  removed on click and paste, undoable
+- 🔗 **Privacy-preserving link previews** — baked on the *sender's* device;
+  recipients never contact the site
+- 🦥 **Animated stickers** — Telegram `.tgs`/Lottie stickers render and send
+- 📦 **Export Chat** — a self-contained HTML viewer + media zip, per chat
+- 😀 **`:emoji:` completion** in the composer — on by default
+- 🌍 **In-app translation editor** — edit UI strings live, export, create
+  languages
+- 🛰️ **In-app relay picker** — choose a chatmail relay with live
+  reachability/latency at onboarding
+
+…and more — see [PATCHES.md](PATCHES.md).
+
 ## Privacy & data protection
 
 The app runs **entirely in your browser**. Your accounts, messages, encryption
