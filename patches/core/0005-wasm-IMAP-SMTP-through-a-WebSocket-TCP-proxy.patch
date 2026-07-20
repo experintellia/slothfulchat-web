@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Mon, 6 Jul 2026 22:34:43 +0000
-Subject: [PATCH 05/16] wasm: IMAP/SMTP through a WebSocket-TCP proxy
+Subject: [PATCH 05/18] wasm: IMAP/SMTP through a WebSocket-TCP proxy
 
 Browsers cannot open TCP sockets, so on wasm32 connect_tcp_inner tunnels
 through a local WS proxy (src/net/ws_tcp.rs): ws_stream_wasm -> duplex

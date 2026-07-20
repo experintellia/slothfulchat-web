@@ -52,7 +52,7 @@ exists:
   window. Lives mostly in our own `packages/calls` (engine/ui/bridge split) and
   `packages/web-app` wiring — see [`docs/calls.md`](docs/calls.md); the one
   upstream change is un-gating the ChatView call button and the `WhoCanCallMe`
-  setting for the browser target. `desktop/0047`
+  setting for the browser target. `desktop/0048`
 - **webimap transport (madmail)** — a second mail transport speaking
   [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at
@@ -186,12 +186,20 @@ exists:
   Matches shortcode, name and keywords over the already-bundled
   `@emoji-mart/data` (no new dependency); a boundary guard keeps it from firing
   inside `http://` or `12:30`. Built as a generic `CompletionProvider` primitive
-  so a future `@mention` menu reuses the same machinery. `desktop/0049`
+  so a future `@mention` menu reuses the same machinery. `desktop/0050`
 
 - **Translation editor in the keyboard-shortcuts cheat sheet** — lists the
   in-app translation editor (`Ctrl/Cmd+Shift+L`, implemented in `web-app`'s
   `runtime.ts`) in the shortcuts dialog so it's discoverable. One entry in
-  `getKeybindings`. `desktop/0051`
+  `getKeybindings`. `desktop/0052`
+
+- **Estimated time-to-read on the unread badge (experimental)** — the chat
+  list can show roughly how long a chat's unread messages take to read
+  ("~4 min") next to the unread counter: word count at 200 wpm plus a flat
+  cost per media message, voice messages by their duration. Only a capped
+  window of the newest messages is fetched (scaled up and shown as "10+ min"
+  beyond it), cached per chat on the fresh-message counter. Off by default,
+  Settings → Advanced → Experimental features. `desktop/0053`
 
 ## Bugfixes
 
@@ -269,7 +277,7 @@ contribution intended.
 - Webxdc last-used-app icons in the chat title bar (app-supplied, untrusted
   images) render on an opaque white tile, so a transparent icon can't blend
   into the navbar to impersonate a native control; their hit target stays
-  icon-sized, unlike the enlarged native buttons. `desktop/0048`
+  icon-sized, unlike the enlarged native buttons. `desktop/0049`
 
 ## Different decisions than upstream
 
