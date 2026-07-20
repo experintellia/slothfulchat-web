@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0 — 2026-07-20
+
+- Switching the UI language now refreshes already-rendered text (chatlist
+  message summaries, self/device contact names, connectivity view) instead of
+  leaving it in the old language until a full reload: the jsonrpc layer emits
+  change events when stock strings are updated (backport of chatmail/core#7719
+  / deltachat-desktop#5403).
+
 ## 0.6.0 — 2026-07-15
 
 - Backup-import durability: new `flush` fs side-channel op and `Core.fsFlush()`
