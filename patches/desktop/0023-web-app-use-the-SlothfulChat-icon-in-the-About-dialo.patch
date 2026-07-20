@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <claude@example.com>
 Date: Thu, 9 Jul 2026 16:17:40 +0000
-Subject: [PATCH 23/53] web-app: use the SlothfulChat icon in the About dialog
+Subject: [PATCH 23/58] web-app: use the SlothfulChat icon in the About dialog
  and welcome screen
 
 Replaces the upstream Delta Chat intro1.png logo with our own app icon

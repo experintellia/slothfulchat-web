@@ -1,0 +1,516 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Mon, 20 Jul 2026 16:56:05 +0000
+Subject: [PATCH 55/58] web-app: two-pane settings layout on wide viewports
+
+On viewports >=800px the settings dialog becomes a single 720px
+Discord/macOS-style two-pane dialog: the navigation list (profile,
+sections, connectivity, donate/help/about) is the left sidebar and the
+selected section renders in a pane on the right, no stacked section
+dialogs. Below 800px everything keeps the existing stacked-dialog flow,
+including fullscreen-on-mobile.
+
+The nav list and the per-section bodies are extracted into shared
+SettingsNav/SettingsSectionBody components so both layouts render the
+exact same content; SettingsIconButton gains an 'active' highlight
+(aria-current) for the sidebar.
+---
+ .../src/components/Settings/Settings.tsx      | 323 +++++++++++-------
+ .../Settings/SettingsIconButton.tsx           |   9 +-
+ .../components/Settings/styles.module.scss    |  67 ++++
+ 3 files changed, 278 insertions(+), 121 deletions(-)
+
+diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
+index 1abbb9d9d..76b551e1c 100644
+--- a/packages/frontend/src/components/Settings/Settings.tsx
++++ b/packages/frontend/src/components/Settings/Settings.tsx
+@@ -1,4 +1,4 @@
+-import React, { useEffect, useCallback } from 'react'
++import React, { useEffect, useCallback, useState } from 'react'
+ 
+ import { useSettingsStore } from '../../stores/settings'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+@@ -16,6 +16,9 @@ import EditProfileDialog from '../dialogs/EditProfileDialog'
+ import SettingsSeparator, { SettingsEndSeparator } from './SettingsSeparator'
+ import useDialog from '../../hooks/dialog/useDialog'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
++import type { TranslationKey } from '@deltachat-desktop/shared/translationKeyType'
++
++import styles from './styles.module.scss'
+ 
+ import type { DialogProps } from '../../contexts/DialogContext'
+ 
+@@ -25,11 +28,155 @@ type SettingsView =
+   | 'appearance'
+   | 'advanced'
+ 
+-export default function Settings({ onClose }: DialogProps) {
++const SECTION_TITLE_KEYS: Record<SettingsView, TranslationKey> = {
++  chats_and_media: 'pref_chats',
++  notifications: 'pref_notifications',
++  appearance: 'pref_appearance',
++  advanced: 'menu_advanced',
++}
++
++/**
++ * Two-pane mode needs room for the 720px dialog plus some backdrop;
++ * below this the settings stay the classic stacked-dialog flow.
++ */
++const WIDE_VIEWPORT_QUERY = '(min-width: 800px)'
++
++function useIsWideViewport(): boolean {
++  const [isWide, setIsWide] = useState(
++    () => window.matchMedia(WIDE_VIEWPORT_QUERY).matches
++  )
++  useEffect(() => {
++    const mediaQuery = window.matchMedia(WIDE_VIEWPORT_QUERY)
++    const onChange = () => setIsWide(mediaQuery.matches)
++    mediaQuery.addEventListener('change', onChange)
++    return () => mediaQuery.removeEventListener('change', onChange)
++  }, [])
++  return isWide
++}
++
++/**
++ * The settings navigation list: profile, the section entries, and the
++ * standalone-dialog entries (connectivity, donate, help, about). Rendered
++ * as the body of the classic narrow settings dialog and as the sidebar of
++ * the wide two-pane layout — only what a section click does differs.
++ */
++function SettingsNav({
++  onSelectSection,
++  activeSection,
++}: {
++  onSelectSection: (section: SettingsView) => void
++  /** set in the two-pane layout to highlight the visible section */
++  activeSection?: SettingsView
++}) {
+   const { openDialog } = useDialog()
++  const settingsStore = useSettingsStore()[0]
++  const tx = useTranslationFunction()
+ 
++  return (
++    <>
++      {settingsStore != null && (
++        <Profile
++          settingsStore={settingsStore}
++          onStatusClick={() => {
++            openDialog(EditProfileDialog, {
++              settingsStore,
++            })
++          }}
++        />
++      )}
++      <SettingsSeparator />
++      <SettingsIconButton
++        icon='forum'
++        active={activeSection === 'chats_and_media'}
++        onClick={() => onSelectSection('chats_and_media')}
++      >
++        {tx('pref_chats')}
++      </SettingsIconButton>
++      <SettingsIconButton
++        icon='bell'
++        active={activeSection === 'notifications'}
++        onClick={() => onSelectSection('notifications')}
++      >
++        {tx('pref_notifications')}
++      </SettingsIconButton>
++      <SettingsIconButton
++        icon='brightness-6'
++        active={activeSection === 'appearance'}
++        onClick={() => onSelectSection('appearance')}
++      >
++        {tx('pref_appearance')}
++      </SettingsIconButton>
++      <ConnectivityButton />
++      <SettingsIconButton
++        icon='code-tags'
++        active={activeSection === 'advanced'}
++        onClick={() => onSelectSection('advanced')}
++        dataTestid='open-advanced-settings'
++      >
++        {tx('menu_advanced')}
++      </SettingsIconButton>
++      <SettingsSeparator />
++      {!runtime.getRuntimeInfo().isMac && (
++        <SettingsIconButton
++          icon='favorite'
++          onClick={() => runtime.openLink(donationUrl)}
++          isLink
++        >
++          {tx('donate')}
++        </SettingsIconButton>
++      )}
++      <SettingsIconButton
++        icon='question_mark'
++        onClick={() => runtime.openHelpWindow()}
++      >
++        {tx('menu_help')}
++      </SettingsIconButton>
++      <SettingsIconButton icon='info' onClick={() => openDialog(About)}>
++        {tx('global_menu_help_about_desktop')}
++      </SettingsIconButton>
++      <SettingsEndSeparator />
++    </>
++  )
++}
++
++/** The content of one settings section, shared by both layouts. */
++function SettingsSectionBody({
++  section,
++  closeSettings,
++}: {
++  section: SettingsView
++  /** closes the whole settings UI (all dialogs), e.g. after "View Log" */
++  closeSettings: () => void
++}) {
+   const settingsStore = useSettingsStore()[0]
++
++  return (
++    <>
++      {section === 'chats_and_media' && settingsStore != null && (
++        <ChatsAndMedia settingsStore={settingsStore} />
++      )}
++      {section === 'notifications' && settingsStore != null && (
++        <Notifications desktopSettings={settingsStore.desktopSettings} />
++      )}
++      {section === 'appearance' && settingsStore != null && (
++        <Appearance
++          rc={settingsStore.rc}
++          desktopSettings={settingsStore.desktopSettings}
++          settingsStore={settingsStore}
++        />
++      )}
++      {section === 'advanced' && <Advanced onClose={closeSettings} />}
++      <SettingsEndSeparator />
++    </>
++  )
++}
++
++export default function Settings({ onClose }: DialogProps) {
++  const { openDialog } = useDialog()
+   const tx = useTranslationFunction()
++  const isWideViewport = useIsWideViewport()
++  const [activeSection, setActiveSection] =
++    useState<SettingsView>('chats_and_media')
+ 
+   useEffect(() => {
+     if (window.__settingsOpened) {
+@@ -53,6 +200,45 @@ export default function Settings({ onClose }: DialogProps) {
+     [onClose, openDialog]
+   )
+ 
++  if (isWideViewport) {
++    // Discord/macOS-style two-pane layout: navigation sidebar + content pane
++    // in one dialog, no stacked section dialogs.
++    return (
++      <Dialog
++        onClose={onClose}
++        fixed
++        width={720}
++        height='min(700px, 90vh)'
++        dataTestid='settings-dialog'
++        noTopPadding
++      >
++        <div className={styles.settingsTwoPane}>
++          <nav className={styles.settingsSidebar}>
++            <SettingsNav
++              onSelectSection={setActiveSection}
++              activeSection={activeSection}
++            />
++          </nav>
++          <div className={styles.settingsPane}>
++            <DialogHeader
++              title={tx(SECTION_TITLE_KEYS[activeSection])}
++              onClose={onClose}
++              dataTestid={
++                activeSection === 'advanced' ? 'settings-advanced' : 'settings'
++              }
++            />
++            <DialogBody>
++              <SettingsSectionBody
++                section={activeSection}
++                closeSettings={onClose}
++              />
++            </DialogBody>
++          </div>
++        </div>
++      </Dialog>
++    )
++  }
++
+   return (
+     <Dialog
+       onClose={onClose}
+@@ -67,66 +253,7 @@ export default function Settings({ onClose }: DialogProps) {
+         dataTestid='settings'
+       />
+       <DialogBody>
+-        {settingsStore != null && (
+-          <Profile
+-            settingsStore={settingsStore}
+-            onStatusClick={() => {
+-              if (settingsStore == null) {
+-                return
+-              }
+-              openDialog(EditProfileDialog, {
+-                settingsStore,
+-              })
+-            }}
+-          />
+-        )}
+-        <SettingsSeparator />
+-        <SettingsIconButton
+-          icon='forum'
+-          onClick={() => openSettingsSectionDialog('chats_and_media')}
+-        >
+-          {tx('pref_chats')}
+-        </SettingsIconButton>
+-        <SettingsIconButton
+-          icon='bell'
+-          onClick={() => openSettingsSectionDialog('notifications')}
+-        >
+-          {tx('pref_notifications')}
+-        </SettingsIconButton>
+-        <SettingsIconButton
+-          icon='brightness-6'
+-          onClick={() => openSettingsSectionDialog('appearance')}
+-        >
+-          {tx('pref_appearance')}
+-        </SettingsIconButton>
+-        <ConnectivityButton />
+-        <SettingsIconButton
+-          icon='code-tags'
+-          onClick={() => openSettingsSectionDialog('advanced')}
+-          dataTestid='open-advanced-settings'
+-        >
+-          {tx('menu_advanced')}
+-        </SettingsIconButton>
+-        <SettingsSeparator />
+-        {!runtime.getRuntimeInfo().isMac && (
+-          <SettingsIconButton
+-            icon='favorite'
+-            onClick={() => runtime.openLink(donationUrl)}
+-            isLink
+-          >
+-            {tx('donate')}
+-          </SettingsIconButton>
+-        )}
+-        <SettingsIconButton
+-          icon='question_mark'
+-          onClick={() => runtime.openHelpWindow()}
+-        >
+-          {tx('menu_help')}
+-        </SettingsIconButton>
+-        <SettingsIconButton icon='info' onClick={() => openDialog(About)}>
+-          {tx('global_menu_help_about_desktop')}
+-        </SettingsIconButton>
+-        <SettingsEndSeparator />
++        <SettingsNav onSelectSection={openSettingsSectionDialog} />
+       </DialogBody>
+     </Dialog>
+   )
+@@ -140,72 +267,28 @@ function SettingsSectionDialog(
+ ) {
+   const { settingsMode, onClose: closeThisDialog } = props
+   const tx = useTranslationFunction()
+-  const settingsStore = useSettingsStore()[0]
+ 
+   const closeThisAndParent = useCallback(() => {
+     closeThisDialog()
+     props.closeParentDialog()
+   }, [closeThisDialog, props])
+-  const commonHeaderProps = {
+-    onClickBack: closeThisDialog,
+-    onClose: closeThisAndParent,
+-  } as const satisfies Partial<Parameters<typeof DialogHeader>[0]>
+ 
+   return (
+     <Dialog onClose={closeThisDialog} fixed width={400} fullscreenOnMobile>
+-      {settingsMode === 'chats_and_media' && (
+-        <>
+-          <DialogHeader title={tx('pref_chats')} {...commonHeaderProps} />
+-          <DialogBody>
+-            {settingsStore != null && (
+-              <ChatsAndMedia settingsStore={settingsStore} />
+-            )}
+-            <SettingsEndSeparator />
+-          </DialogBody>
+-        </>
+-      )}
+-      {settingsMode === 'notifications' && (
+-        <>
+-          <DialogHeader
+-            title={tx('pref_notifications')}
+-            {...commonHeaderProps}
+-          />
+-          <DialogBody>
+-            {settingsStore != null && (
+-              <Notifications desktopSettings={settingsStore.desktopSettings} />
+-            )}
+-            <SettingsEndSeparator />
+-          </DialogBody>
+-        </>
+-      )}
+-      {settingsMode === 'appearance' && (
+-        <>
+-          <DialogHeader title={tx('pref_appearance')} {...commonHeaderProps} />
+-          <DialogBody>
+-            {settingsStore != null && (
+-              <Appearance
+-                rc={settingsStore.rc}
+-                desktopSettings={settingsStore.desktopSettings}
+-                settingsStore={settingsStore}
+-              />
+-            )}
+-            <SettingsEndSeparator />
+-          </DialogBody>
+-        </>
+-      )}
+-      {settingsMode === 'advanced' && (
+-        <>
+-          <DialogHeader
+-            title={tx('menu_advanced')}
+-            {...commonHeaderProps}
+-            dataTestid='settings-advanced'
+-          />
+-          <DialogBody>
+-            <Advanced onClose={closeThisAndParent} />
+-            <SettingsEndSeparator />
+-          </DialogBody>
+-        </>
+-      )}
++      <DialogHeader
++        title={tx(SECTION_TITLE_KEYS[settingsMode])}
++        onClickBack={closeThisDialog}
++        onClose={closeThisAndParent}
++        dataTestid={
++          settingsMode === 'advanced' ? 'settings-advanced' : undefined
++        }
++      />
++      <DialogBody>
++        <SettingsSectionBody
++          section={settingsMode}
++          closeSettings={closeThisAndParent}
++        />
++      </DialogBody>
+     </Dialog>
+   )
+ }
+diff --git a/packages/frontend/src/components/Settings/SettingsIconButton.tsx b/packages/frontend/src/components/Settings/SettingsIconButton.tsx
+index 64db3a95f..853abadce 100644
+--- a/packages/frontend/src/components/Settings/SettingsIconButton.tsx
++++ b/packages/frontend/src/components/Settings/SettingsIconButton.tsx
+@@ -1,4 +1,5 @@
+ import React from 'react'
++import classNames from 'classnames'
+ 
+ import Icon from '../Icon'
+ 
+@@ -12,6 +13,8 @@ type Props = PropsWithChildren<{
+   isLink?: boolean
+   onClick: () => void
+   dataTestid?: string
++  /** highlighted as the currently shown section (two-pane settings sidebar) */
++  active?: boolean
+ }>
+ 
+ export default function SettingsIconButton({
+@@ -20,13 +23,17 @@ export default function SettingsIconButton({
+   isLink = false,
+   onClick,
+   dataTestid,
++  active,
+ }: Props) {
+   return (
+     <button
+       type='button'
+-      className={styles.settingsIconButton}
++      className={classNames(styles.settingsIconButton, {
++        [styles.active]: active,
++      })}
+       onClick={onClick}
+       data-testid={dataTestid}
++      aria-current={active || undefined}
+     >
+       <Icon icon={icon} />
+       <span className={styles.settingsIconButtonLabel}>{children}</span>
+diff --git a/packages/frontend/src/components/Settings/styles.module.scss b/packages/frontend/src/components/Settings/styles.module.scss
+index 76688f3a8..e94b4df54 100644
+--- a/packages/frontend/src/components/Settings/styles.module.scss
++++ b/packages/frontend/src/components/Settings/styles.module.scss
+@@ -71,6 +71,73 @@ $settingsHeight: 40px;
+   &:focus {
+     background-color: var(--chatListItemBgHover);
+   }
++
++  // currently shown section in the two-pane settings sidebar
++  &.active {
++    background-color: var(--chatListItemSelectedBg);
++
++    &:hover,
++    &:focus {
++      background-color: var(--chatListItemSelectedBg);
++    }
++
++    .settingsIconButtonLabel {
++      color: var(--chatListItemSelectedText);
++    }
++
++    // the leading <Icon> is a mask-image span colored via background-color;
++    // recolor it to match the selected label
++    > span:not(.settingsIconButtonLabel) {
++      background-color: var(--chatListItemSelectedText);
++    }
++  }
++}
++
++/* Two-pane settings layout (wide viewports): navigation sidebar on the
++   left, the selected section in a pane on the right — no stacked
++   section dialogs. */
++.settingsTwoPane {
++  display: flex;
++  flex: 1 1 auto;
++  min-height: 0;
++}
++
++.settingsSidebar {
++  // slight tint + hairline so the sidebar reads as its own column;
++  // same hardcoded-black-alpha family as .settingsSeparator above
++  // (--outlineProperties is transparent in the default theme)
++  background-color: rgba(0, 0, 0, 0.03);
++  border-inline-end: 1px solid rgba(0, 0, 0, 0.1);
++  flex-shrink: 0;
++  overflow-y: auto;
++  padding-top: 20px;
++  // ~300/420 split of the 720px dialog; the pane keeps at least the
++  // 400px the section pages were designed for
++  width: 300px;
++
++  // shrink the 100px LargeProfileImage so the name has room next to it;
++  // structural selector because that component's classes are
++  // CSS-module-scoped and unreachable from here
++  .profile > div:first-child {
++    flex-basis: 72px;
++    height: 72px;
++    width: 72px;
++
++    img,
++    span {
++      font-size: 46px;
++      height: 72px;
++      width: 72px;
++    }
++  }
++}
++
++.settingsPane {
++  display: flex;
++  flex: 1 1 auto;
++  flex-direction: column;
++  min-width: 0;
++  padding-top: 20px;
+ }
+ 
+ .settingsIconButtonLabel {
