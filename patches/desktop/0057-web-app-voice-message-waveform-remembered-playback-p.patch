@@ -59,6 +59,27 @@ setting off leaves the VolumeMeter untouched.
 
 Tests: node:test for computePeaks (empty/constant/spike-localization) and mocha
 for positionStore cap/prune/clear via an injectable storage + clock shim.
+
+Review hardening (adversarial pass over this commit):
+- Worker URL is now resolved relative to the document (new URL('waveform-worker.js',
+  location.href), the web-app's BASE convention) instead of a root-absolute path, so
+  it loads on subpath deploys (e.g. GitHub Pages project sites) rather than 404ing.
+- A worker load error (async, doesn't throw at construction) now flips to a
+  permanent fallback: worker is dropped and in-flight callers settle to null at
+  once — no 4s hang, no leaked AudioBuffers, no unbounded pending map. computePeaks
+  short-circuits once the worker is known dead, and User Timing no longer records
+  phantom successes on aborted/worker-died runs. getPeaks caches the in-flight
+  promise so concurrent bubbles for the same src share one pipeline.
+- Position lifecycle vs the mutex takeover: restore never yanks back a singleton
+  mid-playing this src; the takeover cleanup saves the exact position before
+  zeroing; replay-from-top re-applies the saved position; clear-on-ended moved to
+  the singleton so it fires across unmount. positionStore.read() rejects
+  valid-but-wrong-typed JSON instead of throwing on every accessor.
+- Recorder meter resets its history per recording and draws imperatively from the
+  per-buffer volume callback, so digital silence (identical RMS) no longer freezes
+  the waveform via React's state bailout.
+- No layout jump: the seek row reserves the waveform's height from first paint, and
+  the live waveform shares the meter's footprint (incl. the <400px hide rule).
 ---
  .../src/components/AudioPlayer/Waveform.tsx   |  74 ++++++++
  .../src/components/AudioPlayer/index.tsx      | 166 +++++++++++++----

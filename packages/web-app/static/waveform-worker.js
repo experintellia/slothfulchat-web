@@ -1,10 +1,11 @@
 // Voice-message waveform bucketing, off the main thread.
 //
-// Plain ESM, no build step (served as-is by the web-app shell at
-// /waveform-worker.js; the frontend creates `new Worker('/waveform-worker.js',
-// { type: 'module' })`). Decoding stays on the main thread — a plain Worker
-// can't construct an AudioContext, so it can't call decodeAudioData; only the
-// cheap max-abs bucketing loop is offloaded here.
+// Plain ESM, no build step (served as-is by the web-app shell next to the app,
+// e.g. <base>/waveform-worker.js; the frontend creates it with
+// `new Worker(new URL('waveform-worker.js', location.href), { type: 'module' })`
+// so it resolves under any deploy base). Decoding stays on the main thread — a
+// plain Worker can't construct an AudioContext, so it can't call
+// decodeAudioData; only the cheap max-abs bucketing loop is offloaded here.
 
 /**
  * Reduce a mono PCM channel to `n` peaks (max absolute sample per bucket).
