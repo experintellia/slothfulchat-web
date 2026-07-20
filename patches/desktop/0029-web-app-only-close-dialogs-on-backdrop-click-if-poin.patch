@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 10 Jul 2026 01:41:15 +0000
-Subject: [PATCH 29/47] web-app: only close dialogs on backdrop click if
+Subject: [PATCH 29/53] web-app: only close dialogs on backdrop click if
  pointerdown started there
 
 The outside-click-to-close check ran on click, which fires wherever the

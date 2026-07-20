@@ -27,7 +27,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  5 files changed, 39 insertions(+)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index fe3dfc4..5a2b9f2 100644
+index fe3dfc4b3..5a2b9f2b1 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -112,5 +112,11 @@
@@ -43,12 +43,12 @@ index fe3dfc4..5a2b9f2 100644
    }
  }
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 3ca4197..918f0ca 100644
+index f9af952db..2a0b05acd 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-@@ -81,6 +81,11 @@ export function ExperimentalFeatures() {
-         label='Emoji completion menu'
-         description='Type a colon and a name in the composer (e.g. :smile) to pick an emoji from a pop-up menu. Off by default (experimental).'
+@@ -86,6 +86,11 @@ export function ExperimentalFeatures() {
+         label='Estimated read time on unread badge'
+         description='Show roughly how long the unread messages in a chat take to read (e.g. "~4 min") next to the unread counter. Off by default (experimental).'
        />
 +      <DesktopSettingsSwitch
 +        settingsKey='experimentalReadAloud'
@@ -59,7 +59,7 @@ index 3ca4197..918f0ca 100644
          <DesktopSettingsSwitch
            settingsKey='contentProtectionEnabled'
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 65171d5..57e44db 100644
+index 65171d5ea..57e44dbd6 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -33,6 +33,7 @@ import { mapCoreMsgStatus2String } from '../helpers/MapMsgStatus'
@@ -109,26 +109,26 @@ index 65171d5..57e44db 100644
      showCopyImage && {
        label: tx('menu_copy_image_to_clipboard'),
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 093f583..9015672 100644
+index 624d5b1ba..e60248b21 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
-@@ -43,6 +43,8 @@ export interface DesktopSettingsType {
-   linkPreviewSuggestions: boolean
-   /** webapp: composer :emoji: completion menu. Off by default (experimental). */
+@@ -45,6 +45,8 @@ export interface DesktopSettingsType {
    experimentalCompletionMenu: boolean
+   /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
+   experimentalUnreadReadTime: boolean
 +  /** webapp: "Read aloud" message action via browser speechSynthesis. Off by default (experimental). */
 +  experimentalReadAloud: boolean
    enterKeySends: boolean
    locale: string | null
    notifications: boolean
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 557dfb7..3410b74 100644
+index fb007364d..69bf299de 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
-@@ -16,6 +16,7 @@ export function getDefaultState(): DesktopSettingsType {
-     enableOnDemandLocationStreaming: false,
+@@ -17,6 +17,7 @@ export function getDefaultState(): DesktopSettingsType {
      linkPreviewSuggestions: false,
      experimentalCompletionMenu: false,
+     experimentalUnreadReadTime: false,
 +    experimentalReadAloud: false,
      chatViewBgImg: undefined,
      lastChats: {},

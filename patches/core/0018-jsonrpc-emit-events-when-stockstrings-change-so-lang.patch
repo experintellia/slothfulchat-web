@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 15 Jul 2026 12:00:00 +0000
-Subject: [PATCH] jsonrpc: emit events when stockstrings change so language
- switch is seamless
+Subject: [PATCH 18/18] jsonrpc: emit events when stockstrings change so
+ language switch is seamless
 
 set_stock_strings updated the shared stock translations but emitted no
 events, so already-rendered, cached UI text that embeds stock strings
@@ -25,7 +25,7 @@ set_stock_strings).
  2 files changed, 20 insertions(+), 1 deletion(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
-index bf1b29c..7a1fa64 100644
+index 3b3de507e..ab910004b 100644
 --- a/deltachat-jsonrpc/src/api.rs
 +++ b/deltachat-jsonrpc/src/api.rs
 @@ -34,7 +34,7 @@
@@ -49,7 +49,7 @@ index bf1b29c..7a1fa64 100644
      }
  
 diff --git a/src/stock_str.rs b/src/stock_str.rs
-index 886f57b..75f87db 100644
+index 886f57b6b..75f87dbe8 100644
 --- a/src/stock_str.rs
 +++ b/src/stock_str.rs
 @@ -1253,6 +1253,21 @@ pub(crate) async fn update_device_chats(&self) -> Result<()> {

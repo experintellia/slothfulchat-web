@@ -1,0 +1,344 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Mon, 20 Jul 2026 01:21:46 +0000
+Subject: [PATCH 53/53] web-app: estimated time-to-read on the unread badge
+ (experimental)
+
+Show roughly how long a chat's unread messages take to read (e.g. "~4 min")
+next to the unread counter in the chat list. Off by default, opt in under
+Settings -> Advanced -> Experimental features (issue #113).
+
+The estimate is computed client-side per chat: word count of unread bodies at
+200 wpm, plus a flat 10 s per media message; voice/audio messages use their
+recorded duration instead. Only a padded window of the newest <=100 messages
+is fetched (unread = state IN_FRESH within it); if the unread count exceeds
+the window the estimate is scaled linearly and capped at "10+ min", so massive
+backlogs never pull full bodies. Results are cached per chat, keyed on the
+fresh-message counter, which changes exactly when the unread set does.
+
+Pure estimate math lives in readTimeEstimate.ts with a mocha test
+(src/tests/readTimeEstimate.test.ts); fetching and the hook sit in
+ChatListItem.tsx. Settings key experimentalUnreadReadTime mirrors the
+existing experimentalCompletionMenu flag.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TAwiEcYimwGkrDn3JKgRn3
+---
+ .../frontend/scss/chat/_chat-list-item.scss   | 10 +++
+ .../Settings/ExperimentalFeatures.tsx         |  5 ++
+ .../src/components/chat/ChatListItem.tsx      | 79 ++++++++++++++++++-
+ .../src/components/chat/readTimeEstimate.ts   | 47 +++++++++++
+ .../src/tests/readTimeEstimate.test.ts        | 51 ++++++++++++
+ packages/shared/shared-types.d.ts             |  2 +
+ packages/shared/state.ts                      |  1 +
+ 7 files changed, 192 insertions(+), 3 deletions(-)
+ create mode 100644 packages/frontend/src/components/chat/readTimeEstimate.ts
+ create mode 100644 packages/frontend/src/tests/readTimeEstimate.test.ts
+
+diff --git a/packages/frontend/scss/chat/_chat-list-item.scss b/packages/frontend/scss/chat/_chat-list-item.scss
+index c379846ca..acddfbead 100644
+--- a/packages/frontend/scss/chat/_chat-list-item.scss
++++ b/packages/frontend/scss/chat/_chat-list-item.scss
+@@ -41,6 +41,16 @@
+     font-weight: bold;
+   }
+ 
++  // experimental estimated time-to-read, rendered next to the unread counter
++  .unread-read-time {
++    margin-top: 1px;
++    font-size: 9pt;
++    margin-inline-start: 5px;
++    line-height: 20px;
++    white-space: nowrap;
++    opacity: 0.7;
++  }
++
+   & > .content {
+     // Ensure it's as wide as the parent allows, but doesn't overflow
+     // the parent if the content is too long.
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index 3ca4197c3..f9af952db 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -81,6 +81,11 @@ export function ExperimentalFeatures() {
+         label='Emoji completion menu'
+         description='Type a colon and a name in the composer (e.g. :smile) to pick an emoji from a pop-up menu. Off by default (experimental).'
+       />
++      <DesktopSettingsSwitch
++        settingsKey='experimentalUnreadReadTime'
++        label='Estimated read time on unread badge'
++        description='Show roughly how long the unread messages in a chat take to read (e.g. "~4 min") next to the unread counter. Off by default (experimental).'
++      />
+       {runtime.getRuntimeInfo().isContentProtectionSupported && (
+         <DesktopSettingsSwitch
+           settingsKey='contentProtectionEnabled'
+diff --git a/packages/frontend/src/components/chat/ChatListItem.tsx b/packages/frontend/src/components/chat/ChatListItem.tsx
+index 780c2f1b9..38fedad2c 100644
+--- a/packages/frontend/src/components/chat/ChatListItem.tsx
++++ b/packages/frontend/src/components/chat/ChatListItem.tsx
+@@ -1,11 +1,13 @@
+-import React, { useRef } from 'react'
++import React, { useEffect, useRef, useState } from 'react'
+ import classNames from 'classnames'
+ import { T, C } from '@deltachat/jsonrpc-client'
+ 
+ import Timestamp from '../conversations/Timestamp'
+ import { Avatar } from '../Avatar'
+ import Icon from '../Icon'
+-import { Type } from '../../backend-com'
++import { BackendRemote, Type } from '../../backend-com'
++import { useSettingsStore } from '../../stores/settings'
++import { unreadSeconds, readTimeLabel } from './readTimeEstimate'
+ import { marknoticedChat } from '../../backend/chat'
+ import { mapCoreMsgStatus2String } from '../helpers/MapMsgStatus'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+@@ -49,6 +51,69 @@ type ChatListItemType = Type.ChatListItemFetchResult & {
+   kind: 'ChatListItem'
+ }
+ 
++// --- Experimental estimated time-to-read on the unread badge ---
++
++/** Cap on how many trailing messages are fetched for one estimate. */
++const READ_TIME_FETCH_CAP = 100
++const readTimeCache = new Map<
++  string,
++  { counter: number; label: Promise<string | null> }
++>()
++
++function unreadReadTime(
++  accountId: number,
++  chatId: number,
++  counter: number
++): Promise<string | null> {
++  const key = `${accountId}:${chatId}`
++  const cached = readTimeCache.get(key)
++  // the unread set changed <=> the counter changed, so this invalidates itself
++  if (cached && cached.counter === counter) return cached.label
++  const label = (async () => {
++    // ponytail: fetches the chat's full id list (cheap u32s, in-browser rpc);
++    // if it ever hurts, ask core for a windowed/fresh-only id query instead.
++    const ids = await BackendRemote.rpc.getMessageIds(
++      accountId,
++      chatId,
++      false,
++      false
++    )
++    // the unread messages are among the newest ones; fetch a padded window of
++    // trailing messages and scale up if the window didn't reach all of them
++    const window = ids.slice(-Math.min(counter + 20, READ_TIME_FETCH_CAP))
++    const messages = await BackendRemote.rpc.getMessages(accountId, window)
++    const fresh = Object.values(messages).filter(
++      m => m.kind === 'message' && m.state === C.DC_STATE_IN_FRESH
++    ) as Type.Message[]
++    return readTimeLabel(unreadSeconds(fresh), fresh.length, counter)
++  })()
++  label.catch(() => readTimeCache.delete(key))
++  readTimeCache.set(key, { counter, label })
++  return label
++}
++
++function useUnreadReadTime(chatId: number, counter: number): string | null {
++  const enabled =
++    useSettingsStore()[0]?.desktopSettings.experimentalUnreadReadTime === true
++  const [label, setLabel] = useState<string | null>(null)
++  useEffect(() => {
++    if (!enabled || counter === 0) {
++      setLabel(null)
++      return
++    }
++    let stale = false
++    unreadReadTime(selectedAccountId(), chatId, counter)
++      .then(l => {
++        if (!stale) setLabel(l)
++      })
++      .catch(() => {})
++    return () => {
++      stale = true
++    }
++  }, [enabled, chatId, counter])
++  return label
++}
++
+ function Header({
+   lastUpdated,
+   name,
+@@ -96,7 +161,7 @@ const Message = React.memo<
+     | 'freshMessageCounter'
+     | 'isArchived'
+     | 'isContactRequest'
+-  >
++  > & { chatId: number }
+ >(function ({
+   chatType,
+   summaryStatus,
+@@ -105,6 +170,7 @@ const Message = React.memo<
+   freshMessageCounter,
+   isArchived,
+   isContactRequest,
++  chatId,
+ }) {
+   const isIncoming =
+     summaryStatus === C.DC_STATE_IN_FRESH ||
+@@ -113,6 +179,7 @@ const Message = React.memo<
+ 
+   const status = isIncoming ? '' : mapCoreMsgStatus2String(summaryStatus)
+   const tx = useTranslationFunction()
++  const readTime = useUnreadReadTime(chatId, freshMessageCounter)
+   return (
+     <div className='chat-list-item-message'>
+       <div className='text'>
+@@ -135,6 +202,11 @@ const Message = React.memo<
+         !isContactRequest &&
+         !shouldHideDeliveryStatus(chatType, status) &&
+         status && <div className={classNames('status-icon', status)} />}
++      {!isContactRequest && readTime && (
++        <span className='unread-read-time' aria-hidden={true}>
++          {readTime}
++        </span>
++      )}
+       {!isContactRequest && (
+         <FreshMessageCounter counter={freshMessageCounter} visible={true} />
+       )}
+@@ -406,6 +478,7 @@ function RegularChatListItem({
+           freshMessageCounter={chat.freshMessageCounter}
+         />
+         <Message
++          chatId={chat.id}
+           chatType={chat.chatType}
+           summaryStatus={chat.summaryStatus}
+           summaryText1={chat.summaryText1}
+diff --git a/packages/frontend/src/components/chat/readTimeEstimate.ts b/packages/frontend/src/components/chat/readTimeEstimate.ts
+new file mode 100644
+index 000000000..84680be2c
+--- /dev/null
++++ b/packages/frontend/src/components/chat/readTimeEstimate.ts
+@@ -0,0 +1,47 @@
++// Pure math for the experimental "estimated time-to-read" unread badge
++// (Settings -> Advanced -> Experimental features). Kept import-free so the
++// unit test needs no backend.
++
++export const WORDS_PER_MINUTE = 200
++/** Flat cost for glancing at a media/file/webxdc/... message. */
++export const MEDIA_SECONDS = 10
++export const CAP_SECONDS = 10 * 60
++
++export type ReadTimeMessage = {
++  text: string | null
++  viewType: string
++  /** Media duration in ms, 0 when unknown. */
++  duration: number
++}
++
++/** Seconds needed to read/consume the given messages. */
++export function unreadSeconds(messages: ReadTimeMessage[]): number {
++  let seconds = 0
++  for (const msg of messages) {
++    if (msg.text) {
++      seconds += (msg.text.trim().split(/\s+/).length / WORDS_PER_MINUTE) * 60
++    }
++    if (msg.viewType === 'Voice' || msg.viewType === 'Audio') {
++      seconds += msg.duration > 0 ? msg.duration / 1000 : MEDIA_SECONDS
++    } else if (msg.viewType !== 'Text') {
++      seconds += MEDIA_SECONDS
++    }
++  }
++  return seconds
++}
++
++/**
++ * Badge label for the estimate, or null when there is nothing to show.
++ * When only `sampled` of `total` unread messages could be fetched, the
++ * estimate is scaled up linearly.
++ */
++export function readTimeLabel(
++  seconds: number,
++  sampled: number,
++  total: number
++): string | null {
++  if (sampled === 0) return null
++  if (sampled < total) seconds = (seconds * total) / sampled
++  if (seconds >= CAP_SECONDS) return `${CAP_SECONDS / 60}+ min`
++  return `~${Math.max(1, Math.round(seconds / 60))} min`
++}
+diff --git a/packages/frontend/src/tests/readTimeEstimate.test.ts b/packages/frontend/src/tests/readTimeEstimate.test.ts
+new file mode 100644
+index 000000000..f6bb7b534
+--- /dev/null
++++ b/packages/frontend/src/tests/readTimeEstimate.test.ts
+@@ -0,0 +1,51 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import {
++  unreadSeconds,
++  readTimeLabel,
++  MEDIA_SECONDS,
++} from '../components/chat/readTimeEstimate.js'
++
++const text = (words: number) => ({
++  text: Array(words).fill('word').join(' '),
++  viewType: 'Text',
++  duration: 0,
++})
++
++describe('unread read-time estimate', () => {
++  it('counts words at 200 wpm', () => {
++    expect(unreadSeconds([text(200)])).to.equal(60)
++    expect(unreadSeconds([text(100), text(100)])).to.equal(60)
++    expect(unreadSeconds([])).to.equal(0)
++  })
++
++  it('voice/audio uses its duration, other media a constant', () => {
++    expect(
++      unreadSeconds([{ text: null, viewType: 'Voice', duration: 42000 }])
++    ).to.equal(42)
++    expect(
++      unreadSeconds([{ text: null, viewType: 'Voice', duration: 0 }])
++    ).to.equal(MEDIA_SECONDS)
++    expect(
++      unreadSeconds([{ text: null, viewType: 'Image', duration: 0 }])
++    ).to.equal(MEDIA_SECONDS)
++  })
++
++  it('a captioned media message counts both text and media', () => {
++    expect(unreadSeconds([{ ...text(200), viewType: 'Image' }])).to.equal(
++      60 + MEDIA_SECONDS
++    )
++  })
++
++  it('labels round to at least ~1 min and cap at 10+', () => {
++    expect(readTimeLabel(5, 1, 1)).to.equal('~1 min')
++    expect(readTimeLabel(250, 1, 1)).to.equal('~4 min')
++    expect(readTimeLabel(3600, 1, 1)).to.equal('10+ min')
++  })
++
++  it('scales a sampled estimate to the full unread count', () => {
++    expect(readTimeLabel(120, 2, 4)).to.equal('~4 min')
++    expect(readTimeLabel(0, 0, 5)).to.equal(null)
++  })
++})
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index 093f5832b..624d5b1ba 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -43,6 +43,8 @@ export interface DesktopSettingsType {
+   linkPreviewSuggestions: boolean
+   /** webapp: composer :emoji: completion menu. Off by default (experimental). */
+   experimentalCompletionMenu: boolean
++  /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
++  experimentalUnreadReadTime: boolean
+   enterKeySends: boolean
+   locale: string | null
+   notifications: boolean
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index 557dfb723..fb007364d 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -16,6 +16,7 @@ export function getDefaultState(): DesktopSettingsType {
+     enableOnDemandLocationStreaming: false,
+     linkPreviewSuggestions: false,
+     experimentalCompletionMenu: false,
++    experimentalUnreadReadTime: false,
+     chatViewBgImg: undefined,
+     lastChats: {},
+     zoomFactor: undefined,
