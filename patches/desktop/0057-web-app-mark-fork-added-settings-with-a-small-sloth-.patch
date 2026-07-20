@@ -10,13 +10,13 @@ sloth emoji after their label with an explanatory tooltip, so users can
 tell fork additions from upstream Delta Chat settings. Threaded as a
 'forkAdded' flag through SettingsSwitch/DesktopSettingsSwitch.
 ---
- .../src/components/Settings/Advanced.tsx       |  1 +
- .../src/components/Settings/ChatsAndMedia.tsx  |  2 ++
- .../Settings/DesktopSettingsSwitch.tsx         |  4 ++++
- .../Settings/ExperimentalFeatures.tsx          |  3 +++
- .../src/components/Settings/SettingsSwitch.tsx | 18 ++++++++++++++++++
- .../src/components/Settings/styles.module.scss |  8 ++++++++
- 6 files changed, 36 insertions(+)
+ .../frontend/src/components/Settings/Advanced.tsx   |  1 +
+ .../src/components/Settings/ChatsAndMedia.tsx       |  2 ++
+ .../components/Settings/DesktopSettingsSwitch.tsx   |  4 ++++
+ .../components/Settings/ExperimentalFeatures.tsx    |  3 +++
+ .../src/components/Settings/SettingsSwitch.tsx      | 13 +++++++++++++
+ .../src/components/Settings/styles.module.scss      |  8 ++++++++
+ 6 files changed, 31 insertions(+)
 
 diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
 index be8430cc2..318f944e0 100644
@@ -102,53 +102,48 @@ index da5c809bd..be25c59f9 100644
        {runtime.getRuntimeInfo().isContentProtectionSupported && (
          <DesktopSettingsSwitch
 diff --git a/packages/frontend/src/components/Settings/SettingsSwitch.tsx b/packages/frontend/src/components/Settings/SettingsSwitch.tsx
-index 7122943f6..9bba327fa 100644
+index 7122943f6..d71b3a31c 100644
 --- a/packages/frontend/src/components/Settings/SettingsSwitch.tsx
 +++ b/packages/frontend/src/components/Settings/SettingsSwitch.tsx
-@@ -11,6 +11,22 @@ type Props = {
+@@ -11,6 +11,8 @@ type Props = {
    label: string
    onChange: (val: boolean) => void
    value: boolean
 +  /** marks a setting added by the SlothfulChat fork with a small badge */
 +  forkAdded?: boolean
-+}
-+
-+/** Small sloth marker for settings that exist only in this fork. */
-+export function ForkBadge() {
-+  return (
-+    <span
-+      className={styles.forkBadge}
-+      role='img'
-+      aria-label='SlothfulChat feature'
-+      title='Added by SlothfulChat — not part of upstream Delta Chat'
-+    >
-+      🦥
-+    </span>
-+  )
  }
  
  export default function SettingsSwitch({
-@@ -19,6 +35,7 @@ export default function SettingsSwitch({
+@@ -19,6 +21,7 @@ export default function SettingsSwitch({
    label,
    onChange,
    value,
-+  forkAdded = false,
++  forkAdded,
  }: Props) {
    return (
      <label
-@@ -33,6 +50,7 @@ export default function SettingsSwitch({
+@@ -33,6 +36,16 @@ export default function SettingsSwitch({
            })}
          >
            {label}
-+          {forkAdded && <ForkBadge />}
++          {forkAdded && (
++            <span
++              className={styles.forkBadge}
++              role='img'
++              aria-label='SlothfulChat feature'
++              title='Added by SlothfulChat — not part of upstream Delta Chat'
++            >
++              🦥
++            </span>
++          )}
          </span>
          {description && (
            <div
 diff --git a/packages/frontend/src/components/Settings/styles.module.scss b/packages/frontend/src/components/Settings/styles.module.scss
-index cbf9e233e..42a5634a9 100644
+index e94b4df54..49c82dfee 100644
 --- a/packages/frontend/src/components/Settings/styles.module.scss
 +++ b/packages/frontend/src/components/Settings/styles.module.scss
-@@ -205,6 +205,14 @@ $settingsHeight: 40px;
+@@ -204,6 +204,14 @@ $settingsHeight: 40px;
    }
  }
  

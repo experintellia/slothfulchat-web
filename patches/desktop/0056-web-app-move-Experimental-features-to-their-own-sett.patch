@@ -66,7 +66,7 @@ index f9af952db..da5c809bd 100644
        message,
        confirmLabel: tx('ok'),
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 426c782cd..0542c3f97 100644
+index 76b551e1c..f24ac7235 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
 @@ -10,6 +10,7 @@ import Notifications from './Notifications'
@@ -77,13 +77,13 @@ index 426c782cd..0542c3f97 100644
  import Profile from './Profile'
  import Dialog, { DialogBody, DialogHeader } from '../Dialog'
  import EditProfileDialog from '../dialogs/EditProfileDialog'
-@@ -26,12 +27,14 @@ type SettingsView =
+@@ -27,12 +28,14 @@ type SettingsView =
    | 'notifications'
    | 'appearance'
    | 'advanced'
 +  | 'experimental'
  
- const SECTION_TITLE_KEYS: Record<SettingsView, string> = {
+ const SECTION_TITLE_KEYS: Record<SettingsView, TranslationKey> = {
    chats_and_media: 'pref_chats',
    notifications: 'pref_notifications',
    appearance: 'pref_appearance',
@@ -92,7 +92,7 @@ index 426c782cd..0542c3f97 100644
  }
  
  /**
-@@ -114,6 +117,13 @@ function SettingsNav({
+@@ -115,6 +118,13 @@ function SettingsNav({
        >
          {tx('menu_advanced')}
        </SettingsIconButton>
@@ -106,7 +106,7 @@ index 426c782cd..0542c3f97 100644
        <SettingsSeparator />
        {!runtime.getRuntimeInfo().isMac && (
          <SettingsIconButton
-@@ -165,6 +175,7 @@ function SettingsSectionBody({
+@@ -166,6 +176,7 @@ function SettingsSectionBody({
          />
        )}
        {section === 'advanced' && <Advanced onClose={closeSettings} />}
