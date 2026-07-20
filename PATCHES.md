@@ -170,6 +170,26 @@ exists:
   a picked/typed relay skips the classic-email autoconfig probes: the core
   tries the standard chatmail server convention first and only autoconfigures
   if that doesn't connect (see `core/0016`). `desktop/0042`, `core/0016`
+- **Add relays from a list, contact scan, or typed domain in the Transports
+  dialog** — upstream's "Add transport" only scans a QR code (now labeled
+  "Scan relay QR code…" so that's obvious). A second button, "Add from relay
+  list…", reuses the onboarding relay-picker dialog: the public directory
+  relays (probed with live latency on open, exactly like onboarding) plus a
+  new "Relays your contacts use" section — relay domains harvested locally
+  from the contact list with per-relay contact counts, already-configured
+  transports and directory duplicates filtered out. Contact-derived relays
+  are deliberately **not** probed on open: on the web every probe goes
+  through the WS bridge, so pinging that set would broadcast a digest of
+  your contacts' domains to the bridge operator. A "Measure ping" button is
+  the opt-in — clicking it probes those relays and re-sorts the section by
+  latency (unreachable last, disabled); until then rows are listed by
+  contact count and stay selectable. Picking a relay (or typing one into the
+  existing "Other relay…" field) runs the same confirm-and-add flow as the
+  QR path (`dcaccount:` + host); the default row preserves an operator's
+  URL-form `SLOTHFUL_DEFAULT_CHATMAIL` endpoint exactly like onboarding
+  does. A contact's mail domain isn't necessarily a chatmail relay — adding
+  one that isn't fails loudly through the existing error alert.
+  `desktop/0054`
 - **Privacy-preserving link previews** — when the draft contains a URL and no
   image, the composer offers a dismissible ghost to add a preview. Accepting
   fetches the link's OpenGraph metadata (through a bridge with unfurl enabled)

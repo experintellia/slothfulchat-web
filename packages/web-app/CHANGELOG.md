@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Add relays without a QR code**: Settings → Advanced → Transports now has
+  an "Add from relay list…" button — pick from the public relay directory
+  (with live ping), from relays your contacts already use, or just type a
+  relay's domain. Relays derived from your contacts are only pinged when you
+  press "Measure ping", so nothing about your contacts leaks to the bridge
+  unless you ask.
+
 - **Experimental: estimated read time on the unread badge** — the chat list
   can show roughly how long a chat's unread messages take to read (e.g.
   "~4 min", capped at "10+ min") next to the unread counter. Off by default;
