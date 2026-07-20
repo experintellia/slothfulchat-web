@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothfulchat.local>
 Date: Wed, 15 Jul 2026 01:11:05 +0000
-Subject: [PATCH 47/57] web-app: enlarge chat navbar button click targets
+Subject: [PATCH 47/58] web-app: enlarge chat navbar button click targets
 
 The chat title-bar icon buttons (apps, map, three-dot menu) had a 20x20px
 click target sitting in a 50px-tall navbar with a 12px dead gap between

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Mon, 20 Jul 2026 01:21:46 +0000
-Subject: [PATCH 53/57] web-app: estimated time-to-read on the unread badge
+Subject: [PATCH 53/58] web-app: estimated time-to-read on the unread badge
  (experimental)
 
 Show roughly how long a chat's unread messages take to read (e.g. "~4 min")

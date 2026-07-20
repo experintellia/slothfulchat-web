@@ -304,7 +304,8 @@ contribution intended.
   Discord or macOS System Settings — instead of stacked dialogs; narrow
   viewports keep the stacked flow. `desktop/0055`
 - Experimental features moved out of Advanced into their own settings
-  section. `desktop/0056`
+  section, grouped under Composer / Chats / System sub-headings.
+  `desktop/0056`, `desktop/0058`
 - Settings that only exist in this fork are marked with a small sloth
   badge (tooltip explains it's not an upstream Delta Chat setting).
   `desktop/0057`

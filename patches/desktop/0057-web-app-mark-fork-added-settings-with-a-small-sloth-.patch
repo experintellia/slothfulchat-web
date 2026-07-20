@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Mon, 20 Jul 2026 16:57:21 +0000
-Subject: [PATCH 57/57] web-app: mark fork-added settings with a small sloth
+Subject: [PATCH 57/58] web-app: mark fork-added settings with a small sloth
  badge
 
 Settings that exist only in SlothfulChat (community-suggestion toggles,
