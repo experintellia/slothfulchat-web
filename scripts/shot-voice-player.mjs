@@ -195,7 +195,12 @@ await new Promise((r) => setTimeout(r, 700))
 const launchOpts = process.env.CHROMIUM_BIN
   ? { executablePath: process.env.CHROMIUM_BIN }
   : {}
-launchOpts.args = ['--autoplay-policy=no-user-gesture-required']
+launchOpts.args = [
+  '--autoplay-policy=no-user-gesture-required',
+  // fake mic (a generated tone) so the recorder works headless, permission-free
+  '--use-fake-device-for-media-stream',
+  '--use-fake-ui-for-media-stream',
+]
 const browser = await chromium.launch(launchOpts)
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
 page.on('console', (m) => {
@@ -415,6 +420,29 @@ try {
     await shot('05-diagnostics-waveform')
   } catch (err) {
     console.warn('diagnostics shot skipped:', err.message)
+  }
+  for (let i = 0; i < 5; i++) {
+    if (!(await page.locator('dialog[open]').count())) break
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+  }
+
+  // B: recording (tap starts via fake mic), pause, then the preview row
+  try {
+    await page.getByRole('button', { name: 'Voice Message' }).click()
+    await page.waitForTimeout(2500)
+    await shot('07-recording-live')
+    await page.getByRole('button', { name: 'Pause recording' }).click()
+    await page.waitForTimeout(400)
+    await shot('08-recording-paused')
+    await page.getByRole('button', { name: 'Resume recording' }).click()
+    await page.waitForTimeout(1000)
+    await page.getByRole('button', { name: 'Finish recording' }).click()
+    await page.waitForTimeout(800)
+    await shot('09-recording-preview')
+    await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  } catch (err) {
+    console.warn('recording shots skipped:', err.message)
   }
   console.log('DONE')
 } catch (err) {
