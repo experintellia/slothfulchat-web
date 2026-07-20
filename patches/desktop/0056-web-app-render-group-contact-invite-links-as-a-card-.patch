@@ -26,15 +26,22 @@ today's plain link.
 
 colorFromString moves from the Public Bots dialog to utils/ so both spots
 derive a stable avatar color for names that have no core contact.
+
+Right-click 'Copy link' previously only appeared when the click landed on
+the anchor element itself; the card's child elements (name, avatar, View)
+broke that. The message context menu now resolves the clicked element to
+its enclosing anchor via closest('a'), which also covers future labeled
+links with formatting in the label.
 ---
  _locales/_untranslated_en.json                | 12 ++++
  packages/frontend/scss/message/_message.scss  | 58 ++++++++++++++++++
  .../components/dialogs/PublicBots/index.tsx   | 12 +---
  .../frontend/src/components/message/Link.tsx  | 38 ++++++++++++
+ .../src/components/message/Message.tsx        |  6 +-
  .../frontend/src/tests/inviteLink.test.ts     | 53 +++++++++++++++++
  .../frontend/src/utils/colorFromString.ts     | 12 ++++
  packages/frontend/src/utils/inviteLink.ts     | 59 +++++++++++++++++++
- 7 files changed, 233 insertions(+), 11 deletions(-)
+ 8 files changed, 238 insertions(+), 12 deletions(-)
  create mode 100644 packages/frontend/src/tests/inviteLink.test.ts
  create mode 100644 packages/frontend/src/utils/colorFromString.ts
  create mode 100644 packages/frontend/src/utils/inviteLink.ts
@@ -223,6 +230,23 @@ index cd138a0..51bc954 100644
    return (
      <a
        href={asciiUrl}
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index 65171d5..a150827 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -568,7 +568,11 @@ export default function Message(props: {
+         resetSelection()
+       }
+       // the event.t is a workaround for labled links, as they will be able to contain markdown formatting in the label in the future.
+-      const target = ((event as any).t || event.target) as HTMLAnchorElement
++      // closest('a') resolves right-clicks on a link's child elements (e.g.
++      // the invite-link card's name/avatar/button) to the anchor itself, so
++      // "Copy link" stays available anywhere within the link.
++      const target = ((event as any).t ||
++        (event.target as HTMLElement | null)?.closest('a')) as HTMLAnchorElement
+       const common = {
+         accountId,
+         message,
 diff --git a/packages/frontend/src/tests/inviteLink.test.ts b/packages/frontend/src/tests/inviteLink.test.ts
 new file mode 100644
 index 0000000..5aec685
