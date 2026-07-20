@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Readable invite links**: a group, channel or contact invite link
+  (`https://i.delta.chat/#…`) in a message now shows as a small card with the
+  name and a "View" button instead of the long fingerprint URL. Tapping it
+  opens the same join/chat confirmation as before.
+
 - **Links lose their tracking**: known tracking parameters (`utm_*`, YouTube
   `si=`, click ids, Amazon affiliate refs, …) are now removed when you open a
   link and when you paste one into the composer — pasting shows a quiet
