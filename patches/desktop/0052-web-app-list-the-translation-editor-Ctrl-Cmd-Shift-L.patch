@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <experintellia@users.noreply.github.com>
 Date: Thu, 16 Jul 2026 02:54:51 +0000
-Subject: [PATCH] web-app: list the translation editor (Ctrl/Cmd+Shift+L) in
- the keyboard shortcuts cheat sheet
+Subject: [PATCH 52/53] web-app: list the translation editor (Ctrl/Cmd+Shift+L)
+ in the keyboard shortcuts cheat sheet
 
 ---
  packages/frontend/src/components/KeyboardShortcutHint.tsx | 6 ++++++
