@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Experimental: custom voice-message player** — voice and audio messages
+  get proper controls: play/pause, a seek bar, elapsed time, and a
+  playback-speed pill (1×/1.5×/2×, applies to all voice messages). Off by
+  default; turn it on in Settings → Advanced → Experimental features.
+
 - **Links lose their tracking**: known tracking parameters (`utm_*`, YouTube
   `si=`, click ids, Amazon affiliate refs, …) are now removed when you open a
   link and when you paste one into the composer — pasting shows a quiet

@@ -329,18 +329,18 @@ try {
   await shot('01-custom-player-paused')
 
   // play the incoming voice message; progress + global bottom bar appear
-  await incomingPlayer.getByRole('button', { name: 'Play' }).click()
+  await incomingPlayer.getByRole('button', { name: 'Play', exact: true }).click()
   await page.waitForTimeout(2500)
   await shot('02-custom-player-playing')
 
   // speed pill: 1x -> 1.5x -> 2x
-  const pill = incomingPlayer.getByRole('button', { name: /×/ })
+  const pill = incomingPlayer.getByRole('button', { name: /Playback speed/ })
   await pill.click()
   await pill.click()
   await page.waitForTimeout(300)
   await shot('03-custom-player-2x')
 
-  await incomingPlayer.getByRole('button', { name: 'Pause' }).click()
+  await incomingPlayer.getByRole('button', { name: 'Pause', exact: true }).click()
 
   // the experimental setting switch
   try {

@@ -41,6 +41,15 @@ exists:
 
 ## New features
 
+- **Custom voice-message player controls (experimental)** — play/pause
+  button, seek bar, elapsed/total time and a 1×/1.5×/2× speed pill (the rate
+  is global, so every voice message plays at the chosen speed) replace the
+  native `<audio>` controls on voice/audio messages. The existing playback
+  architecture (force-muted per-bubble mirror + global singleton, one-at-a-time
+  playback, auto-advance) is untouched — the custom controls only drive the
+  local element. Off by default: Settings → Advanced → Experimental features.
+  First phase of the voice-messages epic (#120); screenshot loop:
+  `node scripts/shot-voice-player.mjs`. `desktop/0056`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
