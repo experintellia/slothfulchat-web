@@ -8,6 +8,18 @@
   "Tracking removed from link" note with Undo. On by default; switch it off in
   Settings → Chats and Media.
 
+- **Add relays without a QR code**: Settings → Advanced → Transports now has
+  an "Add from relay list…" button — pick from the public relay directory
+  (with live ping), from relays your contacts already use, or just type a
+  relay's domain. Relays derived from your contacts are only pinged when you
+  press "Measure ping", so nothing about your contacts leaks to the bridge
+  unless you ask.
+
+- **Experimental: estimated read time on the unread badge** — the chat list
+  can show roughly how long a chat's unread messages take to read (e.g.
+  "~4 min", capped at "10+ min") next to the unread counter. Off by default;
+  opt in under Settings → Advanced → Experimental features.
+
 - **In-app translation editor** (`Ctrl/Cmd+Shift+L`, in every build): a popup
   window to edit the current language's UI strings live, with badges for
   untranslated / experimental keys, category filters, per-language completion,

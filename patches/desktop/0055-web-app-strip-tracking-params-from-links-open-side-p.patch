@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Sun, 19 Jul 2026 22:53:39 +0000
-Subject: [PATCH 52/52] web-app: strip tracking params from links (open-side +
- paste chip + setting)
+Subject: [PATCH] web-app: strip tracking params from links (open-side + paste
+ chip + setting)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -53,7 +53,7 @@ consent prompt: one setting, on by default.
  create mode 100644 packages/frontend/src/utils/trackingParams.ts
 
 diff --git a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
-index 934ab9c..b7df4da 100644
+index 934ab9c4a..b7df4da27 100644
 --- a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
 +++ b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
 @@ -38,6 +38,11 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
@@ -69,7 +69,7 @@ index 934ab9c..b7df4da 100644
        (SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS), these toggles are moot —
        hide them too. */}
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index c2977f9..644b59a 100644
+index c2977f97a..644b59a16 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
 @@ -14,7 +14,9 @@ import { extension } from 'mime-types'
@@ -194,7 +194,7 @@ index c2977f9..644b59a 100644
                  <section
                    className='attachment-quote-section is-attachment'
 diff --git a/packages/frontend/src/hooks/useOpenLinkSafely.ts b/packages/frontend/src/hooks/useOpenLinkSafely.ts
-index c8dbb9e..08b502c 100644
+index c8dbb9e77..08b502ca3 100644
 --- a/packages/frontend/src/hooks/useOpenLinkSafely.ts
 +++ b/packages/frontend/src/hooks/useOpenLinkSafely.ts
 @@ -4,6 +4,8 @@ import useConfirmationDialog from './dialog/useConfirmationDialog'
@@ -237,7 +237,7 @@ index c8dbb9e..08b502c 100644
  }
 diff --git a/packages/frontend/src/tests/trackingParams.test.ts b/packages/frontend/src/tests/trackingParams.test.ts
 new file mode 100644
-index 0000000..78ab82f
+index 000000000..78ab82fbc
 --- /dev/null
 +++ b/packages/frontend/src/tests/trackingParams.test.ts
 @@ -0,0 +1,105 @@
@@ -348,7 +348,7 @@ index 0000000..78ab82f
 +})
 diff --git a/packages/frontend/src/utils/trackingParams.ts b/packages/frontend/src/utils/trackingParams.ts
 new file mode 100644
-index 0000000..7d4aa94
+index 000000000..7d4aa9447
 --- /dev/null
 +++ b/packages/frontend/src/utils/trackingParams.ts
 @@ -0,0 +1,135 @@
@@ -488,7 +488,7 @@ index 0000000..7d4aa94
 +  return { cleaned: text.replace(originalUrl, () => cleanedUrl), originalUrl, cleanedUrl }
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 093f583..d73446a 100644
+index 624d5b1ba..8d93c75a5 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -41,6 +41,8 @@ export interface DesktopSettingsType {
@@ -499,9 +499,9 @@ index 093f583..d73446a 100644
 +  stripTrackingLinks: boolean
    /** webapp: composer :emoji: completion menu. Off by default (experimental). */
    experimentalCompletionMenu: boolean
-   enterKeySends: boolean
+   /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 557dfb7..4d3b708 100644
+index fb007364d..8501d91de 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -15,6 +15,7 @@ export function getDefaultState(): DesktopSettingsType {
@@ -510,5 +510,5 @@ index 557dfb7..4d3b708 100644
      linkPreviewSuggestions: false,
 +    stripTrackingLinks: true,
      experimentalCompletionMenu: false,
+     experimentalUnreadReadTime: false,
      chatViewBgImg: undefined,
-     lastChats: {},

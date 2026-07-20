@@ -1,0 +1,617 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 20 Jul 2026 00:46:12 +0000
+Subject: [PATCH] web-app: add relays from list, contact scan or typed domain
+ in Transports dialog
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Transports dialog previously offered only a QR scanner to add a transport.
+This adds two ways to add a chatmail relay without a QR code:
+
+- "Add from relay list…" opens the existing instant-onboarding relay picker
+  (RelayPickerDialog, imported across the tree from WelcomeScreen — deliberate,
+  moving it would break the patch stack). It lists the public relay directory,
+  a "Relays your contacts use" section, and a free-text "Other relay…" field.
+- The old button is relabeled "Scan relay QR code…" so its QR-only nature is
+  obvious.
+
+RelayPickerDialog is generalized with three optional props (selectedHost may be
+empty = nothing selected, excludeHosts, contactRelays); the onboarding call site
+is unchanged and still auto-probes the directory on open.
+
+Privacy: the contact-derived relay section is never probed on open — probing
+broadcasts contact mail hostnames to the bridge operator, so reachability is
+only measured when the user clicks "Measure ping", which then re-sorts that
+section by latency. The directory section keeps its on-open auto-probe.
+
+contactRelayCandidates aggregates contact domains (getContactIds/getContactsByIds)
+purely and is unit-tested. A contact's mail domain need not be a chatmail relay;
+adding a non-chatmail domain fails loudly through the existing error alert, which
+is the accepted design.
+
+Picking the default-tagged relay row now signs up with the instance's configured
+QR verbatim (instanceDefaultChatmailQr, matching onboarding) instead of rebuilding
+"dcaccount:" + host, so an operator's URL-form or path-bearing SLOTHFUL_DEFAULT_CHATMAIL
+account-creation endpoint survives; the confirm dialog still shows the bare host.
+
+All new strings are hardcoded English, matching this fork's relay-picker patch
+convention (no locale files touched).
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+---
+ .../dialogs/Transports/contactRelays.ts       |  42 +++++
+ .../components/dialogs/Transports/index.tsx   | 117 ++++++++++++-
+ .../WelcomeScreen/RelayPickerDialog.tsx       | 160 +++++++++++++++++-
+ .../screens/WelcomeScreen/styles.module.scss  |  46 ++++-
+ .../src/hooks/dialog/useAddTransportDialog.ts |   2 +-
+ .../frontend/src/tests/contactRelays.test.ts  |  66 ++++++++
+ 6 files changed, 413 insertions(+), 20 deletions(-)
+ create mode 100644 packages/frontend/src/components/dialogs/Transports/contactRelays.ts
+ create mode 100644 packages/frontend/src/tests/contactRelays.test.ts
+
+diff --git a/packages/frontend/src/components/dialogs/Transports/contactRelays.ts b/packages/frontend/src/components/dialogs/Transports/contactRelays.ts
+new file mode 100644
+index 000000000..87f51f379
+--- /dev/null
++++ b/packages/frontend/src/components/dialogs/Transports/contactRelays.ts
+@@ -0,0 +1,42 @@
++// slothfulchat-web: pure aggregation of the chatmail relays a user's contacts
++// are on, for the "Relays your contacts use" section of the relay picker opened
++// from the Transports dialog.
++//
++// Kept free of browser/runtime imports (only the pure host validator from
++// relayDirectoryParse) so the unit test (src/tests/contactRelays.test.ts) can
++// load it under plain node — the getContactIds/getContactsByIds RPC glue lives
++// in Transports/index.tsx.
++
++import { normalizeRelayHost } from '../../screens/WelcomeScreen/relayDirectoryParse.js'
++
++/**
++ * Group contact email addresses by their domain (the part after the last `@`,
++ * lowercased and validated as a bare hostname), counting how many contacts use
++ * each, dropping any host in `exclude`. Malformed addresses (no `@`, empty
++ * local part, non-hostname domain) are skipped rather than counted.
++ *
++ * Sorted most-used first, ties broken alphabetically — the section's initial
++ * order before the user asks for a reachability measurement.
++ *
++ * ponytail: a contact's mail domain is not necessarily a chatmail relay; adding
++ * a non-chatmail domain fails loudly through useAddTransportDialog's existing
++ * error alert. That is the accepted design — we don't pre-validate chatmail-ness
++ * here (would need a network round trip per host just to hide a row).
++ */
++export function contactRelayCandidates(
++  addresses: string[],
++  exclude: Set<string>
++): { host: string; contacts: number }[] {
++  const counts = new Map<string, number>()
++  for (const addr of addresses) {
++    if (typeof addr !== 'string') continue
++    const at = addr.lastIndexOf('@')
++    if (at < 1) continue // no '@', or empty local part
++    const host = normalizeRelayHost(addr.slice(at + 1))
++    if (!host || exclude.has(host)) continue
++    counts.set(host, (counts.get(host) ?? 0) + 1)
++  }
++  return Array.from(counts, ([host, contacts]) => ({ host, contacts })).sort(
++    (a, b) => b.contacts - a.contacts || a.host.localeCompare(b.host)
++  )
++}
+diff --git a/packages/frontend/src/components/dialogs/Transports/index.tsx b/packages/frontend/src/components/dialogs/Transports/index.tsx
+index 3f6386b9c..1ed96300e 100644
+--- a/packages/frontend/src/components/dialogs/Transports/index.tsx
++++ b/packages/frontend/src/components/dialogs/Transports/index.tsx
+@@ -1,4 +1,4 @@
+-import React, { useCallback, useEffect, useState } from 'react'
++import React, { useCallback, useEffect, useRef, useState } from 'react'
+ import { DialogProps } from '../../../contexts/DialogContext'
+ import Dialog, {
+   DialogBody,
+@@ -22,6 +22,16 @@ import { T } from '@deltachat/jsonrpc-client'
+ import classNames from 'classnames'
+ import useDialog from '../../../hooks/dialog/useDialog'
+ import useAddTransportDialog from '../../../hooks/dialog/useAddTransportDialog'
++// ponytail: deliberate reach into the WelcomeScreen instant-onboarding patch —
++// the relay picker dialog lives there and is reused as-is. Moving it out would
++// break rebasing of the patch stack, so we import across the tree instead.
++import RelayPickerDialog from '../../screens/WelcomeScreen/RelayPickerDialog'
++import {
++  defaultRelayHost,
++  fetchRelayDirectory,
++} from '../../screens/WelcomeScreen/relayDirectory'
++import { contactRelayCandidates } from './contactRelays'
++import { instanceDefaultChatmailQr } from '../../../utils/slothfulInstanceConfig'
+ 
+ /**
+  * Dialog for transports configuration
+@@ -123,6 +133,88 @@ export default function TransportsDialog(
+     addTransportDialog,
+   ])
+ 
++  const addFromListInFlight = useRef(false)
++  const openAddFromList = useCallback(async () => {
++    // Guard against a double-click stacking two dialogs while the directory
++    // fetch (up to 10s) and the two RPCs below are in flight.
++    if (addFromListInFlight.current) {
++      return
++    }
++    addFromListInFlight.current = true
++    try {
++      // Domains already configured as transports — filtered out of the directory
++      // list and the contact section (adding a relay you already have is a no-op).
++      // Last-'@' segment, lowercased, to match contactRelayCandidates' hosts.
++      const excludeHosts = transports
++        .map(t => {
++          const at = t.param.addr.lastIndexOf('@')
++          return at < 0 ? undefined : t.param.addr.slice(at + 1).toLowerCase()
++        })
++        .filter((h): h is string => !!h)
++
++      // Fail soft: an unreachable or disabled ('off') directory yields just the
++      // default relay; the dialog still opens with the contact section and the
++      // free-text "Other relay…" field.
++      const directory = await fetchRelayDirectory()
++
++      // Contact relays, minus configured transports and minus anything already in
++      // the directory list (dedupe; losing the count for those hosts is fine).
++      // Lowercase the directory hosts so the dedupe is case-insensitive.
++      let contactRelays: { host: string; contacts: number }[] = []
++      try {
++        const ids = await BackendRemote.rpc.getContactIds(accountId, 0, null)
++        const contacts = await BackendRemote.rpc.getContactsByIds(
++          accountId,
++          ids
++        )
++        const addresses = Object.values(contacts).map(c => c.address)
++        contactRelays = contactRelayCandidates(
++          addresses,
++          new Set([...excludeHosts, ...directory.map(h => h.toLowerCase())])
++        )
++      } catch {
++        // no contact section if contacts can't be read; the rest still works
++      }
++
++      openDialog(RelayPickerDialog, {
++        relays: directory,
++        defaultHost: defaultRelayHost(),
++        selectedHost: '',
++        excludeHosts,
++        contactRelays,
++        // `undefined` means the user picked the default row. Match onboarding's
++        // signup target: an operator's SLOTHFUL_DEFAULT_CHATMAIL can be a full
++        // URL or a dcaccount: QR with a path that core POSTs to, so hand core
++        // the instance QR verbatim rather than rebuilding 'dcaccount:' + host
++        // (which would drop the path). The confirm dialog still shows the bare
++        // host, never a secret-bearing URL. A non-chatmail contact domain fails
++        // loudly via the existing error alert in useAddTransportDialog.
++        onSelect: async (host?: string) => {
++          const qr =
++            host !== undefined
++              ? 'dcaccount:' + host
++              : (instanceDefaultChatmailQr() ??
++                'dcaccount:' + defaultRelayHost())
++          // multiDeviceMode false: this dialog's body always shows the
++          // multi-device min-version warning (transport_list_hint), so the
++          // confirmation skips the redundant hardcoded note.
++          const transportAdded = await addTransportDialog(
++            accountId,
++            qr,
++            host ?? defaultRelayHost(),
++            false
++          )
++          if (transportAdded) {
++            // refresh transport list
++            getTransports()
++          }
++        },
++      })
++    } finally {
++      addFromListInFlight.current = false
++    }
++  }, [accountId, transports, openDialog, addTransportDialog, getTransports])
++
+   useEffect(() => {
+     getTransports()
+   }, [getTransports])
+@@ -242,14 +334,21 @@ export default function TransportsDialog(
+         </div>
+       </DialogBody>
+       <DialogFooter>
+-        <Button
+-          className={styles.addTransportButton}
+-          onClick={() => openQrScanner()}
+-          aria-label={tx('add_transport')}
+-          title={tx('add_transport')}
+-        >
+-          {tx('add_transport')}
+-        </Button>
++        <FooterActions align='spaceBetween'>
++          <Button
++            className={styles.addTransportButton}
++            data-testid='transports-add-from-list'
++            onClick={() => openAddFromList()}
++          >
++            Add from relay list
++          </Button>
++          <Button
++            className={styles.addTransportButton}
++            onClick={() => openQrScanner()}
++          >
++            Scan relay QR code
++          </Button>
++        </FooterActions>
+       </DialogFooter>
+     </Dialog>
+   )
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
+index 120289cdd..c79364051 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
+@@ -18,8 +18,16 @@ type Props = {
+   /** the instance's default relay — always selectable, tagged, never "down" */
+   defaultHost: string
+   /** the relay currently in effect (a directory relay, the default, or a
+-   * previously-typed custom host) */
+-  selectedHost: string
++   * previously-typed custom host); '' / undefined means nothing is selected
++   * (no checkmark) — used when picking a relay to ADD rather than to switch to */
++  selectedHost?: string
++  /** hosts filtered out of both the directory list and the contact section
++   * (e.g. relays already configured as transports) */
++  excludeHosts?: string[]
++  /** a second "Relays your contacts use" section below the directory list;
++   * NOT probed on open (probing would broadcast contact-derived hostnames to
++   * the bridge operator), only when the user clicks "Measure ping" */
++  contactRelays?: { host: string; contacts: number }[]
+   /** commit a choice; `undefined` means "use the default" */
+   onSelect: (host?: string) => void
+ }
+@@ -46,6 +54,8 @@ export default function RelayPickerDialog({
+   relays,
+   defaultHost,
+   selectedHost,
++  excludeHosts,
++  contactRelays,
+   onSelect,
+   onClose,
+ }: Props & DialogProps) {
+@@ -63,11 +73,24 @@ export default function RelayPickerDialog({
+     }
+   }, [])
+ 
++  const excluded = useRef(new Set(excludeHosts ?? [])).current
++  const directoryHosts = relays.filter(host => !excluded.has(host))
++
+   // A previously-chosen custom host isn't in the directory; show it too.
+   const hosts =
+-    selectedHost !== defaultHost && !relays.includes(selectedHost)
+-      ? [...relays, selectedHost]
+-      : relays
++    selectedHost && selectedHost !== defaultHost
++      ? directoryHosts.includes(selectedHost)
++        ? directoryHosts
++        : [...directoryHosts, selectedHost]
++      : directoryHosts
++
++  // The contact section: ordered independently (initial order comes from the
++  // caller — contacts desc, then alpha), re-sorted only when "Measure ping"
++  // finishes. Excluded hosts are dropped here too.
++  const [contactOrder, setContactOrder] = useState(() =>
++    (contactRelays ?? []).filter(c => !excluded.has(c.host))
++  )
++  const [measuring, setMeasuring] = useState(false)
+ 
+   // Opening the dialog IS the intent to choose, so probe every relay now — but
+   // through a small worker pool, not all at once: each probe opens a WebSocket
+@@ -120,9 +143,60 @@ export default function RelayPickerDialog({
+     onClose()
+   }
+ 
+-  const renderStatus = (host: string) => {
++  // Probe the contact section on demand only. Privacy: probing broadcasts
++  // contact-derived hostnames to the bridge operator, so nothing hits the
++  // network until the user clicks. Same probeRelay + worker pool as the
++  // directory probe above; when ALL settle, re-sort by latency asc (unreachable
++  // last). Re-sort happens only here, never spontaneously while idle.
++  const measureContacts = () => {
++    if (measuring || contactOrder.length === 0) {
++      return
++    }
++    setMeasuring(true)
++    const queue = contactOrder.map(c => c.host)
++    queue.forEach(host => probedRef.current.add(host))
++    const results: Record<string, RelayProbe> = {}
++    const CONCURRENCY = 5
++    let next = 0
++    let settled = 0
++    const worker = async (): Promise<void> => {
++      // Stop probing the remaining hosts if the dialog is closed mid-measure —
++      // mirrors the directory probe's cancellation (mountedRef flips on unmount).
++      while (mountedRef.current && next < queue.length) {
++        const host = queue[next++]
++        const probe = await probeRelay(host)
++        results[host] = probe
++        if (mountedRef.current) {
++          setProbes(prev => ({ ...prev, [host]: probe }))
++        }
++        if (++settled === queue.length && mountedRef.current) {
++          const rank = (host: string) => {
++            const p = results[host]
++            return p && p.status === 'reachable' && p.latencyMs !== null
++              ? p.latencyMs
++              : Number.POSITIVE_INFINITY
++          }
++          setContactOrder(prev =>
++            [...prev].sort(
++              (a, b) =>
++                rank(a.host) - rank(b.host) || a.host.localeCompare(b.host)
++            )
++          )
++          setMeasuring(false)
++        }
++      }
++    }
++    for (let i = 0; i < Math.min(CONCURRENCY, queue.length); i++) {
++      void worker()
++    }
++  }
++
++  const renderStatus = (host: string, pending: boolean) => {
+     const probe = probes[host]
+     if (!probe) {
++      if (!pending) {
++        return null
++      }
+       // sonar ping while this relay is being probed over the bridge
+       return (
+         <span className={styles.relayDialogPing} aria-hidden='true'>
+@@ -150,7 +224,11 @@ export default function RelayPickerDialog({
+       <DialogHeader title='Choose a chatmail relay' onClose={onClose} />
+       <DialogBody>
+         <DialogContent>
+-          <div className={styles.relayDialogList} role='listbox'>
++          <div
++            className={styles.relayDialogList}
++            role='listbox'
++            aria-label='Public relay directory'
++          >
+             {hosts.map(host => (
+               <button
+                 type='button'
+@@ -180,11 +258,77 @@ export default function RelayPickerDialog({
+                     <span className={styles.relayDialogDefaultTag}>default</span>
+                   )}
+                 </span>
+-                {renderStatus(host)}
++                {renderStatus(host, true)}
+               </button>
+             ))}
+           </div>
+ 
++          {contactOrder.length > 0 && (
++            <div className={styles.relayContactSection}>
++              <div className={styles.relayContactHeader}>
++                <span className={styles.relayContactTitle}>
++                  Relays your contacts use
++                </span>
++                <button
++                  type='button'
++                  data-testid='relay-contact-measure'
++                  className={styles.relayContactMeasure}
++                  disabled={measuring}
++                  onClick={measureContacts}
++                >
++                  Measure ping
++                </button>
++              </div>
++              <p className={styles.relayContactHint}>
++                These relays are only pinged (via your bridge) when you press
++                “Measure ping”.
++              </p>
++              <div
++                className={styles.relayDialogList}
++                role='listbox'
++                aria-label='Relays your contacts use'
++              >
++                {contactOrder.map(({ host, contacts }) => (
++                  <button
++                    type='button'
++                    key={host}
++                    role='option'
++                    aria-selected={host === selectedHost}
++                    aria-disabled={!isSelectable(host)}
++                    data-testid={`relay-option-${host}`}
++                    disabled={!isSelectable(host)}
++                    className={[
++                      styles.relayDialogRow,
++                      host === selectedHost
++                        ? styles.relayDialogRowSelected
++                        : '',
++                      !isSelectable(host) ? styles.relayDialogRowDisabled : '',
++                    ]
++                      .filter(Boolean)
++                      .join(' ')}
++                    onClick={() => choose(host)}
++                  >
++                    <span className={styles.relayDialogHost}>
++                      {host === selectedHost && (
++                        <span
++                          className={styles.relayDialogCheck}
++                          aria-hidden='true'
++                        >
++                          ✓{' '}
++                        </span>
++                      )}
++                      {host}
++                      <span className={styles.relayDialogDefaultTag}>
++                        {contacts} contact{contacts === 1 ? '' : 's'}
++                      </span>
++                    </span>
++                    {renderStatus(host, measuring)}
++                  </button>
++                ))}
++              </div>
++            </div>
++          )}
++
+           {!customOpen ? (
+             <button
+               type='button'
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
+index 1654f4006..70c7b254b 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
++++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
+@@ -292,6 +292,48 @@
+   }
+ }
+ 
++// Dialog: the "Relays your contacts use" section (Transports call site only).
++.relayContactSection {
++  border-top: 1px solid var(--separatorColor);
++  margin-top: 12px;
++  padding-top: 8px;
++}
++
++.relayContactHeader {
++  align-items: center;
++  display: flex;
++  justify-content: space-between;
++  padding: 4px 4px 0;
++}
++
++.relayContactTitle {
++  color: var(--deltaChatPrimaryFgLight);
++  font-size: 13px;
++}
++
++.relayContactMeasure {
++  appearance: none;
++  background: none;
++  border: none;
++  color: var(--loginInputFocusColor);
++  cursor: pointer;
++  flex: none;
++  font-size: 14px;
++  padding: 4px;
++
++  &:disabled {
++    cursor: default;
++    opacity: 0.55;
++  }
++}
++
++.relayContactHint {
++  color: var(--deltaChatPrimaryFgLight);
++  font-size: 12px;
++  margin: 2px 4px 6px;
++  opacity: 0.8;
++}
++
+ // Dialog: the "Other relay…" affordance and its input.
+ .relayDialogOther {
+   appearance: none;
+@@ -300,7 +342,7 @@
+   color: var(--loginInputFocusColor);
+   cursor: pointer;
+   font-size: 14px;
+-  margin-top: 12px;
++  margin-block: 12px 8px;
+   padding: 4px 4px;
+   text-align: left;
+ }
+@@ -309,7 +351,7 @@
+   align-items: center;
+   display: flex;
+   gap: 10px;
+-  margin-top: 12px;
++  margin-block: 12px;
+ }
+ 
+ .relayDialogCustomInput {
+diff --git a/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts b/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
+index 6f011dfe0..a979b8f62 100644
+--- a/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
++++ b/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
+@@ -26,7 +26,7 @@ export default function useAddTransportDialog(): AddTransportDialogFn {
+       multiDeviceMode,
+       confirmLabel = tx('confirm_add_transport')
+     ) => {
+-      let message = `${confirmLabel}\n ${domainOrAddress}`
++      let message = `${confirmLabel} ${domainOrAddress}`
+       if (multiDeviceMode) {
+         message +=
+           '\n\nNote if using multi-device:\nbefore changing or adding transports make sure all other devices have at least version 2.33.0 installed. Otherwise they will run out of sync.'
+diff --git a/packages/frontend/src/tests/contactRelays.test.ts b/packages/frontend/src/tests/contactRelays.test.ts
+new file mode 100644
+index 000000000..a9db01793
+--- /dev/null
++++ b/packages/frontend/src/tests/contactRelays.test.ts
+@@ -0,0 +1,66 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import { contactRelayCandidates } from '../components/dialogs/Transports/contactRelays.js'
++
++// The contact addresses come from the account's own contact list, but the
++// aggregation still has to be defensive: skip anything that isn't a plausible
++// mail address, count per relay domain, drop excluded hosts, and hand back a
++// stable most-used-first order for the picker's contact section.
++describe('contactRelayCandidates', () => {
++  it('counts contacts per relay domain, lowercased', () => {
++    expect(
++      contactRelayCandidates(
++        ['a@nine.testrun.org', 'b@Nine.Testrun.Org', 'c@mehl.cloud'],
++        new Set()
++      )
++    ).to.eql([
++      { host: 'nine.testrun.org', contacts: 2 },
++      { host: 'mehl.cloud', contacts: 1 },
++    ])
++  })
++
++  it('excludes given hosts', () => {
++    expect(
++      contactRelayCandidates(
++        ['a@nine.testrun.org', 'b@mehl.cloud', 'c@mehl.cloud'],
++        new Set(['nine.testrun.org'])
++      )
++    ).to.eql([{ host: 'mehl.cloud', contacts: 2 }])
++  })
++
++  it('skips malformed addresses', () => {
++    expect(
++      contactRelayCandidates(
++        [
++          'no-at-sign',
++          '@nolocal.example',
++          'user@',
++          'user@bad host.example',
++          'user@no-dots',
++          'ok@nine.testrun.org',
++        ],
++        new Set()
++      )
++    ).to.eql([{ host: 'nine.testrun.org', contacts: 1 }])
++  })
++
++  it('sorts by contacts desc, then host alphabetically', () => {
++    expect(
++      contactRelayCandidates(
++        [
++          'a@zeta.example',
++          'b@zeta.example',
++          'c@alpha.example',
++          'd@alpha.example',
++          'e@beta.example',
++        ],
++        new Set()
++      )
++    ).to.eql([
++      { host: 'alpha.example', contacts: 2 },
++      { host: 'zeta.example', contacts: 2 },
++      { host: 'beta.example', contacts: 1 },
++    ])
++  })
++})
