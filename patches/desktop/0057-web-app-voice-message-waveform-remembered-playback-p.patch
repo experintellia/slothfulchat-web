@@ -1,0 +1,860 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Mon, 20 Jul 2026 19:12:00 +0000
+Subject: [PATCH 57/57] web-app: voice-message waveform, remembered playback
+ position (experimental)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Builds on the A1 custom controls, still gated behind experimentalAudioPlayerControls
+(off → playback renders exactly as before). Two additions plus a recorder-meter
+upgrade, all progressive: the waveform never gates playback and silently keeps
+the plain A1 seek bar on any failure.
+
+Waveform (progressive enhancement over the A1 range bar):
+- new peaks.ts pipeline getPeaks(src): in-session bounded Map cache (~100, FIFO,
+  no persistent cache — measure first, issue A2.5) → fetch → arrayBuffer →
+  decodeAudioData → hand channel-0 to a shared worker for max-abs bucketing
+  (N=64). Bounded ~4s budget via Promise.race + AbortController on the fetch;
+  any error/timeout resolves null (log.debug at most) and the player falls back.
+- decode stays on the main thread on purpose: decodeAudioData only exists on
+  Audio/OfflineAudioContext, which a plain (non-AudioWorklet) Worker can't
+  construct, so a worker can't decode — only the cheap bucketing loop is
+  offloaded. Worker is lazily created once and shared; if construction throws
+  (upstream builds without the web-app shell don't serve the file) it resolves
+  null forever, i.e. the fallback path.
+- Waveform.tsx renders a canvas UNDER the range (range stays THE interactive
+  seek control — drag guard, keyboard, aria intact); when peaks land the range
+  goes fully transparent (track + thumb) and the canvas draws 64 bars, played
+  portion in --colorPrimary, unplayed in currentColor at 35%. Redraws off the
+  existing currentTime/duration state (no extra listeners), handles dpr. No
+  ResizeObserver — draws use live clientWidth and are driven by playback state.
+
+Performance tracking from day one (on-device only): peaks.ts emits User Timing
+measures sc:waveform:{fetch,decode,bucket} with detail {durationSec, bytes} and,
+on fallback, a sc:waveform:fallback mark with {reason}; all wrapped in try/catch.
+The web-app Diagnostics panel gains a "Waveform (ms)" section reading them back
+(count/last/avg/min/max per stage + last file + fallback count), omitted when
+nothing has run.
+
+Remembered position (positionStore.ts): localStorage JSON map keyed by src
+(stable per message file; avoids threading messageId), value {t, at}, capped
+~300 with oldest-by-at pruning, all storage access try/caught. On loadedmetadata
+restore a saved t in (1, duration-1); save throttled ~2s while playing and
+immediately on pause; clear on natural end.
+
+Seek carryover to the singleton (the A1 ponytail limitation, now fixed — comment
+removed): (a) the mutex onPlay carries a restored/scrubbed local currentTime onto
+the singleton when the src actually changed (it otherwise always starts a fresh
+src at 0); (b) the AudioPlayer mirror pushes a held local position onto the
+singleton when the singleton just started this src from the top (auto-advance to
+a half-heard message) — one-way only, a remounting local element must never yank
+back a mid-play singleton.
+
+Recorder meter: when the setting is on, the segmented VolumeMeter is replaced by
+a rolling live waveform drawn with the SAME canvas routine as the player
+(exported drawBars, not duplicated) over a bounded history of recent RMS levels;
+setting off leaves the VolumeMeter untouched.
+
+Tests: node:test for computePeaks (empty/constant/spike-localization) and mocha
+for positionStore cap/prune/clear via an injectable storage + clock shim.
+---
+ .../src/components/AudioPlayer/Waveform.tsx   |  74 ++++++++
+ .../src/components/AudioPlayer/index.tsx      | 166 +++++++++++++----
+ .../src/components/AudioPlayer/peaks.ts       | 167 ++++++++++++++++++
+ .../components/AudioPlayer/positionStore.ts   |  66 +++++++
+ .../components/AudioPlayer/styles.module.scss |  44 +++++
+ .../AudioRecorder/AudioRecorder.tsx           |  40 ++++-
+ .../AudioRecorder/styles.module.scss          |  16 ++
+ .../src/contexts/MediaPlayerMutexContext.tsx  |  19 +-
+ .../frontend/src/tests/audioPlayer.test.ts    |  42 +++++
+ 9 files changed, 598 insertions(+), 36 deletions(-)
+ create mode 100644 packages/frontend/src/components/AudioPlayer/Waveform.tsx
+ create mode 100644 packages/frontend/src/components/AudioPlayer/peaks.ts
+ create mode 100644 packages/frontend/src/components/AudioPlayer/positionStore.ts
+
+diff --git a/packages/frontend/src/components/AudioPlayer/Waveform.tsx b/packages/frontend/src/components/AudioPlayer/Waveform.tsx
+new file mode 100644
+index 000000000..15aa4bee0
+--- /dev/null
++++ b/packages/frontend/src/components/AudioPlayer/Waveform.tsx
+@@ -0,0 +1,74 @@
++import React, { useEffect, useRef } from 'react'
++
++// Shared canvas bar renderer for both the voice-message waveform and the live
++// recorder meter (they use the exact same routine — don't duplicate it).
++//
++// Draws `peaks` (values ~0..1) as centered vertical bars. Bars before
++// `progress` (0..1 of the width) are the accent colour (--colorPrimary); the
++// rest are currentColor at ~35% opacity. Colours are read from the canvas's
++// computed style so it tracks the theme. Handles devicePixelRatio.
++//
++// ponytail: no ResizeObserver — the canvas uses its live clientWidth on every
++// draw, and draws are driven by the player's currentTime/duration state (or the
++// recorder's per-frame level), so it's correct whenever it actually paints; a
++// window resize of a never-touched bar just isn't worth an observer.
++export function drawBars(
++  canvas: HTMLCanvasElement,
++  peaks: Float32Array | ArrayLike<number>,
++  progress: number
++): void {
++  const ctx = canvas.getContext('2d')
++  if (ctx == null) {
++    return
++  }
++  const dpr = window.devicePixelRatio || 1
++  const cssW = canvas.clientWidth || 200
++  const cssH = canvas.clientHeight || 32
++  if (canvas.width !== Math.round(cssW * dpr)) {
++    canvas.width = Math.round(cssW * dpr)
++  }
++  if (canvas.height !== Math.round(cssH * dpr)) {
++    canvas.height = Math.round(cssH * dpr)
++  }
++  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
++  ctx.clearRect(0, 0, cssW, cssH)
++
++  const style = getComputedStyle(canvas)
++  const played = style.getPropertyValue('--colorPrimary').trim() || style.color
++  const unplayed = style.color
++
++  const n = peaks.length
++  if (n === 0) {
++    return
++  }
++  const barW = cssW / n
++  const gap = Math.min(1, barW * 0.25)
++  const playedBars = progress * n
++  for (let i = 0; i < n; i++) {
++    const h = Math.max(1, peaks[i] * cssH)
++    const isPlayed = i < playedBars
++    ctx.globalAlpha = isPlayed ? 1 : 0.35
++    ctx.fillStyle = isPlayed ? played : unplayed
++    ctx.fillRect(i * barW, (cssH - h) / 2, Math.max(1, barW - gap), h)
++  }
++  ctx.globalAlpha = 1
++}
++
++/** Canvas that redraws `peaks` at `progress` whenever either changes. */
++export function WaveformCanvas({
++  peaks,
++  progress,
++  className,
++}: {
++  peaks: Float32Array
++  progress: number
++  className?: string
++}) {
++  const ref = useRef<HTMLCanvasElement>(null)
++  useEffect(() => {
++    if (ref.current != null) {
++      drawBars(ref.current, peaks, progress)
++    }
++  }, [peaks, progress])
++  return <canvas ref={ref} className={className} aria-hidden='true' />
++}
+diff --git a/packages/frontend/src/components/AudioPlayer/index.tsx b/packages/frontend/src/components/AudioPlayer/index.tsx
+index 825cf3df4..2d02e78b9 100644
+--- a/packages/frontend/src/components/AudioPlayer/index.tsx
++++ b/packages/frontend/src/components/AudioPlayer/index.tsx
+@@ -9,6 +9,9 @@ import {
+   type MediaPlayerMutexContextValue,
+ } from '../../contexts/MediaPlayerMutexContext'
+ import { formatAudioTime, nextPlaybackRate } from './utils'
++import { WaveformCanvas } from './Waveform'
++import { getPeaks } from './peaks'
++import { positionStore } from './positionStore'
+ import { IconButton } from '../Icon'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import { useSettingsStore } from '../../stores/settings'
+@@ -67,6 +70,15 @@ export function AudioPlayer({
+         el.play()
+         ignoreOnePlayEvent.current = true
+       }
++      // Asymmetric, one-way sync: if the singleton just started this src from
++      // the top (e.g. auto-advance reached a message the user had half-heard)
++      // while we hold a restored position, push our position onto it. Never the
++      // reverse — a remounting local element must not yank back a mid-play
++      // singleton.
++      // eslint-disable-next-line react-hooks/immutability
++      if (globalEl.currentTime < 1 && el.currentTime > 1) {
++        globalEl.currentTime = el.currentTime
++      }
+     }
+     const onPauseGlobal = () => {
+       if (!el.paused) {
+@@ -135,7 +147,11 @@ export function AudioPlayer({
+         onPause={wrappedOnPause}
+       />
+       {customControlsEnabled && (
+-        <CustomAudioControls audioRef={ref} tabIndex={props.tabIndex} />
++        <CustomAudioControls
++          audioRef={ref}
++          src={props.src}
++          tabIndex={props.tabIndex}
++        />
+       )}
+     </>
+   )
+@@ -148,9 +164,11 @@ export function AudioPlayer({
+  */
+ function CustomAudioControls({
+   audioRef,
++  src,
+   tabIndex,
+ }: {
+   audioRef: React.RefObject<HTMLAudioElement | null>
++  src: string
+   tabIndex?: number
+ }) {
+   const tx = useTranslationFunction()
+@@ -158,6 +176,15 @@ function CustomAudioControls({
+   const [paused, setPaused] = useState(true)
+   const [currentTime, setCurrentTime] = useState(0)
+   const [duration, setDuration] = useState(0)
++  // Waveform peaks (progressive enhancement). Tagged with the src they were
++  // computed for so a src change instantly stops drawing the previous message's
++  // waveform (peaks below is null until the new ones arrive). null = loading OR
++  // fell back to the plain bar — either way the bar renders exactly as A1.
++  const [peaksState, setPeaksState] = useState<{
++    src: string
++    peaks: Float32Array
++  } | null>(null)
++  const peaks = peaksState?.src === src ? peaksState.peaks : null
+   // While the user drags the seek thumb, don't let `timeupdate` reassert the
+   // controlled value out from under the pointer.
+   const seekingRef = useRef(false)
+@@ -195,7 +222,67 @@ function CustomAudioControls({
+     }
+   }, [audioRef, ctx.playbackRate])
+ 
++  // Peaks pipeline: kick off once per src; never blocks playback.
++  useEffect(() => {
++    let cancelled = false
++    getPeaks(src).then(p => {
++      if (!cancelled && p != null) {
++        setPeaksState({ src, peaks: p })
++      }
++    })
++    return () => {
++      cancelled = true
++    }
++  }, [src])
++
++  // Remembered position (A2): restore on metadata, save while playing
++  // (throttled ~2s) and immediately on pause, clear on natural end.
++  useEffect(() => {
++    const el = audioRef.current
++    if (el == null) {
++      return
++    }
++    let lastSave = 0
++    const restore = () => {
++      const t = positionStore.getPosition(src)
++      if (t != null && t > 1 && t < el.duration - 1) {
++        el.currentTime = t
++      }
++    }
++    const onTime = () => {
++      if (el.paused || el.currentTime <= 1) {
++        return
++      }
++      const t = Date.now()
++      if (t - lastSave > 2000) {
++        lastSave = t
++        positionStore.setPosition(src, el.currentTime)
++      }
++    }
++    const onPause = () => {
++      if (!el.ended && el.currentTime > 1) {
++        positionStore.setPosition(src, el.currentTime)
++      }
++    }
++    const onEnded = () => positionStore.clearPosition(src)
++    if (el.readyState >= 1 /* HAVE_METADATA */) {
++      restore()
++    }
++    el.addEventListener('loadedmetadata', restore)
++    el.addEventListener('timeupdate', onTime)
++    el.addEventListener('pause', onPause)
++    el.addEventListener('ended', onEnded)
++    return () => {
++      el.removeEventListener('loadedmetadata', restore)
++      el.removeEventListener('timeupdate', onTime)
++      el.removeEventListener('pause', onPause)
++      el.removeEventListener('ended', onEnded)
++    }
++  }, [audioRef, src])
++
+   const safeDuration = Number.isFinite(duration) ? duration : 0
++  const progress =
++    safeDuration > 0 ? Math.min(currentTime, safeDuration) / safeDuration : 0
+ 
+   return (
+     <div className={styles.customControls}>
+@@ -218,39 +305,50 @@ function CustomAudioControls({
+           }
+         }}
+       />
+-      <input
+-        type='range'
+-        className={styles.seek}
+-        min={0}
+-        max={safeDuration}
+-        step='any'
+-        value={Math.min(currentTime, safeDuration)}
+-        tabIndex={tabIndex}
+-        aria-label={tx('a11y_audio_seek')}
+-        aria-valuetext={`${formatAudioTime(
+-          Math.min(currentTime, safeDuration)
+-        )} / ${formatAudioTime(safeDuration)}`}
+-        onPointerDown={() => {
+-          seekingRef.current = true
+-        }}
+-        onPointerUp={() => {
+-          seekingRef.current = false
+-        }}
+-        onChange={e => {
+-          const v = Number(e.currentTarget.value)
+-          // Update state too: with `sync()` suppressed during the drag, a
+-          // skip-only fix would leave the controlled value stale and snap the
+-          // thumb back on every pointermove.
+-          setCurrentTime(v)
+-          const el = audioRef.current
+-          if (el != null) {
+-            // ponytail: scrubbing a paused message before playing is not
+-            // mirrored to the global element (same as the native controls
+-            // today). A2's remembered-position work is the upgrade path.
+-            el.currentTime = v
+-          }
+-        }}
+-      />
++      <div className={styles.seekWrap}>
++        {peaks != null && (
++          <WaveformCanvas
++            peaks={peaks}
++            progress={progress}
++            className={styles.waveformCanvas}
++          />
++        )}
++        <input
++          type='range'
++          className={classNames(
++            styles.seek,
++            peaks != null && styles.seekOverWaveform
++          )}
++          min={0}
++          max={safeDuration}
++          step='any'
++          value={Math.min(currentTime, safeDuration)}
++          tabIndex={tabIndex}
++          aria-label={tx('a11y_audio_seek')}
++          aria-valuetext={`${formatAudioTime(
++            Math.min(currentTime, safeDuration)
++          )} / ${formatAudioTime(safeDuration)}`}
++          onPointerDown={() => {
++            seekingRef.current = true
++          }}
++          onPointerUp={() => {
++            seekingRef.current = false
++          }}
++          onChange={e => {
++            const v = Number(e.currentTarget.value)
++            // Update state too: with `sync()` suppressed during the drag, a
++            // skip-only fix would leave the controlled value stale and snap the
++            // thumb back on every pointermove.
++            setCurrentTime(v)
++            const el = audioRef.current
++            if (el != null) {
++              // A scrub before play is carried onto the singleton on play
++              // (see MediaPlayerMutexContext.onPlay), so it's mirrored now.
++              el.currentTime = v
++            }
++          }}
++        />
++      </div>
+       <span className={styles.time}>
+         {formatAudioTime(currentTime)} / {formatAudioTime(safeDuration)}
+       </span>
+diff --git a/packages/frontend/src/components/AudioPlayer/peaks.ts b/packages/frontend/src/components/AudioPlayer/peaks.ts
+new file mode 100644
+index 000000000..a106fed16
+--- /dev/null
++++ b/packages/frontend/src/components/AudioPlayer/peaks.ts
+@@ -0,0 +1,167 @@
++// Voice-message waveform peaks — a progressive enhancement over the plain seek
++// bar, never a dependency. On any error/timeout getPeaks resolves null and the
++// player silently keeps the A1 bar. Playback never waits on this.
++//
++// Pipeline: in-session cache → fetch(src) → arrayBuffer → decodeAudioData →
++// hand channel-0 to the shared worker for max-abs bucketing → Float32Array.
++//
++// Decode stays on the main thread on purpose: decodeAudioData is async and
++// runs the actual decode off-thread internally, but it only exists on
++// AudioContext/OfflineAudioContext, which a plain (non-AudioWorklet) Worker
++// can't construct — so a worker can't decode. Only the cheap bucketing loop is
++// offloaded.
++
++import { getLogger } from '@deltachat-desktop/shared/logger'
++
++const log = getLogger('AudioPlayer/peaks')
++
++const N_PEAKS = 64
++const TIME_BUDGET_MS = 4000
++const CACHE_MAX = 100
++
++// ponytail: bounded in-session cache, NO persistent peak cache (issue A2.5 —
++// measure first). FIFO by insertion order, ~100 entries keyed by src. A cached
++// `null` is kept so a failed src isn't retried every render.
++const cache = new Map<string, Float32Array | null>()
++
++// --- User Timing (sc:waveform:*), all best-effort ------------------------
++function measure(
++  name: string,
++  start: number,
++  end: number,
++  detail: { durationSec: number; bytes: number }
++): void {
++  try {
++    performance.measure(name, { start, end, detail })
++  } catch {
++    // performance.measure can throw in exotic environments; timing is best-effort
++  }
++}
++function fallbackMark(reason: string): void {
++  try {
++    performance.mark('sc:waveform:fallback', { detail: { reason } })
++  } catch {
++    /* best-effort */
++  }
++}
++
++// --- shared bucketing worker (lazy, module-level) ------------------------
++// undefined = not yet tried, null = construction failed (fallback forever).
++let worker: Worker | null | undefined
++let nextId = 0
++const pending = new Map<number, (peaks: Float32Array | null) => void>()
++
++function getWorker(): Worker | null {
++  if (worker !== undefined) {
++    return worker
++  }
++  try {
++    worker = new Worker('/waveform-worker.js', { type: 'module' })
++    worker.onmessage = (e: MessageEvent) => {
++      const { id, peaks } = e.data
++      const resolve = pending.get(id)
++      if (resolve) {
++        pending.delete(id)
++        resolve(peaks)
++      }
++    }
++    // Upstream builds without the web-app shell don't serve the file: a load
++    // error leaves the request pending, so the 4s budget resolves it as null.
++    worker.onerror = () => log.debug('waveform worker error')
++  } catch {
++    // Some environments don't serve the file / block module workers.
++    worker = null
++  }
++  return worker
++}
++
++function bucketInWorker(
++  channel: Float32Array,
++  n: number
++): Promise<Float32Array | null> {
++  const w = getWorker()
++  if (w == null) {
++    return Promise.resolve(null)
++  }
++  return new Promise(resolve => {
++    const id = nextId++
++    pending.set(id, resolve)
++    w.postMessage({ id, data: channel, n }, [channel.buffer])
++  })
++}
++
++// --- pipeline ------------------------------------------------------------
++async function computePeaks(
++  src: string,
++  signal: AbortSignal
++): Promise<Float32Array | null> {
++  try {
++    const t0 = performance.now()
++    const resp = await fetch(src, { signal })
++    const bytes = await resp.arrayBuffer()
++    // Read now: decodeAudioData detaches the buffer, after which byteLength
++    // reports 0.
++    const byteLength = bytes.byteLength
++    const t1 = performance.now()
++
++    const Ctx =
++      (window as any).OfflineAudioContext ||
++      (window as any).webkitOfflineAudioContext
++    // Length/sampleRate are irrelevant to a decode-only context.
++    const ctx: OfflineAudioContext = new Ctx(1, 1, 44100)
++    const audioBuffer = await ctx.decodeAudioData(bytes)
++    const t2 = performance.now()
++
++    // slice() so we transfer a copy and don't neuter the AudioBuffer's channel.
++    const channel = audioBuffer.getChannelData(0).slice()
++    const peaks = await bucketInWorker(channel, N_PEAKS)
++    const t3 = performance.now()
++
++    const detail = {
++      durationSec: audioBuffer.duration,
++      bytes: byteLength,
++    }
++    measure('sc:waveform:fetch', t0, t1, detail)
++    measure('sc:waveform:decode', t1, t2, detail)
++    measure('sc:waveform:bucket', t2, t3, detail)
++    return peaks
++  } catch (e) {
++    // Aborted by the budget timeout is already marked as 'timeout'.
++    if (!signal.aborted) {
++      log.debug('waveform peaks failed', e)
++      fallbackMark('error')
++    }
++    return null
++  }
++}
++
++/**
++ * Peaks for the given (already transformed) audio URL, or null to fall back to
++ * the plain seek bar. Bounded ~4s budget; result is cached for the session.
++ */
++export async function getPeaks(src: string): Promise<Float32Array | null> {
++  if (cache.has(src)) {
++    return cache.get(src) ?? null
++  }
++  const ac = new AbortController()
++  let timer: ReturnType<typeof setTimeout> | undefined
++  const timeout = new Promise<null>(resolve => {
++    timer = setTimeout(() => {
++      ac.abort()
++      fallbackMark('timeout')
++      resolve(null)
++    }, TIME_BUDGET_MS)
++  })
++  const result = await Promise.race([computePeaks(src, ac.signal), timeout])
++    .catch(() => null)
++    .finally(() => clearTimeout(timer))
++
++  cache.set(src, result)
++  if (cache.size > CACHE_MAX) {
++    const oldest = cache.keys().next().value
++    if (oldest !== undefined) {
++      cache.delete(oldest)
++    }
++  }
++  return result
++}
+diff --git a/packages/frontend/src/components/AudioPlayer/positionStore.ts b/packages/frontend/src/components/AudioPlayer/positionStore.ts
+new file mode 100644
+index 000000000..f900bd8cd
+--- /dev/null
++++ b/packages/frontend/src/components/AudioPlayer/positionStore.ts
+@@ -0,0 +1,66 @@
++// Remembered voice-message playback positions, persisted in localStorage under
++// one key. Injectable storage + clock so it's testable in node (mocha).
++//
++// ponytail: keyed by the `src` string (the transformed blob URL, stable per
++// message file) instead of threading messageId through AudioPlayer. Capped at
++// ~300 entries, oldest-by-`at` dropped; all storage access is try/caught so
++// quota / private-mode just no-ops.
++
++const KEY = 'voiceMessagePlaybackPositions'
++const CAP = 300
++
++type Entry = { t: number; at: number }
++type StoreShape = Record<string, Entry>
++type StorageLike = Pick<Storage, 'getItem' | 'setItem'>
++
++export function makePositionStore(
++  storage: StorageLike,
++  now: () => number = () => Date.now()
++) {
++  const read = (): StoreShape => {
++    try {
++      return JSON.parse(storage.getItem(KEY) || '{}') as StoreShape
++    } catch {
++      return {}
++    }
++  }
++  const write = (s: StoreShape): void => {
++    try {
++      storage.setItem(KEY, JSON.stringify(s))
++    } catch {
++      // storage may be blocked (private mode / quota); positions are optional
++    }
++  }
++  return {
++    getPosition(src: string): number | null {
++      const e = read()[src]
++      return e ? e.t : null
++    },
++    setPosition(src: string, t: number): void {
++      const s = read()
++      s[src] = { t, at: now() }
++      const keys = Object.keys(s)
++      if (keys.length > CAP) {
++        keys.sort((a, b) => (s[a]?.at ?? 0) - (s[b]?.at ?? 0))
++        for (const k of keys.slice(0, keys.length - CAP)) {
++          delete s[k]
++        }
++      }
++      write(s)
++    },
++    clearPosition(src: string): void {
++      const s = read()
++      if (src in s) {
++        delete s[src]
++        write(s)
++      }
++    },
++  }
++}
++
++// Browser default; a no-op storage keeps import-time safe where localStorage is
++// absent (e.g. node test harnesses importing this module transitively).
++export const positionStore =
++  typeof localStorage !== 'undefined'
++    ? makePositionStore(localStorage)
++    : makePositionStore({ getItem: () => null, setItem: () => {} })
+diff --git a/packages/frontend/src/components/AudioPlayer/styles.module.scss b/packages/frontend/src/components/AudioPlayer/styles.module.scss
+index 976ee4168..148af1234 100644
+--- a/packages/frontend/src/components/AudioPlayer/styles.module.scss
++++ b/packages/frontend/src/components/AudioPlayer/styles.module.scss
+@@ -23,11 +23,55 @@
+   gap: 0.5rem;
+   min-width: 300px; // parity with the native element
+ }
++.seekWrap {
++  position: relative;
++  flex: 1;
++  min-width: 0;
++  display: flex;
++  align-items: center;
++}
+ .seek {
+   flex: 1;
+   min-width: 0;
+   accent-color: var(--colorPrimary);
+ }
++// The canvas is the visual; the range on top stays the interaction layer.
++.waveformCanvas {
++  position: absolute;
++  inset: 0;
++  width: 100%;
++  height: 100%;
++  pointer-events: none;
++}
++// Over a waveform the range goes fully transparent (track + thumb): the
++// played/unplayed colour split on the canvas is the position indicator, so a
++// separate thumb would just be visual noise. Interaction/keyboard/aria stay.
++.seekOverWaveform {
++  -webkit-appearance: none;
++  appearance: none;
++  background: transparent;
++  accent-color: transparent;
++  // appearance:none collapses the input's intrinsic height to 0, which also
++  // collapses .seekWrap (and with it the absolutely-positioned canvas) — give
++  // the interaction layer the waveform's height explicitly.
++  height: 32px;
++  &::-webkit-slider-runnable-track {
++    background: transparent;
++  }
++  &::-webkit-slider-thumb {
++    -webkit-appearance: none;
++    width: 0;
++    height: 0;
++  }
++  &::-moz-range-track {
++    background: transparent;
++  }
++  &::-moz-range-thumb {
++    width: 0;
++    border: none;
++    opacity: 0;
++  }
++}
+ .time {
+   font-size: 0.85em;
+   font-variant-numeric: tabular-nums;
+diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+index 2b0ec2238..6539ab7d8 100644
+--- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
++++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+@@ -6,6 +6,8 @@ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import useDialog from '../../hooks/dialog/useDialog'
+ import AlertDialog from '../dialogs/AlertDialog'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
++import { useSettingsStore } from '../../stores/settings'
++import { drawBars } from '../AudioPlayer/Waveform'
+ 
+ const log = getLogger('renderer/AudioRecorder')
+ 
+@@ -99,6 +101,26 @@ export const AudioRecorder = ({
+   const recorder = useRef<MicRecorder | null>(null)
+   const { openDialog } = useDialog()
+ 
++  // Experimental: a rolling live waveform in place of the segmented meter,
++  // drawn with the same routine as the player waveform. Setting off → untouched.
++  const liveWaveform =
++    useSettingsStore()[0]?.desktopSettings.experimentalAudioPlayerControls ===
++    true
++  const HISTORY = 64
++  const historyRef = useRef(new Float32Array(HISTORY))
++  const canvasRef = useRef<HTMLCanvasElement>(null)
++  useEffect(() => {
++    if (!liveWaveform) {
++      return
++    }
++    const h = historyRef.current
++    h.copyWithin(0, 1) // shift left, newest at the right
++    h[HISTORY - 1] = Math.min(volume * 2, 1) // same scaling as VolumeMeter
++    if (canvasRef.current != null) {
++      drawBars(canvasRef.current, h, 1)
++    }
++  }, [volume, liveWaveform])
++
+   const onAccessDenied = useCallback(() => {
+     openDialog(AlertDialog, {
+       message: tx('perm_explain_access_to_mic_denied'),
+@@ -205,7 +227,23 @@ export const AudioRecorder = ({
+           <span />
+         </button>
+         <Timer />
+-        <VolumeMeter volume={volume} />
++        {liveWaveform ? (
++          <div
++            role='meter'
++            aria-valuemin={0}
++            aria-valuemax={1}
++            aria-valuenow={Math.min(volume * 2, 1)}
++            className={styles.liveWaveformContainer}
++          >
++            <canvas
++              ref={canvasRef}
++              className={styles.liveWaveform}
++              aria-hidden='true'
++            />
++          </div>
++        ) : (
++          <VolumeMeter volume={volume} />
++        )}
+         <button
+           type='button'
+           className={styles.cancel}
+diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+index 32e591947..2e6329b49 100644
+--- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
++++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+@@ -145,3 +145,19 @@
+     }
+   }
+ }
++
++// Live recorder waveform (experimental; replaces .volumeBarContainer when the
++// custom audio-player controls setting is on). Same footprint as .volumeBar.
++.liveWaveformContainer {
++  flex: 1;
++  padding-inline-end: 10px;
++}
++.liveWaveform {
++  display: block;
++  margin: 15px 20px 0 15px;
++  height: 12px;
++  width: 100%;
++  max-width: 250px;
++  min-width: 60px;
++  color: var(--colorPrimary);
++}
+diff --git a/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx b/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
+index 9d798308c..ad9c93cd3 100644
+--- a/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
++++ b/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
+@@ -117,7 +117,24 @@ export function MediaPlayerMutexProvider({
+           // `getAttribute('src')` returns the value that was provided
+           // to the setter, which is what we should always be using
+           // for comparisons.
+-          onPlay: e => setSrcAndPlay(e.currentTarget.getAttribute('src')),
++          onPlay: e => {
++            const el = e.currentTarget
++            const newSrc = el.getAttribute('src')
++            const srcChanged = audioEl.getAttribute('src') !== (newSrc ?? '')
++            setSrcAndPlay(newSrc)
++            // Carry a restored/scrubbed local position onto the singleton,
++            // which otherwise always starts a freshly-loaded src at 0 (A2
++            // remembered-position). Only when the src actually changed —
++            // resuming the same src keeps the singleton's own position.
++            // (The seek is applied once the new src reaches metadata.)
++            if (
++              srcChanged &&
++              Number.isFinite(el.currentTime) &&
++              el.currentTime > 0
++            ) {
++              audioEl.currentTime = el.currentTime
++            }
++          },
+           onPause: e => {
+             if (e.currentTarget.getAttribute('src') !== currentSrc) {
+               return
+diff --git a/packages/frontend/src/tests/audioPlayer.test.ts b/packages/frontend/src/tests/audioPlayer.test.ts
+index 1dee787ac..866b16822 100644
+--- a/packages/frontend/src/tests/audioPlayer.test.ts
++++ b/packages/frontend/src/tests/audioPlayer.test.ts
+@@ -5,6 +5,7 @@ import {
+   formatAudioTime,
+   nextPlaybackRate,
+ } from '../components/AudioPlayer/utils.js'
++import { makePositionStore } from '../components/AudioPlayer/positionStore.js'
+ 
+ describe('AudioPlayer / formatAudioTime', () => {
+   it('formats seconds as m:ss', () => {
+@@ -33,3 +34,44 @@ describe('AudioPlayer / nextPlaybackRate', () => {
+     expect(nextPlaybackRate(0)).to.equal(1)
+   })
+ })
++
++describe('AudioPlayer / positionStore', () => {
++  // In-memory Storage shim + controllable clock so cap/prune is deterministic.
++  const make = (clock?: () => number) => {
++    let raw = '{}'
++    return makePositionStore(
++      { getItem: () => raw, setItem: (_k: string, v: string) => (raw = v) },
++      clock
++    )
++  }
++
++  it('round-trips a position and clears it', () => {
++    const s = make()
++    expect(s.getPosition('a')).to.equal(null)
++    s.setPosition('a', 12.5)
++    expect(s.getPosition('a')).to.equal(12.5)
++    s.clearPosition('a')
++    expect(s.getPosition('a')).to.equal(null)
++  })
++
++  it('caps at 300 entries, dropping the oldest by insertion time', () => {
++    let t = 0
++    const s = make(() => t++)
++    for (let i = 0; i < 305; i++) {
++      s.setPosition('src' + i, 1)
++    }
++    // 305 inserts over cap 300 → the 5 oldest are gone, the newest 300 remain.
++    expect(s.getPosition('src0')).to.equal(null)
++    expect(s.getPosition('src4')).to.equal(null)
++    expect(s.getPosition('src5')).to.equal(1)
++    expect(s.getPosition('src304')).to.equal(1)
++  })
++
++  it('survives corrupt storage as an empty store', () => {
++    const s = makePositionStore({
++      getItem: () => '{not json',
++      setItem: () => {},
++    })
++    expect(s.getPosition('a')).to.equal(null)
++  })
++})

@@ -328,6 +328,37 @@ try {
   await incomingPlayer.waitFor({ state: 'visible', timeout: 30_000 })
   await shot('01-custom-player-paused')
 
+  if (process.env.WAVE_DEBUG) {
+    await page.waitForTimeout(1500)
+    const dbg = await page.evaluate(() => {
+      const out = []
+      for (const c of document.querySelectorAll('canvas')) {
+        const r = c.getBoundingClientRect()
+        let painted = -1
+        try {
+          const ctx = c.getContext('2d')
+          const d = ctx.getImageData(0, 0, c.width || 1, c.height || 1).data
+          painted = d.reduce((a, v, i) => (i % 4 === 3 ? a + v : a), 0)
+        } catch (e) {
+          painted = String(e)
+        }
+        out.push({
+          cls: c.className,
+          w: c.width,
+          h: c.height,
+          cssW: r.width,
+          cssH: r.height,
+          painted,
+        })
+      }
+      const ranges = [...document.querySelectorAll('input[type=range]')].map(
+        (i) => i.className
+      )
+      return { canvases: out, ranges }
+    })
+    console.log('WAVE_DEBUG', JSON.stringify(dbg, null, 1))
+  }
+
   // play the incoming voice message; progress + global bottom bar appear
   await incomingPlayer.getByRole('button', { name: 'Play', exact: true }).click()
   await page.waitForTimeout(2500)
@@ -350,6 +381,17 @@ try {
     await shot('04-settings-experimental')
   } catch (err) {
     console.warn('settings shot skipped:', err.message)
+  }
+
+  // A2: Diagnostics panel with the Waveform timing section
+  try {
+    await page.getByText('View Log', { exact: true }).click()
+    await page.waitForTimeout(400)
+    await page.getByRole('button', { name: 'Diagnostics' }).click()
+    await page.waitForTimeout(400)
+    await shot('05-diagnostics-waveform')
+  } catch (err) {
+    console.warn('diagnostics shot skipped:', err.message)
   }
   console.log('DONE')
 } catch (err) {

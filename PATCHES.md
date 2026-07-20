@@ -48,8 +48,16 @@ exists:
   architecture (force-muted per-bubble mirror + global singleton, one-at-a-time
   playback, auto-advance) is untouched — the custom controls only drive the
   local element. Off by default: Settings → Advanced → Experimental features.
-  First phase of the voice-messages epic (#120); screenshot loop:
-  `node scripts/shot-voice-player.mjs`. `desktop/0056`
+  Phase two adds a canvas waveform (peaks computed lazily: fetch → decode →
+  64-bucket max-abs in a worker served by the web-app shell, ~4s budget,
+  silent fallback to the plain bar — playback never waits on it), remembered
+  per-message playback position (restored on return, cleared on natural end),
+  seek positions actually carried onto the global player (scrub-before-play
+  now works), a live rolling waveform in the recorder's level meter, and
+  on-device User Timing profiling of peak generation surfaced in Diagnostics
+  ("measure first" — no peak cache until the numbers demand it, see issue
+  A2.5). Phases one and two of the voice-messages epic (#120); screenshot
+  loop: `node scripts/shot-voice-player.mjs`. `desktop/0056`, `desktop/0057`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
