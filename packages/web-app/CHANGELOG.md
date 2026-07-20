@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-07-20
+
+- **Settings open as one two-pane window** on wide screens (≥800px):
+  navigation on the left, the selected section on the right, instead of a
+  stack of dialogs. Narrow viewports keep the stacked flow. Experimental
+  features now live in their own settings section, and settings that only
+  exist in this fork are marked with a small sloth badge.
 
 - **Readable invite links**: a group, channel or contact invite link
   (`https://i.delta.chat/#…`) in a message now shows as a small card with the

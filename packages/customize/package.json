@@ -1,6 +1,6 @@
 {
   "name": "@slothfulchat/customize",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Customize a prebuilt SlothfulChat release zip (instance name, imprint, default bridge) for self-hosting — no rebuild needed.",
   "license": "GPL-3.0-or-later",
   "repository": {
