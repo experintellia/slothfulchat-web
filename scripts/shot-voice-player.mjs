@@ -371,6 +371,25 @@ try {
   await page.waitForTimeout(300)
   await shot('03-custom-player-2x')
 
+  // A3: playback survives a chat switch; the mini-player carries the controls
+  try {
+    await page
+      .locator('.chat-list .chat-list-item')
+      .filter({ hasText: 'Device Messages' })
+      .first()
+      .click()
+    await page.waitForTimeout(800)
+    await shot('06-miniplayer-cross-chat')
+    await page
+      .locator('.chat-list .chat-list-item')
+      .filter({ hasText: 'Bob' })
+      .first()
+      .click()
+    await incomingPlayer.waitFor({ state: 'visible', timeout: 15_000 })
+  } catch (err) {
+    console.warn('mini-player shot skipped:', err.message)
+  }
+
   await incomingPlayer.getByRole('button', { name: 'Pause', exact: true }).click()
 
   // the experimental setting switch
