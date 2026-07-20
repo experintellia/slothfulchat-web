@@ -145,10 +145,10 @@ index 7122943f6..9bba327fa 100644
          {description && (
            <div
 diff --git a/packages/frontend/src/components/Settings/styles.module.scss b/packages/frontend/src/components/Settings/styles.module.scss
-index 28cbb19f8..3b30e6601 100644
+index cbf9e233e..42a5634a9 100644
 --- a/packages/frontend/src/components/Settings/styles.module.scss
 +++ b/packages/frontend/src/components/Settings/styles.module.scss
-@@ -203,6 +203,14 @@ $settingsHeight: 40px;
+@@ -205,6 +205,14 @@ $settingsHeight: 40px;
    }
  }
  

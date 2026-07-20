@@ -17,8 +17,8 @@ exact same content; SettingsIconButton gains an 'active' highlight
 ---
  .../src/components/Settings/Settings.tsx      | 322 +++++++++++-------
  .../Settings/SettingsIconButton.tsx           |   9 +-
- .../components/Settings/styles.module.scss    |  66 ++++
- 3 files changed, 276 insertions(+), 121 deletions(-)
+ .../components/Settings/styles.module.scss    |  68 ++++
+ 3 files changed, 278 insertions(+), 121 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
 index 1abbb9d9d..426c782cd 100644
@@ -436,10 +436,10 @@ index 64db3a95f..182909149 100644
        <Icon icon={icon} />
        <span className={styles.settingsIconButtonLabel}>{children}</span>
 diff --git a/packages/frontend/src/components/Settings/styles.module.scss b/packages/frontend/src/components/Settings/styles.module.scss
-index 76688f3a8..28cbb19f8 100644
+index 76688f3a8..cbf9e233e 100644
 --- a/packages/frontend/src/components/Settings/styles.module.scss
 +++ b/packages/frontend/src/components/Settings/styles.module.scss
-@@ -71,6 +71,72 @@ $settingsHeight: 40px;
+@@ -71,6 +71,74 @@ $settingsHeight: 40px;
    &:focus {
      background-color: var(--chatListItemBgHover);
    }
@@ -484,7 +484,9 @@ index 76688f3a8..28cbb19f8 100644
 +  flex-shrink: 0;
 +  overflow-y: auto;
 +  padding-top: 20px;
-+  width: 260px;
++  // ~300/420 split of the 720px dialog; the pane keeps at least the
++  // 400px the section pages were designed for
++  width: 300px;
 +
 +  // shrink the 100px LargeProfileImage so the name has room next to it;
 +  // structural selector because that component's classes are
