@@ -43,12 +43,13 @@ consent prompt: one setting, on by default.
 ---
  .../src/components/Settings/ChatsAndMedia.tsx |   5 +
  .../src/components/composer/Composer.tsx      |  77 +++++++++-
+ .../composer/linkPreview/styles.module.scss   |  10 ++
  .../frontend/src/hooks/useOpenLinkSafely.ts   |  11 +-
  .../frontend/src/tests/trackingParams.test.ts | 105 ++++++++++++++
  packages/frontend/src/utils/trackingParams.ts | 135 ++++++++++++++++++
  packages/shared/shared-types.d.ts             |   2 +
  packages/shared/state.ts                      |   1 +
- 7 files changed, 333 insertions(+), 3 deletions(-)
+ 8 files changed, 343 insertions(+), 3 deletions(-)
  create mode 100644 packages/frontend/src/tests/trackingParams.test.ts
  create mode 100644 packages/frontend/src/utils/trackingParams.ts
 
@@ -69,7 +70,7 @@ index 934ab9c4a..b7df4da27 100644
        (SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS), these toggles are moot —
        hide them too. */}
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index c2977f97a..644b59a16 100644
+index c2977f97a..bec1d9244 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
 @@ -14,7 +14,9 @@ import { extension } from 'mime-types'
@@ -170,7 +171,7 @@ index c2977f97a..644b59a16 100644
 +                  aria-live='polite'
 +                  data-testid='tracking-removed-chip'
 +                >
-+                  <span className={ghostStyles.linkIcon} aria-hidden='true' />
++                  <span className={ghostStyles.trackingIcon} aria-hidden='true' />
 +                  <span className={ghostStyles.barLabel}>
 +                    Tracking removed from link
 +                  </span>
@@ -193,6 +194,27 @@ index c2977f97a..644b59a16 100644
                {draftState.vcardContact && (
                  <section
                    className='attachment-quote-section is-attachment'
+diff --git a/packages/frontend/src/components/composer/linkPreview/styles.module.scss b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
+index 0d752a182..f68775cb1 100644
+--- a/packages/frontend/src/components/composer/linkPreview/styles.module.scss
++++ b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
+@@ -184,6 +184,16 @@
+   }
+ }
+ 
++// tracking-removed chip: circle-slash ("blocked") icon in the primary color
++.trackingIcon {
++  flex: 0 0 auto;
++  width: 18px;
++  height: 18px;
++  background-color: var(--colorPrimary, #415e6b);
++  -webkit-mask: url(./images/icons/blocked.svg) no-repeat center / contain;
++  mask: url(./images/icons/blocked.svg) no-repeat center / contain;
++}
++
+ .addButton {
+   flex: 0 0 auto;
+   border: none;
 diff --git a/packages/frontend/src/hooks/useOpenLinkSafely.ts b/packages/frontend/src/hooks/useOpenLinkSafely.ts
 index c8dbb9e77..08b502ca3 100644
 --- a/packages/frontend/src/hooks/useOpenLinkSafely.ts
