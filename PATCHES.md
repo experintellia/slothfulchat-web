@@ -206,7 +206,9 @@ exists:
   Matches shortcode, name and keywords over the already-bundled
   `@emoji-mart/data` (no new dependency); a boundary guard keeps it from firing
   inside `http://` or `12:30`. Built as a generic `CompletionProvider` primitive
-  so a future `@mention` menu reuses the same machinery. `desktop/0050`
+  so a future `@mention` menu reuses the same machinery. On by default,
+  switchable off in Settings → Experimental features. `desktop/0050`,
+  `desktop/0061`
 
 - **Translation editor in the keyboard-shortcuts cheat sheet** — lists the
   in-app translation editor (`Ctrl/Cmd+Shift+L`, implemented in `web-app`'s

@@ -7,6 +7,10 @@
   name and a "View" button instead of the long fingerprint URL. Tapping it
   opens the same join/chat confirmation as before.
 
+- **Emoji completion menu is now on by default**: type `:smile` in the
+  composer to pick an emoji. Turn it off in Settings → Experimental features
+  if it gets in your way.
+
 - **Links lose their tracking**: known tracking parameters (`utm_*`, YouTube
   `si=`, click ids, Amazon affiliate refs, …) are now removed when you open a
   link and when you paste one into the composer — pasting shows a quiet
