@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Mon, 6 Jul 2026 00:57:11 +0000
-Subject: [PATCH 02/16] wasm: deltachat-time reads the clock via js-sys
+Subject: [PATCH 02/18] wasm: deltachat-time reads the clock via js-sys
  Date.now()
 
 SystemTime::now() panics on wasm32-unknown-unknown; UNIX_EPOCH + Duration
