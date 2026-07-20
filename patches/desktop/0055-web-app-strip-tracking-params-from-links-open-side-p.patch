@@ -41,18 +41,40 @@ consent prompt: one setting, on by default.
 - tests/trackingParams.test.ts: mocha/chai over the strip rules and the
   paste rewrite / single-URL fallback.
 ---
+ images/icons/cleaning_services.svg            |   1 +
+ .../frontend/src/components/Icon/index.tsx    |   1 +
  .../src/components/Settings/ChatsAndMedia.tsx |   5 +
- .../src/components/composer/Composer.tsx      |  77 +++++++++-
- .../composer/linkPreview/styles.module.scss   |  10 ++
+ .../src/components/composer/Composer.tsx      |  82 ++++++++++-
  .../frontend/src/hooks/useOpenLinkSafely.ts   |  11 +-
  .../frontend/src/tests/trackingParams.test.ts | 105 ++++++++++++++
  packages/frontend/src/utils/trackingParams.ts | 135 ++++++++++++++++++
  packages/shared/shared-types.d.ts             |   2 +
  packages/shared/state.ts                      |   1 +
- 8 files changed, 343 insertions(+), 3 deletions(-)
+ 9 files changed, 340 insertions(+), 3 deletions(-)
+ create mode 100644 images/icons/cleaning_services.svg
  create mode 100644 packages/frontend/src/tests/trackingParams.test.ts
  create mode 100644 packages/frontend/src/utils/trackingParams.ts
 
+diff --git a/images/icons/cleaning_services.svg b/images/icons/cleaning_services.svg
+new file mode 100644
+index 000000000..c60f83365
+--- /dev/null
++++ b/images/icons/cleaning_services.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path d="M120-40v-280q0-83 58.5-141.5T320-520h40v-320q0-33 23.5-56.5T440-920h80q33 0 56.5 23.5T600-840v320h40q83 0 141.5 58.5T840-320v280H120Zm80-80h80v-120q0-17 11.5-28.5T320-280q17 0 28.5 11.5T360-240v120h80v-120q0-17 11.5-28.5T480-280q17 0 28.5 11.5T520-240v120h80v-120q0-17 11.5-28.5T640-280q17 0 28.5 11.5T680-240v120h80v-200q0-50-35-85t-85-35H320q-50 0-85 35t-35 85v200Zm320-400v-320h-80v320h80Zm0 0h-80 80Z"/></svg>
+\ No newline at end of file
+diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
+index 32bff710b..0affbd317 100644
+--- a/packages/frontend/src/components/Icon/index.tsx
++++ b/packages/frontend/src/components/Icon/index.tsx
+@@ -14,6 +14,7 @@ export type IconName =
+   | 'chat_bubble'
+   | 'chevron-left'
+   | 'chevron-right'
++  | 'cleaning_services'
+   | 'clear'
+   | 'code-tags'
+   | 'cross'
 diff --git a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
 index 934ab9c4a..b7df4da27 100644
 --- a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
@@ -70,20 +92,21 @@ index 934ab9c4a..b7df4da27 100644
        (SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS), these toggles are moot —
        hide them too. */}
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index c2977f97a..bec1d9244 100644
+index c2977f97a..097705511 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
-@@ -14,7 +14,9 @@ import { extension } from 'mime-types'
+@@ -14,7 +14,10 @@ import { extension } from 'mime-types'
  import MenuAttachment from './menuAttachment'
  import ComposerMessageInput from './ComposerMessageInput'
  import LinkPreviewGhost from './linkPreview/LinkPreviewGhost'
 +import ghostStyles from './linkPreview/styles.module.scss'
++import Icon from '../Icon'
  import { useLinkPreview } from './linkPreview/useLinkPreview'
 +import { stripTrackingFromPaste } from '../../utils/trackingParams'
  import { getLogger } from '@deltachat-desktop/shared/logger'
  import { EmojiAndStickerPicker } from './EmojiAndStickerPicker'
  import { Quote } from '../message/Message'
-@@ -95,6 +97,13 @@ const Composer = forwardRef<
+@@ -95,6 +98,13 @@ const Composer = forwardRef<
    const [showEmojiPicker, setShowEmojiPicker] = useState(false)
    const [showAppPicker, setShowAppPicker] = useState(false)
    const [recording, setRecording] = useState(false)
@@ -97,7 +120,7 @@ index c2977f97a..bec1d9244 100644
  
    const emojiAndStickerRef = useRef<HTMLDivElement>(null)
    const pickerButtonRef = useRef<HTMLButtonElement>(null)
-@@ -197,6 +206,24 @@ const Composer = forwardRef<
+@@ -197,6 +207,24 @@ const Composer = forwardRef<
      setRecording(false)
    }
  
@@ -122,7 +145,7 @@ index c2977f97a..bec1d9244 100644
    const saveVoiceAsDraft = (voiceData: Blob) => {
      const reader = new FileReader()
      reader.readAsDataURL(voiceData)
-@@ -280,6 +307,7 @@ const Composer = forwardRef<
+@@ -280,6 +308,7 @@ const Composer = forwardRef<
            // re-announce it, which is disorienting.
            // See https://github.com/deltachat/deltachat-desktop/issues/4590#issuecomment-2821985528.
            props.clearDraftState()
@@ -130,7 +153,7 @@ index c2977f97a..bec1d9244 100644
  
            let sentSuccessfully: boolean
            try {
-@@ -508,8 +536,29 @@ const Composer = forwardRef<
+@@ -508,8 +537,29 @@ const Composer = forwardRef<
    const handlePaste = messageEditing.isEditingModeActive
      ? null
      : async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -161,7 +184,7 @@ index c2977f97a..bec1d9244 100644
            return
          }
          // when there is a file then don't paste text
-@@ -680,6 +729,32 @@ const Composer = forwardRef<
+@@ -680,6 +730,36 @@ const Composer = forwardRef<
                    </section>
                  )}
                <LinkPreviewGhost preview={linkPreview} />
@@ -171,7 +194,11 @@ index c2977f97a..bec1d9244 100644
 +                  aria-live='polite'
 +                  data-testid='tracking-removed-chip'
 +                >
-+                  <span className={ghostStyles.trackingIcon} aria-hidden='true' />
++                  <Icon
++                    icon='cleaning_services'
++                    coloring='currentColor'
++                    size={18}
++                  />
 +                  <span className={ghostStyles.barLabel}>
 +                    Tracking removed from link
 +                  </span>
@@ -194,27 +221,6 @@ index c2977f97a..bec1d9244 100644
                {draftState.vcardContact && (
                  <section
                    className='attachment-quote-section is-attachment'
-diff --git a/packages/frontend/src/components/composer/linkPreview/styles.module.scss b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
-index 0d752a182..f68775cb1 100644
---- a/packages/frontend/src/components/composer/linkPreview/styles.module.scss
-+++ b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
-@@ -184,6 +184,16 @@
-   }
- }
- 
-+// tracking-removed chip: circle-slash ("blocked") icon in the primary color
-+.trackingIcon {
-+  flex: 0 0 auto;
-+  width: 18px;
-+  height: 18px;
-+  background-color: var(--colorPrimary, #415e6b);
-+  -webkit-mask: url(./images/icons/blocked.svg) no-repeat center / contain;
-+  mask: url(./images/icons/blocked.svg) no-repeat center / contain;
-+}
-+
- .addButton {
-   flex: 0 0 auto;
-   border: none;
 diff --git a/packages/frontend/src/hooks/useOpenLinkSafely.ts b/packages/frontend/src/hooks/useOpenLinkSafely.ts
 index c8dbb9e77..08b502ca3 100644
 --- a/packages/frontend/src/hooks/useOpenLinkSafely.ts
