@@ -1,0 +1,1366 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Mon, 20 Jul 2026 21:10:44 +0000
+Subject: [PATCH 58/58] web-app: custom voice-message mini-player + Media
+ Session (experimental)
+
+Phase A3 of the experimental audio player. All behind the existing
+experimentalAudioPlayerControls setting; with it off, the global bar and
+playback behave exactly as before (native re-parenting, no media session).
+
+- GlobalVoiceMessagePlayer: with the setting on, replace re-parenting the
+  native <audio> singleton into the bar with the A1/A2 CustomAudioControls
+  driving THE SINGLETON directly (audioRef wraps ctx.audioElement in a stable
+  useMemo so its effects don't re-subscribe each render, src = currentSrc).
+  A2's restore guard is a live-playback no-op here (audioRef.current IS
+  ctx.audioElement), so it never rewinds the message that's playing. Left of
+  the controls: a compact sender line (avatar + display name + chat name),
+  clickable to jump to that message via the existing jumpToMessage mechanism
+  (same-account) or CommandPalette's __selectAccount idiom (cross-account).
+  Sender/chat are fetched once per message with useRpcFetch(getMessage /
+  getBasicChatInfo). The close button is unchanged.
+- CustomAudioControls is exported from the AudioPlayer module and gains a
+  `compact` prop that drops its 300px min-width so it fits the ~295px
+  chat-list column.
+- NextVoiceMessagePlayerContext exposes the validated currMessage and a
+  playNext(): the ended-driven auto-advance and playNext now share one
+  advanceOrStop() code path (advance to nextMessage if ready, defer while it
+  loads, else stop); no behavior change when the setting is off.
+- navigator.mediaSession (guarded, only while a src is playing and the setting
+  is on): metadata is PRIVACY-SUPPRESSED by default -- generic localized
+  "Voice message" title, no artist/artwork -- because these controls can leak
+  onto the lock screen (forum 5423). A new desktop setting
+  voiceMessageMediaSessionDetails (default false) opts in to sender name /
+  chat name / sender avatar. Action handlers: play/pause -> singleton,
+  seekbackward/seekforward (+/-10s clamped), seekto -> singleton currentTime,
+  nexttrack -> ctx.playNext (= auto-advance). positionState is set on the
+  singleton's timeupdate/ratechange/durationchange, throttled ~1Hz and
+  guarded/try-caught (setPositionState throws on non-finite duration).
+  Handlers + metadata are nulled when playback stops / the setting turns off /
+  on unmount.
+- pure helpers mediaSessionMetadata(suppressed, label, {sender,chat,avatar})
+  and clampSeek(t, delta, duration) live in GlobalVoiceMessagePlayer/
+  mediaSession.ts (no browser/React imports) with mocha cases for the
+  suppressed-vs-detailed choice, avatar guard, and seek clamping.
+
+Also folds in A2/recorder refinements that were sitting uncommitted in the
+worktree (they interleave with the files above and A3 relies on several):
+singleton clear-on-ended in MediaPlayerMutexContext, the restorePosition
+helper + one-way restore guard in CustomAudioControls, the shared-promise
+peaks cache + document-relative waveform-worker URL, positionStore test
+extraction, and the recorder's callback-driven live waveform.
+
+Adversarial-review hardening (same feature, no behavior change with the
+setting off): propagate singleton seeks back to the bubble's muted element
+via a delta-guarded 'seeked' mirror (fixes the display desync and the dueling
+positionStore writers in one place); let the restore guard skip only once the
+same-src singleton has real progress (>=1s) so auto-advance onto a half-heard
+message still restores; render the mini-player's sender row only for a
+resolved queued message (draft previews and in-flight fetches no longer show
+an empty focusable jump button, and nexttrack is unregistered when there's no
+next); read the fetch `result` (not the lingering one) so the display and OS
+metadata never attribute the playing message to the previous sender; push a
+fresh mediaSession positionState immediately after a seek; reorder the
+sequential-playback staleness guard ahead of the stop branch so a stale parked
+ended event can't stop an unrelated message; fall back to the generic label
+when a detailed metadata title would be blank; and bump the chat-name contrast
+to meet WCAG AA.
+---
+ .../src/components/AudioPlayer/index.tsx      | 101 ++++-
+ .../src/components/AudioPlayer/peaks.ts       |  63 ++-
+ .../components/AudioPlayer/positionStore.ts   |   8 +-
+ .../components/AudioPlayer/styles.module.scss |  10 +
+ .../AudioRecorder/AudioRecorder.tsx           |  21 +-
+ .../AudioRecorder/styles.module.scss          |  31 +-
+ .../GlobalVoiceMessagePlayer.tsx              | 364 +++++++++++++++++-
+ .../GlobalVoiceMessagePlayer/mediaSession.ts  |  50 +++
+ .../styles.module.scss                        |  49 +++
+ .../Settings/ExperimentalFeatures.tsx         |   5 +
+ .../screens/MainScreen/MainScreen.tsx         |   2 +-
+ .../src/contexts/MediaPlayerMutexContext.tsx  |  11 +
+ .../NextVoiceMessagePlayerContext.tsx         |  60 ++-
+ .../frontend/src/tests/audioPlayer.test.ts    |  71 ++++
+ packages/shared/shared-types.d.ts             |   2 +
+ packages/shared/state.ts                      |   1 +
+ 16 files changed, 768 insertions(+), 81 deletions(-)
+ create mode 100644 packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
+
+diff --git a/packages/frontend/src/components/AudioPlayer/index.tsx b/packages/frontend/src/components/AudioPlayer/index.tsx
+index 2d02e78b9..331c038bc 100644
+--- a/packages/frontend/src/components/AudioPlayer/index.tsx
++++ b/packages/frontend/src/components/AudioPlayer/index.tsx
+@@ -22,6 +22,16 @@ type Props = React.AudioHTMLAttributes<HTMLAudioElement> & {
+   src: string
+ }
+ 
++// Apply a remembered position to a cold local element (before play / on
++// metadata). Guarded so a fresh message (t null) or a near-complete one
++// (t >= duration - 1) starts at 0.
++function restorePosition(el: HTMLAudioElement, src: string): void {
++  const t = positionStore.getPosition(src)
++  if (t != null && t > 1 && t < el.duration - 1) {
++    el.currentTime = t
++  }
++}
++
+ /**
+  * Mutex-aware audio player. When one player starts playing, others get paused.
+  */
+@@ -44,6 +54,16 @@ export function AudioPlayer({
+   const ignoreOnePlayEvent = useRef(false)
+   const ignoreOnePauseEvent = useRef(false)
+ 
++  const customControlsEnabled =
++    useSettingsStore()[0]?.desktopSettings.experimentalAudioPlayerControls ===
++    true
++  // Read the setting from a ref inside the mirror effect's cleanup WITHOUT
++  // adding it to the effect deps — a settings toggle must not re-run this
++  // effect (its cleanup would pause+zero the local element mid-play, the
++  // desync the render-tree comment below guards against).
++  const customControlsEnabledRef = useRef(customControlsEnabled)
++  customControlsEnabledRef.current = customControlsEnabled
++
+   // When we start playing another media, pause this one.
+   //
+   // Also mirror the `paused` state of the global audio element.
+@@ -86,18 +106,38 @@ export function AudioPlayer({
+         ignoreOnePauseEvent.current = true
+       }
+     }
++    // A seek made on the singleton (mini-player slider, media-session
++    // seek) must be copied onto this bubble's local element, or its display
++    // desyncs and the two positionStore writers for this src fight (the stale
++    // bubble value winning on singleton-originated pause). The delta guard
++    // prevents ping-pong with the local→global onSeeking mirror: a local scrub
++    // lands here with delta ≈ 0 and is skipped; the A2 asymmetric restore-push
++    // likewise settles at delta ≈ 0.
++    const onSeekedGlobal = () => {
++      if (Math.abs(globalEl.currentTime - el.currentTime) > 0.5) {
++        el.currentTime = globalEl.currentTime
++      }
++    }
+     if (!globalEl.paused) {
+       onPlayGlobal()
+     }
+     globalEl.addEventListener('play', onPlayGlobal)
+     globalEl.addEventListener('pause', onPauseGlobal)
++    globalEl.addEventListener('seeked', onSeekedGlobal)
+ 
+     return () => {
++      // The queued 'pause' event fires only AFTER this cleanup zeroes
++      // currentTime below, so the position-store onPause would see 0 and skip
++      // the takeover save — capture the real position here first.
++      if (customControlsEnabledRef.current && !el.ended && el.currentTime > 1) {
++        positionStore.setPosition(props.src, el.currentTime)
++      }
+       el.pause()
+       el.currentTime = 0
+ 
+       globalEl.removeEventListener('play', onPlayGlobal)
+       globalEl.removeEventListener('pause', onPauseGlobal)
++      globalEl.removeEventListener('seeked', onSeekedGlobal)
+     }
+   }, [
+     mediaPlayerMutexCtx.audioElement,
+@@ -105,10 +145,6 @@ export function AudioPlayer({
+     props.src,
+   ])
+ 
+-  const customControlsEnabled =
+-    useSettingsStore()[0]?.desktopSettings.experimentalAudioPlayerControls ===
+-    true
+-
+   // Muted because it's gonna be the <audio> element inside of
+   // `MediaPlayerMutexContext` that actually plays the media.
+   const wrappedOnPlay: React.ReactEventHandler<HTMLMediaElement> = e => {
+@@ -158,18 +194,24 @@ export function AudioPlayer({
+ }
+ 
+ /**
+- * Visible custom controls that drive the LOCAL muted `<audio>` element.
+- * The existing mirroring (see `MediaPlayerMutexContext`) turns those local
+- * actions into actual sound on the global singleton.
++ * Visible custom controls that drive the `<audio>` element in `audioRef`.
++ *
++ * In a message bubble that's the LOCAL muted element, and the existing
++ * mirroring (see `MediaPlayerMutexContext`) turns those actions into actual
++ * sound on the global singleton. The global mini-player passes the singleton
++ * itself, so the same controls drive playback directly.
+  */
+-function CustomAudioControls({
++export function CustomAudioControls({
+   audioRef,
+   src,
+   tabIndex,
++  compact,
+ }: {
+   audioRef: React.RefObject<HTMLAudioElement | null>
+   src: string
+   tabIndex?: number
++  /** Drop the 300px min-width so the controls fit a narrow column (mini-player). */
++  compact?: boolean
+ }) {
+   const tx = useTranslationFunction()
+   const ctx = useContext(MediaPlayerMutexContext)
+@@ -235,8 +277,9 @@ function CustomAudioControls({
+     }
+   }, [src])
+ 
+-  // Remembered position (A2): restore on metadata, save while playing
+-  // (throttled ~2s) and immediately on pause, clear on natural end.
++  // Remembered position (A2): restore on metadata (and on replay from the top,
++  // via the play button), save while playing (throttled ~2s) and immediately on
++  // pause. Clear-on-ended is on the singleton (survives unmount).
+   useEffect(() => {
+     const el = audioRef.current
+     if (el == null) {
+@@ -244,10 +287,21 @@ function CustomAudioControls({
+     }
+     let lastSave = 0
+     const restore = () => {
+-      const t = positionStore.getPosition(src)
+-      if (t != null && t > 1 && t < el.duration - 1) {
+-        el.currentTime = t
++      // One-way only (same invariant as onPlayGlobal): never yank back a
++      // mid-play singleton — a restore-seek here would be mirrored onto it by
++      // the mutex onSeeking. If the singleton already owns this src, its own
++      // position is the truth.
++      const globalEl = ctx.audioElement
++      if (
++        !globalEl.paused &&
++        globalEl.getAttribute('src') === src &&
++        // Fresh start (<1s, e.g. auto-advance onto a half-heard message) may
++        // still be restored — same fresh-start test as the onPlayGlobal carry.
++        globalEl.currentTime >= 1
++      ) {
++        return
+       }
++      restorePosition(el, src)
+     }
+     const onTime = () => {
+       if (el.paused || el.currentTime <= 1) {
+@@ -264,28 +318,32 @@ function CustomAudioControls({
+         positionStore.setPosition(src, el.currentTime)
+       }
+     }
+-    const onEnded = () => positionStore.clearPosition(src)
++    // Clear-on-ended lives on the singleton (MediaPlayerMutexProvider) so it
++    // fires even when this bubble unmounted mid-play; no local 'ended' needed.
+     if (el.readyState >= 1 /* HAVE_METADATA */) {
+       restore()
+     }
+     el.addEventListener('loadedmetadata', restore)
+     el.addEventListener('timeupdate', onTime)
+     el.addEventListener('pause', onPause)
+-    el.addEventListener('ended', onEnded)
+     return () => {
+       el.removeEventListener('loadedmetadata', restore)
+       el.removeEventListener('timeupdate', onTime)
+       el.removeEventListener('pause', onPause)
+-      el.removeEventListener('ended', onEnded)
+     }
+-  }, [audioRef, src])
++  }, [audioRef, src, ctx.audioElement])
+ 
+   const safeDuration = Number.isFinite(duration) ? duration : 0
+   const progress =
+     safeDuration > 0 ? Math.min(currentTime, safeDuration) / safeDuration : 0
+ 
+   return (
+-    <div className={styles.customControls}>
++    <div
++      className={classNames(
++        styles.customControls,
++        compact && styles.customControlsCompact
++      )}
++    >
+       <IconButton
+         icon={paused ? 'play' : 'pause'}
+         coloring='currentColor'
+@@ -299,6 +357,13 @@ function CustomAudioControls({
+           // A user click is the non-programmatic path: the mirror's
+           // ignore-refs are only set when the global element drives us.
+           if (el.paused) {
++            // Re-play within the same mount: a prior mutex takeover zeroed this
++            // element (cleanup), so re-apply the saved position BEFORE play —
++            // the scrub-carryover in mutex onPlay then brings the singleton
++            // along. (No-op when resuming a same-src pause: currentTime >= 1.)
++            if (el.currentTime < 1) {
++              restorePosition(el, src)
++            }
+             el.play()
+           } else {
+             el.pause()
+diff --git a/packages/frontend/src/components/AudioPlayer/peaks.ts b/packages/frontend/src/components/AudioPlayer/peaks.ts
+index a106fed16..a47a053d0 100644
+--- a/packages/frontend/src/components/AudioPlayer/peaks.ts
++++ b/packages/frontend/src/components/AudioPlayer/peaks.ts
+@@ -20,9 +20,11 @@ const TIME_BUDGET_MS = 4000
+ const CACHE_MAX = 100
+ 
+ // ponytail: bounded in-session cache, NO persistent peak cache (issue A2.5 —
+-// measure first). FIFO by insertion order, ~100 entries keyed by src. A cached
+-// `null` is kept so a failed src isn't retried every render.
+-const cache = new Map<string, Float32Array | null>()
++// measure first). FIFO by insertion order, ~100 entries keyed by src. The
++// in-flight PROMISE is cached (not the settled value) so two bubbles mounting
++// the same src share one pipeline; a failed src stays cached as a null-promise
++// and isn't retried every render.
++const cache = new Map<string, Promise<Float32Array | null>>()
+ 
+ // --- User Timing (sc:waveform:*), all best-effort ------------------------
+ function measure(
+@@ -56,7 +58,12 @@ function getWorker(): Worker | null {
+     return worker
+   }
+   try {
+-    worker = new Worker('/waveform-worker.js', { type: 'module' })
++    // Resolve relative to the document (like the web-app's BASE convention for
++    // core/worker.js): a root-absolute '/waveform-worker.js' 404s on subpath
++    // deploys (e.g. GitHub Pages project sites).
++    worker = new Worker(new URL('waveform-worker.js', location.href), {
++      type: 'module',
++    })
+     worker.onmessage = (e: MessageEvent) => {
+       const { id, peaks } = e.data
+       const resolve = pending.get(id)
+@@ -65,9 +72,20 @@ function getWorker(): Worker | null {
+         resolve(peaks)
+       }
+     }
+-    // Upstream builds without the web-app shell don't serve the file: a load
+-    // error leaves the request pending, so the 4s budget resolves it as null.
+-    worker.onerror = () => log.debug('waveform worker error')
++    // A load error (targets that don't serve the file) fires asynchronously and
++    // does NOT throw above. Treat any worker error as a permanent fallback: drop
++    // the worker so getWorker() never hands out a dead one again, and settle
++    // in-flight callers now (releasing their retained AudioBuffers) instead of
++    // leaking one `pending` entry each until the 4s budget.
++    worker.onerror = () => {
++      log.debug('waveform worker failed; permanent fallback')
++      worker?.terminate()
++      worker = null
++      for (const resolve of pending.values()) {
++        resolve(null)
++      }
++      pending.clear()
++    }
+   } catch {
+     // Some environments don't serve the file / block module workers.
+     worker = null
+@@ -95,6 +113,13 @@ async function computePeaks(
+   src: string,
+   signal: AbortSignal
+ ): Promise<Float32Array | null> {
++  // Worker known dead (load failed / unavailable): skip the pointless fetch +
++  // main-thread decode and fall back to the plain bar. Also warms the worker on
++  // the first call, in parallel with the fetch below.
++  if (getWorker() == null) {
++    fallbackMark('no-worker')
++    return null
++  }
+   try {
+     const t0 = performance.now()
+     const resp = await fetch(src, { signal })
+@@ -117,6 +142,18 @@ async function computePeaks(
+     const peaks = await bucketInWorker(channel, N_PEAKS)
+     const t3 = performance.now()
+ 
++    // The 4s budget already fired (result discarded, 'timeout' marked): don't
++    // pile success measures onto a run whose peaks were thrown away.
++    if (signal.aborted) {
++      return null
++    }
++    // Worker died mid-flight (onerror flushed `pending` with null): fall back
++    // instead of reporting a phantom success.
++    if (peaks == null) {
++      fallbackMark('no-worker')
++      return null
++    }
++
+     const detail = {
+       durationSec: audioBuffer.duration,
+       bytes: byteLength,
+@@ -137,11 +174,13 @@ async function computePeaks(
+ 
+ /**
+  * Peaks for the given (already transformed) audio URL, or null to fall back to
+- * the plain seek bar. Bounded ~4s budget; result is cached for the session.
++ * the plain seek bar. Bounded ~4s budget; the in-flight promise is cached for
++ * the session so concurrent callers for the same src share one pipeline.
+  */
+-export async function getPeaks(src: string): Promise<Float32Array | null> {
+-  if (cache.has(src)) {
+-    return cache.get(src) ?? null
++export function getPeaks(src: string): Promise<Float32Array | null> {
++  const hit = cache.get(src)
++  if (hit !== undefined) {
++    return hit
+   }
+   const ac = new AbortController()
+   let timer: ReturnType<typeof setTimeout> | undefined
+@@ -152,7 +191,7 @@ export async function getPeaks(src: string): Promise<Float32Array | null> {
+       resolve(null)
+     }, TIME_BUDGET_MS)
+   })
+-  const result = await Promise.race([computePeaks(src, ac.signal), timeout])
++  const result = Promise.race([computePeaks(src, ac.signal), timeout])
+     .catch(() => null)
+     .finally(() => clearTimeout(timer))
+ 
+diff --git a/packages/frontend/src/components/AudioPlayer/positionStore.ts b/packages/frontend/src/components/AudioPlayer/positionStore.ts
+index f900bd8cd..56ff4e3b9 100644
+--- a/packages/frontend/src/components/AudioPlayer/positionStore.ts
++++ b/packages/frontend/src/components/AudioPlayer/positionStore.ts
+@@ -19,7 +19,13 @@ export function makePositionStore(
+ ) {
+   const read = (): StoreShape => {
+     try {
+-      return JSON.parse(storage.getItem(KEY) || '{}') as StoreShape
++      // JSON.parse('null'/'5'/'[1]') all succeed but aren't our object shape;
++      // returning them would make getPosition/setPosition throw. Validate, then
++      // the next setPosition write() self-heals the corrupt key.
++      const v = JSON.parse(storage.getItem(KEY) || '{}')
++      return v !== null && typeof v === 'object' && !Array.isArray(v)
++        ? (v as StoreShape)
++        : {}
+     } catch {
+       return {}
+     }
+diff --git a/packages/frontend/src/components/AudioPlayer/styles.module.scss b/packages/frontend/src/components/AudioPlayer/styles.module.scss
+index 148af1234..b1c116961 100644
+--- a/packages/frontend/src/components/AudioPlayer/styles.module.scss
++++ b/packages/frontend/src/components/AudioPlayer/styles.module.scss
+@@ -23,12 +23,22 @@
+   gap: 0.5rem;
+   min-width: 300px; // parity with the native element
+ }
++// Mini-player: the chat-list column shrinks to ~295px, so drop the 300px floor
++// and let the controls fit. Declared after `.customControls` so it wins (equal
++// specificity, later rule).
++.customControlsCompact {
++  min-width: 0;
++}
+ .seekWrap {
+   position: relative;
+   flex: 1;
+   min-width: 0;
+   display: flex;
+   align-items: center;
++  // Reserve the waveform's height from first paint so the bubble geometry
++  // doesn't jump ~10px when peaks arrive (cf. #3753); peaks then only swap
++  // visuals. The plain range stays vertically centered inside it.
++  height: 32px;
+ }
+ .seek {
+   flex: 1;
+diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+index 6539ab7d8..450aa12ad 100644
+--- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
++++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+@@ -11,6 +11,8 @@ import { drawBars } from '../AudioPlayer/Waveform'
+ 
+ const log = getLogger('renderer/AudioRecorder')
+ 
++const HISTORY = 64
++
+ export enum AudioErrorType {
+   'NO_INPUT',
+   'OTHER_ERROR',
+@@ -106,20 +108,22 @@ export const AudioRecorder = ({
+   const liveWaveform =
+     useSettingsStore()[0]?.desktopSettings.experimentalAudioPlayerControls ===
+     true
+-  const HISTORY = 64
+   const historyRef = useRef(new Float32Array(HISTORY))
+   const canvasRef = useRef<HTMLCanvasElement>(null)
+-  useEffect(() => {
+-    if (!liveWaveform) {
+-      return
+-    }
++  // Drive the rolling waveform straight from the recorder's per-buffer volume
++  // callback (~85ms) and draw imperatively — NOT from a [volume] effect: React
++  // bails out when volume is unchanged (digital silence = exactly 0), so an
++  // effect would never re-run and the waveform would freeze instead of scroll.
++  const pushVolume = useCallback((v: number) => {
++    setVolume(v) // drives the meter aria-valuenow
+     const h = historyRef.current
+     h.copyWithin(0, 1) // shift left, newest at the right
+-    h[HISTORY - 1] = Math.min(volume * 2, 1) // same scaling as VolumeMeter
++    h[HISTORY - 1] = Math.min(v * 2, 1) // same scaling as VolumeMeter
+     if (canvasRef.current != null) {
++      // Only non-null while the setting is on and recording, so no gate needed.
+       drawBars(canvasRef.current, h, 1)
+     }
+-  }, [volume, liveWaveform])
++  }, [])
+ 
+   const onAccessDenied = useCallback(() => {
+     openDialog(AlertDialog, {
+@@ -151,10 +155,11 @@ export const AudioRecorder = ({
+     }
+ 
+     if (!recorder.current) {
+-      recorder.current = new MicRecorder(setVolume, {
++      recorder.current = new MicRecorder(pushVolume, {
+         bitRate: 32,
+       })
+     }
++    historyRef.current.fill(0) // don't carry the previous session's tail
+     setRecording(true)
+     recorder.current
+       ?.start()
+diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+index 2e6329b49..25dbe8b2c 100644
+--- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
++++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+@@ -1,3 +1,13 @@
++// Shared meter/waveform footprint so the experimental live waveform can't
++// drift from the segmented volume meter it replaces.
++@mixin meterFootprint {
++  margin: 15px 20px 0 15px;
++  height: 12px;
++  width: 100%;
++  max-width: 250px;
++  min-width: 60px;
++}
++
+ .microphoneButton {
+   height: 40px;
+   width: 40px;
+@@ -85,12 +95,7 @@
+   .volumeBar {
+     display: flex;
+     position: relative;
+-    display: flex;
+-    margin: 15px 20px 0 15px;
+-    height: 12px;
+-    width: 100%;
+-    max-width: 250px;
+-    min-width: 60px;
++    @include meterFootprint;
+ 
+     .mask {
+       display: flex;
+@@ -138,26 +143,28 @@
+   }
+ }
+ 
++// Below 400px the meter is hidden to make room for Timer/Cancel/OK; the live
++// waveform must hide too (its min-width would otherwise squeeze the buttons).
++// Hide only the inner bar/canvas, not the flex:1 container spacer.
+ @media (max-width: 400px) {
+   .volumeBarContainer {
+     .volumeBar {
+       display: none;
+     }
+   }
++  .liveWaveform {
++    display: none;
++  }
+ }
+ 
+ // Live recorder waveform (experimental; replaces .volumeBarContainer when the
+-// custom audio-player controls setting is on). Same footprint as .volumeBar.
++// custom audio-player controls setting is on). Shares .volumeBar's footprint.
+ .liveWaveformContainer {
+   flex: 1;
+   padding-inline-end: 10px;
+ }
+ .liveWaveform {
+   display: block;
+-  margin: 15px 20px 0 15px;
+-  height: 12px;
+-  width: 100%;
+-  max-width: 250px;
+-  min-width: 60px;
++  @include meterFootprint;
+   color: var(--colorPrimary);
+ }
+diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
+index 49a037ccd..76d7bcc52 100644
+--- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
++++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
+@@ -1,20 +1,225 @@
+-import React, { useContext } from 'react'
++import React, { useContext, useEffect, useEffectEvent, useMemo } from 'react'
++import classNames from 'classnames'
++
+ import styles from './styles.module.scss'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import { MediaPlayerMutexContext } from '../../contexts/MediaPlayerMutexContext'
+ import Icon from '../Icon'
+ import { NextVoiceMessagePlayerContext } from '../../contexts/NextVoiceMessagePlayerContext'
++import { CustomAudioControls } from '../AudioPlayer'
++import { Avatar } from '../Avatar'
++import { useSettingsStore } from '../../stores/settings'
++import { useRpcFetch } from '../../hooks/useFetch'
++import { BackendRemote } from '../../backend-com'
++import useMessage from '../../hooks/chat/useMessage'
++import { saveLastChatId } from '../../backend/chat'
++import { runtime } from '@deltachat-desktop/runtime-interface'
++import { getLogger } from '@deltachat-desktop/shared/logger'
++import { mediaSessionMetadata, clampSeek } from './mediaSession'
++
++const log = getLogger('GlobalVoiceMessagePlayer')
+ 
+-export function GlobalVoiceMessagePlayer() {
++export function GlobalVoiceMessagePlayer({
++  accountId: selectedAccountId,
++}: {
++  /** The currently selected account, to decide same- vs cross-account jump. */
++  accountId: number | undefined
++}) {
+   const tx = useTranslationFunction()
+ 
+   const mediaPlayerMutexCtx = useContext(MediaPlayerMutexContext)
+   const nextVoiceMessagePlayerCtx = useContext(NextVoiceMessagePlayerContext)
+ 
+-  if (mediaPlayerMutexCtx.currentSrc == null) {
++  const desktopSettings = useSettingsStore()[0]?.desktopSettings
++  const customControlsEnabled =
++    desktopSettings?.experimentalAudioPlayerControls === true
++  const showDetails = desktopSettings?.voiceMessageMediaSessionDetails === true
++
++  const currentSrc = mediaPlayerMutexCtx.currentSrc
++  const currMessage = nextVoiceMessagePlayerCtx.currMessage
++
++  // Wrap the never-changing singleton in a stable ref object so
++  // CustomAudioControls' effects (keyed on `audioRef`) don't re-subscribe on
++  // every render of this component.
++  const singletonRef = useMemo(
++    () => ({ current: mediaPlayerMutexCtx.audioElement }),
++    [mediaPlayerMutexCtx.audioElement]
++  )
++
++  // Sender + chat for the mini-player's clickable label (once per message).
++  // Only fetched with the custom player on, so the native path is untouched.
++  const active = customControlsEnabled && currMessage != null
++  // ponytail: on auto-advance this refetches the message the context just
++  // fetched as `nextMessage` (one duplicate local getMessage per advance; the
++  // bubble-initiated first message has no prefetched copy, so the fetch must
++  // exist regardless). Upgrade path: expose the prefetched T.Message alongside
++  // currMessage on the context and prefer it here if the duplicate RPC matters.
++  const messageFetch = useRpcFetch(
++    BackendRemote.rpc.getMessage,
++    active ? [currMessage.accountId, currMessage.messageId] : null
++  )
++  const chatFetch = useRpcFetch(
++    BackendRemote.rpc.getBasicChatInfo,
++    active ? [currMessage.accountId, currMessage.chatId] : null
++  )
++  // `result` (not `lingeringResult`): while the new message's fetch is in
++  // flight these must be null, so the display can never attribute the playing
++  // message to the previous sender/chat (blank-while-loading beats
++  // wrong-while-loading, e.g. across an auto-advance).
++  const message = messageFetch?.result?.ok ? messageFetch.result.value : null
++  const chat = chatFetch?.result?.ok ? chatFetch.result.value : null
++
++  const senderName =
++    (message && (message.overrideSenderName || message.sender.displayName)) ||
++    ''
++  const chatName = chat?.name ?? ''
++  const avatarPath = message?.sender.profileImage ?? null
++  const avatarUrl = avatarPath
++    ? runtime.transformBlobURL(avatarPath)
++    : undefined
++
++  // Media session (OS/lock-screen controls). Suppressed metadata by default;
++  // details only with the opt-in setting on.
++  const meta = useMemo(
++    () =>
++      // Suppress details until the current message's fetch resolves, so the OS
++      // controls never show a stale/empty title during an auto-advance window.
++      mediaSessionMetadata(
++        !showDetails || message == null,
++        tx('voice_message'),
++        {
++          senderName,
++          chatName,
++          avatarUrl,
++        }
++      ),
++    [showDetails, message, tx, senderName, chatName, avatarUrl]
++  )
++  useMediaSession(
++    customControlsEnabled && currentSrc != null,
++    mediaPlayerMutexCtx.audioElement,
++    meta,
++    // No next-track when there's no queued message (e.g. draft audio preview):
++    // an unregistered handler makes the OS hide the button instead of offering
++    // a dead one.
++    currMessage != null ? nextVoiceMessagePlayerCtx.playNext : null
++  )
++
++  const { jumpToMessage } = useMessage()
++
++  if (currentSrc == null) {
+     return null
+   }
+ 
++  const onJumpToMessage = () => {
++    const m = nextVoiceMessagePlayerCtx.currMessage
++    if (m == null) {
++      return
++    }
++    if (m.accountId === selectedAccountId) {
++      jumpToMessage({
++        accountId: m.accountId,
++        msgId: m.messageId,
++        msgChatId: m.chatId,
++        focus: true,
++        scrollIntoViewArg: { block: 'center' },
++      })
++      return
++    }
++    // ponytail: cross-account jump mirrors CommandPalette's idiom (jumpToMessage
++    // can't cross accounts). Rare — reachable only when the singleton keeps
++    // playing after the user switches accounts. Upgrade path: factor
++    // CommandPalette's helper out if a third caller ever needs it.
++    saveLastChatId(m.accountId, m.chatId)
++      .then(() => window.__selectAccount(m.accountId))
++      .then(() => {
++        window.__internal_jump_to_message_asap = {
++          accountId: m.accountId,
++          chatId: m.chatId,
++          jumpToMessageArgs: [
++            {
++              msgId: m.messageId,
++              focus: true,
++              scrollIntoViewArg: { block: 'center' },
++            },
++          ],
++        }
++        window.__internal_check_jump_to_message?.()
++      })
++      .catch(err => log.error('failed to jump to voice message', err))
++  }
++
++  const closeButton = (
++    <button
++      className={styles.closeButton}
++      type='button'
++      aria-label={tx('close')}
++      onClick={() => {
++        mediaPlayerMutexCtx.stop()
++        // Functionality-wise this is not necessary, but let's do it
++        // for good measure.
++        nextVoiceMessagePlayerCtx.setCurrMessage(null)
++      }}
++    >
++      <Icon className={styles.closeButtonIcon} icon={'cross'} size={26} />
++    </button>
++  )
++
++  // Custom mini-player: sender line + singleton-driven controls, in place of
++  // re-parenting the native <audio> singleton into the bar.
++  if (customControlsEnabled) {
++    return (
++      <section
++        className={classNames(styles.root, styles.rootCustom)}
++        aria-label={tx('audio')}
++      >
++        {/*
++          Only render the clickable sender row once there's a message to jump
++          to AND its fetch resolved — otherwise (draft audio preview, or an
++          in-flight auto-advance fetch) this would be an empty focusable button
++          whose activation does nothing. Controls + close still render.
++        */}
++        {currMessage != null && message != null && (
++          <button
++            className={styles.senderLine}
++            type='button'
++            onClick={onJumpToMessage}
++            title={tx('jump_to_message')}
++          >
++            <Avatar
++              avatarPath={avatarPath}
++              color={message.sender.color}
++              displayName={senderName}
++              addr={message.sender.address}
++              small
++              aria-hidden={true}
++            />
++            <span className={styles.senderText}>
++              <span className={styles.senderName}>{senderName}</span>
++              <span className={styles.chatName}>{chatName}</span>
++            </span>
++          </button>
++        )}
++        <div className={styles.controlsRow}>
++          {/*
++            Drive THE SINGLETON directly (not a muted proxy): play/pause/seek/
++            rate act on the element that produces sound. A2's restore guard
++            (`!globalEl.paused && src matches → skip`) is a no-op for live
++            playback here because audioRef.current IS ctx.audioElement, so it
++            never rewinds the message that's currently playing.
++          */}
++          <CustomAudioControls
++            audioRef={singletonRef}
++            src={currentSrc}
++            compact
++          />
++          {closeButton}
++        </div>
++      </section>
++    )
++  }
++
++  // Native path (setting off): unchanged — re-parent the singleton controls.
+   return (
+     <section className={styles.root} aria-label={tx('audio')}>
+       <div
+@@ -32,19 +237,146 @@ export function GlobalVoiceMessagePlayer() {
+           el.append(mediaPlayerMutexCtx.audioElement)
+         }}
+       />
+-      <button
+-        className={styles.closeButton}
+-        type='button'
+-        aria-label={tx('close')}
+-        onClick={() => {
+-          mediaPlayerMutexCtx.stop()
+-          // Functionality-wise this is not necessary, but let's do it
+-          // for good measure.
+-          nextVoiceMessagePlayerCtx.setCurrMessage(null)
+-        }}
+-      >
+-        <Icon className={styles.closeButtonIcon} icon={'cross'} size={26} />
+-      </button>
++      {closeButton}
+     </section>
+   )
+ }
++
++// The media-session actions we own; cleared together when playback stops.
++const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
++  'play',
++  'pause',
++  'seekbackward',
++  'seekforward',
++  'seekto',
++  'nexttrack',
++]
++
++/**
++ * Wire `navigator.mediaSession` to the global singleton while `active`. Clears
++ * metadata + handlers when `active` goes false / on unmount / setting off.
++ */
++function useMediaSession(
++  active: boolean,
++  audioEl: HTMLAudioElement,
++  meta: { title: string; artist: string; artwork: { src: string }[] },
++  onPlayNext: (() => void) | null
++): void {
++  const title = meta.title
++  const artist = meta.artist
++  const artworkSrc = meta.artwork[0]?.src ?? ''
++  // `null` when there's no queued message: don't register a nexttrack handler.
++  const nextEnabled = onPlayNext != null
++  // Effect Event: the nexttrack handler reads the latest `onPlayNext` without
++  // re-running the effect (its identity changes as currMessage changes).
++  const onNext = useEffectEvent(() => onPlayNext?.())
++
++  useEffect(() => {
++    if (!('mediaSession' in navigator)) {
++      return
++    }
++    const ms = navigator.mediaSession
++
++    const clearHandlers = () => {
++      for (const a of MEDIA_SESSION_ACTIONS) {
++        try {
++          ms.setActionHandler(a, null)
++        } catch {
++          // Some browsers throw for actions they don't support.
++        }
++      }
++    }
++
++    if (!active) {
++      ms.metadata = null
++      clearHandlers()
++      return
++    }
++
++    ms.metadata = new MediaMetadata({
++      title,
++      artist,
++      artwork: artworkSrc ? [{ src: artworkSrc }] : [],
++    })
++
++    const SEEK = 10
++    const setTime = (t: number) => {
++      audioEl.currentTime = t
++      // Bypass the 1Hz throttle so the OS scrubber reflects the seek at once
++      // instead of showing the pre-seek position for up to a second.
++      // (`lastPos`/`updatePos` close over the effect scope, initialised by the
++      // time any media-session handler can fire.)
++      lastPos = 0
++      updatePos()
++    }
++    const handlers: Partial<
++      Record<MediaSessionAction, MediaSessionActionHandler>
++    > = {
++      play: () => {
++        audioEl.play()
++      },
++      pause: () => {
++        audioEl.pause()
++      },
++      seekbackward: d =>
++        setTime(
++          clampSeek(
++            audioEl.currentTime,
++            -(d.seekOffset ?? SEEK),
++            audioEl.duration
++          )
++        ),
++      seekforward: d =>
++        setTime(
++          clampSeek(audioEl.currentTime, d.seekOffset ?? SEEK, audioEl.duration)
++        ),
++      seekto: d => {
++        if (d.seekTime != null) {
++          setTime(d.seekTime)
++        }
++      },
++      nexttrack: nextEnabled ? () => onNext() : undefined,
++    }
++    for (const a of MEDIA_SESSION_ACTIONS) {
++      try {
++        ms.setActionHandler(a, handlers[a] ?? null)
++      } catch {
++        // Unsupported action in this browser — skip it.
++      }
++    }
++
++    // positionState, throttled to ~1Hz. setPositionState needs a finite
++    // duration with position in [0, duration] and throws otherwise.
++    let lastPos = 0
++    const updatePos = () => {
++      const now = Date.now()
++      if (now - lastPos < 1000) {
++        return
++      }
++      const dur = audioEl.duration
++      if (!Number.isFinite(dur) || dur <= 0) {
++        return
++      }
++      lastPos = now
++      try {
++        ms.setPositionState({
++          duration: dur,
++          position: Math.min(Math.max(audioEl.currentTime, 0), dur),
++          playbackRate: audioEl.playbackRate || 1,
++        })
++      } catch {
++        // setPositionState can still throw (e.g. an infinite duration slips
++        // past the guard on some engines) — position is best-effort.
++      }
++    }
++    updatePos()
++    const posEvents = ['timeupdate', 'ratechange', 'durationchange'] as const
++    posEvents.forEach(e => audioEl.addEventListener(e, updatePos))
++
++    return () => {
++      posEvents.forEach(e => audioEl.removeEventListener(e, updatePos))
++      ms.metadata = null
++      clearHandlers()
++    }
++  }, [active, audioEl, title, artist, artworkSrc, nextEnabled])
++}
+diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts b/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
+new file mode 100644
+index 000000000..c6041c0ec
+--- /dev/null
++++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
+@@ -0,0 +1,50 @@
++// Pure helpers for wiring `navigator.mediaSession` from the voice-message
++// mini-player. Kept free of browser/React APIs so they're unit-testable; the
++// hook in GlobalVoiceMessagePlayer.tsx turns these into MediaMetadata /
++// setPositionState / action-handler calls.
++
++export type MediaSessionDetails = {
++  senderName: string
++  chatName: string
++  /** Sender avatar URL (blob: works), or undefined when there is none. */
++  avatarUrl?: string
++}
++
++/**
++ * The metadata to publish to the OS media session.
++ *
++ * `suppressed` (the default) hides who/what is playing — only a generic
++ * localized "Voice message" title, no artist, no artwork — because on some
++ * systems the media session shows on the lock screen (forum 5423). When the
++ * user opts in, the sender/chat/avatar are exposed.
++ */
++export function mediaSessionMetadata(
++  suppressed: boolean,
++  voiceMessageLabel: string,
++  details: MediaSessionDetails
++): { title: string; artist: string; artwork: { src: string }[] } {
++  if (suppressed) {
++    return { title: voiceMessageLabel, artist: '', artwork: [] }
++  }
++  return {
++    title: details.senderName || voiceMessageLabel,
++    artist: details.chatName,
++    artwork: details.avatarUrl ? [{ src: details.avatarUrl }] : [],
++  }
++}
++
++/**
++ * New playback position after seeking `delta` seconds from `t`, clamped to
++ * `[0, duration]`. A non-finite `duration` (stream / not-yet-known) only
++ * clamps the lower bound.
++ */
++export function clampSeek(t: number, delta: number, duration: number): number {
++  const next = t + delta
++  if (next < 0) {
++    return 0
++  }
++  if (Number.isFinite(duration) && next > duration) {
++    return duration
++  }
++  return next
++}
+diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
+index 9b4893c81..dbc77e2d2 100644
+--- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
++++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
+@@ -41,3 +41,52 @@
+     background-color: var(--accountSidebarIconColor);
+   }
+ }
++
++// Custom mini-player (experimental): sender line stacked over the controls
++// row. Declared after `.root` so `display` overrides the grid there.
++.rootCustom {
++  display: flex;
++  flex-direction: column;
++  gap: 0.25rem;
++  padding: 0.5rem 0.5rem 0.5rem 0.75rem;
++  // `.root` only sets `color-scheme: dark`; the controls use `currentColor`, so
++  // give the whole widget the sidebar's light foreground.
++  color: var(--accountSidebarIconColor);
++}
++.senderLine {
++  @include mixins.button-reset;
++  display: flex;
++  align-items: center;
++  gap: 0.5rem;
++  min-width: 0; // allow the text to truncate instead of overflowing the column
++  text-align: start;
++  cursor: pointer;
++}
++.senderText {
++  display: flex;
++  flex-direction: column;
++  min-width: 0;
++  line-height: 1.2;
++}
++.senderName,
++.chatName {
++  overflow: hidden;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++.senderName {
++  font-weight: 600;
++  font-size: 0.9em;
++}
++.chatName {
++  font-size: 0.8em;
++  // 0.8 composites to ~#9f9f9f on --accountSidebarBg (#2c2c2c): 5.28:1, AA-pass
++  // for normal text (0.7 fell just short at ~4.4:1).
++  opacity: 0.8;
++}
++.controlsRow {
++  display: flex;
++  align-items: center;
++  gap: 0.25rem;
++  min-width: 0;
++}
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index f5b978ac7..0ef23bab8 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -91,6 +91,11 @@ export function ExperimentalFeatures() {
+         label='Custom voice-message player'
+         description='Custom controls for voice and audio messages: play/pause, seek bar, elapsed time, and playback speed. Off by default (experimental).'
+       />
++      <DesktopSettingsSwitch
++        settingsKey='voiceMessageMediaSessionDetails'
++        label='Show voice-message details in system media controls'
++        description='Show the sender name, chat name and avatar of the playing voice message in the OS media controls. Off by default: on some systems these controls appear on the lock screen, so the details would leak there.'
++      />
+       {runtime.getRuntimeInfo().isContentProtectionSupported && (
+         <DesktopSettingsSwitch
+           settingsKey='contentProtectionEnabled'
+diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
+index 40e2ac55d..de96f8b3c 100644
+--- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
++++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
+@@ -315,7 +315,7 @@ export default function MainScreen({ accountId }: Props) {
+           />
+         </section>
+ 
+-        <GlobalVoiceMessagePlayer />
++        <GlobalVoiceMessagePlayer accountId={accountId} />
+       </div>
+       <ChatView
+         className={styles.chatView}
+diff --git a/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx b/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
+index ad9c93cd3..5ef1c94e0 100644
+--- a/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
++++ b/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
+@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useState } from 'react'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ // eslint-disable-next-line @typescript-eslint/no-unused-vars
+ import { type runtime } from '@deltachat-desktop/runtime-interface'
++import { positionStore } from '../components/AudioPlayer/positionStore'
+ 
+ const log = getLogger('MediaPlayerMutexContext')
+ 
+@@ -39,6 +40,16 @@ export type MediaPlayerMutexContextValue = {
+ 
+ const audioEl = document.createElement('audio')
+ audioEl.controls = true
++// Clear a remembered voice-message position once it plays to its natural end —
++// on the singleton, so it fires even if the bubble unmounted mid-play (playback
++// continues here across chat switches). src-keyed, matching positionStore.
++// No-ops for absent keys (setting off / non-voice audio).
++audioEl.addEventListener('ended', () => {
++  const src = audioEl.getAttribute('src')
++  if (src != null && src !== '') {
++    positionStore.clearPosition(src)
++  }
++})
+ 
+ const noContextErrStr =
+   'tried to use MediaPlayerMutexContextValue outside of context provider'
+diff --git a/packages/frontend/src/contexts/NextVoiceMessagePlayerContext.tsx b/packages/frontend/src/contexts/NextVoiceMessagePlayerContext.tsx
+index 4da058e9e..f4eba8f44 100644
+--- a/packages/frontend/src/contexts/NextVoiceMessagePlayerContext.tsx
++++ b/packages/frontend/src/contexts/NextVoiceMessagePlayerContext.tsx
+@@ -26,9 +26,22 @@ type AudioMessageInfo = {
+ 
+ type ContextValue = {
+   setCurrMessage: (newMsg: AudioMessageInfo | null) => void
++  /**
++   * The currently-playing voice message (src-validated against the global
++   * player), or `null`. Consumed by the custom mini-player.
++   */
++  currMessage: AudioMessageInfo | null
++  /**
++   * Advance to the next voice message if there is one, otherwise stop —
++   * exactly what the `ended` event does, but triggered manually (e.g. the
++   * OS media-session "next track" button).
++   */
++  playNext: () => void
+ }
+ export const NextVoiceMessagePlayerContext = createContext<ContextValue>({
+   setCurrMessage: () => {},
++  currMessage: null,
++  playNext: () => {},
+ })
+ 
+ /**
+@@ -57,6 +70,14 @@ export function NextVoiceMessagePlayerProvider({
+ 
+   const onEndedPlaybackAndLoadedNextMessage = useCallback(
+     (endedSrc: string, _nextMessageIsLoading: false) => {
++      // A (possibly deferred) ended/next event for a src that is no longer
++      // current must never touch the message playing now — check staleness
++      // before the stop branch, or a stale parked event stops an unrelated
++      // actively-playing message.
++      if (currMessage == null || endedSrc !== currMessage.src) {
++        return
++      }
++
+       if (nextMessage == null) {
+         log.info('no next voice message to play, stopping sequential playback')
+         mediaPlayerMutexCtx.stop()
+@@ -64,10 +85,6 @@ export function NextVoiceMessagePlayerProvider({
+         return
+       }
+ 
+-      if (currMessage == null || endedSrc !== currMessage.src) {
+-        return
+-      }
+-
+       const { accountId, message } = nextMessage
+ 
+       if (!message.file) {
+@@ -91,6 +108,20 @@ export function NextVoiceMessagePlayerProvider({
+     [currMessage, mediaPlayerMutexCtx, nextMessage]
+   )
+ 
++  // Shared by the `ended` event and the manual `playNext`: advance if the next
++  // message is ready, defer it if it's still loading, or (via
++  // `onEndedPlaybackAndLoadedNextMessage`) stop when there's nothing next.
++  const advanceOrStop = useCallback(
++    (fromSrc: string) => {
++      if (nextMessageIsLoading) {
++        setPendingEndedEvent({ src: fromSrc })
++      } else {
++        onEndedPlaybackAndLoadedNextMessage(fromSrc, false)
++      }
++    },
++    [nextMessageIsLoading, onEndedPlaybackAndLoadedNextMessage]
++  )
++
+   const onEnded = useEffectEvent(() => {
+     if (mediaPlayerMutexCtx.currentSrc == null) {
+       log.warn(
+@@ -99,16 +130,17 @@ export function NextVoiceMessagePlayerProvider({
+       )
+       return
+     }
++    advanceOrStop(mediaPlayerMutexCtx.currentSrc)
++  })
+ 
+-    if (nextMessageIsLoading) {
+-      setPendingEndedEvent({ src: mediaPlayerMutexCtx.currentSrc })
+-    } else {
+-      onEndedPlaybackAndLoadedNextMessage(
+-        mediaPlayerMutexCtx.currentSrc,
+-        nextMessageIsLoading
+-      )
++  // Manual advance (OS media-session "next track"). Same code path as `ended`,
++  // just keyed off the validated `currMessage` instead of the ended event.
++  const playNext = useCallback(() => {
++    if (currMessage == null) {
++      return
+     }
+-  })
++    advanceOrStop(currMessage.src)
++  }, [currMessage, advanceOrStop])
+   useEffect(() => {
+     const el = mediaPlayerMutexCtx.audioElement
+     el.addEventListener('ended', onEnded)
+@@ -130,7 +162,9 @@ export function NextVoiceMessagePlayerProvider({
+   }
+ 
+   return (
+-    <NextVoiceMessagePlayerContext.Provider value={{ setCurrMessage }}>
++    <NextVoiceMessagePlayerContext.Provider
++      value={{ setCurrMessage, currMessage, playNext }}
++    >
+       {children}
+     </NextVoiceMessagePlayerContext.Provider>
+   )
+diff --git a/packages/frontend/src/tests/audioPlayer.test.ts b/packages/frontend/src/tests/audioPlayer.test.ts
+index 866b16822..7f85e83a6 100644
+--- a/packages/frontend/src/tests/audioPlayer.test.ts
++++ b/packages/frontend/src/tests/audioPlayer.test.ts
+@@ -6,6 +6,10 @@ import {
+   nextPlaybackRate,
+ } from '../components/AudioPlayer/utils.js'
+ import { makePositionStore } from '../components/AudioPlayer/positionStore.js'
++import {
++  mediaSessionMetadata,
++  clampSeek,
++} from '../components/GlobalVoiceMessagePlayer/mediaSession.js'
+ 
+ describe('AudioPlayer / formatAudioTime', () => {
+   it('formats seconds as m:ss', () => {
+@@ -74,4 +78,71 @@ describe('AudioPlayer / positionStore', () => {
+     })
+     expect(s.getPosition('a')).to.equal(null)
+   })
++
++  it('survives valid-but-wrong-typed JSON (null / number / array)', () => {
++    // JSON.parse succeeds for these, but they aren't the object shape; read()
++    // must coerce to {} so no accessor throws (and the store self-heals).
++    for (const raw of ['null', '5', '[1,2]']) {
++      const s = makePositionStore({ getItem: () => raw, setItem: () => {} })
++      expect(s.getPosition('a')).to.equal(null)
++      expect(() => s.setPosition('a', 3)).to.not.throw()
++      expect(() => s.clearPosition('a')).to.not.throw()
++    }
++  })
++})
++
++describe('GlobalVoiceMessagePlayer / mediaSessionMetadata', () => {
++  const details = {
++    senderName: 'Alice',
++    chatName: 'Team',
++    avatarUrl: 'blob:abc',
++  }
++
++  it('suppressed: generic title, no artist/artwork (privacy default)', () => {
++    const m = mediaSessionMetadata(true, 'Voice Message', details)
++    expect(m.title).to.equal('Voice Message')
++    expect(m.artist).to.equal('')
++    expect(m.artwork).to.deep.equal([])
++  })
++
++  it('detailed: sender as title, chat as artist, avatar as artwork', () => {
++    const m = mediaSessionMetadata(false, 'Voice Message', details)
++    expect(m.title).to.equal('Alice')
++    expect(m.artist).to.equal('Team')
++    expect(m.artwork).to.deep.equal([{ src: 'blob:abc' }])
++  })
++
++  it('detailed with no avatar: empty artwork (guarded)', () => {
++    const m = mediaSessionMetadata(false, 'Voice Message', {
++      senderName: 'Alice',
++      chatName: 'Team',
++    })
++    expect(m.artwork).to.deep.equal([])
++  })
++
++  it('detailed but details unavailable: falls back to generic title', () => {
++    const m = mediaSessionMetadata(false, 'Voice Message', {
++      senderName: '',
++      chatName: '',
++    })
++    expect(m.title).to.equal('Voice Message')
++    expect(m.artwork).to.deep.equal([])
++  })
++})
++
++describe('GlobalVoiceMessagePlayer / clampSeek', () => {
++  it('seeks within bounds', () => {
++    expect(clampSeek(10, 10, 60)).to.equal(20)
++    expect(clampSeek(30, -10, 60)).to.equal(20)
++  })
++
++  it('clamps to [0, duration]', () => {
++    expect(clampSeek(5, -10, 60)).to.equal(0)
++    expect(clampSeek(55, 10, 60)).to.equal(60)
++  })
++
++  it('non-finite duration only clamps the lower bound', () => {
++    expect(clampSeek(5, 10, Infinity)).to.equal(15)
++    expect(clampSeek(5, -10, Infinity)).to.equal(0)
++  })
+ })
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index 2b36a2a4e..793247de6 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -49,6 +49,8 @@ export interface DesktopSettingsType {
+   experimentalUnreadReadTime: boolean
+   /** webapp: custom voice/audio message player controls (play/pause, seek, time, speed). Off by default (experimental). */
+   experimentalAudioPlayerControls: boolean
++  /** webapp: expose voice-message sender/chat/avatar in the OS media session (lock screen). Off by default (privacy: suppressed metadata otherwise). */
++  voiceMessageMediaSessionDetails: boolean
+   enterKeySends: boolean
+   locale: string | null
+   notifications: boolean
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index 83001180c..762028a40 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -19,6 +19,7 @@ export function getDefaultState(): DesktopSettingsType {
+     experimentalCompletionMenu: false,
+     experimentalUnreadReadTime: false,
+     experimentalAudioPlayerControls: false,
++    voiceMessageMediaSessionDetails: false,
+     chatViewBgImg: undefined,
+     lastChats: {},
+     zoomFactor: undefined,

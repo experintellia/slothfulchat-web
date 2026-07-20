@@ -56,8 +56,15 @@ exists:
   now works), a live rolling waveform in the recorder's level meter, and
   on-device User Timing profiling of peak generation surfaced in Diagnostics
   ("measure first" — no peak cache until the numbers demand it, see issue
-  A2.5). Phases one and two of the voice-messages epic (#120); screenshot
-  loop: `node scripts/shot-voice-player.mjs`. `desktop/0056`, `desktop/0057`
+  A2.5). Phase three upgrades the global mini-player: the same custom
+  controls drive the singleton directly (waveform, time, speed), plus a
+  clickable sender line (avatar + name + chat) that jumps to the message,
+  and `navigator.mediaSession` wiring (lock-screen/hardware play, pause,
+  seek, next = the existing auto-advance) — lock-screen metadata is
+  privacy-suppressed by default, a second setting opts into sender details
+  (forum 5423). Phases one to three of the voice-messages epic (#120);
+  screenshot loop: `node scripts/shot-voice-player.mjs`. `desktop/0056`,
+  `desktop/0057`, `desktop/0058`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
