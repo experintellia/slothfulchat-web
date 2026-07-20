@@ -15,8 +15,8 @@ SystemTime::now which panics on wasm32-unknown-unknown).
  Cargo.toml        |   8 +++
  src/net.rs        |  16 +++++
  src/net/dns.rs    |  10 +++
- src/net/ws_tcp.rs | 151 +++++++++++++++++++++++++++++++++++++++++++++
- 5 files changed, 292 insertions(+), 46 deletions(-)
+ src/net/ws_tcp.rs | 147 ++++++++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 288 insertions(+), 46 deletions(-)
  create mode 100644 src/net/ws_tcp.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
@@ -478,10 +478,10 @@ index f4e6bec11..b6bf59cd0 100644
      hostname: &str,
 diff --git a/src/net/ws_tcp.rs b/src/net/ws_tcp.rs
 new file mode 100644
-index 000000000..deee1db0f
+index 000000000..eab5f2edc
 --- /dev/null
 +++ b/src/net/ws_tcp.rs
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,147 @@
 +//! wasm32 TCP transport: tunnels byte streams through a WebSocket proxy.
 +//!
 +//! Browsers cannot open TCP sockets. A trivial proxy (see the prototype's
@@ -495,7 +495,6 @@ index 000000000..deee1db0f
 +
 +use std::net::{IpAddr, SocketAddr};
 +use std::pin::Pin;
-+use std::str::FromStr;
 +use std::sync::OnceLock;
 +use std::task::{Context as TaskContext, Poll};
 +use std::time::Duration;
@@ -627,9 +626,6 @@ index 000000000..deee1db0f
 +        ws_stream_wasm::WsMessage::Text(text) => text,
 +        ws_stream_wasm::WsMessage::Binary(bytes) => String::from_utf8(bytes)?,
 +    };
-+    let ips: Vec<String> = serde_json::from_str(&text).context("bad DNS reply")?;
-+    Ok(ips
-+        .iter()
-+        .filter_map(|ip| IpAddr::from_str(ip).ok())
-+        .collect())
++    let ips: Vec<IpAddr> = serde_json::from_str(&text).context("bad DNS reply")?;
++    Ok(ips)
 +}

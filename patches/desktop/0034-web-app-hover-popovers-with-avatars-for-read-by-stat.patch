@@ -40,12 +40,12 @@ shell, a lazy contacts-by-id fetch and a relative-time helper).
  _locales/_untranslated_en.json                |   3 +
  packages/frontend/scss/misc/_avatar.scss      |   7 +
  .../frontend/src/components/Avatar/index.tsx  |   5 +-
- .../src/components/PeopleHoverInfo/index.tsx  | 185 ++++++++++++++++++
+ .../src/components/PeopleHoverInfo/index.tsx  | 181 ++++++++++++++++++
  .../PeopleHoverInfo/styles.module.scss        |  95 +++++++++
  .../src/components/Reactions/index.tsx        | 113 ++++++++++-
  .../components/Reactions/styles.module.scss   |  22 ++-
  .../components/message/MessageMetaData.tsx    | 125 +++++++++---
- 8 files changed, 518 insertions(+), 37 deletions(-)
+ 8 files changed, 514 insertions(+), 37 deletions(-)
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/index.tsx
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 
@@ -113,10 +113,10 @@ index a452c04ee..f6110be3c 100644
        onClick={onClick}
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/index.tsx b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
 new file mode 100644
-index 000000000..1091ee5c0
+index 000000000..b4ff74629
 --- /dev/null
 +++ b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,181 @@
 +import React, { useLayoutEffect, useMemo, useRef, useState } from 'react'
 +import classNames from 'classnames'
 +import moment from 'moment'
@@ -152,11 +152,9 @@ index 000000000..1091ee5c0
 +export function PeopleHoverCard(props: {
 +  title?: React.ReactNode
 +  rows: PersonRow[]
-+  /** Shown instead of the list when there are no rows (and we're not loading). */
-+  emptyLabel?: React.ReactNode
 +  loading?: boolean
 +}) {
-+  const { title, rows, emptyLabel, loading } = props
++  const { title, rows, loading } = props
 +
 +  return (
 +    <div className={styles.peopleHoverCard} role='tooltip'>
@@ -196,10 +194,8 @@ index 000000000..1091ee5c0
 +            </div>
 +          ))}
 +        </div>
-+      ) : loading || emptyLabel != null ? (
-+        <div className={styles.peopleHoverEmpty}>
-+          {loading ? '…' : emptyLabel}
-+        </div>
++      ) : loading ? (
++        <div className={styles.peopleHoverEmpty}>…</div>
 +      ) : null}
 +    </div>
 +  )
