@@ -230,6 +230,15 @@ exists:
   composer (same slot as the link-preview ghost). One switch in Settings →
   Chats and Media, on by default. `desktop/0055`
 
+- **Invite links render as cards** — an `https://i.delta.chat/#…` invite link
+  in a message becomes a compact card (letter avatar, "Group/Channel/Contact
+  invitation" label, decoded name, View button) instead of the raw fingerprint
+  URL. The name is parsed from the URL fragment alone — deliberately not via
+  core's `checkQr`, which would create a hidden contact as a side effect —
+  so it is sender-controlled and cosmetic; clicking still opens the usual
+  join/chat confirmation dialog, and unparseable fragments fall back to a
+  plain link. `desktop/0056`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not

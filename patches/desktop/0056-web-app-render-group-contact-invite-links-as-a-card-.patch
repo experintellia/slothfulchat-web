@@ -1,0 +1,367 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 20 Jul 2026 18:16:56 +0000
+Subject: [PATCH 56/56] web-app: render group/contact invite links as a card
+ with a View button
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+An https://i.delta.chat/#… invite link in a message is a long, unreadable
+fingerprint URL, even though the one thing a reader cares about — which
+group / channel / contact it is for — is right there in the URL fragment
+(g= / b= / n= / a= params). Render such links as a compact card instead:
+letter avatar, a 'Group invitation' / 'Channel invitation' / 'Contact
+invitation' label, the decoded name, and a View button. The whole card is
+the link; clicking keeps the existing behavior (processQr → the usual
+join/chat confirmation dialog).
+
+The name is parsed from the link alone, mirroring core's qr.rs decoding
+('+' as space, trailing '_' as ellipsis) — deliberately NOT via core's
+checkQr, which would create a hidden contact as a side effect just for
+rendering a message. The name is sender-controlled and cosmetic; the
+confirmation dialog stays the actual decision point, and the raw URL
+remains visible as the link title. Unparseable fragments fall back to
+today's plain link.
+
+colorFromString moves from the Public Bots dialog to utils/ so both spots
+derive a stable avatar color for names that have no core contact.
+---
+ _locales/_untranslated_en.json                | 12 ++++
+ packages/frontend/scss/message/_message.scss  | 58 ++++++++++++++++++
+ .../components/dialogs/PublicBots/index.tsx   | 12 +---
+ .../frontend/src/components/message/Link.tsx  | 38 ++++++++++++
+ .../frontend/src/tests/inviteLink.test.ts     | 53 +++++++++++++++++
+ .../frontend/src/utils/colorFromString.ts     | 12 ++++
+ packages/frontend/src/utils/inviteLink.ts     | 59 +++++++++++++++++++
+ 7 files changed, 233 insertions(+), 11 deletions(-)
+ create mode 100644 packages/frontend/src/tests/inviteLink.test.ts
+ create mode 100644 packages/frontend/src/utils/colorFromString.ts
+ create mode 100644 packages/frontend/src/utils/inviteLink.ts
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index fe3dfc4..9e26381 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -112,5 +112,17 @@
+   },
+   "webxdc_store_url_explain_2_desktop": {
+     "message": "This is different from the same feature on Android and iOS.\nThis must be the path containing the xdcget-lock.json file."
++  },
++  "invite_link_group": {
++    "message": "Group invitation"
++  },
++  "invite_link_channel": {
++    "message": "Channel invitation"
++  },
++  "invite_link_contact": {
++    "message": "Contact invitation"
++  },
++  "invite_link_view": {
++    "message": "View"
+   }
+ }
+diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
+index a5d349d..7677b80 100644
+--- a/packages/frontend/scss/message/_message.scss
++++ b/packages/frontend/scss/message/_message.scss
+@@ -641,6 +641,64 @@ $info-text-max-width: 400px;
+   }
+ }
+ 
++// invite links (https://i.delta.chat/#…) render as a tappable card showing
++// the group/channel/contact name from the link instead of the raw URL
++.msg-body > .text a.invite-link-card {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  background: color-mix(in srgb, var(--globalLinkColor) 9%, transparent);
++  border-radius: 7px; // like .quote-background
++  padding: 8px 10px;
++  margin: 2px 0 3px;
++  text-decoration: none;
++  color: var(--messageText);
++  max-width: 100%;
++  // the surrounding .text is pre-wrap; don't let stray whitespace nodes
++  // become anonymous flex items
++  white-space: normal;
++
++  .avatar {
++    --local-avatar-size: 36px;
++    --local-avatar-font-size: 20px;
++    --local-avatar-vertical-margin: 0;
++    flex: none;
++  }
++
++  .invite-link-body {
++    min-width: 0;
++    flex: 1;
++  }
++
++  .invite-link-kind {
++    display: block;
++    font-size: 13px;
++    font-weight: 300;
++    color: var(--messageQuotedText);
++  }
++
++  .invite-link-name {
++    display: block;
++    font-weight: 600;
++    overflow: hidden;
++    text-overflow: ellipsis;
++    white-space: nowrap;
++  }
++
++  .invite-link-view {
++    flex: none;
++    background-color: var(--buttonPrimaryBackground);
++    color: var(--buttonPrimaryText);
++    border-radius: 10px; // matches components/Button
++    padding: 8px 12px;
++    font-weight: bold;
++  }
++
++  &:hover .invite-link-view {
++    background-color: var(--buttonPrimaryHover);
++  }
++}
++
+ /* This is for making links in quoted texts unclickable and
+    have an appereance like the rest of text in there */
+ .quoted-text > a {
+diff --git a/packages/frontend/src/components/dialogs/PublicBots/index.tsx b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
+index 3c8b0ca..e4d5bed 100644
+--- a/packages/frontend/src/components/dialogs/PublicBots/index.tsx
++++ b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
+@@ -20,6 +20,7 @@ import useProcessQR, { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
+ import { useFetchGeneric } from '../../../hooks/useFetch'
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+ import { getJsonFromBase64 } from '../../../utils/getJsonFromBase64'
++import { colorFromString } from '../../../utils/colorFromString'
+ import { instanceHidesPublicSuggestions } from '../../../utils/slothfulInstanceConfig'
+ import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+@@ -56,17 +57,6 @@ interface BotEntry {
+   url: string
+ }
+ 
+-/**
+- * Stable avatar color per bot; the directory entries are not core
+- * contacts (yet), so no core-assigned color exists for them.
+- */
+-function colorFromString(str: string): string {
+-  let hash = 0
+-  for (let i = 0; i < str.length; i++) {
+-    hash = (hash * 31 + str.charCodeAt(i)) | 0
+-  }
+-  return `hsl(${((hash % 360) + 360) % 360}, 54%, 46%)`
+-}
+ 
+ function parseBotsJson(base64: string): {
+   bots: BotEntry[]
+diff --git a/packages/frontend/src/components/message/Link.tsx b/packages/frontend/src/components/message/Link.tsx
+index cd138a0..51bc954 100644
+--- a/packages/frontend/src/components/message/Link.tsx
++++ b/packages/frontend/src/components/message/Link.tsx
+@@ -14,6 +14,9 @@ import useProcessQr from '../../hooks/useProcessQr'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import { isInviteLink } from '@deltachat-desktop/shared/util'
+ import { selectedAccountId } from '../../ScreenController'
++import { Avatar } from '../Avatar'
++import { parseInviteLink } from '../../utils/inviteLink'
++import { colorFromString } from '../../utils/colorFromString'
+ 
+ import type { DialogProps } from '../../contexts/DialogContext'
+ import { SCAN_CONTEXT_TYPE } from '../../hooks/useProcessQr'
+@@ -40,6 +43,7 @@ export const Link = ({
+ }) => {
+   const { openDialog } = useDialog()
+   const openLinkSafely = useOpenLinkSafely()
++  const tx = useTranslationFunction()
+   const accountId = selectedAccountId()
+   const { target, punycode, scheme, linkText } = destination
+ 
+@@ -68,6 +72,40 @@ export const Link = ({
+     }
+   }
+ 
++  // Invite links render as a card with the name parsed from the URL fragment
++  // (never via core's checkQr, which would create a hidden contact just for
++  // rendering). The name is sender-controlled and cosmetic; the real decision
++  // point stays the confirmation dialog that clicking opens.
++  const invite = isInviteLink(target) ? parseInviteLink(target) : null
++  if (invite) {
++    const label = {
++      group: tx('invite_link_group'),
++      channel: tx('invite_link_channel'),
++      contact: tx('invite_link_contact'),
++    }[invite.kind]
++    return (
++      <a
++        href={asciiUrl}
++        x-target-url={asciiUrl}
++        title={asciiUrl}
++        onClick={onClick}
++        tabIndex={tabIndex}
++        className='invite-link-card'
++      >
++        <Avatar
++          displayName={invite.name}
++          color={colorFromString(invite.name)}
++          aria-hidden
++        />
++        <span className='invite-link-body'>
++          <span className='invite-link-kind'>{label}</span>
++          <span className='invite-link-name'>{invite.name}</span>
++        </span>
++        <span className='invite-link-view'>{tx('invite_link_view')}</span>
++      </a>
++    )
++  }
++
+   return (
+     <a
+       href={asciiUrl}
+diff --git a/packages/frontend/src/tests/inviteLink.test.ts b/packages/frontend/src/tests/inviteLink.test.ts
+new file mode 100644
+index 0000000..5aec685
+--- /dev/null
++++ b/packages/frontend/src/tests/inviteLink.test.ts
+@@ -0,0 +1,53 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import { parseInviteLink } from '../utils/inviteLink.js'
++
++const FPR = '77E64B2C8CBB4B01827B3A5D9B7888DAE9AE0C34'
++
++describe('parseInviteLink', () => {
++  it('parses a group invite with percent-encoded name', () => {
++    expect(
++      parseInviteLink(
++        `https://i.delta.chat/#${FPR}&a=alice%40example.org&g=Tuesday%20Climbing%20Crew&x=abc123&i=xyz&s=def`
++      )
++    ).to.deep.equal({ kind: 'group', name: 'Tuesday Climbing Crew' })
++  })
++
++  it('decodes + as space and trailing _ as ellipsis (core decode_name)', () => {
++    expect(
++      parseInviteLink(
++        `https://i.delta.chat/#${FPR}&a=a%40b.org&g=Very+Long+Name_&x=g&i=i&s=s`
++      )
++    ).to.deep.equal({ kind: 'group', name: 'Very Long Name…' })
++  })
++
++  it('parses a channel invite (b=)', () => {
++    expect(
++      parseInviteLink(
++        `https://i.delta.chat/#${FPR}&a=a%40b.org&b=News&x=g&i=i&s=s`
++      )
++    ).to.deep.equal({ kind: 'channel', name: 'News' })
++  })
++
++  it('parses a contact invite, falling back to addr without n=', () => {
++    expect(
++      parseInviteLink(
++        `https://i.delta.chat/#${FPR}&a=alice%40b.org&n=Alice&i=i&s=s`
++      )
++    ).to.deep.equal({ kind: 'contact', name: 'Alice' })
++    expect(
++      parseInviteLink(`https://i.delta.chat/#${FPR}&a=alice%40b.org&i=i&s=s`)
++    ).to.deep.equal({ kind: 'contact', name: 'alice@b.org' })
++  })
++
++  it('returns null for junk, non-invite URLs and broken encoding', () => {
++    expect(parseInviteLink('https://example.org/#a=x&g=y')).to.equal(null)
++    expect(parseInviteLink('https://i.delta.chat/#brokenpayload')).to.equal(
++      null
++    )
++    expect(
++      parseInviteLink(`https://i.delta.chat/#${FPR}&a=a%40b.org&g=%E0%A4%A`)
++    ).to.equal(null)
++  })
++})
+diff --git a/packages/frontend/src/utils/colorFromString.ts b/packages/frontend/src/utils/colorFromString.ts
+new file mode 100644
+index 0000000..206199c
+--- /dev/null
++++ b/packages/frontend/src/utils/colorFromString.ts
+@@ -0,0 +1,12 @@
++/**
++ * Stable avatar color for things that are not core contacts (so no
++ * core-assigned color exists): public-bot directory entries, names parsed
++ * out of invite links, etc.
++ */
++export function colorFromString(str: string): string {
++  let hash = 0
++  for (let i = 0; i < str.length; i++) {
++    hash = (hash * 31 + str.charCodeAt(i)) | 0
++  }
++  return `hsl(${((hash % 360) + 360) % 360}, 54%, 46%)`
++}
+diff --git a/packages/frontend/src/utils/inviteLink.ts b/packages/frontend/src/utils/inviteLink.ts
+new file mode 100644
+index 0000000..edcdb10
+--- /dev/null
++++ b/packages/frontend/src/utils/inviteLink.ts
+@@ -0,0 +1,59 @@
++import { isInviteLink } from '@deltachat-desktop/shared/util.js'
++
++export type InviteLinkInfo = {
++  kind: 'group' | 'channel' | 'contact'
++  /** Display name straight from the link — sender-controlled, cosmetic only. */
++  name: string
++}
++
++/** Mirrors core's qr.rs decode_name: `+` means space, a trailing `_` marks a
++ * name that was truncated when the link was generated (shown as `…`). */
++function decodeName(value: string): string | null {
++  let name: string
++  try {
++    name = decodeURIComponent(value.replace(/\+/g, '%20'))
++  } catch {
++    return null
++  }
++  return name.endsWith('_') ? name.slice(0, -1) + '…' : name
++}
++
++/**
++ * Extract what an `https://i.delta.chat/#…` invite link is for, from the link
++ * alone — the fragment carries the names (`g=` group, `b=` channel,
++ * `n=`/`a=` contact). Deliberately NOT core's checkQr, which would create a
++ * hidden contact as a side effect just for rendering a message.
++ * Returns null when the fragment is unreadable; callers then render the
++ * plain link and clicking still goes through the usual checkQr flow.
++ */
++export function parseInviteLink(url: string): InviteLinkInfo | null {
++  if (!isInviteLink(url)) {
++    return null
++  }
++  const fragment = url.slice(url.indexOf('#') + 1)
++  const params = new Map<string, string>()
++  for (const part of fragment.split('&')) {
++    const eq = part.indexOf('=')
++    if (eq > 0) {
++      params.set(part.slice(0, eq), part.slice(eq + 1))
++    }
++  }
++  const group = params.get('g')
++  if (group !== undefined) {
++    const name = decodeName(group)
++    return name ? { kind: 'group', name } : null
++  }
++  const channel = params.get('b')
++  if (channel !== undefined) {
++    const name = decodeName(channel)
++    return name ? { kind: 'channel', name } : null
++  }
++  const addr = params.get('a')
++  if (addr === undefined) {
++    // not a securejoin payload we understand (e.g. dclogin/dcaccount or junk)
++    return null
++  }
++  const contactName = params.get('n')
++  const name = (contactName && decodeName(contactName)) || decodeName(addr)
++  return name ? { kind: 'contact', name } : null
++}
