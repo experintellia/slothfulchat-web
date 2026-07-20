@@ -237,7 +237,7 @@ exists:
   core's `checkQr`, which would create a hidden contact as a side effect —
   so it is sender-controlled and cosmetic; clicking still opens the usual
   join/chat confirmation dialog, and unparseable fragments fall back to a
-  plain link. `desktop/0056`
+  plain link. `desktop/0060`
 
 ## Bugfixes
 
