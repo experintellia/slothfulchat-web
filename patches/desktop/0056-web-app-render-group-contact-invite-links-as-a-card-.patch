@@ -32,16 +32,24 @@ the anchor element itself; the card's child elements (name, avatar, View)
 broke that. The message context menu now resolves the clicked element to
 its enclosing anchor via closest('a'), which also covers future labeled
 links with formatting in the label.
+
+Copying a selection that spans the card now also yields the original URL
+instead of the card's visible words: a visually-hidden span inside the
+card carries the link (user-select: text) while the visible part is
+user-select: none — which covers native Ctrl+C — and marked data-no-copy,
+which the context menu's new getSelectedText() strips before copying
+(Selection.toString() ignores user-select in Chromium). Selections
+without such content keep the exact toString() behavior.
 ---
- _locales/_untranslated_en.json                | 12 ++++
- packages/frontend/scss/message/_message.scss  | 58 ++++++++++++++++++
- .../components/dialogs/PublicBots/index.tsx   | 12 +---
- .../frontend/src/components/message/Link.tsx  | 38 ++++++++++++
- .../src/components/message/Message.tsx        |  6 +-
- .../frontend/src/tests/inviteLink.test.ts     | 53 +++++++++++++++++
- .../frontend/src/utils/colorFromString.ts     | 12 ++++
- packages/frontend/src/utils/inviteLink.ts     | 59 +++++++++++++++++++
- 8 files changed, 238 insertions(+), 12 deletions(-)
+ _locales/_untranslated_en.json                | 12 +++
+ packages/frontend/scss/message/_message.scss  | 78 +++++++++++++++++++
+ .../components/dialogs/PublicBots/index.tsx   | 12 +--
+ .../frontend/src/components/message/Link.tsx  | 49 ++++++++++++
+ .../src/components/message/Message.tsx        | 33 +++++++-
+ .../frontend/src/tests/inviteLink.test.ts     | 53 +++++++++++++
+ .../frontend/src/utils/colorFromString.ts     | 12 +++
+ packages/frontend/src/utils/inviteLink.ts     | 59 ++++++++++++++
+ 8 files changed, 295 insertions(+), 13 deletions(-)
  create mode 100644 packages/frontend/src/tests/inviteLink.test.ts
  create mode 100644 packages/frontend/src/utils/colorFromString.ts
  create mode 100644 packages/frontend/src/utils/inviteLink.ts
@@ -69,19 +77,18 @@ index fe3dfc4..9e26381 100644
    }
  }
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index a5d349d..7677b80 100644
+index a5d349d..c3b6c42 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
-@@ -641,6 +641,64 @@ $info-text-max-width: 400px;
+@@ -641,6 +641,84 @@ $info-text-max-width: 400px;
    }
  }
  
 +// invite links (https://i.delta.chat/#…) render as a tappable card showing
 +// the group/channel/contact name from the link instead of the raw URL
 +.msg-body > .text a.invite-link-card {
-+  display: flex;
-+  align-items: center;
-+  gap: 10px;
++  display: block;
++  position: relative; // anchors the visually-hidden .invite-link-url
 +  background: color-mix(in srgb, var(--globalLinkColor) 9%, transparent);
 +  border-radius: 7px; // like .quote-background
 +  padding: 8px 10px;
@@ -92,6 +99,27 @@ index a5d349d..7677b80 100644
 +  // the surrounding .text is pre-wrap; don't let stray whitespace nodes
 +  // become anonymous flex items
 +  white-space: normal;
++  // copying a selection spanning the card must yield the original URL
++  // (from .invite-link-url below), not the card's visible words
++  user-select: none;
++
++  .invite-link-url {
++    // part of the selection, but visually imperceptible; display:none or
++    // visibility:hidden would drop it from the selection as well
++    user-select: text;
++    position: absolute;
++    width: 1px;
++    height: 1px;
++    overflow: hidden;
++    clip-path: inset(50%);
++    white-space: nowrap;
++  }
++
++  .invite-link-visible {
++    display: flex;
++    align-items: center;
++    gap: 10px;
++  }
 +
 +  .avatar {
 +    --local-avatar-size: 36px;
@@ -168,7 +196,7 @@ index 3c8b0ca..e4d5bed 100644
  function parseBotsJson(base64: string): {
    bots: BotEntry[]
 diff --git a/packages/frontend/src/components/message/Link.tsx b/packages/frontend/src/components/message/Link.tsx
-index cd138a0..51bc954 100644
+index cd138a0..a952441 100644
 --- a/packages/frontend/src/components/message/Link.tsx
 +++ b/packages/frontend/src/components/message/Link.tsx
 @@ -14,6 +14,9 @@ import useProcessQr from '../../hooks/useProcessQr'
@@ -189,7 +217,7 @@ index cd138a0..51bc954 100644
    const accountId = selectedAccountId()
    const { target, punycode, scheme, linkText } = destination
  
-@@ -68,6 +72,40 @@ export const Link = ({
+@@ -68,6 +72,51 @@ export const Link = ({
      }
    }
  
@@ -213,16 +241,27 @@ index cd138a0..51bc954 100644
 +        tabIndex={tabIndex}
 +        className='invite-link-card'
 +      >
-+        <Avatar
-+          displayName={invite.name}
-+          color={colorFromString(invite.name)}
-+          aria-hidden
-+        />
-+        <span className='invite-link-body'>
-+          <span className='invite-link-kind'>{label}</span>
-+          <span className='invite-link-name'>{invite.name}</span>
++        {/* Selection-copy must carry the real link, not the card's visible
++            words: this span is in the selection but visually imperceptible,
++            while the visible part is user-select:none (native copy) and
++            data-no-copy (stripped by getSelectedText for the context menu). */}
++        {/* aria-hidden: the clip pattern would otherwise read the whole
++            fingerprint URL to screen readers; the visible text is the name */}
++        <span className='invite-link-url' aria-hidden='true'>
++          {target}
 +        </span>
-+        <span className='invite-link-view'>{tx('invite_link_view')}</span>
++        <span className='invite-link-visible' data-no-copy>
++          <Avatar
++            displayName={invite.name}
++            color={colorFromString(invite.name)}
++            aria-hidden
++          />
++          <span className='invite-link-body'>
++            <span className='invite-link-kind'>{label}</span>
++            <span className='invite-link-name'>{invite.name}</span>
++          </span>
++          <span className='invite-link-view'>{tx('invite_link_view')}</span>
++        </span>
 +      </a>
 +    )
 +  }
@@ -231,10 +270,51 @@ index cd138a0..51bc954 100644
      <a
        href={asciiUrl}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 65171d5..a150827 100644
+index 65171d5..1287ff4 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -568,7 +568,11 @@ export default function Message(props: {
+@@ -218,6 +218,31 @@ const ForwardedTitle = ({
+   )
+ }
+ 
++/**
++ * Like `window.getSelection()?.toString()`, but elements marked with
++ * `data-no-copy` (the visible words of invite-link cards, which carry the
++ * real URL in a visually-hidden sibling instead) are excluded — matching
++ * what native Ctrl+C produces for them via `user-select: none`, which
++ * `Selection.toString()` ignores in Chromium.
++ */
++function getSelectedText(): string | undefined {
++  const selection = window.getSelection()
++  const plain = selection?.toString()
++  if (!selection || selection.rangeCount === 0 || !plain) {
++    return plain
++  }
++  const container = document.createElement('div')
++  for (let i = 0; i < selection.rangeCount; i++) {
++    container.append(selection.getRangeAt(i).cloneContents())
++  }
++  if (!container.querySelector('[data-no-copy]')) {
++    // no special content selected — keep the exact toString() behavior
++    return plain
++  }
++  container.querySelectorAll('[data-no-copy]').forEach(el => el.remove())
++  return container.textContent ?? plain
++}
++
+ function buildContextMenu(
+   {
+     accountId,
+@@ -255,7 +280,7 @@ function buildContextMenu(
+   const link: string =
+     clickTarget?.getAttribute('x-target-url') || clickTarget?.href || ''
+   // grab selected text before clicking, otherwise the selection might be already gone
+-  const selectedText = window.getSelection()?.toString()
++  const selectedText = getSelectedText()
+   const textSelected: boolean = selectedText !== null && selectedText !== ''
+ 
+   const isSavedMessage = message.savedMessageId !== null
+@@ -568,7 +593,11 @@ export default function Message(props: {
          resetSelection()
        }
        // the event.t is a workaround for labled links, as they will be able to contain markdown formatting in the label in the future.
