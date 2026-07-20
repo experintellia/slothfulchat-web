@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: experintellia <280144245+experintellia@users.noreply.github.com>
+Date: Mon, 20 Jul 2026 01:19:55 +0000
+Subject: [PATCH] web-app: read-aloud message action (browser TTS) behind an
+ experimental setting
+
+A "Read aloud" item in the message context menu speaks the message text
+with the browser's built-in speechSynthesis -- fully local (OS voices),
+no dependency, no network. While speech is playing the menu also offers
+"Stop reading aloud". Closes #111 (slothfulchat-web).
+
+Gated behind the new off-by-default `experimentalReadAloud` desktop
+setting, mirroring `experimentalCompletionMenu` (patch 0050): one key in
+DesktopSettingsType + getDefaultState(), one DesktopSettingsSwitch under
+Settings -> Advanced -> Experimental features. The menu items are built
+per right-click, so the speechSynthesis.speaking check for the stop item
+is evaluated fresh each time. Utterances use the browser's default
+voice/language; there is no API to detect a message's language.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ _locales/_untranslated_en.json                |  6 +++++
+ .../Settings/ExperimentalFeatures.tsx         |  5 ++++
+ .../src/components/message/Message.tsx        | 25 +++++++++++++++++++
+ packages/shared/shared-types.d.ts             |  2 ++
+ packages/shared/state.ts                      |  1 +
+ 5 files changed, 39 insertions(+)
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index fe3dfc4..5a2b9f2 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -112,5 +112,11 @@
+   },
+   "webxdc_store_url_explain_2_desktop": {
+     "message": "This is different from the same feature on Android and iOS.\nThis must be the path containing the xdcget-lock.json file."
++  },
++  "menu_read_aloud": {
++    "message": "Read aloud"
++  },
++  "menu_stop_reading_aloud": {
++    "message": "Stop reading aloud"
+   }
+ }
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index 3ca4197..918f0ca 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -81,6 +81,11 @@ export function ExperimentalFeatures() {
+         label='Emoji completion menu'
+         description='Type a colon and a name in the composer (e.g. :smile) to pick an emoji from a pop-up menu. Off by default (experimental).'
+       />
++      <DesktopSettingsSwitch
++        settingsKey='experimentalReadAloud'
++        label='Read messages aloud'
++        description="Adds a 'Read aloud' action to the message menu that speaks the message with your device's built-in voices. Fully local, nothing leaves your device; voice quality depends on your OS and browser. Off by default (experimental)."
++      />
+       {runtime.getRuntimeInfo().isContentProtectionSupported && (
+         <DesktopSettingsSwitch
+           settingsKey='contentProtectionEnabled'
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index 65171d5..57e44db 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -33,6 +33,7 @@ import { mapCoreMsgStatus2String } from '../helpers/MapMsgStatus'
+ import { ContextMenuItem } from '../ContextMenu'
+ import { onDCEvent, BackendRemote } from '../../backend-com'
+ import { selectedAccountId } from '../../ScreenController'
++import SettingsStoreInstance from '../../stores/settings'
+ import { ProtectionEnabledDialog } from '../dialogs/ProtectionStatusDialog'
+ import useDialog from '../../hooks/dialog/useDialog'
+ import useMessage from '../../hooks/chat/useMessage'
+@@ -312,6 +313,14 @@ function buildContextMenu(
+   // Do not show "react" for system messages
+   const showSendReaction = showReactionsUi(message, chat)
+ 
++  // "Read aloud" via the browser's built-in speechSynthesis (experimental,
++  // off by default). Fully local: OS voices, no network.
++  const showReadAloud =
++    SettingsStoreInstance.state?.desktopSettings.experimentalReadAloud ===
++      true &&
++    'speechSynthesis' in window &&
++    !!text
++
+   // Only show in groups, don't show on info messages or outgoing messages
+   const showReplyPrivately =
+     (conversationType.chatType === 'Group' ||
+@@ -387,6 +396,22 @@ function buildContextMenu(
+       },
+     // copy item (selection or all text)
+     text !== '' && copy_item,
++    // Read message aloud (experimental)
++    showReadAloud && {
++      label: tx('menu_read_aloud'),
++      action: () => {
++        // ponytail: default voice/language; the browser picks per its locale,
++        // a per-message language guess would need detection with no API for it
++        window.speechSynthesis.cancel()
++        window.speechSynthesis.speak(new SpeechSynthesisUtterance(text))
++      },
++    },
++    // Stop an ongoing read-aloud (only shown while speaking)
++    showReadAloud &&
++      window.speechSynthesis.speaking && {
++        label: tx('menu_stop_reading_aloud'),
++        action: () => window.speechSynthesis.cancel(),
++      },
+     // Copy image
+     showCopyImage && {
+       label: tx('menu_copy_image_to_clipboard'),
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index 093f583..9015672 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -43,6 +43,8 @@ export interface DesktopSettingsType {
+   linkPreviewSuggestions: boolean
+   /** webapp: composer :emoji: completion menu. Off by default (experimental). */
+   experimentalCompletionMenu: boolean
++  /** webapp: "Read aloud" message action via browser speechSynthesis. Off by default (experimental). */
++  experimentalReadAloud: boolean
+   enterKeySends: boolean
+   locale: string | null
+   notifications: boolean
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index 557dfb7..3410b74 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -16,6 +16,7 @@ export function getDefaultState(): DesktopSettingsType {
+     enableOnDemandLocationStreaming: false,
+     linkPreviewSuggestions: false,
+     experimentalCompletionMenu: false,
++    experimentalReadAloud: false,
+     chatViewBgImg: undefined,
+     lastChats: {},
+     zoomFactor: undefined,

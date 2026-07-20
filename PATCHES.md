@@ -188,6 +188,13 @@ exists:
   inside `http://` or `12:30`. Built as a generic `CompletionProvider` primitive
   so a future `@mention` menu reuses the same machinery. `desktop/0049`
 
+- **Read messages aloud (browser TTS)** — a "Read aloud" action in the message
+  context menu speaks the message text with the browser's built-in
+  `speechSynthesis` (fully local OS voices, no dependency, no network), plus a
+  "Stop reading aloud" item while speech is playing. Off by default
+  (experimental), enableable in Settings → Advanced → Experimental features.
+  `desktop/0052`
+
 - **Translation editor in the keyboard-shortcuts cheat sheet** — lists the
   in-app translation editor (`Ctrl/Cmd+Shift+L`, implemented in `web-app`'s
   `runtime.ts`) in the shortcuts dialog so it's discoverable. One entry in

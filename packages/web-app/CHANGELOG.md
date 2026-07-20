@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Read messages aloud (experimental)**: a "Read aloud" action in the message
+  menu speaks the message with your device's built-in voices — fully local,
+  nothing leaves your device. Off by default; turn it on under Settings →
+  Advanced → Experimental features. (#111)
+
 - **In-app translation editor** (`Ctrl/Cmd+Shift+L`, in every build): a popup
   window to edit the current language's UI strings live, with badges for
   untranslated / experimental keys, category filters, per-language completion,
