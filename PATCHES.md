@@ -308,6 +308,17 @@ contribution intended.
   into the navbar to impersonate a native control; their hit target stays
   icon-sized, unlike the enlarged native buttons. `desktop/0049`
 
+- On wide screens (≥800px) Settings opens as a single two-pane dialog —
+  navigation sidebar on the left, the selected section on the right, like
+  Discord or macOS System Settings — instead of stacked dialogs; narrow
+  viewports keep the stacked flow. `desktop/0055`
+- Experimental features moved out of Advanced into their own settings
+  section, grouped under Composer / Chats / System sub-headings.
+  `desktop/0056`, `desktop/0058`
+- Settings that only exist in this fork are marked with a small sloth
+  badge (tooltip explains it's not an upstream Delta Chat setting).
+  `desktop/0057`
+
 ## Different decisions than upstream
 
 - **Branding** — the app calls itself SlothfulChat and uses its own icon in

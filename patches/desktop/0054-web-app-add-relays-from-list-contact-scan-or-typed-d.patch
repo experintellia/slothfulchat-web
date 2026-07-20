@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 20 Jul 2026 00:46:12 +0000
-Subject: [PATCH] web-app: add relays from list, contact scan or typed domain
- in Transports dialog
+Subject: [PATCH 54/58] web-app: add relays from list, contact scan or typed
+ domain in Transports dialog
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

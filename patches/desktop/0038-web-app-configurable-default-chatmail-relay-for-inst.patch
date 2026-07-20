@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 19:30:00 +0000
-Subject: [PATCH 38/53] web-app: configurable default chatmail relay for
+Subject: [PATCH 38/58] web-app: configurable default chatmail relay for
  instant onboarding
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
