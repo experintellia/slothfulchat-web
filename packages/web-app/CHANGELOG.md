@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Experimental: estimated read time on the unread badge** — the chat list
+  can show roughly how long a chat's unread messages take to read (e.g.
+  "~4 min", capped at "10+ min") next to the unread counter. Off by default;
+  opt in under Settings → Advanced → Experimental features.
+
 - **In-app translation editor** (`Ctrl/Cmd+Shift+L`, in every build): a popup
   window to edit the current language's UI strings live, with badges for
   untranslated / experimental keys, category filters, per-language completion,
