@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 8 Jul 2026 23:09:20 +0000
-Subject: [PATCH 17/53] web-app: rename self-referential Delta Chat mentions to
+Subject: [PATCH 17/57] web-app: rename self-referential Delta Chat mentions to
  SlothfulChat in all locales
 
 Extends the en.xml-only rename (0006) to every locale: the conversion

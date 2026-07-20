@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 01:05:26 +0000
-Subject: [PATCH 32/53] web-app: export a chat as a zip (html viewer + txt +
+Subject: [PATCH 32/57] web-app: export a chat as a zip (html viewer + txt +
  json + media) from the three-dot menu
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

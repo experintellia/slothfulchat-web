@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Tue, 7 Jul 2026 16:54:50 +0000
-Subject: [PATCH 02/53] web-app: show WS bridge in connectivity view + edit
+Subject: [PATCH 02/57] web-app: show WS bridge in connectivity view + edit
  button
 
 ---
