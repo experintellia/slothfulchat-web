@@ -8,35 +8,37 @@ VFS as default it silently targeted the wrong VFS. Route through the
 shim's sqlite_vfs_import/take, which dispatch to whichever VFS is
 default.
 ---
- src/imex.rs | 13 +++++--------
+ src/imex.rs | 16 +++++-----------
  src/sql.rs  |  8 +++-----
- 2 files changed, 8 insertions(+), 13 deletions(-)
+ 2 files changed, 8 insertions(+), 16 deletions(-)
 
 diff --git a/src/imex.rs b/src/imex.rs
-index 7f44379ff..48055b0d8 100644
+index 7f44379ff..4f2927fd1 100644
 --- a/src/imex.rs
 +++ b/src/imex.rs
-@@ -795,15 +795,12 @@ async fn export_database(
+@@ -795,17 +795,11 @@ async fn export_database(
          .ok();
      }
  
 -    // Move the bytes from sqlite's in-memory VFS into the tokio memfs.
 -    // MemVfsUtil is not Send; keep it inside a sync helper so the future stays Send.
-+    // Move the bytes from sqlite's default VFS (memory, or opfs-sahpool when
-+    // persistence is enabled) into the tokio memfs so the tar builder can
-+    // read them. The helper is sync so the future stays Send.
-     fn take_from_sqlite_vfs(name: &str) -> Result<Vec<u8>> {
+-    fn take_from_sqlite_vfs(name: &str) -> Result<Vec<u8>> {
 -        let vfs = rusqlite::ffi::MemVfsUtil::<rusqlite::ffi::WasmOsCallback>::new();
 -        let bytes = vfs
 -            .export_db(name)
 -            .map_err(|e| format_err!("failed to export database from sqlite VFS: {e}"))?;
 -        vfs.delete_db(name);
 -        Ok(bytes)
-+        tokio::fs::sqlite_vfs_take(name)
-+            .map_err(|e| format_err!("failed to export database from sqlite VFS: {e}"))
-     }
-     let bytes = take_from_sqlite_vfs(&dest_str)?;
+-    }
+-    let bytes = take_from_sqlite_vfs(&dest_str)?;
++    // Move the bytes from sqlite's default VFS (memory, or opfs-sahpool when
++    // persistence is enabled) into the tokio memfs so the tar builder can
++    // read them.
++    let bytes = tokio::fs::sqlite_vfs_take(&dest_str)
++        .map_err(|e| format_err!("failed to export database from sqlite VFS: {e}"))?;
      fs::write(dest, bytes).await?;
+     Ok(())
+ }
 diff --git a/src/sql.rs b/src/sql.rs
 index 1789da41c..433cfacf1 100644
 --- a/src/sql.rs

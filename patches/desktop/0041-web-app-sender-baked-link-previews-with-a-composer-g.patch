@@ -46,12 +46,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  .../composer/linkPreview/detectUrl.ts         |  80 +++++
  .../composer/linkPreview/generate.ts          | 254 ++++++++++++++
  .../composer/linkPreview/openGraph.ts         |  56 +++
- .../composer/linkPreview/renderCard.ts        | 332 ++++++++++++++++++
+ .../composer/linkPreview/renderCard.ts        | 331 ++++++++++++++++++
  .../composer/linkPreview/styles.module.scss   | 206 +++++++++++
  .../composer/linkPreview/useLinkPreview.ts    | 330 +++++++++++++++++
  packages/shared/shared-types.d.ts             |   2 +
  packages/shared/state.ts                      |   1 +
- 11 files changed, 1425 insertions(+), 17 deletions(-)
+ 11 files changed, 1424 insertions(+), 17 deletions(-)
  create mode 100644 packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
  create mode 100644 packages/frontend/src/components/composer/linkPreview/detectUrl.ts
  create mode 100644 packages/frontend/src/components/composer/linkPreview/generate.ts
@@ -700,10 +700,10 @@ index 000000000..a79acdbcb
 +}
 diff --git a/packages/frontend/src/components/composer/linkPreview/renderCard.ts b/packages/frontend/src/components/composer/linkPreview/renderCard.ts
 new file mode 100644
-index 000000000..6bac8c019
+index 000000000..b6326c4ee
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/linkPreview/renderCard.ts
-@@ -0,0 +1,332 @@
+@@ -0,0 +1,331 @@
 +// Draws a self-contained link-preview card onto a canvas and exports it as PNG.
 +//
 +// The card carries its own opaque light surface so text stays legible on any
@@ -1015,7 +1015,7 @@ index 000000000..6bac8c019
 + * pixel scale down until it does (last resort: return the smallest attempt).
 + */
 +export async function renderCardPng(input: RenderInput): Promise<RenderedCard> {
-+  let smallest: (RenderedCard & { canvas: HTMLCanvasElement }) | null = null
++  let smallest: RenderedCard | null = null
 +  for (const scale of SCALES) {
 +    const canvas = buildCanvas(input, scale)
 +    const { base64, bytes } = await toPngBase64(canvas)
@@ -1024,7 +1024,6 @@ index 000000000..6bac8c019
 +      bytes,
 +      width: canvas.width,
 +      height: canvas.height,
-+      canvas,
 +    }
 +    if (bytes <= BUDGET_BYTES) {
 +      return result

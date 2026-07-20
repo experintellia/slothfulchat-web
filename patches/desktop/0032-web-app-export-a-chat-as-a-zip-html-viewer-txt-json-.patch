@@ -41,8 +41,8 @@ jumbomoji). New strings live in _untranslated_en.json.
 ---
  _locales/_untranslated_en.json                |    6 +
  .../src/components/chat/ChatContextMenu.tsx   |   11 +
- .../components/dialogs/ExportChatToHtml.tsx   | 1231 +++++++++++++++++
- 3 files changed, 1248 insertions(+)
+ .../components/dialogs/ExportChatToHtml.tsx   | 1217 +++++++++++++++++
+ 3 files changed, 1234 insertions(+)
  create mode 100644 packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
@@ -98,10 +98,10 @@ index ec54fd200..60d6f4352 100644
          (chatListItems.some(c => c.freshMessageCounter > 0)
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 new file mode 100644
-index 000000000..2e0c42572
+index 000000000..2831d5735
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-@@ -0,0 +1,1231 @@
+@@ -0,0 +1,1217 @@
 +import React, { useEffect, useRef, useState } from 'react'
 +import moment from 'moment'
 +import { T } from '@deltachat/jsonrpc-client'
@@ -216,18 +216,16 @@ index 000000000..2e0c42572
 +  )
 +}
 +
++// Shared HTML-escape map, hoisted so it isn't rebuilt for every replaced char.
++const HTML_ESCAPES: Record<string, string> = {
++  '&': '&amp;',
++  '<': '&lt;',
++  '>': '&gt;',
++  '"': '&quot;',
++  "'": '&#39;',
++}
 +function escapeHtml(raw: string): string {
-+  return raw.replace(
-+    /[&<>"']/g,
-+    char =>
-+      ({
-+        '&': '&amp;',
-+        '<': '&lt;',
-+        '>': '&gt;',
-+        '"': '&quot;',
-+        "'": '&#39;',
-+      })[char] as string
-+  )
++  return raw.replace(/[&<>"']/g, char => HTML_ESCAPES[char])
 +}
 +
 +/** collects referenced blobdir files (attachments, avatars, quote images)
@@ -478,19 +476,7 @@ index 000000000..2e0c42572
 +  const data = JSON.parse(dataEl.textContent || '{}') as any
 +  const s = data.styles || {}
 +  const esc = (raw: any) =>
-+    String(raw ?? '').replace(
-+      /[&<>"']/g,
-+      c =>
-+        (
-+          ({
-+            '&': '&amp;',
-+            '<': '&lt;',
-+            '>': '&gt;',
-+            '"': '&quot;',
-+            "'": '&#39;',
-+          }) as any
-+        )[c]
-+    )
++    String(raw ?? '').replace(/[&<>"']/g, c => HTML_ESCAPES[c])
 +  const cls = (arr: any[]) => arr.filter(Boolean).join(' ')
 +  const fileHref = (path: any) => {
 +    const rel = path && data.files[path]
