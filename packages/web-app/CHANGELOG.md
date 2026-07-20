@@ -9,7 +9,11 @@
   where you left off. The mini-player that keeps playing while you switch
   chats gets the same controls plus the sender's name — click it to jump back
   to the message — and your lock screen / headset buttons control playback
-  (without showing who sent the message, unless you opt in). Off by default;
+  (without showing who sent the message, unless you opt in). Recording is
+  polished too: pause and resume while recording, listen to your recording
+  before sending it (send, re-record or discard), hold the mic and slide up
+  to record hands-free or slide left to cancel, and an "original audio"
+  option that skips noise suppression for music or ambience. Off by default;
   turn it on in Settings → Advanced → Experimental features.
 
 - **Links lose their tracking**: known tracking parameters (`utm_*`, YouTube

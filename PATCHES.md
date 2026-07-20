@@ -62,9 +62,15 @@ exists:
   and `navigator.mediaSession` wiring (lock-screen/hardware play, pause,
   seek, next = the existing auto-advance) — lock-screen metadata is
   privacy-suppressed by default, a second setting opts into sender details
-  (forum 5423). Phases one to three of the voice-messages epic (#120);
+  (forum 5423). The final phase polishes recording: pause/resume that yields
+  one contiguous MP3 (same LAME encoder, frames simply stop flowing while
+  paused), preview-before-send in the same custom player (send / re-record /
+  discard), press-and-hold with slide-left-to-cancel and slide-up-to-lock
+  (a quick tap still toggles like before), and an "original audio" toggle
+  (noise suppression etc. off — advisory, the UI reflects what the mic
+  actually honored). All phases of the voice-messages epic (#120);
   screenshot loop: `node scripts/shot-voice-player.mjs`. `desktop/0056`,
-  `desktop/0057`, `desktop/0058`
+  `desktop/0057`, `desktop/0058`, `desktop/0059`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
