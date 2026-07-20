@@ -40,16 +40,26 @@ user-select: none — which covers native Ctrl+C — and marked data-no-copy,
 which the context menu's new getSelectedText() strips before copying
 (Selection.toString() ignores user-select in Chromium). Selections
 without such content keep the exact toString() behavior.
+
+Review hardening: parseInviteLink now gates like core's check_qr (hex
+fingerprint, a= and s= required, x= required for group/channel cards) so
+the card never labels a payload differently than the dialog that opens on
+click; names are stripped of control and bidi-override characters; the
+card styles are unscoped so invite links in profile/group descriptions
+(which also render through Link) get the card instead of unstyled markup,
+with an explicit override for the message-text underline rule; and
+getSelectedText only rewrites selections inside a single message's text,
+since textContent has no CSS awareness and would mangle wider selections.
 ---
  _locales/_untranslated_en.json                | 12 +++
- packages/frontend/scss/message/_message.scss  | 78 +++++++++++++++++++
+ packages/frontend/scss/message/_message.scss  | 86 +++++++++++++++++++
  .../components/dialogs/PublicBots/index.tsx   | 12 +--
- .../frontend/src/components/message/Link.tsx  | 49 ++++++++++++
- .../src/components/message/Message.tsx        | 33 +++++++-
- .../frontend/src/tests/inviteLink.test.ts     | 53 +++++++++++++
+ .../frontend/src/components/message/Link.tsx  | 49 +++++++++++
+ .../src/components/message/Message.tsx        | 47 +++++++++-
+ .../frontend/src/tests/inviteLink.test.ts     | 86 +++++++++++++++++++
  .../frontend/src/utils/colorFromString.ts     | 12 +++
- packages/frontend/src/utils/inviteLink.ts     | 59 ++++++++++++++
- 8 files changed, 295 insertions(+), 13 deletions(-)
+ packages/frontend/src/utils/inviteLink.ts     | 75 ++++++++++++++++
+ 8 files changed, 366 insertions(+), 13 deletions(-)
  create mode 100644 packages/frontend/src/tests/inviteLink.test.ts
  create mode 100644 packages/frontend/src/utils/colorFromString.ts
  create mode 100644 packages/frontend/src/utils/inviteLink.ts
@@ -77,16 +87,18 @@ index fe3dfc4..9e26381 100644
    }
  }
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index a5d349d..c3b6c42 100644
+index a5d349d..40ecad8 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
-@@ -641,6 +641,84 @@ $info-text-max-width: 400px;
+@@ -641,6 +641,92 @@ $info-text-max-width: 400px;
    }
  }
  
 +// invite links (https://i.delta.chat/#…) render as a tappable card showing
 +// the group/channel/contact name from the link instead of the raw URL
-+.msg-body > .text a.invite-link-card {
++// deliberately unscoped: Link also renders in profile / group-description
++// dialogs (ProfileInfoHeader), and only Link.tsx emits this class
++a.invite-link-card {
 +  display: block;
 +  position: relative; // anchors the visually-hidden .invite-link-url
 +  background: color-mix(in srgb, var(--globalLinkColor) 9%, transparent);
@@ -160,6 +172,12 @@ index a5d349d..c3b6c42 100644
 +  &:hover .invite-link-view {
 +    background-color: var(--buttonPrimaryHover);
 +  }
++}
++
++// re-assert over `.msg-body > .text a { text-decoration: underline }`,
++// which out-specifies the unscoped card rule above
++.msg-body > .text a.invite-link-card {
++  text-decoration: none;
 +}
 +
  /* This is for making links in quoted texts unclickable and
@@ -270,10 +288,10 @@ index cd138a0..a952441 100644
      <a
        href={asciiUrl}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 65171d5..1287ff4 100644
+index 65171d5..877772c 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -218,6 +218,31 @@ const ForwardedTitle = ({
+@@ -218,6 +218,45 @@ const ForwardedTitle = ({
    )
  }
  
@@ -283,19 +301,33 @@ index 65171d5..1287ff4 100644
 + * real URL in a visually-hidden sibling instead) are excluded — matching
 + * what native Ctrl+C produces for them via `user-select: none`, which
 + * `Selection.toString()` ignores in Chromium.
++ *
++ * Only selections living entirely inside a single message's text are
++ * rewritten: `textContent` of the cloned fragment has no CSS awareness, so
++ * on anything wider it would drop `toString()`'s block-boundary newlines
++ * and include CSS-hidden text (e.g. `.can-hide` author lines).
++ * ponytail: cross-message selections containing a card therefore keep the
++ * old visible-words copy; a `copy` event handler that serializes a rendered
++ * clone would cover that case if it ever matters.
 + */
 +function getSelectedText(): string | undefined {
 +  const selection = window.getSelection()
 +  const plain = selection?.toString()
-+  if (!selection || selection.rangeCount === 0 || !plain) {
++  if (!selection || selection.rangeCount !== 1 || !plain) {
++    return plain
++  }
++  const range = selection.getRangeAt(0)
++  const ancestor =
++    range.commonAncestorContainer instanceof Element
++      ? range.commonAncestorContainer
++      : range.commonAncestorContainer.parentElement
++  if (!ancestor?.closest('.msg-body > .text')) {
 +    return plain
 +  }
 +  const container = document.createElement('div')
-+  for (let i = 0; i < selection.rangeCount; i++) {
-+    container.append(selection.getRangeAt(i).cloneContents())
-+  }
++  container.append(range.cloneContents())
 +  if (!container.querySelector('[data-no-copy]')) {
-+    // no special content selected — keep the exact toString() behavior
++    // no card in the selection — keep the exact toString() behavior
 +    return plain
 +  }
 +  container.querySelectorAll('[data-no-copy]').forEach(el => el.remove())
@@ -305,7 +337,7 @@ index 65171d5..1287ff4 100644
  function buildContextMenu(
    {
      accountId,
-@@ -255,7 +280,7 @@ function buildContextMenu(
+@@ -255,7 +294,7 @@ function buildContextMenu(
    const link: string =
      clickTarget?.getAttribute('x-target-url') || clickTarget?.href || ''
    // grab selected text before clicking, otherwise the selection might be already gone
@@ -314,7 +346,7 @@ index 65171d5..1287ff4 100644
    const textSelected: boolean = selectedText !== null && selectedText !== ''
  
    const isSavedMessage = message.savedMessageId !== null
-@@ -568,7 +593,11 @@ export default function Message(props: {
+@@ -568,7 +607,11 @@ export default function Message(props: {
          resetSelection()
        }
        // the event.t is a workaround for labled links, as they will be able to contain markdown formatting in the label in the future.
@@ -329,10 +361,10 @@ index 65171d5..1287ff4 100644
          message,
 diff --git a/packages/frontend/src/tests/inviteLink.test.ts b/packages/frontend/src/tests/inviteLink.test.ts
 new file mode 100644
-index 0000000..5aec685
+index 0000000..759d096
 --- /dev/null
 +++ b/packages/frontend/src/tests/inviteLink.test.ts
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,86 @@
 +import { expect } from 'chai'
 +import { describe, it } from 'mocha'
 +
@@ -382,8 +414,41 @@ index 0000000..5aec685
 +      null
 +    )
 +    expect(
-+      parseInviteLink(`https://i.delta.chat/#${FPR}&a=a%40b.org&g=%E0%A4%A`)
++      parseInviteLink(
++        `https://i.delta.chat/#${FPR}&a=a%40b.org&g=%E0%A4%A&x=x&i=i&s=s`
++      )
 +    ).to.equal(null)
++  })
++
++  it('gates like core check_qr: fingerprint, a=, s=, and x= for groups', () => {
++    // g= without x= (grpid) is a contact invite to core — no group card
++    expect(
++      parseInviteLink(
++        `https://i.delta.chat/#${FPR}&a=bob%40x.org&n=Bob&i=i&s=s&g=Delta+Chat+Team`
++      )
++    ).to.equal(null)
++    // no authcode s= — core would not offer to join anything
++    expect(
++      parseInviteLink(`https://i.delta.chat/#${FPR}&a=a%40b.org&g=Crew&x=x&i=i`)
++    ).to.equal(null)
++    // first fragment segment must be a hex fingerprint
++    expect(
++      parseInviteLink(
++        'https://i.delta.chat/#nothexatall&a=a%40b.org&g=Crew&x=x&i=i&s=s'
++      )
++    ).to.equal(null)
++    // v3 links have s= but no i= — still valid
++    expect(
++      parseInviteLink(`https://i.delta.chat/#${FPR}&a=a%40b.org&g=Crew&x=x&s=s`)
++    ).to.deep.equal({ kind: 'group', name: 'Crew' })
++  })
++
++  it('strips bidi overrides and control chars from names', () => {
++    expect(
++      parseInviteLink(
++        `https://i.delta.chat/#${FPR}&a=a%40b.org&g=evil%E2%80%AEcrew%0Aline&x=x&i=i&s=s`
++      )
++    ).to.deep.equal({ kind: 'group', name: 'evilcrewline' })
 +  })
 +})
 diff --git a/packages/frontend/src/utils/colorFromString.ts b/packages/frontend/src/utils/colorFromString.ts
@@ -406,10 +471,10 @@ index 0000000..206199c
 +}
 diff --git a/packages/frontend/src/utils/inviteLink.ts b/packages/frontend/src/utils/inviteLink.ts
 new file mode 100644
-index 0000000..edcdb10
+index 0000000..ea08e1d
 --- /dev/null
 +++ b/packages/frontend/src/utils/inviteLink.ts
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,75 @@
 +import { isInviteLink } from '@deltachat-desktop/shared/util.js'
 +
 +export type InviteLinkInfo = {
@@ -427,6 +492,13 @@ index 0000000..edcdb10
 +  } catch {
 +    return null
 +  }
++  // strip control chars and bidi/zero-width overrides so a crafted name
++  // can't reorder or invisibly pad the card's text
++  name = name.replace(
++    // eslint-disable-next-line no-control-regex
++    /[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g,
++    ''
++  )
 +  return name.endsWith('_') ? name.slice(0, -1) + '…' : name
 +}
 +
@@ -443,29 +515,38 @@ index 0000000..edcdb10
 +    return null
 +  }
 +  const fragment = url.slice(url.indexOf('#') + 1)
++  const [fingerprint = '', ...rest] = fragment.split('&')
 +  const params = new Map<string, string>()
-+  for (const part of fragment.split('&')) {
++  for (const part of rest) {
 +    const eq = part.indexOf('=')
 +    if (eq > 0) {
 +      params.set(part.slice(0, eq), part.slice(eq + 1))
 +    }
 +  }
++  // Gate like core's check_qr, so the card never labels a payload
++  // differently than the dialog that opens on click: a securejoin link
++  // starts with a hex fingerprint and carries the address plus the
++  // authcode (the invitenumber i=/j= is optional since securejoin v3),
++  // and group/channel invites also carry the grpid (x=).
++  if (
++    !/^[0-9A-Fa-f]{40,}$/.test(fingerprint) ||
++    params.get('a') === undefined ||
++    params.get('s') === undefined
++  ) {
++    return null
++  }
 +  const group = params.get('g')
 +  if (group !== undefined) {
-+    const name = decodeName(group)
++    const name = params.get('x') !== undefined ? decodeName(group) : null
 +    return name ? { kind: 'group', name } : null
 +  }
 +  const channel = params.get('b')
 +  if (channel !== undefined) {
-+    const name = decodeName(channel)
++    const name = params.get('x') !== undefined ? decodeName(channel) : null
 +    return name ? { kind: 'channel', name } : null
 +  }
-+  const addr = params.get('a')
-+  if (addr === undefined) {
-+    // not a securejoin payload we understand (e.g. dclogin/dcaccount or junk)
-+    return null
-+  }
 +  const contactName = params.get('n')
-+  const name = (contactName && decodeName(contactName)) || decodeName(addr)
++  const name =
++    (contactName && decodeName(contactName)) || decodeName(params.get('a')!)
 +  return name ? { kind: 'contact', name } : null
 +}
