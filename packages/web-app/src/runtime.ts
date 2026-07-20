@@ -92,6 +92,7 @@ function getDefaultSettings() {
     appStoreBaseUrl: undefined,
     hideNewChatSuggestions: false,
     publicBotsRemoteLoadConsent: false,
+    stripTrackingLinks: true,
   }
 }
 
