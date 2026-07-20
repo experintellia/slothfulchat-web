@@ -24,7 +24,7 @@ const APP_PORT = 8674
 // ~7s "spoken-word-ish" mp3 (tone bursts with pauses), encoded with the same
 // lamejs the app's recorder uses — no fixture file needed. `seed` varies the
 // melody so the two messages aren't byte-identical (core dedupes blobs).
-async function voiceMp3Base64(seed = 0) {
+async function voiceMp3Base64(seed = 0, secs = 7) {
   // require.resolve lands on the iife build (empty exports under node); the
   // ESM build sits next to it
   const lame = await import(
@@ -34,7 +34,7 @@ async function voiceMp3Base64(seed = 0) {
   )
   const Mp3Encoder = lame.Mp3Encoder ?? lame.default?.Mp3Encoder
   const sr = 44100
-  const n = sr * 7
+  const n = sr * secs
   const samples = new Int16Array(n)
   for (let i = 0; i < n; i++) {
     const t = i / sr
@@ -251,8 +251,8 @@ try {
     throw new Error(`timeout waiting for ${label} on account ${accId}`)
   }
 
-  const sendVoice = async (accId, chatId, name, seed) => {
-    const b64 = await voiceMp3Base64(seed)
+  const sendVoice = async (accId, chatId, name, seed, secs) => {
+    const b64 = await voiceMp3Base64(seed, secs)
     const path = await page.evaluate(
       ([n, b]) => window.exp.runtime.writeTempFileFromBase64(n, b),
       [name, b64]
@@ -278,7 +278,7 @@ try {
   )
   console.log('OK: alice -> bob voice delivered')
   await rpc('acceptChat', bobId, bobChatId)
-  await sendVoice(bobId, bobChatId, 'bob-reply.mp3', 1)
+  await sendVoice(bobId, bobChatId, 'bob-reply.mp3', 1, 30)
   await waitIncoming(
     aliceId,
     (m) => m.viewType === 'Voice' && !m.isInfo && m.fromId !== 1,
@@ -364,13 +364,6 @@ try {
   await page.waitForTimeout(2500)
   await shot('02-custom-player-playing')
 
-  // speed pill: 1x -> 1.5x -> 2x
-  const pill = incomingPlayer.getByRole('button', { name: /Playback speed/ })
-  await pill.click()
-  await pill.click()
-  await page.waitForTimeout(300)
-  await shot('03-custom-player-2x')
-
   // A3: playback survives a chat switch; the mini-player carries the controls
   try {
     await page
@@ -390,7 +383,18 @@ try {
     console.warn('mini-player shot skipped:', err.message)
   }
 
-  await incomingPlayer.getByRole('button', { name: 'Pause', exact: true }).click()
+  // speed pill: 1x -> 1.5x -> 2x
+  const pill = incomingPlayer.getByRole('button', { name: /Playback speed/ })
+  await pill.click()
+  await pill.click()
+  await page.waitForTimeout(300)
+  await shot('03-custom-player-2x')
+
+  // stop playback for clean dialog shots (it may have ended already)
+  await incomingPlayer
+    .getByRole('button', { name: 'Pause', exact: true })
+    .click({ timeout: 5000 })
+    .catch(() => {})
 
   // the experimental setting switch
   try {
