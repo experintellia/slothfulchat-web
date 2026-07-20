@@ -1,0 +1,542 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Sun, 19 Jul 2026 22:53:39 +0000
+Subject: [PATCH] web-app: strip tracking params from links (open-side + paste
+ chip + setting)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Links picked up from the web arrive carrying tracking cruft — utm_*
+campaign tags, fbclid/gclid click ids, YouTube si=, Amazon aff refs. This
+removes the known trackers automatically, with visibility instead of a
+consent prompt: one setting, on by default.
+
+- utils/trackingParams.ts: pure stripTrackingParams(url). Allowlist only,
+  never "drop all query params" (t= on YouTube is a timestamp, v= the
+  video). Global utm_*/click-ids, plus per-domain rules for youtube,
+  instagram, x/twitter, spotify, tiktok and amazon (query params + trailing
+  /ref= path segment, keeping th=). Raw query-string surgery keeps the
+  untouched params byte-for-byte. Returns null when nothing changed or the
+  input is not a parseable http(s) URL.
+- hooks/useOpenLinkSafely.ts: the open side. Before runtime.openLink, swap
+  in the cleaned URL when the setting is on. Silent, http(s) only; the
+  non-http copy/confirm flow is untouched.
+- setting stripTrackingLinks (shared-types + state, default true) with a
+  plain-label DesktopSettingsSwitch in Chats and Media.
+
+- Composer paste chip: tracking arrives via paste, and paste is the only
+  safe moment to rewrite draft text. utils/trackingParams.ts grows a pure
+  stripTrackingFromPaste(text): when the pasted plain text holds exactly one
+  strippable http(s) URL it returns the rewritten text plus the url pair,
+  and returns null on any doubt (no URL, nothing strippable, multiple URLs)
+  so the paste falls through untouched. Composer.tsx's existing onPaste path
+  (compose mode only — the edit input has no onPaste wired) intercepts the
+  no-file plain-text branch when the setting is on, inserts the cleaned text
+  via insertStringAtCursorPosition instead of the raw paste, and shows a
+  quiet upper-bar chip ("Tracking removed from link") reusing the link-
+  preview ghost's .bar styles, with Undo (swaps the cleaned URL back to the
+  original in the draft) and dismiss. The chip is per-message: cleared on
+  undo, dismiss, send, and chat switch.
+- tests/trackingParams.test.ts: mocha/chai over the strip rules and the
+  paste rewrite / single-URL fallback.
+---
+ images/icons/cleaning_services.svg            |   1 +
+ .../frontend/src/components/Icon/index.tsx    |   1 +
+ .../src/components/Settings/ChatsAndMedia.tsx |   5 +
+ .../src/components/composer/Composer.tsx      |  82 ++++++++++-
+ .../frontend/src/hooks/useOpenLinkSafely.ts   |  11 +-
+ .../frontend/src/tests/trackingParams.test.ts | 105 ++++++++++++++
+ packages/frontend/src/utils/trackingParams.ts | 135 ++++++++++++++++++
+ packages/shared/shared-types.d.ts             |   2 +
+ packages/shared/state.ts                      |   1 +
+ 9 files changed, 340 insertions(+), 3 deletions(-)
+ create mode 100644 images/icons/cleaning_services.svg
+ create mode 100644 packages/frontend/src/tests/trackingParams.test.ts
+ create mode 100644 packages/frontend/src/utils/trackingParams.ts
+
+diff --git a/images/icons/cleaning_services.svg b/images/icons/cleaning_services.svg
+new file mode 100644
+index 000000000..c60f83365
+--- /dev/null
++++ b/images/icons/cleaning_services.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path d="M120-40v-280q0-83 58.5-141.5T320-520h40v-320q0-33 23.5-56.5T440-920h80q33 0 56.5 23.5T600-840v320h40q83 0 141.5 58.5T840-320v280H120Zm80-80h80v-120q0-17 11.5-28.5T320-280q17 0 28.5 11.5T360-240v120h80v-120q0-17 11.5-28.5T480-280q17 0 28.5 11.5T520-240v120h80v-120q0-17 11.5-28.5T640-280q17 0 28.5 11.5T680-240v120h80v-200q0-50-35-85t-85-35H320q-50 0-85 35t-35 85v200Zm320-400v-320h-80v320h80Zm0 0h-80 80Z"/></svg>
+\ No newline at end of file
+diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
+index 32bff710b..0affbd317 100644
+--- a/packages/frontend/src/components/Icon/index.tsx
++++ b/packages/frontend/src/components/Icon/index.tsx
+@@ -14,6 +14,7 @@ export type IconName =
+   | 'chat_bubble'
+   | 'chevron-left'
+   | 'chevron-right'
++  | 'cleaning_services'
+   | 'clear'
+   | 'code-tags'
+   | 'cross'
+diff --git a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
+index 934ab9c4a..b7df4da27 100644
+--- a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
++++ b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
+@@ -38,6 +38,11 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
+         label={tx('pref_enter_sends')}
+         description={tx('pref_enter_sends_explain')}
+       />
++      <DesktopSettingsSwitch
++        settingsKey='stripTrackingLinks'
++        label='Remove tracking from links'
++        description='Strips known tracking parameters (utm_*, YouTube si=, …) when you paste or open a link'
++      />
+       {/* When the whole instance hides the suggestions
+       (SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS), these toggles are moot —
+       hide them too. */}
+diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
+index c2977f97a..097705511 100644
+--- a/packages/frontend/src/components/composer/Composer.tsx
++++ b/packages/frontend/src/components/composer/Composer.tsx
+@@ -14,7 +14,10 @@ import { extension } from 'mime-types'
+ import MenuAttachment from './menuAttachment'
+ import ComposerMessageInput from './ComposerMessageInput'
+ import LinkPreviewGhost from './linkPreview/LinkPreviewGhost'
++import ghostStyles from './linkPreview/styles.module.scss'
++import Icon from '../Icon'
+ import { useLinkPreview } from './linkPreview/useLinkPreview'
++import { stripTrackingFromPaste } from '../../utils/trackingParams'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { EmojiAndStickerPicker } from './EmojiAndStickerPicker'
+ import { Quote } from '../message/Message'
+@@ -95,6 +98,13 @@ const Composer = forwardRef<
+   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+   const [showAppPicker, setShowAppPicker] = useState(false)
+   const [recording, setRecording] = useState(false)
++  // Paste chip: shown after a pasted link had tracking params stripped. Holds
++  // the url pair so Undo can swap the cleaned URL back to the original. Cleared
++  // on undo/dismiss/send/chat-switch — per-message, like the ghost's dismissal.
++  const [trackingChip, setTrackingChip] = useState<null | {
++    originalUrl: string
++    cleanedUrl: string
++  }>(null)
+ 
+   const emojiAndStickerRef = useRef<HTMLDivElement>(null)
+   const pickerButtonRef = useRef<HTMLButtonElement>(null)
+@@ -197,6 +207,24 @@ const Composer = forwardRef<
+     setRecording(false)
+   }
+ 
++  if (useHasChanged2(chatId) && trackingChip) {
++    setTrackingChip(null)
++  }
++
++  const onUndoTracking = useCallback(() => {
++    setTrackingChip(chip => {
++      if (chip) {
++        updateDraftText(
++          // replacer fn, not string: avoids $-substitution when the URL contains '$'
++          draftState.text.replace(chip.cleanedUrl, () => chip.originalUrl),
++          chatId
++        )
++      }
++      return null
++    })
++    regularMessageInputRef.current?.focus()
++  }, [draftState.text, updateDraftText, chatId, regularMessageInputRef])
++
+   const saveVoiceAsDraft = (voiceData: Blob) => {
+     const reader = new FileReader()
+     reader.readAsDataURL(voiceData)
+@@ -280,6 +308,7 @@ const Composer = forwardRef<
+           // re-announce it, which is disorienting.
+           // See https://github.com/deltachat/deltachat-desktop/issues/4590#issuecomment-2821985528.
+           props.clearDraftState()
++          setTrackingChip(null)
+ 
+           let sentSuccessfully: boolean
+           try {
+@@ -508,8 +537,29 @@ const Composer = forwardRef<
+   const handlePaste = messageEditing.isEditingModeActive
+     ? null
+     : async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+-        // Skip if no file
++        // No pasted file: this is the plain-text path. When the setting is on
++        // and the paste carries a single strippable link, rewrite the draft
++        // with the cleaned text and show the undoable chip. On any doubt
++        // (nothing strippable, multiple URLs, no plain text) fall through to
++        // the browser's default paste untouched — never lose the user's text.
++        // ponytail: compose-mode only. `handlePaste` is already null in editing
++        // mode (its input has no onPaste wired), so the chip is compose-only by
++        // construction — smaller diff, and edit mode rarely gets fresh links.
+         if (!e.clipboardData.files.length) {
++          if (settingsStore?.desktopSettings.stripTrackingLinks) {
++            const pasted = e.clipboardData.getData('text/plain')
++            const result = pasted ? stripTrackingFromPaste(pasted) : null
++            if (result) {
++              e.preventDefault()
++              regularMessageInputRef.current?.insertStringAtCursorPosition(
++                result.cleaned
++              )
++              setTrackingChip({
++                originalUrl: result.originalUrl,
++                cleanedUrl: result.cleanedUrl,
++              })
++            }
++          }
+           return
+         }
+         // when there is a file then don't paste text
+@@ -680,6 +730,36 @@ const Composer = forwardRef<
+                   </section>
+                 )}
+               <LinkPreviewGhost preview={linkPreview} />
++              {trackingChip && (
++                <div
++                  className={ghostStyles.bar}
++                  aria-live='polite'
++                  data-testid='tracking-removed-chip'
++                >
++                  <Icon
++                    icon='cleaning_services'
++                    coloring='currentColor'
++                    size={18}
++                  />
++                  <span className={ghostStyles.barLabel}>
++                    Tracking removed from link
++                  </span>
++                  <button
++                    type='button'
++                    className={ghostStyles.labelButton}
++                    style={{ marginLeft: 'auto' }}
++                    onClick={onUndoTracking}
++                    data-testid='tracking-removed-undo'
++                  >
++                    Undo
++                  </button>
++                  <CloseButton
++                    onClick={() => setTrackingChip(null)}
++                    aria-label='Dismiss'
++                    data-testid='tracking-removed-dismiss'
++                  />
++                </div>
++              )}
+               {draftState.vcardContact && (
+                 <section
+                   className='attachment-quote-section is-attachment'
+diff --git a/packages/frontend/src/hooks/useOpenLinkSafely.ts b/packages/frontend/src/hooks/useOpenLinkSafely.ts
+index c8dbb9e77..08b502ca3 100644
+--- a/packages/frontend/src/hooks/useOpenLinkSafely.ts
++++ b/packages/frontend/src/hooks/useOpenLinkSafely.ts
+@@ -4,6 +4,8 @@ import useConfirmationDialog from './dialog/useConfirmationDialog'
+ import useOpenMailtoLink from './useOpenMailtoLink'
+ import useTranslationFunction from './useTranslationFunction'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
++import { useSettingsStore } from '../stores/settings'
++import { stripTrackingParams } from '../utils/trackingParams'
+ 
+ /**
+  * Opens http, https and mailto links, offers to copy all other links.
+@@ -31,6 +33,7 @@ export default function useOpenLinkSafely() {
+ export function useOpenNonMailtoLinkSafely() {
+   const tx = useTranslationFunction()
+   const openConfirmationDialog = useConfirmationDialog()
++  const settingsStore = useSettingsStore()[0]
+ 
+   return useCallback(
+     async (url: string) => {
+@@ -38,7 +41,11 @@ export function useOpenNonMailtoLinkSafely() {
+         url.toLowerCase().startsWith('http:') ||
+         url.toLowerCase().startsWith('https:')
+       ) {
+-        runtime.openLink(url)
++        // webapp: silently drop known tracking params when the setting is on.
++        const cleaned = settingsStore?.desktopSettings.stripTrackingLinks
++          ? stripTrackingParams(url) ?? url
++          : url
++        runtime.openLink(cleaned)
+       } else {
+         const userConfirmed = await openConfirmationDialog({
+           message: tx('ask_copy_unopenable_link_to_clipboard', url),
+@@ -51,6 +58,6 @@ export function useOpenNonMailtoLinkSafely() {
+         }
+       }
+     },
+-    [openConfirmationDialog, tx]
++    [openConfirmationDialog, tx, settingsStore]
+   )
+ }
+diff --git a/packages/frontend/src/tests/trackingParams.test.ts b/packages/frontend/src/tests/trackingParams.test.ts
+new file mode 100644
+index 000000000..78ab82fbc
+--- /dev/null
++++ b/packages/frontend/src/tests/trackingParams.test.ts
+@@ -0,0 +1,105 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import {
++  stripTrackingParams,
++  stripTrackingFromPaste,
++} from '../utils/trackingParams.js'
++
++describe('stripTrackingParams', () => {
++  it('strips YouTube si= but keeps t= and v=', () => {
++    expect(
++      stripTrackingParams('https://www.youtube.com/watch?v=abc&t=42&si=XYZ')
++    ).to.equal('https://www.youtube.com/watch?v=abc&t=42')
++    expect(stripTrackingParams('https://youtu.be/abc?si=XYZ&t=42')).to.equal(
++      'https://youtu.be/abc?t=42'
++    )
++  })
++
++  it('strips utm_* on any host', () => {
++    expect(
++      stripTrackingParams('https://example.com/p?a=1&utm_source=nl&utm_medium=x')
++    ).to.equal('https://example.com/p?a=1')
++    expect(stripTrackingParams('http://foo.test/?utm_campaign=y')).to.equal(
++      'http://foo.test/'
++    )
++  })
++
++  it('strips global click ids on any host', () => {
++    expect(
++      stripTrackingParams('https://shop.example/x?fbclid=1&gclid=2&keep=ok')
++    ).to.equal('https://shop.example/x?keep=ok')
++  })
++
++  it('strips x.com s= and t=', () => {
++    expect(
++      stripTrackingParams('https://x.com/user/status/1?s=20&t=abc')
++    ).to.equal('https://x.com/user/status/1')
++    expect(
++      stripTrackingParams('https://twitter.com/user/status/1?s=20')
++    ).to.equal('https://twitter.com/user/status/1')
++  })
++
++  it('cleans amazon query params and trailing /ref= while keeping th=', () => {
++    expect(
++      stripTrackingParams(
++        'https://www.amazon.com/dp/B000/ref=sr_1_1?tag=aff&th=1&pd_rd_w=q&qid=123'
++      )
++    ).to.equal('https://www.amazon.com/dp/B000?th=1')
++    // amazon.co.uk (multi-part TLD) is recognised too
++    expect(
++      stripTrackingParams('https://amazon.co.uk/dp/B000?ref=nav&crid=abc')
++    ).to.equal('https://amazon.co.uk/dp/B000')
++  })
++
++  it('preserves hash and port', () => {
++    expect(
++      stripTrackingParams('https://example.com:8443/p?utm_source=x#frag')
++    ).to.equal('https://example.com:8443/p#frag')
++  })
++
++  it('returns null when nothing is stripped', () => {
++    expect(
++      stripTrackingParams('https://www.youtube.com/watch?v=abc&t=42')
++    ).to.equal(null)
++    expect(stripTrackingParams('https://example.com/')).to.equal(null)
++  })
++
++  it('returns null for unparsable or non-http(s) input', () => {
++    expect(stripTrackingParams('not a url')).to.equal(null)
++    expect(stripTrackingParams('ftp://host/x?utm_source=y')).to.equal(null)
++    expect(stripTrackingParams('mailto:a@b.com')).to.equal(null)
++  })
++})
++
++describe('stripTrackingFromPaste', () => {
++  it('rewrites the single URL in a text block, keeping surrounding text', () => {
++    const r = stripTrackingFromPaste(
++      'look at https://www.youtube.com/watch?v=abc&si=XYZ please'
++    )
++    expect(r?.cleaned).to.equal(
++      'look at https://www.youtube.com/watch?v=abc please'
++    )
++    expect(r?.originalUrl).to.equal(
++      'https://www.youtube.com/watch?v=abc&si=XYZ'
++    )
++    expect(r?.cleanedUrl).to.equal('https://www.youtube.com/watch?v=abc')
++  })
++
++  it('trims trailing prose punctuation from the matched URL', () => {
++    // The trailing "." must stay in the text, not be swallowed into the URL.
++    const r = stripTrackingFromPaste('see https://example.com/p?utm_source=nl.')
++    expect(r?.cleaned).to.equal('see https://example.com/p.')
++    expect(r?.originalUrl).to.equal('https://example.com/p?utm_source=nl')
++  })
++
++  it('returns null on doubt: no URL, nothing strippable, or multiple URLs', () => {
++    expect(stripTrackingFromPaste('just some plain text')).to.equal(null)
++    expect(stripTrackingFromPaste('https://example.com/clean')).to.equal(null)
++    expect(
++      stripTrackingFromPaste(
++        'https://a.test/?utm_source=x https://b.test/?utm_source=y'
++      )
++    ).to.equal(null)
++  })
++})
+diff --git a/packages/frontend/src/utils/trackingParams.ts b/packages/frontend/src/utils/trackingParams.ts
+new file mode 100644
+index 000000000..7d4aa9447
+--- /dev/null
++++ b/packages/frontend/src/utils/trackingParams.ts
+@@ -0,0 +1,135 @@
++/**
++ * webapp: strip known tracking parameters from http(s) links.
++ *
++ * Allowlist only — never "drop all query params". `t=` on YouTube is a
++ * timestamp, `v=` is the video id; blanket stripping would break links.
++ */
++
++// Stripped on any host.
++const GLOBAL_EXACT = new Set([
++  'fbclid',
++  'gclid',
++  'dclid',
++  'gbraid',
++  'wbraid',
++  'msclkid',
++  'mc_eid',
++  'igshid',
++])
++
++// host === domain || host.endsWith('.' + domain)
++const PER_DOMAIN: Record<string, string[]> = {
++  'youtube.com': ['si', 'pp', 'feature'],
++  'youtu.be': ['si', 'pp', 'feature'],
++  'instagram.com': ['igsh'],
++  'x.com': ['s', 't', 'ref_src', 'ref_url'],
++  'twitter.com': ['s', 't', 'ref_src', 'ref_url'],
++  'open.spotify.com': ['si'],
++  'tiktok.com': ['_t', '_r'],
++}
++
++// amazon.* (any TLD) — keep `th` and other functional params.
++const AMAZON_EXACT = new Set([
++  'tag',
++  'linkCode',
++  'ref',
++  'ref_',
++  'qid',
++  'sr',
++  'sprefix',
++  'crid',
++  'dib',
++  'dib_tag',
++])
++
++/**
++ * Returns the cleaned URL, or `null` when nothing was stripped or the input
++ * is not a parseable http(s) URL.
++ */
++export function stripTrackingParams(url: string): string | null {
++  let u: URL
++  try {
++    u = new URL(url)
++  } catch {
++    return null
++  }
++  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
++    return null
++  }
++
++  const host = u.hostname.toLowerCase()
++  // ponytail: prefix match, so amazon.evil.com is also treated as amazon.
++  // Harmless (we only remove tracker params); tighten with a PSL if it matters.
++  const isAmazon = /(^|\.)amazon\.[a-z.]+$/.test(host)
++
++  const perDomain = new Set<string>()
++  for (const domain of Object.keys(PER_DOMAIN)) {
++    if (host === domain || host.endsWith('.' + domain)) {
++      for (const p of PER_DOMAIN[domain] ?? []) perDomain.add(p)
++    }
++  }
++
++  const shouldStrip = (key: string): boolean => {
++    if (key.startsWith('utm_')) return true
++    if (GLOBAL_EXACT.has(key)) return true
++    if (perDomain.has(key)) return true
++    if (isAmazon) {
++      if (AMAZON_EXACT.has(key)) return true
++      if (key.startsWith('pd_rd_') || key.startsWith('pf_rd_')) return true
++    }
++    return false
++  }
++
++  let changed = false
++
++  // Raw string surgery keeps the untouched params byte-for-byte (order and
++  // percent-encoding), which re-serializing via URLSearchParams would not.
++  // Tracker param names are plain ASCII, so the raw key needs no decoding.
++  const rawQuery = u.search.slice(1)
++  if (rawQuery) {
++    const pairs = rawQuery.split('&')
++    const kept = pairs.filter(p => !shouldStrip(p.split('=')[0] ?? ''))
++    if (kept.length !== pairs.length) {
++      changed = true
++      u.search = kept.join('&')
++    }
++  }
++
++  if (isAmazon) {
++    const trimmed = u.pathname.replace(/\/ref=[^/]*$/, '')
++    if (trimmed !== u.pathname) {
++      u.pathname = trimmed
++      changed = true
++    }
++  }
++
++  return changed ? u.href : null
++}
++
++// Coarse http(s) token; trailing prose punctuation is trimmed off the match.
++const URL_TOKEN = /https?:\/\/\S+/gi
++
++/**
++ * Clean tracking params out of a pasted plain-text block (composer paste chip).
++ * Returns the rewritten text plus the url pair (for undo), or `null` when there
++ * is nothing to strip or the paste is ambiguous.
++ *
++ * Deliberately single-URL: a paste with zero or several URLs is left untouched
++ * so we never rewrite text we're unsure about and undo stays one unambiguous
++ * swap.
++ * ponytail: the trailing-punctuation trim can mis-clip a URL that genuinely
++ * ends in `)`/`.` (rare — some Wikipedia links); it only affects the stripped
++ * URL, never the surrounding text, which is preserved byte-for-byte. Upgrade to
++ * a real URL tokenizer if such links turn up carrying tracking params.
++ */
++export function stripTrackingFromPaste(
++  text: string
++): { cleaned: string; originalUrl: string; cleanedUrl: string } | null {
++  const urls = text.match(URL_TOKEN)
++  if (!urls || urls.length !== 1) return null
++  const originalUrl = urls[0].replace(/[.,;:!?)\]}>"']+$/, '')
++  const cleanedUrl = stripTrackingParams(originalUrl)
++  if (cleanedUrl == null) return null
++  // replacer fn, not string: '$' is a legal URL char and would trigger $-substitution
++  return { cleaned: text.replace(originalUrl, () => cleanedUrl), originalUrl, cleanedUrl }
++}
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index 624d5b1ba..8d93c75a5 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -41,6 +41,8 @@ export interface DesktopSettingsType {
+   enableOnDemandLocationStreaming: boolean
+   /** webapp: show the composer's link-preview suggestion ghost. Off by default (experimental). */
+   linkPreviewSuggestions: boolean
++  /** webapp: strip known tracking params (utm_*, YouTube si=, …) on paste and open. On by default. */
++  stripTrackingLinks: boolean
+   /** webapp: composer :emoji: completion menu. Off by default (experimental). */
+   experimentalCompletionMenu: boolean
+   /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index fb007364d..8501d91de 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -15,6 +15,7 @@ export function getDefaultState(): DesktopSettingsType {
+     lastAccount: undefined,
+     enableOnDemandLocationStreaming: false,
+     linkPreviewSuggestions: false,
++    stripTrackingLinks: true,
+     experimentalCompletionMenu: false,
+     experimentalUnreadReadTime: false,
+     chatViewBgImg: undefined,
