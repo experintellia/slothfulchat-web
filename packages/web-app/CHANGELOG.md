@@ -1,5 +1,8 @@
 # Changelog
 
+- Dragging a profile to reorder the sidebar no longer shows the white
+  "selected" indicator in the drag preview.
+
 ## 0.7.0 — 2026-07-20
 
 - **Settings open as one two-pane window** on wide screens (≥800px):

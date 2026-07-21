@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 21 Jul 2026 11:53:18 +0000
+Subject: [PATCH 62/62] web-app: hide the active-account indicator in the
+ account drag image
+
+The browser's drag ghost is a snapshot of the dragged <li>, which
+includes the white active/hover indicator (the .avatar::before bar).
+Blank its color via the --als-active-indicator-color custom property
+for the duration of the dragstart snapshot and restore it a tick later,
+so the ghost shows just the avatar.
+---
+ packages/frontend/src/hooks/useAccountDragAndDrop.ts | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/packages/frontend/src/hooks/useAccountDragAndDrop.ts b/packages/frontend/src/hooks/useAccountDragAndDrop.ts
+index e8aee41..8b1d2ed 100644
+--- a/packages/frontend/src/hooks/useAccountDragAndDrop.ts
++++ b/packages/frontend/src/hooks/useAccountDragAndDrop.ts
+@@ -31,6 +31,12 @@ export function useAccountDragAndDrop(
+ 
+   const handleDragStart = (e: React.DragEvent, accountId: number) => {
+     e.dataTransfer.effectAllowed = 'move'
++    // The browser snapshots the drag image right after this handler returns,
++    // so hide the active/hover indicator for the snapshot only
++    // and restore it on the next tick.
++    const style = (e.currentTarget as HTMLElement).style
++    style.setProperty('--als-active-indicator-color', 'transparent')
++    setTimeout(() => style.removeProperty('--als-active-indicator-color'), 0)
+     setDraggedAccountId(accountId)
+   }
+ 
