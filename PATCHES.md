@@ -263,6 +263,9 @@ contribution intended.
   coalesced and the button shows a spinner. `desktop/0018`
 - Search fields gave no visual indication of focus; they now use the app's
   standard focus outline. `desktop/0009`
+- The drag image when reordering profiles in the sidebar included the white
+  active/hover indicator bar; its color is blanked for the duration of the
+  dragstart snapshot. `desktop/0062`
 - webimap: the connectivity badge no longer sticks at "Connecting…" /
   "Updating…", and a message that 404s on fetch/delete is treated as
   already-consumed instead of putting the poll loop into an error backoff.
