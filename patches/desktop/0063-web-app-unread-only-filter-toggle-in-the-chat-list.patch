@@ -1,0 +1,199 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Mon, 20 Jul 2026 22:46:58 +0000
+Subject: [PATCH 63/63] web-app: unread-only filter toggle in the chat list
+
+Add a borderless filter button to the chat list header (next to search) that
+filters the list to chats with fresh messages, using core's `is:unread`
+chatlist query composed with any typed search text.
+
+The toggle keys the query off `is:unread` but leaves `isSearchActive` on the
+raw typed text, so filtering alone shows the plain chat list rather than
+entering search-results mode. The archive view keeps DC_GCL_ARCHIVED_ONLY.
+
+While the filter is active a "Unread: N chats" heading (a search-result-divider,
+mirroring search-in-chat) is shown above the list. The toggle uses a Material
+filter_list icon.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ images/icons/filter-list.svg                  |  1 +
+ .../frontend/src/components/Icon/index.tsx    |  1 +
+ .../frontend/src/components/chat/ChatList.tsx | 34 ++++++++++++++++---
+ .../screens/MainScreen/ChatListHeader.tsx     | 14 ++++++++
+ .../screens/MainScreen/MainScreen.tsx         |  4 +++
+ 5 files changed, 49 insertions(+), 5 deletions(-)
+ create mode 100644 images/icons/filter-list.svg
+
+diff --git a/images/icons/filter-list.svg b/images/icons/filter-list.svg
+new file mode 100644
+index 000000000..326db3157
+--- /dev/null
++++ b/images/icons/filter-list.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path d="M400-240v-80h160v80H400ZM240-440v-80h480v80H240ZM120-640v-80h720v80H120Z"/></svg>
+\ No newline at end of file
+diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
+index 0b368d2e5..6225d0d3c 100644
+--- a/packages/frontend/src/components/Icon/index.tsx
++++ b/packages/frontend/src/components/Icon/index.tsx
+@@ -21,6 +21,7 @@ export type IconName =
+   | 'devices'
+   | 'download'
+   | 'favorite'
++  | 'filter-list'
+   | 'forum'
+   | 'image'
+   | 'image_outline'
+diff --git a/packages/frontend/src/components/chat/ChatList.tsx b/packages/frontend/src/components/chat/ChatList.tsx
+index c80488b2d..f21eaeda8 100644
+--- a/packages/frontend/src/components/chat/ChatList.tsx
++++ b/packages/frontend/src/components/chat/ChatList.tsx
+@@ -190,6 +190,7 @@ export default function ChatList(props: {
+   queryChatId: number | null
+   onExitSearch?: () => void
+   onChatClick: (chatId: number) => void
++  unreadOnly?: boolean
+ }) {
+   const accountId = selectedAccountId()
+ 
+@@ -201,10 +202,13 @@ export default function ChatList(props: {
+     queryChatId,
+   } = props
+   const isSearchActive = queryStr && queryStr !== ''
++  const showUnreadFilterDivider =
++    props.unreadOnly && !isSearchActive && !showArchivedChats
+ 
+   const { chatListIds, isChatLoaded, loadChats, chatCache } = useLogicChatPart(
+     queryStr,
+-    showArchivedChats
++    showArchivedChats,
++    props.unreadOnly
+   )
+ 
+   const { openContextMenu, activeContextMenuChatIds } = useChatContextMenu()
+@@ -237,7 +241,7 @@ export default function ChatList(props: {
+           height / 3 - DIVIDER_HEIGHT,
+           chatListIds.length * CHATLISTITEM_CHAT_HEIGHT
+         )
+-      : height
++      : height - (showUnreadFilterDivider ? DIVIDER_HEIGHT : 0)
+ 
+   const chatListRef = useRef<List<any>>(null)
+   const scrollChatIntoView = useCallback((index: number) => {
+@@ -394,6 +398,14 @@ export default function ChatList(props: {
+                 {translate_n('n_chats', chatListIds.length)}
+               </div>
+             )}
++            {showUnreadFilterDivider && (
++              <div
++                id='unread-filter-divider'
++                className='search-result-divider'
++              >
++                {tx('search_unread') + ': ' + translate_n('n_chats', chatListIds.length)}
++              </div>
++            )}
+             {/* TODO RovingTabindex doesn't work well with virtualized
+               lists, because the currently active element might get removed
+               from DOM if scrolled out of view. */}
+@@ -424,7 +436,9 @@ export default function ChatList(props: {
+ 
+                     'aria-labelledby': isSearchActive
+                       ? 'search-result-divider-chats'
+-                      : undefined,
++                      : showUnreadFilterDivider
++                        ? 'unread-filter-divider'
++                        : undefined,
+                     // When `!isSearchActive`, the wrapper `<section>` label
+                     // is enough.
+                   }}
+@@ -877,12 +891,22 @@ export function useLogicVirtualChatList(
+ 
+ function useLogicChatPart(
+   queryStr: string | undefined,
+-  showArchivedChats: boolean
++  showArchivedChats: boolean,
++  unreadOnly?: boolean
+ ) {
+   const listFlags =
+     showArchivedChats && queryStr?.length === 0 ? C.DC_GCL_ARCHIVED_ONLY : 0
+ 
+-  const { chatListIds } = useChatList(listFlags, queryStr)
++  // Filter to unread chats via core's `is:unread` chatlist query, composed with
++  // any typed search text. Note `isSearchActive` still keys off the raw
++  // `queryStr`, so the toggle alone doesn't enter search-results mode.
++  // Not applied in the archive view (it uses DC_GCL_ARCHIVED_ONLY instead).
++  const query =
++    unreadOnly && !showArchivedChats
++      ? `${queryStr ?? ''} is:unread`.trim()
++      : queryStr
++
++  const { chatListIds } = useChatList(listFlags, query)
+   const { isChatLoaded, loadChats, chatCache } =
+     useLogicVirtualChatList(chatListIds)
+ 
+diff --git a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
+index 3387f63fa..adf8f3c19 100644
+--- a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
++++ b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
+@@ -21,6 +21,8 @@ type Props = {
+   onSearchClear: () => void
+   queryStr: string
+   queryChatId: number | null
++  unreadOnly: boolean
++  onToggleUnreadOnly: () => void
+ }
+ 
+ export default function ChatListHeader({
+@@ -32,6 +34,8 @@ export default function ChatListHeader({
+   onSearchClear,
+   queryStr,
+   queryChatId,
++  unreadOnly,
++  onToggleUnreadOnly,
+ }: Props) {
+   const tx = useTranslationFunction()
+   const { openDialog } = useDialog()
+@@ -91,6 +95,16 @@ export default function ChatListHeader({
+             onClear={queryChatId ? () => onSearchClear() : undefined}
+             value={queryStr}
+           />
++          <Button
++            onClick={onToggleUnreadOnly}
++            aria-label={tx('search_unread')}
++            title={tx('search_unread')}
++            aria-pressed={unreadOnly}
++            active={unreadOnly}
++            styling='borderless'
++          >
++            <Icon coloring='navbar' icon='filter-list' size={18}></Icon>
++          </Button>
+           {proxyEnabled && (
+             <Button
+               onClick={openProxyDialog}
+diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
+index 40e2ac55d..1eb14a8cb 100644
+--- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
++++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
+@@ -47,6 +47,7 @@ export default function MainScreen({ accountId }: Props) {
+   const [queryStr, setQueryStr] = useState('')
+   const [queryChatId, setQueryChatId] = useState<null | number>(null)
+   const [archivedChatsSelected, setArchivedChatsSelected] = useState(false)
++  const [unreadOnly, setUnreadOnly] = useState(false)
+   const { chatId, chatWithLinger, selectChat, unselectChat } = useChat()
+   const { smallScreenMode } = useContext(ScreenContext)
+ 
+@@ -301,10 +302,13 @@ export default function MainScreen({ accountId }: Props) {
+             onSearchClear={handleSearchClear}
+             queryStr={queryStr}
+             queryChatId={queryChatId}
++            unreadOnly={unreadOnly}
++            onToggleUnreadOnly={() => setUnreadOnly(v => !v)}
+           />
+           <ChatList
+             queryStr={queryStr}
+             showArchivedChats={showArchivedChats}
++            unreadOnly={unreadOnly}
+             onChatClick={onChatClick}
+             selectedChatId={chatId ?? null}
+             queryChatId={queryChatId}

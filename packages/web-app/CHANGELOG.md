@@ -2,6 +2,10 @@
 
 - Dragging a profile to reorder the sidebar no longer shows the white
   "selected" indicator in the drag preview.
+- **Unread filter in the chat list**: a filter button next to the search box
+  shows only chats with unread messages — an "Unread" heading reminds you the
+  filter is on, and tapping again shows everything. Works together with a
+  typed search.
 
 ## 0.7.0 — 2026-07-20
 
