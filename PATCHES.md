@@ -241,6 +241,13 @@ exists:
   join/chat confirmation dialog, and unparseable fragments fall back to a
   plain link. `desktop/0060`
 
+- **Unread-only filter in the chat list** — a filter toggle next to the chat
+  list search shows only chats with unread messages, via core's `is:unread`
+  chatlist query (also composed with typed search text). The toggle filters
+  the plain list without switching into search-results mode, with an
+  "Unread: N chats" heading (mirroring search-in-chat) as a reminder that the
+  filter is active; the archive view is unaffected. `desktop/0063`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not
