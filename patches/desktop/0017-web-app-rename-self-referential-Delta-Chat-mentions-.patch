@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 8 Jul 2026 23:09:20 +0000
-Subject: [PATCH 17/58] web-app: rename self-referential Delta Chat mentions to
+Subject: [PATCH 17/64] web-app: rename self-referential Delta Chat mentions to
  SlothfulChat in all locales
 
 Extends the en.xml-only rename (0006) to every locale: the conversion
@@ -15,7 +15,7 @@ covered by this and still need a real translation.
  1 file changed, 32 insertions(+)
 
 diff --git a/bin/build-shared-convert-translations.mjs b/bin/build-shared-convert-translations.mjs
-index bdf12c3b4..8f0e4b595 100755
+index bdf12c3..8f0e4b5 100755
 --- a/bin/build-shared-convert-translations.mjs
 +++ b/bin/build-shared-convert-translations.mjs
 @@ -15,6 +15,37 @@ function removeJunk(input) {

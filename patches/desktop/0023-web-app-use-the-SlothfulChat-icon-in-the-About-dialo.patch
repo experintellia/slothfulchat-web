@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <claude@example.com>
 Date: Thu, 9 Jul 2026 16:17:40 +0000
-Subject: [PATCH 23/58] web-app: use the SlothfulChat icon in the About dialog
+Subject: [PATCH 23/64] web-app: use the SlothfulChat icon in the About dialog
  and welcome screen
 
 Replaces the upstream Delta Chat intro1.png logo with our own app icon
@@ -25,7 +25,7 @@ awkwardly next to the buttons.
  4 files changed, 49 insertions(+), 23 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 592629ef0..68825833b 100644
+index 592629e..6882583 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
 @@ -35,11 +35,6 @@ export default function About({ onClose }: DialogProps) {
@@ -67,7 +67,7 @@ index 592629ef0..68825833b 100644
                affiliated with Delta Chat. A WS→TCP bridge is required to send
                and receive.
 diff --git a/packages/frontend/src/components/dialogs/About/styles.module.scss b/packages/frontend/src/components/dialogs/About/styles.module.scss
-index 2052cfe8b..f3bd3a89c 100644
+index 2052cfe..f3bd3a8 100644
 --- a/packages/frontend/src/components/dialogs/About/styles.module.scss
 +++ b/packages/frontend/src/components/dialogs/About/styles.module.scss
 @@ -5,11 +5,14 @@
@@ -91,7 +91,7 @@ index 2052cfe8b..f3bd3a89c 100644
 +  }
  }
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
-index c39e833ac..ce5a87504 100644
+index c39e833..ce5a875 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 @@ -5,7 +5,7 @@ import UseWebimapServerDialog from './UseWebimapServerDialog'
@@ -148,7 +148,7 @@ index c39e833ac..ce5a87504 100644
    )
  }
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
-index 58bc062a7..438b76adc 100644
+index 58bc062..438b76a 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 @@ -16,6 +16,12 @@

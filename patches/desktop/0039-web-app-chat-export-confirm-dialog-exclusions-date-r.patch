@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 19:15:47 +0000
-Subject: [PATCH 39/58] web-app: chat export confirm dialog (exclusions + date
+Subject: [PATCH 39/64] web-app: chat export confirm dialog (exclusions + date
  range) and viewer gap fixes
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -47,7 +47,7 @@ New strings live in _untranslated_en.json.
  2 files changed, 262 insertions(+), 33 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 4ab7816b3..fe3dfc4b3 100644
+index 4ab7816..fe3dfc4 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -1,4 +1,16 @@
@@ -68,7 +68,7 @@ index 4ab7816b3..fe3dfc4b3 100644
      "message": "Export Chat"
    },
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-index 2210714c6..da4e27a51 100644
+index 6363d3d..2940565 100644
 --- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 @@ -1,4 +1,4 @@
@@ -175,7 +175,7 @@ index 2210714c6..da4e27a51 100644
  
    return (
      <Dialog
-@@ -401,6 +462,50 @@ body.html-export::before {
+@@ -399,6 +460,50 @@ body.html-export::before {
  }
  .html-export-reactions-name { flex-grow: 1; }
  .html-export-reactions-emoji { font-size: 20px; }
@@ -226,7 +226,7 @@ index 2210714c6..da4e27a51 100644
  `
  
  /**
-@@ -537,7 +642,11 @@ function chatExportViewer() {
+@@ -523,7 +628,11 @@ function chatExportViewer() {
      }
      const src = fileHref(msg.file)
      const isImage = msg.viewType === 'Image' || msg.viewType === 'Gif'
@@ -239,7 +239,7 @@ index 2210714c6..da4e27a51 100644
        const imgClass = cls([
          'attachment-content',
          msg.dimensionsHeight > msg.dimensionsWidth && 'portrait',
-@@ -547,9 +656,11 @@ function chatExportViewer() {
+@@ -533,9 +642,11 @@ function chatExportViewer() {
        const sizeAttrs =
          (height ? ` height="${height}"` : '') +
          (msg.viewType === 'Sticker' ? ` width="${maxStickerSize}"` : '')
@@ -252,7 +252,7 @@ index 2210714c6..da4e27a51 100644
        )
      }
      if (src && msg.viewType === 'Video') {
-@@ -564,17 +675,44 @@ function chatExportViewer() {
+@@ -550,17 +661,44 @@ function chatExportViewer() {
          `<audio src="${src}" controls></audio></div>`
        )
      }
@@ -301,7 +301,7 @@ index 2210714c6..da4e27a51 100644
        `</div></div>`
      )
    }
-@@ -585,10 +723,20 @@ function chatExportViewer() {
+@@ -571,10 +709,20 @@ function chatExportViewer() {
        hasMessage && !quote.isForwarded
          ? ` style="border-left-color: ${esc(quote.authorDisplayColor)};"`
          : ''
@@ -324,7 +324,7 @@ index 2210714c6..da4e27a51 100644
        : ''
      const text = quote.text
        ? `<div class="quoted-text">${renderText(String(quote.text).slice(0, 3000))}</div>`
-@@ -644,14 +792,28 @@ function chatExportViewer() {
+@@ -630,14 +778,28 @@ function chatExportViewer() {
      if (msg.isEdited) {
        parts.push('<span class="edited">edited</span>')
      }
@@ -355,7 +355,7 @@ index 2210714c6..da4e27a51 100644
        parts.push(
          `<div class="delivery-status-wrapper"><div class="status-icon ${esc(status)}"></div></div>`
        )
-@@ -682,13 +844,18 @@ function chatExportViewer() {
+@@ -668,13 +830,18 @@ function chatExportViewer() {
      )
      let authorOrForwarded
      if (msg.isForwarded) {
@@ -376,7 +376,7 @@ index 2210714c6..da4e27a51 100644
            authorName(msg.sender.displayName, msg.overrideSenderName)
          )}</span></div>`
      }
-@@ -704,20 +871,39 @@ function chatExportViewer() {
+@@ -690,20 +857,39 @@ function chatExportViewer() {
        direction,
        s.message,
        msg.viewType === 'Sticker' && 'type-sticker',
@@ -422,7 +422,7 @@ index 2210714c6..da4e27a51 100644
        footer +
        `</div></div></li>`
      )
-@@ -1180,6 +1366,7 @@ function sanitizeFilename(name: string): string {
+@@ -1166,6 +1352,7 @@ function sanitizeFilename(name: string): string {
  async function exportChatToZip(
    accountId: number,
    chat: T.FullChat,
@@ -430,7 +430,7 @@ index 2210714c6..da4e27a51 100644
    onProgress: (progress: number) => void, // 0..1000
    isCancelled: () => boolean
  ): Promise<string> {
-@@ -1218,10 +1405,35 @@ async function exportChatToZip(
+@@ -1204,10 +1391,35 @@ async function exportChatToZip(
    }
    onProgress(300)
  
@@ -467,7 +467,7 @@ index 2210714c6..da4e27a51 100644
      const reactions = messages[id]?.reactions
      if (reactions) {
        for (const contactId of Object.keys(reactions.reactionsByContact)) {
-@@ -1257,7 +1469,7 @@ async function exportChatToZip(
+@@ -1243,7 +1455,7 @@ async function exportChatToZip(
      await collect(contact.profileImage)
    }
    let processed = 0
@@ -476,7 +476,7 @@ index 2210714c6..da4e27a51 100644
      const msg = messages[id]
      if (msg) {
        await collect(msg.file)
-@@ -1268,7 +1480,7 @@ async function exportChatToZip(
+@@ -1254,7 +1466,7 @@ async function exportChatToZip(
      }
      processed++
      if (processed % 10 === 0) {
@@ -485,7 +485,7 @@ index 2210714c6..da4e27a51 100644
        checkCancelled()
      }
    }
-@@ -1282,8 +1494,8 @@ async function exportChatToZip(
+@@ -1268,8 +1480,8 @@ async function exportChatToZip(
    const data = {
      exportedAt: exportedAt.toISOString(),
      chat,
@@ -496,7 +496,7 @@ index 2210714c6..da4e27a51 100644
      files,
      reactionContacts,
      // hashed css-module class names the viewer needs
-@@ -1303,7 +1515,12 @@ async function exportChatToZip(
+@@ -1289,7 +1501,12 @@ async function exportChatToZip(
      .toString()
      .replace(/<\/script/gi, '<\\/script')
    const indexHtml = buildIndexHtml(chat.name, css, dataJson, viewerSource)

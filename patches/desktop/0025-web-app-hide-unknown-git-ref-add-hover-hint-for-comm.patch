@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <claude@example.com>
 Date: Thu, 9 Jul 2026 22:22:17 +0000
-Subject: [PATCH 25/58] web-app: hide unknown git ref, add hover hint for
+Subject: [PATCH 25/64] web-app: hide unknown git ref, add hover hint for
  commit message
 
 The DC Desktop "git: unknown" line was always unknown for this fork's
@@ -17,7 +17,7 @@ native title tooltip on hover, instead of always displaying it inline.
  2 files changed, 18 insertions(+), 12 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 5188813fa..790307731 100644
+index 5188813..7903077 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
 @@ -33,7 +33,8 @@ export default function About({ onClose }: DialogProps) {
@@ -64,7 +64,7 @@ index 5188813fa..790307731 100644
                  </>
                )}
 diff --git a/packages/frontend/src/components/dialogs/About/styles.module.scss b/packages/frontend/src/components/dialogs/About/styles.module.scss
-index f3bd3a89c..df20489d1 100644
+index f3bd3a8..df20489 100644
 --- a/packages/frontend/src/components/dialogs/About/styles.module.scss
 +++ b/packages/frontend/src/components/dialogs/About/styles.module.scss
 @@ -14,5 +14,10 @@

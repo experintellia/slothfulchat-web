@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Mon, 20 Jul 2026 01:21:46 +0000
-Subject: [PATCH 53/58] web-app: estimated time-to-read on the unread badge
+Subject: [PATCH 53/64] web-app: estimated time-to-read on the unread badge
  (experimental)
 
 Show roughly how long a chat's unread messages take to read (e.g. "~4 min")
@@ -36,7 +36,7 @@ Claude-Session: https://claude.ai/code/session_01TAwiEcYimwGkrDn3JKgRn3
  create mode 100644 packages/frontend/src/tests/readTimeEstimate.test.ts
 
 diff --git a/packages/frontend/scss/chat/_chat-list-item.scss b/packages/frontend/scss/chat/_chat-list-item.scss
-index c379846ca..acddfbead 100644
+index c379846..acddfbe 100644
 --- a/packages/frontend/scss/chat/_chat-list-item.scss
 +++ b/packages/frontend/scss/chat/_chat-list-item.scss
 @@ -41,6 +41,16 @@
@@ -57,7 +57,7 @@ index c379846ca..acddfbead 100644
      // Ensure it's as wide as the parent allows, but doesn't overflow
      // the parent if the content is too long.
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 3ca4197c3..f9af952db 100644
+index 3ca4197..f9af952 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -81,6 +81,11 @@ export function ExperimentalFeatures() {
@@ -73,7 +73,7 @@ index 3ca4197c3..f9af952db 100644
          <DesktopSettingsSwitch
            settingsKey='contentProtectionEnabled'
 diff --git a/packages/frontend/src/components/chat/ChatListItem.tsx b/packages/frontend/src/components/chat/ChatListItem.tsx
-index 780c2f1b9..38fedad2c 100644
+index 780c2f1..38fedad 100644
 --- a/packages/frontend/src/components/chat/ChatListItem.tsx
 +++ b/packages/frontend/src/components/chat/ChatListItem.tsx
 @@ -1,11 +1,13 @@
@@ -209,7 +209,7 @@ index 780c2f1b9..38fedad2c 100644
            summaryText1={chat.summaryText1}
 diff --git a/packages/frontend/src/components/chat/readTimeEstimate.ts b/packages/frontend/src/components/chat/readTimeEstimate.ts
 new file mode 100644
-index 000000000..84680be2c
+index 0000000..84680be
 --- /dev/null
 +++ b/packages/frontend/src/components/chat/readTimeEstimate.ts
 @@ -0,0 +1,47 @@
@@ -262,7 +262,7 @@ index 000000000..84680be2c
 +}
 diff --git a/packages/frontend/src/tests/readTimeEstimate.test.ts b/packages/frontend/src/tests/readTimeEstimate.test.ts
 new file mode 100644
-index 000000000..f6bb7b534
+index 0000000..f6bb7b5
 --- /dev/null
 +++ b/packages/frontend/src/tests/readTimeEstimate.test.ts
 @@ -0,0 +1,51 @@
@@ -318,7 +318,7 @@ index 000000000..f6bb7b534
 +  })
 +})
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 093f5832b..624d5b1ba 100644
+index 093f583..624d5b1 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -43,6 +43,8 @@ export interface DesktopSettingsType {
@@ -331,7 +331,7 @@ index 093f5832b..624d5b1ba 100644
    locale: string | null
    notifications: boolean
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 557dfb723..fb007364d 100644
+index 557dfb7..fb00736 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -16,6 +16,7 @@ export function getDefaultState(): DesktopSettingsType {

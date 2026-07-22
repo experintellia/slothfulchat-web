@@ -1,0 +1,296 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Slothful Dev <dev@slothfulchat.invalid>
+Date: Wed, 22 Jul 2026 19:27:00 +0000
+Subject: [PATCH 64/64] =?UTF-8?q?web-app:=20admin=20groups=20=E2=80=94=20c?=
+ =?UTF-8?q?reate-dialog=20checkbox=20and=20admin-only=20management=20UI?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+UI for the core group-admins feature (ported from ArcaneChat's Android
+client, ArcaneChat/android PR #167):
+
+- New Group dialog: an "Admin group" checkbox creates the group via
+  createGroupWithAdmin, making the creator the only one who can manage
+  it.
+- Group profile dialog: for non-admin members of an admin group, hide
+  Add Member, QR invite code, member remove buttons and the Edit menu
+  entry (core rejects those actions anyway).
+- Chat menu: hide "Disappearing Messages" for non-admins of admin
+  groups.
+- Delete dialog: offer "Delete for Everyone" on other people's
+  messages when you are the group admin.
+---
+ _locales/_untranslated_en.json                |  3 ++
+ .../src/components/chat/ChatContextMenu.tsx   |  5 ++-
+ .../dialogs/ConfirmDeleteMessage.tsx          | 11 ++++-
+ .../components/dialogs/CreateChat/index.tsx   | 41 +++++++++++++++----
+ .../components/dialogs/ViewGroup/index.tsx    | 11 +++--
+ packages/frontend/src/utils/groupAdmin.ts     | 40 ++++++++++++++++++
+ 6 files changed, 98 insertions(+), 13 deletions(-)
+ create mode 100644 packages/frontend/src/utils/groupAdmin.ts
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 9e26381..ef80170 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -1,4 +1,7 @@
+ {
++  "admin_group_checkbox": {
++    "message": "Admin group — only you can edit the group and manage members"
++  },
+   "export_chat_explain": {
+     "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
+   },
+diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+index 5a93f1c..57a3e38 100644
+--- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
++++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+@@ -1,5 +1,6 @@
+ import React, { useContext, useState } from 'react'
+ import type { T } from '@deltachat/jsonrpc-client'
++import { selfMayManageGroup } from '../../utils/groupAdmin'
+ 
+ import { Timespans } from '@deltachat-desktop/shared/constants'
+ import { ContextMenuItem } from '../ContextMenu'
+@@ -467,7 +468,9 @@ export function useChatContextMenu(): {
+       relatedChat.canSend &&
+       relatedChat.chatType !== 'InBroadcast' &&
+       relatedChat.chatType !== 'Mailinglist' &&
+-      relatedChat.isEncrypted && {
++      relatedChat.isEncrypted &&
++      // slothfulchat: in admin groups only the admin may change the timer
++      selfMayManageGroup(relatedChat) && {
+         label: tx('ephemeral_messages'),
+         action: onDisappearingMessages,
+       }
+diff --git a/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx b/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
+index d67707b..6c85462 100644
+--- a/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
++++ b/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
+@@ -15,6 +15,7 @@ import { C } from '@deltachat/jsonrpc-client'
+ import { ScreenContext } from '../../contexts/ScreenContext'
+ import { useFetch } from '../../hooks/useFetch'
+ import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
++import { selfIsAdminOfAdminGroup } from '../../utils/groupAdmin'
+ 
+ export type Props = {
+   accountId: number
+@@ -33,6 +34,10 @@ export default function ConfirmDeleteMessageDialog(props: Props) {
+ 
+   const { accountId, chat, onClose, messageIds, loadedMessages } = props
+ 
++  // slothfulchat: the admin of an admin group may also delete
++  // other members' messages for everyone (ported from ArcaneChat).
++  const selfIsGroupAdmin = selfIsAdminOfAdminGroup(chat)
++
+   const deleteForAllPossibleFetch = useFetch(
+     useCallback(async () => {
+       if (!chat.canSend || chat.isSelfTalk || !chat.isEncrypted) {
+@@ -41,7 +46,10 @@ export default function ConfirmDeleteMessageDialog(props: Props) {
+ 
+       // Check all the loaded messages
+       function msgDeleteForAllPossible(msg: Type.Message): boolean {
+-        return msg.sender.id === C.DC_CONTACT_ID_SELF && !msg.isInfo
++        return (
++          (selfIsGroupAdmin || msg.sender.id === C.DC_CONTACT_ID_SELF) &&
++          !msg.isInfo
++        )
+       }
+       if (
+         messageIds
+@@ -80,6 +88,7 @@ export default function ConfirmDeleteMessageDialog(props: Props) {
+       chat.canSend,
+       chat.isEncrypted,
+       chat.isSelfTalk,
++      selfIsGroupAdmin,
+       loadedMessages,
+       messageIds,
+     ]),
+diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
+index b8559d6..31efed7 100644
+--- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
++++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
+@@ -68,6 +68,7 @@ import { useRpcFetch } from '../../../hooks/useFetch'
+ import { I18nContext } from '../../../contexts/I18nContext'
+ import useProcessQR, { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
+ import { IMAGE_EXTENSIONS } from '@deltachat-desktop/shared/constants'
++import { createGroupWithAdmin } from '../../../utils/groupAdmin'
+ 
+ // Exported (and a regular `enum` rather than `const enum`) so that callers like
+ // the command palette can open `CreateGroup` directly with a `groupType`.
+@@ -713,12 +714,16 @@ export function CreateGroup(props: CreateGroupProps) {
+   const [groupMembers, removeGroupMember, addGroupMember] = useGroupMembers(
+     props.groupMembers || [C.DC_CONTACT_ID_SELF]
+   )
++  // slothfulchat: admin groups (ported from ArcaneChat) — only the creator
++  // can manage members and edit the group.
++  const [adminGroup, setAdminGroup] = useState(false)
+   const finishCreateGroup = useCreateGroup(
+     groupType,
+     groupName,
+     groupImage,
+     groupMembers,
+-    groupDescription
++    groupDescription,
++    adminGroup
+   )
+ 
+   const [errorMissingGroupName, setErrorMissingGroupName] = useState(false)
+@@ -829,6 +834,19 @@ export function CreateGroup(props: CreateGroupProps) {
+                 Parameters<typeof ChatSettingsSetNameAndProfileImage>[0]
+               >)}
+             />
++            {groupType === GroupType.REGULAR_GROUP && (
++              <div className='create-admin-group-checkbox'>
++                <label>
++                  <input
++                    type='checkbox'
++                    checked={adminGroup}
++                    onChange={ev => setAdminGroup(ev.target.checked)}
++                    data-testid='admin-group-checkbox'
++                  />{' '}
++                  {tx('admin_group_checkbox')}
++                </label>
++              </div>
++            )}
+           </DialogContent>
+           <div id='create-group-members-title' className='group-separator'>
+             {tx(
+@@ -1068,7 +1086,8 @@ function useCreateGroup<
+   groupName: string,
+   groupImage: T extends GroupType.REGULAR_GROUP ? string | null : null,
+   groupMembers: number[],
+-  description: string
++  description: string,
++  adminGroup: boolean = false
+ ) {
+   const accountId = selectedAccountId()
+   const { openDialog } = useDialog()
+@@ -1079,11 +1098,9 @@ function useCreateGroup<
+     let chatId: ChatId
+     switch (groupType) {
+       case GroupType.REGULAR_GROUP: {
+-        chatId = await BackendRemote.rpc.createGroupChat(
+-          accountId,
+-          groupName,
+-          false
+-        )
++        chatId = adminGroup
++          ? await createGroupWithAdmin(BackendRemote.rpc, accountId, groupName)
++          : await BackendRemote.rpc.createGroupChat(accountId, groupName, false)
+         break
+       }
+       case GroupType.PLAIN_EMAIL: {
+@@ -1117,7 +1134,15 @@ function useCreateGroup<
+     ])
+ 
+     return chatId
+-  }, [accountId, description, groupImage, groupMembers, groupName, groupType])
++  }, [
++    accountId,
++    adminGroup,
++    description,
++    groupImage,
++    groupMembers,
++    groupName,
++    groupType,
++  ])
+ 
+   return async () => {
+     if (groupName === '') {
+diff --git a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
+index 9ecb5f4..49111e7 100644
+--- a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
++++ b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
+@@ -41,6 +41,7 @@ import { matchesLetterShortcut } from '../../../keybindings'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
++import { selfMayManageGroup } from '../../../utils/groupAdmin'
+ import styles from './styles.module.scss'
+ const log = getLogger('ViewGroup')
+ 
+@@ -399,13 +400,17 @@ function ViewGroupInner(
+ 
+   const listFlags = C.DC_GCL_ADD_SELF
+ 
++  // slothfulchat: in admin groups (ported from ArcaneChat) only the admin
++  // may edit the group or manage members — core rejects it for anyone else.
++  const selfIsAdmin = selfMayManageGroup(group)
++
+   // We don't allow editing of non encrypted groups (email groups)
+   // i.e. changing name, avatar or recipients
+   // since it cannot be guaranteed that the recipients will adapt
+   // these changes (image is not shown at all in MTAs, group name is
+   // just the subject and recipients are basically just an email
+   // distribution list)
+-  const allowEdit = !chatDisabled && group.isEncrypted
++  const allowEdit = !chatDisabled && group.isEncrypted && selfIsAdmin
+ 
+   const showAddMemberDialog = () => {
+     openDialog(AddMemberDialog, {
+@@ -528,7 +533,7 @@ function ViewGroupInner(
+           <RovingTabindexProvider
+             wrapperElementRef={groupMemberContactListWrapperRef}
+           >
+-            {!chatDisabled && group.isEncrypted && memberFilter === '' && (
++            {allowEdit && memberFilter === '' && (
+               <>
+                 {!isBroadcast && (
+                   <PseudoListItemAddMember
+@@ -550,7 +555,7 @@ function ViewGroupInner(
+             )}
+             <ContactList
+               contacts={filterContacts(groupContacts)}
+-              showRemove={!chatDisabled && group.isEncrypted}
++              showRemove={allowEdit}
+               onClick={contact => {
+                 if (contact.id === C.DC_CONTACT_ID_SELF) {
+                   return
+diff --git a/packages/frontend/src/utils/groupAdmin.ts b/packages/frontend/src/utils/groupAdmin.ts
+new file mode 100644
+index 0000000..3450523
+--- /dev/null
++++ b/packages/frontend/src/utils/groupAdmin.ts
+@@ -0,0 +1,40 @@
++import { C } from '@deltachat/jsonrpc-client'
++import type { T } from '@deltachat/jsonrpc-client'
++
++// slothfulchat admin groups (ported from ArcaneChat, core/0019):
++// `groupAdminId` and `createGroupWithAdmin` exist in the regenerated local
++// jsonrpc bindings; the published 2.53.0 package does not have them yet, so
++// widen locally to keep tsc green. At runtime `BackendRemote.rpc` is the
++// regenerated client (it comes from our web-app runtime).
++
++/** Contact ID of the group admin, or null for regular groups. */
++export function groupAdminId(chat: T.FullChat): number | null {
++  return (chat as { groupAdminId?: number | null }).groupAdminId ?? null
++}
++
++/**
++ * Whether we may manage this chat's members/name/avatar/timer:
++ * true for regular chats, and for admin groups only if we are the admin.
++ */
++export function selfMayManageGroup(chat: T.FullChat): boolean {
++  const admin = groupAdminId(chat)
++  return admin == null || admin === C.DC_CONTACT_ID_SELF
++}
++
++/** Whether this is an admin group and we are its admin. */
++export function selfIsAdminOfAdminGroup(chat: T.FullChat): boolean {
++  return groupAdminId(chat) === C.DC_CONTACT_ID_SELF
++}
++
++/** See `createGroupWithAdmin` in the regenerated bindings. */
++export function createGroupWithAdmin(
++  rpc: unknown,
++  accountId: number,
++  name: string
++): Promise<number> {
++  return (
++    rpc as {
++      createGroupWithAdmin(accountId: number, name: string): Promise<number>
++    }
++  ).createGroupWithAdmin(accountId, name)
++}

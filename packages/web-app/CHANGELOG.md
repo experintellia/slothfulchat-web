@@ -1,5 +1,9 @@
 # Changelog
 
+- **Admin groups** (ported from ArcaneChat): tick "Admin group" when creating
+  a group and only you can add or remove members, invite via QR code, edit
+  the name, image, description or disappearing-messages timer — and you can
+  delete anyone's message for everyone. Other members just chat and can leave.
 - Dragging a profile to reorder the sidebar no longer shows the white
   "selected" indicator in the drag preview.
 - **Unread filter in the chat list**: a filter button next to the search box

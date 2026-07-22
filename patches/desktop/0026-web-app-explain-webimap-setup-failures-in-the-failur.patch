@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 22:57:40 +0000
-Subject: [PATCH 26/58] web-app: explain webimap setup failures in the failure
+Subject: [PATCH 26/64] web-app: explain webimap setup failures in the failure
  alert, not up front
 
 Replaces the pre-flight reachability/CORS probe in the madmail-server
@@ -27,7 +27,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  1 file changed, 29 insertions(+)
 
 diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
-index 15785bbc7..1aabccd89 100644
+index 15785bb..1aabccd 100644
 --- a/packages/frontend/src/hooks/useInstantOnboarding.ts
 +++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
 @@ -138,6 +138,35 @@ export default function useInstantOnboarding(): InstantOnboarding {

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Tue, 7 Jul 2026 23:58:49 +0000
-Subject: [PATCH 08/58] web-app: don't crash ClickableLink render when no
+Subject: [PATCH 08/64] web-app: don't crash ClickableLink render when no
  account is selected
 
 selectedAccountId() throws when window.__selectedAccountId is undefined.
@@ -16,7 +16,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  1 file changed, 2 insertions(+), 3 deletions(-)
 
 diff --git a/packages/frontend/src/components/helpers/ClickableLink.tsx b/packages/frontend/src/components/helpers/ClickableLink.tsx
-index e17784745..c26e21348 100644
+index e177847..c26e213 100644
 --- a/packages/frontend/src/components/helpers/ClickableLink.tsx
 +++ b/packages/frontend/src/components/helpers/ClickableLink.tsx
 @@ -8,18 +8,17 @@ import { selectedAccountId } from '../../ScreenController'

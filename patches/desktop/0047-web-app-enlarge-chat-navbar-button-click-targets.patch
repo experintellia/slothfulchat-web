@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothfulchat.local>
 Date: Wed, 15 Jul 2026 01:11:05 +0000
-Subject: [PATCH 47/58] web-app: enlarge chat navbar button click targets
+Subject: [PATCH 47/64] web-app: enlarge chat navbar button click targets
 
 The chat title-bar icon buttons (apps, map, three-dot menu) had a 20x20px
 click target sitting in a 50px-tall navbar with a 12px dead gap between
@@ -14,7 +14,7 @@ pixel-for-pixel identical.
  1 file changed, 15 insertions(+), 4 deletions(-)
 
 diff --git a/packages/frontend/src/components/ChatView/styles.module.scss b/packages/frontend/src/components/ChatView/styles.module.scss
-index c81615c42..28e5e1045 100644
+index c81615c..28e5e10 100644
 --- a/packages/frontend/src/components/ChatView/styles.module.scss
 +++ b/packages/frontend/src/components/ChatView/styles.module.scss
 @@ -62,17 +62,28 @@

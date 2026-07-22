@@ -1,0 +1,739 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Slothful Dev <dev@slothfulchat.invalid>
+Date: Wed, 22 Jul 2026 19:26:46 +0000
+Subject: [PATCH 19/19] group admins: admin groups where only the creator
+ manages the group
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Port of ArcaneChat's group-admin feature (ArcaneChat/core PR #438,
+commits c9b9666 + a2683e9) onto chatmail core:
+
+- create_group_with_admin() creates a group whose grpid is
+  FINGERPRINT:RANDOMID — the embedded key fingerprint marks the admin.
+- Only the admin may add/remove members, rename, change description,
+  avatar and the ephemeral-message timer; core enforces this both when
+  sending (ensure!) and when receiving (non-admin group-change messages
+  are ignored/trashed).
+- Securejoin: invite QR carries the admin fingerprint (z= instead of
+  g= for the group name); non-admins abort handshakes that would add
+  members.
+- The admin may delete other members' messages for everyone; receivers
+  accept a deletion of somebody else's message only from the admin.
+  (Deviation from ArcaneChat: their receive-side check accidentally let
+  *any* member of a *regular* group delete others' messages, because
+  is_group_admin_contact() returns true when the group has no admin;
+  we gate on the group actually being an admin group.)
+- New JSON-RPC: create_group_with_admin, FullChat.groupAdminId.
+---
+ deltachat-jsonrpc/src/api.rs            |  13 +++
+ deltachat-jsonrpc/src/api/types/chat.rs |  10 ++-
+ src/chat.rs                             | 111 ++++++++++++++++++++++++
+ src/ephemeral.rs                        |  13 ++-
+ src/message.rs                          |  13 ++-
+ src/mimeparser.rs                       |   4 +-
+ src/qr.rs                               |  20 ++++-
+ src/receive_imf.rs                      | 104 ++++++++++++++++++----
+ src/securejoin.rs                       |  21 +++++
+ src/tools.rs                            |  17 ++++
+ 10 files changed, 297 insertions(+), 29 deletions(-)
+
+diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
+index ab91000..5fca11d 100644
+--- a/deltachat-jsonrpc/src/api.rs
++++ b/deltachat-jsonrpc/src/api.rs
+@@ -1082,6 +1082,19 @@ async fn create_group_chat(
+         chat::create_group(&ctx, &name).await.map(|id| id.to_u32())
+     }
+ 
++    /// Create a new encrypted group chat with an admin.
++    ///
++    /// Similar to [`Self::create_group_chat`], but only the creator (admin) can add/remove
++    /// members or change the group name, description, avatar, etc.
++    /// Other members can send messages and leave the group.
++    /// The `group_admin_id` field in [`FullChat`] will be set to the admin's contact ID.
++    async fn create_group_with_admin(&self, account_id: u32, name: String) -> Result<u32> {
++        let ctx = self.get_context(account_id).await?;
++        chat::create_group_with_admin(&ctx, &name)
++            .await
++            .map(|id| id.to_u32())
++    }
++
+     /// Create a new unencrypted group chat.
+     ///
+     /// Same as [`Self::create_group_chat`], but the chat is unencrypted and can only have
+diff --git a/deltachat-jsonrpc/src/api/types/chat.rs b/deltachat-jsonrpc/src/api/types/chat.rs
+index 42d69ff..a9c8192 100644
+--- a/deltachat-jsonrpc/src/api/types/chat.rs
++++ b/deltachat-jsonrpc/src/api/types/chat.rs
+@@ -1,7 +1,7 @@
+ use std::time::{Duration, SystemTime};
+ 
+ use anyhow::{bail, Context as _, Result};
+-use deltachat::chat::{self, get_chat_contacts, get_past_chat_contacts, ChatVisibility};
++use deltachat::chat::{self, get_chat_contacts, get_past_chat_contacts, ChatVisibility, get_admin_contact_id};
+ use deltachat::chat::{Chat, ChatId};
+ use deltachat::constants::Chattype;
+ use deltachat::contact::{Contact, ContactId};
+@@ -71,6 +71,9 @@ pub struct FullChat {
+     can_send: bool,
+     was_seen_recently: bool,
+     mailing_list_address: Option<String>,
++
++   /// Contact ID of the group admin for admin-controlled groups, or `null` for regular groups.
++    group_admin_id: Option<u32>,
+ }
+ 
+ impl FullChat {
+@@ -106,6 +109,10 @@ pub async fn try_from_dc_chat_id(context: &Context, chat_id: u32) -> Result<Self
+ 
+         let mailing_list_address = chat.get_mailinglist_addr().map(|s| s.to_string());
+ 
++        let group_admin_id = get_admin_contact_id(context, &chat.grpid)
++            .await?
++            .map(|id| id.to_u32());
++
+         Ok(FullChat {
+             id: chat_id,
+             name: chat.name.clone(),
+@@ -128,6 +135,7 @@ pub async fn try_from_dc_chat_id(context: &Context, chat_id: u32) -> Result<Self
+             can_send,
+             was_seen_recently,
+             mailing_list_address,
++            group_admin_id,
+         })
+     }
+ }
+diff --git a/src/chat.rs b/src/chat.rs
+index 7c2a855..b3f7cbd 100644
+--- a/src/chat.rs
++++ b/src/chat.rs
+@@ -57,6 +57,26 @@
+ 
+ pub(crate) const PARAM_BROADCAST_SECRET: Param = Param::Arg3;
+ 
++/// Separator between the admin's fingerprint and the random group ID in admin groups.
++///
++/// Must not be a URL-safe base64 character (`A-Za-z0-9-_`)
++pub(crate) const ADMIN_GROUP_ID_SEPARATOR: char = ':';
++
++/// Returns the admin fingerprint if this is an admin group.
++pub(crate) fn admin_group_fingerprint(grpid: &str) -> Option<&str> {
++    grpid.split_once(ADMIN_GROUP_ID_SEPARATOR).map(|(fpr, _)| fpr)
++}
++
++/// Returns the base group ID (the random part after the fingerprint), for use in QR codes.
++///
++/// For regular groups, returns the full grpid unchanged.
++pub(crate) fn admin_group_base_id(grpid: &str) -> &str {
++    grpid
++        .split_once(ADMIN_GROUP_ID_SEPARATOR)
++        .map(|(_, id)| id)
++        .unwrap_or(grpid)
++}
++
+ /// An chat item, such as a message or a marker.
+ #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+ pub enum ChatItem {
+@@ -3544,6 +3564,56 @@ pub async fn create_group(context: &Context, name: &str) -> Result<ChatId> {
+     create_group_ex(context, Sync, create_id(), name).await
+ }
+ 
++/// Creates an encrypted group chat with an admin.
++///
++/// The group ID is composed of the creator's fingerprint and a random ID separated by
++/// [`ADMIN_GROUP_ID_SEPARATOR`].
++/// Only the admin (creator) can add/remove members or change the group name, description,
++/// or avatar. Other members can send messages and leave the group.
++pub async fn create_group_with_admin(context: &Context, name: &str) -> Result<ChatId> {
++    let fingerprint = self_fingerprint(context).await?;
++    let base_grpid = create_id();
++    let grpid = format!("{fingerprint}{ADMIN_GROUP_ID_SEPARATOR}{base_grpid}");
++    let result = create_group_ex(context, Sync, grpid, name).await;
++    if let Ok(chat_id) = result {
++        let secret = create_broadcast_secret();
++        save_broadcast_secret(context, chat_id, &secret).await?;
++        Ok(chat_id)
++    } else {
++        result
++    }
++}
++
++/// Returns the contact ID of the group admin for an admin group, or `None` for regular groups.
++///
++/// For admin groups (where `grpid` is `FINGERPRINT.GRPID`), this looks up the contact
++/// whose key fingerprint matches the fingerprint in the group ID.
++/// Returns [`ContactId::SELF`] if the admin is the current user.
++pub async fn get_admin_contact_id(context: &Context, grpid: &str) -> Result<Option<ContactId>> {
++    let Some(admin_fpr) = admin_group_fingerprint(grpid) else {
++        return Ok(None);
++    };
++
++    // Check self first (cheaper and handles the case where the contact is not yet in the DB).
++    use crate::key::self_fingerprint_opt;
++    if let Some(self_fpr) = self_fingerprint_opt(context).await? {
++        if self_fpr == admin_fpr {
++            return Ok(Some(ContactId::SELF));
++        }
++    }
++
++    // `admin_group_fingerprint` guarantees admin_fpr is non-empty.
++    let contact_id = context
++        .sql
++        .query_row_optional(
++            "SELECT id FROM contacts WHERE fingerprint=?",
++            (admin_fpr,),
++            |row| row.get::<_, ContactId>(0),
++        )
++        .await?;
++    Ok(contact_id)
++}
++
+ /// Creates an unencrypted group chat.
+ pub async fn create_group_unencrypted(context: &Context, name: &str) -> Result<ChatId> {
+     create_group_ex(context, Sync, String::new(), name).await
+@@ -3913,6 +3983,15 @@ pub(crate) async fn add_contact_to_chat_ex(
+         );
+         return Ok(false);
+     }
++
++    if let Some(admin_fpr) = admin_group_fingerprint(&chat.grpid) {
++        let self_fpr = self_fingerprint(context).await?;
++        ensure!(
++            self_fpr == admin_fpr,
++            "Only the group admin can add other members to this group"
++        );
++    }
++
+     if from_handshake && chat.param.get_int(Param::Unpromoted).unwrap_or_default() == 1 {
+         let now = time();
+         chat.param
+@@ -4169,6 +4248,16 @@ pub async fn remove_contact_from_chat(
+         bail!("{err_msg}");
+     }
+ 
++    if contact_id != ContactId::SELF {
++        if let Some(admin_fpr) = admin_group_fingerprint(&chat.grpid) {
++            let self_fpr = self_fingerprint(context).await?;
++            ensure!(
++                self_fpr == admin_fpr,
++                "Only the group admin can remove other members from this group"
++            );
++        }
++    }
++
+     let mut sync = Nosync;
+ 
+     let removed = if chat.is_promoted() && chat.typ != Chattype::OutBroadcast {
+@@ -4283,6 +4372,14 @@ async fn set_chat_description_ex(
+         bail!("Cannot set chat description; self not in group");
+     }
+ 
++    if let Some(admin_fpr) = admin_group_fingerprint(&chat.grpid) {
++        let self_fpr = self_fingerprint(context).await?;
++        ensure!(
++            self_fpr == admin_fpr,
++            "Only the group admin can change the description of this group"
++        );
++    }
++
+     let old_description = get_chat_description(context, chat_id).await?;
+     if old_description == new_description {
+         return Ok(());
+@@ -4371,6 +4468,13 @@ async fn rename_ex(
+                 "Cannot set chat name; self not in group".into(),
+             ));
+         } else {
++            if let Some(admin_fpr) = admin_group_fingerprint(&chat.grpid) {
++                let self_fpr = self_fingerprint(context).await?;
++                ensure!(
++                    self_fpr == admin_fpr,
++                    "Only the group admin can rename this group"
++                );
++            }
+             context
+                 .sql
+                 .execute(
+@@ -4442,6 +4546,13 @@ pub async fn set_chat_profile_image(
+         ));
+         bail!("Failed to set profile image");
+     }
++    if let Some(admin_fpr) = admin_group_fingerprint(&chat.grpid) {
++        let self_fpr = self_fingerprint(context).await?;
++        ensure!(
++            self_fpr == admin_fpr,
++            "Only the group admin can change the profile image of this group"
++        );
++    }
+     let mut msg = Message::new(Viewtype::Text);
+     msg.param
+         .set_int(Param::Cmd, SystemMessage::GroupImageChanged as i32);
+diff --git a/src/ephemeral.rs b/src/ephemeral.rs
+index d9ea5b1..9fdc3d2 100644
+--- a/src/ephemeral.rs
++++ b/src/ephemeral.rs
+@@ -72,7 +72,7 @@
+ use serde::{Deserialize, Serialize};
+ use tokio::time::timeout;
+ 
+-use crate::chat::{ChatId, ChatIdBlocked, send_msg};
++use crate::chat::{Chat, ChatId, ChatIdBlocked, admin_group_fingerprint, send_msg};
+ use crate::config::Config;
+ use crate::constants::{DC_CHAT_ID_LAST_SPECIAL, DC_CHAT_ID_TRASH};
+ use crate::contact::ContactId;
+@@ -210,6 +210,17 @@ pub(crate) async fn inner_set_ephemeral_timer(
+     ///
+     /// If timer value is 0, disable ephemeral message timer.
+     pub async fn set_ephemeral_timer(self, context: &Context, timer: Timer) -> Result<()> {
++        ensure!(!self.is_special(), "Invalid chat ID");
++
++        let chat = Chat::load_from_db(context, self).await?;
++        if admin_group_fingerprint(&chat.grpid).is_some() {
++            ensure!(
++                crate::chat::get_admin_contact_id(context, &chat.grpid).await?
++                    == Some(ContactId::SELF),
++                "Only the group admin can change the ephemeral timer of this group"
++            );
++        }
++
+         if timer == self.get_ephemeral_timer(context).await? {
+             return Ok(());
+         }
+diff --git a/src/message.rs b/src/message.rs
+index 677b75e..b4d65c7 100644
+--- a/src/message.rs
++++ b/src/message.rs
+@@ -1703,10 +1703,15 @@ pub async fn delete_msgs_ex(
+ 
+     for &msg_id in msg_ids {
+         let msg = Message::load_from_db(context, msg_id).await?;
+-        ensure!(
+-            !delete_for_all || msg.from_id == ContactId::SELF,
+-            "Can delete only own messages for others"
+-        );
++        if delete_for_all && msg.from_id != ContactId::SELF {
++            // The admin of an admin group may also delete other members' messages.
++            let chat = Chat::load_from_db(context, msg.chat_id).await?;
++            ensure!(
++                crate::chat::get_admin_contact_id(context, &chat.grpid).await?
++                    == Some(ContactId::SELF),
++                "Can delete only own messages for others"
++            );
++        }
+         ensure!(
+             !delete_for_all || msg.get_showpadlock(),
+             "Cannot request deletion of unencrypted message for others"
+diff --git a/src/mimeparser.rs b/src/mimeparser.rs
+index 357ea9f..e751f30 100644
+--- a/src/mimeparser.rs
++++ b/src/mimeparser.rs
+@@ -31,7 +31,7 @@
+ use crate::param::{Param, Params};
+ use crate::simplify::{SimplifiedText, simplify};
+ use crate::sync::SyncItems;
+-use crate::tools::{get_filemeta, parse_receive_headers, time, truncate_msg_text, validate_id};
++use crate::tools::{get_filemeta, parse_receive_headers, time, truncate_msg_text, validate_group_id};
+ use crate::{chatlist_events, location, tools};
+ 
+ /// Public key extracted from `Autocrypt-Gossip`
+@@ -1074,7 +1074,7 @@ pub(crate) fn decoded_data_contains(&self, s: &str) -> bool {
+     /// Returns `Chat-Group-ID` header value if it is a valid group ID.
+     pub fn get_chat_group_id(&self) -> Option<&str> {
+         self.get_header(HeaderDef::ChatGroupId)
+-            .filter(|s| validate_id(s))
++            .filter(|s| validate_group_id(s))
+     }
+ 
+     async fn parse_mime_recursive<'a>(
+diff --git a/src/qr.rs b/src/qr.rs
+index 7f61888..44d6da4 100644
+--- a/src/qr.rs
++++ b/src/qr.rs
+@@ -13,6 +13,7 @@
+ use rand::distr::{Alphanumeric, SampleString};
+ use serde::Deserialize;
+ 
++use crate::chat::ADMIN_GROUP_ID_SEPARATOR;
+ use crate::config::Config;
+ use crate::contact::{Contact, ContactId, Origin};
+ use crate::context::Context;
+@@ -518,14 +519,25 @@ async fn decode_openpgp(context: &Context, qr: &str) -> Result<Qr> {
+         .get("s")
+         .filter(|&s| validate_id(s))
+         .map(|s| s.to_string());
+-    let grpid = param
+-        .get("x")
+-        .filter(|&s| validate_id(s))
+-        .map(|s| s.to_string());
+ 
+     let grpname = decode_name(&param, "g")?;
++    let admin_grpname = decode_name(&param, "z")?;
+     let broadcast_name = decode_name(&param, "b")?;
+ 
++    // For admin groups, reconstruct the full grpid as FINGERPRINT<SEP>base_grpid.
++    let grpid = if admin_grpname.is_some() {
++        param
++            .get("x")
++            .filter(|&s| validate_id(s))
++            .map(|base_id| format!("{}{ADMIN_GROUP_ID_SEPARATOR}{base_id}", fingerprint.hex()))
++    } else {
++        param
++            .get("x")
++            .filter(|&s| validate_id(s))
++            .map(|s| s.to_string())
++    };
++    let grpname = grpname.or(admin_grpname);
++
+     let mut is_v3 = param.get("v") == Some(&"3");
+ 
+     if authcode.is_some() && invitenumber.is_none() {
+diff --git a/src/receive_imf.rs b/src/receive_imf.rs
+index c91cdea..bcd2d8e 100644
+--- a/src/receive_imf.rs
++++ b/src/receive_imf.rs
+@@ -16,6 +16,7 @@
+ 
+ use crate::chat::{
+     self, Chat, ChatId, ChatIdBlocked, ChatVisibility, is_contact_in_chat, save_broadcast_secret,
++    admin_group_fingerprint,
+ };
+ use crate::config::Config;
+ use crate::constants::{self, Blocked, Chattype, DC_CHAT_ID_TRASH, EDITED_PREFIX};
+@@ -1870,6 +1871,8 @@ async fn add_parts(
+     };
+     let in_fresh = state == MessageState::InFresh;
+ 
++    let grpid = chat.grpid.clone();
++
+     let sort_timestamp = chat_id
+         .calc_sort_timestamp(context, mime_parser.timestamp_sent, sort_to_bottom)
+         .await?;
+@@ -1887,6 +1890,7 @@ async fn add_parts(
+             BTreeSet::<ContactId>::from_iter(chat::get_chat_contacts(context, chat_id).await?);
+         let is_from_in_chat =
+             !chat_contacts.contains(&ContactId::SELF) || chat_contacts.contains(&from_id);
++        let sender_is_admin = is_group_admin_contact(context, &grpid, from_id).await?;
+ 
+         info!(
+             context,
+@@ -1897,6 +1901,11 @@ async fn add_parts(
+                 context,
+                 "Ignoring ephemeral timer change to {ephemeral_timer:?} for chat {chat_id} because sender {from_id} is not a member.",
+             );
++        } else if !sender_is_admin {
++            warn!(
++                context,
++                "Ignoring ephemeral timer change to {ephemeral_timer:?} for chat {chat_id} because sender {from_id} is not the admin.",
++            );
+         } else if is_dc_message == MessengerMessage::Yes
+             && get_previous_message(context, mime_parser)
+                 .await?
+@@ -2094,7 +2103,7 @@ async fn add_parts(
+         }
+     }
+ 
+-    handle_edit_delete(context, mime_parser, from_id, &mime_headers).await?;
++    handle_edit_delete(context, mime_parser, from_id, &mime_headers, &grpid).await?;
+     handle_post_message(context, mime_parser, from_id, state).await?;
+ 
+     if mime_parser.is_system_message == SystemMessage::CallAccepted
+@@ -2365,6 +2374,7 @@ async fn handle_edit_delete(
+     mime_parser: &MimeMessage,
+     from_id: ContactId,
+     mime_headers: &[u8],
++    grpid: &str,
+ ) -> Result<()> {
+     if let Some(rfc724_mid) = mime_parser.get_header(HeaderDef::ChatEdit) {
+         let Some(original_msg_id) = rfc724_mid_exists(context, rfc724_mid).await? else {
+@@ -2412,6 +2422,12 @@ async fn handle_edit_delete(
+         let mut modified_chat_ids = BTreeSet::new();
+         let mut msg_ids = Vec::new();
+ 
++        // Only the admin of an admin group may delete other members' messages.
++        // NB: `is_group_admin_contact()` alone is not enough — it returns true
++        // for everyone in regular groups (meaning "no admin restriction").
++        let from_is_group_admin = admin_group_fingerprint(grpid).is_some()
++            && is_group_admin_contact(context, grpid, from_id).await?;
++
+         let rfc724_mid_vec: Vec<&str> = rfc724_mid_list.split_whitespace().collect();
+         for rfc724_mid in rfc724_mid_vec {
+             let rfc724_mid = rfc724_mid.trim_start_matches('<').trim_end_matches('>');
+@@ -2426,7 +2442,7 @@ async fn handle_edit_delete(
+                 warn!(context, "Delete message: Database entry does not exist.");
+                 continue;
+             };
+-            if msg.from_id != from_id {
++            if msg.from_id != from_id && !from_is_group_admin {
+                 warn!(context, "Delete message: Bad sender.");
+                 continue;
+             }
+@@ -2844,6 +2860,18 @@ async fn create_group(
+             // otherwise, a pending "quit" message may pop up
+             && mime_parser.get_header(HeaderDef::ChatGroupMemberRemoved).is_none()
+     {
++        // For admin groups the grpid encodes the admin's fingerprint.
++        // Only accept group creation if the sender is that admin;
++        // otherwise a non-admin could send a message with the admin-grpid
++        // and implicitly create the group on receivers that are not yet
++        // members, potentially manipulating group state.
++        if !is_group_admin_contact(context, grpid, from_id).await? {
++            info!(
++                context,
++                "Ignoring creation of admin group {grpid}: sender {from_id} is not the admin."
++            );
++            return Ok(None);
++        }
+         // Group does not exist but should be created.
+         let grpname = mime_parser
+             .get_header(HeaderDef::ChatGroupName)
+@@ -3047,6 +3075,8 @@ async fn apply_group_changes(
+     let is_from_in_chat =
+         !chat_contacts.contains(&ContactId::SELF) || chat_contacts.contains(&from_id);
+ 
++    let sender_is_admin = is_group_admin_contact(context, &chat.grpid, from_id).await?;
++
+     if let Some(removed_addr) = mime_parser.get_header(HeaderDef::ChatGroupMemberRemoved) {
+         if !is_from_in_chat {
+             better_msg = Some(String::new());
+@@ -3060,17 +3090,27 @@ async fn apply_group_changes(
+                 lookup_key_contact_by_address(context, removed_addr, Some(chat.id)).await?;
+         }
+         if let Some(id) = removed_id {
+-            better_msg = if id == from_id {
+-                silent = true;
+-                Some(stock_str::msg_group_left_local(context, from_id).await)
++            // In admin groups, non-admins can only remove themselves (leave the group)
++            if !sender_is_admin && id != from_id {
++                info!(
++                    context,
++                    "Ignoring member removal by non-admin in admin group {}", chat.id
++                );
++                removed_id = None;
++                better_msg = Some(String::new());
+             } else {
+-                Some(stock_str::msg_del_member_local(context, id, from_id).await)
+-            };
++                better_msg = if id == from_id {
++                    silent = true;
++                    Some(stock_str::msg_group_left_local(context, from_id).await)
++                } else {
++                    Some(stock_str::msg_del_member_local(context, id, from_id).await)
++                };
++            }
+         } else {
+             warn!(context, "Removed {removed_addr:?} has no contact id.")
+         }
+     } else if let Some(added_addr) = mime_parser.get_header(HeaderDef::ChatGroupMemberAdded) {
+-        if !is_from_in_chat {
++        if !is_from_in_chat || !sender_is_admin {
+             better_msg = Some(String::new());
+         } else if let Some(key) = mime_parser.gossiped_keys.get(added_addr) {
+             if !chat_contacts.contains(&from_id) {
+@@ -3119,6 +3159,7 @@ async fn apply_group_changes(
+         // Avoid insertion of `from_id` into a group with inappropriate encryption state.
+         if from_is_key_contact != chat.grpid.is_empty()
+             && chat.member_list_is_stale(context).await?
++            && sender_is_admin
+         {
+             info!(context, "Member list is stale.");
+             let mut new_members: BTreeSet<ContactId> =
+@@ -3155,6 +3196,7 @@ async fn apply_group_changes(
+             send_event_chat_modified = true;
+         } else if let Some(ref chat_group_member_timestamps) =
+             mime_parser.chat_group_member_timestamps()
++            && sender_is_admin
+         {
+             send_event_chat_modified |= update_chats_contacts_timestamps(
+                 context,
+@@ -3297,6 +3339,10 @@ async fn apply_chat_name_avatar_and_description_changes(
+ ) -> Result<()> {
+     // ========== Apply chat name changes ==========
+ 
++    let sender_is_admin = is_group_admin_contact(context, &chat.grpid, from_id).await?;
++    // For group state changes (name/description/avatar), treat non-admins as non-members.
++    let can_modify_group_state = is_from_in_chat && sender_is_admin;
++
+     let group_name_timestamp = mime_parser
+         .get_header(HeaderDef::ChatGroupNameTimestamp)
+         .and_then(|s| s.parse::<i64>().ok());
+@@ -3319,7 +3365,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+         let chat_group_name_timestamp = chat.param.get_i64(Param::GroupNameTimestamp).unwrap_or(0);
+         let group_name_timestamp = group_name_timestamp.unwrap_or(mime_parser.timestamp_sent);
+         // To provide group name consistency, compare names if timestamps are equal.
+-        if is_from_in_chat
++        if can_modify_group_state
+             && (chat_group_name_timestamp, grpname) < (group_name_timestamp, &chat.name)
+             && chat
+                 .id
+@@ -3341,7 +3387,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+             .get_header(HeaderDef::ChatGroupNameChanged)
+             .is_some()
+         {
+-            if is_from_in_chat {
++            if can_modify_group_state {
+                 let old_name = &sanitize_single_line(old_name);
+                 better_msg.get_or_insert(
+                     if matches!(chat.typ, Chattype::InBroadcast | Chattype::OutBroadcast) {
+@@ -3351,7 +3397,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+                     },
+                 );
+             } else {
+-                // Attempt to change group name by non-member, trash it.
++                // Attempt to change group name by non-member or non-admin, trash it.
+                 *better_msg = Some(String::new());
+             }
+         }
+@@ -3376,7 +3422,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+ 
+         let new_timestamp = timestamp_in_header.unwrap_or(mime_parser.timestamp_sent);
+         // To provide consistency, compare descriptions if timestamps are equal.
+-        if is_from_in_chat
++        if can_modify_group_state
+             && (old_timestamp, &old_description) < (new_timestamp, &new_description)
+             && chat
+                 .id
+@@ -3398,11 +3444,11 @@ async fn apply_chat_name_avatar_and_description_changes(
+             .get_header(HeaderDef::ChatGroupDescriptionChanged)
+             .is_some()
+         {
+-            if is_from_in_chat {
++            if can_modify_group_state {
+                 better_msg
+                     .get_or_insert(stock_str::msg_chat_description_changed(context, from_id).await);
+             } else {
+-                // Attempt to change group description by non-member, trash it.
++                // Attempt to change group description by non-member or non-admin, trash it.
+                 *better_msg = Some(String::new());
+             }
+         }
+@@ -3414,7 +3460,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+         && value == "group-avatar-changed"
+         && let Some(avatar_action) = &mime_parser.group_avatar
+     {
+-        if is_from_in_chat {
++        if can_modify_group_state {
+             // this is just an explicit message containing the group-avatar,
+             // apart from that, the group-avatar is send along with various other messages
+             better_msg.get_or_insert(
+@@ -3432,13 +3478,13 @@ async fn apply_chat_name_avatar_and_description_changes(
+                 },
+             );
+         } else {
+-            // Attempt to change group avatar by non-member, trash it.
++            // Attempt to change group avatar by non-member or non-admin, trash it.
+             *better_msg = Some(String::new());
+         }
+     }
+ 
+     if let Some(avatar_action) = &mime_parser.group_avatar
+-        && is_from_in_chat
++        && can_modify_group_state
+         && chat
+             .param
+             .update_timestamp(Param::AvatarTimestamp, mime_parser.timestamp_sent)?
+@@ -4288,6 +4334,30 @@ async fn lookup_key_contact_by_address(
+     Ok(contact_id)
+ }
+ 
++async fn get_contact_fingerprint(context: &Context, contact_id: ContactId) -> Result<Option<String>> {
++    if contact_id == ContactId::SELF {
++        Ok(self_fingerprint_opt(context).await?.map(|s| s.to_string()))
++    } else {
++        Ok(Contact::get_by_id(context, contact_id)
++            .await?
++           .fingerprint()
++           .map(|f| f.hex()))
++    }
++}
++
++async fn is_group_admin_contact(
++    context: &Context,
++    grpid: &str,
++    contact_id: ContactId,
++) -> Result<bool> {
++    if let Some(admin_fpr) = admin_group_fingerprint(grpid) {
++        let contact_fpr = get_contact_fingerprint(context, contact_id).await?;
++        Ok(contact_fpr.as_deref() == Some(admin_fpr))
++    } else {
++        Ok(true)
++    }
++}
++
+ async fn lookup_key_contact_by_fingerprint(
+     context: &Context,
+     fingerprint: &str,
+diff --git a/src/securejoin.rs b/src/securejoin.rs
+index 3ab3180..48d2cff 100644
+--- a/src/securejoin.rs
++++ b/src/securejoin.rs
+@@ -6,6 +6,7 @@
+ 
+ use crate::chat::{
+     self, Chat, ChatId, ChatIdBlocked, add_info_msg, get_chat_id_by_grpid, load_broadcast_secret,
++    admin_group_base_id, admin_group_fingerprint,
+ };
+ use crate::config::Config;
+ use crate::constants::{
+@@ -174,6 +175,12 @@ pub async fn get_securejoin_qr(context: &Context, chat: Option<ChatId>) -> Resul
+             format!(
+                 "https://i.delta.chat/#{fingerprint}&v=3&x={grpid}&j={invitenumber}&s={auth}&a={self_addr_urlencoded}&n={self_name_urlencoded}&b={chat_name_urlencoded}",
+             )
++        } else if admin_group_fingerprint(grpid).is_some() {
++            // Admin group: put only the base (random) grpid in x=, use z= for the group name
++            let base_grpid = admin_group_base_id(grpid);
++            format!(
++                "https://i.delta.chat/#{fingerprint}&v=3&x={base_grpid}&i={invitenumber}&s={auth}&a={self_addr_urlencoded}&n={self_name_urlencoded}&z={chat_name_urlencoded}",
++            )
+         } else {
+             format!(
+                 "https://i.delta.chat/#{fingerprint}&v=3&x={grpid}&i={invitenumber}&s={auth}&a={self_addr_urlencoded}&n={self_name_urlencoded}&g={chat_name_urlencoded}",
+@@ -663,6 +670,20 @@ pub(crate) async fn handle_securejoin_handshake(
+                 ChatId::create_for_contact(context, contact_id).await?;
+             }
+             if let Some(joining_chat_id) = joining_chat_id {
++                // In admin groups, only the admin may add members.
++                // If we are not the admin, abort the secure-join instead of
++                // forwarding an add-member message that will be rejected anyway.
++                if let Some(admin_fpr) = admin_group_fingerprint(&grpid) {
++                    let my_fpr = self_fingerprint(context).await?;
++                    if my_fpr != admin_fpr {
++                        warn!(
++                            context,
++                            "Aborting secure-join: we are not the admin of group."
++                        );
++                        return Ok(HandshakeMessage::Ignore);
++                    }
++                }
++
+                 chat::add_contact_to_chat_ex(context, Nosync, joining_chat_id, contact_id, true)
+                     .await?;
+ 
+diff --git a/src/tools.rs b/src/tools.rs
+index f2984f7..b7f42c1 100644
+--- a/src/tools.rs
++++ b/src/tools.rs
+@@ -302,6 +302,23 @@ pub(crate) fn validate_id(s: &str) -> bool {
+     s.chars().all(|c| alphabet.contains(c)) && s.len() > 10 && s.len() <= 32
+ }
+ 
++/// Returns true if given string is a valid group ID.
++///
++/// Accepts both:
++/// - regular group IDs generated with `create_id()` and admin group IDs
++pub(crate) fn validate_group_id(s: &str) -> bool {
++    if validate_id(s) {
++        return true;
++    }
++    // Admin group grpid: FINGERPRINT<SEPARATOR>base_grpid
++    if let Some((fpr, base_id)) = s.split_once(':') {
++        fpr.chars().all(|c| matches!(c, '0'..='9' | 'A'..='F'))
++            && validate_id(base_id)
++    } else {
++        false
++    }
++}
++
+ pub(crate) fn validate_broadcast_secret(s: &str) -> bool {
+     let alphabet = base64::alphabet::URL_SAFE.as_str();
+     s.chars().all(|c| alphabet.contains(c)) && s.len() >= 43 && s.len() <= 100

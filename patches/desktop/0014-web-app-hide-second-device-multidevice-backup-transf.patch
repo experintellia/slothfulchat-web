@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Wed, 8 Jul 2026 19:44:33 +0000
-Subject: [PATCH 14/58] web-app: hide second-device (multidevice backup
+Subject: [PATCH 14/64] web-app: hide second-device (multidevice backup
  transfer) UI
 
 iroh isn't included in the wasm build (doesn't work locally with
@@ -14,7 +14,7 @@ and the settings 'Add Second Device' item.
  2 files changed, 24 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 749b5afe2..2c5908172 100644
+index 749b5af..2c59081 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
 @@ -1,7 +1,6 @@
@@ -42,7 +42,7 @@ index 749b5afe2..2c5908172 100644
          <SettingsIconButton
            icon='code-tags'
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
-index b00fbf226..8317b9d90 100644
+index b00fbf2..8317b9d 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
 @@ -16,7 +16,6 @@ import { runtime } from '@deltachat-desktop/runtime-interface'

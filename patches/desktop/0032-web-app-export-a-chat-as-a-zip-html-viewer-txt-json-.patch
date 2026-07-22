@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 01:05:26 +0000
-Subject: [PATCH 32/58] web-app: export a chat as a zip (html viewer + txt +
+Subject: [PATCH 32/64] web-app: export a chat as a zip (html viewer + txt +
  json + media) from the three-dot menu
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -46,7 +46,7 @@ jumbomoji). New strings live in _untranslated_en.json.
  create mode 100644 packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 8d24c02ef..64a2fb654 100644
+index 8d24c02..64a2fb6 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -1,4 +1,10 @@
@@ -61,7 +61,7 @@ index 8d24c02ef..64a2fb654 100644
      "message": "Type"
    },
 diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
-index ec54fd200..60d6f4352 100644
+index ec54fd2..60d6f43 100644
 --- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
 +++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
 @@ -15,6 +15,7 @@ import useOpenViewGroupDialog from '../../hooks/dialog/useOpenViewGroupDialog'
@@ -98,7 +98,7 @@ index ec54fd200..60d6f4352 100644
          (chatListItems.some(c => c.freshMessageCounter > 0)
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 new file mode 100644
-index 000000000..2831d5735
+index 0000000..2831d57
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 @@ -0,0 +1,1217 @@

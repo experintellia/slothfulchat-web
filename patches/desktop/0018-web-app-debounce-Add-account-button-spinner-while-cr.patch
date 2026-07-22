@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <experintellia@users.noreply.github.com>
 Date: Wed, 8 Jul 2026 21:55:46 +0000
-Subject: [PATCH 18/58] web-app: debounce Add-account button, spinner while
+Subject: [PATCH 18/64] web-app: debounce Add-account button, spinner while
  creating
 
 Creating + selecting an account isn't instant (new SQLite db + schema
@@ -17,7 +17,7 @@ flight so the click reads as responsive.
  2 files changed, 42 insertions(+), 9 deletions(-)
 
 diff --git a/packages/frontend/src/ScreenController.tsx b/packages/frontend/src/ScreenController.tsx
-index bdcf338a8..9157df1e0 100644
+index bdcf338..9157df1 100644
 --- a/packages/frontend/src/ScreenController.tsx
 +++ b/packages/frontend/src/ScreenController.tsx
 @@ -56,6 +56,7 @@ export default class ScreenController extends Component {
@@ -63,7 +63,7 @@ index bdcf338a8..9157df1e0 100644
  
    async onExitWelcomeScreen(): Promise<void> {
 diff --git a/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx b/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
-index 9570a74a5..d9acfd6f5 100644
+index 9570a74..d9acfd6 100644
 --- a/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
 +++ b/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
 @@ -10,6 +10,7 @@ import { throttle } from '@deltachat-desktop/shared/util'

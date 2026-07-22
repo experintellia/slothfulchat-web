@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <experintellia@users.noreply.github.com>
 Date: Wed, 8 Jul 2026 22:59:39 +0000
-Subject: [PATCH 13/18] webimap: treat 404 on GET/DELETE as already-gone, not
+Subject: [PATCH 13/19] webimap: treat 404 on GET/DELETE as already-gone, not
  an error
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -25,7 +25,7 @@ immediately even when we ask for a long poll, so nothing else would.
  1 file changed, 62 insertions(+), 11 deletions(-)
 
 diff --git a/src/webimap.rs b/src/webimap.rs
-index f3b44e873..ced1beb59 100644
+index f3b44e8..ced1beb 100644
 --- a/src/webimap.rs
 +++ b/src/webimap.rs
 @@ -154,7 +154,10 @@ async fn list_messages(&self, context: &Context, wait: u64) -> Result<Vec<Messag

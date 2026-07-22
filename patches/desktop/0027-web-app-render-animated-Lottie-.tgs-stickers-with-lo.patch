@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothfulchat.local>
 Date: Fri, 10 Jul 2026 01:07:28 +0000
-Subject: [PATCH 27/58] web-app: render animated Lottie (.tgs) stickers with
+Subject: [PATCH 27/64] web-app: render animated Lottie (.tgs) stickers with
  lottie-web
 
 Telegram animated stickers (.tgs = gzipped Lottie JSON) can't be shown by an
@@ -24,7 +24,7 @@ renders it.
  create mode 100644 packages/frontend/src/components/attachment/LottieSticker.tsx
 
 diff --git a/packages/frontend/package.json b/packages/frontend/package.json
-index 69f2d3505..b43f0ff59 100644
+index 69f2d35..b43f0ff 100644
 --- a/packages/frontend/package.json
 +++ b/packages/frontend/package.json
 @@ -37,6 +37,7 @@
@@ -37,7 +37,7 @@ index 69f2d3505..b43f0ff59 100644
      "path-browserify": "^1.0.1",
 diff --git a/packages/frontend/src/components/attachment/LottieSticker.tsx b/packages/frontend/src/components/attachment/LottieSticker.tsx
 new file mode 100644
-index 000000000..f4dacab53
+index 0000000..f4dacab
 --- /dev/null
 +++ b/packages/frontend/src/components/attachment/LottieSticker.tsx
 @@ -0,0 +1,173 @@
@@ -215,7 +215,7 @@ index 000000000..f4dacab53
 +  }
 +}
 diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
-index 6c763d74c..3447fe74c 100644
+index 6c763d7..3447fe7 100644
 --- a/packages/frontend/src/components/attachment/messageAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
 @@ -18,6 +18,7 @@ import FullscreenMedia, {
@@ -283,7 +283,7 @@ index 6c763d74c..3447fe74c 100644
      (isImage(message.viewType) || message.viewType === 'Sticker') &&
      !isOversizedImage
 diff --git a/packages/frontend/src/types.d.ts b/packages/frontend/src/types.d.ts
-index cf683d32e..32664c4e0 100644
+index cf683d3..32664c4 100644
 --- a/packages/frontend/src/types.d.ts
 +++ b/packages/frontend/src/types.d.ts
 @@ -1,5 +1,13 @@
@@ -301,7 +301,7 @@ index cf683d32e..32664c4e0 100644
  // https://www.typescriptlang.org/tsconfig/#noUncheckedSideEffectImports.
  declare module 'moment/min/locales'
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index 463868159..1817bc4a8 100644
+index 4638681..1817bc4 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
 @@ -177,6 +177,9 @@ importers:

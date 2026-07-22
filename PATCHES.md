@@ -41,6 +41,21 @@ exists:
 
 ## New features
 
+- **Admin groups** — port of ArcaneChat's group-admin feature
+  ([ArcaneChat/core#438](https://github.com/ArcaneChat/core/pull/438),
+  [ArcaneChat/android#167](https://github.com/ArcaneChat/android/pull/167)):
+  a group whose ID embeds the creator's key fingerprint
+  (`FINGERPRINT:RANDOMID`), making the creator the admin. Core enforces —
+  on send and on receive — that only the admin adds/removes members,
+  renames, changes description/avatar/ephemeral timer, or deletes other
+  members' messages for everyone; invite QR codes carry the admin
+  fingerprint and non-admin securejoin adds are aborted. Our receive-side
+  delete guard is stricter than ArcaneChat's, which accidentally let any
+  member of a *regular* group delete others' messages. UI (translated from
+  their Android client to the desktop frontend): an "Admin group" checkbox
+  in the New Group dialog, admin-only Add Member / QR invite / member
+  remove / Edit / Disappearing Messages controls, and "Delete for
+  Everyone" on others' messages for the admin. `core/0019`, `desktop/0064`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP

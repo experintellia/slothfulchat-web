@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothfulchat.local>
 Date: Fri, 10 Jul 2026 01:07:09 +0000
-Subject: [PATCH 14/18] sticker: classify .tgs as Sticker + honor Chat-Content
+Subject: [PATCH 14/19] sticker: classify .tgs as Sticker + honor Chat-Content
  sticker header
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -21,7 +21,7 @@ and plays the Lottie.
  2 files changed, 14 insertions(+), 3 deletions(-)
 
 diff --git a/src/message.rs b/src/message.rs
-index 4a80b5744..677b75e69 100644
+index 4a80b57..677b75e 100644
 --- a/src/message.rs
 +++ b/src/message.rs
 @@ -1595,7 +1595,10 @@ pub(crate) fn guess_msgtype_from_path_suffix(path: &Path) -> Option<(Viewtype, &
@@ -37,7 +37,7 @@ index 4a80b5744..677b75e69 100644
          "tif" => (Viewtype::File, "image/tiff"),
          "ttf" => (Viewtype::File, "font/ttf"),
 diff --git a/src/mimeparser.rs b/src/mimeparser.rs
-index eda7f8540..357ea9f32 100644
+index eda7f85..357ea9f 100644
 --- a/src/mimeparser.rs
 +++ b/src/mimeparser.rs
 @@ -848,8 +848,16 @@ fn parse_attachments(&mut self) {

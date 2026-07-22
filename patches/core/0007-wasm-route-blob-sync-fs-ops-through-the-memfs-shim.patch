@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Mon, 6 Jul 2026 22:34:43 +0000
-Subject: [PATCH 07/18] wasm: route blob sync fs ops through the memfs shim
+Subject: [PATCH 07/19] wasm: route blob sync fs ops through the memfs shim
 
 blob.rs does blocking std::fs inside block_in_place; std::fs is
 unsupported on wasm32, so use the shim's sync_* memfs API there.
@@ -11,7 +11,7 @@ unsupported on wasm32, so use the shim's sync_* memfs API there.
  2 files changed, 72 insertions(+), 31 deletions(-)
 
 diff --git a/src/blob.rs b/src/blob.rs
-index 20267a913..a0c4e15dd 100644
+index 20267a9..a0c4e15 100644
 --- a/src/blob.rs
 +++ b/src/blob.rs
 @@ -25,6 +25,26 @@
@@ -169,7 +169,7 @@ index 20267a913..a0c4e15dd 100644
  
  fn exif_orientation(exif: &exif::Exif, context: &Context) -> Orientation {
 diff --git a/src/blob/blob_tests.rs b/src/blob/blob_tests.rs
-index 0b765d72a..6a7496424 100644
+index 0b765d7..6a74964 100644
 --- a/src/blob/blob_tests.rs
 +++ b/src/blob/blob_tests.rs
 @@ -587,7 +587,7 @@ pub(crate) async fn test(self) -> anyhow::Result<DynamicImage> {
