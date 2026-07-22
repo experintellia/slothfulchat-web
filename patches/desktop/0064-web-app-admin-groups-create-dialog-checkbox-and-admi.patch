@@ -36,7 +36,7 @@ client, ArcaneChat/android PR #167):
  create mode 100644 packages/frontend/src/utils/groupAdmin.ts
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 9e26381..322beb1 100644
+index 9e26381..59d3112 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -1,4 +1,13 @@
@@ -48,13 +48,13 @@ index 9e26381..322beb1 100644
 +    "message": "Group admin"
 +  },
 +  "admin_group_explain": {
-+    "message": "Experimental. Only works with ArcaneChat and Slothful Chat members — regular Delta Chat apps cannot see this group."
++    "message": "Experimental. Works with ArcaneChat and Slothful Chat members — on regular Delta Chat apps the messages arrive only as a plain thread, without the group or its admin rules."
 +  },
    "export_chat_explain": {
      "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
    },
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 3704aa8..11ba3e4 100644
+index 3704aa8..2e2e784 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -88,6 +88,19 @@ export function ExperimentalFeatures() {
@@ -64,7 +64,7 @@ index 3704aa8..11ba3e4 100644
 +      <DesktopSettingsSwitch
 +        settingsKey='enableAdminGroups'
 +        label='Admin groups'
-+        description='Create groups that only you, the admin, can manage: members, name, image, disappearing messages — and you can delete anyone’s message for everyone. ONLY works with ArcaneChat and other Slothful Chat users; regular Delta Chat apps cannot see these groups at all. Off by default (experimental).'
++        description='Create groups that only you, the admin, can manage: members, name, image, disappearing messages — and you can delete anyone’s message for everyone. ONLY works properly with ArcaneChat and other Slothful Chat users: on regular Delta Chat the messages arrive as a plain thread without the group’s name, member list or admin rules, and admin deletions are not applied there. Off by default (experimental).'
 +        forkAdded
 +        callback={value => {
 +          if (value) {

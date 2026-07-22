@@ -6,8 +6,10 @@
   code, edit the name, image, description or disappearing-messages timer,
   and you can delete anyone's message for everyone. Other members just chat
   and can leave; every member sees a 👑 next to the admin in the member
-  list. Only works between Slothful Chat and ArcaneChat clients (plain
-  Delta Chat clients don't know this group type and can't participate).
+  list. Only works properly between Slothful Chat and ArcaneChat clients:
+  on plain Delta Chat the messages arrive as an ordinary thread without
+  the group's name, member list or admin rules, and admin deletions
+  don't reach those devices.
 - Dragging a profile to reorder the sidebar no longer shows the white
   "selected" indicator in the drag preview.
 - **Unread filter in the chat list**: a filter button next to the search box

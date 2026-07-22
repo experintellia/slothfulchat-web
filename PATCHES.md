@@ -59,9 +59,14 @@ exists:
   Messages controls, a 👑 badge on the admin's row in the member list
   (visible to every member), and "Delete for Everyone" on others'
   messages for the admin. Usage-stats instances emit an `admin_group`
-  event (`action = create · setting_enabled`). Fork-to-fork only:
-  plain Delta Chat clients reject the oversized `FINGERPRINT:ID` group
-  ID (`validate_id`) and never even see the chat as a group.
+  event (`action = create · setting_enabled`). Fork-to-fork only: plain
+  Delta Chat clients reject the oversized `FINGERPRINT:ID` group ID
+  (`validate_id`), so for them the messages fall back to a reply-threaded
+  / ad-hoc chat — readable and answerable, but with no group name,
+  member list or admin rules, and admin deletions are not applied on
+  their devices (their `handle_edit_delete` keeps the sender-only rule).
+  They can't corrupt fork-side state: group-state changes require the
+  admin's signed messages with the real group ID.
   `core/0019`, `desktop/0064`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
