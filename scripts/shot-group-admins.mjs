@@ -46,7 +46,9 @@ const watchdog = setTimeout(() => {
 }, 360_000)
 await new Promise(r => setTimeout(r, 500))
 
-const browser = await chromium.launch()
+const browser = await chromium.launch(
+  process.env.PW_CHROMIUM ? { executablePath: process.env.PW_CHROMIUM } : {}
+)
 const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
 const consoleTail = []
 page.on('console', m => consoleTail.push(m.text().slice(0, 500)))
@@ -133,7 +135,11 @@ try {
   await page.getByTestId('group-name-input').fill('Book club')
   await page.getByTestId('admin-group-checkbox').check()
   await shot('1-create-admin-group-checkbox')
-  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Cancel' }).click() // CreateGroup
+  await page.keyboard.press('Escape') // the underlying New Chat dialog
+  await page
+    .getByTestId('create-chat-dialog')
+    .waitFor({ state: 'detached', timeout: 10_000 })
 
   // 2. admin's group dialog: Add Member, QR invite, Edit all present
   await openLoungeChat()
@@ -186,22 +192,28 @@ try {
   console.log('OK: non-admin sees no Add Member / QR invite / Edit')
 
   // core enforcement, not just hidden buttons: rename by bob must fail
-  const bobChatId = await page.evaluate(async bobId => {
-    const ids = await window.exp.rpc.getChatlistEntries(bobId, 0, null, null)
+  // (catch inside the page — rpc rejections don't survive page.evaluate)
+  const rename = await page.evaluate(async bobId => {
+    const rpc = window.exp.rpc
+    const ids = await rpc.getChatlistEntries(bobId, 0, null, null)
     for (const id of ids) {
-      const info = await window.exp.rpc.getBasicChatInfo(bobId, id)
-      if (info.name === 'Sloth Lounge') return id
+      const info = await rpc.getBasicChatInfo(bobId, id)
+      if (info.name !== 'Sloth Lounge') continue
+      try {
+        await rpc.setChatName(bobId, id, 'bob was here')
+        return { threw: false }
+      } catch (err) {
+        return { threw: true, msg: String((err && err.message) || err) }
+      }
     }
-    throw new Error('group not found in bob chatlist')
+    return { threw: false, msg: 'group not found in bob chatlist' }
   }, bobId)
-  let renameFailed = false
-  try {
-    await rpc('setChatName', bobId, bobChatId, 'bob was here')
-  } catch (err) {
-    renameFailed = /admin/i.test(err.message)
+  if (!rename.threw || !/admin/i.test(rename.msg)) {
+    throw new Error(
+      `core let a non-admin rename the group: ${JSON.stringify(rename)}`
+    )
   }
-  if (!renameFailed) throw new Error('core let a non-admin rename the group')
-  console.log('OK: core rejected a rename by a non-admin')
+  console.log(`OK: core rejected a rename by a non-admin ("${rename.msg}")`)
 
   console.log('OK: admin groups offline UI check — all surfaces verified')
 } catch (err) {
