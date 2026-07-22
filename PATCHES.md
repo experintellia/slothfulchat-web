@@ -54,8 +54,12 @@ exists:
   member of a *regular* group delete others' messages. UI (translated from
   their Android client to the desktop frontend): an "Admin group" checkbox
   in the New Group dialog, admin-only Add Member / QR invite / member
-  remove / Edit / Disappearing Messages controls, and "Delete for
-  Everyone" on others' messages for the admin. `core/0019`, `desktop/0064`
+  remove / Edit / Disappearing Messages controls, a 👑 badge on the
+  admin's row in the member list (visible to every member), and "Delete
+  for Everyone" on others' messages for the admin. Fork-to-fork only:
+  plain Delta Chat clients reject the oversized `FINGERPRINT:ID` group
+  ID (`validate_id`) and never even see the chat as a group.
+  `core/0019`, `desktop/0064`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP

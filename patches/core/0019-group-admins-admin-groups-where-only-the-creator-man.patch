@@ -28,16 +28,17 @@ commits c9b9666 + a2683e9) onto chatmail core:
 - New JSON-RPC: create_group_with_admin, FullChat.groupAdminId.
 ---
  deltachat-jsonrpc/src/api.rs            |  13 +++
- deltachat-jsonrpc/src/api/types/chat.rs |  10 ++-
- src/chat.rs                             | 111 ++++++++++++++++++++++++
+ deltachat-jsonrpc/src/api/types/chat.rs |  10 +-
+ src/chat.rs                             | 111 +++++++++++++++++++
+ src/chat/chat_tests.rs                  | 136 ++++++++++++++++++++++++
  src/ephemeral.rs                        |  13 ++-
  src/message.rs                          |  13 ++-
  src/mimeparser.rs                       |   4 +-
- src/qr.rs                               |  20 ++++-
- src/receive_imf.rs                      | 104 ++++++++++++++++++----
- src/securejoin.rs                       |  21 +++++
- src/tools.rs                            |  17 ++++
- 10 files changed, 297 insertions(+), 29 deletions(-)
+ src/qr.rs                               |  20 +++-
+ src/receive_imf.rs                      | 105 +++++++++++++++---
+ src/securejoin.rs                       |  21 ++++
+ src/tools.rs                            |  17 +++
+ 11 files changed, 434 insertions(+), 29 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
 index ab91000..5fca11d 100644
@@ -269,6 +270,150 @@ index 7c2a855..b3f7cbd 100644
      let mut msg = Message::new(Viewtype::Text);
      msg.param
          .set_int(Param::Cmd, SystemMessage::GroupImageChanged as i32);
+diff --git a/src/chat/chat_tests.rs b/src/chat/chat_tests.rs
+index a27b706..b1e306a 100644
+--- a/src/chat/chat_tests.rs
++++ b/src/chat/chat_tests.rs
+@@ -6576,3 +6576,139 @@ async fn test_unpromoted_group_start_message() -> Result<()> {
+ 
+     Ok(())
+ }
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_admin_group_permissions() -> Result<()> {
++    let mut tcm = TestContextManager::new();
++    let alice = &tcm.alice().await;
++    let bob = &tcm.bob().await;
++    let charlie = &tcm.charlie().await;
++
++    let alice_chat_id = create_group_with_admin(alice, "Admin group").await?;
++    let alice_chat = Chat::load_from_db(alice, alice_chat_id).await?;
++    assert_eq!(
++        get_admin_contact_id(alice, &alice_chat.grpid).await?,
++        Some(ContactId::SELF)
++    );
++
++    let alice_bob = alice.add_or_lookup_contact_id(bob).await;
++    add_contact_to_chat(alice, alice_chat_id, alice_bob).await?;
++    let sent = alice.send_text(alice_chat_id, "welcome").await;
++    let bob_rcvd = bob.recv_msg(&sent).await;
++    let bob_chat_id = bob_rcvd.chat_id;
++    bob_chat_id.accept(bob).await?;
++
++    // Bob sees Alice as the admin.
++    let bob_chat = Chat::load_from_db(bob, bob_chat_id).await?;
++    let bob_alice = bob.add_or_lookup_contact_id(alice).await;
++    assert_eq!(
++        get_admin_contact_id(bob, &bob_chat.grpid).await?,
++        Some(bob_alice)
++    );
++
++    // Non-admin group management is rejected.
++    let bob_charlie = bob.add_or_lookup_contact_id(charlie).await;
++    assert!(
++        add_contact_to_chat(bob, bob_chat_id, bob_charlie)
++            .await
++            .is_err()
++    );
++    assert!(set_chat_name(bob, bob_chat_id, "hijacked").await.is_err());
++    assert!(
++        set_chat_description(bob, bob_chat_id, "hijacked")
++            .await
++            .is_err()
++    );
++    assert!(
++        bob_chat_id
++            .set_ephemeral_timer(bob, crate::ephemeral::Timer::Enabled { duration: 60 })
++            .await
++            .is_err()
++    );
++    assert!(
++        remove_contact_from_chat(bob, bob_chat_id, bob_alice)
++            .await
++            .is_err()
++    );
++
++    // ...but the admin can do all of that.
++    set_chat_name(alice, alice_chat_id, "Admin group 2").await?;
++
++    // Members can chat.
++    let bob_sent = bob.send_text(bob_chat_id, "hi all").await;
++    let alice_bob_msg = alice.recv_msg(&bob_sent).await;
++
++    // A non-admin cannot delete others' messages for everyone...
++    assert!(
++        message::delete_msgs_ex(bob, &[bob_rcvd.id], true)
++            .await
++            .is_err()
++    );
++    // ...the admin can, and the deletion is applied on the member's device.
++    let bob_cnt = bob_chat_id.get_msg_cnt(bob).await?;
++    message::delete_msgs_ex(alice, &[alice_bob_msg.id], true).await?;
++    let del = alice.pop_sent_msg().await;
++    bob.recv_msg_opt(&del).await;
++    assert_eq!(bob_chat_id.get_msg_cnt(bob).await?, bob_cnt - 1);
++
++    // In REGULAR groups others' messages still cannot be deleted for
++    // everyone (deviation from ArcaneChat, which dropped this check).
++    let reg_chat_id = create_group(alice, "regular").await?;
++    add_contact_to_chat(alice, reg_chat_id, alice_bob).await?;
++    let reg_sent = alice.send_text(reg_chat_id, "regular group").await;
++    let bob_reg_rcvd = bob.recv_msg(&reg_sent).await;
++    bob_reg_rcvd.chat_id.accept(bob).await?;
++    let bob_reg_sent = bob.send_text(bob_reg_rcvd.chat_id, "mine").await;
++    let alice_reg_bob_msg = alice.recv_msg(&bob_reg_sent).await;
++    assert!(
++        message::delete_msgs_ex(alice, &[alice_reg_bob_msg.id], true)
++            .await
++            .is_err()
++    );
++
++    Ok(())
++}
++
++/// Not a test: generates the two-account demo state used for the admin-groups
++/// screenshots (see scripts/shot-group-admins.mjs) and exports both accounts
++/// as backups. Run on demand:
++/// `DEMO_OUT=/tmp/demo cargo test test_admin_group_demo_backups -- --ignored`
++#[ignore = "demo-state generator, needs DEMO_OUT"]
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_admin_group_demo_backups() -> Result<()> {
++    let out = std::env::var("DEMO_OUT").expect("set DEMO_OUT to an output directory");
++    let out = std::path::Path::new(&out);
++    let mut tcm = TestContextManager::new();
++    let alice = &tcm.alice().await;
++    let bob = &tcm.bob().await;
++    alice
++        .set_config(Config::Displayname, Some("Alice"))
++        .await?;
++    bob.set_config(Config::Displayname, Some("Bob")).await?;
++
++    let chat_id = create_group_with_admin(alice, "Sloth Lounge").await?;
++    let alice_bob = alice.add_or_lookup_contact_id(bob).await;
++    add_contact_to_chat(alice, chat_id, alice_bob).await?;
++
++    let sent = alice
++        .send_text(chat_id, "Welcome to the Sloth Lounge! 🦥").await;
++    let bob_rcvd = bob.recv_msg(&sent).await;
++    bob_rcvd.chat_id.accept(bob).await?;
++    let bob_sent = bob.send_text(bob_rcvd.chat_id, "Hi all, Bob here!").await;
++    alice.recv_msg(&bob_sent).await;
++    let sent2 = alice
++        .send_text(
++            chat_id,
++            "I'm the group admin: only I can rename the group, manage members or remove messages.",
++        )
++        .await;
++    bob.recv_msg(&sent2).await;
++
++    let alice_dir = out.join("alice");
++    let bob_dir = out.join("bob");
++    std::fs::create_dir_all(&alice_dir)?;
++    std::fs::create_dir_all(&bob_dir)?;
++    imex(alice, ImexMode::ExportBackup, &alice_dir, None).await?;
++    imex(bob, ImexMode::ExportBackup, &bob_dir, None).await?;
++    Ok(())
++}
 diff --git a/src/ephemeral.rs b/src/ephemeral.rs
 index d9ea5b1..9fdc3d2 100644
 --- a/src/ephemeral.rs
@@ -389,7 +534,7 @@ index 7f61888..44d6da4 100644
  
      if authcode.is_some() && invitenumber.is_none() {
 diff --git a/src/receive_imf.rs b/src/receive_imf.rs
-index c91cdea..bcd2d8e 100644
+index c91cdea..ea54059 100644
 --- a/src/receive_imf.rs
 +++ b/src/receive_imf.rs
 @@ -16,6 +16,7 @@
@@ -400,24 +545,15 @@ index c91cdea..bcd2d8e 100644
  };
  use crate::config::Config;
  use crate::constants::{self, Blocked, Chattype, DC_CHAT_ID_TRASH, EDITED_PREFIX};
-@@ -1870,6 +1871,8 @@ async fn add_parts(
-     };
-     let in_fresh = state == MessageState::InFresh;
- 
-+    let grpid = chat.grpid.clone();
-+
-     let sort_timestamp = chat_id
-         .calc_sort_timestamp(context, mime_parser.timestamp_sent, sort_to_bottom)
-         .await?;
-@@ -1887,6 +1890,7 @@ async fn add_parts(
+@@ -1887,6 +1888,7 @@ async fn add_parts(
              BTreeSet::<ContactId>::from_iter(chat::get_chat_contacts(context, chat_id).await?);
          let is_from_in_chat =
              !chat_contacts.contains(&ContactId::SELF) || chat_contacts.contains(&from_id);
-+        let sender_is_admin = is_group_admin_contact(context, &grpid, from_id).await?;
++        let sender_is_admin = is_group_admin_contact(context, &chat.grpid, from_id).await?;
  
          info!(
              context,
-@@ -1897,6 +1901,11 @@ async fn add_parts(
+@@ -1897,6 +1899,11 @@ async fn add_parts(
                  context,
                  "Ignoring ephemeral timer change to {ephemeral_timer:?} for chat {chat_id} because sender {from_id} is not a member.",
              );
@@ -429,46 +565,28 @@ index c91cdea..bcd2d8e 100644
          } else if is_dc_message == MessengerMessage::Yes
              && get_previous_message(context, mime_parser)
                  .await?
-@@ -2094,7 +2103,7 @@ async fn add_parts(
-         }
-     }
- 
--    handle_edit_delete(context, mime_parser, from_id, &mime_headers).await?;
-+    handle_edit_delete(context, mime_parser, from_id, &mime_headers, &grpid).await?;
-     handle_post_message(context, mime_parser, from_id, state).await?;
- 
-     if mime_parser.is_system_message == SystemMessage::CallAccepted
-@@ -2365,6 +2374,7 @@ async fn handle_edit_delete(
-     mime_parser: &MimeMessage,
-     from_id: ContactId,
-     mime_headers: &[u8],
-+    grpid: &str,
- ) -> Result<()> {
-     if let Some(rfc724_mid) = mime_parser.get_header(HeaderDef::ChatEdit) {
-         let Some(original_msg_id) = rfc724_mid_exists(context, rfc724_mid).await? else {
-@@ -2412,6 +2422,12 @@ async fn handle_edit_delete(
-         let mut modified_chat_ids = BTreeSet::new();
-         let mut msg_ids = Vec::new();
- 
-+        // Only the admin of an admin group may delete other members' messages.
-+        // NB: `is_group_admin_contact()` alone is not enough — it returns true
-+        // for everyone in regular groups (meaning "no admin restriction").
-+        let from_is_group_admin = admin_group_fingerprint(grpid).is_some()
-+            && is_group_admin_contact(context, grpid, from_id).await?;
-+
-         let rfc724_mid_vec: Vec<&str> = rfc724_mid_list.split_whitespace().collect();
-         for rfc724_mid in rfc724_mid_vec {
-             let rfc724_mid = rfc724_mid.trim_start_matches('<').trim_end_matches('>');
-@@ -2426,7 +2442,7 @@ async fn handle_edit_delete(
-                 warn!(context, "Delete message: Database entry does not exist.");
+@@ -2427,8 +2434,18 @@ async fn handle_edit_delete(
                  continue;
              };
--            if msg.from_id != from_id {
-+            if msg.from_id != from_id && !from_is_group_admin {
-                 warn!(context, "Delete message: Bad sender.");
-                 continue;
+             if msg.from_id != from_id {
+-                warn!(context, "Delete message: Bad sender.");
+-                continue;
++                // Only the admin of an admin group may delete other members'
++                // messages. The admin-ness comes from the *target* message's
++                // chat: the delete-request carrier itself is trashed, and
++                // `is_group_admin_contact()` alone is not enough — it returns
++                // true for everyone in regular groups ("no admin restriction").
++                let msg_chat = Chat::load_from_db(context, msg.chat_id).await?;
++                let from_is_group_admin = admin_group_fingerprint(&msg_chat.grpid).is_some()
++                    && is_group_admin_contact(context, &msg_chat.grpid, from_id).await?;
++                if !from_is_group_admin {
++                    warn!(context, "Delete message: Bad sender.");
++                    continue;
++                }
              }
-@@ -2844,6 +2860,18 @@ async fn create_group(
+ 
+             message::delete_msg_locally(context, &msg).await?;
+@@ -2844,6 +2861,18 @@ async fn create_group(
              // otherwise, a pending "quit" message may pop up
              && mime_parser.get_header(HeaderDef::ChatGroupMemberRemoved).is_none()
      {
@@ -487,7 +605,7 @@ index c91cdea..bcd2d8e 100644
          // Group does not exist but should be created.
          let grpname = mime_parser
              .get_header(HeaderDef::ChatGroupName)
-@@ -3047,6 +3075,8 @@ async fn apply_group_changes(
+@@ -3047,6 +3076,8 @@ async fn apply_group_changes(
      let is_from_in_chat =
          !chat_contacts.contains(&ContactId::SELF) || chat_contacts.contains(&from_id);
  
@@ -496,7 +614,7 @@ index c91cdea..bcd2d8e 100644
      if let Some(removed_addr) = mime_parser.get_header(HeaderDef::ChatGroupMemberRemoved) {
          if !is_from_in_chat {
              better_msg = Some(String::new());
-@@ -3060,17 +3090,27 @@ async fn apply_group_changes(
+@@ -3060,17 +3091,27 @@ async fn apply_group_changes(
                  lookup_key_contact_by_address(context, removed_addr, Some(chat.id)).await?;
          }
          if let Some(id) = removed_id {
@@ -530,7 +648,7 @@ index c91cdea..bcd2d8e 100644
              better_msg = Some(String::new());
          } else if let Some(key) = mime_parser.gossiped_keys.get(added_addr) {
              if !chat_contacts.contains(&from_id) {
-@@ -3119,6 +3159,7 @@ async fn apply_group_changes(
+@@ -3119,6 +3160,7 @@ async fn apply_group_changes(
          // Avoid insertion of `from_id` into a group with inappropriate encryption state.
          if from_is_key_contact != chat.grpid.is_empty()
              && chat.member_list_is_stale(context).await?
@@ -538,7 +656,7 @@ index c91cdea..bcd2d8e 100644
          {
              info!(context, "Member list is stale.");
              let mut new_members: BTreeSet<ContactId> =
-@@ -3155,6 +3196,7 @@ async fn apply_group_changes(
+@@ -3155,6 +3197,7 @@ async fn apply_group_changes(
              send_event_chat_modified = true;
          } else if let Some(ref chat_group_member_timestamps) =
              mime_parser.chat_group_member_timestamps()
@@ -546,7 +664,7 @@ index c91cdea..bcd2d8e 100644
          {
              send_event_chat_modified |= update_chats_contacts_timestamps(
                  context,
-@@ -3297,6 +3339,10 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3297,6 +3340,10 @@ async fn apply_chat_name_avatar_and_description_changes(
  ) -> Result<()> {
      // ========== Apply chat name changes ==========
  
@@ -557,7 +675,7 @@ index c91cdea..bcd2d8e 100644
      let group_name_timestamp = mime_parser
          .get_header(HeaderDef::ChatGroupNameTimestamp)
          .and_then(|s| s.parse::<i64>().ok());
-@@ -3319,7 +3365,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3319,7 +3366,7 @@ async fn apply_chat_name_avatar_and_description_changes(
          let chat_group_name_timestamp = chat.param.get_i64(Param::GroupNameTimestamp).unwrap_or(0);
          let group_name_timestamp = group_name_timestamp.unwrap_or(mime_parser.timestamp_sent);
          // To provide group name consistency, compare names if timestamps are equal.
@@ -566,7 +684,7 @@ index c91cdea..bcd2d8e 100644
              && (chat_group_name_timestamp, grpname) < (group_name_timestamp, &chat.name)
              && chat
                  .id
-@@ -3341,7 +3387,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3341,7 +3388,7 @@ async fn apply_chat_name_avatar_and_description_changes(
              .get_header(HeaderDef::ChatGroupNameChanged)
              .is_some()
          {
@@ -575,7 +693,7 @@ index c91cdea..bcd2d8e 100644
                  let old_name = &sanitize_single_line(old_name);
                  better_msg.get_or_insert(
                      if matches!(chat.typ, Chattype::InBroadcast | Chattype::OutBroadcast) {
-@@ -3351,7 +3397,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3351,7 +3398,7 @@ async fn apply_chat_name_avatar_and_description_changes(
                      },
                  );
              } else {
@@ -584,7 +702,7 @@ index c91cdea..bcd2d8e 100644
                  *better_msg = Some(String::new());
              }
          }
-@@ -3376,7 +3422,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3376,7 +3423,7 @@ async fn apply_chat_name_avatar_and_description_changes(
  
          let new_timestamp = timestamp_in_header.unwrap_or(mime_parser.timestamp_sent);
          // To provide consistency, compare descriptions if timestamps are equal.
@@ -593,7 +711,7 @@ index c91cdea..bcd2d8e 100644
              && (old_timestamp, &old_description) < (new_timestamp, &new_description)
              && chat
                  .id
-@@ -3398,11 +3444,11 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3398,11 +3445,11 @@ async fn apply_chat_name_avatar_and_description_changes(
              .get_header(HeaderDef::ChatGroupDescriptionChanged)
              .is_some()
          {
@@ -607,7 +725,7 @@ index c91cdea..bcd2d8e 100644
                  *better_msg = Some(String::new());
              }
          }
-@@ -3414,7 +3460,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3414,7 +3461,7 @@ async fn apply_chat_name_avatar_and_description_changes(
          && value == "group-avatar-changed"
          && let Some(avatar_action) = &mime_parser.group_avatar
      {
@@ -616,7 +734,7 @@ index c91cdea..bcd2d8e 100644
              // this is just an explicit message containing the group-avatar,
              // apart from that, the group-avatar is send along with various other messages
              better_msg.get_or_insert(
-@@ -3432,13 +3478,13 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3432,13 +3479,13 @@ async fn apply_chat_name_avatar_and_description_changes(
                  },
              );
          } else {
@@ -632,7 +750,7 @@ index c91cdea..bcd2d8e 100644
          && chat
              .param
              .update_timestamp(Param::AvatarTimestamp, mime_parser.timestamp_sent)?
-@@ -4288,6 +4334,30 @@ async fn lookup_key_contact_by_address(
+@@ -4288,6 +4335,30 @@ async fn lookup_key_contact_by_address(
      Ok(contact_id)
  }
  

@@ -21,23 +21,28 @@ client, ArcaneChat/android PR #167):
 - Delete dialog: offer "Delete for Everyone" on other people's
   messages when you are the group admin.
 ---
- _locales/_untranslated_en.json                |  3 ++
+ _locales/_untranslated_en.json                |  6 +++
  .../src/components/chat/ChatContextMenu.tsx   |  5 ++-
+ .../src/components/contact/ContactList.tsx    |  4 ++
+ .../components/contact/ContactListItem.tsx    |  4 ++
  .../dialogs/ConfirmDeleteMessage.tsx          | 11 ++++-
  .../components/dialogs/CreateChat/index.tsx   | 41 +++++++++++++++----
- .../components/dialogs/ViewGroup/index.tsx    | 11 +++--
+ .../components/dialogs/ViewGroup/index.tsx    | 33 +++++++++++++--
  packages/frontend/src/utils/groupAdmin.ts     | 40 ++++++++++++++++++
- 6 files changed, 98 insertions(+), 13 deletions(-)
+ 8 files changed, 131 insertions(+), 13 deletions(-)
  create mode 100644 packages/frontend/src/utils/groupAdmin.ts
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 9e26381..ef80170 100644
+index 9e26381..1ab0195 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
-@@ -1,4 +1,7 @@
+@@ -1,4 +1,10 @@
  {
 +  "admin_group_checkbox": {
 +    "message": "Admin group — only you can edit the group and manage members"
++  },
++  "group_admin": {
++    "message": "Group admin"
 +  },
    "export_chat_explain": {
      "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
@@ -64,6 +69,57 @@ index 5a93f1c..57a3e38 100644
          label: tx('ephemeral_messages'),
          action: onDisappearingMessages,
        }
+diff --git a/packages/frontend/src/components/contact/ContactList.tsx b/packages/frontend/src/components/contact/ContactList.tsx
+index 1968b35..ea19c5a 100644
+--- a/packages/frontend/src/components/contact/ContactList.tsx
++++ b/packages/frontend/src/components/contact/ContactList.tsx
+@@ -27,6 +27,8 @@ export function ContactList(props: {
+   disabledContacts?: number[]
+   onContactContextMenu?: (contact: Type.Contact) => void
+   olElementAttrs?: Omit<React.HTMLAttributes<HTMLOListElement>, 'style'>
++  /** slothfulchat: per-contact row marker, e.g. the admin crown */
++  badge?: (contact: Type.Contact) => React.ReactNode
+ }) {
+   const {
+     contacts,
+@@ -39,6 +41,7 @@ export function ContactList(props: {
+     disabledContacts,
+     onContactContextMenu,
+     olElementAttrs,
++    badge,
+   } = props
+   return (
+     <ol
+@@ -67,6 +70,7 @@ export function ContactList(props: {
+             onRemoveClick={onRemoveClick}
+             disabled={disabled}
+             onContextMenu={onContactContextMenu?.bind(null, contact)}
++            badge={badge?.(contact)}
+           />
+         )
+       })}
+diff --git a/packages/frontend/src/components/contact/ContactListItem.tsx b/packages/frontend/src/components/contact/ContactListItem.tsx
+index 7d09299..3c72cbc 100644
+--- a/packages/frontend/src/components/contact/ContactListItem.tsx
++++ b/packages/frontend/src/components/contact/ContactListItem.tsx
+@@ -52,6 +52,9 @@ export function ContactListItem(
+     onRemoveClick?: (contact: Type.Contact) => void
+     disabled?: boolean
+     onContextMenu?: MouseEventHandler<HTMLButtonElement>
++    /** slothfulchat: extra marker rendered at the end of the row,
++     * e.g. the admin crown in admin groups */
++    badge?: React.ReactNode
+   } & Pick<
+     React.HTMLAttributes<HTMLDivElement>,
+     'aria-setsize' | 'aria-posinset'
+@@ -139,6 +142,7 @@ export function ContactListItem(
+       >
+         <Contact contact={contact} />
+       </button>
++      {props.badge}
+       {showCheckbox && (
+         <DeltaCheckbox
+           checked={checked}
 diff --git a/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx b/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
 index d67707b..6c85462 100644
 --- a/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
@@ -200,24 +256,45 @@ index b8559d6..31efed7 100644
    return async () => {
      if (groupName === '') {
 diff --git a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
-index 9ecb5f4..49111e7 100644
+index 9ecb5f4..b35ae9c 100644
 --- a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
 +++ b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
 @@ -41,6 +41,7 @@ import { matchesLetterShortcut } from '../../../keybindings'
  import { runtime } from '@deltachat-desktop/runtime-interface'
  import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
  import { getLogger } from '@deltachat-desktop/shared/logger'
-+import { selfMayManageGroup } from '../../../utils/groupAdmin'
++import { groupAdminId, selfMayManageGroup } from '../../../utils/groupAdmin'
  import styles from './styles.module.scss'
  const log = getLogger('ViewGroup')
  
-@@ -399,13 +400,17 @@ function ViewGroupInner(
+@@ -399,13 +400,38 @@ function ViewGroupInner(
  
    const listFlags = C.DC_GCL_ADD_SELF
  
 +  // slothfulchat: in admin groups (ported from ArcaneChat) only the admin
 +  // may edit the group or manage members — core rejects it for anyone else.
 +  const selfIsAdmin = selfMayManageGroup(group)
++  const adminId = groupAdminId(group)
++  // crown on the admin's row, visible to every member of an admin group
++  const adminBadge =
++    adminId == null
++      ? undefined
++      : (contact: T.Contact) =>
++          contact.id === adminId ? (
++            <span
++              className='group-admin-badge'
++              style={{
++                alignSelf: 'center',
++                fontSize: '18px',
++                padding: '0 12px',
++              }}
++              role='img'
++              title={tx('group_admin')}
++              aria-label={tx('group_admin')}
++            >
++              👑
++            </span>
++          ) : undefined
 +
    // We don't allow editing of non encrypted groups (email groups)
    // i.e. changing name, avatar or recipients
@@ -230,7 +307,7 @@ index 9ecb5f4..49111e7 100644
  
    const showAddMemberDialog = () => {
      openDialog(AddMemberDialog, {
-@@ -528,7 +533,7 @@ function ViewGroupInner(
+@@ -528,7 +554,7 @@ function ViewGroupInner(
            <RovingTabindexProvider
              wrapperElementRef={groupMemberContactListWrapperRef}
            >
@@ -239,12 +316,13 @@ index 9ecb5f4..49111e7 100644
                <>
                  {!isBroadcast && (
                    <PseudoListItemAddMember
-@@ -550,7 +555,7 @@ function ViewGroupInner(
+@@ -550,7 +576,8 @@ function ViewGroupInner(
              )}
              <ContactList
                contacts={filterContacts(groupContacts)}
 -              showRemove={!chatDisabled && group.isEncrypted}
 +              showRemove={allowEdit}
++              badge={adminBadge}
                onClick={contact => {
                  if (contact.id === C.DC_CONTACT_ID_SELF) {
                    return
