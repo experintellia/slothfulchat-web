@@ -128,8 +128,34 @@ try {
   await add.click()
   const bobId = await importBackup(bobTar)
 
-  // 1. the "Admin group" checkbox in the New Group dialog
+  // 0. with the experimental setting off, the checkbox is not offered
   await switchToProfile(aliceId)
+  await page.locator('#new-chat-button').click()
+  await page.getByTestId('newgroup').click()
+  await page.getByTestId('group-name-input').waitFor({ state: 'visible' })
+  if (await page.getByTestId('admin-group-checkbox').isVisible()) {
+    throw new Error('admin-group checkbox offered without the experimental setting')
+  }
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await page.keyboard.press('Escape')
+  await page
+    .getByTestId('create-chat-dialog')
+    .waitFor({ state: 'detached', timeout: 10_000 })
+  console.log('OK: checkbox hidden while the experimental setting is off')
+
+  // 1a. enable the experimental setting through the real Settings UI
+  await page.getByTestId('open-settings-button').click()
+  await page.getByRole('button', { name: 'Experimental Features' }).click()
+  const adminGroupsToggle = page
+    .locator('label')
+    .filter({ hasText: 'Admin groups' })
+    .first()
+  await adminGroupsToggle.waitFor({ state: 'visible', timeout: 15_000 })
+  await shot('0-experimental-setting')
+  await adminGroupsToggle.click()
+  await page.keyboard.press('Escape')
+
+  // 1b. the "Admin group" checkbox in the New Group dialog
   await page.locator('#new-chat-button').click()
   await page.getByTestId('newgroup').click()
   await page.getByTestId('group-name-input').fill('Book club')

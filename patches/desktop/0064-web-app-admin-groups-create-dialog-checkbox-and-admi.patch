@@ -21,22 +21,25 @@ client, ArcaneChat/android PR #167):
 - Delete dialog: offer "Delete for Everyone" on other people's
   messages when you are the group admin.
 ---
- _locales/_untranslated_en.json                |  6 +++
- .../src/components/chat/ChatContextMenu.tsx   |  5 ++-
+ _locales/_untranslated_en.json                |  9 +++
+ .../Settings/ExperimentalFeatures.tsx         | 13 +++++
+ .../src/components/chat/ChatContextMenu.tsx   |  5 +-
  .../src/components/contact/ContactList.tsx    |  4 ++
  .../components/contact/ContactListItem.tsx    |  4 ++
- .../dialogs/ConfirmDeleteMessage.tsx          | 11 ++++-
- .../components/dialogs/CreateChat/index.tsx   | 41 +++++++++++++++----
- .../components/dialogs/ViewGroup/index.tsx    | 33 +++++++++++++--
- packages/frontend/src/utils/groupAdmin.ts     | 40 ++++++++++++++++++
- 8 files changed, 131 insertions(+), 13 deletions(-)
+ .../dialogs/ConfirmDeleteMessage.tsx          | 11 +++-
+ .../components/dialogs/CreateChat/index.tsx   | 56 ++++++++++++++++---
+ .../components/dialogs/ViewGroup/index.tsx    | 33 ++++++++++-
+ packages/frontend/src/utils/groupAdmin.ts     | 40 +++++++++++++
+ packages/shared/shared-types.d.ts             |  2 +
+ packages/shared/state.ts                      |  1 +
+ 11 files changed, 165 insertions(+), 13 deletions(-)
  create mode 100644 packages/frontend/src/utils/groupAdmin.ts
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 9e26381..1ab0195 100644
+index 9e26381..322beb1 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
-@@ -1,4 +1,10 @@
+@@ -1,4 +1,13 @@
  {
 +  "admin_group_checkbox": {
 +    "message": "Admin group — only you can edit the group and manage members"
@@ -44,9 +47,36 @@ index 9e26381..1ab0195 100644
 +  "group_admin": {
 +    "message": "Group admin"
 +  },
++  "admin_group_explain": {
++    "message": "Experimental. Only works with ArcaneChat and Slothful Chat members — regular Delta Chat apps cannot see this group."
++  },
    "export_chat_explain": {
      "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
    },
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index 3704aa8..11ba3e4 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -88,6 +88,19 @@ export function ExperimentalFeatures() {
+         description='Show roughly how long the unread messages in a chat take to read (e.g. "~4 min") next to the unread counter. Off by default (experimental).'
+         forkAdded
+       />
++      <DesktopSettingsSwitch
++        settingsKey='enableAdminGroups'
++        label='Admin groups'
++        description='Create groups that only you, the admin, can manage: members, name, image, disappearing messages — and you can delete anyone’s message for everyone. ONLY works with ArcaneChat and other Slothful Chat users; regular Delta Chat apps cannot see these groups at all. Off by default (experimental).'
++        forkAdded
++        callback={value => {
++          if (value) {
++            ;(window as any).__slothfulTrack?.('admin_group', {
++              action: 'setting_enabled',
++            })
++          }
++        }}
++      />
+       <DesktopSettingsSwitch
+         settingsKey='enableOnDemandLocationStreaming'
+         label={tx('pref_on_demand_location_streaming')}
 diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
 index 5a93f1c..57a3e38 100644
 --- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
@@ -164,24 +194,28 @@ index d67707b..6c85462 100644
        messageIds,
      ]),
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index b8559d6..31efed7 100644
+index b8559d6..f4d0d85 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-@@ -68,6 +68,7 @@ import { useRpcFetch } from '../../../hooks/useFetch'
+@@ -68,6 +68,8 @@ import { useRpcFetch } from '../../../hooks/useFetch'
  import { I18nContext } from '../../../contexts/I18nContext'
  import useProcessQR, { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
  import { IMAGE_EXTENSIONS } from '@deltachat-desktop/shared/constants'
 +import { createGroupWithAdmin } from '../../../utils/groupAdmin'
++import { useSettingsStore } from '../../../stores/settings'
  
  // Exported (and a regular `enum` rather than `const enum`) so that callers like
  // the command palette can open `CreateGroup` directly with a `groupType`.
-@@ -713,12 +714,16 @@ export function CreateGroup(props: CreateGroupProps) {
+@@ -713,12 +715,19 @@ export function CreateGroup(props: CreateGroupProps) {
    const [groupMembers, removeGroupMember, addGroupMember] = useGroupMembers(
      props.groupMembers || [C.DC_CONTACT_ID_SELF]
    )
 +  // slothfulchat: admin groups (ported from ArcaneChat) — only the creator
-+  // can manage members and edit the group.
++  // can manage members and edit the group. Offered only when the
++  // experimental setting is on (Settings → Experimental features).
 +  const [adminGroup, setAdminGroup] = useState(false)
++  const adminGroupsEnabled =
++    useSettingsStore()[0]?.desktopSettings.enableAdminGroups === true
    const finishCreateGroup = useCreateGroup(
      groupType,
      groupName,
@@ -193,11 +227,11 @@ index b8559d6..31efed7 100644
    )
  
    const [errorMissingGroupName, setErrorMissingGroupName] = useState(false)
-@@ -829,6 +834,19 @@ export function CreateGroup(props: CreateGroupProps) {
+@@ -829,6 +838,30 @@ export function CreateGroup(props: CreateGroupProps) {
                  Parameters<typeof ChatSettingsSetNameAndProfileImage>[0]
                >)}
              />
-+            {groupType === GroupType.REGULAR_GROUP && (
++            {groupType === GroupType.REGULAR_GROUP && adminGroupsEnabled && (
 +              <div className='create-admin-group-checkbox'>
 +                <label>
 +                  <input
@@ -208,12 +242,23 @@ index b8559d6..31efed7 100644
 +                  />{' '}
 +                  {tx('admin_group_checkbox')}
 +                </label>
++                {adminGroup && (
++                  <div
++                    style={{
++                      opacity: 0.65,
++                      fontSize: '13px',
++                      margin: '4px 0 0 22px',
++                    }}
++                  >
++                    {tx('admin_group_explain')}
++                  </div>
++                )}
 +              </div>
 +            )}
            </DialogContent>
            <div id='create-group-members-title' className='group-separator'>
              {tx(
-@@ -1068,7 +1086,8 @@ function useCreateGroup<
+@@ -1068,7 +1101,8 @@ function useCreateGroup<
    groupName: string,
    groupImage: T extends GroupType.REGULAR_GROUP ? string | null : null,
    groupMembers: number[],
@@ -223,7 +268,7 @@ index b8559d6..31efed7 100644
  ) {
    const accountId = selectedAccountId()
    const { openDialog } = useDialog()
-@@ -1079,11 +1098,9 @@ function useCreateGroup<
+@@ -1079,11 +1113,9 @@ function useCreateGroup<
      let chatId: ChatId
      switch (groupType) {
        case GroupType.REGULAR_GROUP: {
@@ -238,7 +283,7 @@ index b8559d6..31efed7 100644
          break
        }
        case GroupType.PLAIN_EMAIL: {
-@@ -1117,7 +1134,15 @@ function useCreateGroup<
+@@ -1117,7 +1149,15 @@ function useCreateGroup<
      ])
  
      return chatId
@@ -372,3 +417,28 @@ index 0000000..3450523
 +    }
 +  ).createGroupWithAdmin(accountId, name)
 +}
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index 00c7641..6a40395 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -47,6 +47,8 @@ export interface DesktopSettingsType {
+   experimentalCompletionMenu: boolean
+   /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
+   experimentalUnreadReadTime: boolean
++  /** webapp: offer creating admin groups (ArcaneChat port). Off by default (experimental). */
++  enableAdminGroups: boolean
+   enterKeySends: boolean
+   locale: string | null
+   notifications: boolean
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index 7488ea7..3d01ea4 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -18,6 +18,7 @@ export function getDefaultState(): DesktopSettingsType {
+     stripTrackingLinks: true,
+     experimentalCompletionMenu: true,
+     experimentalUnreadReadTime: false,
++    enableAdminGroups: false,
+     chatViewBgImg: undefined,
+     lastChats: {},
+     zoomFactor: undefined,

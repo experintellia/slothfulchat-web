@@ -127,8 +127,19 @@ try {
   const [bobContactId] = await rpc('importVcardContents', aliceId, vcard)
   console.log('OK: rpc — key exchange done')
 
-  // 1. alice creates an admin group through the real UI
+  // 1a. enable the experimental admin-groups setting through the Settings UI
   await switchToProfile(aliceId)
+  await page.getByTestId('open-settings-button').click()
+  await page.getByRole('button', { name: 'Experimental Features' }).click()
+  const adminGroupsToggle = page
+    .locator('label')
+    .filter({ hasText: 'Admin groups' })
+    .first()
+  await adminGroupsToggle.waitFor({ state: 'visible', timeout: 15_000 })
+  await adminGroupsToggle.click()
+  await page.keyboard.press('Escape')
+
+  // 1b. alice creates an admin group through the real UI
   await page.locator('#new-chat-button').click()
   await page.getByTestId('newgroup').click()
   await page.getByTestId('group-name-input').fill('Sloth Lounge')
