@@ -1,0 +1,170 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Thu, 23 Jul 2026 17:30:03 +0000
+Subject: [PATCH 62/62] web-app: recorder rows and player fit narrow
+ (phone-sized) viewports
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+At 390px the recording row clipped Cancel/OK off-screen, the preview row
+overflowed hard enough to shove the whole chat view sideways, the speed
+pill poked through the bubble border (the .customControls 300px floor),
+and the mic-picker menu (anchored to the picker's right edge, mid-row on
+a phone) clipped past the viewport. Under 500px the recorder now wraps
+with Cancel/OK grouped as one right-aligned unit (display:contents
+wrapper — zero layout effect on wide viewports), the preview controls
+take their own line, the desktop-sized cancel/finish margins shrink, the
+player row drops its min-width floor, and the picker menu clamps to the
+viewport above the composer.
+
+Also fixes the <=400px live-waveform hide, which was silently overridden
+by the base rule declared later in the file (same specificity, later
+source order wins) — the compound selector now out-ranks it, matching the
+volumeBar pattern next to it.
+
+Verified with MOBILE=1 scripts/shot-voice-player.mjs (390x844, touch).
+---
+ .../components/AudioPlayer/styles.module.scss |  7 +++
+ .../AudioRecorder/AudioRecorder.tsx           | 35 +++++++------
+ .../AudioRecorder/styles.module.scss          | 52 ++++++++++++++++++-
+ 3 files changed, 78 insertions(+), 16 deletions(-)
+
+diff --git a/packages/frontend/src/components/AudioPlayer/styles.module.scss b/packages/frontend/src/components/AudioPlayer/styles.module.scss
+index b1c116961..402dabf88 100644
+--- a/packages/frontend/src/components/AudioPlayer/styles.module.scss
++++ b/packages/frontend/src/components/AudioPlayer/styles.module.scss
+@@ -22,6 +22,13 @@
+   align-items: center;
+   gap: 0.5rem;
+   min-width: 300px; // parity with the native element
++
++  // Narrow viewports: bubbles are narrower than 300px + padding, and the
++  // fixed min-width shoved the speed pill through the bubble's border. Let
++  // the row shrink (the seek/waveform is the flexible part).
++  @media (max-width: 500px) {
++    min-width: 0;
++  }
+ }
+ // Mini-player: the chat-list column shrinks to ~295px, so drop the 300px floor
+ // and let the controls fit. Declared after `.customControls` so it wins (equal
+diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+index 80b0099fd..dc14d0ae0 100644
+--- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
++++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+@@ -841,21 +841,26 @@ export const AudioRecorder = ({
+       )}
+       {micCluster}
+       {originalPill}
+-      <button
+-        type='button'
+-        className={styles.cancel}
+-        onClick={() => onRecordingCancel()}
+-      >
+-        {tx('cancel')}
+-      </button>
+-      <button
+-        type='button'
+-        className={styles.stopRecording}
+-        onClick={() => onRecordingStop()}
+-        aria-description={tx('stop_recording')}
+-      >
+-        {tx('ok')}
+-      </button>
++      {/* display:contents on wide viewports (no layout change); becomes a
++          real flex group under 500px so cancel/ok wrap TOGETHER instead of
++          stranding ok alone on the next line. */}
++      <div className={styles.recActions}>
++        <button
++          type='button'
++          className={styles.cancel}
++          onClick={() => onRecordingCancel()}
++        >
++          {tx('cancel')}
++        </button>
++        <button
++          type='button'
++          className={styles.stopRecording}
++          onClick={() => onRecordingStop()}
++          aria-description={tx('stop_recording')}
++        >
++          {tx('ok')}
++        </button>
++      </div>
+     </div>
+   )
+ }
+diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+index 1c4cc49fc..576489f8c 100644
+--- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
++++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+@@ -167,7 +167,9 @@
+       display: none;
+     }
+   }
+-  .liveWaveform {
++  // Compound selector: the base .liveWaveform rule is declared later in this
++  // file and would win a same-specificity tie, un-hiding the waveform.
++  .liveWaveformContainer .liveWaveform {
+     display: none;
+   }
+ }
+@@ -264,6 +266,13 @@
+   padding-inline-end: 10px;
+ }
+ 
++// Cancel/OK grouped so narrow viewports can wrap them as one unit;
++// display:contents = zero layout effect otherwise (children lay out as if
++// the wrapper didn't exist).
++.recActions {
++  display: contents;
++}
++
+ // --- mic picker + inline no-sound warning (experimental) ------------------
+ 
+ // Warning + picker trigger sit together so the "no sound" hint visually points
+@@ -353,3 +362,44 @@
+   display: flex;
+   align-items: center;
+ }
++
++// Narrow viewports (phone-sized): the recording row (pause+mic+timer+meter+
++// picker+pill+cancel+ok) and the preview row (player + three buttons) don't
++// fit on one 390px line — let them wrap and drop the desktop-sized margins.
++// ponytail: one breakpoint, tuned against `MOBILE=1 scripts/shot-voice-player.mjs`.
++@media (max-width: 500px) {
++  .audioRecorder {
++    flex-wrap: wrap;
++  }
++  .previewControls {
++    flex-basis: 100%;
++  }
++  .cancel,
++  .stopRecording {
++    margin-inline-start: 6px;
++  }
++  // Doubled class to out-rank the base block's nested `&.stopRecording`
++  // (margin-inline-end: 40px) at equal position-independent specificity.
++  .stopRecording.stopRecording {
++    margin-inline-end: 6px;
++  }
++  // Cancel/OK wrap together as a right-aligned pair instead of OK being
++  // stranded alone on the next line.
++  .recActions {
++    display: flex;
++    margin-inline-start: auto;
++    align-items: center;
++  }
++  // The picker menu is anchored to the picker's right edge; mid-row on a
++  // phone that pushes it past the viewport. Clamp it to the viewport above
++  // the composer instead. ponytail: the 64px bottom offset approximates the
++  // composer bar height; a dynamic anchor is the upgrade if the composer
++  // ever grows while recording.
++  .micMenu {
++    position: fixed;
++    inset-inline: 8px;
++    bottom: 64px;
++    min-width: 0;
++    max-width: none;
++  }
++}
