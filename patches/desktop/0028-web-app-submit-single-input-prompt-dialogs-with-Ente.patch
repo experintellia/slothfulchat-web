@@ -20,7 +20,7 @@ newline (implicit form submission only fires from inputs).
  3 files changed, 44 insertions(+), 44 deletions(-)
 
 diff --git a/packages/frontend/src/components/AccountListSidebar/EditPrivateTagDialog.tsx b/packages/frontend/src/components/AccountListSidebar/EditPrivateTagDialog.tsx
-index bcb0504..a402064 100644
+index bcb05045c..a402064ae 100644
 --- a/packages/frontend/src/components/AccountListSidebar/EditPrivateTagDialog.tsx
 +++ b/packages/frontend/src/components/AccountListSidebar/EditPrivateTagDialog.tsx
 @@ -31,24 +31,26 @@ export function EditPrivateTagDialog({
@@ -69,7 +69,7 @@ index bcb0504..a402064 100644
    )
  }
 diff --git a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
-index 31e8b4a..9835fd5 100644
+index 31e8b4a67..9835fd5fb 100644
 --- a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 +++ b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 @@ -83,7 +83,7 @@ function EditProfileDialogInner({
@@ -100,7 +100,7 @@ index 31e8b4a..9835fd5 100644
    )
  }
 diff --git a/packages/frontend/src/components/dialogs/ViewProfile/menu.tsx b/packages/frontend/src/components/dialogs/ViewProfile/menu.tsx
-index 630942d..50a4462 100644
+index 630942def..50a446256 100644
 --- a/packages/frontend/src/components/dialogs/ViewProfile/menu.tsx
 +++ b/packages/frontend/src/components/dialogs/ViewProfile/menu.tsx
 @@ -174,25 +174,27 @@ function EditContactNameDialog({

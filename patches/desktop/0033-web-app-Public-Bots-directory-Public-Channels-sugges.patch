@@ -43,7 +43,7 @@ SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS build/customize variable.
  create mode 100644 packages/frontend/src/utils/slothfulInstanceConfig.ts
 
 diff --git a/packages/frontend/src/components/AppPicker/index.tsx b/packages/frontend/src/components/AppPicker/index.tsx
-index 2af4853..730f70f 100644
+index 2af48537b..730f70fd2 100644
 --- a/packages/frontend/src/components/AppPicker/index.tsx
 +++ b/packages/frontend/src/components/AppPicker/index.tsx
 @@ -24,6 +24,7 @@ import {
@@ -78,7 +78,7 @@ index 2af4853..730f70f 100644
    onAppSelected: (app: AppInfo, downloadUrl: string) => Promise<void>
  }
 diff --git a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
-index 4e131b7..934ab9c 100644
+index 4e131b723..934ab9c4a 100644
 --- a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
 +++ b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
 @@ -13,6 +13,7 @@ import useTranslationFunction from '../../hooks/useTranslationFunction'
@@ -114,7 +114,7 @@ index 4e131b7..934ab9c 100644
        <DownloadOnDemand settings={settingsStore.settings} />
  
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index 99af66c..b8559d6 100644
+index 99af66cbe..b8559d672 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 @@ -21,7 +21,7 @@ import {
@@ -296,7 +296,7 @@ index 99af66c..b8559d6 100644
  type CreateGroupProps = {
 diff --git a/packages/frontend/src/components/dialogs/PublicBots/index.tsx b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
 new file mode 100644
-index 0000000..3c8b0ca
+index 000000000..3c8b0ca3d
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
 @@ -0,0 +1,375 @@
@@ -677,7 +677,7 @@ index 0000000..3c8b0ca
 +}
 diff --git a/packages/frontend/src/components/dialogs/PublicBots/styles.module.scss b/packages/frontend/src/components/dialogs/PublicBots/styles.module.scss
 new file mode 100644
-index 0000000..e2c490f
+index 000000000..e2c490fda
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicBots/styles.module.scss
 @@ -0,0 +1,93 @@
@@ -776,7 +776,7 @@ index 0000000..e2c490f
 +}
 diff --git a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 new file mode 100644
-index 0000000..4420fa5
+index 000000000..4420fa53e
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 @@ -0,0 +1,107 @@
@@ -889,7 +889,7 @@ index 0000000..4420fa5
 +}
 diff --git a/packages/frontend/src/utils/getJsonFromBase64.ts b/packages/frontend/src/utils/getJsonFromBase64.ts
 new file mode 100644
-index 0000000..018aaed
+index 000000000..018aaed36
 --- /dev/null
 +++ b/packages/frontend/src/utils/getJsonFromBase64.ts
 @@ -0,0 +1,23 @@
@@ -918,7 +918,7 @@ index 0000000..018aaed
 +}
 diff --git a/packages/frontend/src/utils/slothfulInstanceConfig.ts b/packages/frontend/src/utils/slothfulInstanceConfig.ts
 new file mode 100644
-index 0000000..c519d5a
+index 000000000..c519d5a38
 --- /dev/null
 +++ b/packages/frontend/src/utils/slothfulInstanceConfig.ts
 @@ -0,0 +1,14 @@
@@ -937,7 +937,7 @@ index 0000000..c519d5a
 +  return (window as any).__slothfulConfig?.hidePublicSuggestions === true
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index a131321..9310b6d 100644
+index a131321a2..9310b6de8 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -95,6 +95,17 @@ export interface DesktopSettingsType {
@@ -959,7 +959,7 @@ index a131321..9310b6d 100644
  
  export interface RC_Config {
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 5ac60b2..49969df 100644
+index 5ac60b22e..49969df62 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -31,6 +31,8 @@ export function getDefaultState(): DesktopSettingsType {

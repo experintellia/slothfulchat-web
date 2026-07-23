@@ -24,7 +24,7 @@ mirroring the app's reactions dialog.
  1 file changed, 120 insertions(+), 3 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-index 5fe63a8..6363d3d 100644
+index 5fe63a8b8..6363d3da6 100644
 --- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 @@ -357,6 +357,8 @@ body.html-export::before {

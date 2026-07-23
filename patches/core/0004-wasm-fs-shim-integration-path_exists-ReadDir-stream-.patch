@@ -24,7 +24,7 @@ Content-Transfer-Encoding: 8bit
  5 files changed, 73 insertions(+), 17 deletions(-)
 
 diff --git a/src/accounts.rs b/src/accounts.rs
-index c825c2d..0a8e9f7 100644
+index c825c2d15..0a8e9f737 100644
 --- a/src/accounts.rs
 +++ b/src/accounts.rs
 @@ -87,12 +87,12 @@ fn get_id(&self) -> u32 {
@@ -104,7 +104,7 @@ index c825c2d..0a8e9f7 100644
              !self
                  .lock_task
 diff --git a/src/blob.rs b/src/blob.rs
-index a60ebe6..20267a9 100644
+index a60ebe65c..20267a913 100644
 --- a/src/blob.rs
 +++ b/src/blob.rs
 @@ -14,6 +14,7 @@
@@ -130,7 +130,7 @@ index a60ebe6..20267a9 100644
                  match entry {
                      Ok(entry) => Some(entry),
 diff --git a/src/context.rs b/src/context.rs
-index 3b94c4e..9f31e0c 100644
+index 3b94c4e02..9f31e0caa 100644
 --- a/src/context.rs
 +++ b/src/context.rs
 @@ -402,7 +402,7 @@ pub async fn new_closed(
@@ -143,7 +143,7 @@ index 3b94c4e..9f31e0c 100644
          }
          let context = Context::with_blobdir(
 diff --git a/src/imex.rs b/src/imex.rs
-index e93c98a..3e901ed 100644
+index e93c98a35..3e901edc2 100644
 --- a/src/imex.rs
 +++ b/src/imex.rs
 @@ -11,6 +11,7 @@
@@ -222,7 +222,7 @@ index e93c98a..3e901ed 100644
      context: &'a Context,
      temp_db_path: &Path,
 diff --git a/src/tools.rs b/src/tools.rs
-index cfa3178..bd1939b 100644
+index cfa31781a..bd1939b4c 100644
 --- a/src/tools.rs
 +++ b/src/tools.rs
 @@ -355,7 +355,7 @@ pub(crate) async fn get_filebytes(context: &Context, path: &Path) -> Result<u64>

@@ -15,7 +15,7 @@ covered by this and still need a real translation.
  1 file changed, 32 insertions(+)
 
 diff --git a/bin/build-shared-convert-translations.mjs b/bin/build-shared-convert-translations.mjs
-index bdf12c3..8f0e4b5 100755
+index bdf12c3b4..8f0e4b595 100755
 --- a/bin/build-shared-convert-translations.mjs
 +++ b/bin/build-shared-convert-translations.mjs
 @@ -15,6 +15,37 @@ function removeJunk(input) {

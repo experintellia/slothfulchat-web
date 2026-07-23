@@ -17,7 +17,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  1 file changed, 8 insertions(+), 2 deletions(-)
 
 diff --git a/packages/frontend/scss/misc/_search-input.scss b/packages/frontend/scss/misc/_search-input.scss
-index 0a39d14..328e237 100644
+index 0a39d14ac..328e23719 100644
 --- a/packages/frontend/scss/misc/_search-input.scss
 +++ b/packages/frontend/scss/misc/_search-input.scss
 @@ -1,3 +1,5 @@

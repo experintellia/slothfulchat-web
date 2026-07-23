@@ -22,7 +22,7 @@ and in the single-file snapshot alike.
  1 file changed, 21 insertions(+), 1 deletion(-)
 
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-index 2831d57..5fe63a8 100644
+index 2831d5735..5fe63a8b8 100644
 --- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 @@ -262,7 +262,27 @@ async function collectCss(): Promise<string> {

@@ -14,7 +14,7 @@ and send from the picker.
  1 file changed, 26 insertions(+), 8 deletions(-)
 
 diff --git a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
-index fe3aa67..9564e8e 100644
+index fe3aa6760..9564e8eae 100644
 --- a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
 +++ b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
 @@ -13,6 +13,7 @@ import { BackendRemote } from '../../backend-com'

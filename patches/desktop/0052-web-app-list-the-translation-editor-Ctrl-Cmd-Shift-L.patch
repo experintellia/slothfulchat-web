@@ -9,7 +9,7 @@ Subject: [PATCH 52/64] web-app: list the translation editor (Ctrl/Cmd+Shift+L)
  1 file changed, 6 insertions(+)
 
 diff --git a/packages/frontend/src/components/KeyboardShortcutHint.tsx b/packages/frontend/src/components/KeyboardShortcutHint.tsx
-index 7da2c37..5c5ea42 100644
+index 7da2c3720..5c5ea4269 100644
 --- a/packages/frontend/src/components/KeyboardShortcutHint.tsx
 +++ b/packages/frontend/src/components/KeyboardShortcutHint.tsx
 @@ -202,6 +202,12 @@ export function getKeybindings(

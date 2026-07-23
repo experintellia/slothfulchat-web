@@ -14,7 +14,7 @@ pixel-for-pixel identical.
  1 file changed, 15 insertions(+), 4 deletions(-)
 
 diff --git a/packages/frontend/src/components/ChatView/styles.module.scss b/packages/frontend/src/components/ChatView/styles.module.scss
-index c81615c..28e5e10 100644
+index c81615c42..28e5e1045 100644
 --- a/packages/frontend/src/components/ChatView/styles.module.scss
 +++ b/packages/frontend/src/components/ChatView/styles.module.scss
 @@ -62,17 +62,28 @@

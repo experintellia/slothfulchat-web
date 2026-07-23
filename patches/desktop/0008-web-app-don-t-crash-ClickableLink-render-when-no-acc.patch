@@ -16,7 +16,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  1 file changed, 2 insertions(+), 3 deletions(-)
 
 diff --git a/packages/frontend/src/components/helpers/ClickableLink.tsx b/packages/frontend/src/components/helpers/ClickableLink.tsx
-index e177847..c26e213 100644
+index e17784745..c26e21348 100644
 --- a/packages/frontend/src/components/helpers/ClickableLink.tsx
 +++ b/packages/frontend/src/components/helpers/ClickableLink.tsx
 @@ -8,18 +8,17 @@ import { selectedAccountId } from '../../ScreenController'

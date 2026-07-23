@@ -23,7 +23,7 @@ target check, so the browser build can expose the privacy setting.
  2 files changed, 11 insertions(+), 6 deletions(-)
 
 diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
-index 19fbda5..2e08871 100644
+index 19fbda5c2..2e08871ad 100644
 --- a/packages/frontend/src/components/ChatView/ChatView.tsx
 +++ b/packages/frontend/src/components/ChatView/ChatView.tsx
 @@ -321,9 +321,11 @@ function ChatNavButtons({
@@ -42,7 +42,7 @@ index 19fbda5..2e08871 100644
          chat.isEncrypted &&
          // Core only allows placing calls in chats of type "single"
 diff --git a/packages/frontend/src/components/Settings/Notifications.tsx b/packages/frontend/src/components/Settings/Notifications.tsx
-index ab90726..b29ea71 100644
+index ab9072696..b29ea71e1 100644
 --- a/packages/frontend/src/components/Settings/Notifications.tsx
 +++ b/packages/frontend/src/components/Settings/Notifications.tsx
 @@ -85,9 +85,12 @@ export default function Notifications({ desktopSettings }: Props) {

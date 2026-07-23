@@ -25,7 +25,7 @@ set_stock_strings).
  2 files changed, 20 insertions(+), 1 deletion(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
-index 3b3de50..ab91000 100644
+index 3b3de507e..ab910004b 100644
 --- a/deltachat-jsonrpc/src/api.rs
 +++ b/deltachat-jsonrpc/src/api.rs
 @@ -34,7 +34,7 @@
@@ -49,7 +49,7 @@ index 3b3de50..ab91000 100644
      }
  
 diff --git a/src/stock_str.rs b/src/stock_str.rs
-index 886f57b..75f87db 100644
+index 886f57b6b..75f87dbe8 100644
 --- a/src/stock_str.rs
 +++ b/src/stock_str.rs
 @@ -1253,6 +1253,21 @@ pub(crate) async fn update_device_chats(&self) -> Result<()> {

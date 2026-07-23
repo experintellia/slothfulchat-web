@@ -20,7 +20,7 @@ Subject: [PATCH 08/19] wasm: file-based backup export/import
  6 files changed, 180 insertions(+), 54 deletions(-)
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 04697b5..a5493ca 100644
+index 04697b571..a5493caef 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -195,16 +195,14 @@ dependencies = [
@@ -97,7 +97,7 @@ index 04697b5..a5493ca 100644
  [[package]]
  name = "rayon"
 diff --git a/Cargo.toml b/Cargo.toml
-index 7528163..489250a 100644
+index 75281633f..489250ad1 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -105,8 +105,10 @@ uuid = { version = "1", features = ["serde", "v4"] }
@@ -119,7 +119,7 @@ index 7528163..489250a 100644
 +# fork that routes tokio through the tokio-wasm-shim facade so tar works on wasm32
 +astral-tokio-tar = { path = "../../vendor-crates/astral-tokio-tar" }
 diff --git a/src/imex.rs b/src/imex.rs
-index 3e901ed..7f44379 100644
+index 3e901edc2..7f44379ff 100644
 --- a/src/imex.rs
 +++ b/src/imex.rs
 @@ -11,7 +11,6 @@
@@ -299,7 +299,7 @@ index 3e901ed..7f44379 100644
      context: &Context,
      dest: &Path,
 diff --git a/src/scheduler.rs b/src/scheduler.rs
-index 4c81caa..a2324ae 100644
+index 4c81caa19..a2324ae9a 100644
 --- a/src/scheduler.rs
 +++ b/src/scheduler.rs
 @@ -753,25 +753,43 @@ pub(crate) async fn stop(self, context: &Context) {
@@ -362,7 +362,7 @@ index 4c81caa..a2324ae 100644
          // Abort tasks, then await them to ensure the `Future` is dropped.
          // Just aborting the task may keep resources such as `Context` clone
 diff --git a/src/sql.rs b/src/sql.rs
-index 9dab4c7..1789da4 100644
+index 9dab4c708..1789da41c 100644
 --- a/src/sql.rs
 +++ b/src/sql.rs
 @@ -123,6 +123,48 @@ pub(crate) async fn close(&self) {
@@ -415,7 +415,7 @@ index 9dab4c7..1789da4 100644
          let path_str = path
              .to_str()
 diff --git a/src/tools.rs b/src/tools.rs
-index 4640cef..f2984f7 100644
+index 4640cefd3..f2984f784 100644
 --- a/src/tools.rs
 +++ b/src/tools.rs
 @@ -425,7 +425,11 @@ pub(crate) fn new(path: PathBuf) -> Self {

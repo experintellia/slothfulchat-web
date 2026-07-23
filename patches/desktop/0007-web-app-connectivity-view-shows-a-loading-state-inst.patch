@@ -9,7 +9,7 @@ Subject: [PATCH 07/64] web-app: connectivity view shows a loading state
  1 file changed, 31 insertions(+), 12 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
-index 8a3746d..aa12862 100644
+index 8a3746d2b..aa1286215 100644
 --- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 +++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 @@ -24,6 +24,7 @@ export default function ConnectivityDialog({ onClose }: DialogProps) {

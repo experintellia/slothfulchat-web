@@ -20,7 +20,7 @@ SystemTime::now which panics on wasm32-unknown-unknown).
  create mode 100644 src/net/ws_tcp.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
-index a17aa17..04697b5 100644
+index a17aa1746..04697b571 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -272,8 +272,6 @@ dependencies = [
@@ -360,7 +360,7 @@ index a17aa17..04697b5 100644
   "js-sys",
   "wasm-bindgen",
 diff --git a/Cargo.toml b/Cargo.toml
-index 0a75276..7528163 100644
+index 0a752768c..75281633f 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -120,13 +120,21 @@ tokio-stream = { version = "0.1.17", features = ["fs"] }
@@ -386,7 +386,7 @@ index 0a75276..7528163 100644
  [dev-dependencies]
  anyhow = { workspace = true, features = ["backtrace"] } # Enable `backtrace` feature in tests.
 diff --git a/src/net.rs b/src/net.rs
-index 254a1ac..93bf951 100644
+index 254a1ac68..93bf951a6 100644
 --- a/src/net.rs
 +++ b/src/net.rs
 @@ -5,9 +5,11 @@
@@ -442,7 +442,7 @@ index 254a1ac..93bf951 100644
      context: &Context,
      host: &str,
 diff --git a/src/net/dns.rs b/src/net/dns.rs
-index f4e6bec..b6bf59c 100644
+index f4e6bec11..b6bf59cd0 100644
 --- a/src/net/dns.rs
 +++ b/src/net/dns.rs
 @@ -45,6 +45,7 @@
@@ -478,7 +478,7 @@ index f4e6bec..b6bf59c 100644
      hostname: &str,
 diff --git a/src/net/ws_tcp.rs b/src/net/ws_tcp.rs
 new file mode 100644
-index 0000000..eab5f2e
+index 000000000..eab5f2edc
 --- /dev/null
 +++ b/src/net/ws_tcp.rs
 @@ -0,0 +1,147 @@

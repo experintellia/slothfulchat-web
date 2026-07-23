@@ -36,7 +36,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  2 files changed, 35 insertions(+), 21 deletions(-)
 
 diff --git a/src/scheduler/connectivity.rs b/src/scheduler/connectivity.rs
-index 19086ac..435cb3d 100644
+index 19086ac92..435cb3d17 100644
 --- a/src/scheduler/connectivity.rs
 +++ b/src/scheduler/connectivity.rs
 @@ -152,7 +152,11 @@ fn all_work_done(&self) -> bool {
@@ -53,7 +53,7 @@ index 19086ac..435cb3d 100644
          context.emit_event(EventType::ConnectivityChanged);
      }
 diff --git a/src/webimap.rs b/src/webimap.rs
-index 3a96148..f3b44e8 100644
+index 3a96148f1..f3b44e873 100644
 --- a/src/webimap.rs
 +++ b/src/webimap.rs
 @@ -130,8 +130,9 @@ pub(crate) async fn verify(&self, context: &Context) -> Result<()> {

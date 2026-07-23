@@ -15,7 +15,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
  1 file changed, 3 insertions(+), 1 deletion(-)
 
 diff --git a/packages/frontend/src/components/QrReader/index.tsx b/packages/frontend/src/components/QrReader/index.tsx
-index 53dec8a..ab62220 100644
+index 53dec8aac..ab622209e 100644
 --- a/packages/frontend/src/components/QrReader/index.tsx
 +++ b/packages/frontend/src/components/QrReader/index.tsx
 @@ -326,9 +326,11 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(

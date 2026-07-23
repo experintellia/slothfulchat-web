@@ -11,7 +11,7 @@ Subject: [PATCH 01/64] web-app: about 'what this is' + hide unimplemented
  3 files changed, 15 insertions(+), 57 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
-index 96699ec..15e418e 100644
+index 96699ecdc..15e418e7e 100644
 --- a/packages/frontend/src/components/Settings/Advanced.tsx
 +++ b/packages/frontend/src/components/Settings/Advanced.tsx
 @@ -11,7 +11,6 @@ import { runtime } from '@deltachat-desktop/runtime-interface'
@@ -51,7 +51,7 @@ index 96699ec..15e418e 100644
          label={tx('pref_multidevice')}
          settingsKey='bcc_self'
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index fb81947..8abf664 100644
+index fb81947da..8abf6641e 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
 @@ -68,6 +68,21 @@ export default function About({ onClose }: DialogProps) {
@@ -77,7 +77,7 @@ index fb81947..8abf664 100644
          </DialogContent>
        </DialogBody>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
-index 0305569..58ab5d8 100644
+index 030556968..58ab5d86d 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
 @@ -18,36 +18,11 @@ import useDialog from '../../../hooks/dialog/useDialog'

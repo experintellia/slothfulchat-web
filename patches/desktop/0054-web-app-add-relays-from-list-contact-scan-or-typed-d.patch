@@ -53,7 +53,7 @@ Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
 
 diff --git a/packages/frontend/src/components/dialogs/Transports/contactRelays.ts b/packages/frontend/src/components/dialogs/Transports/contactRelays.ts
 new file mode 100644
-index 0000000..87f51f3
+index 000000000..87f51f379
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/Transports/contactRelays.ts
 @@ -0,0 +1,42 @@
@@ -100,7 +100,7 @@ index 0000000..87f51f3
 +  )
 +}
 diff --git a/packages/frontend/src/components/dialogs/Transports/index.tsx b/packages/frontend/src/components/dialogs/Transports/index.tsx
-index 3f6386b..1ed9630 100644
+index 3f6386b9c..1ed96300e 100644
 --- a/packages/frontend/src/components/dialogs/Transports/index.tsx
 +++ b/packages/frontend/src/components/dialogs/Transports/index.tsx
 @@ -1,4 +1,4 @@
@@ -246,7 +246,7 @@ index 3f6386b..1ed9630 100644
      </Dialog>
    )
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
-index 120289c..c793640 100644
+index 120289cdd..c79364051 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 @@ -18,8 +18,16 @@ type Props = {
@@ -460,7 +460,7 @@ index 120289c..c793640 100644
              <button
                type='button'
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
-index 1654f40..70c7b25 100644
+index 1654f4006..70c7b254b 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 @@ -292,6 +292,48 @@
@@ -531,7 +531,7 @@ index 1654f40..70c7b25 100644
  
  .relayDialogCustomInput {
 diff --git a/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts b/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
-index 6f011df..a979b8f 100644
+index 6f011dfe0..a979b8f62 100644
 --- a/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
 +++ b/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
 @@ -26,7 +26,7 @@ export default function useAddTransportDialog(): AddTransportDialogFn {
@@ -545,7 +545,7 @@ index 6f011df..a979b8f 100644
            '\n\nNote if using multi-device:\nbefore changing or adding transports make sure all other devices have at least version 2.33.0 installed. Otherwise they will run out of sync.'
 diff --git a/packages/frontend/src/tests/contactRelays.test.ts b/packages/frontend/src/tests/contactRelays.test.ts
 new file mode 100644
-index 0000000..a9db017
+index 000000000..a9db01793
 --- /dev/null
 +++ b/packages/frontend/src/tests/contactRelays.test.ts
 @@ -0,0 +1,66 @@

@@ -18,7 +18,7 @@ rest. The location-streaming info dialog's pointer is updated to
  4 files changed, 13 insertions(+), 7 deletions(-)
 
 diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
-index 0affbd3..0b368d2 100644
+index 0affbd317..0b368d2e5 100644
 --- a/packages/frontend/src/components/Icon/index.tsx
 +++ b/packages/frontend/src/components/Icon/index.tsx
 @@ -48,6 +48,7 @@ export type IconName =
@@ -30,7 +30,7 @@ index 0affbd3..0b368d2 100644
    | 'upload-file'
    | 'visibility'
 diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
-index 79669fa..be8430c 100644
+index 79669fa2b..be8430cc2 100644
 --- a/packages/frontend/src/components/Settings/Advanced.tsx
 +++ b/packages/frontend/src/components/Settings/Advanced.tsx
 @@ -1,6 +1,5 @@
@@ -53,7 +53,7 @@ index 79669fa..be8430c 100644
          <>
            <SettingsSeparator />
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index f9af952..da5c809 100644
+index f9af952db..da5c809bd 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -55,7 +55,7 @@ export function ExperimentalFeatures() {
@@ -66,7 +66,7 @@ index f9af952..da5c809 100644
        message,
        confirmLabel: tx('ok'),
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 76b551e..f24ac72 100644
+index 76b551e1c..f24ac7235 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
 @@ -10,6 +10,7 @@ import Notifications from './Notifications'

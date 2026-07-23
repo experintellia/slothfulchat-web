@@ -8,7 +8,7 @@ Subject: [PATCH 05/64] web-app: link Imprint page from the welcome screen
  1 file changed, 4 insertions(+)
 
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
-index 0b1c89b..780f5b3 100644
+index 0b1c89b63..780f5b3b1 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 @@ -61,6 +61,10 @@ export default function OnboardingScreen(props: Props) {

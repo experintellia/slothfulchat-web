@@ -29,7 +29,7 @@ most one chat lookup per relevant incoming message.
  2 files changed, 35 insertions(+)
 
 diff --git a/src/contact.rs b/src/contact.rs
-index 310600c..2f739f9 100644
+index 310600c96..2f739f943 100644
 --- a/src/contact.rs
 +++ b/src/contact.rs
 @@ -1998,6 +1998,12 @@ pub(crate) async fn update_last_seen(
@@ -46,7 +46,7 @@ index 310600c..2f739f9 100644
              .scheduler
              .interrupt_recently_seen(contact_id, timestamp)
 diff --git a/src/events/chatlist_events.rs b/src/events/chatlist_events.rs
-index ec909a1..eb22208 100644
+index ec909a12f..eb222088f 100644
 --- a/src/events/chatlist_events.rs
 +++ b/src/events/chatlist_events.rs
 @@ -380,6 +380,35 @@ async fn test_change_chat_profile_image() -> Result<()> {

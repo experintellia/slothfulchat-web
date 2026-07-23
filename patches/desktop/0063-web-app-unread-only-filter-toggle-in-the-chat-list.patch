@@ -27,14 +27,14 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 
 diff --git a/images/icons/filter-list.svg b/images/icons/filter-list.svg
 new file mode 100644
-index 0000000..326db31
+index 000000000..326db3157
 --- /dev/null
 +++ b/images/icons/filter-list.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path d="M400-240v-80h160v80H400ZM240-440v-80h480v80H240ZM120-640v-80h720v80H120Z"/></svg>
 \ No newline at end of file
 diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
-index 0b368d2..6225d0d 100644
+index 0b368d2e5..6225d0d3c 100644
 --- a/packages/frontend/src/components/Icon/index.tsx
 +++ b/packages/frontend/src/components/Icon/index.tsx
 @@ -21,6 +21,7 @@ export type IconName =
@@ -46,7 +46,7 @@ index 0b368d2..6225d0d 100644
    | 'image'
    | 'image_outline'
 diff --git a/packages/frontend/src/components/chat/ChatList.tsx b/packages/frontend/src/components/chat/ChatList.tsx
-index c80488b..f21eaed 100644
+index c80488b2d..f21eaeda8 100644
 --- a/packages/frontend/src/components/chat/ChatList.tsx
 +++ b/packages/frontend/src/components/chat/ChatList.tsx
 @@ -190,6 +190,7 @@ export default function ChatList(props: {
@@ -133,7 +133,7 @@ index c80488b..f21eaed 100644
      useLogicVirtualChatList(chatListIds)
  
 diff --git a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
-index 3387f63..adf8f3c 100644
+index 3387f63fa..adf8f3c19 100644
 --- a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
 @@ -21,6 +21,8 @@ type Props = {
@@ -172,7 +172,7 @@ index 3387f63..adf8f3c 100644
              <Button
                onClick={openProxyDialog}
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index 40e2ac5..1eb14a8 100644
+index 40e2ac55d..1eb14a8cb 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 @@ -47,6 +47,7 @@ export default function MainScreen({ accountId }: Props) {

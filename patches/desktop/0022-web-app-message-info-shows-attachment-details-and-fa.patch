@@ -27,7 +27,7 @@ Adds the untranslated labels Type/Size/Resolution/Duration.
  4 files changed, 128 insertions(+), 12 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 4cbd935..8d24c02 100644
+index 4cbd935bf..8d24c02ef 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -1,4 +1,13 @@
@@ -45,7 +45,7 @@ index 4cbd935..8d24c02 100644
      "message": "Tab to search"
    },
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
-index ff0ec13..5d3432a 100644
+index ff0ec1325..5d3432a69 100644
 --- a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 @@ -1,6 +1,7 @@
@@ -172,7 +172,7 @@ index ff0ec13..5d3432a 100644
    )
  }
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/styles.module.scss b/packages/frontend/src/components/dialogs/MessageDetail/styles.module.scss
-index c6b3146..b7f85ba 100644
+index c6b31462f..b7f85baa1 100644
 --- a/packages/frontend/src/components/dialogs/MessageDetail/styles.module.scss
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/styles.module.scss
 @@ -17,6 +17,31 @@
@@ -208,7 +208,7 @@ index c6b3146..b7f85ba 100644
    display: flex;
    justify-content: space-between;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index bd24649..65171d5 100644
+index bd2464902..65171d5ea 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -67,7 +67,6 @@ import { useRpcFetch } from '../../hooks/useFetch'

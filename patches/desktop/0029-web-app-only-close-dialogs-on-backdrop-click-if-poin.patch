@@ -15,7 +15,7 @@ click land there, matching how native dialogs behave.
  1 file changed, 25 insertions(+), 8 deletions(-)
 
 diff --git a/packages/frontend/src/components/Dialog/Dialog.tsx b/packages/frontend/src/components/Dialog/Dialog.tsx
-index 8de3ce4..3e1bdf9 100644
+index 8de3ce420..3e1bdf98d 100644
 --- a/packages/frontend/src/components/Dialog/Dialog.tsx
 +++ b/packages/frontend/src/components/Dialog/Dialog.tsx
 @@ -60,6 +60,29 @@ const Dialog = React.memo<Props>(

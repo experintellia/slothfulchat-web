@@ -14,7 +14,7 @@ await.
  1 file changed, 8 insertions(+)
 
 diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
-index 60d6f43..5a93f1c 100644
+index 60d6f4352..5a93f1c7d 100644
 --- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
 +++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
 @@ -326,6 +326,14 @@ export function useChatContextMenu(): {

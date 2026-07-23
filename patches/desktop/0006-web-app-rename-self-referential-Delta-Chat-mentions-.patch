@@ -15,7 +15,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  1 file changed, 8 insertions(+), 8 deletions(-)
 
 diff --git a/_locales/en.xml b/_locales/en.xml
-index a52b7b6..f09c33c 100644
+index a52b7b6ca..f09c33ccc 100644
 --- a/_locales/en.xml
 +++ b/_locales/en.xml
 @@ -1,7 +1,7 @@

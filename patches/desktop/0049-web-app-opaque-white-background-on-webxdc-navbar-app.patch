@@ -17,7 +17,7 @@ navbar buttons.
  1 file changed, 9 insertions(+)
 
 diff --git a/packages/frontend/src/components/ChatView/styles.module.scss b/packages/frontend/src/components/ChatView/styles.module.scss
-index 28e5e10..00b2179 100644
+index 28e5e1045..00b21791f 100644
 --- a/packages/frontend/src/components/ChatView/styles.module.scss
 +++ b/packages/frontend/src/components/ChatView/styles.module.scss
 @@ -96,6 +96,15 @@

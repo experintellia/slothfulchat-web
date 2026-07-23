@@ -33,7 +33,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
 
 diff --git a/packages/frontend/src/components/LoginForm.tsx b/packages/frontend/src/components/LoginForm.tsx
-index 32c1120..235e92c 100644
+index 32c11202e..235e92c1f 100644
 --- a/packages/frontend/src/components/LoginForm.tsx
 +++ b/packages/frontend/src/components/LoginForm.tsx
 @@ -298,6 +298,23 @@ export default function LoginForm({
@@ -61,7 +61,7 @@ index 32c1120..235e92c 100644
                <label>
                  <span>{tx('enforce_e2ee')}</span>
 diff --git a/packages/frontend/src/components/Settings/DefaultCredentials.ts b/packages/frontend/src/components/Settings/DefaultCredentials.ts
-index bd2016a..6ab6dff 100644
+index bd2016aae..6ab6dffcc 100644
 --- a/packages/frontend/src/components/Settings/DefaultCredentials.ts
 +++ b/packages/frontend/src/components/Settings/DefaultCredentials.ts
 @@ -1,6 +1,8 @@
@@ -83,7 +83,7 @@ index bd2016a..6ab6dff 100644
  
    return { ...defaultCredentials, ...credentials }
 diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
-index aa12862..3ec99b6 100644
+index aa1286215..3ec99b6f5 100644
 --- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 +++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 @@ -103,9 +103,16 @@ function ConnectivityDialogInner() {
@@ -104,7 +104,7 @@ index aa12862..3ec99b6 100644
          Change…
        </button>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
-index 58ab5d8..dc53ee4 100644
+index 58ab5d86d..dc53ee49e 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
 @@ -95,6 +95,18 @@ export default function InstantOnboardingScreen({
@@ -127,7 +127,7 @@ index 58ab5d8..dc53ee4 100644
    // because that function is called on every keypress
    const saveDisplayName = () =>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
-index 780f5b3..c39e833 100644
+index 780f5b3b1..c39e833ac 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 @@ -1,6 +1,7 @@
@@ -166,7 +166,7 @@ index 780f5b3..c39e833 100644
            </form>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
 new file mode 100644
-index 0000000..33d3c6b
+index 000000000..33d3c6b6f
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
 @@ -0,0 +1,109 @@
@@ -280,7 +280,7 @@ index 0000000..33d3c6b
 +  )
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-index bbfe900..6e40c33 100644
+index bbfe900af..6e40c33ae 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
 @@ -24,6 +24,12 @@ function extractLinkFromQrCode(qrWithUrl: QrWithUrl<AccountQr>) {

@@ -56,7 +56,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/tests/relayDirectory.test.ts
 
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
-index dc53ee4..cdeb369 100644
+index dc53ee49e..cdeb369a0 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
 @@ -3,6 +3,7 @@ import React, { useContext, useEffect, useState } from 'react'
@@ -80,7 +80,7 @@ index dc53ee4..cdeb369 100644
                  {welcomeQr?.qr.kind === 'login' && (
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
 new file mode 100644
-index 0000000..9346294
+index 000000000..934629448
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
 @@ -0,0 +1,95 @@
@@ -181,7 +181,7 @@ index 0000000..9346294
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 new file mode 100644
-index 0000000..120289c
+index 000000000..120289cdd
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 @@ -0,0 +1,238 @@
@@ -424,7 +424,7 @@ index 0000000..120289c
 +  )
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-index de5acd9..f5438b4 100644
+index de5acd99d..f5438b4d0 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
 @@ -36,21 +36,26 @@ function extractLinkFromQrCode(qrWithUrl: QrWithUrl<AccountQr>) {
@@ -468,7 +468,7 @@ index de5acd9..f5438b4 100644
      <>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
 new file mode 100644
-index 0000000..a37fe2e
+index 000000000..a37fe2ea3
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
 @@ -0,0 +1,290 @@
@@ -764,7 +764,7 @@ index 0000000..a37fe2e
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
 new file mode 100644
-index 0000000..5df9372
+index 000000000..5df93720c
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
 @@ -0,0 +1,51 @@
@@ -820,7 +820,7 @@ index 0000000..5df9372
 +  return found
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
-index 438b76a..1654f40 100644
+index 438b76adc..1654f4006 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 @@ -78,3 +78,267 @@
@@ -1092,7 +1092,7 @@ index 438b76a..1654f40 100644
 +  padding: 6px 8px;
 +}
 diff --git a/packages/frontend/src/contexts/InstantOnboardingContext.tsx b/packages/frontend/src/contexts/InstantOnboardingContext.tsx
-index 9c2fc6e..a92312f 100644
+index 9c2fc6e29..a92312f69 100644
 --- a/packages/frontend/src/contexts/InstantOnboardingContext.tsx
 +++ b/packages/frontend/src/contexts/InstantOnboardingContext.tsx
 @@ -24,6 +24,11 @@ type InstantOnboardingContextValue = {
@@ -1129,7 +1129,7 @@ index 9c2fc6e..a92312f 100644
  
    return (
 diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
-index 17d65c0..6c95d72 100644
+index 17d65c0f8..6c95d7208 100644
 --- a/packages/frontend/src/hooks/useInstantOnboarding.ts
 +++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
 @@ -6,6 +6,7 @@ import { ConfigureProgressDialog } from '../components/dialogs/ConfigureProgress
@@ -1201,7 +1201,7 @@ index 17d65c0..6c95d72 100644
  }
 diff --git a/packages/frontend/src/tests/relayDirectory.test.ts b/packages/frontend/src/tests/relayDirectory.test.ts
 new file mode 100644
-index 0000000..7c8d38f
+index 000000000..7c8d38f4e
 --- /dev/null
 +++ b/packages/frontend/src/tests/relayDirectory.test.ts
 @@ -0,0 +1,102 @@

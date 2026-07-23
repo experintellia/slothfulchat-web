@@ -31,7 +31,7 @@ centred. Onboarding dialogs are intentionally left unchanged for now.
  13 files changed, 117 insertions(+), 8 deletions(-)
 
 diff --git a/packages/frontend/scss/dialogs/_qr-code.scss b/packages/frontend/scss/dialogs/_qr-code.scss
-index 604d2df..eaa0427 100644
+index 604d2dfea..eaa0427e1 100644
 --- a/packages/frontend/scss/dialogs/_qr-code.scss
 +++ b/packages/frontend/scss/dialogs/_qr-code.scss
 @@ -1,4 +1,5 @@
@@ -64,7 +64,7 @@ index 604d2df..eaa0427 100644
  
  .copy-link-icon {
 diff --git a/packages/frontend/src/components/Dialog/Dialog.tsx b/packages/frontend/src/components/Dialog/Dialog.tsx
-index d89b22a..8de3ce4 100644
+index d89b22a19..8de3ce420 100644
 --- a/packages/frontend/src/components/Dialog/Dialog.tsx
 +++ b/packages/frontend/src/components/Dialog/Dialog.tsx
 @@ -37,6 +37,12 @@ type Props = React.PropsWithChildren<{
@@ -97,7 +97,7 @@ index d89b22a..8de3ce4 100644
          style={style}
          data-testid={props['dataTestid']}
 diff --git a/packages/frontend/src/components/Dialog/DialogWithHeader.tsx b/packages/frontend/src/components/Dialog/DialogWithHeader.tsx
-index c04b41f..6c49ab1 100644
+index c04b41f2f..6c49ab147 100644
 --- a/packages/frontend/src/components/Dialog/DialogWithHeader.tsx
 +++ b/packages/frontend/src/components/Dialog/DialogWithHeader.tsx
 @@ -15,6 +15,7 @@ type Props = React.PropsWithChildren<
@@ -117,7 +117,7 @@ index c04b41f..6c49ab1 100644
        <DialogHeader
          onClose={props.onClose}
 diff --git a/packages/frontend/src/components/Dialog/styles.module.scss b/packages/frontend/src/components/Dialog/styles.module.scss
-index 3eeed1a..5761fa4 100644
+index 3eeed1a83..5761fa48c 100644
 --- a/packages/frontend/src/components/Dialog/styles.module.scss
 +++ b/packages/frontend/src/components/Dialog/styles.module.scss
 @@ -45,6 +45,33 @@ $paddingVertical: 20px;
@@ -155,7 +155,7 @@ index 3eeed1a..5761fa4 100644
    width: 100%;
    align-items: center;
 diff --git a/packages/frontend/src/components/QrReader/styles.module.scss b/packages/frontend/src/components/QrReader/styles.module.scss
-index c423a78..d43ad0b 100644
+index c423a781c..d43ad0b19 100644
 --- a/packages/frontend/src/components/QrReader/styles.module.scss
 +++ b/packages/frontend/src/components/QrReader/styles.module.scss
 @@ -1,7 +1,19 @@
@@ -192,7 +192,7 @@ index c423a78..d43ad0b 100644
      background-color: gray;
    }
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 2c59081..c3e736d 100644
+index 2c5908172..c3e736d6b 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
 @@ -54,7 +54,13 @@ export default function Settings({ onClose }: DialogProps) {
@@ -211,7 +211,7 @@ index 2c59081..c3e736d 100644
          title={tx('menu_settings')}
          onClose={onClose}
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 614c2c3..592629e 100644
+index 614c2c3d8..592629ef0 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
 @@ -45,6 +45,7 @@ export default function About({ onClose }: DialogProps) {
@@ -223,7 +223,7 @@ index 614c2c3..592629e 100644
        <DialogBody>
          <DialogContent>
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index b20726b..99af66c 100644
+index b20726be5..99af66cbe 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 @@ -90,7 +90,13 @@ export default function CreateChat(props: DialogProps) {
@@ -281,7 +281,7 @@ index b20726b..99af66c 100644
        <form onSubmit={submitForm}>
          <DialogBody>
 diff --git a/packages/frontend/src/components/dialogs/MediaView/index.tsx b/packages/frontend/src/components/dialogs/MediaView/index.tsx
-index 2c17308..d5609d1 100644
+index 2c17308e7..d5609d1db 100644
 --- a/packages/frontend/src/components/dialogs/MediaView/index.tsx
 +++ b/packages/frontend/src/components/dialogs/MediaView/index.tsx
 @@ -18,7 +18,11 @@ export default function MediaView(
@@ -298,7 +298,7 @@ index 2c17308..d5609d1 100644
        <DialogBody className={styles.mediaViewDialogBody}>
          <Gallery chatId={chatId} />
 diff --git a/packages/frontend/src/components/dialogs/QrCode.tsx b/packages/frontend/src/components/dialogs/QrCode.tsx
-index 2a278f1..6f4bbb0 100644
+index 2a278f1e0..6f4bbb0f0 100644
 --- a/packages/frontend/src/components/dialogs/QrCode.tsx
 +++ b/packages/frontend/src/components/dialogs/QrCode.tsx
 @@ -66,7 +66,12 @@ export default function QrCode({
@@ -325,7 +325,7 @@ index 2a278f1..6f4bbb0 100644
            onScanSuccess={handleScan}
            onError={handleError}
 diff --git a/packages/frontend/src/components/dialogs/QrCodeScanner.tsx b/packages/frontend/src/components/dialogs/QrCodeScanner.tsx
-index 53394fe..d09be4a 100644
+index 53394fe99..d09be4a79 100644
 --- a/packages/frontend/src/components/dialogs/QrCodeScanner.tsx
 +++ b/packages/frontend/src/components/dialogs/QrCodeScanner.tsx
 @@ -23,6 +23,7 @@ export default function QrCodeScanner({
@@ -337,7 +337,7 @@ index 53394fe..d09be4a 100644
        <QrCodeScanQrInner onClose={onClose} scanContext={scanContext} />
      </DialogWithHeader>
 diff --git a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
-index 6a7ad0d..9ecb5f4 100644
+index 6a7ad0dbf..9ecb5f43d 100644
 --- a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
 +++ b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
 @@ -73,6 +73,7 @@ export default function ViewGroup(
@@ -349,7 +349,7 @@ index 6a7ad0d..9ecb5f4 100644
        <ViewGroupInner
          onClose={onClose}
 diff --git a/packages/frontend/src/components/dialogs/ViewProfile/index.tsx b/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
-index 2fca890..26ee3fc 100644
+index 2fca89070..26ee3fc68 100644
 --- a/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
 +++ b/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
 @@ -89,6 +89,7 @@ export default function ViewProfile(

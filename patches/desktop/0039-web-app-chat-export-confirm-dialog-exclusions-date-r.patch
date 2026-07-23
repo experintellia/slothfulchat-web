@@ -47,7 +47,7 @@ New strings live in _untranslated_en.json.
  2 files changed, 262 insertions(+), 33 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 4ab7816..fe3dfc4 100644
+index 4ab7816b3..fe3dfc4b3 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -1,4 +1,16 @@
@@ -68,7 +68,7 @@ index 4ab7816..fe3dfc4 100644
      "message": "Export Chat"
    },
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-index 6363d3d..2940565 100644
+index 6363d3da6..294056514 100644
 --- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 @@ -1,4 +1,4 @@

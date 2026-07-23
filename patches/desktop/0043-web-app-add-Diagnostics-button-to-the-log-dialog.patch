@@ -11,7 +11,7 @@ other target because that global only exists in the wasm web build.
  1 file changed, 10 insertions(+)
 
 diff --git a/packages/frontend/src/components/dialogs/Log/index.tsx b/packages/frontend/src/components/dialogs/Log/index.tsx
-index df6e38b..af52196 100644
+index df6e38b2b..af521960e 100644
 --- a/packages/frontend/src/components/dialogs/Log/index.tsx
 +++ b/packages/frontend/src/components/dialogs/Log/index.tsx
 @@ -232,6 +232,16 @@ export function LogDialog({ onClose }: DialogProps) {

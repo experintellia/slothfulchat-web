@@ -16,7 +16,7 @@ disabled.
  1 file changed, 8 insertions(+)
 
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-index 2940565..634bf21 100644
+index 294056514..634bf211c 100644
 --- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 @@ -83,6 +83,14 @@ export default function ExportChatToHtml({ chat, onClose }: Props) {

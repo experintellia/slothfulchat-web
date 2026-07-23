@@ -29,19 +29,19 @@ commits c9b9666 + a2683e9) onto chatmail core:
 ---
  deltachat-jsonrpc/src/api.rs            |  13 +++
  deltachat-jsonrpc/src/api/types/chat.rs |  10 +-
- src/chat.rs                             | 111 +++++++++++++++++++
- src/chat/chat_tests.rs                  | 136 ++++++++++++++++++++++++
+ src/chat.rs                             | 111 ++++++++++++++++++
+ src/chat/chat_tests.rs                  | 144 ++++++++++++++++++++++++
  src/ephemeral.rs                        |  13 ++-
  src/message.rs                          |  13 ++-
  src/mimeparser.rs                       |   4 +-
  src/qr.rs                               |  20 +++-
- src/receive_imf.rs                      | 105 +++++++++++++++---
+ src/receive_imf.rs                      | 105 ++++++++++++++---
  src/securejoin.rs                       |  21 ++++
  src/tools.rs                            |  17 +++
- 11 files changed, 434 insertions(+), 29 deletions(-)
+ 11 files changed, 442 insertions(+), 29 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
-index ab91000..5fca11d 100644
+index ab910004b..5fca11d20 100644
 --- a/deltachat-jsonrpc/src/api.rs
 +++ b/deltachat-jsonrpc/src/api.rs
 @@ -1082,6 +1082,19 @@ async fn create_group_chat(
@@ -65,7 +65,7 @@ index ab91000..5fca11d 100644
      ///
      /// Same as [`Self::create_group_chat`], but the chat is unencrypted and can only have
 diff --git a/deltachat-jsonrpc/src/api/types/chat.rs b/deltachat-jsonrpc/src/api/types/chat.rs
-index 42d69ff..a9c8192 100644
+index 42d69ffa6..a9c819244 100644
 --- a/deltachat-jsonrpc/src/api/types/chat.rs
 +++ b/deltachat-jsonrpc/src/api/types/chat.rs
 @@ -1,7 +1,7 @@
@@ -107,7 +107,7 @@ index 42d69ff..a9c8192 100644
      }
  }
 diff --git a/src/chat.rs b/src/chat.rs
-index 7c2a855..b3f7cbd 100644
+index 7c2a855a6..b3f7cbd8f 100644
 --- a/src/chat.rs
 +++ b/src/chat.rs
 @@ -57,6 +57,26 @@
@@ -271,10 +271,10 @@ index 7c2a855..b3f7cbd 100644
      msg.param
          .set_int(Param::Cmd, SystemMessage::GroupImageChanged as i32);
 diff --git a/src/chat/chat_tests.rs b/src/chat/chat_tests.rs
-index a27b706..b1e306a 100644
+index a27b70670..ac52a521a 100644
 --- a/src/chat/chat_tests.rs
 +++ b/src/chat/chat_tests.rs
-@@ -6576,3 +6576,139 @@ async fn test_unpromoted_group_start_message() -> Result<()> {
+@@ -6576,3 +6576,147 @@ async fn test_unpromoted_group_start_message() -> Result<()> {
  
      Ok(())
  }
@@ -353,6 +353,14 @@ index a27b706..b1e306a 100644
 +    bob.recv_msg_opt(&del).await;
 +    assert_eq!(bob_chat_id.get_msg_cnt(bob).await?, bob_cnt - 1);
 +
++    // A non-admin can still leave on their own,
++    // and the admin's device applies it.
++    remove_contact_from_chat(bob, bob_chat_id, ContactId::SELF).await?;
++    assert!(!is_contact_in_chat(bob, bob_chat_id, ContactId::SELF).await?);
++    let leave = bob.pop_sent_msg().await;
++    alice.recv_msg_opt(&leave).await;
++    assert!(!is_contact_in_chat(alice, alice_chat_id, alice_bob).await?);
++
 +    // In REGULAR groups others' messages still cannot be deleted for
 +    // everyone (deviation from ArcaneChat, which dropped this check).
 +    let reg_chat_id = create_group(alice, "regular").await?;
@@ -415,7 +423,7 @@ index a27b706..b1e306a 100644
 +    Ok(())
 +}
 diff --git a/src/ephemeral.rs b/src/ephemeral.rs
-index d9ea5b1..9fdc3d2 100644
+index d9ea5b16b..9fdc3d219 100644
 --- a/src/ephemeral.rs
 +++ b/src/ephemeral.rs
 @@ -72,7 +72,7 @@
@@ -446,7 +454,7 @@ index d9ea5b1..9fdc3d2 100644
              return Ok(());
          }
 diff --git a/src/message.rs b/src/message.rs
-index 677b75e..b4d65c7 100644
+index 677b75e69..b4d65c7bd 100644
 --- a/src/message.rs
 +++ b/src/message.rs
 @@ -1703,10 +1703,15 @@ pub async fn delete_msgs_ex(
@@ -470,7 +478,7 @@ index 677b75e..b4d65c7 100644
              !delete_for_all || msg.get_showpadlock(),
              "Cannot request deletion of unencrypted message for others"
 diff --git a/src/mimeparser.rs b/src/mimeparser.rs
-index 357ea9f..e751f30 100644
+index 357ea9f32..e751f3073 100644
 --- a/src/mimeparser.rs
 +++ b/src/mimeparser.rs
 @@ -31,7 +31,7 @@
@@ -492,7 +500,7 @@ index 357ea9f..e751f30 100644
  
      async fn parse_mime_recursive<'a>(
 diff --git a/src/qr.rs b/src/qr.rs
-index 7f61888..44d6da4 100644
+index 7f6188805..44d6da46f 100644
 --- a/src/qr.rs
 +++ b/src/qr.rs
 @@ -13,6 +13,7 @@
@@ -534,7 +542,7 @@ index 7f61888..44d6da4 100644
  
      if authcode.is_some() && invitenumber.is_none() {
 diff --git a/src/receive_imf.rs b/src/receive_imf.rs
-index c91cdea..ea54059 100644
+index c91cdea22..ea5405909 100644
 --- a/src/receive_imf.rs
 +++ b/src/receive_imf.rs
 @@ -16,6 +16,7 @@
@@ -782,7 +790,7 @@ index c91cdea..ea54059 100644
      context: &Context,
      fingerprint: &str,
 diff --git a/src/securejoin.rs b/src/securejoin.rs
-index 3ab3180..48d2cff 100644
+index 3ab31805d..48d2cffdd 100644
 --- a/src/securejoin.rs
 +++ b/src/securejoin.rs
 @@ -6,6 +6,7 @@
@@ -828,7 +836,7 @@ index 3ab3180..48d2cff 100644
                      .await?;
  
 diff --git a/src/tools.rs b/src/tools.rs
-index f2984f7..b7f42c1 100644
+index f2984f784..b7f42c1f4 100644
 --- a/src/tools.rs
 +++ b/src/tools.rs
 @@ -302,6 +302,23 @@ pub(crate) fn validate_id(s: &str) -> bool {

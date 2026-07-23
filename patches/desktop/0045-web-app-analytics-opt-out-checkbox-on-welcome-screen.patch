@@ -12,7 +12,7 @@ Subject: [PATCH 45/64] web-app: analytics opt-out checkbox on welcome screen +
  4 files changed, 120 insertions(+), 1 deletion(-)
 
 diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
-index 15e418e..79669fa 100644
+index 15e418e7e..79669fa2b 100644
 --- a/packages/frontend/src/components/Settings/Advanced.tsx
 +++ b/packages/frontend/src/components/Settings/Advanced.tsx
 @@ -10,6 +10,8 @@ import SettingsButton from './SettingsButton'
@@ -82,7 +82,7 @@ index 15e418e..79669fa 100644
    const tx = useTranslationFunction()
  
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 7903077..d8053b2 100644
+index 790307731..d8053b29b 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
 @@ -118,6 +118,15 @@ export default function About({ onClose }: DialogProps) {
@@ -102,7 +102,7 @@ index 7903077..d8053b2 100644
          <SettingsIconButton
            icon='question_mark'
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
-index ce5a875..485d9b9 100644
+index ce5a87504..485d9b9b1 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 @@ -1,4 +1,4 @@
@@ -181,7 +181,7 @@ index ce5a875..485d9b9 100644
        </DialogFooter>
      </>
 diff --git a/packages/frontend/src/utils/slothfulInstanceConfig.ts b/packages/frontend/src/utils/slothfulInstanceConfig.ts
-index 3e44735..93a4e73 100644
+index 3e4473553..93a4e738a 100644
 --- a/packages/frontend/src/utils/slothfulInstanceConfig.ts
 +++ b/packages/frontend/src/utils/slothfulInstanceConfig.ts
 @@ -70,3 +70,27 @@ export function instanceDefaultChatmailQr(): string | undefined {

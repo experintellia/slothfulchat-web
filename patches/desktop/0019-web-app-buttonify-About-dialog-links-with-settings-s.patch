@@ -16,7 +16,7 @@ ship at /changelog/, replacing the old link to GitHub releases.
  1 file changed, 56 insertions(+), 36 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index f6bf017..614c2c3 100644
+index f6bf017c7..614c2c3d8 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
 @@ -1,22 +1,19 @@

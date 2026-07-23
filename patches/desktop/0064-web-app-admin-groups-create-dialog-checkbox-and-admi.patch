@@ -36,7 +36,7 @@ client, ArcaneChat/android PR #167):
  create mode 100644 packages/frontend/src/utils/groupAdmin.ts
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 9e26381..59d3112 100644
+index 9e2638185..59d31120c 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -1,4 +1,13 @@
@@ -54,7 +54,7 @@ index 9e26381..59d3112 100644
      "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
    },
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 3704aa8..2e2e784 100644
+index 3704aa87c..2e2e784d2 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -88,6 +88,19 @@ export function ExperimentalFeatures() {
@@ -78,7 +78,7 @@ index 3704aa8..2e2e784 100644
          settingsKey='enableOnDemandLocationStreaming'
          label={tx('pref_on_demand_location_streaming')}
 diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
-index 5a93f1c..57a3e38 100644
+index 5a93f1c7d..57a3e38d3 100644
 --- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
 +++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
 @@ -1,5 +1,6 @@
@@ -100,7 +100,7 @@ index 5a93f1c..57a3e38 100644
          action: onDisappearingMessages,
        }
 diff --git a/packages/frontend/src/components/contact/ContactList.tsx b/packages/frontend/src/components/contact/ContactList.tsx
-index 1968b35..ea19c5a 100644
+index 1968b35b1..ea19c5af7 100644
 --- a/packages/frontend/src/components/contact/ContactList.tsx
 +++ b/packages/frontend/src/components/contact/ContactList.tsx
 @@ -27,6 +27,8 @@ export function ContactList(props: {
@@ -129,7 +129,7 @@ index 1968b35..ea19c5a 100644
          )
        })}
 diff --git a/packages/frontend/src/components/contact/ContactListItem.tsx b/packages/frontend/src/components/contact/ContactListItem.tsx
-index 7d09299..3c72cbc 100644
+index 7d09299a0..3c72cbcd2 100644
 --- a/packages/frontend/src/components/contact/ContactListItem.tsx
 +++ b/packages/frontend/src/components/contact/ContactListItem.tsx
 @@ -52,6 +52,9 @@ export function ContactListItem(
@@ -151,7 +151,7 @@ index 7d09299..3c72cbc 100644
          <DeltaCheckbox
            checked={checked}
 diff --git a/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx b/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
-index d67707b..6c85462 100644
+index d67707b8d..6c85462f2 100644
 --- a/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
 +++ b/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
 @@ -15,6 +15,7 @@ import { C } from '@deltachat/jsonrpc-client'
@@ -194,7 +194,7 @@ index d67707b..6c85462 100644
        messageIds,
      ]),
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index b8559d6..f4d0d85 100644
+index b8559d672..f4d0d8598 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 @@ -68,6 +68,8 @@ import { useRpcFetch } from '../../../hooks/useFetch'
@@ -301,7 +301,7 @@ index b8559d6..f4d0d85 100644
    return async () => {
      if (groupName === '') {
 diff --git a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
-index 9ecb5f4..b35ae9c 100644
+index 9ecb5f43d..b35ae9c47 100644
 --- a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
 +++ b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
 @@ -41,6 +41,7 @@ import { matchesLetterShortcut } from '../../../keybindings'
@@ -373,7 +373,7 @@ index 9ecb5f4..b35ae9c 100644
                    return
 diff --git a/packages/frontend/src/utils/groupAdmin.ts b/packages/frontend/src/utils/groupAdmin.ts
 new file mode 100644
-index 0000000..3450523
+index 000000000..345052320
 --- /dev/null
 +++ b/packages/frontend/src/utils/groupAdmin.ts
 @@ -0,0 +1,40 @@
@@ -418,7 +418,7 @@ index 0000000..3450523
 +  ).createGroupWithAdmin(accountId, name)
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 00c7641..6a40395 100644
+index 00c76415d..6a403951f 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -47,6 +47,8 @@ export interface DesktopSettingsType {
@@ -431,7 +431,7 @@ index 00c7641..6a40395 100644
    locale: string | null
    notifications: boolean
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 7488ea7..3d01ea4 100644
+index 7488ea78b..3d01ea44d 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -18,6 +18,7 @@ export function getDefaultState(): DesktopSettingsType {

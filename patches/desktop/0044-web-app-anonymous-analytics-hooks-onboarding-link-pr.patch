@@ -16,7 +16,7 @@ All no-op on other targets and when analytics is disabled.
  3 files changed, 16 insertions(+)
 
 diff --git a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
-index eb6d6c2..84f1fc5 100644
+index eb6d6c287..84f1fc5a5 100644
 --- a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
 +++ b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
 @@ -204,6 +204,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
@@ -47,7 +47,7 @@ index eb6d6c2..84f1fc5 100644
        dismissedRef.current = url
      }
 diff --git a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
-index 4420fa5..b9aae4d 100644
+index 4420fa53e..b9aae4d77 100644
 --- a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 +++ b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 @@ -49,6 +49,8 @@ function ChannelSourceItem({
@@ -60,7 +60,7 @@ index 4420fa5..b9aae4d 100644
            onClose()
          }}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/index.tsx b/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
-index be9b1d3..0aa222f 100644
+index be9b1d300..0aa222ffc 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
 @@ -31,6 +31,14 @@ export default function WelcomeScreen({ selectedAccountId, ...props }: Props) {

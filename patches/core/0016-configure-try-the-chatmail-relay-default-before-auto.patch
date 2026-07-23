@@ -30,7 +30,7 @@ the eventual WebSocket-transport relays.
  create mode 100644 src/configure/chatmail_default.rs
 
 diff --git a/src/configure.rs b/src/configure.rs
-index 33da10d..3a7efa5 100644
+index 33da10d44..3a7efa536 100644
 --- a/src/configure.rs
 +++ b/src/configure.rs
 @@ -11,6 +11,7 @@
@@ -88,7 +88,7 @@ index 33da10d..3a7efa5 100644
          .await;
 diff --git a/src/configure/chatmail_default.rs b/src/configure/chatmail_default.rs
 new file mode 100644
-index 0000000..79940db
+index 000000000..79940db56
 --- /dev/null
 +++ b/src/configure/chatmail_default.rs
 @@ -0,0 +1,124 @@

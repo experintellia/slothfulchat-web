@@ -57,14 +57,14 @@ consent prompt: one setting, on by default.
 
 diff --git a/images/icons/cleaning_services.svg b/images/icons/cleaning_services.svg
 new file mode 100644
-index 0000000..c60f833
+index 000000000..c60f83365
 --- /dev/null
 +++ b/images/icons/cleaning_services.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path d="M120-40v-280q0-83 58.5-141.5T320-520h40v-320q0-33 23.5-56.5T440-920h80q33 0 56.5 23.5T600-840v320h40q83 0 141.5 58.5T840-320v280H120Zm80-80h80v-120q0-17 11.5-28.5T320-280q17 0 28.5 11.5T360-240v120h80v-120q0-17 11.5-28.5T480-280q17 0 28.5 11.5T520-240v120h80v-120q0-17 11.5-28.5T640-280q17 0 28.5 11.5T680-240v120h80v-200q0-50-35-85t-85-35H320q-50 0-85 35t-35 85v200Zm320-400v-320h-80v320h80Zm0 0h-80 80Z"/></svg>
 \ No newline at end of file
 diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
-index 32bff71..0affbd3 100644
+index 32bff710b..0affbd317 100644
 --- a/packages/frontend/src/components/Icon/index.tsx
 +++ b/packages/frontend/src/components/Icon/index.tsx
 @@ -14,6 +14,7 @@ export type IconName =
@@ -76,7 +76,7 @@ index 32bff71..0affbd3 100644
    | 'code-tags'
    | 'cross'
 diff --git a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
-index 934ab9c..b7df4da 100644
+index 934ab9c4a..b7df4da27 100644
 --- a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
 +++ b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
 @@ -38,6 +38,11 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
@@ -92,7 +92,7 @@ index 934ab9c..b7df4da 100644
        (SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS), these toggles are moot —
        hide them too. */}
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index c2977f9..0977055 100644
+index c2977f97a..097705511 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
 @@ -14,7 +14,10 @@ import { extension } from 'mime-types'
@@ -222,7 +222,7 @@ index c2977f9..0977055 100644
                  <section
                    className='attachment-quote-section is-attachment'
 diff --git a/packages/frontend/src/hooks/useOpenLinkSafely.ts b/packages/frontend/src/hooks/useOpenLinkSafely.ts
-index c8dbb9e..08b502c 100644
+index c8dbb9e77..08b502ca3 100644
 --- a/packages/frontend/src/hooks/useOpenLinkSafely.ts
 +++ b/packages/frontend/src/hooks/useOpenLinkSafely.ts
 @@ -4,6 +4,8 @@ import useConfirmationDialog from './dialog/useConfirmationDialog'
@@ -265,7 +265,7 @@ index c8dbb9e..08b502c 100644
  }
 diff --git a/packages/frontend/src/tests/trackingParams.test.ts b/packages/frontend/src/tests/trackingParams.test.ts
 new file mode 100644
-index 0000000..78ab82f
+index 000000000..78ab82fbc
 --- /dev/null
 +++ b/packages/frontend/src/tests/trackingParams.test.ts
 @@ -0,0 +1,105 @@
@@ -376,7 +376,7 @@ index 0000000..78ab82f
 +})
 diff --git a/packages/frontend/src/utils/trackingParams.ts b/packages/frontend/src/utils/trackingParams.ts
 new file mode 100644
-index 0000000..7d4aa94
+index 000000000..7d4aa9447
 --- /dev/null
 +++ b/packages/frontend/src/utils/trackingParams.ts
 @@ -0,0 +1,135 @@
@@ -516,7 +516,7 @@ index 0000000..7d4aa94
 +  return { cleaned: text.replace(originalUrl, () => cleanedUrl), originalUrl, cleanedUrl }
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 624d5b1..8d93c75 100644
+index 624d5b1ba..8d93c75a5 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -41,6 +41,8 @@ export interface DesktopSettingsType {
@@ -529,7 +529,7 @@ index 624d5b1..8d93c75 100644
    experimentalCompletionMenu: boolean
    /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index fb00736..8501d91 100644
+index fb007364d..8501d91de 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -15,6 +15,7 @@ export function getDefaultState(): DesktopSettingsType {
