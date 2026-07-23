@@ -1525,6 +1525,61 @@ mod tests {
 
     #[cfg_attr(feature = "runtime-tokio", tokio::test)]
     #[cfg_attr(feature = "runtime-async-std", async_std::test)]
+    async fn fetch_body_partial_origin() {
+        use futures::TryStreamExt;
+
+        // BODY[]<0>: partial fetch starting at origin 0.
+        {
+            let response = "* 1 FETCH (UID 1 FLAGS () BODY[]<0> {5}\r\nhello)\r\n\
+                            A0001 OK FETCH completed\r\n";
+            let mut session = mock_session!(MockStream::new(response.as_bytes().to_vec()));
+            let mut stream = session.fetch("1", "(UID FLAGS BODY[]<0>)").await.unwrap();
+            let fetch = stream.try_next().await.unwrap().unwrap();
+            assert_eq!(fetch.body(), Some(&b"hello"[..]));
+            assert_eq!(fetch.body_origin(), Some(0));
+        }
+
+        // BODY[]<16384>: non-zero origin.
+        {
+            let response = "* 1 FETCH (UID 1 FLAGS () BODY[]<16384> {5}\r\nhello)\r\n\
+                            A0001 OK FETCH completed\r\n";
+            let mut session = mock_session!(MockStream::new(response.as_bytes().to_vec()));
+            let mut stream = session
+                .fetch("1", "(UID FLAGS BODY[]<16384>)")
+                .await
+                .unwrap();
+            let fetch = stream.try_next().await.unwrap().unwrap();
+            assert_eq!(fetch.body(), Some(&b"hello"[..]));
+            assert_eq!(fetch.body_origin(), Some(16384));
+        }
+
+        // Full BODY[]: no origin.
+        {
+            let response = "* 1 FETCH (UID 1 FLAGS () BODY[] {5}\r\nhello)\r\n\
+                            A0001 OK FETCH completed\r\n";
+            let mut session = mock_session!(MockStream::new(response.as_bytes().to_vec()));
+            let mut stream = session.fetch("1", "(UID FLAGS BODY[])").await.unwrap();
+            let fetch = stream.try_next().await.unwrap().unwrap();
+            assert_eq!(fetch.body(), Some(&b"hello"[..]));
+            assert_eq!(fetch.body_origin(), None);
+        }
+
+        // BODY[]<300> NIL: partial fetch past the end of the message. The
+        // server answers with no data, but the origin must still surface so
+        // callers can tell "empty chunk" apart from "no body section at all".
+        {
+            let response = "* 1 FETCH (UID 1 FLAGS () BODY[]<300> NIL)\r\n\
+                            A0001 OK FETCH completed\r\n";
+            let mut session = mock_session!(MockStream::new(response.as_bytes().to_vec()));
+            let mut stream = session.fetch("1", "(UID FLAGS BODY[]<300>)").await.unwrap();
+            let fetch = stream.try_next().await.unwrap().unwrap();
+            assert_eq!(fetch.body(), None);
+            assert_eq!(fetch.body_origin(), Some(300));
+        }
+    }
+
+    #[cfg_attr(feature = "runtime-tokio", tokio::test)]
+    #[cfg_attr(feature = "runtime-async-std", async_std::test)]
     async fn readline_delay_read() {
         let greeting = "* OK Dovecot ready.\r\n";
         let mock_stream = MockStream::default()
