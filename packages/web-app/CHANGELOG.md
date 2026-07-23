@@ -1,5 +1,7 @@
 # Changelog
 
+- Downloading a big message now shows a live percentage on the message bubble,
+  and an interrupted download continues where it stopped.
 - Dragging a profile to reorder the sidebar no longer shows the white
   "selected" indicator in the drag preview.
 - **Unread filter in the chat list**: a filter button next to the search box

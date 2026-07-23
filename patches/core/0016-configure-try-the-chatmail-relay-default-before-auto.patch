@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 12 Jul 2026 12:00:00 +0000
-Subject: [PATCH 16/18] configure: try the chatmail relay default before
+Subject: [PATCH 16/20] configure: try the chatmail relay default before
  autoconfig
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

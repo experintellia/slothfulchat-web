@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 17:50:53 +0000
-Subject: [PATCH 37/58] web-app: chat export viewer shows who reacted (hover
+Subject: [PATCH 37/64] web-app: chat export viewer shows who reacted (hover
  title + click dialog)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -24,10 +24,10 @@ mirroring the app's reactions dialog.
  1 file changed, 120 insertions(+), 3 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-index 788888f51..2210714c6 100644
+index 5fe63a8b8..6363d3da6 100644
 --- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-@@ -359,6 +359,8 @@ body.html-export::before {
+@@ -357,6 +357,8 @@ body.html-export::before {
    color: var(--textPrimary, black);
    border-radius: 8px;
    max-width: 420px;
@@ -36,7 +36,7 @@ index 788888f51..2210714c6 100644
    padding: 20px;
    font-size: 14px;
    line-height: 1.45;
-@@ -373,6 +375,32 @@ body.html-export::before {
+@@ -371,6 +373,32 @@ body.html-export::before {
    gap: 8px;
    margin-top: 16px;
  }
@@ -69,7 +69,7 @@ index 788888f51..2210714c6 100644
  `
  
  /**
-@@ -573,7 +601,21 @@ function chatExportViewer() {
+@@ -559,7 +587,21 @@ function chatExportViewer() {
      )
    }
  
@@ -92,7 +92,7 @@ index 788888f51..2210714c6 100644
      if (!reactions || !reactions.reactions.length) {
        return ''
      }
-@@ -584,7 +626,7 @@ function chatExportViewer() {
+@@ -570,7 +612,7 @@ function chatExportViewer() {
          return `<span class="${cls([s.emoji, r.isFromSelf && s.isFromSelf])}">${esc(r.emoji)}${count}</span>`
        })
        .join('')
@@ -101,7 +101,7 @@ index 788888f51..2210714c6 100644
    }
  
    const metadataHtml = (msg: any, direction: string) => {
-@@ -655,7 +697,7 @@ function chatExportViewer() {
+@@ -641,7 +683,7 @@ function chatExportViewer() {
      const footer =
        `<footer class="${cls([s.messageFooter, isWithoutText && s.onlyMedia])}">` +
        metadataHtml(msg, direction) +
@@ -110,7 +110,7 @@ index 788888f51..2210714c6 100644
        `</footer>`
      const messageClass = cls([
        'message',
-@@ -722,6 +764,54 @@ function chatExportViewer() {
+@@ -708,6 +750,54 @@ function chatExportViewer() {
        .join('\n')
    }
  
@@ -165,7 +165,7 @@ index 788888f51..2210714c6 100644
    // --- toolbar: transcript download + single-file snapshot with dialog ---
    const deliverFile = (name: string, contents: BlobPart, type: string) => {
      const file = new File([contents], name, { type })
-@@ -1128,6 +1218,29 @@ async function exportChatToZip(
+@@ -1114,6 +1204,29 @@ async function exportChatToZip(
    }
    onProgress(300)
  
@@ -195,7 +195,7 @@ index 788888f51..2210714c6 100644
    // collect all referenced media into the zip's media/ directory
    const media = new MediaCollector()
    const files: { [memfsPath: string]: string } = {}
-@@ -1140,6 +1253,9 @@ async function exportChatToZip(
+@@ -1126,6 +1239,9 @@ async function exportChatToZip(
      }
    }
    await collect(chat.profileImage)
@@ -205,7 +205,7 @@ index 788888f51..2210714c6 100644
    let processed = 0
    for (const id of msgIds) {
      const msg = messages[id]
-@@ -1169,6 +1285,7 @@ async function exportChatToZip(
+@@ -1155,6 +1271,7 @@ async function exportChatToZip(
      items,
      messages,
      files,

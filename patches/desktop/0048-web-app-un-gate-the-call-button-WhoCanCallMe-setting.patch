@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude@anthropic.com>
 Date: Tue, 14 Jul 2026 12:25:58 +0000
-Subject: [PATCH 48/58] web-app: un-gate the call button + WhoCanCallMe setting
+Subject: [PATCH 48/64] web-app: un-gate the call button + WhoCanCallMe setting
  for the browser runtime
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

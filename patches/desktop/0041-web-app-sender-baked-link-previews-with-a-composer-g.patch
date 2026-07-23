@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 10 Jul 2026 23:14:32 +0000
-Subject: [PATCH 41/58] web-app: sender-baked link previews with a composer
+Subject: [PATCH 41/64] web-app: sender-baked link previews with a composer
  ghost UI
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

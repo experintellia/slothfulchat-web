@@ -1,0 +1,172 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 23 Jul 2026 02:43:20 +0000
+Subject: [PATCH 64/64] web-app: show live download percentage on the
+ 'downloading' message bubble
+
+Core now emits DownloadProgress (msgId, permille) while fetching a message
+in chunks. useDownloadProgress listens for it per-message and appends the
+percent to the existing label; the published jsonrpc-client pin predates
+the event so its type is widened locally (same pattern already used for
+DefaultCredentials.ts's `webimap` field).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019DhvV6wm3aXyrgHHXaefxw
+---
+ packages/frontend/src/backend-com.ts          | 23 ++++++++++++--
+ .../src/components/message/Message.tsx        | 11 ++++++-
+ .../frontend/src/hooks/useDownloadProgress.ts | 30 +++++++++++++++++++
+ .../src/tests/downloadProgress.test.ts        | 14 +++++++++
+ .../frontend/src/utils/downloadProgress.ts    |  7 +++++
+ 5 files changed, 81 insertions(+), 4 deletions(-)
+ create mode 100644 packages/frontend/src/hooks/useDownloadProgress.ts
+ create mode 100644 packages/frontend/src/tests/downloadProgress.test.ts
+ create mode 100644 packages/frontend/src/utils/downloadProgress.ts
+
+diff --git a/packages/frontend/src/backend-com.ts b/packages/frontend/src/backend-com.ts
+index 1c6e35c2c..6ba14188c 100644
+--- a/packages/frontend/src/backend-com.ts
++++ b/packages/frontend/src/backend-com.ts
+@@ -1,8 +1,22 @@
+-import { BaseDeltaChat, DcEvent } from '@deltachat/jsonrpc-client'
++import {
++  BaseDeltaChat,
++  DcEvent as CoreDcEvent,
++} from '@deltachat/jsonrpc-client'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import { clearNotificationsForChat } from './system-integration/notifications'
+ import { countCall } from './debug-tools'
+ 
++// `DownloadProgress` is emitted by the regenerated local jsonrpc bindings;
++// the published @deltachat/jsonrpc-client pinned in this workspace's catalog
++// predates it, so it's widened locally here to keep tsc green (same pattern
++// as Settings/DefaultCredentials.ts's `webimap` widening).
++type DownloadProgressEvent = {
++  kind: 'DownloadProgress'
++  msgId: number
++  permille: number
++}
++type DcEvent = CoreDcEvent | DownloadProgressEvent
++
+ export { T as Type } from '@deltachat/jsonrpc-client'
+ 
+ export const BackendRemote: BaseDeltaChat<any> =
+@@ -64,8 +78,11 @@ export function onDCEvent<variant extends keyof ContextEvents>(
+   callback: ContextEvents[variant]
+ ) {
+   const emitter = BackendRemote.getContextEvents(accountId)
+-  emitter.on(eventType, callback)
++  // The emitter itself is typed against the published jsonrpc-client's
++  // event union (see the `DcEvent` widening above for why that's stale);
++  // `any` here only affects this internal bridge, not callers' types.
++  emitter.on(eventType as any, callback as any)
+   return () => {
+-    emitter.off(eventType, callback)
++    emitter.off(eventType as any, callback as any)
+   }
+ }
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index 877772c20..06fe061a1 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -64,6 +64,7 @@ import { avatarInitial } from '@deltachat-desktop/shared/avatarInitial'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { IconButton } from '../Icon'
+ import { useRpcFetch } from '../../hooks/useFetch'
++import { useDownloadProgress } from '../../hooks/useDownloadProgress'
+ import ForwardMessage from '../dialogs/ForwardMessage'
+ import MessageDetail from '../dialogs/MessageDetail/MessageDetail'
+ import ConfirmDeleteMessageDialog from '../dialogs/ConfirmDeleteMessage'
+@@ -962,6 +963,11 @@ export default function Message(props: {
+   )
+ 
+   const { downloadState } = message
++  const downloadPercent = useDownloadProgress(
++    accountId,
++    message.id,
++    downloadState === 'InProgress'
++  )
+ 
+   if (downloadState !== 'Done') {
+     content = (
+@@ -973,7 +979,10 @@ export default function Message(props: {
+           </span>
+         )}
+         {downloadState == 'InProgress' && (
+-          <span key='downloading'>{tx('downloading')}</span>
++          <span key='downloading'>
++            {tx('downloading')}
++            {downloadPercent !== null && ` ${downloadPercent}%`}
++          </span>
+         )}
+         {(downloadState == 'Failure' || downloadState === 'Available') && (
+           <button
+diff --git a/packages/frontend/src/hooks/useDownloadProgress.ts b/packages/frontend/src/hooks/useDownloadProgress.ts
+new file mode 100644
+index 000000000..7d9274a2e
+--- /dev/null
++++ b/packages/frontend/src/hooks/useDownloadProgress.ts
+@@ -0,0 +1,30 @@
++import { useEffect, useState } from 'react'
++import { onDCEvent } from '../backend-com'
++import { permilleToPercent } from '../utils/downloadProgress'
++
++/**
++ * Latest download progress (0-100) for a message whose `downloadState`
++ * is `'InProgress'`, driven by the core's `DownloadProgress` event.
++ * Returns `null` until the first event for this message arrives.
++ */
++export function useDownloadProgress(
++  accountId: number,
++  messageId: number,
++  isDownloading: boolean
++): number | null {
++  const [percent, setPercent] = useState<number | null>(null)
++
++  useEffect(() => {
++    if (!isDownloading) {
++      setPercent(null)
++      return
++    }
++    return onDCEvent(accountId, 'DownloadProgress', ({ msgId, permille }) => {
++      if (msgId === messageId) {
++        setPercent(permilleToPercent(permille))
++      }
++    })
++  }, [accountId, messageId, isDownloading])
++
++  return percent
++}
+diff --git a/packages/frontend/src/tests/downloadProgress.test.ts b/packages/frontend/src/tests/downloadProgress.test.ts
+new file mode 100644
+index 000000000..2b4701496
+--- /dev/null
++++ b/packages/frontend/src/tests/downloadProgress.test.ts
+@@ -0,0 +1,14 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import { permilleToPercent } from '../utils/downloadProgress.js'
++
++describe('permilleToPercent', () => {
++  it('floors permille (0-1000) down to whole percent (0-100)', () => {
++    expect(permilleToPercent(1)).to.equal(0)
++    expect(permilleToPercent(499)).to.equal(49)
++    expect(permilleToPercent(500)).to.equal(50)
++    expect(permilleToPercent(999)).to.equal(99)
++    expect(permilleToPercent(1000)).to.equal(100)
++  })
++})
+diff --git a/packages/frontend/src/utils/downloadProgress.ts b/packages/frontend/src/utils/downloadProgress.ts
+new file mode 100644
+index 000000000..592044888
+--- /dev/null
++++ b/packages/frontend/src/utils/downloadProgress.ts
+@@ -0,0 +1,7 @@
++// Pure math for the download-progress percentage shown next to the
++// 'downloading' label. Kept import-free so the unit test needs no backend.
++
++/** `permille` (0-1000) -> whole percent (0-100), as shown to the user. */
++export function permilleToPercent(permille: number): number {
++  return Math.floor(permille / 10)
++}

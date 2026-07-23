@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Mon, 20 Jul 2026 16:56:38 +0000
-Subject: [PATCH 56/58] web-app: move Experimental features to their own
+Subject: [PATCH 57/64] web-app: move Experimental features to their own
  settings section
 
 Advanced had grown into a grab bag: log, server, multi-device, the
@@ -18,10 +18,10 @@ rest. The location-streaming info dialog's pointer is updated to
  4 files changed, 13 insertions(+), 7 deletions(-)
 
 diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
-index 32bff710b..723f15741 100644
+index 0affbd317..0b368d2e5 100644
 --- a/packages/frontend/src/components/Icon/index.tsx
 +++ b/packages/frontend/src/components/Icon/index.tsx
-@@ -47,6 +47,7 @@ export type IconName =
+@@ -48,6 +48,7 @@ export type IconName =
    | 'settings'
    | 'swap_vert'
    | 'swap_hor'

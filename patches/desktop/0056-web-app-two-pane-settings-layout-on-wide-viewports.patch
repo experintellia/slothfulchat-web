@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Mon, 20 Jul 2026 16:56:05 +0000
-Subject: [PATCH 55/58] web-app: two-pane settings layout on wide viewports
+Subject: [PATCH 56/64] web-app: two-pane settings layout on wide viewports
 
 On viewports >=800px the settings dialog becomes a single 720px
 Discord/macOS-style two-pane dialog: the navigation list (profile,

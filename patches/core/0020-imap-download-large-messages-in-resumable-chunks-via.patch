@@ -1,0 +1,1403 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 23 Jul 2026 03:23:39 +0000
+Subject: [PATCH 20/20] imap: download large messages in resumable chunks via
+ partial FETCH
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Messages fetched on demand (download-on-demand path) are now downloaded
+with a sequence of BODY.PEEK[]<offset.count> partial FETCHes (mandatory
+IMAP4rev1, RFC 3501) instead of a single full-body FETCH:
+
+- Chunks are appended to a staging file in the blobdir whose length is
+  the resume offset; an interrupted download continues where it stopped,
+  across reconnects and restarts. Chunk size doubles from 128 KiB to a
+  4 MiB cap to amortize round-trip latency. Peak memory drops from
+  O(message size) to O(chunk size).
+- End of message is detected by a short/empty chunk, never RFC822.SIZE,
+  which some servers misreport; the size is only used for the new
+  DownloadProgress events.
+- The staging name is keyed by (transport, folder hash, UIDVALIDITY,
+  UID); on UIDVALIDITY change stale staging files are discarded, and
+  housekeeping keeps staging files of pending downloads alive.
+- The assembled message must carry the expected Message-ID, guarding
+  against servers that reuse UIDs without bumping UIDVALIDITY; a
+  mismatch sets DownloadState::Failure instead of retrying forever.
+- Fallback for servers without working partial FETCH: async-imap
+  terminates a FETCH stream at the tagged response without surfacing
+  its NO/BAD status, so a rejection looks like an empty response — the
+  empty case is disambiguated by re-probing the UID (message still
+  there = partial FETCH refused). Chunked downloads are then disabled
+  for the transport for the process lifetime, a one-time device message
+  informs the user, and the previous full-body fetch is used instead.
+  Responses with a wrong or missing range origin past the start of the
+  message are treated the same way rather than guessed at; a server
+  that ignores the range but returns the full message from the
+  beginning is accepted silently.
+- fetch_msgs_mutex is now held only around receive_imf instead of the
+  whole (potentially long) download; a message delivered concurrently
+  via another transport is detected as duplicate by receive_imf.
+
+Includes tests for the chunk loop (adaptive sizing, resume, size lies,
+origin validation, error paths preserving resume state), the staging
+file lifecycle, UIDVALIDITY-change discarding, housekeeping GC and the
+one-time fallback device message.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019DhvV6wm3aXyrgHHXaefxw
+---
+ src/context.rs            |  10 +-
+ src/download.rs           | 943 +++++++++++++++++++++++++++++++++++++-
+ src/imap.rs               |   6 +-
+ src/imap/select_folder.rs |   8 +
+ src/imap/session.rs       | 135 +++++-
+ src/sql.rs                |  37 ++
+ src/sql/sql_tests.rs      |  56 +++
+ 7 files changed, 1188 insertions(+), 7 deletions(-)
+
+diff --git a/src/context.rs b/src/context.rs
+index 5a478ad39..18877918d 100644
+--- a/src/context.rs
++++ b/src/context.rs
+@@ -1,6 +1,6 @@
+ //! Context module.
+ 
+-use std::collections::{BTreeMap, HashMap};
++use std::collections::{BTreeMap, HashMap, HashSet};
+ use std::ffi::OsString;
+ use std::ops::Deref;
+ use std::path::{Path, PathBuf};
+@@ -269,6 +269,13 @@ pub struct InnerContext {
+     /// IMAP METADATA.
+     pub(crate) metadata: RwLock<Option<ServerMetadata>>,
+ 
++    /// Transports whose IMAP server turned out not to support partial FETCH,
++    /// so chunked message downloads are disabled for them.
++    ///
++    /// In-memory only: re-probing once per process lifetime costs a single
++    /// round trip.
++    pub(crate) chunked_download_disabled: parking_lot::Mutex<HashSet<u32>>,
++
+     /// ID for this `Context` in the current process.
+     ///
+     /// This allows for multiple `Context`s open in a single process where each context can
+@@ -496,6 +503,7 @@ pub(crate) fn with_blobdir(
+             new_msgs_notify,
+             server_id: RwLock::new(None),
+             metadata: RwLock::new(None),
++            chunked_download_disabled: parking_lot::Mutex::new(HashSet::new()),
+             creation_time: tools::time_now(),
+             last_error: parking_lot::RwLock::new("".to_string()),
+             migration_error: parking_lot::RwLock::new(None),
+diff --git a/src/download.rs b/src/download.rs
+index b5f9ec0c1..adc3cdf10 100644
+--- a/src/download.rs
++++ b/src/download.rs
+@@ -1,16 +1,25 @@
+ //! # Download large messages manually.
+ 
+ use std::collections::BTreeMap;
++use std::future::Future;
++use std::path::PathBuf;
++use std::pin::Pin;
+ 
+-use anyhow::{Result, anyhow, bail, ensure};
++use anyhow::{Context as _, Result, anyhow, bail, ensure};
+ use deltachat_derive::{FromSql, ToSql};
+ use serde::{Deserialize, Serialize};
++use sha2::{Digest, Sha256};
++use tokio::io::AsyncWriteExt;
+ 
++use crate::chat::add_device_msg;
+ use crate::config::Config;
++use crate::constants::DC_VERSION_STR;
+ use crate::context::Context;
+-use crate::imap::session::Session;
++use crate::imap::session::{PartialFetchResult, Session};
++use crate::imap::{GENERATED_PREFIX, get_uidvalidity, prefetch_get_message_id};
+ use crate::log::warn;
+ use crate::message::{self, Message, MsgId, rfc724_mid_exists};
++use crate::receive_imf::receive_imf_inner;
+ use crate::{EventType, chatlist_events, ephemeral};
+ 
+ pub(crate) mod post_msg_metadata;
+@@ -131,6 +140,254 @@ pub fn download_state(&self) -> DownloadState {
+     }
+ }
+ 
++/// Initial chunk size for chunked downloads.
++///
++/// Small enough for fine-grained progress and quick failure on bad links.
++const CHUNK_SIZE_START: u32 = 128 * 1024;
++
++/// Maximum chunk size. The chunk size doubles with every fetched chunk
++/// up to this cap to amortize round-trip latency on large messages.
++const CHUNK_SIZE_MAX: u32 = 4 * 1024 * 1024;
++
++/// Short hash of a folder name for use in staging file names;
++/// folder names themselves are not filesystem-safe.
++fn folder_hash(folder: &str) -> String {
++    let mut hash = hex::encode(Sha256::digest(folder.as_bytes()));
++    hash.truncate(8);
++    hash
++}
++
++/// Staging file for a chunked download, stored in the blobdir.
++///
++/// The file length is the resume offset: chunks are appended as they arrive
++/// and a download interrupted at any point continues where the file ends.
++/// The name is keyed by the server-side identity of the message
++/// (transport, folder, UIDVALIDITY, UID), so stale bytes can never be
++/// resumed against a different message.
++pub(crate) struct StagingFile {
++    path: PathBuf,
++    len: u64,
++}
++
++impl StagingFile {
++    /// Returns the blobdir file name for the given message identity.
++    pub(crate) fn name(transport_id: u32, folder: &str, uidvalidity: u32, uid: u32) -> String {
++        let folder_hash = folder_hash(folder);
++        format!("partial-t{transport_id}-{folder_hash}-v{uidvalidity}-u{uid}")
++    }
++
++    /// Prefix of all staging file names for the given folder,
++    /// regardless of UIDVALIDITY.
++    fn folder_prefix(transport_id: u32, folder: &str) -> String {
++        let folder_hash = folder_hash(folder);
++        format!("partial-t{transport_id}-{folder_hash}-")
++    }
++
++    /// Opens the staging file, creating the bookkeeping for a fresh one
++    /// if it does not exist yet.
++    async fn open(
++        context: &Context,
++        transport_id: u32,
++        folder: &str,
++        uidvalidity: u32,
++        uid: u32,
++    ) -> Result<Self> {
++        let path = context
++            .get_blobdir()
++            .join(Self::name(transport_id, folder, uidvalidity, uid));
++        let len = match tokio::fs::metadata(&path).await {
++            Ok(metadata) => metadata.len(),
++            Err(_) => 0,
++        };
++        Ok(Self { path, len })
++    }
++
++    /// Returns the number of bytes staged so far, i.e. the resume offset.
++    fn len(&self) -> u64 {
++        self.len
++    }
++
++    async fn append(&mut self, bytes: &[u8]) -> Result<()> {
++        let mut file = tokio::fs::OpenOptions::new()
++            .create(true)
++            .append(true)
++            .open(&self.path)
++            .await
++            .with_context(|| format!("failed to open staging file {}", self.path.display()))?;
++        file.write_all(bytes).await?;
++        // tokio file writes complete in the background; without the flush a
++        // read_all() right after append() could see a truncated file and
++        // consecutive appends could land out of order.
++        file.flush().await?;
++        self.len = self.len.saturating_add(bytes.len() as u64);
++        Ok(())
++    }
++
++    async fn read_all(&self) -> Result<Vec<u8>> {
++        Ok(tokio::fs::read(&self.path).await?)
++    }
++
++    async fn delete(self) -> Result<()> {
++        // The file does not exist if no chunk was ever appended.
++        if let Err(err) = tokio::fs::remove_file(&self.path).await
++            && err.kind() != std::io::ErrorKind::NotFound
++        {
++            return Err(err.into());
++        }
++        Ok(())
++    }
++}
++
++/// Removes staging files of the folder that do not belong
++/// to the current UIDVALIDITY. Called when UIDVALIDITY changes:
++/// UIDs are no longer valid then, so partial downloads cannot be resumed.
++pub(crate) async fn discard_partial_files(
++    context: &Context,
++    transport_id: u32,
++    folder: &str,
++    uidvalidity: u32,
++) -> Result<()> {
++    let prefix = StagingFile::folder_prefix(transport_id, folder);
++    let keep_marker = format!("-v{uidvalidity}-");
++    let mut dir = tokio::fs::read_dir(context.get_blobdir()).await?;
++    while let Ok(Some(entry)) = dir.next_entry().await {
++        let name = entry.file_name();
++        let name = name.to_string_lossy();
++        if name.starts_with(&prefix) && !name.contains(&keep_marker) {
++            info!(context, "Discarding stale partial download {name}.");
++            tokio::fs::remove_file(entry.path()).await.ok();
++        }
++    }
++    Ok(())
++}
++
++/// Outcome of [`chunked_fetch_loop`].
++enum ChunkOutcome {
++    /// The fully assembled raw message.
++    Complete(Vec<u8>),
++
++    /// The server does not support partial FETCH;
++    /// the caller falls back to a full fetch.
++    Unsupported,
++
++    /// The server sent no FETCH response for the UID.
++    ///
++    /// Ambiguous: the message may be gone, but a tagged NO/BAD also
++    /// produces an empty response stream (async-imap terminates a FETCH
++    /// stream at the tagged response without surfacing its status), so
++    /// the caller must re-probe to distinguish the two.
++    Gone,
++
++    /// The staged length left the u32 offset range of partial FETCH;
++    /// the server keeps returning full-size chunks and cannot be trusted.
++    TooLarge,
++}
++
++/// One partial FETCH of a message byte range.
++///
++/// This seam keeps [`chunked_fetch_loop`] testable without an IMAP session.
++/// The returned future is boxed instead of using an `async fn`/`AsyncFnMut`
++/// so that the loop's future stays `Send`
++/// (rustc cannot prove that for opaque lending futures, see rust#110338).
++trait RangeFetcher: Send {
++    fn fetch_range(
++        &mut self,
++        offset: u32,
++        count: u32,
++    ) -> Pin<Box<dyn Future<Output = Result<PartialFetchResult>> + Send + '_>>;
++}
++
++/// [`RangeFetcher`] performing partial FETCHes of one UID
++/// over an IMAP session.
++struct SessionRangeFetcher<'a> {
++    session: &'a mut Session,
++    uid: u32,
++}
++
++impl RangeFetcher for SessionRangeFetcher<'_> {
++    fn fetch_range(
++        &mut self,
++        offset: u32,
++        count: u32,
++    ) -> Pin<Box<dyn Future<Output = Result<PartialFetchResult>> + Send + '_>> {
++        Box::pin(self.session.uid_fetch_partial(self.uid, offset, count))
++    }
++}
++
++/// Downloads a message in chunks, appending to the staging file,
++/// starting from the staged length, until the server returns a chunk
++/// shorter than requested.
++///
++/// `expected_size` (`RFC822.SIZE`) is used for progress reporting only,
++/// never to decide termination: servers may misreport it.
++///
++async fn chunked_fetch_loop(
++    context: &Context,
++    staging: &mut StagingFile,
++    expected_size: Option<u64>,
++    msg_id: Option<MsgId>,
++    mut fetcher: impl RangeFetcher,
++) -> Result<ChunkOutcome> {
++    let mut chunk_size = CHUNK_SIZE_START;
++    loop {
++        let Ok(offset) = u32::try_from(staging.len()) else {
++            return Ok(ChunkOutcome::TooLarge);
++        };
++
++        let (origin, bytes) = match fetcher.fetch_range(offset, chunk_size).await? {
++            PartialFetchResult::Data { origin, bytes } => (origin, bytes),
++            PartialFetchResult::Gone => return Ok(ChunkOutcome::Gone),
++            PartialFetchResult::Unsupported => return Ok(ChunkOutcome::Unsupported),
++        };
++
++        match origin {
++            Some(origin) if origin == offset => {}
++            // A response without an origin octet is only safe to use from
++            // the very beginning of the message.
++            None if offset == 0 => {}
++            // A server that ignores the requested range but returns the
++            // whole message from the beginning is harmless.
++            Some(0) if bytes.len() as u64 > u64::from(offset) => {
++                info!(
++                    context,
++                    "Server ignored the requested range and returned the full message."
++                );
++                return Ok(ChunkOutcome::Complete(bytes));
++            }
++            // Anything else — wrong origin, or a plain `BODY[]` response to
++            // a mid-message range request, which could be either the full
++            // message or just the range (indistinguishable, and guessing
++            // wrong would splice a corrupt message) — means partial FETCH
++            // cannot be trusted on this server.
++            _ => {
++                warn!(
++                    context,
++                    "Partial FETCH returned origin {origin:?}, requested {offset}."
++                );
++                return Ok(ChunkOutcome::Unsupported);
++            }
++        }
++
++        let short_chunk = (bytes.len() as u64) < u64::from(chunk_size);
++        staging.append(&bytes).await?;
++
++        if let (Some(msg_id), Some(size)) = (msg_id, expected_size)
++            && let Some(permille) = staging.len().saturating_mul(1000).checked_div(size)
++        {
++            let permille = permille.clamp(1, 999) as u16;
++            context.emit_event(EventType::DownloadProgress { msg_id, permille });
++        }
++
++        if short_chunk {
++            // The server truncates the range at the end of the message;
++            // this is the ground truth for "message complete".
++            return Ok(ChunkOutcome::Complete(staging.read_all().await?));
++        }
++
++        chunk_size = std::cmp::min(chunk_size.saturating_mul(2), CHUNK_SIZE_MAX);
++    }
++}
++
+ /// Actually downloads a message partially downloaded before if the message is available on the
+ /// session transport, in which case returns `Some`. If the message is available on another
+ /// transport, returns `None`.
+@@ -187,6 +444,9 @@ impl Session {
+     ///
+     /// receive_imf() is not directly aware that this is a result of a call to download_msg(),
+     /// however, implicitly knows that as the existing message is flagged as being partly.
++    ///
++    /// Downloads in chunks via partial FETCH (resumable, with progress
++    /// reporting) unless the server turned out not to support it.
+     async fn fetch_single_msg(
+         &mut self,
+         context: &Context,
+@@ -201,7 +461,145 @@ async fn fetch_single_msg(
+         let folder_exists = self.select_with_uidvalidity(context, folder).await?;
+         ensure!(folder_exists, "No folder {folder}");
+ 
++        let transport_id = self.transport_id();
++        let chunking_disabled = context
++            .chunked_download_disabled
++            .lock()
++            .contains(&transport_id);
++        if chunking_disabled {
++            return Box::pin(self.fetch_single_msg_full(context, folder, uid, rfc724_mid)).await;
++        }
++
+         // we are connected, and the folder is selected
++        info!(
++            context,
++            "Downloading message {}/{} in chunks...", folder, uid
++        );
++
++        let Some(meta) = self.uid_fetch_meta(uid).await? else {
++            bail!("Failed to fetch UID {uid}");
++        };
++        if meta.deleted {
++            info!(context, "Not processing deleted msg {}.", uid);
++            return Ok(());
++        }
++
++        let uidvalidity = get_uidvalidity(context, transport_id, folder).await?;
++        let mut staging =
++            StagingFile::open(context, transport_id, folder, uidvalidity, uid).await?;
++        let msg_id = rfc724_mid_exists(context, &rfc724_mid).await?;
++
++        let outcome = chunked_fetch_loop(
++            context,
++            &mut staging,
++            meta.size.map(u64::from),
++            msg_id,
++            SessionRangeFetcher { session: self, uid },
++        )
++        .await?;
++
++        let body = match outcome {
++            ChunkOutcome::Unsupported => {
++                staging.delete().await?;
++                disable_chunked_download(context, transport_id).await?;
++                return Box::pin(self.fetch_single_msg_full(context, folder, uid, rfc724_mid))
++                    .await;
++            }
++            ChunkOutcome::Gone => {
++                // Empty response: either the message is gone or the server
++                // rejected the partial FETCH with a tagged NO/BAD, which the
++                // fetch stream cannot surface. Re-probe to tell them apart.
++                if self.uid_fetch_meta(uid).await?.is_some() {
++                    staging.delete().await?;
++                    disable_chunked_download(context, transport_id).await?;
++                    return Box::pin(self.fetch_single_msg_full(context, folder, uid, rfc724_mid))
++                        .await;
++                }
++                bail!("Failed to fetch UID {uid}");
++            }
++            ChunkOutcome::TooLarge => {
++                warn!(
++                    context,
++                    "Chunked download of {folder}/{uid} exceeded the partial FETCH offset range; giving up."
++                );
++                // Without deleting the staging file every retry would grow it
++                // to the same ceiling again.
++                staging.delete().await?;
++                set_state_to_failure(context, &rfc724_mid).await?;
++                return Ok(());
++            }
++            ChunkOutcome::Complete(body) => body,
++        };
++
++        // Guard against servers that reuse a UID for a different message
++        // without changing UIDVALIDITY: the assembled message must be the one
++        // we were told this UID maps to. An unparseable header counts as a
++        // mismatch. The staging file is deleted and the message is set to
++        // `Failure` instead of erroring: an error would keep the `download`
++        // row and re-download the same wrong message on every fetch cycle.
++        if !rfc724_mid.starts_with(GENERATED_PREFIX) {
++            let actual = match mailparse::parse_headers(&body) {
++                Ok((headers, _)) => prefetch_get_message_id(&headers),
++                Err(err) => {
++                    warn!(context, "Failed to parse assembled headers: {err:#}.");
++                    None
++                }
++            };
++            if actual.as_deref() != Some(rfc724_mid.as_str()) {
++                warn!(
++                    context,
++                    "Downloaded message has Message-ID {actual:?}, expected {rfc724_mid:?}; discarding."
++                );
++                staging.delete().await?;
++                set_state_to_failure(context, &rfc724_mid).await?;
++                return Ok(());
++            }
++        }
++
++        let res = {
++            let _fetch_msgs_lock_guard = context.fetch_msgs_mutex.lock().await;
++            // `Ok(None)` means the message is already known (e.g. delivered
++            // meanwhile via another transport) — that is success here.
++            receive_imf_inner(context, &rfc724_mid, &body, meta.seen).await
++        };
++        match res {
++            Err(err) => {
++                warn!(context, "receive_imf error: {err:#}.");
++                // Same device message as the full fetch path; delete the
++                // staging file, otherwise the same broken bytes would be
++                // retried forever.
++                let text = format!(
++                    // No trailing '.' to avoid from the Android UI treating it as a part of
++                    // URL.
++                    "❌ Failed to receive a message: {err:#}. Core version v{DC_VERSION_STR}. Please report this bug to delta@merlinux.eu or https://support.delta.chat/",
++                );
++                let mut msg = Message::new_text(text);
++                add_device_msg(context, None, Some(&mut msg)).await?;
++                staging.delete().await?;
++            }
++            Ok(_) => {
++                staging.delete().await?;
++                if let Some(msg_id) = rfc724_mid_exists(context, &rfc724_mid).await? {
++                    context.emit_event(EventType::DownloadProgress {
++                        msg_id,
++                        permille: 1000,
++                    });
++                }
++            }
++        }
++        Ok(())
++    }
++
++    /// Downloads a single message with one full `BODY.PEEK[]` FETCH.
++    ///
++    /// Fallback for servers that do not support partial FETCH.
++    async fn fetch_single_msg_full(
++        &mut self,
++        context: &Context,
++        folder: &str,
++        uid: u32,
++        rfc724_mid: String,
++    ) -> Result<()> {
+         info!(context, "Downloading message {}/{} fully...", folder, uid);
+ 
+         let mut uid_message_ids: BTreeMap<u32, String> = BTreeMap::new();
+@@ -219,6 +617,33 @@ async fn fetch_single_msg(
+     }
+ }
+ 
++/// Disables chunked downloads for the transport for the rest of the process
++/// lifetime and informs the user once per account that the server lacks
++/// partial FETCH.
++async fn disable_chunked_download(context: &Context, transport_id: u32) -> Result<()> {
++    warn!(
++        context,
++        "Server of transport {transport_id} does not support partial FETCH, disabling chunked downloads."
++    );
++    context
++        .chunked_download_disabled
++        .lock()
++        .insert(transport_id);
++
++    let text = "⚠️ Your email server does not support downloading messages in parts \
++                (IMAP partial fetch, RFC 3501). Large messages are downloaded in one piece \
++                and interrupted downloads cannot be resumed"
++        .to_string();
++    let mut msg = Message::new_text(text);
++    add_device_msg(
++        context,
++        Some("chunked-download-unsupported"),
++        Some(&mut msg),
++    )
++    .await?;
++    Ok(())
++}
++
+ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()> {
+     if let Some(msg_id) = rfc724_mid_exists(context, rfc724_mid).await? {
+         // Update download state to failure
+@@ -359,11 +784,14 @@ pub(crate) async fn download_known_post_messages_without_pre_message(
+ 
+ #[cfg(test)]
+ mod tests {
++    use std::sync::{Arc, Mutex};
++
+     use num_traits::FromPrimitive;
+ 
+     use super::*;
+-    use crate::chat::send_msg;
+-    use crate::test_utils::TestContextManager;
++    use crate::chat::{ChatId, get_chat_msgs, send_msg};
++    use crate::contact::ContactId;
++    use crate::test_utils::{TestContext, TestContextManager};
+ 
+     #[test]
+     fn test_downloadstate_values() {
+@@ -412,4 +840,511 @@ async fn test_update_download_state() -> Result<()> {
+ 
+         Ok(())
+     }
++
++    /// Deterministic fake message bytes: assembly bugs (gaps, duplication,
++    /// reordering) show up as a mismatch against this pattern.
++    fn fake_message(len: usize) -> Vec<u8> {
++        (0..len).map(|i| (i % 251) as u8).collect()
++    }
++
++    /// Opens a staging file for an arbitrary but fixed message identity,
++    /// varied only by `uid` so a test can use several independent staging
++    /// files within one blobdir.
++    async fn open_staging(t: &TestContext, uid: u32) -> StagingFile {
++        StagingFile::open(t, 1, "INBOX", 1, uid).await.unwrap()
++    }
++
++    /// Creates a real message via [`send_msg`] so tests that assert on
++    /// `DownloadProgress` events have a genuine [`MsgId`] to emit them for.
++    async fn real_msg_id(tcm: &mut TestContextManager) -> Result<(TestContext, MsgId)> {
++        let t = tcm.alice().await;
++        let bob = tcm.bob().await;
++        let chat_id = t.create_chat_id(&bob).await;
++        let mut msg = Message::new_text("hi".to_owned());
++        let msg_id = send_msg(&t, chat_id, &mut msg).await?;
++        Ok((t, msg_id))
++    }
++
++    /// Fake [`RangeFetcher`] over an in-memory buffer, for testing
++    /// [`chunked_fetch_loop`] without an IMAP session.
++    ///
++    /// By default it slices `data` like a real partial FETCH (empty result
++    /// once the requested offset is past the end). `respond_with` lets a
++    /// test substitute a different response for scenarios a real server
++    /// could produce (origin mismatch, `Gone`, ignoring the requested
++    /// range); `fail_at` makes the n-th call (1-indexed) return an error, to
++    /// test that staging survives an I/O failure. Every requested
++    /// `(offset, count)` is recorded; grab a handle with `calls_handle`
++    /// before handing the fetcher to `chunked_fetch_loop` since it consumes
++    /// it by value.
++    type RespondFn = dyn Fn(u32, u32, &[u8]) -> PartialFetchResult + Send;
++
++    struct FakeFetcher {
++        data: Vec<u8>,
++        calls: Arc<Mutex<Vec<(u32, u32)>>>,
++        fail_at_call: Option<usize>,
++        respond: Option<Box<RespondFn>>,
++    }
++
++    impl FakeFetcher {
++        fn new(data: Vec<u8>) -> Self {
++            Self {
++                data,
++                calls: Arc::new(Mutex::new(Vec::new())),
++                fail_at_call: None,
++                respond: None,
++            }
++        }
++
++        fn fail_at(mut self, call_no: usize) -> Self {
++            self.fail_at_call = Some(call_no);
++            self
++        }
++
++        fn respond_with(
++            mut self,
++            f: impl Fn(u32, u32, &[u8]) -> PartialFetchResult + Send + 'static,
++        ) -> Self {
++            self.respond = Some(Box::new(f));
++            self
++        }
++
++        fn calls_handle(&self) -> Arc<Mutex<Vec<(u32, u32)>>> {
++            self.calls.clone()
++        }
++    }
++
++    impl RangeFetcher for FakeFetcher {
++        fn fetch_range(
++            &mut self,
++            offset: u32,
++            count: u32,
++        ) -> Pin<Box<dyn Future<Output = Result<PartialFetchResult>> + Send + '_>> {
++            self.calls.lock().unwrap().push((offset, count));
++            let call_no = self.calls.lock().unwrap().len();
++            if self.fail_at_call == Some(call_no) {
++                return Box::pin(async move { bail!("fake fetch error") });
++            }
++            let result = if let Some(respond) = &self.respond {
++                respond(offset, count, &self.data)
++            } else {
++                let start = offset as usize;
++                let end = std::cmp::min(start.saturating_add(count as usize), self.data.len());
++                let bytes = if start >= self.data.len() {
++                    Vec::new()
++                } else {
++                    self.data[start..end].to_vec()
++                };
++                PartialFetchResult::Data {
++                    origin: Some(offset),
++                    bytes,
++                }
++            };
++            Box::pin(async move { Ok(result) })
++        }
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_chunked_fetch_happy_path() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let (t, msg_id) = real_msg_id(&mut tcm).await?;
++        t.evtracker.clear_events();
++
++        let data = fake_message(1_048_576); // 1 MiB
++        let mut staging = open_staging(&t, 1).await;
++        let fetcher = FakeFetcher::new(data.clone());
++        let calls = fetcher.calls_handle();
++
++        let outcome = chunked_fetch_loop(
++            &t,
++            &mut staging,
++            Some(data.len() as u64),
++            Some(msg_id),
++            fetcher,
++        )
++        .await?;
++        let ChunkOutcome::Complete(body) = outcome else {
++            panic!("expected Complete");
++        };
++        assert_eq!(body, data);
++
++        // Adaptive doubling: 128K, 256K, 512K, 1024K, terminated by the
++        // short final chunk (only 128K left of the 1 MiB message).
++        assert_eq!(
++            *calls.lock().unwrap(),
++            vec![
++                (0, 128 * 1024),
++                (128 * 1024, 256 * 1024),
++                (384 * 1024, 512 * 1024),
++                (896 * 1024, 1024 * 1024),
++            ]
++        );
++
++        let permilles: Vec<u16> = t
++            .evtracker
++            .take_events()
++            .into_iter()
++            .filter_map(|ev| match ev.typ {
++                EventType::DownloadProgress {
++                    msg_id: id,
++                    permille,
++                } if id == msg_id => Some(permille),
++                _ => None,
++            })
++            .collect();
++        assert_eq!(permilles, vec![125, 375, 875, 999]);
++        assert!(permilles.windows(2).all(|w| w[0] <= w[1]));
++        assert!(permilles.iter().all(|&p| p <= 999));
++
++        Ok(())
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_chunked_fetch_resume() -> Result<()> {
++        let t = TestContext::new().await;
++        let data = fake_message(500_000);
++        let n = 200_000usize;
++
++        let mut staging = open_staging(&t, 1).await;
++        staging.append(&data[..n]).await?;
++
++        let fetcher = FakeFetcher::new(data.clone());
++        let calls = fetcher.calls_handle();
++        let outcome = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await?;
++        let ChunkOutcome::Complete(body) = outcome else {
++            panic!("expected Complete");
++        };
++        assert_eq!(body, data, "resumed download must match the full message");
++
++        assert_eq!(calls.lock().unwrap().first().unwrap().0, n as u32);
++        Ok(())
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_chunked_fetch_exact_multiple() -> Result<()> {
++        let t = TestContext::new().await;
++        let data = fake_message(128 * 1024 + 256 * 1024);
++
++        let mut staging = open_staging(&t, 1).await;
++        let fetcher = FakeFetcher::new(data.clone());
++        let calls = fetcher.calls_handle();
++        let outcome = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await?;
++        let ChunkOutcome::Complete(body) = outcome else {
++            panic!("expected Complete");
++        };
++        assert_eq!(body, data);
++
++        assert_eq!(
++            *calls.lock().unwrap(),
++            vec![
++                (0, 128 * 1024),
++                (128 * 1024, 256 * 1024),
++                (384 * 1024, 512 * 1024)
++            ]
++        );
++        Ok(())
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_chunked_fetch_empty_message() -> Result<()> {
++        let t = TestContext::new().await;
++        let data: Vec<u8> = Vec::new();
++
++        let mut staging = open_staging(&t, 1).await;
++        let fetcher = FakeFetcher::new(data.clone());
++        let calls = fetcher.calls_handle();
++        let outcome = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await?;
++        let ChunkOutcome::Complete(body) = outcome else {
++            panic!("expected Complete");
++        };
++        assert!(body.is_empty());
++        assert_eq!(*calls.lock().unwrap(), vec![(0, 128 * 1024)]);
++        Ok(())
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_chunked_fetch_size_lies() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let (t, msg_id) = real_msg_id(&mut tcm).await?;
++        let data = fake_message(300_000);
++
++        for (uid, claimed_size) in [(1u32, data.len() as u64 / 2), (2, data.len() as u64 * 2)] {
++            t.evtracker.clear_events();
++            let mut staging = open_staging(&t, uid).await;
++            let fetcher = FakeFetcher::new(data.clone());
++            let outcome =
++                chunked_fetch_loop(&t, &mut staging, Some(claimed_size), Some(msg_id), fetcher)
++                    .await?;
++            let ChunkOutcome::Complete(body) = outcome else {
++                panic!("expected Complete");
++            };
++            assert_eq!(body, data, "assembly is short-read based, not size based");
++
++            let permilles: Vec<u16> = t
++                .evtracker
++                .take_events()
++                .into_iter()
++                .filter_map(|ev| match ev.typ {
++                    EventType::DownloadProgress {
++                        msg_id: id,
++                        permille,
++                    } if id == msg_id => Some(permille),
++                    _ => None,
++                })
++                .collect();
++            assert!(!permilles.is_empty());
++            assert!(permilles.windows(2).all(|w| w[0] <= w[1]));
++            assert!(
++                permilles.iter().all(|&p| p <= 999),
++                "permille must be capped even when staged bytes exceed the claimed size: {permilles:?}"
++            );
++        }
++        Ok(())
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_chunked_fetch_origin_mismatch() -> Result<()> {
++        // origin off by one from the requested offset.
++        let t = TestContext::new().await;
++        let data = fake_message(500_000);
++        let mut staging = open_staging(&t, 1).await;
++        let fetcher = FakeFetcher::new(data.clone()).respond_with(|offset, _count, data| {
++            let end = std::cmp::min(offset as usize + 10, data.len());
++            PartialFetchResult::Data {
++                origin: Some(offset + 1),
++                bytes: data[offset as usize..end].to_vec(),
++            }
++        });
++        let outcome = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await?;
++        assert!(matches!(outcome, ChunkOutcome::Unsupported));
++
++        // origin None (server-omitted, treated as 0) with offset>0 and a
++        // short response that isn't the full message either.
++        let mut staging = open_staging(&t, 2).await;
++        staging.append(&data[..1000]).await?;
++        let fetcher = FakeFetcher::new(data.clone()).respond_with(|_offset, _count, _data| {
++            PartialFetchResult::Data {
++                origin: None,
++                bytes: vec![1, 2, 3],
++            }
++        });
++        let outcome = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await?;
++        assert!(matches!(outcome, ChunkOutcome::Unsupported));
++        Ok(())
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_chunked_fetch_server_ignores_range() -> Result<()> {
++        let t = TestContext::new().await;
++        let data = fake_message(500_000);
++
++        // Fresh download: server sends the whole message right away, larger
++        // than the requested count. `origin == offset (0)` on this very
++        // first request looks compliant, so the loop appends it whole and
++        // asks again; the follow-up request lands past the end of the
++        // message and gets an empty short-read, which is what actually
++        // terminates the loop with the fully assembled body.
++        let mut staging = open_staging(&t, 1).await;
++        let fetcher = FakeFetcher::new(data.clone()).respond_with(|offset, _count, data| {
++            if offset == 0 {
++                PartialFetchResult::Data {
++                    origin: Some(0),
++                    bytes: data.to_vec(),
++                }
++            } else {
++                PartialFetchResult::Data {
++                    origin: Some(offset),
++                    bytes: Vec::new(),
++                }
++            }
++        });
++        let calls = fetcher.calls_handle();
++        let outcome = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await?;
++        let ChunkOutcome::Complete(body) = outcome else {
++            panic!("expected Complete");
++        };
++        assert_eq!(body, data);
++        assert_eq!(
++            *calls.lock().unwrap(),
++            vec![(0, 128 * 1024), (data.len() as u32, 256 * 1024)],
++            "over-long first chunk is accepted, then a follow-up short read terminates the loop"
++        );
++
++        // Resume case, origin Some(0): must not splice the pre-staged bytes
++        // in front of the freshly returned full message.
++        let mut staging = open_staging(&t, 2).await;
++        staging.append(&data[..1000]).await?;
++        let fetcher = FakeFetcher::new(data.clone()).respond_with(|_offset, _count, data| {
++            PartialFetchResult::Data {
++                origin: Some(0),
++                bytes: data.to_vec(),
++            }
++        });
++        let outcome = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await?;
++        let ChunkOutcome::Complete(body) = outcome else {
++            panic!("expected Complete");
++        };
++        assert_eq!(body, data);
++
++        // Origin None past the start is NOT accepted as the full message:
++        // a plain `BODY[]` response to a mid-message range request could be
++        // either the full message or just the requested range — guessing
++        // wrong would splice a corrupt message, so the loop gives up on
++        // chunking instead.
++        let mut staging = open_staging(&t, 3).await;
++        staging.append(&data[..1000]).await?;
++        let fetcher = FakeFetcher::new(data.clone()).respond_with(|_offset, _count, data| {
++            PartialFetchResult::Data {
++                origin: None,
++                bytes: data.to_vec(),
++            }
++        });
++        let outcome = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await?;
++        assert!(matches!(outcome, ChunkOutcome::Unsupported));
++
++        // Fresh download from a server that omits the origin octet entirely:
++        // safe at offset 0, so a message fitting into the first chunk
++        // completes as a short read.
++        let small = fake_message(100_000);
++        let mut staging = open_staging(&t, 4).await;
++        let fetcher = FakeFetcher::new(small.clone()).respond_with(|_offset, _count, data| {
++            PartialFetchResult::Data {
++                origin: None,
++                bytes: data.to_vec(),
++            }
++        });
++        let outcome = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await?;
++        let ChunkOutcome::Complete(body) = outcome else {
++            panic!("expected Complete");
++        };
++        assert_eq!(body, small);
++        Ok(())
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_chunked_fetch_io_error_keeps_staging() -> Result<()> {
++        let t = TestContext::new().await;
++        let data = fake_message(1_048_576);
++
++        let mut staging = open_staging(&t, 1).await;
++        let fetcher = FakeFetcher::new(data.clone()).fail_at(2);
++        let result = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await;
++        assert!(result.is_err());
++
++        // The staging file on disk still has exactly the first chunk.
++        let on_disk = tokio::fs::read(&staging.path).await?;
++        assert_eq!(on_disk, data[..128 * 1024]);
++        assert_eq!(staging.len(), (128 * 1024) as u64);
++
++        // Retrying with a working fetcher resumes and completes correctly.
++        let fetcher = FakeFetcher::new(data.clone());
++        let outcome = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await?;
++        let ChunkOutcome::Complete(body) = outcome else {
++            panic!("expected Complete");
++        };
++        assert_eq!(body, data);
++        Ok(())
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_chunked_fetch_gone() -> Result<()> {
++        // An empty FETCH response is ambiguous (message gone vs. tagged
++        // NO/BAD that the stream cannot surface); the loop reports it as
++        // `Gone` and the caller disambiguates by re-probing the UID.
++        let t = TestContext::new().await;
++        let mut staging = open_staging(&t, 1).await;
++        let fetcher =
++            FakeFetcher::new(vec![1, 2, 3]).respond_with(|_, _, _| PartialFetchResult::Gone);
++        let outcome = chunked_fetch_loop(&t, &mut staging, None, None, fetcher).await?;
++        assert!(matches!(outcome, ChunkOutcome::Gone));
++        Ok(())
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_staging_file_roundtrip() -> Result<()> {
++        let t = TestContext::new().await;
++
++        let mut staging = StagingFile::open(&t, 1, "INBOX", 1, 42).await?;
++        assert_eq!(staging.len(), 0);
++        staging.append(b"hello").await?;
++        assert_eq!(staging.len(), 5);
++        let path = staging.path.clone();
++        drop(staging);
++
++        // Reopening picks the length back up from disk.
++        let staging = StagingFile::open(&t, 1, "INBOX", 1, 42).await?;
++        assert_eq!(staging.len(), 5);
++        assert_eq!(staging.read_all().await?, b"hello");
++        staging.delete().await?;
++        assert!(tokio::fs::metadata(&path).await.is_err());
++
++        // Deleting a staging file that was never appended to is fine.
++        let staging = StagingFile::open(&t, 1, "INBOX", 1, 99).await?;
++        staging.delete().await?;
++        Ok(())
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_discard_partial_files() -> Result<()> {
++        let t = TestContext::new().await;
++        let transport_id = 1;
++        let folder = "INBOX";
++
++        let mut v1 = StagingFile::open(&t, transport_id, folder, 1, 10).await?;
++        v1.append(b"v1 bytes").await?;
++        let v1_path = v1.path.clone();
++
++        let mut v2 = StagingFile::open(&t, transport_id, folder, 2, 10).await?;
++        v2.append(b"v2 bytes").await?;
++        let v2_path = v2.path.clone();
++
++        // Staging file for a different folder on the same transport must
++        // survive regardless of its UIDVALIDITY.
++        let mut other_folder = StagingFile::open(&t, transport_id, "Other", 1, 10).await?;
++        other_folder.append(b"other folder bytes").await?;
++        let other_folder_path = other_folder.path.clone();
++
++        let unrelated_path = t.get_blobdir().join("some-unrelated-blob.txt");
++        tokio::fs::write(&unrelated_path, b"blob").await?;
++
++        discard_partial_files(&t, transport_id, folder, 2).await?;
++
++        assert!(
++            tokio::fs::metadata(&v1_path).await.is_err(),
++            "stale v1 staging file should be removed"
++        );
++        assert!(
++            tokio::fs::metadata(&v2_path).await.is_ok(),
++            "current v2 staging file must survive"
++        );
++        assert!(
++            tokio::fs::metadata(&other_folder_path).await.is_ok(),
++            "different-folder staging file must survive"
++        );
++        assert!(
++            tokio::fs::metadata(&unrelated_path).await.is_ok(),
++            "unrelated blob must survive"
++        );
++        Ok(())
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_disable_chunked_download_device_msg_once() -> Result<()> {
++        let t = TestContext::new().await;
++        let device_chat_id = ChatId::get_for_contact(&t, ContactId::DEVICE).await?;
++
++        disable_chunked_download(&t, 1).await?;
++        disable_chunked_download(&t, 2).await?;
++
++        assert!(t.chunked_download_disabled.lock().contains(&1));
++        assert!(t.chunked_download_disabled.lock().contains(&2));
++
++        let msgs = get_chat_msgs(&t, device_chat_id).await?;
++        assert_eq!(
++            msgs.len(),
++            1,
++            "the device message must be added only once across transports"
++        );
++        Ok(())
++    }
+ }
+diff --git a/src/imap.rs b/src/imap.rs
+index 45374e646..d780f9fa8 100644
+--- a/src/imap.rs
++++ b/src/imap.rs
+@@ -1988,7 +1988,11 @@ pub(crate) async fn set_uidvalidity(
+     Ok(())
+ }
+ 
+-async fn get_uidvalidity(context: &Context, transport_id: u32, folder: &str) -> Result<u32> {
++pub(crate) async fn get_uidvalidity(
++    context: &Context,
++    transport_id: u32,
++    folder: &str,
++) -> Result<u32> {
+     Ok(context
+         .sql
+         .query_get_value(
+diff --git a/src/imap/select_folder.rs b/src/imap/select_folder.rs
+index 78c743b33..2fa8bb664 100644
+--- a/src/imap/select_folder.rs
++++ b/src/imap/select_folder.rs
+@@ -219,6 +219,14 @@ pub(crate) async fn select_with_uidvalidity(
+             )
+             .await?;
+ 
++        // UIDs are invalid now, staged partial downloads cannot be resumed.
++        if let Err(err) =
++            crate::download::discard_partial_files(context, transport_id, folder, new_uid_validity)
++                .await
++        {
++            warn!(context, "Failed to discard partial downloads: {err:#}.");
++        }
++
+         if old_uid_validity != 0 || old_uid_next != 0 {
+             self.resync_request_sender.try_send(()).ok();
+         }
+diff --git a/src/imap/session.rs b/src/imap/session.rs
+index 65d90d851..d158e1b69 100644
+--- a/src/imap/session.rs
++++ b/src/imap/session.rs
+@@ -3,12 +3,46 @@
+ 
+ use anyhow::{Context as _, Result};
+ use async_imap::Session as ImapSession;
+-use async_imap::types::Mailbox;
++use async_imap::types::{Fetch, Flag, Mailbox};
+ use futures::TryStreamExt;
+ 
+ use crate::imap::capabilities::Capabilities;
+ use crate::net::session::SessionStream;
+ 
++/// Result of a single partial `UID FETCH` of a message body range
++/// requested with `BODY.PEEK[]<offset.count>`.
++pub(crate) enum PartialFetchResult {
++    /// Body data for the requested UID.
++    Data {
++        /// Origin octet from the `BODY[]<origin>` response.
++        /// `None` if the server returned a full `BODY[]` instead.
++        origin: Option<u32>,
++
++        /// The returned bytes. Empty if the requested range
++        /// starts at or past the end of the message.
++        bytes: Vec<u8>,
++    },
++
++    /// The server sent no FETCH response for the UID; the message is gone.
++    Gone,
++
++    /// Tagged NO/BAD response: the server rejects partial fetch.
++    Unsupported,
++}
++
++/// Flags and size of a message on the server,
++/// prefetched before a chunked download.
++pub(crate) struct UidMeta {
++    /// `RFC822.SIZE` as reported by the server, if any.
++    pub size: Option<u32>,
++
++    /// Message has the `\Seen` flag.
++    pub seen: bool,
++
++    /// Message has the `\Deleted` flag.
++    pub deleted: bool,
++}
++
+ /// Prefetch:
+ /// - Message-ID to check if we already have the message.
+ /// - In-Reply-To and References to check if message is a reply to chat message.
+@@ -146,4 +180,103 @@ pub(crate) async fn prefetch(
+ 
+         Ok(Vec::from_iter(msgs))
+     }
++
++    /// Fetches flags and `RFC822.SIZE` of a single message.
++    ///
++    /// Returns `None` if the server sent no FETCH response for the UID,
++    /// i.e. the message is gone.
++    pub(crate) async fn uid_fetch_meta(&mut self, uid: u32) -> Result<Option<UidMeta>> {
++        let mut list = self
++            .uid_fetch(uid.to_string(), "(FLAGS RFC822.SIZE)")
++            .await
++            .with_context(|| format!("fetching flags and size of UID {uid}"))?;
++
++        let mut meta = None;
++        while let Some(msg) = list.try_next().await? {
++            if msg.uid == Some(uid) && meta.is_none() {
++                meta = Some(UidMeta {
++                    size: msg.size,
++                    seen: msg.flags().any(|flag| flag == Flag::Seen),
++                    deleted: msg.flags().any(|flag| flag == Flag::Deleted),
++                });
++            }
++        }
++        Ok(meta)
++    }
++
++    /// Fetches a byte range of a single message
++    /// with a partial FETCH (`BODY.PEEK[]<offset.count>`, RFC 3501).
++    ///
++    /// Does not classify `Io`/`ConnectionLost`/`Parse` errors as
++    /// [`PartialFetchResult::Unsupported`] — those are temporary and bubble up
++    /// as errors so that the download can be retried in chunked mode.
++    pub(crate) async fn uid_fetch_partial(
++        &mut self,
++        uid: u32,
++        offset: u32,
++        count: u32,
++    ) -> Result<PartialFetchResult> {
++        let query = format!("(BODY.PEEK[]<{offset}.{count}>)");
++        // NB: async-imap terminates a FETCH response stream at the tagged
++        // response without surfacing its NO/BAD status, so a rejected
++        // partial FETCH normally shows up as an EMPTY stream (`Gone`) —
++        // the caller re-probes the UID to distinguish "message gone" from
++        // "partial FETCH rejected". The `Error::No`/`Error::Bad` arms below
++        // are defensive, for error paths that do surface them.
++        let mut list = match self.uid_fetch(uid.to_string(), &query).await {
++            Ok(list) => list,
++            Err(async_imap::error::Error::No(_) | async_imap::error::Error::Bad(_)) => {
++                return Ok(PartialFetchResult::Unsupported);
++            }
++            Err(err) => {
++                return Err(err).with_context(|| format!("partial fetch of UID {uid}"));
++            }
++        };
++
++        let mut result = PartialFetchResult::Gone;
++        loop {
++            match list.try_next().await {
++                Ok(Some(msg)) => {
++                    // A response for our UID without a body section is
++                    // unsolicited (e.g. a flag change); keep waiting.
++                    if msg.uid == Some(uid)
++                        && matches!(result, PartialFetchResult::Gone)
++                        && let Some(data) = partial_fetch_data(&msg)
++                    {
++                        result = PartialFetchResult::Data {
++                            origin: msg.body_origin(),
++                            bytes: data,
++                        };
++                    }
++                }
++                Ok(None) => break,
++                Err(async_imap::error::Error::No(_) | async_imap::error::Error::Bad(_)) => {
++                    result = PartialFetchResult::Unsupported;
++                }
++                Err(err) => {
++                    return Err(err).with_context(|| format!("partial fetch of UID {uid}"));
++                }
++            }
++        }
++        Ok(result)
++    }
++}
++
++/// Returns the body bytes of a partial FETCH response,
++/// or `Some(vec![])` when the server returned a body section without data
++/// (`BODY[]<origin> ""` or NIL), which means the requested range starts
++/// at or past the end of the message.
++///
++/// Returns `None` if the response carries no body section at all.
++fn partial_fetch_data(msg: &Fetch) -> Option<Vec<u8>> {
++    if let Some(body) = msg.body() {
++        Some(body.to_vec())
++    } else if msg.body_origin().is_some() {
++        // ponytail: relies on `body_origin()` matching a body section even
++        // with NIL data; a full `BODY[]` with NIL data would be missed, but
++        // servers only return NIL/"" for out-of-range partial requests.
++        Some(Vec::new())
++    } else {
++        None
++    }
+ }
+diff --git a/src/sql.rs b/src/sql.rs
+index 433cfacf1..5c6ec77b0 100644
+--- a/src/sql.rs
++++ b/src/sql.rs
+@@ -1029,6 +1029,43 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
+         .await
+         .context("Failed to SELECT blobname FROM http_cache")?;
+ 
++    // Keep staging files of pending chunked downloads
++    // (see `download::StagingFile`); interrupted downloads resume from them.
++    context
++        .sql
++        .query_map(
++            "SELECT imap.transport_id, imap.folder, imap.uidvalidity, imap.uid
++             FROM download JOIN imap ON download.rfc724_mid=imap.rfc724_mid
++             WHERE imap.target!=''
++             UNION
++             SELECT imap.transport_id, imap.folder, imap.uidvalidity, imap.uid
++             FROM available_post_msgs JOIN imap
++               ON available_post_msgs.rfc724_mid=imap.rfc724_mid
++             WHERE imap.target!=''",
++            (),
++            |row| {
++                let transport_id: u32 = row.get(0)?;
++                let folder: String = row.get(1)?;
++                let uidvalidity: u32 = row.get(2)?;
++                let uid: u32 = row.get(3)?;
++                Ok((transport_id, folder, uidvalidity, uid))
++            },
++            |rows| {
++                for row in rows {
++                    let (transport_id, folder, uidvalidity, uid) = row?;
++                    files_in_use.insert(crate::download::StagingFile::name(
++                        transport_id,
++                        &folder,
++                        uidvalidity,
++                        uid,
++                    ));
++                }
++                Ok(())
++            },
++        )
++        .await
++        .context("Failed to SELECT pending downloads")?;
++
+     info!(context, "{} files in use.", files_in_use.len());
+     /* go through directories and delete unused files */
+     let blobdir = context.get_blobdir();
+diff --git a/src/sql/sql_tests.rs b/src/sql/sql_tests.rs
+index 1ae651bd7..944932b94 100644
+--- a/src/sql/sql_tests.rs
++++ b/src/sql/sql_tests.rs
+@@ -367,3 +367,59 @@ async fn test_incremental_vacuum() -> Result<()> {
+ 
+     Ok(())
+ }
++
++/// Tests that `remove_unused_files` keeps the staging file of a pending chunked
++/// download (there is a `download` row whose message is still sitting in `imap`
++/// with a non-empty `target`), while an orphaned staging file with no matching
++/// `download`/`imap` rows is removed as usual.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_housekeeping_keeps_pending_download_staging() -> Result<()> {
++    let t = TestContext::new().await;
++
++    let transport_id = 1;
++    let folder = "INBOX";
++    let uidvalidity = 33;
++    let uid = 7;
++    let rfc724_mid = "staging-test@example.org";
++
++    t.sql
++        .execute(
++            "INSERT INTO download (rfc724_mid, msg_id) VALUES (?, 0)",
++            (rfc724_mid,),
++        )
++        .await?;
++    t.sql
++        .execute(
++            "INSERT INTO imap (transport_id, rfc724_mid, folder, target, uid, uidvalidity)
++             VALUES (?, ?, ?, 'INBOX', ?, ?)",
++            (transport_id, rfc724_mid, folder, uid, uidvalidity),
++        )
++        .await?;
++
++    let referenced_name =
++        crate::download::StagingFile::name(transport_id, folder, uidvalidity, uid);
++    let referenced_path = t.get_blobdir().join(&referenced_name);
++    tokio::fs::write(&referenced_path, b"partial data").await?;
++
++    // No download/imap rows reference this one.
++    let orphan_path = t.get_blobdir().join("partial-t9-deadbeef-v1-u1");
++    tokio::fs::write(&orphan_path, b"orphaned data").await?;
++
++    // Push the housekeeping "not modified for the last hour" cutoff into the future,
++    // so both files (whose real mtimes are "now") count as stale without needing to
++    // touch the filesystem clock, same trick as `blob_tests::test_create_and_deduplicate_from_bytes`.
++    SystemTime::shift(Duration::from_secs(65 * 60));
++
++    remove_unused_files(&t).await?;
++
++    assert!(
++        referenced_path.exists(),
++        "staging file of a pending chunked download was deleted by housekeeping"
++    );
++    assert!(
++        !orphan_path.exists(),
++        "orphaned staging file was not cleaned up by housekeeping"
++    );
++
++    Ok(())
++}

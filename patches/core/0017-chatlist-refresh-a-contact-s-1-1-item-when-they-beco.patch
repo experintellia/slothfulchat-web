@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 15 Jul 2026 00:48:05 +0000
-Subject: [PATCH 17/18] chatlist: refresh a contact's 1:1 item when they become
+Subject: [PATCH 17/20] chatlist: refresh a contact's 1:1 item when they become
  recently seen
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

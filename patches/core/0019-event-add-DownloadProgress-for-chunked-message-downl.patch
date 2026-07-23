@@ -1,0 +1,113 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 23 Jul 2026 02:27:26 +0000
+Subject: [PATCH 19/20] event: add DownloadProgress for chunked message
+ downloads
+
+Reports permille progress (1..=999, 1000 = done) while a large message
+is being downloaded from the server in chunks. Modeled on ImexProgress.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_019DhvV6wm3aXyrgHHXaefxw
+---
+ deltachat-ffi/src/lib.rs                  | 10 ++++++++--
+ deltachat-jsonrpc/src/api/types/events.rs | 14 ++++++++++++++
+ src/events/payload.rs                     | 11 +++++++++++
+ 3 files changed, 33 insertions(+), 2 deletions(-)
+
+diff --git a/deltachat-ffi/src/lib.rs b/deltachat-ffi/src/lib.rs
+index abea9ebba..adcf7f75c 100644
+--- a/deltachat-ffi/src/lib.rs
++++ b/deltachat-ffi/src/lib.rs
+@@ -537,6 +537,7 @@ fn spawn_configure(ctx: Context) {
+         EventType::ConfigureProgress { .. } => 2041,
+         EventType::ImexProgress(_) => 2051,
+         EventType::ImexFileWritten(_) => 2052,
++        EventType::DownloadProgress { .. } => 2053,
+         EventType::SecurejoinInviterProgress { .. } => 2060,
+         EventType::SecurejoinJoinerProgress { .. } => 2061,
+         EventType::ConnectivityChanged => 2100,
+@@ -626,7 +627,8 @@ fn spawn_configure(ctx: Context) {
+         | EventType::IncomingCall { msg_id, .. }
+         | EventType::IncomingCallAccepted { msg_id, .. }
+         | EventType::OutgoingCallAccepted { msg_id, .. }
+-        | EventType::CallEnded { msg_id, .. } => msg_id.to_u32() as libc::c_int,
++        | EventType::CallEnded { msg_id, .. }
++        | EventType::DownloadProgress { msg_id, .. } => msg_id.to_u32() as libc::c_int,
+         EventType::ChatlistItemChanged { chat_id } => {
+             chat_id.unwrap_or_default().to_u32() as libc::c_int
+         }
+@@ -693,7 +695,10 @@ fn spawn_configure(ctx: Context) {
+         | EventType::MsgDeleted { msg_id, .. }
+         | EventType::MsgReadCountChanged { msg_id, .. } => msg_id.to_u32() as libc::c_int,
+         EventType::SecurejoinInviterProgress { progress, .. }
+-        | EventType::SecurejoinJoinerProgress { progress, .. } => *progress as libc::c_int,
++        | EventType::SecurejoinJoinerProgress { progress, .. }
++        | EventType::DownloadProgress {
++            permille: progress, ..
++        } => *progress as libc::c_int,
+         EventType::ChatEphemeralTimerModified { timer, .. } => timer.to_u32() as libc::c_int,
+         EventType::WebxdcStatusUpdate {
+             status_update_serial,
+@@ -786,6 +791,7 @@ fn spawn_configure(ctx: Context) {
+         | EventType::AccountsItemChanged
+         | EventType::IncomingCallAccepted { .. }
+         | EventType::WebxdcRealtimeAdvertisementReceived { .. }
++        | EventType::DownloadProgress { .. }
+         | EventType::TransportsModified => ptr::null_mut(),
+         EventType::IncomingCall {
+             place_call_info, ..
+diff --git a/deltachat-jsonrpc/src/api/types/events.rs b/deltachat-jsonrpc/src/api/types/events.rs
+index 64ab1a3a4..16f4ee7d8 100644
+--- a/deltachat-jsonrpc/src/api/types/events.rs
++++ b/deltachat-jsonrpc/src/api/types/events.rs
+@@ -296,6 +296,16 @@ pub enum EventType {
+         progress: u16,
+     },
+ 
++    /// Progress of a message download from the server.
++    #[serde(rename_all = "camelCase")]
++    DownloadProgress {
++        /// Message ID of the message being downloaded.
++        msg_id: u32,
++
++        /// 1..=999 = permille of downloaded bytes, 1000 = download finished and processed.
++        permille: u16,
++    },
++
+     /// A file has been exported. A file has been written by imex().
+     /// This event may be sent multiple times by a single call to imex().
+     ///
+@@ -587,6 +597,10 @@ fn from(event: CoreEventType) -> Self {
+                 ConfigureProgress { progress, comment }
+             }
+             CoreEventType::ImexProgress(progress) => ImexProgress { progress },
++            CoreEventType::DownloadProgress { msg_id, permille } => DownloadProgress {
++                msg_id: msg_id.to_u32(),
++                permille,
++            },
+             CoreEventType::ImexFileWritten(path) => ImexFileWritten {
+                 path: path.to_str().unwrap_or_default().to_owned(),
+             },
+diff --git a/src/events/payload.rs b/src/events/payload.rs
+index 8300f02b1..8e88e92a7 100644
+--- a/src/events/payload.rs
++++ b/src/events/payload.rs
+@@ -265,6 +265,17 @@ pub enum EventType {
+     /// @param data2 0
+     ImexProgress(u16),
+ 
++    /// Progress of a message download from the server.
++    ///
++    /// 1..=999 = permille of downloaded bytes, 1000 = download finished and processed.
++    DownloadProgress {
++        /// Message ID of the message being downloaded.
++        msg_id: MsgId,
++
++        /// Progress in permille.
++        permille: u16,
++    },
++
+     /// A file has been exported. A file has been written by imex().
+     /// This event may be sent multiple times by a single call to imex().
+     ///

@@ -1,5 +1,11 @@
 # Changelog
 
+- **Resumable, chunked big-message downloads**: "download on demand" messages
+  now arrive in chunks (IMAP partial fetch) — an interrupted download resumes
+  where it stopped instead of restarting from zero, and new `DownloadProgress`
+  events report a percentage while it runs. Servers without partial-fetch
+  support keep the old whole-message download and get a one-time notice.
+
 ## 0.7.0 — 2026-07-20
 
 - Switching the UI language now refreshes already-rendered text (chatlist

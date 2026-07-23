@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothfulchat.local>
 Date: Wed, 15 Jul 2026 02:07:50 +0000
-Subject: [PATCH 49/58] web-app: opaque white background on webxdc navbar app
+Subject: [PATCH 49/64] web-app: opaque white background on webxdc navbar app
  icons
 
 The last-used-app icons shown in a chat's title bar are app-supplied,
