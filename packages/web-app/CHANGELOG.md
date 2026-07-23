@@ -13,7 +13,10 @@
   polished too: pause and resume while recording, listen to your recording
   before sending it (send, re-record or discard), hold the mic and slide up
   to record hands-free or slide left to cancel, and an "original audio"
-  option that skips noise suppression for music or ambience. Off by default;
+  option that skips noise suppression for music or ambience. If you have
+  several microphones you can pick one right in the recorder (with a live
+  level meter), even mid-recording — and if no sound is coming in, an inline
+  hint says so instead of cancelling your recording. Off by default;
   turn it on in Settings → Advanced → Experimental features.
 
 - **Links lose their tracking**: known tracking parameters (`utm_*`, YouTube

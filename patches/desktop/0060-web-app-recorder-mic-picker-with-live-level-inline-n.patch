@@ -1,0 +1,953 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Thu, 23 Jul 2026 01:59:57 +0000
+Subject: [PATCH 60/60] web-app: recorder mic picker with live level + inline
+ no-sound warning (experimental)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Follow-up to phase B of the voice-messages epic (#120), all gated behind
+experimentalAudioPlayerControls (off = today's recorder, byte-identical: the
+picker/warning aren't rendered, the deviceId constraint is dropped, the
+SilenceDetector is skipped and the OFF path's aborting 1s NO_INPUT alert
+stays).
+
+- Mic picker in the recording row: a small device-select button appears only
+  when enumerateDevices() reports more than one audioinput (enumerated when
+  the row mounts — permission is granted by then so labels populate; the list
+  refreshes each time the menu opens, ponytail: no devicechange listener). The
+  popover lists each input (empty labels fall back to "Microphone N" via a pure
+  helper), checkmarks the active device (read from the open track's
+  getSettings, not the recorder ref during render), and shows a compact live
+  level on the ACTIVE row only, driven by the recorder's existing RMS. ponytail:
+  only the active device is metered — no extra getUserMedia per inactive mic,
+  same as Jitsi.
+- Hot-switch without losing the take: MicRecorder.switchDevice() opens the new
+  stream, then swaps the source node feeding the SAME processor/encoder, so the
+  MP3 stays one contiguous stream (no re-init). Frames are gated via the
+  internal paused flag during the swap so no garbage lands; the flag is
+  restored, NOT the React paused state, so the timer doesn't double-bank.
+  Opening the new stream before tearing down the old one means a failed switch
+  (device vanished) keeps the take running on the old device. Not recording →
+  the choice just applies to the next take (start() reads config).
+- Persisted as a new desktop setting voiceRecordingDeviceId (default = system
+  default, set from the menu, no ExperimentalFeatures toggle). Stored as
+  string|undefined, not string|null: the desktop-setting persistence setter
+  only round-trips string|number|boolean|undefined, so undefined means "system
+  default" and reads normalize with `?? null`.
+- Stale persisted deviceId: `{ deviceId: { exact } }` throws OverconstrainedError
+  (or NotFoundError) when the mic is gone. start() catches it, falls back to the
+  system default instead of failing the whole recording, flags the take, and the
+  UI clears the stored setting. resolveDeviceId() is the pure decision (persisted
+  id kept only if still enumerated) used for the menu checkmark.
+- Inline no-sound warning replaces the aborting alert on the ON path: a pure
+  SilenceDetector (feed rms+now per frame; reports after ~3s of continuous
+  near-silence) drives a hint next to the picker so the "no sound" text points
+  at the remedy — switch mics. It does NOT abort the recording and clears the
+  moment signal returns. Paused time can't count: the recorder skips frames
+  while paused (nothing is fed) and the detector is reset on resume so the gap
+  can't back-date the quiet window. Setting off keeps the upstream one-shot
+  alert exactly as-is.
+
+SilenceDetector transitions, the device-label fallback and the stale-deviceId
+decision are unit-tested (mocha, 19 in the recorder suite). The contiguous-MP3
+hot-switch needs a live WebAudio pipeline, so it's left to the screenshot/e2e
+harness like the other recorder invariants.
+
+Review hardening: switchDevice() no longer multiplexes the user's pause flag
+during a swap — a dedicated `swapping` flag gates frames (paused stays
+authoritative) and doubles as a reentrancy guard that drops an overlapping
+switch. The alive-check is on context.state (stop() closes the context but
+leaves the fields set), so a stop during the getUserMedia await now stops the
+just-opened stream instead of leaking it, and any node-rewiring throw stops the
+new stream before propagating. Menu keyboard/focus: Escape closes and returns
+focus to the trigger, selecting a device does too, and the outside-click
+handler is memoized so OutsideClickHelper stops re-registering document
+listeners on every volume-driven render. The no-sound hint uses --colorDanger
+(AA-passing on every theme's composer bg) instead of a hard-coded red that
+failed contrast on the dark themes, and the picker row now keeps the device
+label (min-width:0 ellipsis + title) beside the fixed-width meter.
+---
+ _locales/_untranslated_en.json                |   6 +
+ .../AudioRecorder/AudioRecorder.tsx           | 247 ++++++++++++++++--
+ .../components/AudioRecorder/MicRecorder.ts   | 119 ++++++++-
+ .../components/AudioRecorder/recorderLogic.ts |  66 +++++
+ .../AudioRecorder/styles.module.scss          | 107 +++++++-
+ .../frontend/src/tests/audioRecorder.test.ts  |  74 ++++++
+ packages/shared/shared-types.d.ts             |   2 +
+ packages/shared/state.ts                      |   1 +
+ 8 files changed, 589 insertions(+), 33 deletions(-)
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index b957b5c08..594bd5372 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -142,5 +142,11 @@
+   },
+   "original_audio_not_supported": {
+     "message": "Original audio is not supported by this browser or microphone"
++  },
++  "select_microphone": {
++    "message": "Select microphone"
++  },
++  "recording_no_sound": {
++    "message": "No sound — check your microphone"
+   }
+ }
+diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+index c294743ea..80b0099fd 100644
+--- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
++++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+@@ -17,15 +17,21 @@ import { MediaPlayerMutexContext } from '../../contexts/MediaPlayerMutexContext'
+ import { drawBars } from '../AudioPlayer/Waveform'
+ import { CustomAudioControls } from '../AudioPlayer'
+ import { IconButton } from '../Icon'
++import OutsideClickHelper from '../OutsideClickHelper'
+ import {
+   CANCEL_DX,
+   LOCK_DY,
+   classifyGesture,
++  deviceLabel,
+   originalAudioHonored,
++  resolveDeviceId,
++  silenceReset,
++  silenceStep,
+   timerElapsedMs,
+   timerPause,
+   timerResume,
+   timerStart,
++  type SilenceState,
+   type TimerState,
+ } from './recorderLogic'
+ 
+@@ -96,7 +102,7 @@ const Timer = ({ paused = false }: { paused?: boolean }) => {
+  * 2. a level layer to show/hide the coloured background
+  * 3. a coloured background with a color gradient from green to red
+  */
+-const VolumeMeter = (prop: { volume: number }) => {
++const VolumeMeter = (prop: { volume: number; compact?: boolean }) => {
+   const steps = 10
+   // doubling the volume shows a more realistic volume level
+   const level = Math.min(prop.volume * 2, 1)
+@@ -108,7 +114,9 @@ const VolumeMeter = (prop: { volume: number }) => {
+       aria-valuemin={0}
+       aria-valuemax={1}
+       aria-valuenow={level}
+-      className={styles.volumeBarContainer}
++      className={
++        prop.compact ? styles.volumeBarCompact : styles.volumeBarContainer
++      }
+     >
+       <div className={styles.volumeBar}>
+         <div className={styles.mask}>
+@@ -158,8 +166,39 @@ export const AudioRecorder = ({
+   const settings = useSettingsStore()[0]?.desktopSettings
+   const experimental = settings?.experimentalAudioPlayerControls === true
+   const originalAudio = settings?.voiceRecordingOriginalAudio === true
++  const voiceRecordingDeviceId = settings?.voiceRecordingDeviceId ?? null
+   const liveWaveform = experimental
+ 
++  // Microphone picker (experimental). Enumerated while the recording row is up
++  // (permission is granted then, so labels populate); refreshed on each open.
++  // Rendered only when there's more than one audioinput.
++  const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([])
++  const [micMenuOpen, setMicMenuOpen] = useState(false)
++  // Wraps trigger + menu; used to hand focus back to the trigger button.
++  // ponytail: IconButton isn't a forwardRef, so focus the trigger by its
++  // data-testid inside this wrapper rather than reffing the button directly.
++  const micPickerRef = useRef<HTMLDivElement>(null)
++  // Stable so OutsideClickHelper doesn't re-register its document listeners on
++  // every volume-driven render (~12/s while the menu is open). Outside-click
++  // just closes; focus stays where the click landed.
++  const closeMicMenu = useCallback(() => setMicMenuOpen(false), [])
++  // Escape / select close the menu AND return focus to the trigger.
++  const closeMicMenuToTrigger = useCallback(() => {
++    setMicMenuOpen(false)
++    micPickerRef.current
++      ?.querySelector<HTMLButtonElement>('[data-testid="mic-picker-trigger"]')
++      ?.focus()
++  }, [])
++  // deviceId actually feeding the open stream (from track.getSettings), captured
++  // when the stream opens / after a hot-switch so the checkmark doesn't read the
++  // recorder ref during render. null until the first stream opens.
++  const [appliedDeviceId, setAppliedDeviceId] = useState<string | null>(null)
++
++  // Inline no-sound warning (experimental): the SilenceDetector drives it from
++  // the per-frame RMS instead of the OFF path's aborting 1s NO_INPUT alert.
++  const silenceRef = useRef<SilenceState>(silenceReset())
++  const [noSound, setNoSound] = useState(false)
++
+   // Recording pause state (experimental).
+   const [paused, setPaused] = useState(false)
+   // Whether the advisory "original audio" request was honored by the mic/browser
+@@ -187,16 +226,29 @@ export const AudioRecorder = ({
+   // callback (~85ms) and draw imperatively — NOT from a [volume] effect: React
+   // bails out when volume is unchanged (digital silence = exactly 0), so an
+   // effect would never re-run and the waveform would freeze instead of scroll.
+-  const pushVolume = useCallback((v: number) => {
+-    setVolume(v) // drives the meter aria-valuenow
+-    const h = historyRef.current
+-    h.copyWithin(0, 1) // shift left, newest at the right
+-    h[HISTORY - 1] = Math.min(v * 2, 1) // same scaling as VolumeMeter
+-    if (canvasRef.current != null) {
+-      // Only non-null while the setting is on and recording, so no gate needed.
+-      drawBars(canvasRef.current, h, 1)
+-    }
+-  }, [])
++  const pushVolume = useCallback(
++    (v: number) => {
++      setVolume(v) // drives the meter aria-valuenow
++      const h = historyRef.current
++      h.copyWithin(0, 1) // shift left, newest at the right
++      h[HISTORY - 1] = Math.min(v * 2, 1) // same scaling as VolumeMeter
++      if (canvasRef.current != null) {
++        // Only non-null while the setting is on and recording, so no gate needed.
++        drawBars(canvasRef.current, h, 1)
++      }
++      // Experimental only: paused frames never reach here (onaudioprocess skips
++      // them), so paused time can't accumulate as silence. OFF keeps the aborting
++      // 1s alert instead, so we skip the detector to stay byte-identical. The
++      // recorder captures this closure at construction (per take), so a mid-take
++      // settings flip is picked up on the next recording — fine, it's rare.
++      if (experimental) {
++        const [next, warn] = silenceStep(silenceRef.current, v, Date.now())
++        silenceRef.current = next
++        setNoSound(prev => (prev === warn ? prev : warn))
++      }
++    },
++    [experimental]
++  )
+ 
+   const onAccessDenied = useCallback(() => {
+     openDialog(AlertDialog, {
+@@ -255,10 +307,17 @@ export const AudioRecorder = ({
+     const mic = new MicRecorder(pushVolume, {
+       bitRate: 32,
+       originalAudio: experimental && originalAudio,
++      // Persisted picker choice (experimental only, so OFF stays default audio:
++      // true → byte-identical). A stale id is caught in start() and reset below.
++      deviceId: experimental ? voiceRecordingDeviceId : null,
+     })
+     recorder.current = mic
+     setPaused(false)
+     setOriginalHonored(null)
++    setNoSound(false)
++    setAppliedDeviceId(null)
++    setMicMenuOpen(false) // don't reopen a menu left open from a prior take
++    silenceRef.current = silenceReset()
+     historyRef.current.fill(0) // don't carry the previous session's tail
+     setRecording(true)
+     mic
+@@ -270,6 +329,19 @@ export const AudioRecorder = ({
+           mic.stop()
+           return
+         }
++        // Stale persisted deviceId got dropped to the system default in start():
++        // clear the setting so the picker doesn't keep pointing at a gone mic.
++        if (mic.deviceIdWasStale) {
++          // undefined (not null): the persistence setter only round-trips
++          // string|number|boolean|undefined. Reads normalize back with `?? null`.
++          SettingsStoreInstance.effect.setDesktopSetting(
++            'voiceRecordingDeviceId',
++            undefined
++          )
++        }
++        // Capture the real device now feeding the stream (may differ from the
++        // persisted id after a stale fallback) so the picker checkmark is right.
++        setAppliedDeviceId(mic.getAppliedSettings()?.deviceId ?? null)
+         // Advisory constraints are honored only if the mic/browser agrees —
+         // read the truth back and reflect it in the pill's tooltip.
+         if (experimental && originalAudio) {
+@@ -278,12 +350,18 @@ export const AudioRecorder = ({
+             applied ? originalAudioHonored(applied as any) : null
+           )
+         }
+-        window.setTimeout(() => {
+-          if (!recorder.current?.audioSignalDetected && recording) {
+-            onError(new AudioRecorderError('No input', AudioErrorType.NO_INPUT))
+-            onRecordingCancel()
+-          }
+-        }, 1000)
++        // OFF path only: the aborting 1s NO_INPUT alert. ON replaces it with the
++        // non-aborting inline SilenceDetector warning (user can switch mics).
++        if (!experimental) {
++          window.setTimeout(() => {
++            if (!recorder.current?.audioSignalDetected && recording) {
++              onError(
++                new AudioRecorderError('No input', AudioErrorType.NO_INPUT)
++              )
++              onRecordingCancel()
++            }
++          }, 1000)
++        }
+       })
+       .catch((err: any) => {
+         onError(new AudioRecorderError(err.message))
+@@ -340,9 +418,14 @@ export const AudioRecorder = ({
+       return
+     }
+     if (paused) {
++      // Reset silence tracking on resume so the paused gap can't back-date
++      // quietSince and instant-warn (paused frames were never fed).
++      silenceRef.current = silenceReset()
++      setNoSound(false)
+       r.resume()
+       setPaused(false)
+     } else {
++      setNoSound(false) // no signal while paused isn't "no sound"
+       r.pause()
+       setPaused(true)
+     }
+@@ -355,6 +438,33 @@ export const AudioRecorder = ({
+     )
+   }
+ 
++  // ponytail: no `devicechange` listener — reopening the menu re-enumerates,
++  // which is enough for the recorder's short-lived lifetime. Upgrade path is a
++  // navigator.mediaDevices.ondevicechange refresh if hot-plug during a take
++  // needs to reflow the list live.
++  const refreshDevices = useCallback(async () => {
++    try {
++      const devices = await navigator.mediaDevices.enumerateDevices()
++      setAudioInputs(devices.filter(d => d.kind === 'audioinput'))
++    } catch (err: any) {
++      log.error('enumerateDevices failed', err)
++    }
++  }, [])
++
++  // Persist the choice and, if recording, hot-swap without breaking the take.
++  const selectDevice = (deviceId: string | null) => {
++    closeMicMenuToTrigger()
++    // null → undefined for the persistence setter (see stale-reset note above).
++    SettingsStoreInstance.effect.setDesktopSetting(
++      'voiceRecordingDeviceId',
++      deviceId ?? undefined
++    )
++    const r = recorder.current
++    r?.switchDevice(deviceId)
++      .then(() => setAppliedDeviceId(r.getAppliedSettings()?.deviceId ?? null))
++      .catch((err: any) => log.error('switchDevice failed', err))
++  }
++
+   const onPreviewSend = () => {
+     const blob = previewBlobRef.current
+     cleanupPreview()
+@@ -465,6 +575,16 @@ export const AudioRecorder = ({
+     }
+   }, [recording, cleanupPreview])
+ 
++  // Enumerate audioinputs when the recording row is up (permission granted →
++  // labels populate). Loading an external list on mount is a valid effect;
++  // setAudioInputs only fires after the async enumerate resolves.
++  useEffect(() => {
++    if (recording && experimental) {
++      // eslint-disable-next-line react-hooks/set-state-in-effect
++      refreshDevices()
++    }
++  }, [recording, experimental, refreshDevices])
++
+   // Preview playback is mutually exclusive with the shared voice-message
+   // singleton: whichever starts pauses the other (pause, not stop, so a
+   // mini-player keeps its position). ponytail: the preview deliberately does
+@@ -514,6 +634,96 @@ export const AudioRecorder = ({
+     </button>
+   )
+ 
++  // --- mic picker + inline no-sound warning (experimental) ------------------
++  // Active row = the device actually feeding the stream (getSettings) while
++  // recording, else the persisted choice validated against the enumerated list
++  // (resolveDeviceId: a stale id resolves to null = system default).
++  const activeDeviceId =
++    appliedDeviceId ??
++    resolveDeviceId(
++      voiceRecordingDeviceId,
++      audioInputs.map(d => d.deviceId)
++    )
++  const micCluster = experimental && (
++    <div className={styles.micCluster}>
++      {noSound && (
++        <span
++          className={styles.noSoundHint}
++          role='status'
++          data-testid='recording-no-sound'
++        >
++          {tx('recording_no_sound')}
++        </span>
++      )}
++      {audioInputs.length > 1 && (
++        <div className={styles.micPicker} ref={micPickerRef}>
++          <IconButton
++            className={styles.micPickerButton}
++            icon='devices'
++            coloring='currentColor'
++            aria-label={tx('select_microphone')}
++            aria-haspopup='menu'
++            aria-expanded={micMenuOpen}
++            data-testid='mic-picker-trigger'
++            onClick={() => {
++              refreshDevices() // reopen refreshes the list
++              setMicMenuOpen(o => !o)
++            }}
++          />
++          {micMenuOpen && (
++            <OutsideClickHelper onClick={closeMicMenu}>
++              <div
++                className={styles.micMenu}
++                role='menu'
++                aria-label={tx('select_microphone')}
++                data-testid='mic-picker-menu'
++                onKeyDown={e => {
++                  if (e.key === 'Escape') {
++                    e.stopPropagation()
++                    closeMicMenuToTrigger()
++                  }
++                }}
++              >
++                {audioInputs.map((d, i) => {
++                  const selected = d.deviceId === activeDeviceId
++                  const label = deviceLabel(d.label, i)
++                  return (
++                    <button
++                      type='button'
++                      role='menuitemradio'
++                      aria-checked={selected}
++                      key={d.deviceId || i}
++                      className={styles.micMenuItem}
++                      onClick={() => selectDevice(d.deviceId)}
++                    >
++                      <span className={styles.micCheck}>
++                        {selected ? '✓' : ''}
++                      </span>
++                      <span className={styles.micLabel} title={label}>
++                        {label}
++                      </span>
++                      {/* ponytail: only the active device is metered — no extra
++                          getUserMedia per inactive mic (Jitsi meters the active
++                          one too). Reuses the live `volume` state. */}
++                      {selected && (
++                        <span
++                          className={styles.micRowMeter}
++                          data-testid='mic-picker-level'
++                        >
++                          <VolumeMeter volume={volume} compact />
++                        </span>
++                      )}
++                    </button>
++                  )
++                })}
++              </div>
++            </OutsideClickHelper>
++          )}
++        </div>
++      )}
++    </div>
++  )
++
+   // --- preview row ----------------------------------------------------------
+   if (previewUrl != null) {
+     return (
+@@ -629,6 +839,7 @@ export const AudioRecorder = ({
+       ) : (
+         <VolumeMeter volume={volume} />
+       )}
++      {micCluster}
+       {originalPill}
+       <button
+         type='button'
+diff --git a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
+index afd6f5602..9ba7f21fe 100644
+--- a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
++++ b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
+@@ -25,12 +25,19 @@ interface MicRecorderConfig {
+  */
+ class MicRecorder {
+   public audioSignalDetected: boolean = false
++  // Set true when start() had to drop a stale persisted deviceId and fall back
++  // to the system default; the caller resets the stored setting on seeing it.
++  public deviceIdWasStale: boolean = false
+   // Gate checked by onaudioprocess: while paused, frames are neither encoded
+   // nor volume-metered, so the resulting MP3 is one contiguous stream (same
+   // encoder, no re-init) and the waveform/meter freeze.
+   // ponytail: the mic stream stays live while paused, so the OS/tab "recording"
+   // indicator stays on. Upgrade path if that matters: toggle track.enabled.
+   public paused: boolean = false
++  // Frame gate while a device hot-swap is mid-flight. Separate from `paused`
++  // (the user's pause is authoritative and untouched during a swap) so the two
++  // can't clobber each other; also doubles as the reentrancy guard.
++  private swapping: boolean = false
+   private onVolumeChange: (volume: number) => void
+   private config: MicRecorderConfig
+   private activeStream: MediaStream | null
+@@ -85,7 +92,7 @@ class MicRecorder {
+       // The contiguous-MP3 invariant (paused frames are skipped, resume feeds
+       // the SAME encoder → one stream) is exercised by the screenshot/e2e
+       // harness, not the unit suite — it needs a live WebAudio pipeline.
+-      if (this.timerToStart || this.paused) {
++      if (this.timerToStart || this.paused || this.swapping) {
+         return
+       }
+ 
+@@ -126,19 +133,16 @@ class MicRecorder {
+   }
+ 
+   /**
+-   * Requests access to the microphone and start recording
+-   * @return Promise<MediaStream>
++   * getUserMedia audio constraints for a given deviceId. `deviceId: { exact }`
++   * pins the device; originalAudio flips the advisory processing flags off.
++   * Returns `true` (default device, no processing constraints) when empty.
+    */
+-  start(): Promise<MediaStream> {
+-    const AudioContext =
+-      window.AudioContext || (window as any).webkitAudioContext
+-    this.context = new AudioContext()
+-    this.config.sampleRate = this.context.sampleRate
+-    this.lameEncoder = new Encoder(this.config)
+-
++  private audioConstraints(
++    deviceId: string | null
++  ): MediaTrackConstraints | true {
+     const constraints: MediaTrackConstraints = {}
+-    if (this.config.deviceId) {
+-      constraints.deviceId = { exact: this.config.deviceId }
++    if (deviceId) {
++      constraints.deviceId = { exact: deviceId }
+     }
+     if (this.config.originalAudio) {
+       // Advisory: browsers/mics may ignore these. Caller reads back the truth
+@@ -147,11 +151,42 @@ class MicRecorder {
+       constraints.echoCancellation = false
+       constraints.autoGainControl = false
+     }
+-    const audio = Object.keys(constraints).length > 0 ? constraints : true
++    return Object.keys(constraints).length > 0 ? constraints : true
++  }
++
++  /**
++   * Requests access to the microphone and start recording.
++   * @return Promise<MediaStream>
++   */
++  start(): Promise<MediaStream> {
++    const AudioContext =
++      window.AudioContext || (window as any).webkitAudioContext
++    this.context = new AudioContext()
++    this.config.sampleRate = this.context.sampleRate
++    this.lameEncoder = new Encoder(this.config)
+ 
+     return new Promise((resolve, reject) => {
+       navigator.mediaDevices
+-        .getUserMedia({ audio })
++        .getUserMedia({
++          audio: this.audioConstraints(this.config.deviceId ?? null),
++        })
++        .catch((err: any) => {
++          // Stale/unplugged persisted deviceId → OverconstrainedError (or
++          // NotFoundError). Retry on the system default instead of failing the
++          // whole recording; the caller resets the stored setting.
++          if (
++            this.config.deviceId &&
++            (err?.name === 'OverconstrainedError' ||
++              err?.name === 'NotFoundError')
++          ) {
++            this.deviceIdWasStale = true
++            this.config.deviceId = null
++            return navigator.mediaDevices.getUserMedia({
++              audio: this.audioConstraints(null),
++            })
++          }
++          throw err
++        })
+         .then(stream => {
+           this.addMicrophoneListener(stream)
+           resolve(stream)
+@@ -162,6 +197,62 @@ class MicRecorder {
+     })
+   }
+ 
++  /**
++   * Hot-swap the input device mid-recording without breaking the take: open the
++   * new stream, then swap the source node feeding the SAME processor/encoder so
++   * the MP3 stays one contiguous stream. Frames are gated via the internal
++   * `swapping` flag during the swap so no garbage lands — the user's pause flag
++   * stays authoritative and untouched. Opening the new stream before tearing
++   * down the old one means a failed switch (e.g. the device vanished) keeps the
++   * current take running on the old device.
++   *
++   * Alive-check is on context.state, not context/processor being non-null:
++   * stop() closes the context but leaves the fields set, so a stopped recorder
++   * still has a non-null context.
++   */
++  async switchDevice(deviceId: string | null): Promise<void> {
++    const processor = this.processor
++    if (!this.context || this.context.state === 'closed' || processor == null) {
++      // Not recording (or already stopped) — next start() picks up the new
++      // deviceId via config.
++      this.config.deviceId = deviceId
++      return
++    }
++    if (this.swapping) {
++      // ponytail: a swap is already in flight — drop this call. The menu closes
++      // on select so a queued switch isn't worth building; upgrade path is a
++      // pending-deviceId re-run in finally if callers ever spam it.
++      return
++    }
++    this.swapping = true // gate frames + block a reentrant swap during the await
++    try {
++      const newStream = await navigator.mediaDevices.getUserMedia({
++        audio: this.audioConstraints(deviceId),
++      })
++      const ctx = this.context
++      if (ctx == null || ctx.state === 'closed') {
++        // Recorder was stopped while getUserMedia resolved — don't leak the
++        // freshly opened stream, and don't wire a node onto a dead context.
++        newStream.getAudioTracks().forEach(track => track.stop())
++        return
++      }
++      try {
++        this.microphone?.disconnect()
++        this.activeStream?.getAudioTracks().forEach(track => track.stop())
++        this.config.deviceId = deviceId
++        this.activeStream = newStream
++        this.microphone = ctx.createMediaStreamSource(newStream)
++        this.microphone.connect(processor)
++      } catch (err) {
++        // Any wiring failure: stop the new stream so it can't leak, then rethrow.
++        newStream.getAudioTracks().forEach(track => track.stop())
++        throw err
++      }
++    } finally {
++      this.swapping = false
++    }
++  }
++
+   /**
+    * Return Mp3 Buffer and Blob with type mp3
+    * @return {Promise<[Int8Array[], Blob]>}
+diff --git a/packages/frontend/src/components/AudioRecorder/recorderLogic.ts b/packages/frontend/src/components/AudioRecorder/recorderLogic.ts
+index c2abd7403..3bbb9979b 100644
+--- a/packages/frontend/src/components/AudioRecorder/recorderLogic.ts
++++ b/packages/frontend/src/components/AudioRecorder/recorderLogic.ts
+@@ -91,3 +91,69 @@ export function originalAudioHonored(
+   }
+   return present.every(k => settings[k] === false)
+ }
++
++// --- microphone picker + inline no-sound warning ---------------------------
++
++/**
++ * Which deviceId to actually record with: the persisted one if it's still in
++ * the enumerated inputs, else null (system default). A stale id would make
++ * getUserMedia({ deviceId: { exact } }) throw OverconstrainedError; falling
++ * back to null keeps the recording alive. Pure so it's unit-testable; start()
++ * additionally catches the runtime race where a device vanishes mid-flight.
++ */
++export function resolveDeviceId(
++  persisted: string | null,
++  availableIds: string[]
++): string | null {
++  return persisted != null && availableIds.indexOf(persisted) !== -1
++    ? persisted
++    : null
++}
++
++/**
++ * Display name for an audioinput. Empty labels happen before mic permission is
++ * granted; here permission is already granted so labels populate and the
++ * fallback is a rare edge case.
++ * ponytail: English "Microphone N" fallback (not localized) — only surfaces for
++ * empty labels, which don't occur post-permission. Localize if it ever shows.
++ */
++export function deviceLabel(
++  label: string | null | undefined,
++  index: number
++): string {
++  const l = (label ?? '').trim()
++  return l !== '' ? l : `Microphone ${index + 1}`
++}
++
++// Continuous near-silence for this long → show the inline "no sound" hint.
++// Threshold is a small RMS floor; real speech/room tone sits well above it.
++// ponytail: fixed threshold, not noise-floor-calibrated per mic. Ceiling: a
++// very quiet mic could false-warn; upgrade path = adaptive floor from the first
++// second of signal.
++export const SILENCE_RMS_THRESHOLD = 0.01
++export const SILENCE_HOLD_MS = 3000
++
++export type SilenceState = { quietSinceMs: number | null }
++
++export function silenceReset(): SilenceState {
++  return { quietSinceMs: null }
++}
++
++/**
++ * Feed (rmsValue, nowMs) once per audio frame. Any signal above the threshold
++ * resets the quiet timer; sustained near-silence accumulates and reports true
++ * after SILENCE_HOLD_MS. Paused time can't count toward silence because the
++ * recorder skips frames while paused (nothing is fed) — reset on resume so the
++ * paused gap doesn't back-date quietSince.
++ */
++export function silenceStep(
++  s: SilenceState,
++  rms: number,
++  nowMs: number
++): [SilenceState, boolean] {
++  if (rms > SILENCE_RMS_THRESHOLD) {
++    return [{ quietSinceMs: null }, false]
++  }
++  const quietSince = s.quietSinceMs ?? nowMs
++  return [{ quietSinceMs: quietSince }, nowMs - quietSince >= SILENCE_HOLD_MS]
++}
+diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+index cdacd5693..1c4cc49fc 100644
+--- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
++++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+@@ -56,7 +56,11 @@
+       }
+     }
+   }
+-  button:not(.microphoneButton) {
++  // Only the cancel/finish buttons get the fixed 85px look. Upstream wrote
++  // this as `button:not(.microphoneButton)`, which silently clamped every
++  // button later added to the recorder (mic-menu rows, pills, pause) to 85px.
++  .cancel,
++  .stopRecording {
+     padding: 4px;
+     height: 32px;
+     margin-top: 4px;
+@@ -92,6 +96,9 @@
+ .volumeBarContainer {
+   flex: 1;
+   padding-inline-end: 10px;
++}
++.volumeBarContainer,
++.volumeBarCompact {
+   .volumeBar {
+     display: flex;
+     position: relative;
+@@ -142,6 +149,14 @@
+     }
+   }
+ }
++// Compact reuse of the same segmented meter inside a mic-picker menu row.
++// After the shared block so these shrink the footprint (source order wins).
++.volumeBarCompact .volumeBar {
++  margin: 0;
++  width: 56px;
++  min-width: 56px;
++  max-width: 56px;
++}
+ 
+ // Below 400px the meter is hidden to make room for Timer/Cancel/OK; the live
+ // waveform must hide too (its min-width would otherwise squeeze the buttons).
+@@ -248,3 +263,93 @@
+   align-self: center;
+   padding-inline-end: 10px;
+ }
++
++// --- mic picker + inline no-sound warning (experimental) ------------------
++
++// Warning + picker trigger sit together so the "no sound" hint visually points
++// at the remedy (switch mics). Anchored relative so the menu can pop above it.
++.micCluster {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  align-self: center;
++  position: relative;
++  flex-shrink: 0;
++}
++.noSoundHint {
++  // Theme error color: --colorDanger clears AA (≥4.5:1) on every composerBg
++  // (light #eb0000/#fff 4.63; dark #ff5c5a on #222 5.25, #000 6.93, #222333
++  // 5.11). The old hard-coded #d70b0b was ~3.0:1 on the dark composer.
++  color: var(--colorDanger, #d70b0b);
++  font-size: 12px;
++  white-space: nowrap;
++}
++.micPicker {
++  position: relative;
++  display: flex;
++  align-items: center;
++}
++.micPickerButton {
++  color: var(--composerPlaceholderText);
++  &:hover {
++    color: var(--buttonSecondaryText);
++  }
++  &[aria-expanded='true'] {
++    color: var(--buttonSecondaryText);
++  }
++}
++
++// Popover listing audioinputs, anchored above the trigger like the completion
++// menu. ponytail: same absolute-over-.lower-bar idiom as .holdHints; no portal.
++.micMenu {
++  position: absolute;
++  inset-inline-end: 0;
++  bottom: calc(100% + 6px);
++  z-index: 10;
++  min-width: 260px;
++  max-width: min(340px, 80vw);
++  max-height: 240px;
++  overflow-y: auto;
++  padding: 4px;
++  background-color: var(--bgPrimary);
++  color: var(--textPrimary);
++  border: 1px solid var(--separatorColor, #ccc);
++  border-radius: 8px;
++  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
++}
++.micMenuItem {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  width: 100%;
++  padding: 7px 8px;
++  border: none;
++  background: none;
++  color: inherit;
++  text-align: start;
++  border-radius: 5px;
++  cursor: pointer;
++  &:hover {
++    background-color: var(--chatListItemSelectedBg);
++  }
++}
++.micCheck {
++  flex: 0 0 auto;
++  width: 14px;
++  text-align: center;
++}
++.micLabel {
++  flex: 1;
++  // min-width:0 lets the label shrink below its content so it ellipsizes
++  // instead of pushing the fixed-width meter off the row (flex default is
++  // min-width:auto). Meter (.micRowMeter, flex:0 0 auto) sits at the row end.
++  min-width: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++.micRowMeter {
++  flex: 0 0 auto;
++  display: flex;
++  align-items: center;
++}
+diff --git a/packages/frontend/src/tests/audioRecorder.test.ts b/packages/frontend/src/tests/audioRecorder.test.ts
+index 0e3368103..854c6746f 100644
+--- a/packages/frontend/src/tests/audioRecorder.test.ts
++++ b/packages/frontend/src/tests/audioRecorder.test.ts
+@@ -4,9 +4,14 @@ import { describe, it } from 'mocha'
+ import {
+   CANCEL_DX,
+   LOCK_DY,
++  SILENCE_HOLD_MS,
+   TAP_MAX_MS,
+   classifyGesture,
++  deviceLabel,
+   originalAudioHonored,
++  resolveDeviceId,
++  silenceReset,
++  silenceStep,
+   timerElapsedMs,
+   timerPause,
+   timerResume,
+@@ -96,3 +101,72 @@ describe('AudioRecorder / originalAudioHonored', () => {
+     expect(originalAudioHonored({ noiseSuppression: true })).to.equal(false)
+   })
+ })
++
++describe('AudioRecorder / SilenceDetector', () => {
++  const SIGNAL = 0.2 // well above the near-silence threshold
++  const QUIET = 0 // digital silence
++
++  it('warns after continuous near-silence past the hold window', () => {
++    let s = silenceReset()
++    let warn: boolean
++    ;[s, warn] = silenceStep(s, QUIET, 0) // first quiet frame anchors quietSince
++    expect(warn).to.equal(false)
++    ;[s, warn] = silenceStep(s, QUIET, SILENCE_HOLD_MS - 1)
++    expect(warn).to.equal(false)
++    ;[s, warn] = silenceStep(s, QUIET, SILENCE_HOLD_MS)
++    expect(warn).to.equal(true) // >= hold window
++  })
++
++  it('resets on any signal (warning clears immediately)', () => {
++    let s = silenceReset()
++    let warn: boolean
++    ;[s, warn] = silenceStep(s, QUIET, 0)
++    ;[s, warn] = silenceStep(s, QUIET, SILENCE_HOLD_MS) // now warning
++    expect(warn).to.equal(true)
++    ;[s, warn] = silenceStep(s, SIGNAL, SILENCE_HOLD_MS + 10) // signal returns
++    expect(warn).to.equal(false)
++    // quiet timer restarts from here, so it takes another full window to warn
++    ;[s, warn] = silenceStep(s, QUIET, SILENCE_HOLD_MS + 20)
++    expect(warn).to.equal(false)
++  })
++
++  it('ignores paused gaps: a reset before the resume frame stops back-dating', () => {
++    // Frames stop while paused; the component resets on resume so the gap
++    // between the last pre-pause frame and the first post-resume frame can't
++    // count as silence. Without the reset, the large nowMs jump would warn.
++    let s = silenceReset()
++    let warn: boolean
++    ;[s, warn] = silenceStep(s, QUIET, 100) // one quiet frame, then "pause"
++    // ... long paused gap, no frames fed ...
++    s = silenceReset() // resume reset
++    ;[s, warn] = silenceStep(s, QUIET, 100000) // first frame after resume
++    expect(warn).to.equal(false) // gap did not back-date quietSince
++  })
++})
++
++describe('AudioRecorder / deviceLabel', () => {
++  it('uses the reported label when present', () => {
++    expect(deviceLabel('USB Microphone', 3)).to.equal('USB Microphone')
++  })
++
++  it('falls back to a 1-based "Microphone N" for empty/blank labels', () => {
++    expect(deviceLabel('', 0)).to.equal('Microphone 1')
++    expect(deviceLabel('   ', 2)).to.equal('Microphone 3')
++    expect(deviceLabel(null, 1)).to.equal('Microphone 2')
++    expect(deviceLabel(undefined, 4)).to.equal('Microphone 5')
++  })
++})
++
++describe('AudioRecorder / resolveDeviceId', () => {
++  const ids = ['mic-a', 'mic-b']
++  it('keeps a persisted id that still exists', () => {
++    expect(resolveDeviceId('mic-b', ids)).to.equal('mic-b')
++  })
++  it('drops a stale id to null (system default)', () => {
++    expect(resolveDeviceId('gone', ids)).to.equal(null)
++    expect(resolveDeviceId('mic-a', [])).to.equal(null)
++  })
++  it('null stays null (already system default)', () => {
++    expect(resolveDeviceId(null, ids)).to.equal(null)
++  })
++})
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index e0d8f999c..e86deb3db 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -53,6 +53,8 @@ export interface DesktopSettingsType {
+   voiceMessageMediaSessionDetails: boolean
+   /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Toggled from the recorder UI, applies to the next recording. */
+   voiceRecordingOriginalAudio: boolean
++  /** webapp: preferred microphone deviceId for voice recording, chosen from the recorder's mic picker. undefined = system default (the persistence setter only round-trips string|number|boolean|undefined). Reset if the device is gone. */
++  voiceRecordingDeviceId: string | undefined
+   enterKeySends: boolean
+   locale: string | null
+   notifications: boolean
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index 290ca4ee9..e3a356bef 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -21,6 +21,7 @@ export function getDefaultState(): DesktopSettingsType {
+     experimentalAudioPlayerControls: false,
+     voiceMessageMediaSessionDetails: false,
+     voiceRecordingOriginalAudio: false,
++    voiceRecordingDeviceId: undefined,
+     chatViewBgImg: undefined,
+     lastChats: {},
+     zoomFactor: undefined,

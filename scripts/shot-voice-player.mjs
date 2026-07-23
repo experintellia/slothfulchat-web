@@ -450,6 +450,32 @@ try {
     try {
       await page.getByTestId('mic-picker-trigger').click({ timeout: 3000 })
       await page.waitForTimeout(500)
+      if (process.env.MIC_DEBUG) {
+        const dbg = await page.evaluate(() => {
+          const menu = document.querySelector('[data-testid=mic-picker-menu]')
+          if (!menu) return 'NO MENU'
+          const mr = menu.getBoundingClientRect()
+          return {
+            menu: { w: mr.width, cls: menu.className },
+            rows: [...menu.querySelectorAll('button')].map((b) => {
+              const r = b.getBoundingClientRect()
+              const label = b.querySelector('[class*=micLabel]')
+              const meter = b.querySelector('[class*=micRowMeter]')
+              const lr = label?.getBoundingClientRect()
+              return {
+                rowW: r.width,
+                text: label?.textContent,
+                labelW: lr?.width,
+                labelDisplay: label ? getComputedStyle(label).display : null,
+                labelFlex: label ? getComputedStyle(label).flex : null,
+                rowDisplay: getComputedStyle(b).display,
+                meterW: meter?.getBoundingClientRect().width ?? null,
+              }
+            }),
+          }
+        })
+        console.log('MIC_DEBUG', JSON.stringify(dbg, null, 1))
+      }
       await shot('10-mic-picker')
       await page.keyboard.press('Escape')
     } catch {

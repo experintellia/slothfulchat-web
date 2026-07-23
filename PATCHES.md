@@ -68,9 +68,16 @@ exists:
   discard), press-and-hold with slide-left-to-cancel and slide-up-to-lock
   (a quick tap still toggles like before), and an "original audio" toggle
   (noise suppression etc. off — advisory, the UI reflects what the mic
-  actually honored). All phases of the voice-messages epic (#120);
-  screenshot loop: `node scripts/shot-voice-player.mjs`. `desktop/0056`,
-  `desktop/0057`, `desktop/0058`, `desktop/0059`
+  actually honored). A follow-up adds a microphone picker to the recording
+  row (shown with multiple inputs; Jitsi-style live level on the active
+  device only — no extra streams; hot-switching mid-recording keeps the MP3
+  contiguous; the choice persists, with stale-device fallback) and turns the
+  aborting "no input" alert into an inline non-aborting "No sound — check
+  your microphone" hint after ~3s of silence, with the picker right next to
+  it as the remedy. All phases of the voice-messages epic (#120);
+  screenshot loop: `node scripts/shot-voice-player.mjs` (SILENT_WAV=… for
+  the warning). `desktop/0056`, `desktop/0057`, `desktop/0058`,
+  `desktop/0059`, `desktop/0060`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
