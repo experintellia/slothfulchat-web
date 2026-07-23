@@ -1,0 +1,586 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Slothful Dev <dev@slothfulchat.invalid>
+Date: Wed, 22 Jul 2026 19:27:00 +0000
+Subject: [PATCH 64/64] =?UTF-8?q?web-app:=20admin=20groups=20=E2=80=94=20c?=
+ =?UTF-8?q?reate-dialog=20checkbox=20and=20admin-only=20management=20UI?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+UI for the core group-admins feature (ported from ArcaneChat's Android
+client, ArcaneChat/android PR #167):
+
+- New Group dialog: an "Admin group" checkbox creates the group via
+  createGroupWithAdmin, making the creator the only one who can manage
+  it.
+- Group profile dialog: for non-admin members of an admin group, hide
+  Add Member, QR invite code, member remove buttons and the Edit menu
+  entry (core rejects those actions anyway).
+- Chat menu: hide "Disappearing Messages" for non-admins of admin
+  groups.
+- Delete dialog: offer "Delete for Everyone" on other people's
+  messages when you are the group admin.
+---
+ _locales/_untranslated_en.json                |  9 +++
+ .../Settings/ExperimentalFeatures.tsx         | 60 +++++++++++++++++++
+ .../src/components/chat/ChatContextMenu.tsx   |  5 +-
+ .../src/components/contact/ContactList.tsx    |  4 ++
+ .../components/contact/ContactListItem.tsx    |  4 ++
+ .../src/components/dialogs/About/index.tsx    | 48 ++++++++++++++-
+ .../dialogs/ConfirmDeleteMessage.tsx          | 11 +++-
+ .../components/dialogs/CreateChat/index.tsx   | 56 ++++++++++++++---
+ .../components/dialogs/ViewGroup/index.tsx    | 33 +++++++++-
+ packages/frontend/src/utils/groupAdmin.ts     | 40 +++++++++++++
+ packages/shared/shared-types.d.ts             |  6 ++
+ packages/shared/state.ts                      |  2 +
+ 12 files changed, 263 insertions(+), 15 deletions(-)
+ create mode 100644 packages/frontend/src/utils/groupAdmin.ts
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 9e2638185..59d31120c 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -1,4 +1,13 @@
+ {
++  "admin_group_checkbox": {
++    "message": "Admin group — only you can edit the group and manage members"
++  },
++  "group_admin": {
++    "message": "Group admin"
++  },
++  "admin_group_explain": {
++    "message": "Experimental. Works with ArcaneChat and Slothful Chat members — on regular Delta Chat apps the messages arrive only as a plain thread, without the group or its admin rules."
++  },
+   "export_chat_explain": {
+     "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
+   },
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index 3704aa87c..1a535a5bf 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -24,6 +24,7 @@ import { DialogProps } from '../../contexts/DialogContext'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { DeltaInput } from '../Login-Styles'
+ import SettingsSelector from './SettingsSelector'
++import styles from './styles.module.scss'
+ import { defaultAppStoreBaseUrl } from '@deltachat-desktop/shared/state'
+ 
+ const log = getLogger('ExperimentalFeatures')
+@@ -116,6 +117,65 @@ export function ExperimentalFeatures() {
+       >
+         {tx('webxdc_store_url')}
+       </SettingsSelector>
++      {settingsStore?.desktopSettings.showSuperDangerousExperimentalOptions && (
++        <SuperDangerousExperimentalFeatures />
++      )}
++    </>
++  )
++}
++
++// Keys of options considered "super-dangerous". The section stays visible
++// while any of them is on, and the "hide" button is disabled until they are
++// all off, so a user can't lose track of an enabled dangerous feature.
++const SUPER_DANGEROUS_KEYS = ['enableAdminGroups'] as const
++
++// Only revealed after unlocking via the 10× version tap in the About dialog
++// (see components/dialogs/About). Hidden by default.
++function SuperDangerousExperimentalFeatures() {
++  const settingsStore = useSettingsStore()[0]
++  const anyActive = SUPER_DANGEROUS_KEYS.some(
++    key => settingsStore?.desktopSettings[key] === true
++  )
++
++  const hideSection = () => {
++    SettingsStoreInstance.effect.setDesktopSetting(
++      'showSuperDangerousExperimentalOptions',
++      false
++    )
++  }
++
++  return (
++    <>
++      <SettingsSeparator />
++      <SettingsHeading>⚠️ Super-dangerous</SettingsHeading>
++      <DesktopSettingsSwitch
++        settingsKey='enableAdminGroups'
++        label='Admin groups'
++        description='Create groups that only you, the admin, can manage: members, name, image, disappearing messages — and you can delete anyone’s message for everyone. The admin is fixed for the group’s lifetime (it is tied to your key, so there is no way to transfer it or recover if you lose the key). ONLY works properly with ArcaneChat and other Slothful Chat users: on regular Delta Chat the messages arrive as a plain thread without the group’s name, member list or admin rules, and admin deletions are not applied there. Off by default (experimental).'
++        forkAdded
++        callback={value => {
++          if (value) {
++            ;(window as any).__slothfulTrack?.('admin_group', {
++              action: 'setting_enabled',
++            })
++          }
++        }}
++      />
++      <button
++        type='button'
++        className={styles.settingsButton}
++        style={{ opacity: anyActive ? 0.5 : undefined }}
++        disabled={anyActive}
++        title={
++          anyActive
++            ? 'Turn off every super-dangerous option before hiding this section.'
++            : undefined
++        }
++        onClick={hideSection}
++        data-testid='hide-super-dangerous'
++      >
++        Hide super-dangerous options
++      </button>
+     </>
+   )
+ }
+diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+index 5a93f1c7d..57a3e38d3 100644
+--- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
++++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+@@ -1,5 +1,6 @@
+ import React, { useContext, useState } from 'react'
+ import type { T } from '@deltachat/jsonrpc-client'
++import { selfMayManageGroup } from '../../utils/groupAdmin'
+ 
+ import { Timespans } from '@deltachat-desktop/shared/constants'
+ import { ContextMenuItem } from '../ContextMenu'
+@@ -467,7 +468,9 @@ export function useChatContextMenu(): {
+       relatedChat.canSend &&
+       relatedChat.chatType !== 'InBroadcast' &&
+       relatedChat.chatType !== 'Mailinglist' &&
+-      relatedChat.isEncrypted && {
++      relatedChat.isEncrypted &&
++      // slothfulchat: in admin groups only the admin may change the timer
++      selfMayManageGroup(relatedChat) && {
+         label: tx('ephemeral_messages'),
+         action: onDisappearingMessages,
+       }
+diff --git a/packages/frontend/src/components/contact/ContactList.tsx b/packages/frontend/src/components/contact/ContactList.tsx
+index 1968b35b1..ea19c5af7 100644
+--- a/packages/frontend/src/components/contact/ContactList.tsx
++++ b/packages/frontend/src/components/contact/ContactList.tsx
+@@ -27,6 +27,8 @@ export function ContactList(props: {
+   disabledContacts?: number[]
+   onContactContextMenu?: (contact: Type.Contact) => void
+   olElementAttrs?: Omit<React.HTMLAttributes<HTMLOListElement>, 'style'>
++  /** slothfulchat: per-contact row marker, e.g. the admin crown */
++  badge?: (contact: Type.Contact) => React.ReactNode
+ }) {
+   const {
+     contacts,
+@@ -39,6 +41,7 @@ export function ContactList(props: {
+     disabledContacts,
+     onContactContextMenu,
+     olElementAttrs,
++    badge,
+   } = props
+   return (
+     <ol
+@@ -67,6 +70,7 @@ export function ContactList(props: {
+             onRemoveClick={onRemoveClick}
+             disabled={disabled}
+             onContextMenu={onContactContextMenu?.bind(null, contact)}
++            badge={badge?.(contact)}
+           />
+         )
+       })}
+diff --git a/packages/frontend/src/components/contact/ContactListItem.tsx b/packages/frontend/src/components/contact/ContactListItem.tsx
+index 7d09299a0..3c72cbcd2 100644
+--- a/packages/frontend/src/components/contact/ContactListItem.tsx
++++ b/packages/frontend/src/components/contact/ContactListItem.tsx
+@@ -52,6 +52,9 @@ export function ContactListItem(
+     onRemoveClick?: (contact: Type.Contact) => void
+     disabled?: boolean
+     onContextMenu?: MouseEventHandler<HTMLButtonElement>
++    /** slothfulchat: extra marker rendered at the end of the row,
++     * e.g. the admin crown in admin groups */
++    badge?: React.ReactNode
+   } & Pick<
+     React.HTMLAttributes<HTMLDivElement>,
+     'aria-setsize' | 'aria-posinset'
+@@ -139,6 +142,7 @@ export function ContactListItem(
+       >
+         <Contact contact={contact} />
+       </button>
++      {props.badge}
+       {showCheckbox && (
+         <DeltaCheckbox
+           checked={checked}
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index d8053b29b..1a8958a8f 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -1,4 +1,4 @@
+-import React, { useEffect } from 'react'
++import React, { useEffect, useRef } from 'react'
+ 
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import { DialogBody, DialogContent, DialogWithHeader } from '../../Dialog'
+@@ -7,11 +7,20 @@ import useDialog from '../../../hooks/dialog/useDialog'
+ import { LogDialog } from '../Log'
+ import SettingsIconButton from '../../Settings/SettingsIconButton'
+ import SettingsSeparator from '../../Settings/SettingsSeparator'
++import SettingsStoreInstance, {
++  useSettingsStore,
++} from '../../../stores/settings'
+ 
+ import styles from './styles.module.scss'
+ 
+ import type { DialogProps } from '../../../contexts/DialogContext'
+ 
++// Taps on the version needed to reveal the super-dangerous experimental
++// options, and how many taps out we start warning — an homage to Android's
++// developer-options gesture.
++const TAPS_TO_UNLOCK = 10
++const WARN_FROM_REMAINING = 3
++
+ const GITHUB_URL = 'https://github.com/experintellia/slothfulchat-web'
+ const DELTA_CHAT_URL = 'https://delta.chat'
+ 
+@@ -25,6 +34,37 @@ export default function About({ onClose }: DialogProps) {
+     }
+   }, [])
+ 
++  const settingsStore = useSettingsStore()[0]
++  const alreadyUnlocked =
++    settingsStore?.desktopSettings.showSuperDangerousExperimentalOptions ===
++    true
++  const tapCount = useRef(0)
++
++  const onVersionTap = () => {
++    if (alreadyUnlocked) {
++      return
++    }
++    tapCount.current += 1
++    const remaining = TAPS_TO_UNLOCK - tapCount.current
++    if (remaining <= 0) {
++      SettingsStoreInstance.effect.setDesktopSetting(
++        'showSuperDangerousExperimentalOptions',
++        true
++      )
++      window.__userFeedback?.({
++        type: 'success',
++        text: 'Super-dangerous experimental options are now visible in Settings → Experimental features.',
++      })
++    } else if (remaining <= WARN_FROM_REMAINING) {
++      window.__userFeedback?.({
++        type: 'success',
++        text: `You are now ${remaining} ${
++          remaining === 1 ? 'step' : 'steps'
++        } away from revealing super-dangerous options.`,
++      })
++    }
++  }
++
+   const { openDialog } = useDialog()
+   const viewLog = () => {
+     openDialog(LogDialog)
+@@ -51,7 +91,11 @@ export default function About({ onClose }: DialogProps) {
+               src='./images/icon-512.png'
+               alt='SlothfulChat'
+             />
+-            <div className={styles.appVersion}>
++            <div
++              className={styles.appVersion}
++              onClick={onVersionTap}
++              data-testid='about-version'
++            >
+               v{VERSION}
+               {slothfulConfig?.commitHash && (
+                 <>
+diff --git a/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx b/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
+index d67707b8d..6c85462f2 100644
+--- a/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
++++ b/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
+@@ -15,6 +15,7 @@ import { C } from '@deltachat/jsonrpc-client'
+ import { ScreenContext } from '../../contexts/ScreenContext'
+ import { useFetch } from '../../hooks/useFetch'
+ import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
++import { selfIsAdminOfAdminGroup } from '../../utils/groupAdmin'
+ 
+ export type Props = {
+   accountId: number
+@@ -33,6 +34,10 @@ export default function ConfirmDeleteMessageDialog(props: Props) {
+ 
+   const { accountId, chat, onClose, messageIds, loadedMessages } = props
+ 
++  // slothfulchat: the admin of an admin group may also delete
++  // other members' messages for everyone (ported from ArcaneChat).
++  const selfIsGroupAdmin = selfIsAdminOfAdminGroup(chat)
++
+   const deleteForAllPossibleFetch = useFetch(
+     useCallback(async () => {
+       if (!chat.canSend || chat.isSelfTalk || !chat.isEncrypted) {
+@@ -41,7 +46,10 @@ export default function ConfirmDeleteMessageDialog(props: Props) {
+ 
+       // Check all the loaded messages
+       function msgDeleteForAllPossible(msg: Type.Message): boolean {
+-        return msg.sender.id === C.DC_CONTACT_ID_SELF && !msg.isInfo
++        return (
++          (selfIsGroupAdmin || msg.sender.id === C.DC_CONTACT_ID_SELF) &&
++          !msg.isInfo
++        )
+       }
+       if (
+         messageIds
+@@ -80,6 +88,7 @@ export default function ConfirmDeleteMessageDialog(props: Props) {
+       chat.canSend,
+       chat.isEncrypted,
+       chat.isSelfTalk,
++      selfIsGroupAdmin,
+       loadedMessages,
+       messageIds,
+     ]),
+diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
+index b8559d672..f4d0d8598 100644
+--- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
++++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
+@@ -68,6 +68,8 @@ import { useRpcFetch } from '../../../hooks/useFetch'
+ import { I18nContext } from '../../../contexts/I18nContext'
+ import useProcessQR, { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
+ import { IMAGE_EXTENSIONS } from '@deltachat-desktop/shared/constants'
++import { createGroupWithAdmin } from '../../../utils/groupAdmin'
++import { useSettingsStore } from '../../../stores/settings'
+ 
+ // Exported (and a regular `enum` rather than `const enum`) so that callers like
+ // the command palette can open `CreateGroup` directly with a `groupType`.
+@@ -713,12 +715,19 @@ export function CreateGroup(props: CreateGroupProps) {
+   const [groupMembers, removeGroupMember, addGroupMember] = useGroupMembers(
+     props.groupMembers || [C.DC_CONTACT_ID_SELF]
+   )
++  // slothfulchat: admin groups (ported from ArcaneChat) — only the creator
++  // can manage members and edit the group. Offered only when the
++  // experimental setting is on (Settings → Experimental features).
++  const [adminGroup, setAdminGroup] = useState(false)
++  const adminGroupsEnabled =
++    useSettingsStore()[0]?.desktopSettings.enableAdminGroups === true
+   const finishCreateGroup = useCreateGroup(
+     groupType,
+     groupName,
+     groupImage,
+     groupMembers,
+-    groupDescription
++    groupDescription,
++    adminGroup
+   )
+ 
+   const [errorMissingGroupName, setErrorMissingGroupName] = useState(false)
+@@ -829,6 +838,30 @@ export function CreateGroup(props: CreateGroupProps) {
+                 Parameters<typeof ChatSettingsSetNameAndProfileImage>[0]
+               >)}
+             />
++            {groupType === GroupType.REGULAR_GROUP && adminGroupsEnabled && (
++              <div className='create-admin-group-checkbox'>
++                <label>
++                  <input
++                    type='checkbox'
++                    checked={adminGroup}
++                    onChange={ev => setAdminGroup(ev.target.checked)}
++                    data-testid='admin-group-checkbox'
++                  />{' '}
++                  {tx('admin_group_checkbox')}
++                </label>
++                {adminGroup && (
++                  <div
++                    style={{
++                      opacity: 0.65,
++                      fontSize: '13px',
++                      margin: '4px 0 0 22px',
++                    }}
++                  >
++                    {tx('admin_group_explain')}
++                  </div>
++                )}
++              </div>
++            )}
+           </DialogContent>
+           <div id='create-group-members-title' className='group-separator'>
+             {tx(
+@@ -1068,7 +1101,8 @@ function useCreateGroup<
+   groupName: string,
+   groupImage: T extends GroupType.REGULAR_GROUP ? string | null : null,
+   groupMembers: number[],
+-  description: string
++  description: string,
++  adminGroup: boolean = false
+ ) {
+   const accountId = selectedAccountId()
+   const { openDialog } = useDialog()
+@@ -1079,11 +1113,9 @@ function useCreateGroup<
+     let chatId: ChatId
+     switch (groupType) {
+       case GroupType.REGULAR_GROUP: {
+-        chatId = await BackendRemote.rpc.createGroupChat(
+-          accountId,
+-          groupName,
+-          false
+-        )
++        chatId = adminGroup
++          ? await createGroupWithAdmin(BackendRemote.rpc, accountId, groupName)
++          : await BackendRemote.rpc.createGroupChat(accountId, groupName, false)
+         break
+       }
+       case GroupType.PLAIN_EMAIL: {
+@@ -1117,7 +1149,15 @@ function useCreateGroup<
+     ])
+ 
+     return chatId
+-  }, [accountId, description, groupImage, groupMembers, groupName, groupType])
++  }, [
++    accountId,
++    adminGroup,
++    description,
++    groupImage,
++    groupMembers,
++    groupName,
++    groupType,
++  ])
+ 
+   return async () => {
+     if (groupName === '') {
+diff --git a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
+index 9ecb5f43d..b35ae9c47 100644
+--- a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
++++ b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
+@@ -41,6 +41,7 @@ import { matchesLetterShortcut } from '../../../keybindings'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
++import { groupAdminId, selfMayManageGroup } from '../../../utils/groupAdmin'
+ import styles from './styles.module.scss'
+ const log = getLogger('ViewGroup')
+ 
+@@ -399,13 +400,38 @@ function ViewGroupInner(
+ 
+   const listFlags = C.DC_GCL_ADD_SELF
+ 
++  // slothfulchat: in admin groups (ported from ArcaneChat) only the admin
++  // may edit the group or manage members — core rejects it for anyone else.
++  const selfIsAdmin = selfMayManageGroup(group)
++  const adminId = groupAdminId(group)
++  // crown on the admin's row, visible to every member of an admin group
++  const adminBadge =
++    adminId == null
++      ? undefined
++      : (contact: T.Contact) =>
++          contact.id === adminId ? (
++            <span
++              className='group-admin-badge'
++              style={{
++                alignSelf: 'center',
++                fontSize: '18px',
++                padding: '0 12px',
++              }}
++              role='img'
++              title={tx('group_admin')}
++              aria-label={tx('group_admin')}
++            >
++              👑
++            </span>
++          ) : undefined
++
+   // We don't allow editing of non encrypted groups (email groups)
+   // i.e. changing name, avatar or recipients
+   // since it cannot be guaranteed that the recipients will adapt
+   // these changes (image is not shown at all in MTAs, group name is
+   // just the subject and recipients are basically just an email
+   // distribution list)
+-  const allowEdit = !chatDisabled && group.isEncrypted
++  const allowEdit = !chatDisabled && group.isEncrypted && selfIsAdmin
+ 
+   const showAddMemberDialog = () => {
+     openDialog(AddMemberDialog, {
+@@ -528,7 +554,7 @@ function ViewGroupInner(
+           <RovingTabindexProvider
+             wrapperElementRef={groupMemberContactListWrapperRef}
+           >
+-            {!chatDisabled && group.isEncrypted && memberFilter === '' && (
++            {allowEdit && memberFilter === '' && (
+               <>
+                 {!isBroadcast && (
+                   <PseudoListItemAddMember
+@@ -550,7 +576,8 @@ function ViewGroupInner(
+             )}
+             <ContactList
+               contacts={filterContacts(groupContacts)}
+-              showRemove={!chatDisabled && group.isEncrypted}
++              showRemove={allowEdit}
++              badge={adminBadge}
+               onClick={contact => {
+                 if (contact.id === C.DC_CONTACT_ID_SELF) {
+                   return
+diff --git a/packages/frontend/src/utils/groupAdmin.ts b/packages/frontend/src/utils/groupAdmin.ts
+new file mode 100644
+index 000000000..345052320
+--- /dev/null
++++ b/packages/frontend/src/utils/groupAdmin.ts
+@@ -0,0 +1,40 @@
++import { C } from '@deltachat/jsonrpc-client'
++import type { T } from '@deltachat/jsonrpc-client'
++
++// slothfulchat admin groups (ported from ArcaneChat, core/0019):
++// `groupAdminId` and `createGroupWithAdmin` exist in the regenerated local
++// jsonrpc bindings; the published 2.53.0 package does not have them yet, so
++// widen locally to keep tsc green. At runtime `BackendRemote.rpc` is the
++// regenerated client (it comes from our web-app runtime).
++
++/** Contact ID of the group admin, or null for regular groups. */
++export function groupAdminId(chat: T.FullChat): number | null {
++  return (chat as { groupAdminId?: number | null }).groupAdminId ?? null
++}
++
++/**
++ * Whether we may manage this chat's members/name/avatar/timer:
++ * true for regular chats, and for admin groups only if we are the admin.
++ */
++export function selfMayManageGroup(chat: T.FullChat): boolean {
++  const admin = groupAdminId(chat)
++  return admin == null || admin === C.DC_CONTACT_ID_SELF
++}
++
++/** Whether this is an admin group and we are its admin. */
++export function selfIsAdminOfAdminGroup(chat: T.FullChat): boolean {
++  return groupAdminId(chat) === C.DC_CONTACT_ID_SELF
++}
++
++/** See `createGroupWithAdmin` in the regenerated bindings. */
++export function createGroupWithAdmin(
++  rpc: unknown,
++  accountId: number,
++  name: string
++): Promise<number> {
++  return (
++    rpc as {
++      createGroupWithAdmin(accountId: number, name: string): Promise<number>
++    }
++  ).createGroupWithAdmin(accountId, name)
++}
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index 00c76415d..1a8606ab9 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -47,6 +47,12 @@ export interface DesktopSettingsType {
+   experimentalCompletionMenu: boolean
+   /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
+   experimentalUnreadReadTime: boolean
++  /** webapp: reveal the "super-dangerous" experimental options. Hidden by
++   * default; unlocked by tapping the version in About 10× (Android-style). */
++  showSuperDangerousExperimentalOptions: boolean
++  /** webapp: offer creating admin groups (ArcaneChat port). Off by default
++   * (experimental, super-dangerous). */
++  enableAdminGroups: boolean
+   enterKeySends: boolean
+   locale: string | null
+   notifications: boolean
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index 7488ea78b..3779343ba 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -18,6 +18,8 @@ export function getDefaultState(): DesktopSettingsType {
+     stripTrackingLinks: true,
+     experimentalCompletionMenu: true,
+     experimentalUnreadReadTime: false,
++    showSuperDangerousExperimentalOptions: false,
++    enableAdminGroups: false,
+     chatViewBgImg: undefined,
+     lastChats: {},
+     zoomFactor: undefined,

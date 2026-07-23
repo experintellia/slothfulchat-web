@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Wed, 15 Jul 2026 02:25:41 +0000
-Subject: [PATCH 50/58] web-app: composer completion menu (:emoji: now,
+Subject: [PATCH 50/64] web-app: composer completion menu (:emoji: now,
  mentions later)
 
 A scrollable, keyboard-navigable menu that pops up over the composer and

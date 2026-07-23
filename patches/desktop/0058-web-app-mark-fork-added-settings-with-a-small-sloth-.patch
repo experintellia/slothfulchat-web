@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Mon, 20 Jul 2026 16:57:21 +0000
-Subject: [PATCH 57/58] web-app: mark fork-added settings with a small sloth
+Subject: [PATCH 58/64] web-app: mark fork-added settings with a small sloth
  badge
 
 Settings that exist only in SlothfulChat (community-suggestion toggles,
@@ -31,10 +31,10 @@ index be8430cc2..318f944e0 100644
          onChange={next => {
            analyticsUi.setEnabled(next)
 diff --git a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
-index 934ab9c4a..97094c322 100644
+index b7df4da27..a7e74810e 100644
 --- a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
 +++ b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
-@@ -47,11 +47,13 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
+@@ -52,11 +52,13 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
              settingsKey='hideNewChatSuggestions'
              label='Hide community suggestions'
              description='Hides the "Public Bots" and "Public Channels" entries in the "New Chat" dialog'

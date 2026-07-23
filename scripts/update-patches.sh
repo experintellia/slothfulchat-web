@@ -10,7 +10,9 @@ update() {
   local base
   base=$(git -C "$sub" rev-parse HEAD)
   rm -f "$root/patches/$name"/*.patch
-  git -C "$root/build/$name" format-patch --zero-commit --no-signature -o "$root/patches/$name" "$base" >/dev/null
+  # core.abbrev=9: index-line hash abbreviation otherwise scales with the
+  # local object count, so shallow vs full submodule clones churn every patch
+  git -C "$root/build/$name" -c core.abbrev=9 format-patch --zero-commit --no-signature -o "$root/patches/$name" "$base" >/dev/null
   echo "$name: $(ls "$root/patches/$name" | wc -l) patch(es)"
 }
 

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 20 Jul 2026 18:16:56 +0000
-Subject: [PATCH 56/56] web-app: render group/contact invite links as a card
+Subject: [PATCH 60/64] web-app: render group/contact invite links as a card
  with a View button
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -65,7 +65,7 @@ since textContent has no CSS awareness and would mangle wider selections.
  create mode 100644 packages/frontend/src/utils/inviteLink.ts
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index fe3dfc4..9e26381 100644
+index fe3dfc4b3..9e2638185 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -112,5 +112,17 @@
@@ -87,7 +87,7 @@ index fe3dfc4..9e26381 100644
    }
  }
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index a5d349d..40ecad8 100644
+index a5d349d02..40ecad8c2 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
 @@ -641,6 +641,92 @@ $info-text-max-width: 400px;
@@ -184,7 +184,7 @@ index a5d349d..40ecad8 100644
     have an appereance like the rest of text in there */
  .quoted-text > a {
 diff --git a/packages/frontend/src/components/dialogs/PublicBots/index.tsx b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
-index 3c8b0ca..e4d5bed 100644
+index 3c8b0ca3d..e4d5bed11 100644
 --- a/packages/frontend/src/components/dialogs/PublicBots/index.tsx
 +++ b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
 @@ -20,6 +20,7 @@ import useProcessQR, { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
@@ -214,7 +214,7 @@ index 3c8b0ca..e4d5bed 100644
  function parseBotsJson(base64: string): {
    bots: BotEntry[]
 diff --git a/packages/frontend/src/components/message/Link.tsx b/packages/frontend/src/components/message/Link.tsx
-index cd138a0..a952441 100644
+index cd138a0bf..a952441ff 100644
 --- a/packages/frontend/src/components/message/Link.tsx
 +++ b/packages/frontend/src/components/message/Link.tsx
 @@ -14,6 +14,9 @@ import useProcessQr from '../../hooks/useProcessQr'
@@ -288,7 +288,7 @@ index cd138a0..a952441 100644
      <a
        href={asciiUrl}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 65171d5..877772c 100644
+index 65171d5ea..877772c20 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -218,6 +218,45 @@ const ForwardedTitle = ({
@@ -361,7 +361,7 @@ index 65171d5..877772c 100644
          message,
 diff --git a/packages/frontend/src/tests/inviteLink.test.ts b/packages/frontend/src/tests/inviteLink.test.ts
 new file mode 100644
-index 0000000..759d096
+index 000000000..759d0962c
 --- /dev/null
 +++ b/packages/frontend/src/tests/inviteLink.test.ts
 @@ -0,0 +1,86 @@
@@ -453,7 +453,7 @@ index 0000000..759d096
 +})
 diff --git a/packages/frontend/src/utils/colorFromString.ts b/packages/frontend/src/utils/colorFromString.ts
 new file mode 100644
-index 0000000..206199c
+index 000000000..206199cd7
 --- /dev/null
 +++ b/packages/frontend/src/utils/colorFromString.ts
 @@ -0,0 +1,12 @@
@@ -471,7 +471,7 @@ index 0000000..206199c
 +}
 diff --git a/packages/frontend/src/utils/inviteLink.ts b/packages/frontend/src/utils/inviteLink.ts
 new file mode 100644
-index 0000000..ea08e1d
+index 000000000..ea08e1d29
 --- /dev/null
 +++ b/packages/frontend/src/utils/inviteLink.ts
 @@ -0,0 +1,75 @@

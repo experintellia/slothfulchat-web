@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 15 Jul 2026 12:00:00 +0000
-Subject: [PATCH 18/18] jsonrpc: emit events when stockstrings change so
+Subject: [PATCH 18/19] jsonrpc: emit events when stockstrings change so
  language switch is seamless
 
 set_stock_strings updated the shared stock translations but emitted no

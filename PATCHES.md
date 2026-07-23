@@ -41,6 +41,45 @@ exists:
 
 ## New features
 
+- **Admin groups** — port of ArcaneChat's group-admin feature
+  ([ArcaneChat/core#438](https://github.com/ArcaneChat/core/pull/438),
+  [ArcaneChat/android#167](https://github.com/ArcaneChat/android/pull/167)):
+  a group whose ID embeds the creator's key fingerprint
+  (`FINGERPRINT:RANDOMID`), making the creator the admin. Core enforces —
+  on send and on receive — that only the admin adds/removes members,
+  renames, changes description/avatar/ephemeral timer, or deletes other
+  members' messages for everyone; invite QR codes carry the admin
+  fingerprint and non-admin securejoin adds are aborted. Our receive-side
+  delete guard is stricter than ArcaneChat's, which accidentally let any
+  member of a *regular* group delete others' messages. UI (translated from
+  their Android client to the desktop frontend): an "Admin group" checkbox
+  in the New Group dialog (offered only when the experimental
+  "Admin groups" setting is on), admin-only Add Member / QR invite /
+  member remove / Edit / Disappearing Messages controls, a 👑 badge on the
+  admin's row in the member list (visible to every member), and "Delete
+  for Everyone" on others' messages for the admin. Creating admin groups
+  is a "super-dangerous" experimental option, hidden until unlocked by
+  tapping the version in the About dialog ten times (Android
+  developer-menu style, with a countdown toast); the Experimental
+  Features section then shows a Super-dangerous group with a "hide" button
+  that is disabled while any such option is still enabled. Usage-stats
+  instances emit an `admin_group` event
+  (`action = create · setting_enabled`). Fork-to-fork only: plain
+  Delta Chat clients reject the oversized `FINGERPRINT:ID` group ID
+  (`validate_id`), so for them the messages fall back to a reply-threaded
+  / ad-hoc chat — readable and answerable, but with no group name,
+  member list or admin rules, and admin deletions are not applied on
+  their devices (their `handle_edit_delete` keeps the sender-only rule).
+  They can't corrupt fork-side state: every membership/name/avatar change
+  is applied only from the admin's signed messages (member *removals* stay
+  allowed for self-leave). Inherent limits of embedding the key
+  fingerprint in an immutable group ID: the admin can't be transferred or
+  recovered, and management breaks only if the admin switches to a
+  *different* key (importing another key, or a fresh keypair with no
+  backup) — since contacts are identified by fingerprint, an ordinary
+  address change (AEAP keeps the same key) does not affect it. Noted in
+  the experimental-setting description.
+  `core/0019`, `desktop/0064`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP

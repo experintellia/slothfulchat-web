@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothful.chat>
 Date: Sat, 11 Jul 2026 14:39:33 +0000
-Subject: [PATCH 43/58] web-app: add Diagnostics button to the log dialog
+Subject: [PATCH 43/64] web-app: add Diagnostics button to the log dialog
 
 Opens the browser edition's local profiling + usage-statistics panel
 (window.__slothfulDiagnostics, set by our runtime.js). Hidden on every

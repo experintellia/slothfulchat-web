@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothfulchat.local>
 Date: Fri, 10 Jul 2026 01:07:09 +0000
-Subject: [PATCH 15/18] sticker picker: list animated .tgs stickers
+Subject: [PATCH 15/19] sticker picker: list animated .tgs stickers
 
 misc_get_stickers only listed .png/.webp/.gif, so a saved Telegram animated
 sticker (.tgs, now classified as Viewtype::Sticker) never appeared in the
