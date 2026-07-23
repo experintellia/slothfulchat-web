@@ -69,8 +69,11 @@ exists:
   is applied only from the admin's signed messages (member *removals* stay
   allowed for self-leave). Inherent limits of embedding the key
   fingerprint in an immutable group ID: the admin can't be transferred or
-  recovered, and admin key rotation (AEAP/reset) freezes management —
-  noted in the experimental-setting description.
+  recovered, and management breaks only if the admin switches to a
+  *different* key (importing another key, or a fresh keypair with no
+  backup) — since contacts are identified by fingerprint, an ordinary
+  address change (AEAP keeps the same key) does not affect it. Noted in
+  the experimental-setting description.
   `core/0019`, `desktop/0064`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
