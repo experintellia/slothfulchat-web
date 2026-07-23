@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- Origin-isolation proof for webxdc subdomains. Served only on webxdc
+     origins (plain http on localhost, https in prod), never on the app origin.
+     No CSP: temporary scaffold page, no dependencies, no build step. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>webxdc origin-isolation test</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; }
+  code { background: #eee; padding: .1em .4em; border-radius: .3em; word-break: break-all; }
+  .big { font-size: 1.4rem; }
+  .status { font-weight: bold; }
+</style>
+<h1>webxdc storage isolation</h1>
+<p>Origin: <code class="big" id="origin"></code></p>
+<p>Persistent id: <code class="big" id="id"></code></p>
+<p class="status" id="status"></p>
+<p id="created"></p>
+<p>Reload → same id. A different subdomain → different id → each wildcard
+   subdomain has its own storage partition.</p>
+<script>
+  // Explicit getElementById, not bare-id globals: `origin` and `status` are
+  // pre-existing window properties and would shadow the elements.
+  const $ = (id) => document.getElementById(id)
+  const KEY = 'slothfulWebxdcTest'
+  let rec = JSON.parse(localStorage.getItem(KEY) || 'null')
+  const fresh = !rec
+  if (fresh) {
+    rec = { id: crypto.randomUUID(), created: new Date().toISOString() }
+    localStorage.setItem(KEY, JSON.stringify(rec))
+  }
+  $('origin').textContent = location.origin
+  $('id').textContent = rec.id
+  $('status').textContent = fresh ? 'CREATED this load (first visit to this origin)' : 'READ BACK (already stored here)'
+  $('created').textContent = 'Created: ' + rec.created
+</script>

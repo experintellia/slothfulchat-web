@@ -472,6 +472,11 @@ export const precacheSkip = f =>
   f.endsWith('.map') ||
   f.startsWith('demo/') ||
   f.startsWith('changelog/') ||
+  // webserver config ships in dist/ but isn't an app-shell asset; the webxdc
+  // test page must never be served from the app's SW cache (it belongs to the
+  // webxdc origins, not the app origin).
+  f.startsWith('caddy/') ||
+  f === 'webxdc-test.html' ||
   ['.nojekyll', 'sw-precache.js', 'blobs-sw.js'].includes(f)
 
 /** Content-hashes [path, bytes] entries into the sw-precache.js source.

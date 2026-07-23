@@ -1,0 +1,166 @@
+# Build the standalone web app from a checked-out tree into
+# packages/web-app/dist. Shared by deploy-pages.yml (prod), deploy-next.yml
+# (next) and preview-deploy.yml so all three build byte-identically.
+#
+# Checkout is NOT part of this action — a composite action can't run before the
+# repo (and this file) is checked out, so callers must check out FIRST, with
+# submodules: recursive. Everything after checkout lives here.
+#
+# The build order is load-bearing and NOT obvious — see the comments below.
+# It was derived empirically (a full clean build was run end-to-end); do not
+# reorder steps casually. The three ordering traps:
+#   1. the @deltachat/jsonrpc-client `file:` dep must be generated + built
+#      BEFORE the root `pnpm install` tries to resolve it.
+#   2. `pnpm assemble` wipes and repopulates dist/, so `pnpm build` (which
+#      emits runtime.js + blobs-sw.js INTO dist/) must run AFTER assemble.
+#   3. rust-cache must run AFTER apply-patches — build/core doesn't exist
+#      before it (wrong cache key), and apply-patches rm -rf's build/core
+#      (would delete a restored target/).
+#
+# The assemble step bakes in per-instance branding from SLOTHFUL_* environment
+# variables. Composite run steps inherit the caller's job-level env as real
+# process env vars, so callers set SLOTHFUL_* at the job level (as vars.*) —
+# see deploy-pages.yml. This action declares no inputs for them.
+
+name: Build web-app
+description: Toolchains + patched core + release wasm + assembled dist for the standalone web-app.
+
+runs:
+  using: composite
+  steps:
+    # scripts/apply-patches.sh runs `git am` inside the submodules; git am
+    # refuses to commit without an author identity.
+    - name: Configure git identity (required by `git am` in apply-patches)
+      shell: bash
+      run: |
+        git config --global user.email "ci@github-actions"
+        git config --global user.name "GitHub Actions"
+
+    # sqlite-wasm-rs compiles SQLite's C sources with clang.
+    # The runner's preinstalled third-party repos (packages.microsoft.com,
+    # google-chrome) intermittently fail clearsign validation or serve a
+    # mid-sync index, and ANY failing repo makes `apt-get update` exit 100 and
+    # aborts the job. We don't use them, so drop them first; retry to ride out
+    # transient hiccups on the base ubuntu archive too.
+    - name: Install clang (sqlite-wasm-rs builds C)
+      shell: bash
+      run: |
+        sudo rm -f /etc/apt/sources.list.d/*microsoft* \
+                   /etc/apt/sources.list.d/*azure* \
+                   /etc/apt/sources.list.d/*google* \
+                   /etc/apt/sources.list.d/*chrome*
+        for i in 1 2 3; do sudo apt-get update && break || sleep $((i*5)); done
+        sudo apt-get install -y clang
+
+    - name: Install Rust stable + wasm32 target
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+
+    - name: Setup Node 22 + pnpm (corepack)
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+    - name: Enable corepack (provides the pinned pnpm)
+      shell: bash
+      run: corepack enable
+
+    - name: Cache pnpm store
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/share/pnpm/store
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-
+
+    - name: Install wasm-pack
+      shell: bash
+      run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+    # Recreate build/core + build/desktop worktrees from the pinned submodule
+    # commits + patch stacks (build/core = patched core, build/desktop =
+    # upstream desktop, 0 patches).
+    - name: Apply patch stacks (creates build/core, build/desktop)
+      shell: bash
+      run: pnpm apply-patches
+
+    # Cache the cargo registry + the build/core and wasm target/ dirs. The
+    # native `cargo test` and the ~10-min release wasm build dominate wall
+    # time, so this is the cache that matters most.
+    # ORDER TRAP #3: this MUST run after apply-patches. rust-cache hashes the
+    # workspaces' Cargo.lock files at restore time — build/core only exists
+    # once apply-patches has created it, so running earlier computes a key
+    # blind to the core dependency graph. Worse, apply-patches recreates
+    # build/core with `rm -rf`, which would wipe a restored build/core/target.
+    - name: Cache Rust build artifacts
+      uses: Swatinem/rust-cache@v2
+      env:
+        # Save the cache even when the job fails — otherwise a broken deploy
+        # rebuilds the ~10-min wasm step from scratch on every retry.
+        CACHE_ON_FAILURE: true
+      with:
+        workspaces: |
+          build/core
+          packages/core-wasm/rust
+
+    # ORDER TRAP #1: generate + build the @deltachat/jsonrpc-client TS client
+    # from the patched core at its pinned commit. `cargo test` generates the
+    # TS bindings; then constants, tsc, esbuild bundle. This is a `file:` dep
+    # of core-wasm, so it MUST exist before the root `pnpm install` below.
+    # (local pnpm-workspace.yaml: builds in isolation from the root workspace
+    # AND carries allowBuilds — pnpm 11 hard-errors on esbuild's postinstall
+    # otherwise; --ignore-workspace can't work here since it makes pnpm skip
+    # the very file that holds the allowBuilds setting. esbuild's postinstall
+    # is unwanted anyway, its JS launcher is what we bundle with.)
+    - name: Generate + build @deltachat/jsonrpc-client (before root install)
+      working-directory: build/core/deltachat-jsonrpc/typescript
+      shell: bash
+      run: |
+        printf 'allowBuilds:\n  esbuild: false\n' > pnpm-workspace.yaml
+        pnpm install
+        cargo test -p deltachat-jsonrpc
+        node scripts/generate-constants.js
+        ./node_modules/.bin/tsc
+        ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js
+
+    - name: Install workspace deps
+      shell: bash
+      run: pnpm install
+
+    # Upstream deltachat-desktop browser bundle (its own workspace/lockfile).
+    # assemble.mjs copies its dist/ output. esbuild builds fine in-tree here.
+    # VERSION_INFO_GIT_REF: upstream's build stamps a `git describe` into the
+    # bundle, which fails here (worktree has no tags) — pass the sha instead.
+    # NODE_ENV=production: release frontend (minified React, debug features
+    # hidden) — only on the build, NOT on `pnpm install` (production install
+    # would skip the devDependencies the build needs). Local builds stay dev.
+    - name: Build upstream desktop browser frontend (release)
+      working-directory: build/desktop
+      shell: bash
+      run: |
+        export VERSION_INFO_GIT_REF=$(git rev-parse --short HEAD)
+        pnpm install --frozen-lockfile
+        NODE_ENV=production pnpm build:browser
+
+    # Release wasm (opt-level=s + LTO); dev builds crash the browser tab.
+    # ~10 min uncached.
+    - name: Build wasm core (release)
+      shell: bash
+      run: pnpm --filter @slothfulchat/core-wasm build:wasm
+
+    - name: Build core-wasm TS (worker + index)
+      shell: bash
+      run: pnpm --filter @slothfulchat/core-wasm build
+
+    # ORDER TRAP #2: assemble wipes+repopulates dist/ (upstream bundle,
+    # locales, wasm worker, index.html, .nojekyll); build emits runtime.js +
+    # blobs-sw.js INTO dist/. build MUST come after assemble.
+    # Per-instance config (SLOTHFUL_*) is inherited from the caller's job env.
+    - name: Assemble web-app dist/ (upstream bundle + wasm + overlays)
+      shell: bash
+      run: pnpm --filter @slothfulchat/web-app assemble
+      env:
+        # release: bakes devmode:false into config.js (runtime rc_config)
+        NODE_ENV: production
+    - name: Build web-app runtime + service worker (into dist/)
+      shell: bash
+      run: pnpm --filter @slothfulchat/web-app build

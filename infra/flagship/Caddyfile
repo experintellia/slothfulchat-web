@@ -1,0 +1,45 @@
+# Flagship Caddyfile — slothful.chat next + PR-preview server.
+#
+# REFERENCE COPY. Deployed manually to /etc/caddy/Caddyfile at bring-up (see
+# README.md). At bring-up: fill the email, uncomment your DNS provider in
+# (wildcard_tls), then:
+#   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+{
+	# email acme@slothful.chat   # <- edit (ACME account for expiry notices)
+}
+
+# (wildcard_tls) — cert config for the *.webxdc.* wildcard labels that
+# routes.caddy serves. Wildcard certs need the DNS-01 challenge, which needs a
+# caddy build with your DNS provider plugin compiled in (see README.md).
+# The keep-alive comment below ensures the snippet still parses when every tls
+# line is commented out.
+(wildcard_tls) {
+	# uncomment your provider at bring-up; requires a caddy build with the plugin (see README.md)
+	# tls {
+	#	dns porkbun {
+	#		api_key {env.PORKBUN_API_KEY}
+	#		api_secret_key {env.PORKBUN_API_SECRET_KEY}
+	#	}
+	# }
+	# tls {
+	#	dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	# }
+}
+
+# next.slothful.chat — main-branch build, deployed by deploy-preview.sh into
+# /srv/slothfulchat/next/dist. The routes file is taken from the deployed
+# bundle itself, so each deploy's reload picks up that version's routes.
+# Uncomment once next has been deployed at least once — otherwise caddy fails
+# to load on this missing import file on a fresh server.
+# import /srv/slothfulchat/next/dist/caddy/routes.caddy next.slothful.chat /srv/slothfulchat/next/dist
+
+# PR previews — one site.caddy per pr-<n>, written server-side by
+# deploy-preview.sh. The glob targets */site.caddy specifically, so a permanent
+# comment-only previews/_keep/site.caddy (created at bring-up, see README.md)
+# guarantees the glob always matches at least one file and can never break
+# config load on an empty previews/ directory.
+import /srv/slothfulchat/previews/*/site.caddy
+
+# ROADMAP — prod split-DNS webxdc. When prod (web.slothful.chat, GitHub Pages)
+# gains webxdc via split-DNS, its xdc origins get served here from a prod bundle:
+# import /srv/slothfulchat/prod-webxdc/dist/caddy/routes.caddy *.webxdc.web.slothful.chat /srv/slothfulchat/prod-webxdc/dist
