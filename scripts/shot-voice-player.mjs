@@ -201,6 +201,11 @@ launchOpts.args = [
   '--use-fake-device-for-media-stream',
   '--use-fake-ui-for-media-stream',
 ]
+// SILENT_WAV=<path to silent wav>: feed silence instead of the tone, to
+// capture the no-sound warning shot
+if (process.env.SILENT_WAV) {
+  launchOpts.args.push(`--use-file-for-fake-audio-capture=${process.env.SILENT_WAV}`)
+}
 const browser = await chromium.launch(launchOpts)
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
 page.on('console', (m) => {
@@ -431,7 +436,25 @@ try {
   try {
     await page.getByRole('button', { name: 'Voice Message' }).click()
     await page.waitForTimeout(2500)
+    if (process.env.SILENT_WAV) {
+      // silence detector fires after ~3s of quiet; the warning must show
+      await page
+        .getByTestId('recording-no-sound')
+        .waitFor({ state: 'visible', timeout: 10_000 })
+      await shot('11-no-sound-warning')
+      await page.getByRole('button', { name: 'Cancel' }).click()
+      throw { silentRunDone: true }
+    }
     await shot('07-recording-live')
+    // mic picker (renders only when >1 audioinput is enumerated)
+    try {
+      await page.getByTestId('mic-picker-trigger').click({ timeout: 3000 })
+      await page.waitForTimeout(500)
+      await shot('10-mic-picker')
+      await page.keyboard.press('Escape')
+    } catch {
+      console.warn('mic picker not shown (single audioinput) — shot skipped')
+    }
     await page.getByRole('button', { name: 'Pause recording' }).click()
     await page.waitForTimeout(400)
     await shot('08-recording-paused')
@@ -442,7 +465,11 @@ try {
     await shot('09-recording-preview')
     await page.getByRole('button', { name: 'Delete', exact: true }).click()
   } catch (err) {
-    console.warn('recording shots skipped:', err.message)
+    if (err?.silentRunDone) {
+      console.log('DONE (silent run)')
+    } else {
+      console.warn('recording shots skipped:', err.message)
+    }
   }
   console.log('DONE')
 } catch (err) {
