@@ -1,0 +1,174 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Thu, 23 Jul 2026 19:45:53 +0000
+Subject: [PATCH 63/63] =?UTF-8?q?web-app:=20player=20controls=20in=20two?=
+ =?UTF-8?q?=20rows=20=E2=80=94=20waveform=20full-width,=20time=20+=20speed?=
+ =?UTF-8?q?=20below?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The seek/waveform row no longer shares its line with the time display and
+speed pill: right of the play button, the waveform takes the full width
+and a meta row below carries elapsed/total (start) and the speed pill
+(end) — the usual messenger layout. Applies to all three surfaces via the
+shared CustomAudioControls (bubbles, mini-player, recorder preview);
+markup-only regroup, all behavior (seek input, drag guard, aria) is
+untouched.
+---
+ .../src/components/AudioPlayer/index.tsx      | 114 ++++++++++--------
+ .../components/AudioPlayer/styles.module.scss |  13 ++
+ 2 files changed, 74 insertions(+), 53 deletions(-)
+
+diff --git a/packages/frontend/src/components/AudioPlayer/index.tsx b/packages/frontend/src/components/AudioPlayer/index.tsx
+index f900ef187..23113a1fc 100644
+--- a/packages/frontend/src/components/AudioPlayer/index.tsx
++++ b/packages/frontend/src/components/AudioPlayer/index.tsx
+@@ -382,62 +382,70 @@ export function CustomAudioControls({
+           }
+         }}
+       />
+-      <div className={styles.seekWrap}>
+-        {peaks != null && (
+-          <WaveformCanvas
+-            peaks={peaks}
+-            progress={progress}
+-            className={styles.waveformCanvas}
+-          />
+-        )}
+-        <input
+-          type='range'
+-          className={classNames(
+-            styles.seek,
+-            peaks != null && styles.seekOverWaveform
++      {/* Two rows right of the play button: the seek/waveform gets the full
++          width, time and speed sit below it (the usual messenger layout). */}
++      <div className={styles.stack}>
++        <div className={styles.seekWrap}>
++          {peaks != null && (
++            <WaveformCanvas
++              peaks={peaks}
++              progress={progress}
++              className={styles.waveformCanvas}
++            />
+           )}
+-          min={0}
+-          max={safeDuration}
+-          step='any'
+-          value={Math.min(currentTime, safeDuration)}
+-          tabIndex={tabIndex}
+-          aria-label={tx('a11y_audio_seek')}
+-          aria-valuetext={`${formatAudioTime(
+-            Math.min(currentTime, safeDuration)
+-          )} / ${formatAudioTime(safeDuration)}`}
+-          onPointerDown={() => {
+-            seekingRef.current = true
+-          }}
+-          onPointerUp={() => {
+-            seekingRef.current = false
+-          }}
+-          onChange={e => {
+-            const v = Number(e.currentTarget.value)
+-            // Update state too: with `sync()` suppressed during the drag, a
+-            // skip-only fix would leave the controlled value stale and snap the
+-            // thumb back on every pointermove.
+-            setCurrentTime(v)
+-            const el = audioRef.current
+-            if (el != null) {
+-              // A scrub before play is carried onto the singleton on play
+-              // (see MediaPlayerMutexContext.onPlay), so it's mirrored now.
+-              el.currentTime = v
++          <input
++            type='range'
++            className={classNames(
++              styles.seek,
++              peaks != null && styles.seekOverWaveform
++            )}
++            min={0}
++            max={safeDuration}
++            step='any'
++            value={Math.min(currentTime, safeDuration)}
++            tabIndex={tabIndex}
++            aria-label={tx('a11y_audio_seek')}
++            aria-valuetext={`${formatAudioTime(
++              Math.min(currentTime, safeDuration)
++            )} / ${formatAudioTime(safeDuration)}`}
++            onPointerDown={() => {
++              seekingRef.current = true
++            }}
++            onPointerUp={() => {
++              seekingRef.current = false
++            }}
++            onChange={e => {
++              const v = Number(e.currentTarget.value)
++              // Update state too: with `sync()` suppressed during the drag, a
++              // skip-only fix would leave the controlled value stale and snap
++              // the thumb back on every pointermove.
++              setCurrentTime(v)
++              const el = audioRef.current
++              if (el != null) {
++                // A scrub before play is carried onto the singleton on play
++                // (see MediaPlayerMutexContext.onPlay), so it's mirrored now.
++                el.currentTime = v
++              }
++            }}
++          />
++        </div>
++        <div className={styles.metaRow}>
++          <span className={styles.time}>
++            {formatAudioTime(currentTime)} / {formatAudioTime(safeDuration)}
++          </span>
++          <button
++            type='button'
++            className={styles.speedPill}
++            tabIndex={tabIndex}
++            aria-label={tx('a11y_playback_speed', `${ctx.playbackRate}×`)}
++            onClick={() =>
++              ctx.setPlaybackRate(nextPlaybackRate(ctx.playbackRate))
+             }
+-          }}
+-        />
++          >
++            {ctx.playbackRate}×
++          </button>
++        </div>
+       </div>
+-      <span className={styles.time}>
+-        {formatAudioTime(currentTime)} / {formatAudioTime(safeDuration)}
+-      </span>
+-      <button
+-        type='button'
+-        className={styles.speedPill}
+-        tabIndex={tabIndex}
+-        aria-label={tx('a11y_playback_speed', `${ctx.playbackRate}×`)}
+-        onClick={() => ctx.setPlaybackRate(nextPlaybackRate(ctx.playbackRate))}
+-      >
+-        {ctx.playbackRate}×
+-      </button>
+     </div>
+   )
+ }
+diff --git a/packages/frontend/src/components/AudioPlayer/styles.module.scss b/packages/frontend/src/components/AudioPlayer/styles.module.scss
+index 402dabf88..ef23e5830 100644
+--- a/packages/frontend/src/components/AudioPlayer/styles.module.scss
++++ b/packages/frontend/src/components/AudioPlayer/styles.module.scss
+@@ -36,6 +36,19 @@
+ .customControlsCompact {
+   min-width: 0;
+ }
++// Column right of the play button: seek/waveform on top, time + speed pill
++// below — the waveform gets the full row width on every surface.
++.stack {
++  flex: 1;
++  min-width: 0;
++  display: flex;
++  flex-direction: column;
++}
++.metaRow {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++}
+ .seekWrap {
+   position: relative;
+   flex: 1;

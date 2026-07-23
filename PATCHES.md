@@ -76,8 +76,10 @@ exists:
   your microphone" hint after ~3s of silence, with the picker right next to
   it as the remedy. All phases of the voice-messages epic (#120);
   screenshot loop: `node scripts/shot-voice-player.mjs` (SILENT_WAV=… for
-  the warning). `desktop/0056`, `desktop/0057`, `desktop/0058`,
-  `desktop/0059`, `desktop/0060`
+  the warning, MOBILE=1 for phone-width shots). Later refinements: bubbles
+  adopt the singleton's position on remount (upstream #6378), phone-width
+  layout, and a two-row player (full-width waveform, time + speed below).
+  `desktop/0056` – `desktop/0063`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
