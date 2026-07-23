@@ -266,6 +266,20 @@ function blobToBase64(blob: Blob): Promise<string> {
   })
 }
 
+/** Ask the browser to persist our OPFS data — exempt it from automatic
+ * eviction under disk pressure. No-op if already persisted or unsupported.
+ * Chrome decides silently (auto-granted for installed PWAs / high engagement),
+ * Firefox prompts once; either way it's best-effort and idempotent. */
+async function requestPersistentStorage(): Promise<void> {
+  try {
+    if (!navigator.storage?.persist || (await navigator.storage.persisted())) return
+    const granted = await navigator.storage.persist()
+    console.info(`slothfulchat: storage persistence ${granted ? 'granted' : 'denied'}`)
+  } catch (err) {
+    console.warn('slothfulchat: storage.persist() failed', err)
+  }
+}
+
 let core: Core | null = null
 function getCore(): Core {
   if (!core) {
@@ -370,7 +384,15 @@ function getCore(): Core {
     // accurate). All no-ops unless analytics is enabled.
     core.transport
       .request('get_all_account_ids', [])
-      .then(ids => session.setHadAccount(Array.isArray(ids) && ids.length > 0))
+      .then(ids => {
+        const has = Array.isArray(ids) && ids.length > 0
+        session.setHadAccount(has)
+        // Keep existing accounts out of the browser's evictable "best-effort"
+        // storage bucket: without this, a disk-pressure eviction can wipe the
+        // whole origin (accounts, messages, blobs) at once. Only asked once we
+        // actually hold data worth protecting (a fresh visitor isn't prompted).
+        if (has) void requestPersistentStorage()
+      })
       .catch(() => {})
       .finally(() => {
         perf.recordStartup()

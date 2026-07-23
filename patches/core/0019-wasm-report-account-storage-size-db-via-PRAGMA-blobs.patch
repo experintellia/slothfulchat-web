@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Thu, 23 Jul 2026 19:28:34 +0000
+Subject: [PATCH 19/19] wasm: report account storage size (db via PRAGMA +
+ blobs via tokio::fs)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+get_account_file_size sized the database with std::fs
+(get_dbfile().metadata()) and the blobdir with walkdir — both unsupported on
+wasm: the database is a sqlite-VFS file with no real path, and the walkdir
+walk finds nothing. The RPC therefore returned an error and the account-
+deletion screen rendered "?".
+
+Add storage_usage::get_account_size, which computes the database size
+logically (page_size * page_count) and sums the blobdir via tokio::fs (the
+memfs shim on wasm, real fs natively), and call it from the RPC on wasm. The
+native path is unchanged.
+---
+ deltachat-jsonrpc/src/api.rs | 20 +++++++++++++++-----
+ src/storage_usage.rs         | 34 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 49 insertions(+), 5 deletions(-)
+
+diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
+index ab91000..8281447 100644
+--- a/deltachat-jsonrpc/src/api.rs
++++ b/deltachat-jsonrpc/src/api.rs
+@@ -35,7 +35,9 @@
+ use deltachat::reaction::{get_msg_reactions, send_reaction};
+ use deltachat::securejoin;
+ use deltachat::stock_str::{emit_events_for_updated_stock_strings, StockMessage};
+-use deltachat::storage_usage::{get_blobdir_storage_usage, get_storage_usage};
++#[cfg(not(target_arch = "wasm32"))]
++use deltachat::storage_usage::get_blobdir_storage_usage;
++use deltachat::storage_usage::get_storage_usage;
+ use deltachat::webxdc::StatusUpdateSerial;
+ use deltachat::EventEmitter;
+ use sanitize_filename::is_sanitized;
+@@ -339,10 +341,18 @@ async fn get_push_state(&self, account_id: u32) -> Result<JsonrpcNotifyState> {
+     /// Get the combined filesize of an account in bytes
+     async fn get_account_file_size(&self, account_id: u32) -> Result<u64> {
+         let ctx = self.get_context(account_id).await?;
+-        let dbfile = ctx.get_dbfile().metadata()?.len();
+-        let total_size = get_blobdir_storage_usage(&ctx);
+-
+-        Ok(dbfile + total_size)
++        // On wasm the database is a sqlite-VFS file with no real path, so
++        // `get_dbfile().metadata()` (std::fs) errors, and the blobdir walk uses
++        // walkdir (std::fs) which finds nothing — the RPC returned an error and
++        // the UI rendered "?". Size db + blobs the wasm-safe way instead.
++        #[cfg(target_arch = "wasm32")]
++        let size = deltachat::storage_usage::get_account_size(&ctx).await?;
++        #[cfg(not(target_arch = "wasm32"))]
++        let size = {
++            let dbfile = ctx.get_dbfile().metadata()?.len();
++            dbfile + get_blobdir_storage_usage(&ctx)
++        };
++        Ok(size)
+     }
+ 
+     /// Returns provider for the given domain.
+diff --git a/src/storage_usage.rs b/src/storage_usage.rs
+index a2283bf..84d0264 100644
+--- a/src/storage_usage.rs
++++ b/src/storage_usage.rs
+@@ -132,3 +132,37 @@ pub fn get_blobdir_storage_usage(ctx: &Context) -> u64 {
+         .filter(|metadata| metadata.is_file())
+         .fold(0, |acc, m| acc + m.len())
+ }
++
++/// Combined on-disk size of an account (database + blobs) in bytes, computed
++/// WITHOUT `std::fs` so it also works on wasm — where the database is a
++/// sqlite-VFS file with no real path (`get_dbfile().metadata()` errors) and
++/// [`get_blobdir_storage_usage`]'s `walkdir` walk (std::fs) finds nothing, so
++/// `get_account_file_size` came back as an error and the UI showed "?".
++///
++/// The database size is the logical sqlite size (`page_size * page_count`); the
++/// blobdir is summed via `tokio::fs` (the memfs shim on wasm, real fs natively).
++pub async fn get_account_size(ctx: &Context) -> Result<u64> {
++    let page_size: u64 = ctx
++        .sql
++        .query_get_value("PRAGMA page_size", ())
++        .await?
++        .unwrap_or_default();
++    let page_count: u64 = ctx
++        .sql
++        .query_get_value("PRAGMA page_count", ())
++        .await?
++        .unwrap_or_default();
++    let mut total = page_size.saturating_mul(page_count);
++    // Blobs live flat in the blobdir; sum them with async read_dir + metadata,
++    // both of which the wasm memfs shim implements.
++    if let Ok(mut entries) = tokio::fs::read_dir(ctx.get_blobdir()).await {
++        while let Ok(Some(entry)) = entries.next_entry().await {
++            if let Ok(m) = entry.metadata().await {
++                if m.is_file() {
++                    total = total.saturating_add(m.len());
++                }
++            }
++        }
++    }
++    Ok(total)
++}

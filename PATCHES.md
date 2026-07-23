@@ -299,6 +299,13 @@ contribution intended.
   closed chatmail/core#7719 by Simon Laux / deltachat-desktop#5403 (the
   upstream import hunk was de-duplicated and the call site adapted to the
   pinned core). `core/0018`
+- The profile-deletion screen showed "?" instead of the account's storage
+  size: `get_account_file_size` sized the database with `std::fs`
+  (`get_dbfile().metadata()`) and the blobdir with `walkdir`, both unsupported
+  on wasm (the database is a sqlite-VFS file with no real path), so the RPC
+  errored. A new `storage_usage::get_account_size` sizes the database
+  logically (`page_size * page_count`) and sums the blobdir via `tokio::fs`;
+  the RPC uses it on wasm, native path unchanged. `core/0019`
 
 ## UI & mobile polish
 
