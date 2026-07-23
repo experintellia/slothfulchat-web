@@ -1,15 +1,17 @@
 # Changelog
 
-- **Admin groups** (ported from ArcaneChat, experimental): turn on
-  Settings → Experimental features → "Admin groups", then tick "Admin group"
-  when creating a group — only you can add or remove members, invite via QR
-  code, edit the name, image, description or disappearing-messages timer,
-  and you can delete anyone's message for everyone. Other members just chat
+- **Admin groups** (ported from ArcaneChat, experimental): support for
+  groups that only the admin (creator) can manage — add/remove members,
+  invite via QR, edit name/image/description, set the disappearing-messages
+  timer, and delete anyone's message for everyone. Other members just chat
   and can leave; every member sees a 👑 next to the admin in the member
-  list. Only works properly between Slothful Chat and ArcaneChat clients:
-  on plain Delta Chat the messages arrive as an ordinary thread without
-  the group's name, member list or admin rules, and admin deletions
-  don't reach those devices.
+  list. Creating one is off by default and lives behind a hidden
+  "super-dangerous" experimental option (unlock it by tapping the version
+  in About ten times, then enable it in Settings → Experimental features).
+  Only works properly between Slothful Chat and ArcaneChat clients: on
+  plain Delta Chat the messages arrive as an ordinary thread without the
+  group's name, member list or admin rules, and admin deletions don't
+  reach those devices.
 - Dragging a profile to reorder the sidebar no longer shows the white
   "selected" indicator in the drag preview.
 - **Unread filter in the chat list**: a filter button next to the search box

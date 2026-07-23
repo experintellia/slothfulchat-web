@@ -54,12 +54,17 @@ exists:
   member of a *regular* group delete others' messages. UI (translated from
   their Android client to the desktop frontend): an "Admin group" checkbox
   in the New Group dialog (offered only when the experimental
-  "Admin groups" setting is on, Settings → Experimental features),
-  admin-only Add Member / QR invite / member remove / Edit / Disappearing
-  Messages controls, a 👑 badge on the admin's row in the member list
-  (visible to every member), and "Delete for Everyone" on others'
-  messages for the admin. Usage-stats instances emit an `admin_group`
-  event (`action = create · setting_enabled`). Fork-to-fork only: plain
+  "Admin groups" setting is on), admin-only Add Member / QR invite /
+  member remove / Edit / Disappearing Messages controls, a 👑 badge on the
+  admin's row in the member list (visible to every member), and "Delete
+  for Everyone" on others' messages for the admin. Creating admin groups
+  is a "super-dangerous" experimental option, hidden until unlocked by
+  tapping the version in the About dialog ten times (Android
+  developer-menu style, with a countdown toast); the Experimental
+  Features section then shows a Super-dangerous group with a "hide" button
+  that is disabled while any such option is still enabled. Usage-stats
+  instances emit an `admin_group` event
+  (`action = create · setting_enabled`). Fork-to-fork only: plain
   Delta Chat clients reject the oversized `FINGERPRINT:ID` group ID
   (`validate_id`), so for them the messages fall back to a reply-threaded
   / ad-hoc chat — readable and answerable, but with no group name,

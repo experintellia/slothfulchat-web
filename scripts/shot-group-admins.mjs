@@ -143,16 +143,58 @@ try {
     .waitFor({ state: 'detached', timeout: 10_000 })
   console.log('OK: checkbox hidden while the experimental setting is off')
 
-  // 1a. enable the experimental setting through the real Settings UI
+  // 1a. the Admin groups option is a super-dangerous option, hidden until
+  // unlocked by tapping the version in About 10× (Android developer-menu style)
   await page.getByTestId('open-settings-button').click()
   await page.getByRole('button', { name: 'Experimental Features' }).click()
   const adminGroupsToggle = page
     .locator('label')
     .filter({ hasText: 'Admin groups' })
     .first()
+  if (await adminGroupsToggle.isVisible()) {
+    throw new Error('Admin groups option visible before unlocking')
+  }
+  console.log('OK: Admin groups option hidden before unlock')
+
+  // unlock: About → tap the version 10 times (a countdown toast shows near the end)
+  await page.getByRole('button', { name: 'About SlothfulChat' }).click()
+  const version = page.getByTestId('about-version')
+  await version.waitFor({ state: 'visible', timeout: 15_000 })
+  for (let i = 0; i < 10; i++) {
+    await version.click()
+    if (i === 7) {
+      // remaining === 2 → countdown toast
+      await page
+        .locator('.user-feedback')
+        .filter({ hasText: 'steps away' })
+        .first()
+        .waitFor({ state: 'visible', timeout: 5_000 })
+      await shot('0-unlock-countdown-toast')
+    }
+  }
+  await page
+    .locator('.user-feedback')
+    .filter({ hasText: 'super-dangerous' })
+    .first()
+    .waitFor({ state: 'visible', timeout: 5_000 })
+  console.log('OK: 10 taps unlocked the super-dangerous options')
+  await page.keyboard.press('Escape') // close About
+
+  // now the Admin groups toggle is revealed under "Super-dangerous"
+  await page.getByRole('button', { name: 'Experimental Features' }).click()
   await adminGroupsToggle.waitFor({ state: 'visible', timeout: 15_000 })
   await shot('0-experimental-setting')
+  // the "hide" button is enabled while no super-dangerous option is active
+  const hideBtn = page.getByTestId('hide-super-dangerous')
+  if (await hideBtn.isDisabled()) {
+    throw new Error('hide button should be enabled while admin groups is off')
+  }
   await adminGroupsToggle.click()
+  // ...and becomes disabled once admin groups is on
+  await hideBtn
+    .and(page.locator(':disabled'))
+    .waitFor({ state: 'attached', timeout: 5_000 })
+  console.log('OK: hide button disabled while a super-dangerous option is on')
   await page.keyboard.press('Escape')
 
   // 1b. the "Admin group" checkbox in the New Group dialog

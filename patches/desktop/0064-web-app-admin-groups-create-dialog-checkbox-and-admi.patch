@@ -22,17 +22,18 @@ client, ArcaneChat/android PR #167):
   messages when you are the group admin.
 ---
  _locales/_untranslated_en.json                |  9 +++
- .../Settings/ExperimentalFeatures.tsx         | 13 +++++
+ .../Settings/ExperimentalFeatures.tsx         | 60 +++++++++++++++++++
  .../src/components/chat/ChatContextMenu.tsx   |  5 +-
  .../src/components/contact/ContactList.tsx    |  4 ++
  .../components/contact/ContactListItem.tsx    |  4 ++
+ .../src/components/dialogs/About/index.tsx    | 48 ++++++++++++++-
  .../dialogs/ConfirmDeleteMessage.tsx          | 11 +++-
- .../components/dialogs/CreateChat/index.tsx   | 56 ++++++++++++++++---
- .../components/dialogs/ViewGroup/index.tsx    | 33 ++++++++++-
+ .../components/dialogs/CreateChat/index.tsx   | 56 ++++++++++++++---
+ .../components/dialogs/ViewGroup/index.tsx    | 33 +++++++++-
  packages/frontend/src/utils/groupAdmin.ts     | 40 +++++++++++++
- packages/shared/shared-types.d.ts             |  2 +
- packages/shared/state.ts                      |  1 +
- 11 files changed, 165 insertions(+), 13 deletions(-)
+ packages/shared/shared-types.d.ts             |  6 ++
+ packages/shared/state.ts                      |  2 +
+ 12 files changed, 263 insertions(+), 15 deletions(-)
  create mode 100644 packages/frontend/src/utils/groupAdmin.ts
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
@@ -54,13 +55,52 @@ index 9e2638185..59d31120c 100644
      "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
    },
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 3704aa87c..70ad8d4ea 100644
+index 3704aa87c..1a535a5bf 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-@@ -88,6 +88,19 @@ export function ExperimentalFeatures() {
-         description='Show roughly how long the unread messages in a chat take to read (e.g. "~4 min") next to the unread counter. Off by default (experimental).'
-         forkAdded
-       />
+@@ -24,6 +24,7 @@ import { DialogProps } from '../../contexts/DialogContext'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { DeltaInput } from '../Login-Styles'
+ import SettingsSelector from './SettingsSelector'
++import styles from './styles.module.scss'
+ import { defaultAppStoreBaseUrl } from '@deltachat-desktop/shared/state'
+ 
+ const log = getLogger('ExperimentalFeatures')
+@@ -116,6 +117,65 @@ export function ExperimentalFeatures() {
+       >
+         {tx('webxdc_store_url')}
+       </SettingsSelector>
++      {settingsStore?.desktopSettings.showSuperDangerousExperimentalOptions && (
++        <SuperDangerousExperimentalFeatures />
++      )}
++    </>
++  )
++}
++
++// Keys of options considered "super-dangerous". The section stays visible
++// while any of them is on, and the "hide" button is disabled until they are
++// all off, so a user can't lose track of an enabled dangerous feature.
++const SUPER_DANGEROUS_KEYS = ['enableAdminGroups'] as const
++
++// Only revealed after unlocking via the 10× version tap in the About dialog
++// (see components/dialogs/About). Hidden by default.
++function SuperDangerousExperimentalFeatures() {
++  const settingsStore = useSettingsStore()[0]
++  const anyActive = SUPER_DANGEROUS_KEYS.some(
++    key => settingsStore?.desktopSettings[key] === true
++  )
++
++  const hideSection = () => {
++    SettingsStoreInstance.effect.setDesktopSetting(
++      'showSuperDangerousExperimentalOptions',
++      false
++    )
++  }
++
++  return (
++    <>
++      <SettingsSeparator />
++      <SettingsHeading>⚠️ Super-dangerous</SettingsHeading>
 +      <DesktopSettingsSwitch
 +        settingsKey='enableAdminGroups'
 +        label='Admin groups'
@@ -74,9 +114,24 @@ index 3704aa87c..70ad8d4ea 100644
 +          }
 +        }}
 +      />
-       <DesktopSettingsSwitch
-         settingsKey='enableOnDemandLocationStreaming'
-         label={tx('pref_on_demand_location_streaming')}
++      <button
++        type='button'
++        className={styles.settingsButton}
++        style={{ opacity: anyActive ? 0.5 : undefined }}
++        disabled={anyActive}
++        title={
++          anyActive
++            ? 'Turn off every super-dangerous option before hiding this section.'
++            : undefined
++        }
++        onClick={hideSection}
++        data-testid='hide-super-dangerous'
++      >
++        Hide super-dangerous options
++      </button>
+     </>
+   )
+ }
 diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
 index 5a93f1c7d..57a3e38d3 100644
 --- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
@@ -150,6 +205,88 @@ index 7d09299a0..3c72cbcd2 100644
        {showCheckbox && (
          <DeltaCheckbox
            checked={checked}
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index d8053b29b..1a8958a8f 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -1,4 +1,4 @@
+-import React, { useEffect } from 'react'
++import React, { useEffect, useRef } from 'react'
+ 
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import { DialogBody, DialogContent, DialogWithHeader } from '../../Dialog'
+@@ -7,11 +7,20 @@ import useDialog from '../../../hooks/dialog/useDialog'
+ import { LogDialog } from '../Log'
+ import SettingsIconButton from '../../Settings/SettingsIconButton'
+ import SettingsSeparator from '../../Settings/SettingsSeparator'
++import SettingsStoreInstance, {
++  useSettingsStore,
++} from '../../../stores/settings'
+ 
+ import styles from './styles.module.scss'
+ 
+ import type { DialogProps } from '../../../contexts/DialogContext'
+ 
++// Taps on the version needed to reveal the super-dangerous experimental
++// options, and how many taps out we start warning — an homage to Android's
++// developer-options gesture.
++const TAPS_TO_UNLOCK = 10
++const WARN_FROM_REMAINING = 3
++
+ const GITHUB_URL = 'https://github.com/experintellia/slothfulchat-web'
+ const DELTA_CHAT_URL = 'https://delta.chat'
+ 
+@@ -25,6 +34,37 @@ export default function About({ onClose }: DialogProps) {
+     }
+   }, [])
+ 
++  const settingsStore = useSettingsStore()[0]
++  const alreadyUnlocked =
++    settingsStore?.desktopSettings.showSuperDangerousExperimentalOptions ===
++    true
++  const tapCount = useRef(0)
++
++  const onVersionTap = () => {
++    if (alreadyUnlocked) {
++      return
++    }
++    tapCount.current += 1
++    const remaining = TAPS_TO_UNLOCK - tapCount.current
++    if (remaining <= 0) {
++      SettingsStoreInstance.effect.setDesktopSetting(
++        'showSuperDangerousExperimentalOptions',
++        true
++      )
++      window.__userFeedback?.({
++        type: 'success',
++        text: 'Super-dangerous experimental options are now visible in Settings → Experimental features.',
++      })
++    } else if (remaining <= WARN_FROM_REMAINING) {
++      window.__userFeedback?.({
++        type: 'success',
++        text: `You are now ${remaining} ${
++          remaining === 1 ? 'step' : 'steps'
++        } away from revealing super-dangerous options.`,
++      })
++    }
++  }
++
+   const { openDialog } = useDialog()
+   const viewLog = () => {
+     openDialog(LogDialog)
+@@ -51,7 +91,11 @@ export default function About({ onClose }: DialogProps) {
+               src='./images/icon-512.png'
+               alt='SlothfulChat'
+             />
+-            <div className={styles.appVersion}>
++            <div
++              className={styles.appVersion}
++              onClick={onVersionTap}
++              data-testid='about-version'
++            >
+               v{VERSION}
+               {slothfulConfig?.commitHash && (
+                 <>
 diff --git a/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx b/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
 index d67707b8d..6c85462f2 100644
 --- a/packages/frontend/src/components/dialogs/ConfirmDeleteMessage.tsx
@@ -418,26 +555,31 @@ index 000000000..345052320
 +  ).createGroupWithAdmin(accountId, name)
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 00c76415d..6a403951f 100644
+index 00c76415d..1a8606ab9 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
-@@ -47,6 +47,8 @@ export interface DesktopSettingsType {
+@@ -47,6 +47,12 @@ export interface DesktopSettingsType {
    experimentalCompletionMenu: boolean
    /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
    experimentalUnreadReadTime: boolean
-+  /** webapp: offer creating admin groups (ArcaneChat port). Off by default (experimental). */
++  /** webapp: reveal the "super-dangerous" experimental options. Hidden by
++   * default; unlocked by tapping the version in About 10× (Android-style). */
++  showSuperDangerousExperimentalOptions: boolean
++  /** webapp: offer creating admin groups (ArcaneChat port). Off by default
++   * (experimental, super-dangerous). */
 +  enableAdminGroups: boolean
    enterKeySends: boolean
    locale: string | null
    notifications: boolean
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 7488ea78b..3d01ea44d 100644
+index 7488ea78b..3779343ba 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
-@@ -18,6 +18,7 @@ export function getDefaultState(): DesktopSettingsType {
+@@ -18,6 +18,8 @@ export function getDefaultState(): DesktopSettingsType {
      stripTrackingLinks: true,
      experimentalCompletionMenu: true,
      experimentalUnreadReadTime: false,
++    showSuperDangerousExperimentalOptions: false,
 +    enableAdminGroups: false,
      chatViewBgImg: undefined,
      lastChats: {},
