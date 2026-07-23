@@ -62,6 +62,38 @@ pnpm --filter @slothfulchat/web-app build
 # upload packages/web-app/dist/ to your host
 ```
 
+## Optional: webxdc apps
+
+[webxdc](https://webxdc.org) mini-apps run each in their own **origin**, so they
+need a wildcard subdomain and a webserver that terminates TLS for it. This is
+purely optional: skip everything here and the app still works — webxdc just
+reports as unsupported. Turning it on takes three steps:
+
+1. **DNS.** Point both your app host and a wildcard beneath it at your server:
+   `yourdomain` and `*.webxdc.yourdomain`. (The wildcard covers every app's
+   origin with one record; keep it DNS-only if you're on Cloudflare.)
+2. **Caddy config.** The release zip ships `dist/caddy/Caddyfile.example` — edit
+   the marked lines (your domain and dist path) and uncomment the `tls { dns … }`
+   block for your DNS provider (porkbun and cloudflare variants are both there).
+   Keep the API token in the environment variable, not in the file: the config
+   lives inside the web root. The shipped routes refuse to serve `/caddy/*` as a
+   safety net, but hardcoded secrets in the webroot are one webserver swap away
+   from being public — copy the file outside `dist/` if you prefer.
+3. **Run Caddy.** Wildcard certificates use the DNS-01 challenge, which needs a
+   Caddy built with your provider's plugin:
+
+   ```sh
+   xcaddy build \
+     --with github.com/caddy-dns/porkbun \
+     --with github.com/caddy-dns/cloudflare
+   ```
+
+   Then `caddy run --config dist/caddy/Caddyfile.example`.
+
+The full design — the naming rule, the DNS-vs-TLS wildcard distinction, storage
+and deletion, and the flagship/preview deployment model — is in
+[WEBXDC.md](WEBXDC.md).
+
 ## 2. Run the bridge
 
 **Just for yourself?** Run it locally with no config — it listens on

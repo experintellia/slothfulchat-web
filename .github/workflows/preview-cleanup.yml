@@ -1,0 +1,66 @@
+# Tear down PR previews on the flagship Caddy server: on PR close (delete that
+# PR's slot) and on a weekly sweep (delete slots for PRs no longer open, e.g.
+# closed while the server was down). Deleting a slot also stops its cert
+# renewals. Variable-gated on PREVIEW_SSH_HOST so it no-ops until the server
+# exists. See infra/flagship/README.md.
+
+name: Preview cleanup
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: '17 4 * * 1' # weekly, Monday 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Closed PR -> delete just this PR's slot. Same-repo guard: fork PRs never
+  # deployed a preview, so there's nothing to delete.
+  delete:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.PREVIEW_SSH_HOST != ''
+    runs-on: ubuntu-latest
+    env:
+      SSH_KEY: ${{ secrets.PREVIEW_SSH_KEY }}
+      SSH_HOSTKEY: ${{ vars.PREVIEW_SSH_HOSTKEY }}
+      SSH_HOST: ${{ vars.PREVIEW_SSH_HOST }}
+      PR: ${{ github.event.number }}
+    steps:
+      - name: Delete this PR's preview
+        run: |
+          set -euo pipefail
+          key=$(mktemp); kh=$(mktemp)
+          printf '%s\n' "$SSH_KEY" > "$key"; chmod 600 "$key"
+          printf '%s\n' "$SSH_HOSTKEY" > "$kh"
+          ssh -i "$key" -o IdentitiesOnly=yes -o UserKnownHostsFile="$kh" \
+            deploy@"$SSH_HOST" "delete $PR"
+
+  # Weekly / manual sweep: list deployed pr-N slots, diff against the currently
+  # open PRs, delete the orphans (missed closes, force-closed, etc.).
+  sweep:
+    if: github.event_name != 'pull_request' && vars.PREVIEW_SSH_HOST != ''
+    runs-on: ubuntu-latest
+    env:
+      SSH_KEY: ${{ secrets.PREVIEW_SSH_KEY }}
+      SSH_HOSTKEY: ${{ vars.PREVIEW_SSH_HOSTKEY }}
+      SSH_HOST: ${{ vars.PREVIEW_SSH_HOST }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Delete orphaned previews
+        run: |
+          set -euo pipefail
+          key=$(mktemp); kh=$(mktemp)
+          printf '%s\n' "$SSH_KEY" > "$key"; chmod 600 "$key"
+          printf '%s\n' "$SSH_HOSTKEY" > "$kh"
+          gate() { ssh -i "$key" -o IdentitiesOnly=yes -o UserKnownHostsFile="$kh" deploy@"$SSH_HOST" "$@"; }
+          deployed=$(gate list | sed -n 's/^pr-\([0-9]\+\)$/\1/p' | sort -u)
+          open=$(gh api --paginate "repos/${{ github.repository }}/pulls?state=open&per_page=100" \
+                   --jq '.[].number' | sort -u)
+          for n in $deployed; do
+            if ! grep -qx "$n" <<<"$open"; then
+              echo "orphan pr-$n (PR not open) — deleting"
+              gate "delete $n"
+            fi
+          done

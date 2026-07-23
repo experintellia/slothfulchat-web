@@ -1,0 +1,88 @@
+# Per-PR preview deploy: builds the web-app and ships dist/ to the flagship
+# Caddy server, served at https://pr-<n>.preview.slothful.chat.
+#
+# Same-repo PRs only — fork PRs can't read the deploy secret and must not
+# publish under our domain. The job is gated on the PREVIEW_SSH_HOST repo
+# Variable (secrets aren't readable in a job-level `if`), so it no-ops cleanly
+# until the server exists. See infra/flagship/README.md for bring-up.
+
+name: Preview deploy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# One deploy per PR; a new push supersedes the previous build.
+concurrency:
+  group: preview-pr-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  deploy:
+    # Fork PRs excluded (no secrets); Variable-gated so it no-ops until the
+    # server exists (secrets can't be read in a job-level if).
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.PREVIEW_SSH_HOST != ''
+    runs-on: ubuntu-latest
+    # Same SLOTHFUL_* branding as prod (deploy-pages.yml) so previews match the
+    # flagship build — minus SLOTHFUL_PLAUSIBLE_*: analytics track prod only
+    # (issue #134). Inherited as process env by the composite assemble step.
+    env:
+      SLOTHFUL_INSTANCE_NAME: ${{ vars.SLOTHFUL_INSTANCE_NAME }}
+      SLOTHFUL_INSTANCE_URL: ${{ vars.SLOTHFUL_INSTANCE_URL }}
+      SLOTHFUL_DEFAULT_PROXY: ${{ vars.SLOTHFUL_DEFAULT_PROXY }}
+      SLOTHFUL_PUBLIC_BRIDGES: ${{ vars.SLOTHFUL_PUBLIC_BRIDGES }}
+      SLOTHFUL_DEFAULT_CHATMAIL: ${{ vars.SLOTHFUL_DEFAULT_CHATMAIL }}
+      SLOTHFUL_IMPRINT_NAME: ${{ vars.SLOTHFUL_IMPRINT_NAME }}
+      SLOTHFUL_IMPRINT_ADDRESS: ${{ vars.SLOTHFUL_IMPRINT_ADDRESS }}
+      SLOTHFUL_IMPRINT_EMAIL: ${{ vars.SLOTHFUL_IMPRINT_EMAIL }}
+    steps:
+      - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build web-app dist/
+        uses: ./.github/actions/build-web-app
+
+      # Stream dist/ to the server; the deploy key's forced command runs the
+      # gate script (`upload <n>`), which stages, `caddy validate`s the full
+      # merged config and reloads on success. A non-zero exit fails the job.
+      - name: Deploy dist/ to the preview server
+        env:
+          SSH_KEY: ${{ secrets.PREVIEW_SSH_KEY }}
+          SSH_HOSTKEY: ${{ vars.PREVIEW_SSH_HOSTKEY }}
+          SSH_HOST: ${{ vars.PREVIEW_SSH_HOST }}
+          PR: ${{ github.event.number }}
+        run: |
+          set -euo pipefail
+          key=$(mktemp); kh=$(mktemp)
+          printf '%s\n' "$SSH_KEY" > "$key"; chmod 600 "$key"
+          printf '%s\n' "$SSH_HOSTKEY" > "$kh"
+          tar -C packages/web-app -czf - dist \
+            | ssh -i "$key" -o IdentitiesOnly=yes -o UserKnownHostsFile="$kh" \
+                deploy@"$SSH_HOST" "upload $PR"
+
+      # Sticky comment: one comment per PR, updated in place on every push.
+      # Plain `gh api` — no third-party action.
+      - name: Sticky preview-URL comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.number }}
+        run: |
+          set -euo pipefail
+          marker='<!-- preview-url -->'
+          body="$marker
+          Preview: https://pr-$PR.preview.slothful.chat
+
+          The \`*.webxdc.\` cert can lag ~a minute after the first deploy. This comment updates on every push."
+          id=$(gh api --paginate "repos/${{ github.repository }}/issues/$PR/comments" \
+                 --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -n1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$id" -f body="$body"
+          else
+            gh api -X POST "repos/${{ github.repository }}/issues/$PR/comments" -f body="$body"
+          fi

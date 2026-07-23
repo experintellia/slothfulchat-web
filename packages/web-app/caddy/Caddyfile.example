@@ -1,0 +1,50 @@
+# Slothfulchat self-hosting Caddyfile — copy next to routes.caddy and run
+# `caddy run`. To enable webxdc you only need to:
+#   1. edit the lines marked "# <- edit" (your domain + dist path)
+#   2. uncomment the (wildcard_tls) block for your DNS provider and set its
+#      API token(s) in the environment
+#
+# webxdc origins live on a *.webxdc.<domain> wildcard, and a wildcard TLS cert
+# requires a DNS-01 challenge, which requires a Caddy binary built WITH your DNS
+# provider's plugin — the stock download can't do it. Build one with, e.g.:
+#   xcaddy build --with github.com/caddy-dns/porkbun --with github.com/caddy-dns/cloudflare
+# Pluginless alternative: Caddy's `on_demand_tls` obtains a normal per-hostname
+# cert as each subdomain is first hit (no wildcard, no plugin) — fine for a few
+# webxdc origins, avoids the custom build.
+#
+# Don't want webxdc at all? Delete the (wildcard_tls) snippet and the
+# *.webxdc block inside routes.caddy — the app still works; webxdc just reports
+# unsupported. Plain static hosting needs no Caddy at all.
+#
+# SECRETS: keep API tokens in env vars as shown — never hardcode them here.
+# This file sits INSIDE the web root (dist/caddy/). routes.caddy refuses to
+# serve /caddy/* as a safety net, but that net only holds while Caddy with
+# these routes is the thing serving dist/ — if you edit config in place,
+# prefer copying it outside the webroot first.
+
+# Global options (optional).
+# {
+# 	email you@example.com   # <- edit: for Let's Encrypt expiry notices
+# }
+
+# Cert config for the *.webxdc. wildcard. routes.caddy does `import wildcard_tls`
+# inside its webxdc block, so this snippet must exist even if empty.
+(wildcard_tls) {
+	# Uncomment ONE, matching your provider (env var holds the token):
+	#
+	# Porkbun — needs both an API key and a secret key (per the caddy-dns/porkbun
+	# plugin README):
+	# tls {
+	# 	dns porkbun {
+	# 		api_key {env.PORKBUN_API_KEY}
+	# 		api_secret_key {env.PORKBUN_API_SECRET_KEY}
+	# 	}
+	# }
+	#
+	# Cloudflare — single API token:
+	# tls {
+	# 	dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	# }
+}
+
+import routes.caddy example.com /srv/slothfulchat/dist # <- edit: your domain + dist path

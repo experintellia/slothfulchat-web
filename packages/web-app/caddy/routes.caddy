@@ -1,0 +1,23 @@
+# Slothfulchat routes — shipped with each build so webserver config stays in
+# lockstep with the app version. Import from a top-level Caddyfile:
+#   import routes.caddy <app-host> <dist-root>
+# The importing file must define a (wildcard_tls) snippet (cert config for the
+# *.webxdc. wildcard — see Caddyfile.example).
+{args[0]} {
+	root * {args[1]}
+	# Never serve the shipped webserver config back out: dist/caddy/ sits inside
+	# the web root, and an in-place-edited Caddyfile.example may carry hardcoded
+	# DNS API credentials (they belong in env vars, but belt and braces).
+	error /caddy/* 404
+	encode zstd gzip
+	file_server
+}
+*.webxdc.{args[0]} {
+	import wildcard_tls
+	root * {args[1]}
+	encode zstd gzip
+	# For now every path serves the isolation test page; becomes the webxdc
+	# bootstrap + wipe routes as the feature develops (see WEBXDC.md).
+	rewrite * /webxdc-test.html
+	file_server
+}
