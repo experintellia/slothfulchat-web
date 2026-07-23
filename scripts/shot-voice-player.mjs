@@ -17,7 +17,9 @@ import { randomBytes } from 'node:crypto'
 import { chromium } from 'playwright'
 
 const script = (p) => fileURLToPath(new URL(p, import.meta.url))
-const SHOTS = script('../.cache/voice-shots/')
+// MOBILE=1: phone-sized viewport + touch, shots land in voice-shots-mobile/
+const MOBILE = !!process.env.MOBILE
+const SHOTS = script(MOBILE ? '../.cache/voice-shots-mobile/' : '../.cache/voice-shots/')
 await mkdir(SHOTS, { recursive: true })
 const APP_PORT = 8674
 
@@ -207,7 +209,11 @@ if (process.env.SILENT_WAV) {
   launchOpts.args.push(`--use-file-for-fake-audio-capture=${process.env.SILENT_WAV}`)
 }
 const browser = await chromium.launch(launchOpts)
-const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+const page = await browser.newPage(
+  MOBILE
+    ? { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }
+    : { viewport: { width: 1280, height: 900 } }
+)
 page.on('console', (m) => {
   if (/panicked at/.test(m.text())) console.error('[page PANIC]', m.text())
 })
@@ -389,6 +395,14 @@ try {
       .first()
       .click()
     await incomingPlayer.waitFor({ state: 'visible', timeout: 15_000 })
+    // upstream #6378: after switching away and back while playing, the bubble
+    // must show the singleton's real position, not reset to 0:00
+    await page.waitForTimeout(600)
+    const t = await incomingPlayer.locator('[class*=time]').textContent()
+    if (!t || /^0:0[01] \//.test(t)) {
+      throw new Error(`bubble position desynced after chat switch: "${t}"`)
+    }
+    console.log('OK: bubble position kept after chat switch:', t)
   } catch (err) {
     console.warn('mini-player shot skipped:', err.message)
   }

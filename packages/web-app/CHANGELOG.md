@@ -19,6 +19,11 @@
   hint says so instead of cancelling your recording. Off by default;
   turn it on in Settings → Advanced → Experimental features.
 
+- **Voice-message position stays in sync**: switching profiles or chats while
+  a voice message plays no longer resets the message's displayed position to
+  0:00 — it picks up where the audio actually is. The recorder also fits
+  phone-sized windows now instead of pushing its buttons off-screen.
+
 - **Links lose their tracking**: known tracking parameters (`utm_*`, YouTube
   `si=`, click ids, Amazon affiliate refs, …) are now removed when you open a
   link and when you paste one into the composer — pasting shows a quiet
