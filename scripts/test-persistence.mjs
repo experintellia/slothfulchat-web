@@ -149,6 +149,50 @@ try {
     }
   }
 
+  // 6.5 REGRESSION — the boot orphan sweep must NOT delete a live account's db.
+  // accounts.toml and the sqlite db are synchronously durable; the account's
+  // memfs DIR is mirrored asynchronously and can be dropped on tab close. Drop
+  // ONLY the account dir(s) from the OPFS memfs mirror (keep accounts.toml and
+  // the sahpool db) and reload: the account MUST survive. Before the fix the
+  // sweep keyed on dir presence and reclaimed the (perfectly good) db, and the
+  // self-heal then rebuilt an empty registry — total, permanent account loss.
+  await injectOpfsCorruption(async () => {
+    const root = await navigator.storage.getDirectory()
+    const accounts = await (
+      await root.getDirectoryHandle('memfs')
+    ).getDirectoryHandle('accounts')
+    const names = []
+    for await (const [name, handle] of accounts.entries()) {
+      if (handle.kind === 'directory') names.push(name) // uuid-named account dirs
+    }
+    for (const name of names) await accounts.removeEntry(name, { recursive: true })
+    // a tearing-down worker can re-flush a dir; throw so the helper retries
+    // until removal sticks
+    for await (const [, handle] of accounts.entries()) {
+      if (handle.kind === 'directory') throw new Error('account dir reappeared; retry')
+    }
+  })
+  console.log('OK: dropped account dir(s) from the OPFS memfs mirror (accounts.toml + db kept)')
+  await page.goto(appUrl)
+  await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
+  await page
+    .locator('#new-chat-button')
+    .waitFor({ state: 'visible', timeout: 120_000 })
+  const survivedIds = await rpc('getAllAccountIds')
+  if (!survivedIds.includes(accountId)) {
+    throw new Error(
+      `account ${accountId} lost after its memfs dir was dropped (got ${survivedIds}) — the boot orphan sweep deleted a live account's db`
+    )
+  }
+  const survivedInfo = await rpc('getAccountInfo', accountId)
+  if (survivedInfo.kind !== 'Configured' || survivedInfo.addr !== alice.email) {
+    throw new Error(`account not intact after memfs-dir drop: ${JSON.stringify(survivedInfo)}`)
+  }
+  if (consoleTail.some(l => l.includes('accounts.toml is corrupt'))) {
+    throw new Error('self-heal fired on a valid registry — a dropped dir must not trigger a heal')
+  }
+  console.log(`OK: account ${accountId} survived losing its memfs dir (db not swept)`)
+
   // 7. corrupt accounts.toml in OPFS (the iOS incident: mirror returned ~1MB
   // of garbage) → boot again → the wasm self-heal must quarantine it and
   // restore the last-good backup

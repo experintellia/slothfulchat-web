@@ -115,31 +115,51 @@ pub async fn enable_persistence() -> Result<(), String> {
         .await
         .map_err(|e| format!("opfs hydrate failed: {}", js_err(e)))?;
 
-    // Boot-time orphan sweep. Every db core creates lives inside an account
-    // dir that IS mirrored into the memfs, so any pool file whose parent dir is
-    // absent from the freshly hydrated memfs is an orphan left by a removed
-    // account whose slot the pre-fix `remove_account` never freed. Reclaim it:
-    // this is what un-bricks deployments already at the 32-slot ceiling, where
-    // the leaked slots outnumber the free ones and the next open fails with
-    // SQLITE_CANTOPEN (the post-#75 boot incident). delete_db is synchronous.
+    // Boot-time orphan sweep: reclaim sahpool slots left by REMOVED accounts,
+    // which un-bricks installs already at the 32-slot ceiling (the post-#75
+    // boot SQLITE_CANTOPEN incident). delete_db is synchronous.
     //
-    // Known window: the account dir mirrors to OPFS asynchronously while the
-    // pool file is durable at once, so a worker killed within the sub-second
-    // gap right after add_account can leave a db whose dir never landed — the
-    // sweep then reclaims that just-created (still empty) account's db. An
-    // established account cannot hit this: once its dir has flushed it stays.
+    // The authority on "which accounts still exist" is accounts.toml, NOT the
+    // memfs account dirs. accounts.toml and each account's dc.db are written
+    // through SYNCHRONOUSLY (durable the instant core writes them — the toml
+    // via the held sync-access handles, the db via the sahpool VFS). The
+    // account DIR is mirrored ASYNCHRONOUSLY and can lag or be dropped on tab
+    // close (an accepted M5 limitation). Keying the sweep on dir presence
+    // therefore deleted the sync-durable db of a perfectly LIVE account
+    // whenever its dir mirror had not landed yet — and losing the db is total,
+    // permanent loss (Accounts::new then can't open it, and the self-heal, on
+    // seeing a registry entry with no dir, rebuilds an empty `accounts = []`).
+    // A missing dir alone is cosmetic and recoverable: the db is intact in the
+    // sahpool and core recreates the blobdir on open. So: an orphan is a pool
+    // db whose account uuid is absent from accounts.toml.
+    //
+    // Trust accounts.toml only when it is a plausible config (core serializes
+    // `selected_account` first). Missing / empty / corrupt (e.g. the iOS ~1 MB
+    // garbage) → skip the sweep entirely: never delete a db we cannot prove is
+    // orphaned; the self-heal rebuilds the registry with every db left intact.
+    let registry = match fs::snapshot(Path::new(ACCOUNTS_TOML)) {
+        Snapshot::File(bytes) => String::from_utf8(bytes).ok(),
+        _ => None,
+    }
+    .filter(|text| text.trim_start().starts_with("selected_account"));
     let mut reclaimed = 0u32;
-    for name in util.list() {
-        let is_orphan = match Path::new(&name).parent() {
-            Some(parent) => !fs::sync_is_dir(parent),
-            None => false,
-        };
-        if is_orphan {
-            match util.delete_db(&name) {
-                Ok(_) => reclaimed += 1,
-                Err(err) => web_sys::console::warn_1(&JsValue::from_str(&format!(
-                    "opfs: could not reclaim orphaned pool slot {name:?}: {err}"
-                ))),
+    if let Some(registry) = &registry {
+        for name in util.list() {
+            // db logical path is /accounts/<uuid>/dc.db{,-wal,-journal}; the
+            // parent dir name IS the account uuid. Absent from the registry =
+            // a removed account's leaked slot (uuids are unique 36-char ids, so
+            // a substring test can't false-match one live uuid against another).
+            let uuid = Path::new(&name)
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str());
+            if uuid.is_some_and(|uuid| !registry.contains(uuid)) {
+                match util.delete_db(&name) {
+                    Ok(_) => reclaimed += 1,
+                    Err(err) => web_sys::console::warn_1(&JsValue::from_str(&format!(
+                        "opfs: could not reclaim orphaned pool slot {name:?}: {err}"
+                    ))),
+                }
             }
         }
     }

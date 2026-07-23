@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.1 — 2026-07-23
+
+- Fixed total account loss on boot: the sahpool slot-reclaim sweep decided
+  which accounts still existed from the asynchronously-mirrored account folders
+  rather than the synchronously-durable `accounts.toml`, so an account whose
+  folder mirror merely lagged (or was dropped on tab close) had its intact
+  database deleted and was then rebuilt away to nothing. The sweep now trusts
+  `accounts.toml`, and skips entirely when that file is missing or corrupt.
+- The profile-deletion screen now shows an account's storage size instead of
+  "?": the size RPC relied on `std::fs`, which can't see the database (it
+  lives in the sqlite VFS) on wasm; it now sizes the database via sqlite
+  PRAGMAs and the blobs via the memfs shim (core patch `core/0019`).
+
 ## 0.7.0 — 2026-07-20
 
 - Switching the UI language now refreshes already-rendered text (chatlist

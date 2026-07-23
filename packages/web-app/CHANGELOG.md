@@ -1,5 +1,11 @@
 # Changelog
 
+- **Your data is now kept safe from browser eviction**: once you have an
+  account, the app asks the browser to store its data persistently, so it
+  won't be wiped to reclaim disk space when the disk runs low. The Diagnostics
+  panel (Log dialog → Diagnostics) gained a Storage section showing whether
+  storage is persistent, how much is used, and a button to request it — and
+  the panel now opens full-screen and scrolls properly on phones.
 - Dragging a profile to reorder the sidebar no longer shows the white
   "selected" indicator in the drag preview.
 - **Unread filter in the chat list**: a filter button next to the search box
