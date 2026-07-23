@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1 — 2026-07-23
+
+- Fixed total account loss on boot: the sahpool slot-reclaim sweep decided
+  which accounts still existed from the asynchronously-mirrored account folders
+  rather than the synchronously-durable `accounts.toml`, so an account whose
+  folder mirror merely lagged (or was dropped on tab close) had its intact
+  database deleted and was then rebuilt away to nothing. The sweep now trusts
+  `accounts.toml`, and skips entirely when that file is missing or corrupt.
+
 ## 0.7.0 — 2026-07-20
 
 - Switching the UI language now refreshes already-rendered text (chatlist
