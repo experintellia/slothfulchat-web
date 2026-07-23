@@ -1,5 +1,10 @@
 # Changelog
 
+- Admin groups (ported from ArcaneChat): new `createGroupWithAdmin` JSON-RPC
+  method and `groupAdminId` field on `FullChat`. Core enforces that only the
+  admin manages members, name, image, description, the disappearing-messages
+  timer — and may delete other members' messages for everyone.
+
 ## 0.7.0 — 2026-07-20
 
 - Switching the UI language now refreshes already-rendered text (chatlist
