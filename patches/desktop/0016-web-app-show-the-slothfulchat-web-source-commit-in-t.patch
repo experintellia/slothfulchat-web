@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 8 Jul 2026 23:01:12 +0000
-Subject: [PATCH 16/58] web-app: show the slothfulchat-web source commit in the
+Subject: [PATCH 16/64] web-app: show the slothfulchat-web source commit in the
  About dialog
 
 Surfaces which commit + message a deployed instance was built from,
@@ -15,7 +15,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
  1 file changed, 12 insertions(+)
 
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 2d3f0b075..f6bf017c7 100644
+index 2d3f0b0..f6bf017 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
 @@ -62,6 +62,18 @@ export default function About({ onClose }: DialogProps) {

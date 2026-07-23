@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 9 Jul 2026 20:55:05 +0000
-Subject: [PATCH 21/58] web-app: accept full URLs (https, path, port) in
+Subject: [PATCH 21/64] web-app: accept full URLs (https, path, port) in
  webimap host input
 
 Parse the pasted value as a URL and take only its host[:port] before
@@ -14,7 +14,7 @@ checkQr error.
  1 file changed, 21 insertions(+), 8 deletions(-)
 
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
-index 33d3c6b6f..65caf9bbc 100644
+index 33d3c6b..65caf9b 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
 @@ -16,6 +16,24 @@ type Props = {

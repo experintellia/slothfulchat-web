@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Tue, 7 Jul 2026 22:52:15 +0000
-Subject: [PATCH 10/18] wasm: HTTP via browser fetch()
+Subject: [PATCH 10/19] wasm: HTTP via browser fetch()
 
 Replace the http_wasm.rs stubs with a fetch()-backed implementation.
 The browser owns TLS/redirects/caching; requests are subject to CORS
@@ -17,7 +17,7 @@ reports back over a oneshot channel, like ws_tcp.
  create mode 100644 deltachat-jsonrpc/typescript/pnpm-lock.yaml
 
 diff --git a/Cargo.lock b/Cargo.lock
-index a5493caef..b840b9472 100644
+index a5493ca..b840b94 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -2,6 +2,18 @@
@@ -261,7 +261,7 @@ index a5493caef..b840b9472 100644
  
  [[package]]
 diff --git a/Cargo.toml b/Cargo.toml
-index 489250ad1..adb8ad9fa 100644
+index 489250a..adb8ad9 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -135,7 +135,9 @@ js-sys = "0.3"
@@ -276,7 +276,7 @@ index 489250ad1..adb8ad9fa 100644
  [dev-dependencies]
 diff --git a/deltachat-jsonrpc/typescript/pnpm-lock.yaml b/deltachat-jsonrpc/typescript/pnpm-lock.yaml
 new file mode 100644
-index 000000000..befb26afe
+index 0000000..befb26a
 --- /dev/null
 +++ b/deltachat-jsonrpc/typescript/pnpm-lock.yaml
 @@ -0,0 +1,2863 @@
@@ -3144,7 +3144,7 @@ index 000000000..befb26afe
 +
 +  yocto-queue@0.1.0: {}
 diff --git a/src/net/http_wasm.rs b/src/net/http_wasm.rs
-index 2319619db..24520a04b 100644
+index 2319619..24520a0 100644
 --- a/src/net/http_wasm.rs
 +++ b/src/net/http_wasm.rs
 @@ -1,11 +1,15 @@

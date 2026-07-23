@@ -248,6 +248,13 @@ exists:
   "Unread: N chats" heading (mirroring search-in-chat) as a reminder that the
   filter is active; the archive view is unaffected. `desktop/0063`
 
+- **Rich download-on-demand placeholders** — large attachments in encrypted
+  chats arrive as a placeholder before the real message; upstream shows a plain
+  "text [Image – 228 KiB] - Download" line. The pre-message metadata now carries
+  the real MIME type and a small blurred thumbnail preview, and the placeholder
+  renders as a styled per-type card (image/video/audio/file/webxdc) with the
+  attachment size and a big download button. `core/0019`, `desktop/0064`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not

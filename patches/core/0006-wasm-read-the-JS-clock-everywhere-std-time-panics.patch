@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Mon, 6 Jul 2026 22:34:43 +0000
-Subject: [PATCH 06/18] wasm: read the JS clock everywhere std::time panics
+Subject: [PATCH 06/19] wasm: read the JS clock everywhere std::time panics
 
 std::time::{SystemTime,Instant}::now() abort on wasm32-unknown-unknown.
 - rustls: JsClockTimeProvider via ClientConfig::builder_with_details
@@ -27,7 +27,7 @@ std::time::{SystemTime,Instant}::now() abort on wasm32-unknown-unknown.
  14 files changed, 113 insertions(+), 37 deletions(-)
 
 diff --git a/deltachat-ratelimit/Cargo.toml b/deltachat-ratelimit/Cargo.toml
-index 04f2a9107..075e2b236 100644
+index 04f2a91..075e2b2 100644
 --- a/deltachat-ratelimit/Cargo.toml
 +++ b/deltachat-ratelimit/Cargo.toml
 @@ -5,4 +5,6 @@ description = "Token bucket implementation"
@@ -38,7 +38,7 @@ index 04f2a9107..075e2b236 100644
  [dependencies]
 +deltachat-time = { path = "../deltachat-time" }
 diff --git a/deltachat-ratelimit/src/lib.rs b/deltachat-ratelimit/src/lib.rs
-index 497cc83bb..df53680a4 100644
+index 497cc83..df53680 100644
 --- a/deltachat-ratelimit/src/lib.rs
 +++ b/deltachat-ratelimit/src/lib.rs
 @@ -6,6 +6,11 @@
@@ -99,7 +99,7 @@ index 497cc83bb..df53680a4 100644
          let mut ratelimit = Ratelimit::new_at(Duration::new(60, 0), 3.0, now);
          assert!(ratelimit.can_send_at(now));
 diff --git a/src/context.rs b/src/context.rs
-index 9f31e0caa..5a478ad39 100644
+index 9f31e0c..5a478ad 100644
 --- a/src/context.rs
 +++ b/src/context.rs
 @@ -469,7 +469,7 @@ pub(crate) fn with_blobdir(
@@ -139,7 +139,7 @@ index 9f31e0caa..5a478ad39 100644
              }
              RunningState::ShallStop { .. } | RunningState::Stopped => {
 diff --git a/src/imap.rs b/src/imap.rs
-index a34e8590e..45374e646 100644
+index a34e859..45374e6 100644
 --- a/src/imap.rs
 +++ b/src/imap.rs
 @@ -307,7 +307,7 @@ pub(crate) async fn connect(
@@ -161,7 +161,7 @@ index a34e8590e..45374e646 100644
          const BACKOFF_MAX_MS: u64 = 80_000;
          self.conn_backoff_ms = min(self.conn_backoff_ms, BACKOFF_MAX_MS / 2);
 diff --git a/src/imap/idle.rs b/src/imap/idle.rs
-index 2f55684ef..368fb5d99 100644
+index 2f55684..368fb5d 100644
 --- a/src/imap/idle.rs
 +++ b/src/imap/idle.rs
 @@ -121,7 +121,7 @@ pub async fn idle(
@@ -174,7 +174,7 @@ index 2f55684ef..368fb5d99 100644
          info!(context, "IMAP-fake-IDLEing folder={:?}", watch_folder);
  
 diff --git a/src/key.rs b/src/key.rs
-index ff088a1c5..1f3ade763 100644
+index ff088a1..1f3ade7 100644
 --- a/src/key.rs
 +++ b/src/key.rs
 @@ -472,7 +472,7 @@ async fn generate_keypair(context: &Context) -> Result<SignedSecretKey> {
@@ -187,7 +187,7 @@ index ff088a1c5..1f3ade763 100644
              let keypair = Handle::current()
                  .spawn_blocking(move || crate::pgp::create_keypair(addr))
 diff --git a/src/net/tls.rs b/src/net/tls.rs
-index c868c7634..30643716a 100644
+index c868c76..3064371 100644
 --- a/src/net/tls.rs
 +++ b/src/net/tls.rs
 @@ -28,6 +28,41 @@ pub(crate) fn default_provider() -> rustls::crypto::CryptoProvider {
@@ -248,7 +248,7 @@ index c868c7634..30643716a 100644
          vec![]
      } else {
 diff --git a/src/quota.rs b/src/quota.rs
-index 64fb97110..6e3bbf715 100644
+index 64fb971..6e3bbf7 100644
 --- a/src/quota.rs
 +++ b/src/quota.rs
 @@ -99,7 +99,7 @@ pub(crate) async fn update_recent_quota(
@@ -279,7 +279,7 @@ index 64fb97110..6e3bbf715 100644
              );
              map
 diff --git a/src/scheduler.rs b/src/scheduler.rs
-index be7e4190e..4c81caa19 100644
+index be7e419..4c81caa 100644
 --- a/src/scheduler.rs
 +++ b/src/scheduler.rs
 @@ -589,7 +589,7 @@ async fn smtp_loop(
@@ -292,7 +292,7 @@ index be7e4190e..4c81caa19 100644
                      ctx,
                      "SMTP has messages to retry, planning to retry {t} seconds later."
 diff --git a/src/smtp.rs b/src/smtp.rs
-index 7f1bdf1dc..de53df70c 100644
+index 7f1bdf1..de53df7 100644
 --- a/src/smtp.rs
 +++ b/src/smtp.rs
 @@ -152,7 +152,7 @@ pub async fn connect(
@@ -305,7 +305,7 @@ index 7f1bdf1dc..de53df70c 100644
              context.emit_event(EventType::SmtpConnected(format!(
                  "SMTP-LOGIN as {} ok",
 diff --git a/src/smtp/send.rs b/src/smtp/send.rs
-index d48920c4f..1783c64cd 100644
+index d48920c..1783c64 100644
 --- a/src/smtp/send.rs
 +++ b/src/smtp/send.rs
 @@ -61,7 +61,7 @@ pub async fn send(
@@ -318,7 +318,7 @@ index d48920c4f..1783c64cd 100644
      }
  }
 diff --git a/src/sql/migrations.rs b/src/sql/migrations.rs
-index 095c11fec..1ba18ce44 100644
+index 095c11f..1ba18ce 100644
 --- a/src/sql/migrations.rs
 +++ b/src/sql/migrations.rs
 @@ -17,7 +17,7 @@
@@ -349,7 +349,7 @@ index 095c11fec..1ba18ce44 100644
              .await?;
          info!(
 diff --git a/src/sql/pool/wal_checkpoint.rs b/src/sql/pool/wal_checkpoint.rs
-index 0d95be93b..5185a4fc5 100644
+index 0d95be9..5185a4f 100644
 --- a/src/sql/pool/wal_checkpoint.rs
 +++ b/src/sql/pool/wal_checkpoint.rs
 @@ -5,7 +5,7 @@
@@ -389,7 +389,7 @@ index 0d95be93b..5185a4fc5 100644
          let blocked = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
              let blocked: i64 = row.get(0)?;
 diff --git a/src/tools.rs b/src/tools.rs
-index bd1939b4c..4640cefd3 100644
+index bd1939b..4640cef 100644
 --- a/src/tools.rs
 +++ b/src/tools.rs
 @@ -18,14 +18,16 @@

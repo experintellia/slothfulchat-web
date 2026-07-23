@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <claude@example.com>
 Date: Thu, 9 Jul 2026 22:08:57 +0000
-Subject: [PATCH 24/58] web-app: show slothfulchat-web version+commit in About,
+Subject: [PATCH 24/64] web-app: show slothfulchat-web version+commit in About,
  real browser-log hint
 
 The About dialog showed the full commit subject alongside the hash, which
@@ -22,7 +22,7 @@ viewing is implemented for the browser build.
  2 files changed, 31 insertions(+), 9 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 68825833b..5188813fa 100644
+index 6882583..5188813 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
 @@ -62,11 +62,11 @@ export default function About({ onClose }: DialogProps) {
@@ -43,7 +43,7 @@ index 68825833b..5188813fa 100644
                  </>
                )}
 diff --git a/packages/frontend/src/components/dialogs/Log/index.tsx b/packages/frontend/src/components/dialogs/Log/index.tsx
-index fab649eb7..df6e38b2b 100644
+index fab649e..df6e38b 100644
 --- a/packages/frontend/src/components/dialogs/Log/index.tsx
 +++ b/packages/frontend/src/components/dialogs/Log/index.tsx
 @@ -75,12 +75,28 @@ async function getLog(): Promise<string> {

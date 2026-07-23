@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <experintellia@users.noreply.github.com>
 Date: Thu, 16 Jul 2026 02:54:51 +0000
-Subject: [PATCH 52/58] web-app: list the translation editor (Ctrl/Cmd+Shift+L)
+Subject: [PATCH 52/64] web-app: list the translation editor (Ctrl/Cmd+Shift+L)
  in the keyboard shortcuts cheat sheet
 
 ---
@@ -9,7 +9,7 @@ Subject: [PATCH 52/58] web-app: list the translation editor (Ctrl/Cmd+Shift+L)
  1 file changed, 6 insertions(+)
 
 diff --git a/packages/frontend/src/components/KeyboardShortcutHint.tsx b/packages/frontend/src/components/KeyboardShortcutHint.tsx
-index 7da2c3720..5c5ea4269 100644
+index 7da2c37..5c5ea42 100644
 --- a/packages/frontend/src/components/KeyboardShortcutHint.tsx
 +++ b/packages/frontend/src/components/KeyboardShortcutHint.tsx
 @@ -202,6 +202,12 @@ export function getKeybindings(

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 10 Jul 2026 23:14:32 +0000
-Subject: [PATCH 41/58] web-app: sender-baked link previews with a composer
+Subject: [PATCH 41/64] web-app: sender-baked link previews with a composer
  ghost UI
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -61,7 +61,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
 
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index b4ed923b9..efdf05669 100644
+index b4ed923..efdf056 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -71,6 +71,11 @@ export function ExperimentalFeatures() {
@@ -77,7 +77,7 @@ index b4ed923b9..efdf05669 100644
          <DesktopSettingsSwitch
            settingsKey='contentProtectionEnabled'
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index bd995140f..99cb83ef4 100644
+index bd99514..99cb83e 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
 @@ -13,6 +13,8 @@ import { extension } from 'mime-types'
@@ -164,7 +164,7 @@ index bd995140f..99cb83ef4 100644
                    className='attachment-quote-section is-attachment'
 diff --git a/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx b/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
 new file mode 100644
-index 000000000..bc531e58d
+index 0000000..bc531e5
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
 @@ -0,0 +1,122 @@
@@ -292,7 +292,7 @@ index 000000000..bc531e58d
 +}
 diff --git a/packages/frontend/src/components/composer/linkPreview/detectUrl.ts b/packages/frontend/src/components/composer/linkPreview/detectUrl.ts
 new file mode 100644
-index 000000000..1a29ff2b0
+index 0000000..1a29ff2
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/linkPreview/detectUrl.ts
 @@ -0,0 +1,80 @@
@@ -378,7 +378,7 @@ index 000000000..1a29ff2b0
 +}
 diff --git a/packages/frontend/src/components/composer/linkPreview/generate.ts b/packages/frontend/src/components/composer/linkPreview/generate.ts
 new file mode 100644
-index 000000000..a582bf1b3
+index 0000000..a582bf1
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/linkPreview/generate.ts
 @@ -0,0 +1,254 @@
@@ -638,7 +638,7 @@ index 000000000..a582bf1b3
 +}
 diff --git a/packages/frontend/src/components/composer/linkPreview/openGraph.ts b/packages/frontend/src/components/composer/linkPreview/openGraph.ts
 new file mode 100644
-index 000000000..a79acdbcb
+index 0000000..a79acdb
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/linkPreview/openGraph.ts
 @@ -0,0 +1,56 @@
@@ -700,7 +700,7 @@ index 000000000..a79acdbcb
 +}
 diff --git a/packages/frontend/src/components/composer/linkPreview/renderCard.ts b/packages/frontend/src/components/composer/linkPreview/renderCard.ts
 new file mode 100644
-index 000000000..b6326c4ee
+index 0000000..b6326c4
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/linkPreview/renderCard.ts
 @@ -0,0 +1,331 @@
@@ -1037,7 +1037,7 @@ index 000000000..b6326c4ee
 +}
 diff --git a/packages/frontend/src/components/composer/linkPreview/styles.module.scss b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
 new file mode 100644
-index 000000000..0d752a182
+index 0000000..0d752a1
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
 @@ -0,0 +1,206 @@
@@ -1249,7 +1249,7 @@ index 000000000..0d752a182
 +
 diff --git a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
 new file mode 100644
-index 000000000..eb6d6c287
+index 0000000..eb6d6c2
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
 @@ -0,0 +1,330 @@
@@ -1584,7 +1584,7 @@ index 000000000..eb6d6c287
 +  )
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 9310b6de8..1ea04c297 100644
+index 9310b6d..1ea04c2 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -39,6 +39,8 @@ export interface DesktopSettingsType {
@@ -1597,7 +1597,7 @@ index 9310b6de8..1ea04c297 100644
    locale: string | null
    notifications: boolean
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 49969df62..7f20920cd 100644
+index 49969df..7f20920 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -14,6 +14,7 @@ export function getDefaultState(): DesktopSettingsType {

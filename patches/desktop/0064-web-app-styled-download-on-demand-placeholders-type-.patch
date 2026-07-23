@@ -1,0 +1,516 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 23 Jul 2026 01:40:02 +0000
+Subject: [PATCH 64/64] web-app: styled download-on-demand placeholders (type,
+ thumbnail, size)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Large attachments (>140 KB in encrypted chats) arrive as a pre-message
+placeholder before the real message. Upstream renders it as a plain text
+line ("text [Image – 228 KiB] - Download"). This adds a per-type styled
+placeholder that mirrors the "Done"-path attachment markup.
+
+New DownloadOnDemandPlaceholder component renders the fork's thumbnail
+(blob referenced by Param::File, exposed as message.file) and target size:
+- image/gif/sticker: blurred thumbnail (or grey box) in the
+  .message-attachment-media box with a centered download+size overlay
+- video: same media box, black bg, CSS play glyph
+- audio/voice: .message-attachment-audio-style row
+- file: .message-attachment-generic card with extension + name
+- webxdc: .webxdc card with the app icon (thumbnail or default asset)
+
+Wired into Message.tsx's downloadState !== 'Done' branch behind the new
+message.postMessageViewType field; the old plain-text path stays as the
+fallback when that field is absent (old-DC senders). showAttachment is now
+gated on downloadState === 'Done' so a placeholder's thumbnail is never
+rendered as a real attachment card. The trailing " [Label – size]" tag core
+appends to the caption is stripped since our UI shows the size itself.
+
+postMessageViewType isn't in the pinned @deltachat/jsonrpc-client bindings
+yet (core regenerates them later in the build); it's read through one typed
+accessor rather than scattered casts.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
+---
+ packages/frontend/scss/manifest.scss          |   1 +
+ .../_message-download-placeholder.scss        | 118 ++++++++++
+ .../MessageDetail/BasicMessageInfo.tsx        |   2 +-
+ .../message/DownloadOnDemandPlaceholder.tsx   | 201 ++++++++++++++++++
+ .../src/components/message/Message.tsx        |  82 ++++---
+ 5 files changed, 378 insertions(+), 26 deletions(-)
+ create mode 100644 packages/frontend/scss/message/_message-download-placeholder.scss
+ create mode 100644 packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
+
+diff --git a/packages/frontend/scss/manifest.scss b/packages/frontend/scss/manifest.scss
+index b55d0eb..99294f1 100644
+--- a/packages/frontend/scss/manifest.scss
++++ b/packages/frontend/scss/manifest.scss
+@@ -48,6 +48,7 @@
+ @use 'message/_metadata';
+ @use 'message/_status-icon';
+ @use 'message/_message-calls';
++@use 'message/_message-download-placeholder';
+ 
+ // misc
+ @use 'misc/_avatar.scss';
+diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
+new file mode 100644
+index 0000000..289f18a
+--- /dev/null
++++ b/packages/frontend/scss/message/_message-download-placeholder.scss
+@@ -0,0 +1,118 @@
++// Styled download-on-demand placeholders (see DownloadOnDemandPlaceholder.tsx).
++// Reuses the .message-attachment-* / .webxdc boxes from _message-attachment.scss
++// and adds: a blurred thumbnail, a grey fallback box, and a centered overlay
++// with a prominent download button plus the target file size.
++
++.download-on-demand {
++  // Media types (image / gif / sticker / video) share the media box.
++  &.message-attachment-media {
++    display: block;
++    min-height: 160px;
++
++    // Blur the thumbnail so it reads as "not yet downloaded".
++    & > .attachment-content {
++      width: 100%;
++      height: 100%;
++      min-height: 160px;
++      object-fit: cover;
++      filter: blur(6px);
++      // blur() samples transparent pixels past the edge; scale up to hide it.
++      transform: scale(1.1);
++    }
++
++    & > .download-on-demand-empty {
++      width: 100%;
++      min-height: 160px;
++      background-color: var(--messageAttachmentIconBg);
++    }
++
++    &.video > .attachment-content,
++    &.video > .download-on-demand-empty {
++      background-color: black;
++    }
++
++    // CSS play triangle, centered behind the overlay controls.
++    & > .play-glyph {
++      position: absolute;
++      top: 50%;
++      left: 50%;
++      transform: translate(-40%, -140%);
++      width: 0;
++      height: 0;
++      border-style: solid;
++      border-width: 14px 0 14px 24px;
++      border-color: transparent transparent transparent
++        rgba(255, 255, 255, 0.85);
++    }
++  }
++
++  .download-on-demand-overlay {
++    position: absolute;
++    inset: 0;
++    display: flex;
++    flex-direction: column;
++    align-items: center;
++    justify-content: center;
++    gap: 8px;
++
++    .duration {
++      color: white;
++      font-size: 12px;
++      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
++    }
++  }
++
++  // Non-media rows (audio / file / webxdc) lay controls out inline.
++  &.message-attachment-audio,
++  &.message-attachment-generic,
++  &.webxdc {
++    align-items: center;
++  }
++
++  .text-part > .duration {
++    color: var(--messageAttachmentFileInfo);
++    font-size: 11px;
++    line-height: 16px;
++    margin-top: 3px;
++  }
++}
++
++.download-on-demand-controls {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  gap: 4px;
++
++  .download-button {
++    padding: 8px 18px;
++    border: none;
++    border-radius: 18px;
++    background-color: var(--colorPrimary, #415e6b);
++    color: white;
++    font-size: 14px;
++    cursor: pointer;
++
++    &:disabled {
++      opacity: 0.6;
++      cursor: default;
++    }
++  }
++
++  .size {
++    font-size: 11px;
++    letter-spacing: 0.3px;
++    color: var(--messageAttachmentFileInfo);
++  }
++
++  // Over a blurred thumbnail the size text needs contrast.
++  .download-on-demand-overlay & .size,
++  .download-on-demand-overlay & .failed {
++    color: white;
++    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
++  }
++
++  .failed {
++    color: var(--errorText, #e6512c);
++    font-size: 12px;
++  }
++}
+diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
+index 5d3432a..b6e27a6 100644
+--- a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
++++ b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
+@@ -13,7 +13,7 @@ import useOpenViewProfileDialog from '../../../hooks/dialog/useOpenViewProfileDi
+ import { isImage } from '../../attachment/Attachment'
+ 
+ /** Format a millisecond duration as `m:ss` (or `h:mm:ss`). */
+-function formatDuration(ms: number): string {
++export function formatDuration(ms: number): string {
+   const totalSeconds = Math.round(ms / 1000)
+   const seconds = totalSeconds % 60
+   const minutes = Math.floor(totalSeconds / 60) % 60
+diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
+new file mode 100644
+index 0000000..7eba074
+--- /dev/null
++++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
+@@ -0,0 +1,201 @@
++import React from 'react'
++import { filesize } from 'filesize'
++import { T } from '@deltachat/jsonrpc-client'
++
++import { runtime } from '@deltachat-desktop/runtime-interface'
++import { BackendRemote } from '../../backend-com'
++import { getExtension, isImage } from '../attachment/Attachment'
++import { formatDuration } from '../dialogs/MessageDetail/BasicMessageInfo'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
++
++/**
++ * The type the message will have *after* it is downloaded. It's a fork-only
++ * field on the pre-message placeholder that upstream's generated jsonrpc
++ * bindings don't declare yet (core regenerates them later in the build), so we
++ * read it through this one typed accessor.
++ *
++ * ponytail: single typed cast lives here instead of scattering `as any` at call
++ * sites; drop the cast once the regenerated bindings carry `postMessageViewType`.
++ */
++export function getPostMessageViewType(message: T.Message): T.Viewtype | null {
++  return (
++    (message as { postMessageViewType?: T.Viewtype | null })
++      .postMessageViewType ?? null
++  )
++}
++
++// Core appends " [Label – 123 KiB]" to the placeholder text (message.rs:645-674,
++// bracketed, with an en-dash before the size). Strip that trailing tag so our
++// own UI shows the size instead of duplicating it in the caption.
++//
++// ponytail: regex on the bracket/en-dash shape; upgrade path = a core field
++// carrying the raw caption without the appended tag.
++const DOWNLOAD_TAG_RE = /\s*\[[^\]]*–[^\]]*\]\s*$/
++
++export function placeholderCaption(text: string | null): string {
++  return (text ?? '').replace(DOWNLOAD_TAG_RE, '').trim()
++}
++
++type PlaceholderProps = {
++  message: T.Message
++  postMessageViewType: T.Viewtype
++  accountId: number
++  tabindexForInteractiveContents: -1 | 0
++}
++
++function DownloadControls({
++  message,
++  accountId,
++  tabindexForInteractiveContents,
++}: Omit<PlaceholderProps, 'postMessageViewType'>) {
++  const tx = useTranslationFunction()
++  const { downloadState } = message
++  return (
++    <div className='download-on-demand-controls'>
++      {downloadState === 'Failure' && (
++        <span className='failed'>{tx('download_failed')}</span>
++      )}
++      {downloadState === 'InProgress' ? (
++        <button
++          type='button'
++          className='download-button'
++          disabled
++          tabIndex={tabindexForInteractiveContents}
++        >
++          {tx('downloading')}
++        </button>
++      ) : (
++        <button
++          type='button'
++          className='download-button'
++          onClick={() =>
++            BackendRemote.rpc.downloadFullMessage(accountId, message.id)
++          }
++          tabIndex={tabindexForInteractiveContents}
++        >
++          {tx('download')}
++        </button>
++      )}
++      <span className='size'>{filesize(message.fileBytes ?? 0)}</span>
++    </div>
++  )
++}
++
++/**
++ * Styled placeholder shown for a download-on-demand pre-message while
++ * `downloadState !== 'Done'`. It mirrors the "Done"-path markup/classes from
++ * `messageAttachment.tsx` (`.message-attachment-media`, `-audio`, `-generic`,
++ * `.webxdc`) but swaps the real attachment for a blurred thumbnail (or a grey
++ * box) plus a prominent download button and the target file size.
++ */
++export default function DownloadOnDemandPlaceholder({
++  message,
++  postMessageViewType,
++  accountId,
++  tabindexForInteractiveContents,
++}: PlaceholderProps) {
++  const controls = (
++    <DownloadControls
++      message={message}
++      accountId={accountId}
++      tabindexForInteractiveContents={tabindexForInteractiveContents}
++    />
++  )
++
++  const viewType = postMessageViewType
++
++  // Image / Gif / Sticker: blurred thumbnail (or grey box) with centered overlay.
++  if (isImage(viewType) || viewType === 'Sticker') {
++    return (
++      <div className='message-attachment-media download-on-demand'>
++        {message.file ? (
++          <img
++            className='attachment-content'
++            src={runtime.transformBlobURL(message.file)}
++            alt=''
++          />
++        ) : (
++          <div className='download-on-demand-empty' />
++        )}
++        <div className='download-on-demand-overlay'>{controls}</div>
++      </div>
++    )
++  }
++
++  // Video: same media box, black background, play glyph behind the overlay.
++  if (viewType === 'Video') {
++    return (
++      <div className='message-attachment-media video download-on-demand'>
++        {message.file ? (
++          <img
++            className='attachment-content'
++            src={runtime.transformBlobURL(message.file)}
++            alt=''
++          />
++        ) : (
++          <div className='download-on-demand-empty' />
++        )}
++        <div className='play-glyph' aria-hidden='true' />
++        <div className='download-on-demand-overlay'>
++          {message.duration > 0 && (
++            <span className='duration'>{formatDuration(message.duration)}</span>
++          )}
++          {controls}
++        </div>
++      </div>
++    )
++  }
++
++  // Audio / Voice: an icon-less row with name, optional duration, and controls.
++  if (viewType === 'Audio' || viewType === 'Voice') {
++    return (
++      <div className='message-attachment-audio download-on-demand'>
++        <div className='text-part'>
++          <div className='name'>{message.fileName}</div>
++          {message.duration > 0 && (
++            <div className='duration'>{formatDuration(message.duration)}</div>
++          )}
++        </div>
++        {controls}
++      </div>
++    )
++  }
++
++  // Webxdc: the app card, with the app icon (thumbnail) or default asset.
++  if (viewType === 'Webxdc') {
++    return (
++      <div className='webxdc download-on-demand'>
++        {message.file ? (
++          <img src={runtime.transformBlobURL(message.file)} alt='' />
++        ) : (
++          // No thumbnail yet and no .xdc downloaded to derive an icon from, so
++          // fall back to the grey box rather than getWebxdcIconURL (which is
++          // unimplemented on target-browser and can't work for a pre-message).
++          <div className='download-on-demand-empty' />
++        )}
++        <div className='info-text'>
++          <div className='name'>{message.fileName}</div>
++        </div>
++        {controls}
++      </div>
++    )
++  }
++
++  // Generic file (and any other type): the file card with extension + name.
++  const extension = getExtension(message)
++  return (
++    <div className='message-attachment-generic download-on-demand'>
++      <div className='file-icon' title={message.fileMime || 'null'}>
++        {extension ? (
++          <div className='file-extension'>
++            {message.fileMime === 'application/octet-stream' ? '' : extension}
++          </div>
++        ) : null}
++      </div>
++      <div className='text-part'>
++        <div className='name'>{message.fileName}</div>
++        {controls}
++      </div>
++    </div>
++  )
++}
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index 877772c..eba6111 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -47,6 +47,10 @@ import ShortcutMenu from '../ShortcutMenu'
+ import InvalidUnencryptedMailDialog from '../dialogs/InvalidUnencryptedMail'
+ import Button from '../Button'
+ import VCardComponent from './VCard'
++import DownloadOnDemandPlaceholder, {
++  getPostMessageViewType,
++  placeholderCaption,
++} from './DownloadOnDemandPlaceholder'
+ 
+ import {
+   matchesLetterShortcut,
+@@ -330,7 +334,10 @@ function buildContextMenu(
+     copy_item = false
+   }
+ 
+-  const showAttachmentOptions = !!message.file
++  // Placeholders carry a thumbnail in `file`; the attachment options
++  // (Export/Open) must act on the real attachment, so gate on downloadState.
++  const showAttachmentOptions =
++    !!message.file && message.downloadState === 'Done'
+   const showCopyImage =
+     !!message.file && isImage(message.viewType) && message.viewType !== 'Gif'
+   const showResend =
+@@ -964,30 +971,52 @@ export default function Message(props: {
+   const { downloadState } = message
+ 
+   if (downloadState !== 'Done') {
+-    content = (
+-      <div className={'download'}>
+-        {text} {'- '}
+-        {downloadState == 'Failure' && (
+-          <span key='fail' className={'failed'}>
+-            {tx('download_failed')}
+-          </span>
+-        )}
+-        {downloadState == 'InProgress' && (
+-          <span key='downloading'>{tx('downloading')}</span>
+-        )}
+-        {(downloadState == 'Failure' || downloadState === 'Available') && (
+-          <button
+-            type='button'
+-            onClick={() =>
+-              BackendRemote.rpc.downloadFullMessage(accountId, message.id)
+-            }
+-            tabIndex={tabindexForInteractiveContents}
+-          >
+-            {tx('download')}
+-          </button>
+-        )}
+-      </div>
+-    )
++    const postMessageViewType = getPostMessageViewType(message)
++    if (postMessageViewType) {
++      // Fork placeholder: styled per-type box (thumbnail + download + size).
++      const caption = placeholderCaption(text)
++      content = (
++        <div dir='auto' className='text download-on-demand-caption'>
++          <DownloadOnDemandPlaceholder
++            message={message}
++            postMessageViewType={postMessageViewType}
++            accountId={accountId}
++            tabindexForInteractiveContents={tabindexForInteractiveContents}
++          />
++          {caption ? (
++            <MessageBody
++              text={caption}
++              tabindexForInteractiveContents={tabindexForInteractiveContents}
++            />
++          ) : null}
++        </div>
++      )
++    } else {
++      content = (
++        <div className={'download'}>
++          {text} {'- '}
++          {downloadState == 'Failure' && (
++            <span key='fail' className={'failed'}>
++              {tx('download_failed')}
++            </span>
++          )}
++          {downloadState == 'InProgress' && (
++            <span key='downloading'>{tx('downloading')}</span>
++          )}
++          {(downloadState == 'Failure' || downloadState === 'Available') && (
++            <button
++              type='button'
++              onClick={() =>
++                BackendRemote.rpc.downloadFullMessage(accountId, message.id)
++              }
++              tabIndex={tabindexForInteractiveContents}
++            >
++              {tx('download')}
++            </button>
++          )}
++        </div>
++      )
++    }
+   }
+ 
+   /** Whether to show author name and avatar */
+@@ -1002,6 +1031,9 @@ export default function Message(props: {
+   const isWithoutText = isMediaWithoutText(hasText, message.viewType)
+   const showAttachment = (message: T.Message) =>
+     message.file &&
++    // Placeholders carry a thumbnail in `file`; don't render it as a real
++    // attachment card — the DownloadOnDemandPlaceholder above owns that UI.
++    message.downloadState === 'Done' &&
+     message.viewType !== 'Webxdc' &&
+     message.viewType !== 'Vcard'
+ 

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 20 Jul 2026 18:16:56 +0000
-Subject: [PATCH 56/56] web-app: render group/contact invite links as a card
+Subject: [PATCH 60/64] web-app: render group/contact invite links as a card
  with a View button
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

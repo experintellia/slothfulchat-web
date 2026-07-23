@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Mon, 20 Jul 2026 16:56:05 +0000
-Subject: [PATCH 55/58] web-app: two-pane settings layout on wide viewports
+Subject: [PATCH 56/64] web-app: two-pane settings layout on wide viewports
 
 On viewports >=800px the settings dialog becomes a single 720px
 Discord/macOS-style two-pane dialog: the navigation list (profile,
@@ -21,7 +21,7 @@ exact same content; SettingsIconButton gains an 'active' highlight
  3 files changed, 278 insertions(+), 121 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 1abbb9d9d..76b551e1c 100644
+index 1abbb9d..76b551e 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
 @@ -1,4 +1,4 @@
@@ -399,7 +399,7 @@ index 1abbb9d9d..76b551e1c 100644
    )
  }
 diff --git a/packages/frontend/src/components/Settings/SettingsIconButton.tsx b/packages/frontend/src/components/Settings/SettingsIconButton.tsx
-index 64db3a95f..853abadce 100644
+index 64db3a9..853abad 100644
 --- a/packages/frontend/src/components/Settings/SettingsIconButton.tsx
 +++ b/packages/frontend/src/components/Settings/SettingsIconButton.tsx
 @@ -1,4 +1,5 @@
@@ -437,7 +437,7 @@ index 64db3a95f..853abadce 100644
        <Icon icon={icon} />
        <span className={styles.settingsIconButtonLabel}>{children}</span>
 diff --git a/packages/frontend/src/components/Settings/styles.module.scss b/packages/frontend/src/components/Settings/styles.module.scss
-index 76688f3a8..e94b4df54 100644
+index 76688f3..e94b4df 100644
 --- a/packages/frontend/src/components/Settings/styles.module.scss
 +++ b/packages/frontend/src/components/Settings/styles.module.scss
 @@ -71,6 +71,73 @@ $settingsHeight: 40px;

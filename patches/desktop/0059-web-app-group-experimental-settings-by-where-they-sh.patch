@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Mon, 20 Jul 2026 17:18:53 +0000
-Subject: [PATCH 58/58] web-app: group experimental settings by where they show
+Subject: [PATCH 59/64] web-app: group experimental settings by where they show
  up
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -16,7 +16,7 @@ now sit together instead of historical order.
  1 file changed, 19 insertions(+), 11 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index be25c59f9..5d9cbd008 100644
+index be25c59..5d9cbd0 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -5,6 +5,8 @@ import SettingsStoreInstance, {

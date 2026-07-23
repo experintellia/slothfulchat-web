@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothfulchat.local>
 Date: Fri, 10 Jul 2026 01:07:28 +0000
-Subject: [PATCH 30/58] web-app: show animated .tgs stickers in the composer
+Subject: [PATCH 30/64] web-app: show animated .tgs stickers in the composer
  sticker picker
 
 The picker rendered every saved sticker with a plain <img>, which can't play a
@@ -14,7 +14,7 @@ and send from the picker.
  1 file changed, 26 insertions(+), 8 deletions(-)
 
 diff --git a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
-index fe3aa6760..9564e8eae 100644
+index fe3aa67..9564e8e 100644
 --- a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
 +++ b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
 @@ -13,6 +13,7 @@ import { BackendRemote } from '../../backend-com'

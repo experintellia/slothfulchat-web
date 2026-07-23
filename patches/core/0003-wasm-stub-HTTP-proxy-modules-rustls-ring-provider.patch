@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Mon, 6 Jul 2026 00:57:11 +0000
-Subject: [PATCH 03/18] wasm: stub HTTP/proxy modules, rustls ring provider
+Subject: [PATCH 03/19] wasm: stub HTTP/proxy modules, rustls ring provider
 
 - net/http_wasm.rs, net/proxy_wasm.rs: compile-compatible stubs selected
   via #[cfg]+#[path]; every operation errors at runtime (fetch()/WS proxy
@@ -23,7 +23,7 @@ Subject: [PATCH 03/18] wasm: stub HTTP/proxy modules, rustls ring provider
  create mode 100644 src/net/proxy_wasm.rs
 
 diff --git a/src/net.rs b/src/net.rs
-index 01cf1c03c..254a1ac68 100644
+index 01cf1c0..254a1ac 100644
 --- a/src/net.rs
 +++ b/src/net.rs
 @@ -17,7 +17,15 @@
@@ -44,7 +44,7 @@ index 01cf1c03c..254a1ac68 100644
  pub(crate) mod tls;
 diff --git a/src/net/http_wasm.rs b/src/net/http_wasm.rs
 new file mode 100644
-index 000000000..2319619db
+index 0000000..2319619
 --- /dev/null
 +++ b/src/net/http_wasm.rs
 @@ -0,0 +1,75 @@
@@ -125,7 +125,7 @@ index 000000000..2319619db
 +}
 diff --git a/src/net/proxy_wasm.rs b/src/net/proxy_wasm.rs
 new file mode 100644
-index 000000000..152613428
+index 0000000..1526134
 --- /dev/null
 +++ b/src/net/proxy_wasm.rs
 @@ -0,0 +1,45 @@
@@ -175,7 +175,7 @@ index 000000000..152613428
 +    }
 +}
 diff --git a/src/net/session.rs b/src/net/session.rs
-index 981e01fd4..dd1a18505 100644
+index 981e01f..dd1a185 100644
 --- a/src/net/session.rs
 +++ b/src/net/session.rs
 @@ -1,4 +1,5 @@
@@ -209,7 +209,7 @@ index 981e01fd4..dd1a18505 100644
      fn set_read_timeout(&mut self, timeout: Option<Duration>) {
          self.get_mut().set_read_timeout(timeout)
 diff --git a/src/net/tls.rs b/src/net/tls.rs
-index 870fe1a8a..c868c7634 100644
+index 870fe1a..c868c76 100644
 --- a/src/net/tls.rs
 +++ b/src/net/tls.rs
 @@ -16,6 +16,18 @@
@@ -299,7 +299,7 @@ index 870fe1a8a..c868c7634 100644
      .with_root_certificates(root_cert_store)
      .with_no_client_auth();
 diff --git a/src/net/tls/danger.rs b/src/net/tls/danger.rs
-index 809dd820d..4063fbb6f 100644
+index 809dd82..4063fbb 100644
 --- a/src/net/tls/danger.rs
 +++ b/src/net/tls/danger.rs
 @@ -51,7 +51,7 @@ fn verify_server_cert(
@@ -337,7 +337,7 @@ index 809dd820d..4063fbb6f 100644
              .signature_verification_algorithms
              .supported_schemes()
 diff --git a/src/qr.rs b/src/qr.rs
-index 9a0724955..981087c11 100644
+index 9a07249..981087c 100644
 --- a/src/qr.rs
 +++ b/src/qr.rs
 @@ -763,7 +763,14 @@ fn decode_tg_socks_proxy(_context: &Context, qr: &str) -> Result<Qr> {

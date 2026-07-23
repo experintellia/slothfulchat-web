@@ -1,0 +1,778 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 23 Jul 2026 01:48:04 +0000
+Subject: [PATCH 19/19] pre-message: real mimetype and thumbnail preview in
+ metadata
+
+Extend the encrypted Chat-Post-Message-Metadata header so a large-attachment
+placeholder can show a real MIME type and a small preview before the
+post-message is downloaded.
+
+- PostMsgMetadata gains optional `mime` (from Message::get_filemime(), the
+  guaranteed-value accessor: Param::MimeType -> suffix guess -> octet-stream)
+  and `thumbnail` (base64 JPEG, longest edge 128px, quality 40, capped at
+  20_000 encoded bytes). from_msg builds the thumbnail from the attachment
+  blob for Image/Gif/Sticker and from the app icon (get_webxdc_blob) for
+  Webxdc; Video/Audio/File get none. Any failure warns and yields None so a
+  preview never fails a send.
+- blob::thumbnail_base64 does the pixel work in block_in_place, flattening
+  alpha onto white before JPEG encode.
+- Receive side sets Param::MimeType from `mime` and, after a 60_000-char guard
+  on the attacker-controlled base64, stores the thumbnail as a normal blob
+  referenced by Param::File. `file` deliberately holds the preview JPEG while
+  `fileMime` names the real target mime; the frontend treats `file` as a
+  preview until downloadState == Done.
+- jsonrpc: get_post_message_viewtype is no longer test-only and MessageObject
+  exposes post_message_view_type; naturally None once the post-message arrives.
+
+Wire-compat: the new header fields are optional JSON keys
+(skip_serializing_if = Option::is_none); serde ignores unknown keys both ways,
+so an old Delta Chat simply drops them and slothful degrades gracefully when
+they are absent.
+
+Storage: the thumbnail is a normal blob keyed by Param::File, so housekeeping's
+remove_unused_files GCs it once the placeholder is trashed or the arriving
+post-message overwrites file/fileMime. No new table, no migration, no hooks.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
+---
+ deltachat-jsonrpc/src/api/types/message.rs |   5 +
+ src/blob.rs                                |  37 +++
+ src/download/post_msg_metadata.rs          | 328 ++++++++++++++++++++-
+ src/imap.rs                                |   5 +-
+ src/message.rs                             |   3 +-
+ src/receive_imf.rs                         |   6 +-
+ src/sql.rs                                 |   4 +-
+ src/tests/pre_messages/receiving.rs        | 103 ++++++-
+ src/tests/pre_messages/util.rs             |  12 +-
+ 9 files changed, 483 insertions(+), 20 deletions(-)
+
+diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
+index 2b37fb5..b589893 100644
+--- a/deltachat-jsonrpc/src/api/types/message.rs
++++ b/deltachat-jsonrpc/src/api/types/message.rs
+@@ -48,6 +48,10 @@ pub struct MessageObject {
+     has_location: bool,
+     has_html: bool,
+     view_type: MessageViewtype,
++
++    /// For a pre-message placeholder, the viewtype the message will have once downloaded;
++    /// `None` for normal messages and once the post-message has arrived.
++    post_message_view_type: Option<MessageViewtype>,
+     state: u32,
+ 
+     /// An error text, if there is one.
+@@ -210,6 +214,7 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Option<Self
+             has_location: message.has_location(),
+             has_html: message.has_html(),
+             view_type: message.get_viewtype().into(),
++            post_message_view_type: message.get_post_message_viewtype().map(Into::into),
+             state: message
+                 .get_state()
+                 .to_u32()
+diff --git a/src/blob.rs b/src/blob.rs
+index a0c4e15..5cf5c2e 100644
+--- a/src/blob.rs
++++ b/src/blob.rs
+@@ -725,6 +725,43 @@ fn encode_img(
+     Ok(())
+ }
+ 
++/// Encodes a small JPEG thumbnail (longest edge 128px, quality 40) of `bytes` as base64.
++///
++/// `bytes` may be any image the `image` crate can guess (in-memory, so it also works for the
++/// webxdc app icon). Returns `Ok(None)` if the encoded thumbnail exceeds the size cap; an error
++/// only on decode/encode failure. Callers treat every non-`Some` outcome as "no preview" and
++/// never fail a send over it.
++pub(crate) fn thumbnail_base64(context: &Context, bytes: &[u8]) -> Result<Option<String>> {
++    // Same rationale as `constants::WORSE_AVATAR_BYTES`: a preview small enough to inline in the
++    // encrypted metadata header without bloating the pre-message.
++    const MAX_THUMBNAIL_BYTES: usize = 20_000;
++    tokio::task::block_in_place(|| {
++        let mut img = ImageReader::new(Cursor::new(bytes))
++            .with_guessed_format()?
++            .decode()
++            .context("thumbnail decode failure")?
++            .thumbnail(128, 128);
++        // JPEG has no alpha channel; flatten transparency onto white so it isn't rendered black.
++        if img.color().has_alpha() {
++            add_white_bg(&mut img);
++        }
++        let mut encoded = Vec::new();
++        encode_img(&img, ImageOutputFormat::Jpeg { quality: 40 }, &mut encoded)?;
++        if encoded.len() > MAX_THUMBNAIL_BYTES {
++            warn!(
++                context,
++                "Thumbnail {}B exceeds {}B cap, dropping preview.",
++                encoded.len(),
++                MAX_THUMBNAIL_BYTES
++            );
++            return Ok(None);
++        }
++        Ok(Some(
++            base64::engine::general_purpose::STANDARD.encode(&encoded),
++        ))
++    })
++}
++
+ fn encoded_img_exceeds_bytes(
+     context: &Context,
+     img: &DynamicImage,
+diff --git a/src/download/post_msg_metadata.rs b/src/download/post_msg_metadata.rs
+index 705a71a..55a6b72 100644
+--- a/src/download/post_msg_metadata.rs
++++ b/src/download/post_msg_metadata.rs
+@@ -23,6 +23,12 @@ pub struct PostMsgMetadata {
+     /// Duration of audio file or video in milliseconds
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub(crate) duration: Option<i32>,
++    /// Real MIME type of the attachment, as `Message::get_filemime()` would report it.
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub(crate) mime: Option<String>,
++    /// Small base64 JPEG preview (longest edge 128px) for image-like and webxdc messages.
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub(crate) thumbnail: Option<String>,
+ }
+ 
+ impl PostMsgMetadata {
+@@ -66,6 +72,8 @@ pub(crate) async fn from_msg(context: &Context, message: &Message) -> Result<Opt
+             }
+         };
+         let duration = message.param.get_int(Param::Duration);
++        let mime = message.get_filemime();
++        let thumbnail = Self::thumbnail(context, message).await;
+ 
+         Ok(Some(Self {
+             size,
+@@ -73,9 +81,43 @@ pub(crate) async fn from_msg(context: &Context, message: &Message) -> Result<Opt
+             viewtype: message.viewtype,
+             wh,
+             duration,
++            mime,
++            thumbnail,
+         }))
+     }
+ 
++    /// Best-effort small preview JPEG (base64) for image-like and webxdc messages.
++    ///
++    /// A preview is never worth failing a send over, so every failure path warns and
++    /// yields `None`. Video/Audio/File get no thumbnail (frame extraction = new dep).
++    async fn thumbnail(context: &Context, message: &Message) -> Option<String> {
++        let bytes = match message.viewtype {
++            Viewtype::Image | Viewtype::Gif | Viewtype::Sticker => {
++                let path = message.get_file(context)?;
++                // read_file is wasm-safe and warns on failure itself.
++                crate::tools::read_file(context, &path).await.ok()?
++            }
++            Viewtype::Webxdc => {
++                let info = message.get_webxdc_info(context).await.ok()?;
++                match message.get_webxdc_blob(context, &info.icon).await {
++                    Ok(bytes) => bytes,
++                    Err(err) => {
++                        warn!(context, "Thumbnail: failed to read webxdc icon: {err:#}.");
++                        return None;
++                    }
++                }
++            }
++            _ => return None,
++        };
++        match crate::blob::thumbnail_base64(context, &bytes) {
++            Ok(thumbnail) => thumbnail,
++            Err(err) => {
++                warn!(context, "Thumbnail: failed to encode preview: {err:#}.");
++                None
++            }
++        }
++    }
++
+     pub(crate) fn to_header_value(&self) -> Result<String> {
+         Ok(serde_json::to_string(&self)?)
+     }
+@@ -111,17 +153,75 @@ pub(crate) fn apply_post_msg_metadata(
+     }
+ }
+ 
++/// Applies a received Pre-Message's metadata to `param`, including the parts that need the
++/// [`Context`]: the real MIME type and the optional preview thumbnail.
++///
++/// The thumbnail base64 is attacker-controlled, so its length is capped before decoding and it is
++/// stored as a normal `Param::File` blob. A preview is never worth failing receipt over: every
++/// failure warns and leaves the placeholder without a preview.
++pub(crate) fn apply_received_metadata(
++    context: &Context,
++    param: &mut Params,
++    metadata: &PostMsgMetadata,
++) {
++    param.apply_post_msg_metadata(metadata);
++    // Make jsonrpc `fileMime` real on placeholders (guaranteed value from the sender).
++    param.set_optional(Param::MimeType, metadata.mime.as_deref());
++    let Some(thumbnail) = &metadata.thumbnail else {
++        return;
++    };
++    // Trust boundary: the base64 is attacker-controlled, so cap its length before decoding.
++    // 60_000 chars ~ 45 KiB decoded, well above our 20_000-byte send cap.
++    if thumbnail.len() > 60_000 {
++        warn!(
++            context,
++            "Pre-message thumbnail too large ({} chars), ignoring.",
++            thumbnail.len()
++        );
++        return;
++    }
++    // ponytail: deliberate mismatch — `file` holds the preview JPEG while `fileMime` names the
++    // real target mime. The frontend renders `file` as a preview while downloadState != Done; the
++    // arriving post-message then overwrites `file`/`fileMime` with the real attachment.
++    match crate::blob::BlobObject::store_from_base64(context, thumbnail) {
++        Ok(Some(name)) => {
++            param.set(Param::File, name);
++        }
++        Ok(None) => warn!(
++            context,
++            "Pre-message thumbnail: invalid base64, placeholder without preview."
++        ),
++        Err(err) => warn!(context, "Pre-message thumbnail: failed to store: {err:#}."),
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use anyhow::Result;
++    use base64::Engine as _;
+     use pretty_assertions::assert_eq;
+ 
+     use crate::{
+         message::{Message, Viewtype},
++        param::{Param, Params},
+         test_utils::{TestContextManager, create_test_image},
+     };
+ 
+-    use super::PostMsgMetadata;
++    use super::{PostMsgMetadata, apply_received_metadata};
++
++    /// Decodes a base64 JPEG thumbnail, asserting it is a valid JPEG no larger than 128px per edge.
++    fn decode_thumbnail(thumbnail: &str) -> image::DynamicImage {
++        let bytes = base64::engine::general_purpose::STANDARD
++            .decode(thumbnail)
++            .expect("thumbnail is valid base64");
++        assert_eq!(
++            image::guess_format(&bytes).expect("thumbnail is a known image format"),
++            image::ImageFormat::Jpeg,
++        );
++        let img = image::load_from_memory(&bytes).expect("thumbnail decodes");
++        assert!(img.width() <= 128 && img.height() <= 128, "thumbnail <=128px");
++        img
++    }
+ 
+     /// Build from message with file attachment
+     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+@@ -132,6 +232,7 @@ async fn test_build_from_file_msg() -> Result<()> {
+         let mut file_msg = Message::new(Viewtype::File);
+         file_msg.set_file_from_bytes(alice, "test.bin", &vec![0u8; 1_000_000], None)?;
+         let post_msg_metadata = PostMsgMetadata::from_msg(alice, &file_msg).await?;
++        // File with an unknown suffix falls back to the generic mime; no thumbnail (E8).
+         assert_eq!(
+             post_msg_metadata,
+             Some(PostMsgMetadata {
+@@ -140,11 +241,186 @@ async fn test_build_from_file_msg() -> Result<()> {
+                 filename: "test.bin".to_string(),
+                 wh: None,
+                 duration: None,
++                mime: Some("application/octet-stream".to_string()),
++                thumbnail: None,
+             })
+         );
+         Ok(())
+     }
+ 
++    /// Video attachment: no thumbnail, but the mime is guessed from the suffix (E8).
++    ///
++    /// `set_file_from_bytes` with `filemime: None` leaves `Param::MimeType` unset (as a jsonrpc
++    /// send would), so this exercises `get_filemime`'s suffix-guess fallback.
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_build_from_video_msg() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++
++        let mut video_msg = Message::new(Viewtype::Video);
++        video_msg.set_file_from_bytes(alice, "clip.mp4", &vec![0u8; 1_000_000], None)?;
++        assert!(!video_msg.param.exists(Param::MimeType));
++        let post_msg_metadata = PostMsgMetadata::from_msg(alice, &video_msg)
++            .await?
++            .expect("video has a file");
++        assert_eq!(post_msg_metadata.mime.as_deref(), Some("video/mp4"));
++        assert_eq!(post_msg_metadata.thumbnail, None);
++        Ok(())
++    }
++
++    /// Corrupt/truncated image bytes: send still succeeds, thumbnail is `None` (E1).
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_build_from_corrupt_image_msg() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++
++        let test_img = create_test_image(1080, 1920)?;
++        // Truncate to half — a PNG header followed by garbage, undecodable.
++        let truncated = &test_img[..test_img.len() / 2];
++        let mut image_msg = Message::new(Viewtype::Image);
++        image_msg.set_file_from_bytes(alice, "broken.png", truncated, None)?;
++        let post_msg_metadata = PostMsgMetadata::from_msg(alice, &image_msg)
++            .await?
++            .expect("image has a file");
++        assert_eq!(post_msg_metadata.mime.as_deref(), Some("image/png"));
++        assert_eq!(post_msg_metadata.thumbnail, None);
++        Ok(())
++    }
++
++    /// PNG with alpha via the sticker path: thumbnail present, JPEG decodes, transparency is
++    /// flattened onto white (not black) (E2).
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_build_from_alpha_sticker_msg() -> Result<()> {
++        use image::{ImageBuffer, Rgba, RgbaImage};
++        use std::io::Cursor;
++
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++
++        // Fully transparent black RGBA: if alpha isn't flattened, JPEG renders it black.
++        let img: RgbaImage = ImageBuffer::from_pixel(256, 256, Rgba([0, 0, 0, 0]));
++        let mut png = Vec::new();
++        img.write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)?;
++
++        let mut sticker_msg = Message::new(Viewtype::Sticker);
++        sticker_msg.set_file_from_bytes(alice, "sticker.png", &png, None)?;
++        let post_msg_metadata = PostMsgMetadata::from_msg(alice, &sticker_msg)
++            .await?
++            .expect("sticker has a file");
++        let thumbnail = post_msg_metadata.thumbnail.expect("sticker has a thumbnail");
++        let decoded = decode_thumbnail(&thumbnail).to_rgb8();
++        let corner = decoded.get_pixel(0, 0);
++        assert!(
++            corner.0.iter().all(|&c| c > 200),
++            "transparent area flattened to white, got {corner:?}"
++        );
++        Ok(())
++    }
++
++    /// Webxdc thumbnails: both a bundled icon and the fallback default icon yield a preview (E7).
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_build_from_webxdc_msg() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++        let chat_id = alice.create_group_with_members("webxdc test", &[]).await;
++
++        for (name, bytes) in [
++            (
++                "with-icon.xdc",
++                include_bytes!("../../test-data/webxdc/with-png-icon.xdc").as_slice(),
++            ),
++            (
++                "default-icon.xdc",
++                include_bytes!("../../test-data/webxdc/minimal.xdc").as_slice(),
++            ),
++        ] {
++            // A webxdc instance needs a chat (get_webxdc_info loads it), so draft it first.
++            let mut msg = Message::new(Viewtype::Webxdc);
++            msg.set_file_from_bytes(alice, name, bytes, None)?;
++            chat_id.set_draft(alice, Some(&mut msg)).await?;
++            let msg = Message::load_from_db(alice, msg.id).await?;
++            let metadata = PostMsgMetadata::from_msg(alice, &msg)
++                .await?
++                .expect("webxdc has a file");
++            let thumbnail = metadata
++                .thumbnail
++                .unwrap_or_else(|| panic!("{name} has a thumbnail"));
++            decode_thumbnail(&thumbnail);
++        }
++        Ok(())
++    }
++
++    /// Receive side: metadata WITHOUT the new fields (old-DC sender) sets neither mime nor a
++    /// preview — identical to before this feature (E5).
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_apply_received_metadata_old_sender() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++
++        let metadata = PostMsgMetadata {
++            size: 1_000_000,
++            viewtype: Viewtype::File,
++            filename: "test.bin".to_string(),
++            wh: None,
++            duration: None,
++            mime: None,
++            thumbnail: None,
++        };
++        let mut param = Params::new();
++        apply_received_metadata(alice, &mut param, &metadata);
++        assert!(!param.exists(Param::MimeType));
++        assert!(!param.exists(Param::File));
++        assert_eq!(param.get(Param::Filename), Some("test.bin"));
++        Ok(())
++    }
++
++    /// Receive side: an oversized thumbnail field (> 60 000 chars) is ignored; the placeholder is
++    /// still built and gets no `Param::File` (E3).
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_apply_received_metadata_oversized_thumbnail() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++
++        let metadata = PostMsgMetadata {
++            size: 1_000_000,
++            viewtype: Viewtype::Image,
++            filename: "big.jpg".to_string(),
++            wh: None,
++            duration: None,
++            mime: Some("image/jpeg".to_string()),
++            thumbnail: Some("A".repeat(60_001)),
++        };
++        let mut param = Params::new();
++        apply_received_metadata(alice, &mut param, &metadata);
++        assert_eq!(param.get(Param::MimeType), Some("image/jpeg"));
++        assert!(!param.exists(Param::File));
++        Ok(())
++    }
++
++    /// Receive side: invalid base64 in the thumbnail field doesn't crash and yields no preview
++    /// (E4). (Valid base64 of non-image bytes is stored as a harmless capped blob by
++    /// `store_from_base64`'s avatar semantics — see notes.)
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_apply_received_metadata_invalid_base64_thumbnail() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++
++        let metadata = PostMsgMetadata {
++            size: 1_000_000,
++            viewtype: Viewtype::Image,
++            filename: "x.jpg".to_string(),
++            wh: None,
++            duration: None,
++            mime: Some("image/jpeg".to_string()),
++            thumbnail: Some("!!! not base64 !!!".to_string()),
++        };
++        let mut param = Params::new();
++        apply_received_metadata(alice, &mut param, &metadata);
++        assert_eq!(param.get(Param::MimeType), Some("image/jpeg"));
++        assert!(!param.exists(Param::File));
++        Ok(())
++    }
++
+     /// Build from message with image attachment
+     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+     async fn test_build_from_image_msg() -> Result<()> {
+@@ -158,17 +434,17 @@ async fn test_build_from_image_msg() -> Result<()> {
+         // this is usually done while sending,
+         // but we don't send it here, so we need to call it ourself
+         image_msg.try_calc_and_set_dimensions(alice).await?;
+-        let post_msg_metadata = PostMsgMetadata::from_msg(alice, &image_msg).await?;
+-        assert_eq!(
+-            post_msg_metadata,
+-            Some(PostMsgMetadata {
+-                size: 1816098,
+-                viewtype: Viewtype::Image,
+-                filename: "vacation.png".to_string(),
+-                wh: Some((width as i32, height as i32)),
+-                duration: None,
+-            })
+-        );
++        let post_msg_metadata = PostMsgMetadata::from_msg(alice, &image_msg)
++            .await?
++            .expect("image has a file");
++        // Don't golden-test the JPEG bytes (unstable across image-crate versions): assert shape.
++        assert_eq!(post_msg_metadata.size, 1816098);
++        assert_eq!(post_msg_metadata.viewtype, Viewtype::Image);
++        assert_eq!(post_msg_metadata.filename, "vacation.png");
++        assert_eq!(post_msg_metadata.wh, Some((width as i32, height as i32)));
++        assert_eq!(post_msg_metadata.duration, None);
++        assert_eq!(post_msg_metadata.mime.as_deref(), Some("image/png"));
++        decode_thumbnail(&post_msg_metadata.thumbnail.expect("image has a thumbnail"));
+ 
+         Ok(())
+     }
+@@ -183,6 +459,8 @@ fn test_serialize_to_header() -> Result<()> {
+                 filename: "test.bin".to_string(),
+                 wh: None,
+                 duration: None,
++                mime: None,
++                thumbnail: None,
+             }
+             .to_header_value()?,
+             "{\"size\":1000000,\"viewtype\":\"File\",\"filename\":\"test.bin\"}"
+@@ -194,6 +472,8 @@ fn test_serialize_to_header() -> Result<()> {
+                 filename: "vacation.png".to_string(),
+                 wh: Some((1080, 1920)),
+                 duration: None,
++                mime: None,
++                thumbnail: None,
+             }
+             .to_header_value()?,
+             "{\"size\":5342765,\"viewtype\":\"Image\",\"filename\":\"vacation.png\",\"wh\":[1080,1920]}"
+@@ -205,6 +485,8 @@ fn test_serialize_to_header() -> Result<()> {
+                 filename: "audio-DD-MM-YY.ogg".to_string(),
+                 wh: None,
+                 duration: Some(152_310),
++                mime: None,
++                thumbnail: None,
+             }
+             .to_header_value()?,
+             "{\"size\":5000,\"viewtype\":\"Audio\",\"filename\":\"audio-DD-MM-YY.ogg\",\"duration\":152310}"
+@@ -227,6 +509,8 @@ fn test_deserialize_from_header() -> Result<()> {
+                 filename: "test.bin".to_string(),
+                 wh: None,
+                 duration: None,
++                mime: None,
++                thumbnail: None,
+             }
+         );
+         assert_eq!(
+@@ -239,6 +523,8 @@ fn test_deserialize_from_header() -> Result<()> {
+                 filename: "vacation.png".to_string(),
+                 wh: Some((1080, 1920)),
+                 duration: None,
++                mime: None,
++                thumbnail: None,
+             }
+         );
+         assert_eq!(
+@@ -251,6 +537,24 @@ fn test_deserialize_from_header() -> Result<()> {
+                 filename: "audio-DD-MM-YY.ogg".to_string(),
+                 wh: None,
+                 duration: Some(152_310),
++                mime: None,
++                thumbnail: None,
++            }
++        );
++
++        // E6: an unknown future field is ignored (forward compat for later us).
++        assert_eq!(
++            serde_json::from_str::<PostMsgMetadata>(
++                "{\"size\":5000,\"viewtype\":\"Audio\",\"filename\":\"a.ogg\",\"future_field\":42}"
++            )?,
++            PostMsgMetadata {
++                size: 5_000,
++                viewtype: Viewtype::Audio,
++                filename: "a.ogg".to_string(),
++                wh: None,
++                duration: None,
++                mime: None,
++                thumbnail: None,
+             }
+         );
+ 
+diff --git a/src/imap.rs b/src/imap.rs
+index 45374e6..33d7db0 100644
+--- a/src/imap.rs
++++ b/src/imap.rs
+@@ -1276,7 +1276,10 @@ pub(crate) async fn fetch_many_msgs(
+                     context,
+                     "Passing message UID {} to receive_imf().", request_uid
+                 );
+-                let res = receive_imf_inner(context, rfc724_mid, body, is_seen).await;
++                // Box::pin keeps this future off the `fetch_many_msgs` stack frame: the
++                // pre-message metadata now carries a mime + thumbnail preview, which nudged
++                // both callers of `fetch_many_msgs` past the `large_futures` size threshold.
++                let res = Box::pin(receive_imf_inner(context, rfc724_mid, body, is_seen)).await;
+ 
+                 // If there was an error receiving the message, show a device message:
+                 let received_msg = match res {
+diff --git a/src/message.rs b/src/message.rs
+index 677b75e..4bbd12b 100644
+--- a/src/message.rs
++++ b/src/message.rs
+@@ -899,8 +899,7 @@ pub async fn get_filebytes(&self, context: &Context) -> Result<Option<u64>> {
+ 
+     /// If message is a Pre-Message,
+     /// then this returns the viewtype it will have when it is downloaded.
+-    #[cfg(test)]
+-    pub(crate) fn get_post_message_viewtype(&self) -> Option<Viewtype> {
++    pub fn get_post_message_viewtype(&self) -> Option<Viewtype> {
+         if self.download_state != DownloadState::Done {
+             return self
+                 .param
+diff --git a/src/receive_imf.rs b/src/receive_imf.rs
+index c91cdea..c641edd 100644
+--- a/src/receive_imf.rs
++++ b/src/receive_imf.rs
+@@ -2170,7 +2170,11 @@ async fn add_parts(
+             ..
+         } = &mime_parser.pre_message
+         {
+-            param.apply_post_msg_metadata(metadata);
++            crate::download::post_msg_metadata::apply_received_metadata(
++                context,
++                &mut param,
++                metadata,
++            );
+         };
+ 
+         // If you change which information is skipped if the message is trashed,
+diff --git a/src/sql.rs b/src/sql.rs
+index 433cfac..23e6129 100644
+--- a/src/sql.rs
++++ b/src/sql.rs
+@@ -972,7 +972,9 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
+     maybe_add_from_param(
+         &context.sql,
+         &mut files_in_use,
+-        "SELECT param FROM msgs  WHERE chat_id!=3   AND type!=10;",
++        // download_state!=0 (not Done) keeps pre-message placeholders, which are
++        // stored as type=10 (Text) but carry a preview blob in Param::File.
++        "SELECT param FROM msgs  WHERE chat_id!=3   AND (type!=10 OR download_state!=0);",
+         Param::File,
+     )
+     .await?;
+diff --git a/src/tests/pre_messages/receiving.rs b/src/tests/pre_messages/receiving.rs
+index 7a2586e..bb55eb8 100644
+--- a/src/tests/pre_messages/receiving.rs
++++ b/src/tests/pre_messages/receiving.rs
+@@ -1,4 +1,6 @@
+ //! Tests about receiving Pre-Messages and Post-Message
++use std::time::Duration;
++
+ use anyhow::{Context as _, Result};
+ use pretty_assertions::assert_eq;
+ 
+@@ -15,8 +17,10 @@
+ use crate::receive_imf::receive_imf;
+ use crate::summary::assert_summary_texts;
+ use crate::test_utils::TestContextManager;
++use crate::tools::SystemTime;
+ use crate::tests::pre_messages::util::{
+-    big_webxdc_app, send_large_file_message, send_large_image_message, send_large_webxdc_message,
++    big_webxdc_app, send_large_file_message, send_large_image_message,
++    send_large_image_message_sized, send_large_webxdc_message,
+ };
+ use crate::webxdc::StatusUpdateSerial;
+ 
+@@ -49,7 +53,9 @@ async fn test_mimeparser_pre_message_and_post_message() -> Result<()> {
+                 viewtype: Viewtype::File,
+                 filename: "test.bin".to_string(),
+                 wh: None,
+-                duration: None
++                duration: None,
++                mime: Some("application/octet-stream".to_string()),
++                thumbnail: None,
+             })
+         }
+     );
+@@ -1007,3 +1013,96 @@ async fn test_bot_pre_message_notifications() -> Result<()> {
+ 
+     Ok(())
+ }
++
++/// Happy path: a large image placeholder carries a real mime and a decodable JPEG preview, and the
++/// arriving post-message replaces both with the real attachment.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_receive_pre_message_image_preview() -> Result<()> {
++    let mut tcm = TestContextManager::new();
++    let alice = &tcm.alice().await;
++    let bob = &tcm.bob().await;
++    let alice_group_id = alice.create_group_with_members("test group", &[bob]).await;
++
++    let (pre_message, post_message, _alice_msg_id) =
++        send_large_image_message(alice, alice_group_id).await?;
++
++    let msg = bob.recv_msg(&pre_message).await;
++    assert_eq!(msg.download_state(), DownloadState::Available);
++    assert_eq!(msg.viewtype, Viewtype::Text);
++
++    // Real mime is set on the placeholder (images are recoded to JPEG when sent).
++    assert_eq!(msg.param.get(Param::MimeType), Some("image/jpeg"));
++    assert_eq!(msg.get_filemime().as_deref(), Some("image/jpeg"));
++
++    // `Param::File` holds the preview: a decodable JPEG no larger than 128px per edge.
++    let preview_path = msg.get_file(bob).context("placeholder has a preview file")?;
++    let preview_bytes = tokio::fs::read(&preview_path).await?;
++    assert_eq!(image::guess_format(&preview_bytes)?, image::ImageFormat::Jpeg);
++    let preview = image::load_from_memory(&preview_bytes)?;
++    assert!(preview.width() <= 128 && preview.height() <= 128);
++
++    // The post-message replaces preview + mime with the real attachment.
++    bob.recv_msg_trash(&post_message).await;
++    let msg = Message::load_from_db(bob, msg.id).await?;
++    assert_eq!(msg.download_state(), DownloadState::Done);
++    assert_eq!(msg.viewtype, Viewtype::Image);
++    assert_eq!(msg.get_filemime().as_deref(), Some("image/jpeg"));
++    let real_path = msg.get_file(bob).context("downloaded message has a file")?;
++    assert_ne!(real_path, preview_path);
++    let real = image::load_from_memory(&tokio::fs::read(&real_path).await?)?;
++    assert!(real.width() > 128 || real.height() > 128, "real image is full size");
++
++    Ok(())
++}
++
++/// E9 lifecycle: the preview blob is a normal `Param::File` blob, so housekeeping GCs it once the
++/// placeholder is deleted or the post-message overwrites it, while the real file is kept.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_pre_message_thumbnail_housekeeping() -> Result<()> {
++    let mut tcm = TestContextManager::new();
++    let alice = &tcm.alice().await;
++    let bob = &tcm.bob().await;
++    let alice_group_id = alice.create_group_with_members("test group", &[bob]).await;
++
++    // The three cases use content-distinct images so their preview blobs don't dedup into one
++    // shared file; otherwise a broken GC path could hide behind a still-referenced sibling blob.
++
++    // Case A: deleted placeholder -> preview blob becomes unreferenced.
++    let (pre_a, _post_a, _) = send_large_image_message_sized(alice, alice_group_id, 1080, 1920).await?;
++    let msg_a = bob.recv_msg(&pre_a).await;
++    let preview_a = msg_a.get_file(bob).context("preview A exists")?;
++    assert!(tokio::fs::try_exists(&preview_a).await?);
++    delete_msgs(bob, &[msg_a.id]).await?;
++
++    // Case B: post-message overwrites the preview -> old preview unreferenced, real file kept.
++    let (pre_b, post_b, _) = send_large_image_message_sized(alice, alice_group_id, 1200, 2000).await?;
++    let msg_b = bob.recv_msg(&pre_b).await;
++    let preview_b = msg_b.get_file(bob).context("preview B exists")?;
++    assert!(tokio::fs::try_exists(&preview_b).await?);
++    bob.recv_msg_trash(&post_b).await;
++    let msg_b = Message::load_from_db(bob, msg_b.id).await?;
++    assert_eq!(msg_b.download_state(), DownloadState::Done);
++    let real_b = msg_b.get_file(bob).context("real file B exists")?;
++    assert_ne!(real_b, preview_b);
++
++    // Case C: a live placeholder that is neither deleted nor downloaded -> its preview must SURVIVE
++    // housekeeping (its Param::File is still referenced from a type=Text row).
++    let (pre_c, _post_c, _) = send_large_image_message_sized(alice, alice_group_id, 1400, 1600).await?;
++    let msg_c = bob.recv_msg(&pre_c).await;
++    assert_eq!(msg_c.download_state(), DownloadState::Available);
++    let preview_c = msg_c.get_file(bob).context("preview C exists")?;
++    assert!(tokio::fs::try_exists(&preview_c).await?);
++    assert_ne!(preview_c, preview_a);
++    assert_ne!(preview_c, preview_b);
++
++    // Age all blobs past the 1h grace and run housekeeping.
++    SystemTime::shift(Duration::from_secs(65 * 60));
++    crate::sql::housekeeping(bob).await?;
++
++    assert!(!tokio::fs::try_exists(&preview_a).await?, "deleted placeholder's preview GC'd");
++    assert!(!tokio::fs::try_exists(&preview_b).await?, "overwritten preview GC'd");
++    assert!(tokio::fs::try_exists(&real_b).await?, "real downloaded file kept");
++    assert!(tokio::fs::try_exists(&preview_c).await?, "live placeholder's preview survives housekeeping");
++
++    Ok(())
++}
+diff --git a/src/tests/pre_messages/util.rs b/src/tests/pre_messages/util.rs
+index 3e26384..d9f7319 100644
+--- a/src/tests/pre_messages/util.rs
++++ b/src/tests/pre_messages/util.rs
+@@ -63,7 +63,17 @@ pub async fn send_large_image_message<'a>(
+     sender: &'a TestContext,
+     target_chat: ChatId,
+ ) -> Result<(SentMessage<'a>, SentMessage<'a>, MsgId)> {
+-    let (width, height) = (1080, 1920);
++    send_large_image_message_sized(sender, target_chat, 1080, 1920).await
++}
++
++/// Like [`send_large_image_message`] but with explicit dimensions, so callers can produce
++/// content-distinct images (and therefore distinct preview blobs, defeating receiver-side dedup).
++pub async fn send_large_image_message_sized<'a>(
++    sender: &'a TestContext,
++    target_chat: ChatId,
++    width: u32,
++    height: u32,
++) -> Result<(SentMessage<'a>, SentMessage<'a>, MsgId)> {
+     let test_img = create_test_image(width, height)?;
+     send_large_file_message(sender, target_chat, Viewtype::Image, &test_img).await
+ }

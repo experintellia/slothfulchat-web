@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 15:04:22 +0000
-Subject: [PATCH 34/58] web-app: hover popovers with avatars for read-by status
+Subject: [PATCH 34/64] web-app: hover popovers with avatars for read-by status
  and reactions
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -50,7 +50,7 @@ shell, a lazy contacts-by-id fetch and a relative-time helper).
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 64a2fb654..4ab7816b3 100644
+index 64a2fb6..4ab7816 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -14,6 +14,9 @@
@@ -64,7 +64,7 @@ index 64a2fb654..4ab7816b3 100644
      "message": "Tab to search"
    },
 diff --git a/packages/frontend/scss/misc/_avatar.scss b/packages/frontend/scss/misc/_avatar.scss
-index a8ad9fd17..948ff4e7c 100644
+index a8ad9fd..948ff4e 100644
 --- a/packages/frontend/scss/misc/_avatar.scss
 +++ b/packages/frontend/scss/misc/_avatar.scss
 @@ -103,6 +103,13 @@
@@ -82,7 +82,7 @@ index a8ad9fd17..948ff4e7c 100644
  .avatar.large {
    --local-avatar-size: 64px;
 diff --git a/packages/frontend/src/components/Avatar/index.tsx b/packages/frontend/src/components/Avatar/index.tsx
-index a452c04ee..f6110be3c 100644
+index a452c04..f6110be 100644
 --- a/packages/frontend/src/components/Avatar/index.tsx
 +++ b/packages/frontend/src/components/Avatar/index.tsx
 @@ -38,6 +38,8 @@ export function Avatar(props: {
@@ -113,7 +113,7 @@ index a452c04ee..f6110be3c 100644
        onClick={onClick}
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/index.tsx b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
 new file mode 100644
-index 000000000..b4ff74629
+index 0000000..b4ff746
 --- /dev/null
 +++ b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
 @@ -0,0 +1,181 @@
@@ -300,7 +300,7 @@ index 000000000..b4ff74629
 +}
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 new file mode 100644
-index 000000000..d95e0c580
+index 0000000..d95e0c5
 --- /dev/null
 +++ b/packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 @@ -0,0 +1,95 @@
@@ -400,7 +400,7 @@ index 000000000..d95e0c580
 +  font-size: 11.5px;
 +}
 diff --git a/packages/frontend/src/components/Reactions/index.tsx b/packages/frontend/src/components/Reactions/index.tsx
-index ddc10364b..1c9bc983b 100644
+index ddc1036..1c9bc98 100644
 --- a/packages/frontend/src/components/Reactions/index.tsx
 +++ b/packages/frontend/src/components/Reactions/index.tsx
 @@ -3,6 +3,12 @@ import classNames from 'classnames'
@@ -544,7 +544,7 @@ index ddc10364b..1c9bc983b 100644
 +  return <PeopleHoverCard title={props.title} rows={rows} loading={loading} />
 +}
 diff --git a/packages/frontend/src/components/Reactions/styles.module.scss b/packages/frontend/src/components/Reactions/styles.module.scss
-index 6d5f26360..52d2acff2 100644
+index 6d5f263..52d2acf 100644
 --- a/packages/frontend/src/components/Reactions/styles.module.scss
 +++ b/packages/frontend/src/components/Reactions/styles.module.scss
 @@ -6,6 +6,24 @@
@@ -584,7 +584,7 @@ index 6d5f26360..52d2acff2 100644
      background-color: var(--messageOutgoingBg);
    }
 diff --git a/packages/frontend/src/components/message/MessageMetaData.tsx b/packages/frontend/src/components/message/MessageMetaData.tsx
-index 2627443c5..4c86c98ff 100644
+index 2627443..4c86c98 100644
 --- a/packages/frontend/src/components/message/MessageMetaData.tsx
 +++ b/packages/frontend/src/components/message/MessageMetaData.tsx
 @@ -1,5 +1,6 @@

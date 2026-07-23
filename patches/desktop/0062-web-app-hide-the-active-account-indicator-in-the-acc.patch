@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 21 Jul 2026 11:53:18 +0000
-Subject: [PATCH 62/62] web-app: hide the active-account indicator in the
+Subject: [PATCH 62/64] web-app: hide the active-account indicator in the
  account drag image
 
 The browser's drag ghost is a snapshot of the dragged <li>, which
