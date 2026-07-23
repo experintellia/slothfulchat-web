@@ -65,8 +65,12 @@ exists:
   / ad-hoc chat — readable and answerable, but with no group name,
   member list or admin rules, and admin deletions are not applied on
   their devices (their `handle_edit_delete` keeps the sender-only rule).
-  They can't corrupt fork-side state: group-state changes require the
-  admin's signed messages with the real group ID.
+  They can't corrupt fork-side state: every membership/name/avatar change
+  is applied only from the admin's signed messages (member *removals* stay
+  allowed for self-leave). Inherent limits of embedding the key
+  fingerprint in an immutable group ID: the admin can't be transferred or
+  recovered, and admin key rotation (AEAP/reset) freezes management —
+  noted in the experimental-setting description.
   `core/0019`, `desktop/0064`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run

@@ -179,10 +179,14 @@ try {
   await page
     .getByTestId('view-group-edit')
     .waitFor({ state: 'visible', timeout: 10_000 })
-  await shot('2-admin-group-dialog')
   await page.keyboard.press('Escape') // menu
+  // the 👑 badge marks the admin's row, visible to every member
+  await page
+    .locator('.group-admin-badge')
+    .waitFor({ state: 'visible', timeout: 10_000 })
+  await shot('2-admin-group-dialog')
   await page.keyboard.press('Escape') // dialog
-  console.log('OK: admin sees Add Member / QR invite / Edit')
+  console.log('OK: admin sees Add Member / QR invite / Edit / 👑 badge')
 
   // 3. admin deletes bob's message for everyone
   const bobMsg = page
@@ -212,10 +216,14 @@ try {
   if (await page.getByTestId('view-group-edit').isVisible()) {
     throw new Error('non-admin must not have an Edit menu entry')
   }
+  await page.keyboard.press('Escape') // menu
+  // the member also sees the 👑 on the admin's row
+  await page
+    .locator('.group-admin-badge')
+    .waitFor({ state: 'visible', timeout: 10_000 })
   await shot('4-member-group-dialog')
-  await page.keyboard.press('Escape')
-  await page.keyboard.press('Escape')
-  console.log('OK: non-admin sees no Add Member / QR invite / Edit')
+  await page.keyboard.press('Escape') // dialog
+  console.log('OK: non-admin sees the 👑 but no Add Member / QR invite / Edit')
 
   // core enforcement, not just hidden buttons: rename by bob must fail
   // (catch inside the page — rpc rejections don't survive page.evaluate)

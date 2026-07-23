@@ -27,18 +27,18 @@ commits c9b9666 + a2683e9) onto chatmail core:
   we gate on the group actually being an admin group.)
 - New JSON-RPC: create_group_with_admin, FullChat.groupAdminId.
 ---
- deltachat-jsonrpc/src/api.rs            |  13 +++
+ deltachat-jsonrpc/src/api.rs            |  13 ++
  deltachat-jsonrpc/src/api/types/chat.rs |  10 +-
- src/chat.rs                             | 111 ++++++++++++++++++
- src/chat/chat_tests.rs                  | 144 ++++++++++++++++++++++++
- src/ephemeral.rs                        |  13 ++-
- src/message.rs                          |  13 ++-
+ src/chat.rs                             | 109 ++++++++++++++
+ src/chat/chat_tests.rs                  | 186 ++++++++++++++++++++++++
+ src/ephemeral.rs                        |  13 +-
+ src/message.rs                          |  13 +-
  src/mimeparser.rs                       |   4 +-
- src/qr.rs                               |  20 +++-
- src/receive_imf.rs                      | 105 ++++++++++++++---
- src/securejoin.rs                       |  21 ++++
- src/tools.rs                            |  17 +++
- 11 files changed, 442 insertions(+), 29 deletions(-)
+ src/qr.rs                               |  20 ++-
+ src/receive_imf.rs                      | 122 +++++++++++++---
+ src/securejoin.rs                       |  21 +++
+ src/tools.rs                            |  22 +++
+ 11 files changed, 500 insertions(+), 33 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
 index ab910004b..5fca11d20 100644
@@ -107,7 +107,7 @@ index 42d69ffa6..a9c819244 100644
      }
  }
 diff --git a/src/chat.rs b/src/chat.rs
-index 7c2a855a6..b3f7cbd8f 100644
+index 7c2a855a6..197c28cc2 100644
 --- a/src/chat.rs
 +++ b/src/chat.rs
 @@ -57,6 +57,26 @@
@@ -137,7 +137,7 @@ index 7c2a855a6..b3f7cbd8f 100644
  /// An chat item, such as a message or a marker.
  #[derive(Debug, Copy, Clone, PartialEq, Eq)]
  pub enum ChatItem {
-@@ -3544,6 +3564,56 @@ pub async fn create_group(context: &Context, name: &str) -> Result<ChatId> {
+@@ -3544,6 +3564,54 @@ pub async fn create_group(context: &Context, name: &str) -> Result<ChatId> {
      create_group_ex(context, Sync, create_id(), name).await
  }
  
@@ -151,14 +151,7 @@ index 7c2a855a6..b3f7cbd8f 100644
 +    let fingerprint = self_fingerprint(context).await?;
 +    let base_grpid = create_id();
 +    let grpid = format!("{fingerprint}{ADMIN_GROUP_ID_SEPARATOR}{base_grpid}");
-+    let result = create_group_ex(context, Sync, grpid, name).await;
-+    if let Ok(chat_id) = result {
-+        let secret = create_broadcast_secret();
-+        save_broadcast_secret(context, chat_id, &secret).await?;
-+        Ok(chat_id)
-+    } else {
-+        result
-+    }
++    create_group_ex(context, Sync, grpid, name).await
 +}
 +
 +/// Returns the contact ID of the group admin for an admin group, or `None` for regular groups.
@@ -170,6 +163,12 @@ index 7c2a855a6..b3f7cbd8f 100644
 +    let Some(admin_fpr) = admin_group_fingerprint(grpid) else {
 +        return Ok(None);
 +    };
++    // Never match on an empty fingerprint: `SELECT ... WHERE fingerprint=''`
++    // would resolve to an arbitrary address-only contact. A well-formed admin
++    // grpid always has a non-empty fpr (`validate_group_id`), but be defensive.
++    if admin_fpr.is_empty() {
++        return Ok(None);
++    }
 +
 +    // Check self first (cheaper and handles the case where the contact is not yet in the DB).
 +    use crate::key::self_fingerprint_opt;
@@ -179,7 +178,6 @@ index 7c2a855a6..b3f7cbd8f 100644
 +        }
 +    }
 +
-+    // `admin_group_fingerprint` guarantees admin_fpr is non-empty.
 +    let contact_id = context
 +        .sql
 +        .query_row_optional(
@@ -194,7 +192,7 @@ index 7c2a855a6..b3f7cbd8f 100644
  /// Creates an unencrypted group chat.
  pub async fn create_group_unencrypted(context: &Context, name: &str) -> Result<ChatId> {
      create_group_ex(context, Sync, String::new(), name).await
-@@ -3913,6 +3983,15 @@ pub(crate) async fn add_contact_to_chat_ex(
+@@ -3913,6 +3981,15 @@ pub(crate) async fn add_contact_to_chat_ex(
          );
          return Ok(false);
      }
@@ -210,7 +208,7 @@ index 7c2a855a6..b3f7cbd8f 100644
      if from_handshake && chat.param.get_int(Param::Unpromoted).unwrap_or_default() == 1 {
          let now = time();
          chat.param
-@@ -4169,6 +4248,16 @@ pub async fn remove_contact_from_chat(
+@@ -4169,6 +4246,16 @@ pub async fn remove_contact_from_chat(
          bail!("{err_msg}");
      }
  
@@ -227,7 +225,7 @@ index 7c2a855a6..b3f7cbd8f 100644
      let mut sync = Nosync;
  
      let removed = if chat.is_promoted() && chat.typ != Chattype::OutBroadcast {
-@@ -4283,6 +4372,14 @@ async fn set_chat_description_ex(
+@@ -4283,6 +4370,14 @@ async fn set_chat_description_ex(
          bail!("Cannot set chat description; self not in group");
      }
  
@@ -242,7 +240,7 @@ index 7c2a855a6..b3f7cbd8f 100644
      let old_description = get_chat_description(context, chat_id).await?;
      if old_description == new_description {
          return Ok(());
-@@ -4371,6 +4468,13 @@ async fn rename_ex(
+@@ -4371,6 +4466,13 @@ async fn rename_ex(
                  "Cannot set chat name; self not in group".into(),
              ));
          } else {
@@ -256,7 +254,7 @@ index 7c2a855a6..b3f7cbd8f 100644
              context
                  .sql
                  .execute(
-@@ -4442,6 +4546,13 @@ pub async fn set_chat_profile_image(
+@@ -4442,6 +4544,13 @@ pub async fn set_chat_profile_image(
          ));
          bail!("Failed to set profile image");
      }
@@ -271,10 +269,10 @@ index 7c2a855a6..b3f7cbd8f 100644
      msg.param
          .set_int(Param::Cmd, SystemMessage::GroupImageChanged as i32);
 diff --git a/src/chat/chat_tests.rs b/src/chat/chat_tests.rs
-index a27b70670..ac52a521a 100644
+index a27b70670..25b7b22ff 100644
 --- a/src/chat/chat_tests.rs
 +++ b/src/chat/chat_tests.rs
-@@ -6576,3 +6576,147 @@ async fn test_unpromoted_group_start_message() -> Result<()> {
+@@ -6576,3 +6576,189 @@ async fn test_unpromoted_group_start_message() -> Result<()> {
  
      Ok(())
  }
@@ -374,6 +372,48 @@ index a27b70670..ac52a521a 100644
 +        message::delete_msgs_ex(alice, &[alice_reg_bob_msg.id], true)
 +            .await
 +            .is_err()
++    );
++
++    Ok(())
++}
++
++/// Receive-side security test: a non-admin cannot inject members into an admin
++/// group even with a modified client. The honest client refuses to *send* such
++/// a change, so we simulate the modified client by inserting the victim into
++/// the attacker's local member table (bypassing only the send-side guard) and
++/// letting the attacker send an ordinary, signed message — which then carries
++/// the victim in its member list. The admin must not apply it.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_admin_group_member_injection_rejected() -> Result<()> {
++    let mut tcm = TestContextManager::new();
++    let alice = &tcm.alice().await; // admin
++    let bob = &tcm.bob().await; // non-admin member
++    let charlie = &tcm.charlie().await; // victim the attacker tries to inject
++
++    let alice_chat_id = create_group_with_admin(alice, "Admin group").await?;
++    let alice_bob = alice.add_or_lookup_contact_id(bob).await;
++    add_contact_to_chat(alice, alice_chat_id, alice_bob).await?;
++    let sent = alice.send_text(alice_chat_id, "welcome").await;
++    let bob_rcvd = bob.recv_msg(&sent).await;
++    let bob_chat_id = bob_rcvd.chat_id;
++    bob_chat_id.accept(bob).await?;
++    assert_eq!(get_chat_contacts(alice, alice_chat_id).await?.len(), 2);
++
++    // Modified-client simulation: attacker injects charlie into its own member
++    // table with a fresh timestamp (bypasses the send-side ensure! only).
++    let bob_charlie = bob.add_or_lookup_contact_id(charlie).await;
++    add_to_chat_contacts_table(bob, time(), bob_chat_id, &[bob_charlie]).await?;
++    assert_eq!(get_chat_contacts(bob, bob_chat_id).await?.len(), 3);
++
++    // The attacker sends an ordinary signed message; it carries the injected
++    // member list. Delivered to the admin, it must NOT add charlie.
++    let attack = bob.send_text(bob_chat_id, "hi").await;
++    alice.recv_msg(&attack).await;
++    let members = get_chat_contacts(alice, alice_chat_id).await?;
++    assert_eq!(
++        members.len(),
++        2,
++        "non-admin injected a member into an admin group"
 +    );
 +
 +    Ok(())
@@ -542,7 +582,7 @@ index 7f6188805..44d6da46f 100644
  
      if authcode.is_some() && invitenumber.is_none() {
 diff --git a/src/receive_imf.rs b/src/receive_imf.rs
-index c91cdea22..ea5405909 100644
+index c91cdea22..d2f8daac7 100644
 --- a/src/receive_imf.rs
 +++ b/src/receive_imf.rs
 @@ -16,6 +16,7 @@
@@ -672,7 +712,44 @@ index c91cdea22..ea5405909 100644
          {
              send_event_chat_modified |= update_chats_contacts_timestamps(
                  context,
-@@ -3297,6 +3340,10 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3169,8 +3212,15 @@ async fn apply_group_changes(
+             let mut new_members: BTreeSet<ContactId>;
+             // True if a Delta Chat client has explicitly and really added our primary address to an
+             // already existing group.
+-            let self_added =
+-                if let Some(added_addr) = mime_parser.get_header(HeaderDef::ChatGroupMemberAdded) {
++            // In an admin group only the admin may add members. `removed_id`
++            // is already admin-or-self-only (computed above), so removals —
++            // including a non-admin leaving — stay allowed; we gate only the
++            // addition vectors. `sender_is_admin` is always true in regular
++            // groups, so this is a no-op there.
++            let self_added = sender_is_admin
++                && if let Some(added_addr) =
++                    mime_parser.get_header(HeaderDef::ChatGroupMemberAdded)
++                {
+                     addr_cmp(&context.get_primary_self_addr().await?, added_addr)
+                         && !chat_contacts.contains(&ContactId::SELF)
+                 } else {
+@@ -3187,14 +3237,16 @@ async fn apply_group_changes(
+             }
+ 
+             // Allow non-Delta Chat MUAs to add members.
+-            if mime_parser.get_header(HeaderDef::ChatVersion).is_none() {
++            if mime_parser.get_header(HeaderDef::ChatVersion).is_none() && sender_is_admin {
+                 // Don't delete any members locally, but instead add absent ones to provide group
+                 // membership consistency for all members:
+                 new_members.extend(to_ids_flat.iter());
+             }
+ 
+             // Apply explicit addition if any.
+-            if let Some(added_id) = added_id {
++            if let Some(added_id) = added_id
++                && sender_is_admin
++            {
+                 new_members.insert(added_id);
+             }
+ 
+@@ -3297,6 +3349,10 @@ async fn apply_chat_name_avatar_and_description_changes(
  ) -> Result<()> {
      // ========== Apply chat name changes ==========
  
@@ -683,7 +760,7 @@ index c91cdea22..ea5405909 100644
      let group_name_timestamp = mime_parser
          .get_header(HeaderDef::ChatGroupNameTimestamp)
          .and_then(|s| s.parse::<i64>().ok());
-@@ -3319,7 +3366,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3319,7 +3375,7 @@ async fn apply_chat_name_avatar_and_description_changes(
          let chat_group_name_timestamp = chat.param.get_i64(Param::GroupNameTimestamp).unwrap_or(0);
          let group_name_timestamp = group_name_timestamp.unwrap_or(mime_parser.timestamp_sent);
          // To provide group name consistency, compare names if timestamps are equal.
@@ -692,7 +769,7 @@ index c91cdea22..ea5405909 100644
              && (chat_group_name_timestamp, grpname) < (group_name_timestamp, &chat.name)
              && chat
                  .id
-@@ -3341,7 +3388,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3341,7 +3397,7 @@ async fn apply_chat_name_avatar_and_description_changes(
              .get_header(HeaderDef::ChatGroupNameChanged)
              .is_some()
          {
@@ -701,7 +778,7 @@ index c91cdea22..ea5405909 100644
                  let old_name = &sanitize_single_line(old_name);
                  better_msg.get_or_insert(
                      if matches!(chat.typ, Chattype::InBroadcast | Chattype::OutBroadcast) {
-@@ -3351,7 +3398,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3351,7 +3407,7 @@ async fn apply_chat_name_avatar_and_description_changes(
                      },
                  );
              } else {
@@ -710,7 +787,7 @@ index c91cdea22..ea5405909 100644
                  *better_msg = Some(String::new());
              }
          }
-@@ -3376,7 +3423,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3376,7 +3432,7 @@ async fn apply_chat_name_avatar_and_description_changes(
  
          let new_timestamp = timestamp_in_header.unwrap_or(mime_parser.timestamp_sent);
          // To provide consistency, compare descriptions if timestamps are equal.
@@ -719,7 +796,7 @@ index c91cdea22..ea5405909 100644
              && (old_timestamp, &old_description) < (new_timestamp, &new_description)
              && chat
                  .id
-@@ -3398,11 +3445,11 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3398,11 +3454,11 @@ async fn apply_chat_name_avatar_and_description_changes(
              .get_header(HeaderDef::ChatGroupDescriptionChanged)
              .is_some()
          {
@@ -733,7 +810,7 @@ index c91cdea22..ea5405909 100644
                  *better_msg = Some(String::new());
              }
          }
-@@ -3414,7 +3461,7 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3414,7 +3470,7 @@ async fn apply_chat_name_avatar_and_description_changes(
          && value == "group-avatar-changed"
          && let Some(avatar_action) = &mime_parser.group_avatar
      {
@@ -742,7 +819,7 @@ index c91cdea22..ea5405909 100644
              // this is just an explicit message containing the group-avatar,
              // apart from that, the group-avatar is send along with various other messages
              better_msg.get_or_insert(
-@@ -3432,13 +3479,13 @@ async fn apply_chat_name_avatar_and_description_changes(
+@@ -3432,13 +3488,13 @@ async fn apply_chat_name_avatar_and_description_changes(
                  },
              );
          } else {
@@ -758,7 +835,7 @@ index c91cdea22..ea5405909 100644
          && chat
              .param
              .update_timestamp(Param::AvatarTimestamp, mime_parser.timestamp_sent)?
-@@ -4288,6 +4335,30 @@ async fn lookup_key_contact_by_address(
+@@ -4288,6 +4344,30 @@ async fn lookup_key_contact_by_address(
      Ok(contact_id)
  }
  
@@ -836,10 +913,10 @@ index 3ab31805d..48d2cffdd 100644
                      .await?;
  
 diff --git a/src/tools.rs b/src/tools.rs
-index f2984f784..b7f42c1f4 100644
+index f2984f784..46d955d26 100644
 --- a/src/tools.rs
 +++ b/src/tools.rs
-@@ -302,6 +302,23 @@ pub(crate) fn validate_id(s: &str) -> bool {
+@@ -302,6 +302,28 @@ pub(crate) fn validate_id(s: &str) -> bool {
      s.chars().all(|c| alphabet.contains(c)) && s.len() > 10 && s.len() <= 32
  }
  
@@ -851,9 +928,14 @@ index f2984f784..b7f42c1f4 100644
 +    if validate_id(s) {
 +        return true;
 +    }
-+    // Admin group grpid: FINGERPRINT<SEPARATOR>base_grpid
-+    if let Some((fpr, base_id)) = s.split_once(':') {
-+        fpr.chars().all(|c| matches!(c, '0'..='9' | 'A'..='F'))
++    // Admin group grpid: FINGERPRINT<SEPARATOR>base_grpid. The fingerprint must
++    // be non-empty, uppercase hex and bounded — an empty or unbounded fpr would
++    // otherwise match e.g. address-only contacts (fingerprint='') in
++    // `get_admin_contact_id`.
++    if let Some((fpr, base_id)) = s.split_once(crate::chat::ADMIN_GROUP_ID_SEPARATOR) {
++        !fpr.is_empty()
++            && fpr.len() <= 64
++            && fpr.chars().all(|c| matches!(c, '0'..='9' | 'A'..='F'))
 +            && validate_id(base_id)
 +    } else {
 +        false
