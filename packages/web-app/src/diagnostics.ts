@@ -87,6 +87,8 @@ function buildOverlay(): HTMLDialogElement {
   panel.append(head)
 
   panel.append(perfSection())
+  const wf = waveformSection()
+  if (wf) panel.append(wf)
   if (isConfigured()) panel.append(usageSection())
 
   backdrop.append(panel)
@@ -150,6 +152,60 @@ function startupsList(startups: StartupRecord[]): HTMLElement {
     )
   )
   return box
+}
+
+// --- waveform section ---------------------------------------------------
+
+// The voice-message waveform pipeline (in the frontend bundle) emits User
+// Timing measures named `sc:waveform:{fetch,decode,bucket}` and, on fallback,
+// `sc:waveform:fallback` marks. We read them straight off the global
+// Performance timeline here — no perf.ts plumbing needed. Section is omitted
+// entirely when nothing has run.
+function waveformSection(): HTMLElement | null {
+  type Stage = { count: number; last: number; avg: number; min: number; max: number; detail: any }
+  let stages: Record<string, Stage | null>
+  let fallbacks: number
+  try {
+    const stat = (name: string): Stage | null => {
+      const entries = performance.getEntriesByName('sc:waveform:' + name, 'measure')
+      if (!entries.length) return null
+      const durs = entries.map(e => e.duration)
+      return {
+        count: entries.length,
+        last: entries[entries.length - 1].duration,
+        avg: durs.reduce((a, b) => a + b, 0) / durs.length,
+        min: Math.min(...durs),
+        max: Math.max(...durs),
+        detail: (entries[entries.length - 1] as any).detail,
+      }
+    }
+    stages = { fetch: stat('fetch'), decode: stat('decode'), bucket: stat('bucket') }
+    fallbacks = performance.getEntriesByName('sc:waveform:fallback', 'mark').length
+  } catch {
+    return null
+  }
+
+  if (!stages.fetch && !stages.decode && !stages.bucket && !fallbacks) return null
+
+  const s = section('Waveform (ms)', 'Voice-message peak generation, timed locally.')
+  const rows: [string, string][] = []
+  for (const name of ['fetch', 'decode', 'bucket']) {
+    const st = stages[name]
+    rows.push([
+      name,
+      st
+        ? `${Math.round(st.last)} (avg ${Math.round(st.avg)}, ${Math.round(st.min)}–${Math.round(st.max)}, ${st.count}×)`
+        : '—',
+    ])
+  }
+  // last-decoded file characteristics (present on any stage's detail)
+  const detail = stages.bucket?.detail ?? stages.decode?.detail ?? stages.fetch?.detail
+  if (detail) {
+    rows.push(['last audio', `${(detail.durationSec ?? 0).toFixed(1)}s · ${Math.round((detail.bytes ?? 0) / 1024)} KB`])
+  }
+  rows.push(['fallbacks', String(fallbacks)])
+  s.append(kvTable('Peak generation', rows))
+  return s
 }
 
 // --- usage-statistics section ------------------------------------------

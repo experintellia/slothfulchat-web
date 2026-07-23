@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Thu, 23 Jul 2026 17:30:02 +0000
+Subject: [PATCH 61/62] web-app: bubble adopts the singleton's position on
+ remount (upstream #6378)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A bubble (re)mounting while its message plays on the global singleton —
+switching profiles or chats and coming back — displayed 0:00 counting up
+while the sound continued mid-track (deltachat/deltachat-desktop#6378).
+The mirror effect now adopts the singleton's currentTime when it has real
+progress (>1s) and the local element is fresh (<1s). One direction only:
+the existing restored-position carry (local -> just-started singleton)
+requires the inverse state, so the two cannot fight. Ungated, like the
+other mutex-level sync fixes — with the experimental setting off this
+also fixes the native-controls display.
+
+Verified by the harness: the cross-chat step now asserts the bubble shows
+the singleton's position after switching back.
+---
+ .../frontend/src/components/AudioPlayer/index.tsx    | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/packages/frontend/src/components/AudioPlayer/index.tsx b/packages/frontend/src/components/AudioPlayer/index.tsx
+index 331c038bc..f900ef187 100644
+--- a/packages/frontend/src/components/AudioPlayer/index.tsx
++++ b/packages/frontend/src/components/AudioPlayer/index.tsx
+@@ -82,6 +82,18 @@ export function AudioPlayer({
+       return
+     }
+ 
++    // A bubble (re)mounting or becoming active while its message is already
++    // mid-track on the singleton (profile/chat switch back, auto-advance with
++    // a restored position) used to start displaying at 0:00 while the sound
++    // kept playing (upstream #6378). Adopt the singleton's position when it
++    // has real progress and the local element is fresh — the opposite carry
++    // (restored local position → just-started singleton) lives in
++    // onPlayGlobal below and requires the inverse state, so the two can't
++    // fight.
++    if (globalEl.currentTime > 1 && el.currentTime < 1) {
++      el.currentTime = globalEl.currentTime
++    }
++
+     // This is very primitive syncing. Only the `paused` state,
+     // no regard for `currentTime`, `playbackRate` etc.
+     // But it's good enough for a start.

@@ -1,0 +1,1192 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Mon, 20 Jul 2026 22:12:40 +0000
+Subject: [PATCH 59/59] =?UTF-8?q?web-app:=20recording=20polish=20=E2=80=94?=
+ =?UTF-8?q?=20pause/resume,=20preview,=20gestures,=20original=20audio=20(e?=
+ =?UTF-8?q?xperimental)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Final phase of the voice-messages epic (#120), all gated behind
+experimentalAudioPlayerControls (off = today's recorder, unchanged). The
+getUserMedia + ScriptProcessorNode -> real-time LAME MP3 pipeline is
+preserved (no MediaRecorder: iOS can't play Chrome's Opus/WebM).
+
+- Pause/resume while recording: a gate in onaudioprocess stops feeding the
+  encoder, so resuming continues into the SAME encoder and yields one
+  contiguous MP3. The timer banks only active time (pure TimerState helper,
+  no per-tick slop); the live waveform freezes while paused. The mic stream
+  stays live while paused (ponytail: OS indicator stays on; upgrade path
+  track.enabled).
+- Preview before send: stopping a recording shows the draft in the shared
+  custom player (blob: URL; peaks work via fetch, position persistence is
+  skipped for ephemeral blob: srcs at the store level) with send /
+  record-again / discard. Send drafts exactly like the old checkmark.
+- Press-and-hold gestures: hold the mic to record, release to preview;
+  slide left past 80px to cancel, up past 60px to lock hands-free (then
+  tap-to-stop + pause available). A quick tap (<300ms) still toggles like
+  today, so both styles work. Pure classifyGesture() with mocha coverage;
+  pointer events + capture, no long-press context menu.
+- Original-audio toggle in the recorder UI (voiceRecordingOriginalAudio
+  desktop setting, default off): requests noiseSuppression/echoCancellation/
+  autoGainControl off — advisory, so the actual track.getSettings() are read
+  back and unsupported setups say so instead of pretending.
+
+Constraints honesty and gesture thresholds are unit-tested (27 passing
+across the audio suites). The contiguous-MP3 invariant needs a live WebAudio
+pipeline, so it's verified by the screenshot/e2e harness, not the unit suite.
+
+Review hardening (adversarial pass):
+- Abortable start: onRecordingStart is async (permission await before the mic
+  opens). A generation counter (bumped on cancel/stop and each new start) is
+  snapshotted at entry and re-checked after every await and before opening the
+  mic, so a gesture that cancels/stops during the await can't resume and
+  re-open the mic against intent, and a double pointerdown can't leave two
+  MicRecorders; if getUserMedia resolves after being superseded, the fresh
+  stream is stopped.
+- Context menu is now suppressed for the whole gesture via a window-level
+  listener (the mic button — and its onContextMenu — unmounts ~100ms into a
+  hold, before the ~500ms OS long-press), removed in the gesture cleanup.
+- The gesture's window listeners are also torn down on unmount (cleanup kept
+  in a ref, invoked from the unmount effect), not only on pointerup/cancel.
+- Locale keys: renamed our lock_recording -> slide_up_to_lock (it collided
+  with upstream's translated "Lock Recording" and the untranslated merge would
+  have shadowed it) and dropped our slide_to_cancel duplicate in favour of the
+  translated chat_record_slide_to_cancel.
+- Preview: focus lands on Send (the input is unmounted while previewing, so
+  focusMessageInput was a no-op); the preview element and the shared voice
+  singleton now pause each other so they can't sound at once.
+---
+ _locales/_untranslated_en.json                |  24 +
+ .../components/AudioPlayer/positionStore.ts   |  11 +
+ .../AudioRecorder/AudioRecorder.tsx           | 514 +++++++++++++++---
+ .../components/AudioRecorder/MicRecorder.ts   |  50 +-
+ .../components/AudioRecorder/recorderLogic.ts |  93 ++++
+ .../AudioRecorder/styles.module.scss          |  80 +++
+ .../frontend/src/tests/audioPlayer.test.ts    |   9 +
+ .../frontend/src/tests/audioRecorder.test.ts  |  98 ++++
+ packages/shared/shared-types.d.ts             |   2 +
+ packages/shared/state.ts                      |   1 +
+ 10 files changed, 811 insertions(+), 71 deletions(-)
+ create mode 100644 packages/frontend/src/components/AudioRecorder/recorderLogic.ts
+ create mode 100644 packages/frontend/src/tests/audioRecorder.test.ts
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 7c6e721aa..b957b5c08 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -118,5 +118,29 @@
+   },
+   "a11y_playback_speed": {
+     "message": "Playback speed: %1$s"
++  },
++  "pause_recording": {
++    "message": "Pause recording"
++  },
++  "resume_recording": {
++    "message": "Resume recording"
++  },
++  "record_again": {
++    "message": "Record again"
++  },
++  "slide_up_to_lock": {
++    "message": "Slide up to lock"
++  },
++  "original_audio": {
++    "message": "Original audio"
++  },
++  "voice_quality": {
++    "message": "Voice quality"
++  },
++  "original_audio_explain": {
++    "message": "Record unprocessed audio (no noise suppression, echo cancellation or auto gain). Applies to the next recording."
++  },
++  "original_audio_not_supported": {
++    "message": "Original audio is not supported by this browser or microphone"
+   }
+ }
+diff --git a/packages/frontend/src/components/AudioPlayer/positionStore.ts b/packages/frontend/src/components/AudioPlayer/positionStore.ts
+index 56ff4e3b9..613ad8dab 100644
+--- a/packages/frontend/src/components/AudioPlayer/positionStore.ts
++++ b/packages/frontend/src/components/AudioPlayer/positionStore.ts
+@@ -37,12 +37,23 @@ export function makePositionStore(
+       // storage may be blocked (private mode / quota); positions are optional
+     }
+   }
++  // Object URLs (blob:) are per-session and change every time — persisting a
++  // position under one is pure garbage that never matches again. The recorder's
++  // preview player plays a blob: URL through the same CustomAudioControls, so
++  // guard here (the one place all writers route through) rather than in each.
++  const isEphemeral = (src: string): boolean => src.startsWith('blob:')
+   return {
+     getPosition(src: string): number | null {
++      if (isEphemeral(src)) {
++        return null
++      }
+       const e = read()[src]
+       return e ? e.t : null
+     },
+     setPosition(src: string, t: number): void {
++      if (isEphemeral(src)) {
++        return
++      }
+       const s = read()
+       s[src] = { t, at: now() }
+       const keys = Object.keys(s)
+diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+index 450aa12ad..c294743ea 100644
+--- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
++++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+@@ -1,4 +1,10 @@
+-import React, { useCallback, useEffect, useRef, useState } from 'react'
++import React, {
++  useCallback,
++  useContext,
++  useEffect,
++  useRef,
++  useState,
++} from 'react'
+ import MicRecorder from './MicRecorder'
+ import styles from './styles.module.scss'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+@@ -6,8 +12,22 @@ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import useDialog from '../../hooks/dialog/useDialog'
+ import AlertDialog from '../dialogs/AlertDialog'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+-import { useSettingsStore } from '../../stores/settings'
++import SettingsStoreInstance, { useSettingsStore } from '../../stores/settings'
++import { MediaPlayerMutexContext } from '../../contexts/MediaPlayerMutexContext'
+ import { drawBars } from '../AudioPlayer/Waveform'
++import { CustomAudioControls } from '../AudioPlayer'
++import { IconButton } from '../Icon'
++import {
++  CANCEL_DX,
++  LOCK_DY,
++  classifyGesture,
++  originalAudioHonored,
++  timerElapsedMs,
++  timerPause,
++  timerResume,
++  timerStart,
++  type TimerState,
++} from './recorderLogic'
+ 
+ const log = getLogger('renderer/AudioRecorder')
+ 
+@@ -27,21 +47,39 @@ export class AudioRecorderError extends Error {
+ }
+ 
+ /**
+- * shows a timer in format MM:SS
++ * shows a timer in format MM:SS. `paused` freezes the count without losing the
++ * elapsed active time (wall-clock accumulator, see recorderLogic).
+  */
+-const Timer = () => {
+-  const [recordingTime, setRecordingTime] = useState(0)
++const Timer = ({ paused = false }: { paused?: boolean }) => {
++  // Pure initial value (no Date.now during render); the mount effect starts it.
++  const stateRef = useRef<TimerState>({ accumulatedMs: 0, runningSince: null })
++  const [totalSeconds, setTotalSeconds] = useState(0)
++  const tick = () =>
++    setTotalSeconds(
++      Math.floor(timerElapsedMs(stateRef.current, Date.now()) / 1000)
++    )
++
++  // Start on mount; re-read the accumulator a few times a second so the running
++  // segment ticks up. While paused the accumulator ignores `now` → frozen.
+   useEffect(() => {
+-    const timer = window.setInterval(() => {
+-      setRecordingTime(prevTime => prevTime + 1)
+-    }, 1000)
++    stateRef.current = timerStart(Date.now())
++    const timer = window.setInterval(tick, 250)
+     return () => window.clearInterval(timer)
+   }, [])
+ 
+-  const minutes = Math.floor(recordingTime / 60)
++  // Apply pause/resume transitions to the accumulator as the prop flips, and
++  // reflect the freeze/resume in the display immediately.
++  useEffect(() => {
++    stateRef.current = paused
++      ? timerPause(stateRef.current, Date.now())
++      : timerResume(stateRef.current, Date.now())
++    tick()
++  }, [paused])
++
++  const minutes = Math.floor(totalSeconds / 60)
+     .toString()
+     .padStart(2, '0')
+-  const seconds = (recordingTime % 60).toString().padStart(2, '0')
++  const seconds = (totalSeconds % 60).toString().padStart(2, '0')
+ 
+   return (
+     <div role='timer'>
+@@ -102,12 +140,47 @@ export const AudioRecorder = ({
+   const [volume, setVolume] = useState(0)
+   const recorder = useRef<MicRecorder | null>(null)
+   const { openDialog } = useDialog()
++  const mutexCtx = useContext(MediaPlayerMutexContext)
++
++  // Bumped on every start attempt and on cancel/stop. An async start reads its
++  // generation at entry and bails after each await / before opening the mic if
++  // it's been superseded — so a gesture that cancels or stops during the
++  // permission await can't resume and re-open the mic against the user's
++  // intent, and a double pointerdown can't leave two MicRecorders running.
++  const startGenRef = useRef(0)
++  // The in-flight press-and-hold gesture's window-listener teardown, so the
++  // unmount effect can run it if the component leaves mid-gesture.
++  const gestureCleanupRef = useRef<(() => void) | null>(null)
++
++  // The whole phase-B polish (pause/resume, preview, gestures, original audio)
++  // rides on the SAME experimental setting as the custom player. Off → today's
++  // recorder, byte-identical.
++  const settings = useSettingsStore()[0]?.desktopSettings
++  const experimental = settings?.experimentalAudioPlayerControls === true
++  const originalAudio = settings?.voiceRecordingOriginalAudio === true
++  const liveWaveform = experimental
++
++  // Recording pause state (experimental).
++  const [paused, setPaused] = useState(false)
++  // Whether the advisory "original audio" request was honored by the mic/browser
++  // once the stream opened. null = unknown / not yet recorded / unsupported.
++  const [originalHonored, setOriginalHonored] = useState<boolean | null>(null)
++
++  // Preview-before-send: after stopping, hold the recorded blob and play it
++  // locally through the shared CustomAudioControls until the user sends /
++  // re-records / discards. The object URL is revoked on every transition.
++  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
++  const previewUrlRef = useRef<string | null>(null)
++  const previewBlobRef = useRef<Blob | null>(null)
++  const previewAudioRef = useRef<HTMLAudioElement>(null)
++
++  // Press-and-hold gesture state (experimental). `holding` = pointer is down
++  // mid-gesture (show lock/cancel affordances); once released as a tap or
++  // locked, we drop to the tap-to-stop "latched" row.
++  const [holding, setHolding] = useState(false)
++  const [slideDx, setSlideDx] = useState(0) // leftward pointer delta, ≤ 0
++  const [cancelArmed, setCancelArmed] = useState(false)
+ 
+-  // Experimental: a rolling live waveform in place of the segmented meter,
+-  // drawn with the same routine as the player waveform. Setting off → untouched.
+-  const liveWaveform =
+-    useSettingsStore()[0]?.desktopSettings.experimentalAudioPlayerControls ===
+-    true
+   const historyRef = useRef(new Float32Array(HISTORY))
+   const canvasRef = useRef<HTMLCanvasElement>(null)
+   // Drive the rolling waveform straight from the recorder's per-buffer volume
+@@ -131,10 +204,25 @@ export const AudioRecorder = ({
+     })
+   }, [openDialog, tx])
+ 
++  const cleanupPreview = useCallback(() => {
++    if (previewUrlRef.current != null) {
++      URL.revokeObjectURL(previewUrlRef.current)
++      previewUrlRef.current = null
++    }
++    previewBlobRef.current = null
++    setPreviewUrl(null)
++  }, [])
++
+   const onRecordingStart = async () => {
++    // Snapshot this start's generation; a cancel/stop or a newer start bumps
++    // the counter and we bail rather than open the mic against user intent.
++    const gen = ++startGenRef.current
+     let access = 'unknown'
+     try {
+       access = await runtime.checkMediaAccess('microphone')
++      if (gen !== startGenRef.current) {
++        return // superseded during the permission check
++      }
+       log.debug('checkMediaAccess', { access })
+       if (access === 'denied') {
+         onAccessDenied()
+@@ -143,6 +231,9 @@ export const AudioRecorder = ({
+       if (access === 'not-determined') {
+         // try to ask for access
+         const accessAllowed = await runtime.askForMediaAccess('microphone')
++        if (gen !== startGenRef.current) {
++          return // superseded while the permission prompt was open
++        }
+         if (accessAllowed === false) {
+           onAccessDenied()
+           return
+@@ -154,16 +245,39 @@ export const AudioRecorder = ({
+       return
+     }
+ 
+-    if (!recorder.current) {
+-      recorder.current = new MicRecorder(pushVolume, {
+-        bitRate: 32,
+-      })
++    if (gen !== startGenRef.current) {
++      return // superseded after the awaits, before touching the mic
+     }
++    // Rebuild per recording so the current originalAudio setting takes effect
++    // (getUserMedia is called fresh in start(), so the choice applies here).
++    // Gated on `experimental` so OFF mode always requests default constraints
++    // (audio: true) — byte-identical to today regardless of the stored setting.
++    const mic = new MicRecorder(pushVolume, {
++      bitRate: 32,
++      originalAudio: experimental && originalAudio,
++    })
++    recorder.current = mic
++    setPaused(false)
++    setOriginalHonored(null)
+     historyRef.current.fill(0) // don't carry the previous session's tail
+     setRecording(true)
+-    recorder.current
+-      ?.start()
++    mic
++      .start()
+       .then(() => {
++        if (gen !== startGenRef.current) {
++          // Cancelled/stopped while getUserMedia was resolving: close the
++          // freshly opened stream instead of leaving the mic live.
++          mic.stop()
++          return
++        }
++        // Advisory constraints are honored only if the mic/browser agrees —
++        // read the truth back and reflect it in the pill's tooltip.
++        if (experimental && originalAudio) {
++          const applied = recorder.current?.getAppliedSettings()
++          setOriginalHonored(
++            applied ? originalAudioHonored(applied as any) : null
++          )
++        }
+         window.setTimeout(() => {
+           if (!recorder.current?.audioSignalDetected && recording) {
+             onError(new AudioRecorderError('No input', AudioErrorType.NO_INPUT))
+@@ -176,95 +290,361 @@ export const AudioRecorder = ({
+         setRecording(false)
+       })
+   }
++
+   const onRecordingStop = () => {
+-    setRecording(false)
++    startGenRef.current++ // invalidate any in-flight start
+     setTimeout(() => focusMessageInput())
+ 
+-    recorder.current
+-      ?.stop()
+-      .getMp3()
++    const mp3 = recorder.current?.stop().getMp3()
++    if (mp3 == null) {
++      // No recorder (e.g. released before permission resolved): nothing to save.
++      setRecording(false)
++      return
++    }
++    mp3
+       .then(([buffer, _blob]) => {
+-        saveVoiceAsDraft(new Blob(buffer as any, { type: 'audio/mp3' }))
++        const blob = new Blob(buffer as any, { type: 'audio/mp3' })
++        if (experimental) {
++          // Don't draft yet — show the preview row (keep `recording` true so the
++          // composer bar stays ours). Send/discard from there.
++          const url = URL.createObjectURL(blob)
++          if (previewUrlRef.current != null) {
++            URL.revokeObjectURL(previewUrlRef.current)
++          }
++          previewUrlRef.current = url
++          previewBlobRef.current = blob
++          setHolding(false)
++          setPaused(false)
++          setPreviewUrl(url)
++        } else {
++          setRecording(false)
++          saveVoiceAsDraft(blob)
++        }
+       })
+       .catch((err: any) => {
+         onError(new AudioRecorderError(err.message))
++        setRecording(false)
+       })
+   }
+ 
+   const onRecordingCancel = useCallback(() => {
++    startGenRef.current++ // invalidate any in-flight start
+     setRecording(false)
++    setHolding(false)
+     recorder.current?.stop()
+   }, [setRecording])
+ 
++  const togglePause = () => {
++    const r = recorder.current
++    if (r == null) {
++      return
++    }
++    if (paused) {
++      r.resume()
++      setPaused(false)
++    } else {
++      r.pause()
++      setPaused(true)
++    }
++  }
++
++  const toggleOriginalAudio = () => {
++    SettingsStoreInstance.effect.setDesktopSetting(
++      'voiceRecordingOriginalAudio',
++      !originalAudio
++    )
++  }
++
++  const onPreviewSend = () => {
++    const blob = previewBlobRef.current
++    cleanupPreview()
++    setRecording(false)
++    setTimeout(() => focusMessageInput())
++    if (blob != null) {
++      saveVoiceAsDraft(blob)
++    }
++  }
++  const onPreviewRerecord = () => {
++    cleanupPreview()
++    // keep `recording` true; start a fresh recording immediately
++    onRecordingStart()
++  }
++
++  // --- press-and-hold gesture (experimental) --------------------------------
++  // Window-level listeners (not setPointerCapture) so tracking survives the
++  // mic button unmounting when the recording row replaces it.
++  // ponytail: window listeners instead of setPointerCapture for that reason;
++  // upgrade path is a stable button element if we ever want native capture.
++  const onMicPointerDown = (e: React.PointerEvent) => {
++    if (!experimental || e.button !== 0) {
++      return
++    }
++    const startX = e.clientX
++    const startY = e.clientY
++    const startT = Date.now()
++    let active = true
++
++    setHolding(true)
++    setSlideDx(0)
++    setCancelArmed(false)
++
++    // Suppress the OS long-press context menu for the WHOLE gesture: the mic
++    // button unmounts ~100ms into a hold (its own onContextMenu goes with it),
++    // but the ~500ms touch long-press would then pop a menu over the recording
++    // row. A window-level listener covers that gap until the gesture ends.
++    const suppressContextMenu = (ev: Event) => ev.preventDefault()
++    const cleanup = () => {
++      window.removeEventListener('pointermove', move)
++      window.removeEventListener('pointerup', up)
++      window.removeEventListener('pointercancel', up)
++      window.removeEventListener('contextmenu', suppressContextMenu)
++      gestureCleanupRef.current = null
++    }
++    gestureCleanupRef.current = cleanup
++    const move = (ev: PointerEvent) => {
++      const dx = ev.clientX - startX
++      const dy = ev.clientY - startY
++      setSlideDx(Math.min(dx, 0))
++      setCancelArmed(dx <= CANCEL_DX)
++      if (dy <= LOCK_DY) {
++        // Lock live: hands-free. Stop tracking and drop to the tap-to-stop row.
++        active = false
++        cleanup()
++        setHolding(false)
++        setSlideDx(0)
++        setCancelArmed(false)
++      }
++    }
++    const up = (ev: PointerEvent) => {
++      cleanup()
++      if (!active) {
++        return
++      }
++      active = false
++      const g = classifyGesture(
++        ev.clientX - startX,
++        ev.clientY - startY,
++        Date.now() - startT
++      )
++      setHolding(false)
++      setSlideDx(0)
++      setCancelArmed(false)
++      if (g === 'cancel') {
++        onRecordingCancel()
++      } else if (g === 'hold-release') {
++        onRecordingStop()
++      }
++      // 'tap' / 'lock': recording continues (latched); tap the row's stop
++      // button to finish into preview.
++    }
++    window.addEventListener('pointermove', move)
++    window.addEventListener('pointerup', up)
++    window.addEventListener('pointercancel', up)
++    window.addEventListener('contextmenu', suppressContextMenu)
++
++    onRecordingStart()
++  }
++
+   useEffect(() => {
+     return () => {
++      gestureCleanupRef.current?.() // drop any mid-gesture window listeners
+       onRecordingCancel()
++      cleanupPreview()
+     }
+-  }, [onRecordingCancel])
++  }, [onRecordingCancel, cleanupPreview])
+ 
+   useEffect(() => {
+     if (!recording) {
+       // make sure recorder is stopped when still running
+       recorder.current?.stop()
++      // and drop any pending preview (e.g. chat switched while previewing).
++      // Syncing an external `recording=false` (owned by the composer) into our
++      // preview state is exactly what an effect is for, hence the disable.
++      // eslint-disable-next-line react-hooks/set-state-in-effect
++      cleanupPreview()
+     }
+-  }, [recording])
++  }, [recording, cleanupPreview])
+ 
+-  if (!recording) {
+-    return (
+-      <button
+-        type='button'
+-        aria-label={tx('voice_message')}
+-        className={styles.microphoneButton}
+-        onClick={() => onRecordingStart()}
+-      >
+-        <span />
+-      </button>
+-    )
+-  } else {
++  // Preview playback is mutually exclusive with the shared voice-message
++  // singleton: whichever starts pauses the other (pause, not stop, so a
++  // mini-player keeps its position). ponytail: the preview deliberately does
++  // NOT register as a mutex src — these two listeners are enough for "don't
++  // play both at once"; full src wiring (seek/rate mirroring) is the upgrade
++  // path if the preview ever needs to drive the singleton.
++  useEffect(() => {
++    const preview = previewAudioRef.current
++    const singleton = mutexCtx.audioElement
++    if (previewUrl == null || preview == null) {
++      return
++    }
++    const onPreviewPlay = () => {
++      if (!singleton.paused) {
++        singleton.pause()
++      }
++    }
++    const onSingletonPlay = () => {
++      if (!preview.paused) {
++        preview.pause()
++      }
++    }
++    preview.addEventListener('play', onPreviewPlay)
++    singleton.addEventListener('play', onSingletonPlay)
++    return () => {
++      preview.removeEventListener('play', onPreviewPlay)
++      singleton.removeEventListener('play', onSingletonPlay)
++    }
++  }, [previewUrl, mutexCtx.audioElement])
++
++  // --- original-audio pill (shared between recording rows) ------------------
++  const originalPill = experimental && (
++    <button
++      type='button'
++      className={styles.originalAudioPill}
++      aria-pressed={originalAudio}
++      title={
++        tx('original_audio_explain') +
++        (originalAudio && originalHonored === false
++          ? '\n\n' + tx('original_audio_not_supported')
++          : '')
++      }
++      onClick={toggleOriginalAudio}
++    >
++      {originalAudio ? tx('original_audio') : tx('voice_quality')}
++      {originalAudio && originalHonored === false ? ' ⚠️' : ''}
++    </button>
++  )
++
++  // --- preview row ----------------------------------------------------------
++  if (previewUrl != null) {
+     return (
+       <div className={styles.audioRecorder}>
++        {/* Not muted and no `controls`: invisible, but produces the sound the
++            CustomAudioControls drive. Object-URL peaks work via fetch(); its
++            positionStore writes are no-oped (blob: guard). */}
++        <audio ref={previewAudioRef} src={previewUrl} preload='metadata' />
++        <div className={styles.previewControls}>
++          <CustomAudioControls
++            audioRef={previewAudioRef}
++            src={previewUrl}
++            compact
++          />
++        </div>
+         <button
+           type='button'
+-          className={styles.microphoneButton}
+-          onClick={() => onRecordingStop()}
+-          aria-label={tx('stop_recording')}
++          className={styles.cancel}
++          onClick={onPreviewRerecord}
++          title={tx('record_again')}
+         >
+-          <span />
++          {tx('record_again')}
+         </button>
+-        <Timer />
+-        {liveWaveform ? (
+-          <div
+-            role='meter'
+-            aria-valuemin={0}
+-            aria-valuemax={1}
+-            aria-valuenow={Math.min(volume * 2, 1)}
+-            className={styles.liveWaveformContainer}
+-          >
+-            <canvas
+-              ref={canvasRef}
+-              className={styles.liveWaveform}
+-              aria-hidden='true'
+-            />
+-          </div>
+-        ) : (
+-          <VolumeMeter volume={volume} />
+-        )}
+         <button
+           type='button'
+           className={styles.cancel}
+-          onClick={() => onRecordingCancel()}
++          onClick={() => {
++            cleanupPreview()
++            setRecording(false)
++          }}
+         >
+-          {tx('cancel')}
++          {tx('delete')}
+         </button>
+         <button
+           type='button'
+           className={styles.stopRecording}
+-          onClick={() => onRecordingStop()}
+-          aria-description={tx('stop_recording')}
++          onClick={onPreviewSend}
++          aria-label={tx('menu_send')}
++          // The message input is unmounted while previewing, so focusing it
++          // after stop is a no-op; land focus on Send (the default action).
++          autoFocus
+         >
+-          {tx('ok')}
++          {tx('menu_send')}
+         </button>
+       </div>
+     )
+   }
++
++  if (!recording) {
++    return (
++      <button
++        type='button'
++        aria-label={tx('voice_message')}
++        className={styles.microphoneButton}
++        onClick={experimental ? undefined : () => onRecordingStart()}
++        onPointerDown={experimental ? onMicPointerDown : undefined}
++        // Suppress the long-press context menu so a touch hold records instead
++        // of popping a menu (no useful context action on the mic button).
++        onContextMenu={experimental ? e => e.preventDefault() : undefined}
++      >
++        <span />
++      </button>
++    )
++  }
++
++  // recording (possibly holding = mid-gesture, or latched = tap-to-stop)
++  return (
++    <div className={styles.audioRecorder}>
++      {holding && experimental && (
++        <div className={styles.holdHints} aria-hidden='true'>
++          <div className={styles.lockHint}>🔒 {tx('slide_up_to_lock')}</div>
++          <div
++            className={styles.cancelHint}
++            style={{ transform: `translateX(${slideDx}px)` }}
++            data-armed={cancelArmed}
++          >
++            ‹ {tx('chat_record_slide_to_cancel')}
++          </div>
++        </div>
++      )}
++      {experimental && (
++        <IconButton
++          className={styles.pauseButton}
++          icon={paused ? 'play' : 'pause'}
++          coloring='currentColor'
++          aria-label={paused ? tx('resume_recording') : tx('pause_recording')}
++          onClick={togglePause}
++        />
++      )}
++      <button
++        type='button'
++        className={styles.microphoneButton}
++        onClick={() => onRecordingStop()}
++        aria-label={tx('stop_recording')}
++      >
++        <span />
++      </button>
++      <Timer paused={experimental && paused} />
++      {liveWaveform ? (
++        <div
++          role='meter'
++          aria-valuemin={0}
++          aria-valuemax={1}
++          aria-valuenow={Math.min(volume * 2, 1)}
++          className={styles.liveWaveformContainer}
++        >
++          <canvas
++            ref={canvasRef}
++            className={styles.liveWaveform}
++            aria-hidden='true'
++          />
++        </div>
++      ) : (
++        <VolumeMeter volume={volume} />
++      )}
++      {originalPill}
++      <button
++        type='button'
++        className={styles.cancel}
++        onClick={() => onRecordingCancel()}
++      >
++        {tx('cancel')}
++      </button>
++      <button
++        type='button'
++        className={styles.stopRecording}
++        onClick={() => onRecordingStop()}
++        aria-description={tx('stop_recording')}
++      >
++        {tx('ok')}
++      </button>
++    </div>
++  )
+ }
+diff --git a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
+index 2e3e0799a..afd6f5602 100644
+--- a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
++++ b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
+@@ -11,6 +11,11 @@ interface MicRecorderConfig {
+   startRecordingAt?: number
+   deviceId?: string | null
+   sampleRate?: number
++  /**
++   * Request unprocessed audio (noiseSuppression / echoCancellation /
++   * autoGainControl all off). Advisory — read back via getAppliedSettings().
++   */
++  originalAudio?: boolean
+ }
+ 
+ /**
+@@ -20,6 +25,12 @@ interface MicRecorderConfig {
+  */
+ class MicRecorder {
+   public audioSignalDetected: boolean = false
++  // Gate checked by onaudioprocess: while paused, frames are neither encoded
++  // nor volume-metered, so the resulting MP3 is one contiguous stream (same
++  // encoder, no re-init) and the waveform/meter freeze.
++  // ponytail: the mic stream stays live while paused, so the OS/tab "recording"
++  // indicator stays on. Upgrade path if that matters: toggle track.enabled.
++  public paused: boolean = false
+   private onVolumeChange: (volume: number) => void
+   private config: MicRecorderConfig
+   private activeStream: MediaStream | null
+@@ -71,7 +82,10 @@ class MicRecorder {
+ 
+     // Add all buffers from LAME into an array.
+     this.processor.onaudioprocess = (event: AudioProcessingEvent) => {
+-      if (this.timerToStart) {
++      // The contiguous-MP3 invariant (paused frames are skipped, resume feeds
++      // the SAME encoder → one stream) is exercised by the screenshot/e2e
++      // harness, not the unit suite — it needs a live WebAudio pipeline.
++      if (this.timerToStart || this.paused) {
+         return
+       }
+ 
+@@ -122,9 +136,18 @@ class MicRecorder {
+     this.config.sampleRate = this.context.sampleRate
+     this.lameEncoder = new Encoder(this.config)
+ 
+-    const audio = this.config.deviceId
+-      ? { deviceId: { exact: this.config.deviceId } }
+-      : true
++    const constraints: MediaTrackConstraints = {}
++    if (this.config.deviceId) {
++      constraints.deviceId = { exact: this.config.deviceId }
++    }
++    if (this.config.originalAudio) {
++      // Advisory: browsers/mics may ignore these. Caller reads back the truth
++      // via getAppliedSettings() and reflects it in the UI.
++      constraints.noiseSuppression = false
++      constraints.echoCancellation = false
++      constraints.autoGainControl = false
++    }
++    const audio = Object.keys(constraints).length > 0 ? constraints : true
+ 
+     return new Promise((resolve, reject) => {
+       navigator.mediaDevices
+@@ -166,6 +189,25 @@ class MicRecorder {
+     })
+   }
+ 
++  /** Stop feeding frames to the encoder (mic stays live). */
++  pause(): void {
++    this.paused = true
++  }
++
++  /** Resume feeding frames into the SAME encoder → one contiguous MP3. */
++  resume(): void {
++    this.paused = false
++  }
++
++  /**
++   * Actual audio track settings after the stream opened, or null if not
++   * recording. Used to confirm advisory constraints (e.g. originalAudio).
++   */
++  getAppliedSettings(): MediaTrackSettings | null {
++    const track = this.activeStream?.getAudioTracks()[0]
++    return track ? track.getSettings() : null
++  }
++
+   /**
+    * Return the volume of the microphone
+    * @return {number}
+diff --git a/packages/frontend/src/components/AudioRecorder/recorderLogic.ts b/packages/frontend/src/components/AudioRecorder/recorderLogic.ts
+new file mode 100644
+index 000000000..c2abd7403
+--- /dev/null
++++ b/packages/frontend/src/components/AudioRecorder/recorderLogic.ts
+@@ -0,0 +1,93 @@
++// Pure, browser-free logic for the experimental recorder polish (phase B):
++// press-and-hold gesture classification and a paused-time-excluding timer.
++// Kept import-free so it runs under mocha/node and is unit-testable.
++
++// --- press-and-hold gesture -------------------------------------------------
++
++// ponytail: fixed thresholds (device-pixel deltas), not calibrated per screen
++// DPI. Ceiling: on a very high-DPI touch panel 80px is a shorter physical
++// slide; upgrade path = scale by a measured px-per-mm if it feels off. Up is
++// negative dy, left is negative dx (pointer coordinate convention).
++export const CANCEL_DX = -80 // slid this far left → discard
++export const LOCK_DY = -60 // slid this far up → hands-free lock
++export const TAP_MAX_MS = 300 // released this fast with no slide → tap-to-toggle
++
++export type Gesture = 'cancel' | 'lock' | 'hold-release' | 'tap'
++
++/**
++ * Classify a completed (or in-progress) press-and-hold on the mic button.
++ * dx/dy are pointer deltas from the press origin (up = negative dy, left =
++ * negative dx); elapsedMs is how long the pointer was down.
++ *
++ * Cancel and lock win over the time test so a fast flick still cancels/locks.
++ * Cancel is checked before lock so a diagonal down-left flick discards rather
++ * than latching a recording the user was trying to throw away.
++ */
++export function classifyGesture(
++  dx: number,
++  dy: number,
++  elapsedMs: number
++): Gesture {
++  if (dx <= CANCEL_DX) {
++    return 'cancel'
++  }
++  if (dy <= LOCK_DY) {
++    return 'lock'
++  }
++  if (elapsedMs < TAP_MAX_MS) {
++    return 'tap'
++  }
++  return 'hold-release'
++}
++
++// --- paused-time-excluding timer -------------------------------------------
++
++// Wall-clock accumulator that only counts time while running. Pausing banks the
++// running segment; the display reads total banked + the current open segment.
++// More correct than skipping setInterval ticks (no ±1s slop at each pause
++// boundary), and trivially testable with an injected clock.
++export type TimerState = { accumulatedMs: number; runningSince: number | null }
++
++export function timerStart(now: number): TimerState {
++  return { accumulatedMs: 0, runningSince: now }
++}
++
++export function timerPause(s: TimerState, now: number): TimerState {
++  if (s.runningSince == null) {
++    return s // already paused → no-op (idempotent)
++  }
++  return {
++    accumulatedMs: s.accumulatedMs + (now - s.runningSince),
++    runningSince: null,
++  }
++}
++
++export function timerResume(s: TimerState, now: number): TimerState {
++  if (s.runningSince != null) {
++    return s // already running → no-op (idempotent)
++  }
++  return { accumulatedMs: s.accumulatedMs, runningSince: now }
++}
++
++export function timerElapsedMs(s: TimerState, now: number): number {
++  return s.accumulatedMs + (s.runningSince != null ? now - s.runningSince : 0)
++}
++
++// --- advisory getUserMedia constraints -------------------------------------
++
++/**
++ * Whether an "original audio" request was actually honored, read back from
++ * `track.getSettings()`. getSettings may omit these keys entirely (the mic /
++ * browser doesn't expose them) → null = "can't tell / unsupported". When
++ * present, honored only if every reported key is false (no processing applied).
++ */
++export function originalAudioHonored(
++  settings: Record<string, unknown>
++): boolean | null {
++  const keys = ['noiseSuppression', 'echoCancellation', 'autoGainControl']
++  const present = keys.filter(k => k in settings)
++  if (present.length === 0) {
++    return null
++  }
++  return present.every(k => settings[k] === false)
++}
+diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+index 25dbe8b2c..cdacd5693 100644
+--- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
++++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+@@ -168,3 +168,83 @@
+   @include meterFootprint;
+   color: var(--colorPrimary);
+ }
++
++// --- phase B: pause/resume, gestures, original-audio, preview -------------
++
++// Pause/resume toggle sitting before the pulsing mic in the recording row.
++.pauseButton {
++  align-self: center;
++  margin-inline-end: 4px;
++  color: var(--composerPlaceholderText);
++  &:hover {
++    color: var(--buttonSecondaryText);
++  }
++}
++
++// Small pill toggling voice-quality vs unprocessed "original audio".
++.originalAudioPill {
++  align-self: center;
++  flex-shrink: 0;
++  height: 24px;
++  padding: 0 10px;
++  margin-inline-start: 8px;
++  border-radius: 12px;
++  border: 1px solid var(--separatorColor, #ccc);
++  background-color: var(--buttonSecondaryBackground);
++  color: var(--buttonSecondaryText);
++  font-size: 12px;
++  white-space: nowrap;
++  cursor: pointer;
++  &[aria-pressed='true'] {
++    background-color: var(--buttonPrimaryBackground);
++    color: #fff;
++  }
++  &:hover {
++    background-color: var(--buttonSecondaryHover);
++  }
++}
++
++// Lock / slide-to-cancel affordances shown while press-and-holding the mic.
++// Anchored to `.lower-bar` (position: relative), like the completion menu.
++.holdHints {
++  position: absolute;
++  inset-inline-start: 8px;
++  bottom: calc(100% + 6px);
++  display: flex;
++  flex-direction: column;
++  align-items: flex-start;
++  gap: 6px;
++  pointer-events: none;
++  z-index: 10;
++}
++.lockHint {
++  padding: 4px 10px;
++  border-radius: 12px;
++  background-color: var(--bgPrimary);
++  color: var(--textPrimary);
++  border: 1px solid var(--separatorColor, #ccc);
++  font-size: 13px;
++}
++.cancelHint {
++  padding: 4px 10px;
++  border-radius: 12px;
++  background-color: var(--bgPrimary);
++  color: var(--textSecondary, var(--textPrimary));
++  border: 1px solid var(--separatorColor, #ccc);
++  font-size: 13px;
++  // `data-armed` = pointer slid past the cancel threshold: highlight in red.
++  &[data-armed='true'] {
++    color: #fff;
++    background-color: #d70b0b;
++    border-color: #d70b0b;
++  }
++}
++
++// Preview-before-send row: the shared custom controls plus send/re-record/
++// discard. Let the controls take the free width and shrink on narrow columns.
++.previewControls {
++  flex: 1;
++  min-width: 0;
++  align-self: center;
++  padding-inline-end: 10px;
++}
+diff --git a/packages/frontend/src/tests/audioPlayer.test.ts b/packages/frontend/src/tests/audioPlayer.test.ts
+index 7f85e83a6..eaf5f4d0c 100644
+--- a/packages/frontend/src/tests/audioPlayer.test.ts
++++ b/packages/frontend/src/tests/audioPlayer.test.ts
+@@ -79,6 +79,15 @@ describe('AudioPlayer / positionStore', () => {
+     expect(s.getPosition('a')).to.equal(null)
+   })
+ 
++  it('never persists positions for ephemeral blob: URLs (recorder preview)', () => {
++    const s = make()
++    s.setPosition('blob:http://x/abc', 42)
++    expect(s.getPosition('blob:http://x/abc')).to.equal(null)
++    // real (transformed) message srcs are unaffected
++    s.setPosition('/blobs/db/a.mp3', 7)
++    expect(s.getPosition('/blobs/db/a.mp3')).to.equal(7)
++  })
++
+   it('survives valid-but-wrong-typed JSON (null / number / array)', () => {
+     // JSON.parse succeeds for these, but they aren't the object shape; read()
+     // must coerce to {} so no accessor throws (and the store self-heals).
+diff --git a/packages/frontend/src/tests/audioRecorder.test.ts b/packages/frontend/src/tests/audioRecorder.test.ts
+new file mode 100644
+index 000000000..0e3368103
+--- /dev/null
++++ b/packages/frontend/src/tests/audioRecorder.test.ts
+@@ -0,0 +1,98 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import {
++  CANCEL_DX,
++  LOCK_DY,
++  TAP_MAX_MS,
++  classifyGesture,
++  originalAudioHonored,
++  timerElapsedMs,
++  timerPause,
++  timerResume,
++  timerStart,
++} from '../components/AudioRecorder/recorderLogic.js'
++
++describe('AudioRecorder / classifyGesture', () => {
++  it('a quick press with no slide is a tap', () => {
++    expect(classifyGesture(0, 0, 100)).to.equal('tap')
++    expect(classifyGesture(-5, -5, TAP_MAX_MS - 1)).to.equal('tap')
++  })
++
++  it('a held press with no slide is a hold-release', () => {
++    expect(classifyGesture(0, 0, TAP_MAX_MS)).to.equal('hold-release')
++    expect(classifyGesture(-10, -10, 1000)).to.equal('hold-release')
++  })
++
++  it('sliding left past the cancel threshold cancels', () => {
++    expect(classifyGesture(CANCEL_DX, 0, 1000)).to.equal('cancel')
++    expect(classifyGesture(CANCEL_DX - 20, 0, 50)).to.equal('cancel')
++  })
++
++  it('sliding up past the lock threshold locks', () => {
++    expect(classifyGesture(0, LOCK_DY, 1000)).to.equal('lock')
++    expect(classifyGesture(-10, LOCK_DY - 20, 50)).to.equal('lock')
++  })
++
++  it('just short of a threshold does NOT trigger it', () => {
++    expect(classifyGesture(CANCEL_DX + 1, 0, 1000)).to.equal('hold-release')
++    expect(classifyGesture(0, LOCK_DY + 1, 1000)).to.equal('hold-release')
++  })
++
++  it('cancel wins over lock on a diagonal down-left flick', () => {
++    // slid far left AND far up: destructive intent (cancel) takes precedence.
++    expect(classifyGesture(CANCEL_DX - 10, LOCK_DY - 10, 50)).to.equal('cancel')
++  })
++})
++
++describe('AudioRecorder / paused-time-excluding timer', () => {
++  it('counts only active wall-clock time across a pause', () => {
++    let s = timerStart(0)
++    expect(timerElapsedMs(s, 1000)).to.equal(1000)
++    s = timerPause(s, 2000) // banked 2000ms active
++    // time passes while paused — must not count
++    expect(timerElapsedMs(s, 5000)).to.equal(2000)
++    s = timerResume(s, 5000)
++    expect(timerElapsedMs(s, 6000)).to.equal(3000) // 2000 + 1000 more active
++  })
++
++  it('pause/resume are idempotent (no double-banking, no reset)', () => {
++    let s = timerStart(0)
++    s = timerPause(s, 1000)
++    s = timerPause(s, 9000) // second pause is a no-op
++    expect(timerElapsedMs(s, 9000)).to.equal(1000)
++    s = timerResume(s, 9000)
++    s = timerResume(s, 99999) // second resume is a no-op
++    expect(timerElapsedMs(s, 10000)).to.equal(2000)
++  })
++})
++
++describe('AudioRecorder / originalAudioHonored', () => {
++  it('null when the mic/browser reports none of the keys', () => {
++    expect(originalAudioHonored({ sampleRate: 48000 })).to.equal(null)
++    expect(originalAudioHonored({})).to.equal(null)
++  })
++
++  it('true only when every reported processing key is off', () => {
++    expect(
++      originalAudioHonored({
++        noiseSuppression: false,
++        echoCancellation: false,
++        autoGainControl: false,
++      })
++    ).to.equal(true)
++    // reported but a subset present, all off → still honored
++    expect(originalAudioHonored({ noiseSuppression: false })).to.equal(true)
++  })
++
++  it('false when any reported key is still on (request ignored)', () => {
++    expect(
++      originalAudioHonored({
++        noiseSuppression: true,
++        echoCancellation: false,
++        autoGainControl: false,
++      })
++    ).to.equal(false)
++    expect(originalAudioHonored({ noiseSuppression: true })).to.equal(false)
++  })
++})
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index 793247de6..e0d8f999c 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -51,6 +51,8 @@ export interface DesktopSettingsType {
+   experimentalAudioPlayerControls: boolean
+   /** webapp: expose voice-message sender/chat/avatar in the OS media session (lock screen). Off by default (privacy: suppressed metadata otherwise). */
+   voiceMessageMediaSessionDetails: boolean
++  /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Toggled from the recorder UI, applies to the next recording. */
++  voiceRecordingOriginalAudio: boolean
+   enterKeySends: boolean
+   locale: string | null
+   notifications: boolean
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index 762028a40..290ca4ee9 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -20,6 +20,7 @@ export function getDefaultState(): DesktopSettingsType {
+     experimentalUnreadReadTime: false,
+     experimentalAudioPlayerControls: false,
+     voiceMessageMediaSessionDetails: false,
++    voiceRecordingOriginalAudio: false,
+     chatViewBgImg: undefined,
+     lastChats: {},
+     zoomFactor: undefined,

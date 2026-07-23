@@ -24,6 +24,28 @@
   composer to pick an emoji. Turn it off in Settings → Experimental features
   if it gets in your way.
 
+- **Experimental: custom voice-message player** — voice and audio messages
+  get proper controls: play/pause, a waveform you can click to seek (with a
+  plain seek bar as fallback), elapsed time, and a playback-speed pill
+  (1×/1.5×/2×, applies to all voice messages). Half-listened messages resume
+  where you left off. The mini-player that keeps playing while you switch
+  chats gets the same controls plus the sender's name — click it to jump back
+  to the message — and your lock screen / headset buttons control playback
+  (without showing who sent the message, unless you opt in). Recording is
+  polished too: pause and resume while recording, listen to your recording
+  before sending it (send, re-record or discard), hold the mic and slide up
+  to record hands-free or slide left to cancel, and an "original audio"
+  option that skips noise suppression for music or ambience. If you have
+  several microphones you can pick one right in the recorder (with a live
+  level meter), even mid-recording — and if no sound is coming in, an inline
+  hint says so instead of cancelling your recording. Off by default;
+  turn it on in Settings → Advanced → Experimental features.
+
+- **Voice-message position stays in sync**: switching profiles or chats while
+  a voice message plays no longer resets the message's displayed position to
+  0:00 — it picks up where the audio actually is. The recorder also fits
+  phone-sized windows now instead of pushing its buttons off-screen.
+
 - **Links lose their tracking**: known tracking parameters (`utm_*`, YouTube
   `si=`, click ids, Amazon affiliate refs, …) are now removed when you open a
   link and when you paste one into the composer — pasting shows a quiet
