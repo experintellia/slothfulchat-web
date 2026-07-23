@@ -148,6 +148,8 @@ function storageSection(): HTMLElement {
       set(2, mib(est.quota))
     } catch {
       set(0, 'unavailable')
+      set(1, '—')
+      set(2, '—')
     }
   }
 
