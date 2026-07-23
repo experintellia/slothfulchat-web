@@ -29,8 +29,21 @@ export function initDiagnostics(): void {
   ;(window as any).__slothfulDiagnostics = { open, close }
 }
 
+/** Injects the one media query the inline-styled overlay can't express: full
+ * screen on phones (inline styles can't hold an @media rule). Idempotent. */
+function ensureStyles(): void {
+  if (document.getElementById('sc-diag-style')) return
+  const st = document.createElement('style')
+  st.id = 'sc-diag-style'
+  st.textContent =
+    '@media (max-width:640px){.sc-diag-panel{width:100vw!important;height:100dvh!important;' +
+    'max-height:100dvh!important;border-radius:0!important;padding:16px!important;}}'
+  document.head.append(st)
+}
+
 export function open(): void {
   if (root) return
+  ensureStyles()
   root = buildOverlay()
   document.body.append(root)
   // native <dialog> + showModal: the Log dialog we're opened from is a
@@ -72,13 +85,16 @@ function buildOverlay(): HTMLDialogElement {
     'div',
     [
       'background:#141a18;color:#eef2f0;',
-      'width:min(680px,94vw);max-height:88vh;overflow:auto;',
+      'width:min(680px,94vw);max-height:88vh;overflow:auto;-webkit-overflow-scrolling:touch;',
       'border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,0.5);',
       'padding:20px 22px;box-sizing:border-box;',
     ].join('')
   )
+  panel.className = 'sc-diag-panel' // hook for the mobile full-screen media query
 
-  const head = el('div', 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;')
+  // sticky so the title + close stay reachable while the body scrolls (esp.
+  // full-screen on mobile); background matches the panel to hide scrolled rows
+  const head = el('div', 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;position:sticky;top:0;background:#141a18;padding:2px 0 6px;')
   head.append(el('h2', 'margin:0;font-size:18px;', 'Diagnostics'))
   const x = el('button', 'background:none;border:none;color:#eef2f0;font-size:22px;cursor:pointer;line-height:1;', '×')
   x.setAttribute('aria-label', 'Close')
@@ -86,12 +102,68 @@ function buildOverlay(): HTMLDialogElement {
   head.append(x)
   panel.append(head)
 
+  panel.append(storageSection())
   panel.append(perfSection())
   if (isConfigured()) panel.append(usageSection())
 
   backdrop.append(panel)
   dlg.append(backdrop)
   return dlg
+}
+
+// --- storage section ----------------------------------------------------
+
+function storageSection(): HTMLElement {
+  const s = section(
+    'Storage',
+    'Your accounts, messages and files live in this browser (OPFS). "Persistent" means the browser will not evict them to reclaim disk space.'
+  )
+  const table = kvTable('Origin storage', [
+    ['Persistent (safe from eviction)', '…'],
+    ['Used', '…'],
+    ['Quota', '…'],
+  ])
+  s.append(table)
+
+  const btn = actionButton('Make storage persistent')
+  btn.style.display = 'none'
+  s.append(btn)
+
+  // StorageManager APIs are async, so fill the cells after the panel is built.
+  const valueCell = (row: number) =>
+    table.querySelectorAll('tr')[row]?.querySelectorAll('td')[1] ?? null
+  const set = (row: number, text: string) => {
+    const cell = valueCell(row)
+    if (cell) cell.textContent = text
+  }
+  const mib = (n?: number) => (n === undefined ? '—' : `${(n / 1048576).toFixed(1)} MiB`)
+
+  const refresh = async () => {
+    try {
+      const persisted = (await navigator.storage?.persisted?.()) ?? false
+      set(0, persisted ? 'yes' : 'no — evictable under disk pressure')
+      btn.style.display = persisted ? 'none' : ''
+      const est = (await navigator.storage?.estimate?.()) ?? {}
+      set(1, mib(est.usage))
+      set(2, mib(est.quota))
+    } catch {
+      set(0, 'unavailable')
+    }
+  }
+
+  btn.addEventListener('click', async () => {
+    try {
+      const granted = await navigator.storage?.persist?.()
+      btn.textContent = granted ? 'Persistent ✓' : 'Browser declined'
+      await refresh()
+      if (granted) setTimeout(() => btn.remove(), 1500)
+    } catch {
+      btn.textContent = 'Request failed'
+    }
+  })
+
+  void refresh()
+  return s
 }
 
 // --- performance section ------------------------------------------------
