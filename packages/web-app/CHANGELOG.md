@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Experimental: custom voice-message player** — voice and audio messages
+- **Custom voice-message player** — voice and audio messages
   get proper controls: play/pause, a waveform you can click to seek (with a
   plain seek bar as fallback), elapsed time, and a playback-speed pill
   (1×/1.5×/2×, applies to all voice messages). Half-listened messages resume
@@ -16,8 +16,11 @@
   option that skips noise suppression for music or ambience. If you have
   several microphones you can pick one right in the recorder (with a live
   level meter), even mid-recording — and if no sound is coming in, an inline
-  hint says so instead of cancelling your recording. Off by default;
-  turn it on in Settings → Advanced → Experimental features.
+  hint says so instead of cancelling your recording. On by default now —
+  turn it off in Settings → Advanced → Experimental features if it gives
+  you trouble. The setting for showing sender and chat details in the
+  system media controls has moved to Settings → Notifications, next to
+  "show notification content" (it is the same lock-screen question).
 
 - **Voice-message position stays in sync**: switching profiles or chats while
   a voice message plays no longer resets the message's displayed position to

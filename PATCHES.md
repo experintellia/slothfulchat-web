@@ -41,13 +41,14 @@ exists:
 
 ## New features
 
-- **Custom voice-message player controls (experimental)** — play/pause
+- **Custom voice-message player controls** — play/pause
   button, seek bar, elapsed/total time and a 1×/1.5×/2× speed pill (the rate
   is global, so every voice message plays at the chosen speed) replace the
   native `<audio>` controls on voice/audio messages. The existing playback
   architecture (force-muted per-bubble mirror + global singleton, one-at-a-time
   playback, auto-advance) is untouched — the custom controls only drive the
-  local element. Off by default: Settings → Advanced → Experimental features.
+  local element. On by default; opt out at Settings → Advanced →
+  Experimental features (the switch stays there).
   Phase two adds a canvas waveform (peaks computed lazily: fetch → decode →
   64-bucket max-abs in a worker served by the web-app shell, ~4s budget,
   silent fallback to the plain bar — playback never waits on it), remembered
@@ -61,12 +62,14 @@ exists:
   clickable sender line (avatar + name + chat) that jumps to the message,
   and `navigator.mediaSession` wiring (lock-screen/hardware play, pause,
   seek, next = the existing auto-advance) — lock-screen metadata is
-  privacy-suppressed by default, a second setting opts into sender details
-  (forum 5423). The final phase polishes recording: pause/resume that yields
-  one contiguous MP3 (same LAME encoder, frames simply stop flowing while
-  paused), preview-before-send in the same custom player (send / re-record /
-  discard), press-and-hold with slide-left-to-cancel and slide-up-to-lock
-  (a quick tap still toggles like before), and an "original audio" toggle
+  privacy-suppressed by default, a second setting (Settings → Notifications,
+  beside "show notification content" — same lock-screen exposure) opts into
+  sender details (forum 5423). The final phase polishes recording:
+  pause/resume that yields one contiguous MP3 (same LAME encoder, frames
+  simply stop flowing while paused), preview-before-send in the same
+  custom player (send / re-record / discard), press-and-hold with
+  slide-left-to-cancel and slide-up-to-lock (a quick tap still toggles
+  like before), and an "original audio" toggle
   (noise suppression etc. off — advisory, the UI reflects what the mic
   actually honored). A follow-up adds a microphone picker to the recording
   row (shown with multiple inputs; Jitsi-style live level on the active
@@ -79,7 +82,7 @@ exists:
   the warning, MOBILE=1 for phone-width shots). Later refinements: bubbles
   adopt the singleton's position on remount (upstream #6378), phone-width
   layout, and a two-row player (full-width waveform, time + speed below).
-  `desktop/0064` – `desktop/0071`
+  `desktop/0064` – `desktop/0073`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP

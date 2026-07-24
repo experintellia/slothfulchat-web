@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Fri, 24 Jul 2026 17:48:51 +0000
+Subject: [PATCH 73/73] web-app: custom voice player on by default;
+ media-session details setting moves to notifications
+
+The custom voice/audio player has been through four phases of polish and
+is the better experience on every surface, so flip
+experimentalAudioPlayerControls to true the same way 0061 flipped
+experimentalCompletionMenu: change the default in getDefaultState(),
+retag the shared-types doc comment, and reword the switch, which stays in
+Settings -> Experimental features for anyone who wants the native
+<audio> controls back.
+
+Like 0061 this ships no migration, and none is needed: our browser
+runtime persists only the keys a user actually touched
+(setDesktopSetting writes a single key into slothfulchat.desktopSettings
+and getDesktopSettings merges it over the defaults), so a profile that
+never met this switch has no stored entry and simply picks up the new
+default. That also keeps the key meaningful as a signal -- a stored
+false can only come from someone flipping the switch off, never from a
+persisted old default, which is what the fork's voice_player_disabled
+event counts.
+
+voiceMessageMediaSessionDetails moves out of Experimental features into
+Settings -> Notifications, right below "show notification content": it is
+the same privacy question in different clothing -- who and which chat is
+put on an OS surface that may be a lock screen -- so it belongs next to
+the setting people already reason about that way, not filed under
+experiments. The key is unchanged, so nothing to migrate. It is greyed
+out while the custom player is off (the media session only exists with
+the custom player), matching how the row above greys out when
+notifications are off.
+---
+ .../src/components/Settings/ExperimentalFeatures.tsx     | 8 +-------
+ .../frontend/src/components/Settings/Notifications.tsx   | 9 +++++++++
+ packages/shared/shared-types.d.ts                        | 4 ++--
+ packages/shared/state.ts                                 | 2 +-
+ 4 files changed, 13 insertions(+), 10 deletions(-)
+
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index 3f8ced9e1..c74636f2f 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -98,13 +98,7 @@ export function ExperimentalFeatures() {
+       <DesktopSettingsSwitch
+         settingsKey='experimentalAudioPlayerControls'
+         label='Custom voice-message player'
+-        description='Custom controls for voice and audio messages: play/pause, seek bar, elapsed time, and playback speed. Off by default (experimental).'
+-        forkAdded
+-      />
+-      <DesktopSettingsSwitch
+-        settingsKey='voiceMessageMediaSessionDetails'
+-        label='Show voice-message details in system media controls'
+-        description='Show the sender name, chat name and avatar of the playing voice message in the OS media controls. Off by default: on some systems these controls appear on the lock screen, so the details would leak there.'
++        description='Custom controls for voice and audio messages: play/pause, seek bar, elapsed time, and playback speed. On by default; turn off if playback gives you trouble.'
+         forkAdded
+       />
+       <SettingsSeparator />
+diff --git a/packages/frontend/src/components/Settings/Notifications.tsx b/packages/frontend/src/components/Settings/Notifications.tsx
+index b29ea71e1..aeb247755 100644
+--- a/packages/frontend/src/components/Settings/Notifications.tsx
++++ b/packages/frontend/src/components/Settings/Notifications.tsx
+@@ -118,6 +118,15 @@ export default function Notifications({ desktopSettings }: Props) {
+         label={tx('pref_show_notification_content')}
+         disabled={!desktopSettings['notifications']}
+       />
++      <DesktopSettingsSwitch
++        settingsKey='voiceMessageMediaSessionDetails'
++        label='Show voice-message details in system media controls'
++        description='Show the sender name, chat name and avatar of the playing voice message in the OS media controls. Off by default: like notification content, these controls can appear on the lock screen, so the details would show there.'
++        // only has an effect while the custom voice player draws the media
++        // session; same dependent-switch treatment as the row above
++        disabled={!desktopSettings['experimentalAudioPlayerControls']}
++        forkAdded
++      />
+       <DesktopSettingsSwitch
+         settingsKey='notifications'
+         label={tx('pref_notifications_explain')}
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index b2eccbc57..9bce88b69 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -47,9 +47,9 @@ export interface DesktopSettingsType {
+   experimentalCompletionMenu: boolean
+   /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
+   experimentalUnreadReadTime: boolean
+-  /** webapp: custom voice/audio message player controls (play/pause, seek, time, speed). Off by default (experimental). */
++  /** webapp: custom voice/audio message player controls (play/pause, seek, time, speed). On by default. */
+   experimentalAudioPlayerControls: boolean
+-  /** webapp: expose voice-message sender/chat/avatar in the OS media session (lock screen). Off by default (privacy: suppressed metadata otherwise). */
++  /** webapp: expose voice-message sender/chat/avatar in the OS media session (lock screen). Off by default (privacy: suppressed metadata otherwise). Shown in Settings -> Notifications, next to showNotificationContent. */
+   voiceMessageMediaSessionDetails: boolean
+   /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Toggled from the recorder UI, applies to the next recording. */
+   voiceRecordingOriginalAudio: boolean
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index e4aae2bde..667b0ee33 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -18,7 +18,7 @@ export function getDefaultState(): DesktopSettingsType {
+     stripTrackingLinks: true,
+     experimentalCompletionMenu: true,
+     experimentalUnreadReadTime: false,
+-    experimentalAudioPlayerControls: false,
++    experimentalAudioPlayerControls: true,
+     voiceMessageMediaSessionDetails: false,
+     voiceRecordingOriginalAudio: false,
+     voiceRecordingDeviceId: undefined,

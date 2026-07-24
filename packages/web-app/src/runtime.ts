@@ -93,6 +93,12 @@ function getDefaultSettings() {
     hideNewChatSuggestions: false,
     publicBotsRemoteLoadConsent: false,
     stripTrackingLinks: true,
+    experimentalAudioPlayerControls: true,
+    // 0.7.0 announced the emoji completion menu as on-by-default (desktop
+    // patch flipping shared getDefaultState), but this mirror was never
+    // updated, so the web app silently kept it off. Same drift the audio
+    // key above just avoided.
+    experimentalCompletionMenu: true,
   }
 }
 
@@ -655,6 +661,18 @@ class BrowserRuntime {
     // passed — release any held first-visit analytics if its 'welcome' hook
     // somehow didn't fire (a no-op on warm starts and once already released).
     analytics.releaseHeldEvents()
+    // Disable signal for the on-by-default custom voice player. Only an
+    // explicitly stored `false` counts: setDesktopSetting persists just the
+    // keys the user actually touched, so a legacy profile that never met this
+    // switch has no entry and falls back to the default (true) above. Sent
+    // here — after the notice — and once per visit, since ScreenController
+    // calls emitUIFullyReady exactly once.
+    void this.getDesktopSettings()
+      .then(s => {
+        if (s.experimentalAudioPlayerControls === false)
+          analytics.event('voice_player_disabled')
+      })
+      .catch(() => {})
   }
   emitUIReady(): void {
     perf.boot('ui-ready')
