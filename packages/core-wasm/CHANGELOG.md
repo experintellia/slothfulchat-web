@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.1 — 2026-07-23
+## 0.8.0 — 2026-07-24
 
 - Fixed total account loss on boot: the sahpool slot-reclaim sweep decided
   which accounts still existed from the asynchronously-mirrored account folders
