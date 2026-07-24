@@ -54,12 +54,26 @@ await cp(upstreamDist, dist, {
 // ("NotoEmoji" + "EmojiMart"), which the browser downloads twice; drop the
 // redundant one — the app stack and the picker both resolve via "EmojiMart".
 // Exact-match replace: a no-op if upstream ever changes the block.
+// (Belt-and-suspenders now: the emoji-set picker's runtime override always
+// replaces --emojifonts, so neither upstream face is normally referenced —
+// but this keeps the pre-JS first-paint fallback from pulling the CBDT font.)
 const fontsCssPath = join(dist, 'fonts/fonts.css')
 const fontsCss = await readFile(fontsCssPath, 'utf-8')
 await writeFile(fontsCssPath, fontsCss.replace(
   `@font-face {\n  font-family: "NotoEmoji";\n  src: url("noto/emoji/NotoColorEmoji.ttf") format("truetype");\n}\n`,
   ''
 ))
+
+// Emoji-set web fonts for the Appearance emoji-set picker: our Sloth* @font-face
+// families (one per set, loaded lazily per unicode-range) + the fonts they point
+// at, dropped beside upstream's fonts. main.html links emoji-fonts.css; the
+// picker's --emojifonts override (runtime.ts) selects among the families. These
+// are deliberately kept OUT of the SW precache (instance-config precacheSkip) so
+// only the set a user actually picks is ever fetched/cached.
+await cp(join(here, 'static/fonts/emoji-fonts.css'), join(dist, 'fonts/emoji-fonts.css'))
+await cp(join(here, 'static/fonts/emoji-sets'), join(dist, 'fonts/emoji-sets'), {
+  recursive: true,
+})
 
 await mkdir(join(dist, 'locales'))
 for (const file of await readdir(locales)) {

@@ -3,6 +3,12 @@
 - **Resizable chat list**: drag the divider between the chat list and the
   chat view to set your own sidebar width — it sticks across reloads on this
   device. Double-click the divider to go back to the default split.
+- **Choose your emoji style** (Settings → Appearance): pick between Standard
+  (your device’s own emoji on Apple, Google Noto Color elsewhere), Google Noto
+  Color, Google Noto black & white, Twemoji, or Full native (whatever your
+  system provides). Each option shows a live preview, and only the set you
+  actually pick is ever downloaded. This also fixes Firefox showing a broken
+  emoji font and logging a "font rejected by sanitizer" error on every load.
 
 ## 0.8.0 — 2026-07-24
 

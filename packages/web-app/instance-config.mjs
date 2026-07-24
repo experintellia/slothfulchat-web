@@ -477,6 +477,11 @@ export const precacheSkip = f =>
   // webxdc origins, not the app origin).
   f.startsWith('caddy/') ||
   f === 'webxdc-test.html' ||
+  // Emoji-set fonts are opt-in: only the set a user actually picks should ever
+  // be fetched, and it's runtime-cached on first use (blobs-sw.ts) rather than
+  // precached — so the offline shell never carries every set's font. The tiny
+  // emoji-fonts.css (just @font-face rules, no glyph data) stays precached.
+  f.startsWith('fonts/emoji-sets/') ||
   ['.nojekyll', 'sw-precache.js', 'blobs-sw.js'].includes(f)
 
 /** Content-hashes [path, bytes] entries into the sw-precache.js source.

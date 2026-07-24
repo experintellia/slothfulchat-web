@@ -1,3 +1,5 @@
+import { TRACKED_EMOJI_SETS } from './emoji-sets.mjs'
+
 /**
  * The closed catalogue of analytics events — the single source of truth for
  * what may ever be sent (see analytics.ts for the design constraints). Plain
@@ -61,6 +63,11 @@ export const EVENTS = [
     name: 'link',
     what: 'That an info link was opened (which one, not who).',
     props: 'target = imprint · github · changelog · donate',
+  },
+  {
+    name: 'emoji_set',
+    what: 'Which non-default emoji set is in use, reported once per startup (the default set is never reported).',
+    props: 'set = ' + TRACKED_EMOJI_SETS.join(' · '),
   },
   {
     name: 'chats',
