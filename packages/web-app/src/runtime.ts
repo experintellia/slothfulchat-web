@@ -28,6 +28,7 @@ import { CallsUiStore, mountCallsUi } from '@slothfulchat/calls/ui'
 import { createPlaceholderVideoTrack } from './call-media'
 import * as perf from './perf'
 import * as analytics from './analytics'
+import { EMOJI_SETS, DEFAULT_EMOJI_SET, emojiFonts } from './emoji-sets.mjs'
 import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
@@ -77,6 +78,7 @@ function getDefaultSettings() {
     lastChats: {},
     zoomFactor: undefined,
     activeTheme: 'system',
+    emojiSet: DEFAULT_EMOJI_SET,
     minimizeToTray: false,
     syncAllAccounts: true,
     lastSaveDialogLocation: undefined,
@@ -1275,6 +1277,49 @@ class BrowserRuntime {
       enabled: () => analytics.getConsent() !== 'denied',
       setEnabled: (on: boolean) => analytics.setConsent(on ? 'granted' : 'denied'),
       showInfo: showAnalyticsInfoDialog,
+    }
+
+    // Emoji set (Settings → Appearance): apply the chosen font stack to
+    // --emojifonts, which the theme's --fonts-default wraps — so messages, the
+    // composer and the (native-rendered) emoji-mart picker all switch together.
+    // Read straight from localStorage so emoji paint in the right set from the
+    // first frame, and expose a hook the Appearance selector drives. The set
+    // fonts are lazy (only the picked family's @font-face is ever referenced,
+    // so only it downloads) and never precached — see instance-config precacheSkip.
+    const readEmojiSet = (): string => {
+      try {
+        const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}').emojiSet
+        return EMOJI_SETS.some(e => e.id === s) ? s : DEFAULT_EMOJI_SET
+      } catch {
+        return DEFAULT_EMOJI_SET
+      }
+    }
+    const applyEmojiSet = (id: string) =>
+      document.documentElement.style.setProperty('--emojifonts', emojiFonts(id))
+    const activeEmojiSet = readEmojiSet()
+    applyEmojiSet(activeEmojiSet)
+    // 'noto_color' (force Noto) only differs from 'standard' on Apple devices —
+    // elsewhere Standard already falls back to Noto Color, so it's a duplicate.
+    // Offer it only where Apple emoji make it distinct (or if already selected).
+    const isApple = /Macintosh|Mac OS X|iPhone|iPad|iPod/.test(navigator.userAgent)
+    const visibleSets = EMOJI_SETS.filter(
+      e => e.id !== 'noto_color' || isApple || e.id === activeEmojiSet
+    )
+    ;(window as any).__slothfulchatEmoji = {
+      // picker options (id/label/note) + the per-option font stack for the
+      // live preview; `current`/`apply` read & persist the choice.
+      sets: visibleSets.map(({ id, label, note }) => ({ id, label, note })),
+      fontsFor: (id: string) => emojiFonts(id),
+      current: () => readEmojiSet(),
+      apply: (id: string) => {
+        applyEmojiSet(id)
+        this.setDesktopSetting('emojiSet', id) // persist (async, fire-and-forget)
+      },
+    }
+    // Once-per-startup usage signal — only for non-default sets, and consent-
+    // gated inside analytics.event (a no-op on self-hosted / opted-out builds).
+    if (EMOJI_SETS.find(e => e.id === activeEmojiSet)?.track) {
+      analytics.event('emoji_set', { set: activeEmojiSet })
     }
 
     document.body.addEventListener('drop', async e => {
