@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Fri, 24 Jul 2026 17:05:54 +0000
+Subject: [PATCH 72/72] web-app: mini-player controls fill the bar width
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Without flex:1 in the controls row, CustomAudioControls shrank to its meta
+row's text width — the waveform stopped short of the close button and the
+bar showed dead space (visible with wide sidebars). The controls now take
+all width left of the close button; the waveform spans it and the speed
+pill aligns at its right edge.
+---
+ .../GlobalVoiceMessagePlayer/styles.module.scss           | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
+index dbc77e2d2..29346bc65 100644
+--- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
++++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
+@@ -89,4 +89,12 @@
+   align-items: center;
+   gap: 0.25rem;
+   min-width: 0;
++
++  // The controls must take all width left of the close button: without
++  // flex:1 they shrink to the meta row's text width and the waveform stops
++  // short, leaving dead space in the bar.
++  > :first-child {
++    flex: 1;
++    min-width: 0;
++  }
+ }
