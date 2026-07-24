@@ -33,8 +33,8 @@ index b44acb723..0b1c89b63 100644
 +              {/* slothfulchat: replaces the intro1.png logo */}
 +              <p className={styles.welcomeScreenTitle}>SlothfulChat</p>
 +              <p style={{ textAlign: 'center', margin: '10px 0 0' }}>
-+                An experimental port of Delta Chat running fully in your
-+                browser — unofficial, and it may be buggy.
++                An experimental fork of Delta Chat running fully in your browser,
++                with features beyond stock Delta Chat — unofficial, and it may be buggy.
                </p>
 +              <ClickableLink href='https://github.com/experintellia/slothfulchat-web'>
 +                Source code
