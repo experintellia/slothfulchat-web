@@ -6,6 +6,15 @@
       name="viewport"
       content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
     />
+    <!-- Canonical description for crawlers/social previews. The app is an empty
+         #root until the wasm core boots, so without this a crawler that fails to
+         run the wasm scrapes the boot-error screen as the page snippet instead.
+         Name-agnostic on purpose: unlike <title>, it needs no per-instance
+         patch. -->
+    <meta
+      name="description"
+      content="A private, end-to-end encrypted chat that runs entirely in your browser — connect your existing email or chatmail account, no install required."
+    />
     <link rel="icon" type="image/png" href="./images/icon-256.png" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <meta name="theme-color" content="#2c8a68" />
