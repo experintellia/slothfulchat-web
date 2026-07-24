@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.8.0 — 2026-07-24
+
 - **Your data is now kept safe from browser eviction**: once you have an
   account, the app asks the browser to store its data persistently, so it
   won't be wiped to reclaim disk space when the disk runs low. The Diagnostics
@@ -12,6 +14,11 @@
   shows only chats with unread messages — an "Unread" heading reminds you the
   filter is on, and tapping again shows everything. Works together with a
   typed search.
+- **Groundwork for webxdc mini-apps**: the release zip now ships ready-made
+  Caddy config (`dist/caddy/`) so self-hosters can set up the wildcard
+  subdomain webxdc will need — see the new webxdc section in SELFHOSTING.md.
+  Nothing changes in the app yet; without the subdomain it will simply report
+  webxdc as unsupported.
 
 ## 0.7.0 — 2026-07-20
 
