@@ -32,3 +32,24 @@ Rules:
 - Mark intentional simplifications with a `ponytail:` comment. If the shortcut has a known ceiling (global lock, O(n²) scan, naive heuristic), the comment names the ceiling and the upgrade path.
 
 Not lazy about: understanding the problem (read it fully and trace the real flow before picking a rung, a small diff you don't understand is just laziness dressed up as efficiency), input validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs (the platform is never the spec ideal, a clock drifts, a sensor reads off), anything explicitly requested. Lazy code without its check is unfinished: non-trivial logic leaves ONE runnable check behind, the smallest thing that fails if the logic breaks (an assert-based demo/self-check or one small test file; no frameworks, no fixtures). Trivial one-liners need no test.
+
+# Building core-wasm (packages/core-wasm)
+
+Cold-start gotchas, in order. Each one cost real time to rediscover:
+
+1. **Submodule + patches first.** `build/core` is throwaway and not checked in.
+   `git submodule update --init vendor/core && scripts/apply-patches.sh`.
+   (apply-patches also tries the `desktop` worktree — it needs
+   `vendor/deltachat-desktop` inited too; `build:wasm` doesn't, so a desktop
+   failure there is fine.)
+2. **Toolchain = nightly.** Pinned `rusqlite` uses the nightly-only `cfg_select!`
+   macro; stable rustc fails with E0658. Build with
+   `RUSTUP_TOOLCHAIN=nightly` (`rustup toolchain install nightly` +
+   `rustup +nightly target add wasm32-unknown-unknown`).
+3. **Install wasm-pack + wasm-bindgen-cli from crates.io, version-matched.**
+   Neither ships in the image. GitHub binary downloads are proxy-blocked, so
+   `cargo install wasm-pack` and `cargo install wasm-bindgen-cli --version <X>`
+   where `<X>` is the `wasm-bindgen` version in `rust/Cargo.lock` (a mismatch
+   makes wasm-pack try to download the matching one from GitHub → fails).
+4. **Use `build:wasm:ci`, not `build:wasm`.** The `:ci` variant passes
+   `--no-opt`, skipping `wasm-opt`, which also downloads from GitHub.
