@@ -40,6 +40,7 @@ interface FsResponse {
   ok: boolean
   data?: Uint8Array
   exists?: boolean
+  failed?: number
   error?: string
 }
 
@@ -55,8 +56,9 @@ export interface Core {
   fsRemove(path: string): Promise<void>
   fsExists(path: string): Promise<boolean>
   /** Resolves once every queued OPFS write-through is durable (backup-import
-   * persistence — see the worker `flush` op). No-op without persistence. */
-  fsFlush(): Promise<void>
+   * persistence — see the worker `flush` op). Resolves to the number of writes
+   * that did NOT reach OPFS (0 = fully durable). No-op (0) without persistence. */
+  fsFlush(): Promise<number>
 }
 
 /** Spawns the core worker and returns the typed client.
@@ -116,9 +118,7 @@ export function startCore(
       await fsRequest('remove', path)
     },
     fsExists: async (path) => (await fsRequest('exists', path)).exists === true,
-    fsFlush: async () => {
-      await fsRequest('flush', '')
-    },
+    fsFlush: async () => (await fsRequest('flush', '')).failed ?? 0,
   }
 }
 

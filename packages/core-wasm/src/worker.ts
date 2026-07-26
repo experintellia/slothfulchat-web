@@ -23,6 +23,8 @@ interface FsResponse {
   ok: boolean
   data?: Uint8Array
   exists?: boolean
+  /** flush op: writes that did NOT reach OPFS (0 = fully durable). */
+  failed?: number
   error?: string
 }
 
@@ -98,10 +100,15 @@ async function waitForOpfsSyncHandles(): Promise<void> {
     try {
       const root = await (self as any).navigator.storage.getDirectory()
       // race a timeout: createSyncAccessHandle can HANG (not reject) while
-      // the previous worker is mid-teardown
+      // the previous worker is mid-teardown. The budget grows with each
+      // attempt: the pool has max(32, 2N+8) files and never shrinks, and on
+      // slow storage (low-end eMMC) probing them all can exceed a fixed 2s
+      // every time — which would misreport "already running in another tab"
+      // and brick boot with no other tab open. Later attempts allow more time.
+      const budgetMs = Math.min(2000 + (attempt - 1) * 1000, 12000)
       await Promise.race([
         probeAll(root),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('probe timeout')), 2000)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('probe timeout')), budgetMs)),
       ])
       return
     } catch (err) {
@@ -173,8 +180,9 @@ scope.onmessage = async (event: MessageEvent<string | FsRequest | ConfigMessage>
         break
       case 'flush':
         // awaits until every queued OPFS write-through is durable (backup
-        // import persistence, see DeltaChat.fs_flush)
-        await dc.fs_flush()
+        // import persistence, see DeltaChat.fs_flush); reports how many writes
+        // did NOT make it so the caller can avoid claiming a false success
+        response.failed = await dc.fs_flush()
         break
       default:
         throw new Error(`unknown fs op: ${(msg as FsRequest).op}`)

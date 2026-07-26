@@ -354,22 +354,39 @@ function getCore(): Core {
       // memfs is rebuilt from OPFS without the un-flushed blobs → broken images
       // that only return once re-fetched from the server ("reload N times to
       // see the images", #77). Track the call so we can drain before reporting
-      // success — see the _onmessage wrap.
-      if (message?.method === 'import_backup' && message.id != null) {
+      // success — see the _onmessage wrap. `get_backup` is the second-device
+      // transfer receive: it unpacks blobs the same way and, unlike a file
+      // import, has NO local backup to retry from if the tail is lost — so it
+      // needs the same durability hold.
+      if (
+        (message?.method === 'import_backup' || message?.method === 'get_backup') &&
+        message.id != null
+      ) {
         pendingImports.add(message.id)
       }
       originalSend(message)
     }
-    // Hold a successful import_backup response until fsFlush() confirms every
-    // imported blob has reached OPFS, so the frontend's importBackup promise
-    // resolves only once a reload would find everything. Errors pass straight
-    // through (a failed import wrote nothing to persist).
+    // Hold a successful import/transfer response until fsFlush() confirms every
+    // imported blob has reached OPFS, so the frontend's promise resolves only
+    // once a reload would find everything. Errors pass straight through (a
+    // failed import wrote nothing to persist).
     const transport = core.transport as any
     const originalOnMessage = transport._onmessage.bind(transport)
     transport._onmessage = (message: any) => {
       if (message?.id != null && pendingImports.delete(message.id) && !message.error) {
         activeCore
           .fsFlush()
+          .then(failed => {
+            // fsFlush reports writes that never reached OPFS (e.g. the disk
+            // filled mid-drain). Don't silently claim a complete restore.
+            if (failed) {
+              console.error(
+                `slothfulchat: ${failed} restored write(s) did not reach persistent ` +
+                  'storage — some imported data may be missing after a reload ' +
+                  '(browser storage may be full).'
+              )
+            }
+          })
           .catch(err => console.warn('post-import OPFS flush failed', err))
           .finally(() => originalOnMessage(message))
         return
