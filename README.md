@@ -23,6 +23,8 @@ See [SELFHOSTING.md](SELFHOSTING.md) to run your own instance, [PLAN.md](PLAN.md
   languages
 - 🛰️ **In-app relay picker** — choose a chatmail relay with live
   reachability/latency at onboarding
+- 📱 **Works on mobile as a PWA** — install it to your home screen; tested
+  on iOS and Android
 
 …and more — see [PATCHES.md](PATCHES.md).
 
