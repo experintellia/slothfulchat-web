@@ -42,10 +42,9 @@ Cold-start gotchas, in order. Each one cost real time to rediscover:
    (apply-patches also tries the `desktop` worktree — it needs
    `vendor/deltachat-desktop` inited too; `build:wasm` doesn't, so a desktop
    failure there is fine.)
-2. **Toolchain = nightly.** Pinned `rusqlite` uses the nightly-only `cfg_select!`
-   macro; stable rustc fails with E0658. Build with
-   `RUSTUP_TOOLCHAIN=nightly` (`rustup toolchain install nightly` +
-   `rustup +nightly target add wasm32-unknown-unknown`).
+2. **Toolchain = nightly** (auto-selected via `rust/rust-toolchain.toml`; pinned
+   `rusqlite` uses the nightly-only `cfg_select!` macro, so stable fails E0658).
+   Just ensure it's installed: `rustup toolchain install nightly`.
 3. **Install wasm-pack + wasm-bindgen-cli from crates.io, version-matched.**
    Neither ships in the image. GitHub binary downloads are proxy-blocked, so
    `cargo install wasm-pack` and `cargo install wasm-bindgen-cli --version <X>`

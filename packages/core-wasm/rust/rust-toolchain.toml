@@ -1,0 +1,6 @@
+# Pinned to nightly: a pinned dependency in core's tree (rusqlite) uses the
+# nightly-only `cfg_select!` macro, so stable rustc fails to compile it (E0658).
+# rustup reads this file automatically, so `wasm-pack build` here just works.
+[toolchain]
+channel = "nightly"
+targets = ["wasm32-unknown-unknown"]
