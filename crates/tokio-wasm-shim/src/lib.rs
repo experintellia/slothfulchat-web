@@ -15,6 +15,10 @@ pub use tokio::*;
 #[cfg(target_arch = "wasm32")]
 pub use tokio::{io, join, pin, select, sync, task_local, try_join};
 
+// Pure registry/sweep-decision helpers — no web_sys, compiled (and unit-tested)
+// on every target, since a sweep mistake permanently deletes a user's account.
+pub mod registry;
+
 #[cfg(target_arch = "wasm32")]
 pub mod fs;
 #[cfg(target_arch = "wasm32")]
