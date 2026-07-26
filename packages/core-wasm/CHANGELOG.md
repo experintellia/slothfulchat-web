@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.8.1 — 2026-07-24
+
+Follow-up hardening of the account-storage subsystem after an audit — closing
+the remaining ways a durable account could still be lost or corrupted:
+
+- The self-heal now recognises an account by its **database**, not just its
+  folder. An account whose folder mirror was lost (tab closed under disk
+  pressure) but whose synchronously-durable database survives is rebuilt from
+  the database instead of being dropped from the registry.
+- The boot slot-reclaim sweep no longer trusts a `accounts.toml` that a crash
+  left torn: it cross-checks the last-good backup, so a truncated-but-plausible
+  registry (what a disk-full/power-loss event produces) can't authorise
+  deleting a live account's database. It also reclaims crashed backup-export
+  leftovers.
+- A **failed backup import** no longer leaves a half-written, undecryptable
+  database registered; the partial database is removed.
+- Second-device transfer (receiving a backup) now waits for its blobs to be
+  durable before reporting success, like file import already did, and both
+  surface a warning instead of a silent success when storage fills mid-write.
+- Boot no longer misreports "already running in another tab" on slow storage
+  with many accounts (the reload lock-probe budget now scales).
+
 ## 0.8.0 — 2026-07-24
 
 - Fixed total account loss on boot: the sahpool slot-reclaim sweep decided
