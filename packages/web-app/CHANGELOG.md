@@ -1,5 +1,18 @@
 # Changelog
 
+- **Admin groups** (ported from ArcaneChat, experimental): support for
+  groups that only the admin (creator) can manage — add/remove members,
+  invite via QR, edit name/image/description, set the disappearing-messages
+  timer, and delete anyone's message for everyone. Other members just chat
+  and can leave; every member sees a 👑 next to the admin in the member
+  list. Creating one is off by default and lives behind a hidden
+  "super-dangerous" experimental option (unlock it by tapping the version
+  in About ten times, then enable it in Settings → Experimental features).
+  Only works properly between Slothful Chat and ArcaneChat clients: on
+  plain Delta Chat the messages arrive as an ordinary thread without the
+  group's name, member list or admin rules, and admin deletions don't
+  reach those devices.
+
 ## 0.8.0 — 2026-07-24
 
 - **Your data is now kept safe from browser eviction**: once you have an
