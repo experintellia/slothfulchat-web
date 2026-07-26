@@ -97,6 +97,13 @@ function handle(method: string, params: unknown, p: Promise<unknown>, raw: Reque
       }
       break
 
+    // experimental admin groups (ArcaneChat port); the matching
+    // 'setting_enabled' action fires from the settings toggle via
+    // window.__slothfulTrack
+    case 'create_group_with_admin':
+      analytics.event('admin_group', { action: 'create' })
+      break
+
     case 'export_backup':
       analytics.event('backup', { action: 'export' })
       timed('export backup', p)

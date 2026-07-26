@@ -53,6 +53,11 @@ export const EVENTS = [
     props: 'action = accept · dismiss',
   },
   {
+    name: 'admin_group',
+    what: 'That the experimental admin-groups setting was enabled, or an admin group was created (never which one).',
+    props: 'action = create · setting_enabled',
+  },
+  {
     name: 'bridge',
     what: 'Which kind of WS→TCP bridge the session uses.',
     props: 'kind = local · provided · custom',
