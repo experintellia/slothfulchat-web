@@ -72,11 +72,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.number }}
+          # Must match the domain the gate script writes into site.caddy
+          # (infra/flagship/deploy-preview.sh); set it while the server runs on a
+          # temporary domain, unset it to go back to the default.
+          DOMAIN: ${{ vars.PREVIEW_DOMAIN || 'preview.slothful.chat' }}
         run: |
           set -euo pipefail
           marker='<!-- preview-url -->'
           body="$marker
-          Preview: https://pr-$PR.preview.slothful.chat
+          Preview: https://pr-$PR.$DOMAIN
 
           The \`*.webxdc.\` cert can lag ~a minute after the first deploy. This comment updates on every push."
           id=$(gh api --paginate "repos/${{ github.repository }}/issues/$PR/comments" \
