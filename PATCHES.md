@@ -248,6 +248,13 @@ exists:
   "Unread: N chats" heading (mirroring search-in-chat) as a reminder that the
   filter is active; the archive view is unaffected. `desktop/0063`
 
+- **Resizable chat-list sidebar** — a drag handle between the chat list and
+  the chat view sets an explicit sidebar width (clamped so both panes stay
+  usable), persisted per device in localStorage. Double-click resets to the
+  default 3:8 split; the handle is a keyboard-operable separator
+  (ArrowLeft/ArrowRight, RTL-aware) and is absent in the single-pane
+  small-screen layout. `desktop/0064`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not

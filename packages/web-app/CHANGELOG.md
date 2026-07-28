@@ -1,5 +1,9 @@
 # Changelog
 
+- **Resizable chat list**: drag the divider between the chat list and the
+  chat view to set your own sidebar width — it sticks across reloads on this
+  device. Double-click the divider to go back to the default split.
+
 ## 0.8.0 — 2026-07-24
 
 - **Your data is now kept safe from browser eviction**: once you have an
