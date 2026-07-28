@@ -14,8 +14,8 @@ renders nothing there.
 ---
  .../src/components/EmojiPicker/index.tsx      |   9 +-
  .../src/components/Settings/Appearance.tsx    |   2 +
- .../components/Settings/EmojiSetSelector.tsx  | 105 ++++++++++++++++++
- 3 files changed, 115 insertions(+), 1 deletion(-)
+ .../components/Settings/EmojiSetSelector.tsx  | 116 ++++++++++++++++++
+ 3 files changed, 126 insertions(+), 1 deletion(-)
  create mode 100644 packages/frontend/src/components/Settings/EmojiSetSelector.tsx
 
 diff --git a/packages/frontend/src/components/EmojiPicker/index.tsx b/packages/frontend/src/components/EmojiPicker/index.tsx
@@ -60,13 +60,14 @@ index c3a932a..598f3e0 100644
        <SettingsTrayIcon settingsStore={settingsStore} />
 diff --git a/packages/frontend/src/components/Settings/EmojiSetSelector.tsx b/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
 new file mode 100644
-index 0000000..88012fe
+index 0000000..0d7da17
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,116 @@
 +import React, { useState } from 'react'
 +
 +import SettingsHeading from './SettingsHeading'
++import styles from './styles.module.scss'
 +
 +// SlothfulChat fork: emoji-set picker. The browser edition's runtime
 +// (packages/web-app/src/runtime.ts) exposes window.__slothfulchatEmoji and
@@ -101,7 +102,17 @@ index 0000000..88012fe
 +
 +  return (
 +    <>
-+      <SettingsHeading>Emoji style</SettingsHeading>
++      <SettingsHeading>
++        Emoji style
++        <span
++          className={styles.forkBadge}
++          role='img'
++          aria-label='SlothfulChat feature'
++          title='Added by SlothfulChat — not part of upstream Delta Chat'
++        >
++          🦥
++        </span>
++      </SettingsHeading>
 +      <div
 +        role='radiogroup'
 +        aria-label='Emoji style'
