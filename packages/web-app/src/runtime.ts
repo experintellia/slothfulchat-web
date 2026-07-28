@@ -73,6 +73,10 @@ function getDefaultSettings() {
     credentials: undefined,
     lastAccount: undefined as number | undefined,
     enableOnDemandLocationStreaming: false,
+    // on by default (matches shared state.ts + the 0.7.0 changelog); the
+    // frontend gates the composer :emoji: completion on `=== true`, so an
+    // omitted default left it silently off in the web edition.
+    experimentalCompletionMenu: true,
     linkPreviewSuggestions: false,
     chatViewBgImg: undefined as string | undefined,
     lastChats: {},
