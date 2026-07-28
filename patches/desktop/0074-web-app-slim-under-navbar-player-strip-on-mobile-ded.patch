@@ -1,0 +1,672 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Tue, 28 Jul 2026 22:20:47 +0000
+Subject: [PATCH 74/74] web-app: slim under-navbar player strip on mobile;
+ dedupe mini-player sender line
+
+The global voice player lived at the bottom of the chat-list column, and
+on the single-column layout that column is `display: none` while a chat
+is open -- so on a phone the player vanished the moment you opened a chat
+and there was no way to pause, change speed or jump back to the message
+(#137). Playback kept going from a surface nobody could see.
+
+On that layout the player now renders as a slim strip pinned under the
+navbar, mounted in MainScreen *outside* both columns so it survives the
+chat-list/chat-view switch and is visible in both. One row, 36px: the
+play/pause button driving the singleton, the truncated "sender . chat"
+label (tap = the same jump-to-message as the bar, and no dead button when
+there is nothing to jump to), the speed pill on the shared
+ctx.playbackRate, and close. Under it a 2px hairline -- played portion in
+--colorPrimary, track in --navBarButtonActive -- fed by the singleton's
+currentTime/duration. It is a position readout, not a control: the bubble
+owns the waveform and seeking, the OS media session owns scrubbing from
+outside the app, and a 2px pointer target would be a bad third option, so
+the hairline is aria-hidden and has no interaction. The strip continues
+the navbar's own colors (--navBarBackground/--navBarText, not the
+always-dark account-sidebar scheme the bar uses) because it sits in the
+content column.
+
+The strip's 38px band is reserved, not overlaid: it is positioned
+absolutely (z-index 2 -- above the message list's local scopes, below the
+toast at 100 and dialogs), and a sibling-combinator rule keyed off the
+strip's presence gives both small-screen navbars a 38px margin-bottom, so
+the scrolling areas below them simply start lower. Overlaying instead
+would hide the topmost chat-list row / message and, worse, swallow taps
+meant for it. The strip only exists on the small-screen layout, so with
+no strip in the DOM the rule matches nothing and layout is unchanged.
+
+One surface at a time. `voicePlayerSurface(smallScreen, customControls,
+hasSrc)` in mediaSession.ts is the single decision: none / native (setting
+off, unchanged on every viewport) / strip (small screen) / bar (wide).
+Both mount points render `GlobalVoiceMessagePlayer`; the one that is not
+the current surface returns null *and* keeps its hooks idle, so the sender
+fetch, the jump wiring and the media-session registration never run twice
+-- the media session belongs to whichever instance is mounted, and a
+breakpoint change hands it over cleanly (React flushes all effect
+cleanups before the setups). Four mocha cases pin the table.
+
+Independently, the bar's sender line no longer repeats itself: in a 1:1
+chat the chat is named after the contact, so it read "Bob Martinez / Bob
+Martinez". The chat sub-line now shows only when it differs from the
+sender name, which keeps "Me / Saved Messages" intact and applies to the
+strip's label too. Truncation and aria are unchanged.
+
+Everything stays behind experimentalAudioPlayerControls: with the setting
+off the native re-parented <audio> bar is byte-identical on all viewports.
+CustomAudioControls' element-state subscription is extracted as
+`useAudioElementState` so the strip reuses it instead of copying the
+paused/time/duration mirror; the strip is its own component so its ~4Hz
+timeupdate re-renders don't reach the player's fetch hooks.
+---
+ .../src/components/AudioPlayer/index.tsx      |  77 +++++---
+ .../GlobalVoiceMessagePlayer.tsx              | 184 ++++++++++++++++--
+ .../GlobalVoiceMessagePlayer/mediaSession.ts  |  34 +++-
+ .../styles.module.scss                        |  70 +++++++
+ .../screens/MainScreen/MainScreen.tsx         |   4 +
+ .../screens/MainScreen/styles.module.scss     |  19 ++
+ .../frontend/src/tests/audioPlayer.test.ts    |  21 ++
+ 7 files changed, 362 insertions(+), 47 deletions(-)
+
+diff --git a/packages/frontend/src/components/AudioPlayer/index.tsx b/packages/frontend/src/components/AudioPlayer/index.tsx
+index 23113a1fc..d3d533646 100644
+--- a/packages/frontend/src/components/AudioPlayer/index.tsx
++++ b/packages/frontend/src/components/AudioPlayer/index.tsx
+@@ -205,6 +205,49 @@ export function AudioPlayer({
+   )
+ }
+ 
++/**
++ * One dumb subscription mirroring an `<audio>` element's state into React.
++ *
++ * `holdTimeRef.current === true` suspends `currentTime` updates (the seek thumb
++ * is being dragged), which is why `setCurrentTime` comes back out.
++ */
++export function useAudioElementState(
++  audioRef: React.RefObject<HTMLAudioElement | null>,
++  holdTimeRef?: React.RefObject<boolean>
++) {
++  const [paused, setPaused] = useState(true)
++  const [currentTime, setCurrentTime] = useState(0)
++  const [duration, setDuration] = useState(0)
++
++  useEffect(() => {
++    const el = audioRef.current
++    if (el == null) {
++      return
++    }
++    const sync = () => {
++      setPaused(el.paused)
++      if (holdTimeRef?.current !== true) {
++        setCurrentTime(el.currentTime)
++      }
++      setDuration(el.duration)
++    }
++    sync()
++    const events = ['timeupdate', 'durationchange', 'play', 'pause'] as const
++    events.forEach(ev => el.addEventListener(ev, sync))
++    return () => events.forEach(ev => el.removeEventListener(ev, sync))
++  }, [audioRef, holdTimeRef])
++
++  const safeDuration = Number.isFinite(duration) ? duration : 0
++  return {
++    paused,
++    currentTime,
++    safeDuration,
++    progress:
++      safeDuration > 0 ? Math.min(currentTime, safeDuration) / safeDuration : 0,
++    setCurrentTime,
++  }
++}
++
+ /**
+  * Visible custom controls that drive the `<audio>` element in `audioRef`.
+  *
+@@ -227,9 +270,11 @@ export function CustomAudioControls({
+ }) {
+   const tx = useTranslationFunction()
+   const ctx = useContext(MediaPlayerMutexContext)
+-  const [paused, setPaused] = useState(true)
+-  const [currentTime, setCurrentTime] = useState(0)
+-  const [duration, setDuration] = useState(0)
++  // While the user drags the seek thumb, don't let `timeupdate` reassert the
++  // controlled value out from under the pointer.
++  const seekingRef = useRef(false)
++  const { paused, currentTime, safeDuration, progress, setCurrentTime } =
++    useAudioElementState(audioRef, seekingRef)
+   // Waveform peaks (progressive enhancement). Tagged with the src they were
+   // computed for so a src change instantly stops drawing the previous message's
+   // waveform (peaks below is null until the new ones arrive). null = loading OR
+@@ -239,28 +284,6 @@ export function CustomAudioControls({
+     peaks: Float32Array
+   } | null>(null)
+   const peaks = peaksState?.src === src ? peaksState.peaks : null
+-  // While the user drags the seek thumb, don't let `timeupdate` reassert the
+-  // controlled value out from under the pointer.
+-  const seekingRef = useRef(false)
+-
+-  // One dumb subscription mirroring the local element's state into React.
+-  useEffect(() => {
+-    const el = audioRef.current
+-    if (el == null) {
+-      return
+-    }
+-    const sync = () => {
+-      setPaused(el.paused)
+-      if (!seekingRef.current) {
+-        setCurrentTime(el.currentTime)
+-      }
+-      setDuration(el.duration)
+-    }
+-    sync()
+-    const events = ['timeupdate', 'durationchange', 'play', 'pause'] as const
+-    events.forEach(ev => el.addEventListener(ev, sync))
+-    return () => events.forEach(ev => el.removeEventListener(ev, sync))
+-  }, [audioRef])
+ 
+   // Keep the local rate in sync with the global one so all bubbles agree
+   // (on mount and whenever the global rate changes). Setting it fires
+@@ -345,10 +368,6 @@ export function CustomAudioControls({
+     }
+   }, [audioRef, src, ctx.audioElement])
+ 
+-  const safeDuration = Number.isFinite(duration) ? duration : 0
+-  const progress =
+-    safeDuration > 0 ? Math.min(currentTime, safeDuration) / safeDuration : 0
+-
+   return (
+     <div
+       className={classNames(
+diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
+index 76d7bcc52..1360c854c 100644
+--- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
++++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
+@@ -4,10 +4,12 @@ import classNames from 'classnames'
+ import styles from './styles.module.scss'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import { MediaPlayerMutexContext } from '../../contexts/MediaPlayerMutexContext'
+-import Icon from '../Icon'
++import Icon, { IconButton } from '../Icon'
+ import { NextVoiceMessagePlayerContext } from '../../contexts/NextVoiceMessagePlayerContext'
+-import { CustomAudioControls } from '../AudioPlayer'
++import { CustomAudioControls, useAudioElementState } from '../AudioPlayer'
++import { nextPlaybackRate } from '../AudioPlayer/utils'
+ import { Avatar } from '../Avatar'
++import { ScreenContext } from '../../contexts/ScreenContext'
+ import { useSettingsStore } from '../../stores/settings'
+ import { useRpcFetch } from '../../hooks/useFetch'
+ import { BackendRemote } from '../../backend-com'
+@@ -15,20 +17,33 @@ import useMessage from '../../hooks/chat/useMessage'
+ import { saveLastChatId } from '../../backend/chat'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+-import { mediaSessionMetadata, clampSeek } from './mediaSession'
++import {
++  mediaSessionMetadata,
++  clampSeek,
++  voicePlayerSurface,
++} from './mediaSession'
+ 
+ const log = getLogger('GlobalVoiceMessagePlayer')
+ 
+ export function GlobalVoiceMessagePlayer({
+   accountId: selectedAccountId,
++  strip,
+ }: {
+   /** The currently selected account, to decide same- vs cross-account jump. */
+   accountId: number | undefined
++  /**
++   * This instance is the under-navbar strip mount point (small-screen layout),
++   * not the chat-list column one. Both are mounted; the one that isn't the
++   * current surface renders `null` and, crucially, keeps all its
++   * fetch/media-session hooks idle, so none of that work happens twice.
++   */
++  strip?: boolean
+ }) {
+   const tx = useTranslationFunction()
+ 
+   const mediaPlayerMutexCtx = useContext(MediaPlayerMutexContext)
+   const nextVoiceMessagePlayerCtx = useContext(NextVoiceMessagePlayerContext)
++  const { smallScreenMode } = useContext(ScreenContext)
+ 
+   const desktopSettings = useSettingsStore()[0]?.desktopSettings
+   const customControlsEnabled =
+@@ -38,6 +53,17 @@ export function GlobalVoiceMessagePlayer({
+   const currentSrc = mediaPlayerMutexCtx.currentSrc
+   const currMessage = nextVoiceMessagePlayerCtx.currMessage
+ 
++  const surface = voicePlayerSurface(
++    smallScreenMode,
++    customControlsEnabled,
++    currentSrc != null
++  )
++  // The strip mounts above the chat-list/chat-view switch (it must survive
++  // both), the bar and the native element inside the chat-list column.
++  const isOurSurface = strip
++    ? surface === 'strip'
++    : surface === 'bar' || surface === 'native'
++
+   // Wrap the never-changing singleton in a stable ref object so
+   // CustomAudioControls' effects (keyed on `audioRef`) don't re-subscribe on
+   // every render of this component.
+@@ -47,8 +73,10 @@ export function GlobalVoiceMessagePlayer({
+   )
+ 
+   // Sender + chat for the mini-player's clickable label (once per message).
+-  // Only fetched with the custom player on, so the native path is untouched.
+-  const active = customControlsEnabled && currMessage != null
++  // Only fetched with the custom player on, so the native path is untouched,
++  // and only by the instance that actually renders, so the idle mount point
++  // costs nothing.
++  const active = isOurSurface && customControlsEnabled && currMessage != null
+   // ponytail: on auto-advance this refetches the message the context just
+   // fetched as `nextMessage` (one duplicate local getMessage per advance; the
+   // bubble-initiated first message has no prefetched copy, so the fetch must
+@@ -73,6 +101,10 @@ export function GlobalVoiceMessagePlayer({
+     (message && (message.overrideSenderName || message.sender.displayName)) ||
+     ''
+   const chatName = chat?.name ?? ''
++  // In a 1:1 chat the chat is named after the contact, so the sub-line would
++  // just repeat the sender ("Bob Martinez / Bob Martinez"). Show it only when
++  // it says something new (groups, and "Me / Saved Messages").
++  const showChatName = chatName !== '' && chatName !== senderName
+   const avatarPath = message?.sender.profileImage ?? null
+   const avatarUrl = avatarPath
+     ? runtime.transformBlobURL(avatarPath)
+@@ -96,7 +128,9 @@ export function GlobalVoiceMessagePlayer({
+     [showDetails, message, tx, senderName, chatName, avatarUrl]
+   )
+   useMediaSession(
+-    customControlsEnabled && currentSrc != null,
++    // Belongs to whichever instance is mounted — the idle one must not
++    // register (or, on a breakpoint change, clear) the OS handlers.
++    isOurSurface && customControlsEnabled,
+     mediaPlayerMutexCtx.audioElement,
+     meta,
+     // No next-track when there's no queued message (e.g. draft audio preview):
+@@ -107,7 +141,9 @@ export function GlobalVoiceMessagePlayer({
+ 
+   const { jumpToMessage } = useMessage()
+ 
+-  if (currentSrc == null) {
++  // `currentSrc == null` is already `surface === 'none'`; repeated for the
++  // type narrowing below.
++  if (!isOurSurface || currentSrc == null) {
+     return null
+   }
+ 
+@@ -149,25 +185,48 @@ export function GlobalVoiceMessagePlayer({
+       .catch(err => log.error('failed to jump to voice message', err))
+   }
+ 
++  const onClose = () => {
++    mediaPlayerMutexCtx.stop()
++    // Functionality-wise this is not necessary, but let's do it
++    // for good measure.
++    nextVoiceMessagePlayerCtx.setCurrMessage(null)
++  }
++
+   const closeButton = (
+     <button
+       className={styles.closeButton}
+       type='button'
+       aria-label={tx('close')}
+-      onClick={() => {
+-        mediaPlayerMutexCtx.stop()
+-        // Functionality-wise this is not necessary, but let's do it
+-        // for good measure.
+-        nextVoiceMessagePlayerCtx.setCurrMessage(null)
+-      }}
++      onClick={onClose}
+     >
+       <Icon className={styles.closeButtonIcon} icon={'cross'} size={26} />
+     </button>
+   )
+ 
++  // Small-screen layout: a slim strip under the navbar, the one surface that
++  // is visible both in the chat list and inside a chat (#137).
++  if (surface === 'strip') {
++    return (
++      <VoiceMessageStrip
++        audioRef={singletonRef}
++        // Same guard as the bar's sender line: no dead button while there is
++        // nothing to jump to (draft preview, in-flight auto-advance fetch).
++        label={
++          currMessage != null && message != null
++            ? {
++                text: showChatName ? `${senderName} · ${chatName}` : senderName,
++                onClick: onJumpToMessage,
++              }
++            : null
++        }
++        onClose={onClose}
++      />
++    )
++  }
++
+   // Custom mini-player: sender line + singleton-driven controls, in place of
+   // re-parenting the native <audio> singleton into the bar.
+-  if (customControlsEnabled) {
++  if (surface === 'bar') {
+     return (
+       <section
+         className={classNames(styles.root, styles.rootCustom)}
+@@ -196,7 +255,9 @@ export function GlobalVoiceMessagePlayer({
+             />
+             <span className={styles.senderText}>
+               <span className={styles.senderName}>{senderName}</span>
+-              <span className={styles.chatName}>{chatName}</span>
++              {showChatName && (
++                <span className={styles.chatName}>{chatName}</span>
++              )}
+             </span>
+           </button>
+         )}
+@@ -242,6 +303,99 @@ export function GlobalVoiceMessagePlayer({
+   )
+ }
+ 
++/**
++ * The small-screen surface: one row (play/pause, label, speed, close) over a
++ * 2px progress hairline, pinned under the navbar.
++ *
++ * Its own component so the ~4Hz `timeupdate` re-renders stay here instead of
++ * re-rendering the whole player (and its fetch hooks).
++ */
++function VoiceMessageStrip({
++  audioRef,
++  label,
++  onClose,
++}: {
++  audioRef: React.RefObject<HTMLAudioElement | null>
++  /** Jump-to-message label, or `null` when there's no message to jump to. */
++  label: { text: string; onClick: () => void } | null
++  onClose: () => void
++}) {
++  const tx = useTranslationFunction()
++  const ctx = useContext(MediaPlayerMutexContext)
++  const { paused, progress } = useAudioElementState(audioRef)
++
++  return (
++    <section
++      className={styles.strip}
++      aria-label={tx('audio')}
++      data-testid='voice-message-strip'
++    >
++      <div className={styles.stripRow}>
++        <IconButton
++          icon={paused ? 'play' : 'pause'}
++          coloring='currentColor'
++          size={18}
++          aria-label={paused ? tx('menu_play') : tx('menu_pause')}
++          onClick={() => {
++            const el = audioRef.current
++            if (el == null) {
++              return
++            }
++            // This IS the singleton: no position restore needed (unlike a cold
++            // bubble element), its currentTime is the live one.
++            if (el.paused) {
++              el.play()
++            } else {
++              el.pause()
++            }
++          }}
++        />
++        {label != null ? (
++          <button
++            type='button'
++            className={styles.stripLabel}
++            title={tx('jump_to_message')}
++            onClick={label.onClick}
++          >
++            {label.text}
++          </button>
++        ) : (
++          <span className={styles.stripSpacer} />
++        )}
++        <button
++          type='button'
++          className={styles.speedPill}
++          aria-label={tx('a11y_playback_speed', `${ctx.playbackRate}×`)}
++          onClick={() =>
++            ctx.setPlaybackRate(nextPlaybackRate(ctx.playbackRate))
++          }
++        >
++          {ctx.playbackRate}×
++        </button>
++        <IconButton
++          icon='cross'
++          coloring='currentColor'
++          size={18}
++          aria-label={tx('close')}
++          onClick={onClose}
++        />
++      </div>
++      {/*
++        Position readout only — the bubble's waveform and the OS media session
++        own seeking, so there is deliberately no pointer target here (a 2px
++        strip would be a poor one anyway). Decorative: the same position is
++        already announced by the bubble's seek slider.
++      */}
++      <div className={styles.hairline} aria-hidden={true}>
++        <div
++          className={styles.hairlineFill}
++          style={{ width: `${progress * 100}%` }}
++        />
++      </div>
++    </section>
++  )
++}
++
+ // The media-session actions we own; cleared together when playback stops.
+ const MEDIA_SESSION_ACTIONS: MediaSessionAction[] = [
+   'play',
+diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts b/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
+index c6041c0ec..a2a8e05e9 100644
+--- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
++++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
+@@ -1,8 +1,36 @@
+-// Pure helpers for wiring `navigator.mediaSession` from the voice-message
+-// mini-player. Kept free of browser/React APIs so they're unit-testable; the
+-// hook in GlobalVoiceMessagePlayer.tsx turns these into MediaMetadata /
++// Pure helpers for the global voice-message player: `navigator.mediaSession`
++// metadata/seeking, and which player surface renders. Kept free of
++// browser/React APIs so they're unit-testable; the hook in
++// GlobalVoiceMessagePlayer.tsx turns these into MediaMetadata /
+ // setPositionState / action-handler calls.
+ 
++/**
++ * Which player surface renders, from the layout, the experimental setting and
++ * whether anything is playing. Exactly one at a time — the strip *replaces*
++ * the bar on the single-column layout, it never doubles it.
++ *
++ * - `'none'` — nothing playing.
++ * - `'native'` — setting off: the re-parented `<audio>` element, at the bottom
++ *   of the chat-list column (unchanged on every viewport).
++ * - `'strip'` — single-column (small-screen) layout: that column is hidden
++ *   while a chat is open, taking the bar with it (#137), so the player moves
++ *   to a slim strip under the navbar instead.
++ * - `'bar'` — the custom mini-player at the bottom of the chat-list column.
++ */
++export function voicePlayerSurface(
++  smallScreen: boolean,
++  customControls: boolean,
++  hasSrc: boolean
++): 'none' | 'native' | 'strip' | 'bar' {
++  if (!hasSrc) {
++    return 'none'
++  }
++  if (!customControls) {
++    return 'native'
++  }
++  return smallScreen ? 'strip' : 'bar'
++}
++
+ export type MediaSessionDetails = {
+   senderName: string
+   chatName: string
+diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
+index 29346bc65..cdbec09fd 100644
+--- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
++++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
+@@ -84,6 +84,76 @@
+   // for normal text (0.7 fell just short at ~4.4:1).
+   opacity: 0.8;
+ }
++// Small-screen (single-column) surface: a slim strip pinned right under the
++// navbar, so the player stays visible inside a chat, where the chat-list
++// column — and with it `.root` — is `display: none` (#137).
++//
++// Total height 38px (row + hairline, no border: the hairline is the bottom
++// edge). MainScreen's `[data-testid='voice-message-strip'] ~ …` rule reserves
++// exactly that much below both navbars, so the strip covers reserved space
++// only — never content. Keep the two in sync.
++.strip {
++  position: absolute;
++  top: var(--navBarHeight);
++  inset-inline: 0;
++  // Above the message list (whose z-indexes are local scopes topping out at
++  // 1), below the user-feedback toast (100) and dialogs.
++  z-index: 2;
++
++  display: flex;
++  flex-direction: column;
++
++  // The app's content surface, NOT the navbar's — the strip must read as its
++  // own element below the navbar (Telegram's pattern: colored navbar, surface
++  // strip). textPrimary-on-bgPrimary is the app's standard AA pairing; the
++  // hairline underneath acts as the separator toward the content.
++  background-color: var(--bgPrimary);
++  color: var(--textPrimary);
++  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
++}
++.stripRow {
++  display: flex;
++  align-items: center;
++  gap: 0.25rem;
++  height: 36px; // + the 2px hairline below
++  padding-inline: 0.25rem;
++}
++.stripLabel {
++  @include mixins.button-reset;
++  flex: 1;
++  min-width: 0;
++  overflow: hidden;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++  text-align: start;
++  font-size: 0.85em;
++  cursor: pointer;
++}
++// No message to jump to (draft preview / in-flight auto-advance fetch): keep
++// the row's shape without a dead button in the tab order.
++.stripSpacer {
++  flex: 1;
++}
++// Same pill as the bubble controls' (AudioPlayer/styles.module.scss); not
++// worth cross-importing a CSS module for five declarations.
++.speedPill {
++  @include mixins.button-reset;
++  border: 1px solid currentColor;
++  border-radius: 9999999px;
++  padding: 0.1rem 0.5rem;
++  font-size: 0.85em;
++  line-height: 1.2;
++}
++.hairline {
++  height: 2px;
++  // Subtle track on the content surface, in both themes.
++  background-color: var(--separatorColor, rgba(143, 153, 168, 0.3));
++}
++.hairlineFill {
++  height: 100%;
++  background-color: var(--colorPrimary);
++}
++
+ .controlsRow {
+   display: flex;
+   align-items: center;
+diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
+index 7d486e800..e98988725 100644
+--- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
++++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
+@@ -276,6 +276,10 @@ export default function MainScreen({ accountId }: Props) {
+         !messageSectionShouldBeHidden ? 'chat-view-open' : ''
+       }`}
+     >
++      {/* Outside both columns on purpose: on the single-column layout one of
++          them is always hidden, and the voice player has to survive the
++          switch (it renders only in that layout, see `voicePlayerSurface`). */}
++      <GlobalVoiceMessagePlayer accountId={accountId} strip />
+       <div className={styles.chatListAndHeaderAndAudioPlayer}>
+         <section
+           className={styles.chatListAndHeader}
+diff --git a/packages/frontend/src/components/screens/MainScreen/styles.module.scss b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
+index d12e23b5a..91c5b0957 100644
+--- a/packages/frontend/src/components/screens/MainScreen/styles.module.scss
++++ b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
+@@ -14,6 +14,25 @@
+   }
+ }
+ 
++// The voice-message strip is absolutely positioned in the band right under
++// the navbar (see GlobalVoiceMessagePlayer/styles.module.scss). Reserve
++// exactly its 38px there — as a navbar margin, so the navbars stay put and
++// the scrolling areas below them start 38px lower — instead of letting it
++// overlay and click-block the top of the chat list / message list.
++//
++// ponytail: the mechanism is the sibling combinator alone — the strip is
++// MainScreen's first child and only mounts when it is the active surface, so
++// no JS, no class to keep in sync, and no strip in the DOM (wide screen,
++// setting off, nothing playing) means byte-identical layout. It does hard-wire
++// the strip's test id and mount order; upgrade path if either has to move:
++// have MainScreen put a class on `.main-screen` and key off that.
++:global([data-testid='voice-message-strip'])
++  ~ .chatListAndHeaderAndAudioPlayer
++  .chatListHeader,
++:global([data-testid='voice-message-strip']) ~ .chatView > nav {
++  margin-bottom: 38px;
++}
++
+ .chatListAndHeaderAndAudioPlayer {
+   display: flex;
+   flex-direction: column;
+diff --git a/packages/frontend/src/tests/audioPlayer.test.ts b/packages/frontend/src/tests/audioPlayer.test.ts
+index eaf5f4d0c..1c0f28e0a 100644
+--- a/packages/frontend/src/tests/audioPlayer.test.ts
++++ b/packages/frontend/src/tests/audioPlayer.test.ts
+@@ -9,6 +9,7 @@ import { makePositionStore } from '../components/AudioPlayer/positionStore.js'
+ import {
+   mediaSessionMetadata,
+   clampSeek,
++  voicePlayerSurface,
+ } from '../components/GlobalVoiceMessagePlayer/mediaSession.js'
+ 
+ describe('AudioPlayer / formatAudioTime', () => {
+@@ -139,6 +140,26 @@ describe('GlobalVoiceMessagePlayer / mediaSessionMetadata', () => {
+   })
+ })
+ 
++describe('GlobalVoiceMessagePlayer / voicePlayerSurface', () => {
++  it('renders nothing when nothing is playing', () => {
++    expect(voicePlayerSurface(true, true, false)).to.equal('none')
++    expect(voicePlayerSurface(false, false, false)).to.equal('none')
++  })
++
++  it('setting off: the native element, on every viewport', () => {
++    expect(voicePlayerSurface(false, false, true)).to.equal('native')
++    expect(voicePlayerSurface(true, false, true)).to.equal('native')
++  })
++
++  it('small screen + setting on: the under-navbar strip', () => {
++    expect(voicePlayerSurface(true, true, true)).to.equal('strip')
++  })
++
++  it('wide screen + setting on: the chat-list column bar', () => {
++    expect(voicePlayerSurface(false, true, true)).to.equal('bar')
++  })
++})
++
+ describe('GlobalVoiceMessagePlayer / clampSeek', () => {
+   it('seeks within bounds', () => {
+     expect(clampSeek(10, 10, 60)).to.equal(20)

@@ -20,7 +20,10 @@
   turn it off in Settings → Advanced → Experimental features if it gives
   you trouble. The setting for showing sender and chat details in the
   system media controls has moved to Settings → Notifications, next to
-  "show notification content" (it is the same lock-screen question).
+  "show notification content" (it is the same lock-screen question). On
+  phone-sized screens the playing voice message shows as a slim bar pinned
+  under the top bar — visible inside the chat too, with play/pause, the
+  sender (tap to jump to the message), speed and a thin progress line.
 
 - **Voice-message position stays in sync**: switching profiles or chats while
   a voice message plays no longer resets the message's displayed position to

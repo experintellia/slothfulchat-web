@@ -81,8 +81,12 @@ exists:
   screenshot loop: `node scripts/shot-voice-player.mjs` (SILENT_WAV=… for
   the warning, MOBILE=1 for phone-width shots). Later refinements: bubbles
   adopt the singleton's position on remount (upstream #6378), phone-width
-  layout, and a two-row player (full-width waveform, time + speed below).
-  `desktop/0064` – `desktop/0073`
+  layout, a two-row player (full-width waveform, time + speed below), and a
+  slim under-navbar strip on the single-column mobile layout (issue #137 —
+  the chat-list bar is hidden there while a chat is open; the strip stays
+  visible in both views, reserves its space instead of covering content,
+  and demotes the waveform to a 2px progress hairline).
+  `desktop/0064` – `desktop/0074`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
