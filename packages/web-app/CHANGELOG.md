@@ -1,5 +1,9 @@
 # Changelog
 
+- **Newest emoji everywhere**: the emoji picker and the composer `:emoji:`
+  completion now include Unicode 16 and 17 emoji (e.g. 🪎 treasure chest), so
+  you can search for and insert the latest ones. The composer completion is
+  also correctly on by default in the browser edition again.
 - **Resizable chat list**: drag the divider between the chat list and the
   chat view to set your own sidebar width — it sticks across reloads on this
   device. Double-click the divider to go back to the default split.
