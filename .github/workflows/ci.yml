@@ -271,6 +271,12 @@ jobs:
       - name: E2E test — chat export to zip
         run: node scripts/test-export-chat-html.mjs
 
+      # resizable sidebar e2e (fully offline, mock madmail): drag the chat-list
+      # divider, min-width clamp, persistence across reload, keyboard resize,
+      # double-click reset.
+      - name: E2E test — resizable chat-list sidebar
+        run: node scripts/test-sidebar-resize-e2e.mjs
+
       # unfurl service self-check (fully offline): metadata + inline image,
       # SSRF guards (private-IP / literal-IP refusal), size cap, rate limit.
       - name: Self-check — unfurl service
