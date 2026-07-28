@@ -26,7 +26,8 @@ static FS: Mutex<BTreeMap<PathBuf, Node>> = Mutex::new(BTreeMap::new());
 use crate::opfs::{mark_dirty, purge_pool_files_under};
 // re-exported here so the core can reach persistence entry points via `tokio::fs::*`
 pub use crate::opfs::{
-    enable_persistence, flush_pending, sqlite_vfs_account_uuids, sqlite_vfs_import, sqlite_vfs_take,
+    enable_persistence, failed_count, flush_pending, sqlite_vfs_account_uuids, sqlite_vfs_import,
+    sqlite_vfs_take,
 };
 
 /// Point-in-time state of one memfs path, for the OPFS write-through.
@@ -178,6 +179,13 @@ pub fn sync_remove(path: impl AsRef<Path>) -> io::Result<()> {
         .cloned()
         .collect();
     if keys.is_empty() {
+        // Purge even with no memfs node: sqlite dbs live solely in the sahpool
+        // VFS, never in the memfs, so an account dir whose async mirror was
+        // lost still has its db holding pool slots — leaving it behind lets
+        // the next self-heal resurrect the deleted account (same gap
+        // `remove_file` closes below).
+        drop(fs);
+        purge_pool_files_under(&prefix);
         return Err(not_found());
     }
     for key in keys {
@@ -227,6 +235,11 @@ pub async fn remove_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
         .cloned()
         .collect();
     if keys.is_empty() {
+        // Same as sync_remove: purge pool slots even when the memfs node is
+        // gone, or a deleted account whose dir mirror was lost leaks its db
+        // (and the next self-heal resurrects the account from it).
+        drop(fs);
+        purge_pool_files_under(&prefix);
         return Err(not_found());
     }
     for key in keys {

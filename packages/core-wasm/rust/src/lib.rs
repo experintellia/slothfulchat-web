@@ -505,17 +505,28 @@ impl DeltaChat {
         tokio::fs::sync_create_dir_all(&path).map_err(fs_err)
     }
 
+    /// Snapshot of the monotonic count of OPFS write-throughs that have failed.
+    /// Take it BEFORE starting an import and pass it to [`Self::fs_flush`]: the
+    /// OPFS flusher reconciles concurrently with the import, so a baseline
+    /// captured at flush time would bucket mid-import failures into "before"
+    /// and falsely report full durability.
+    pub fn fs_failed(&self) -> u32 {
+        tokio::fs::failed_count()
+    }
+
     /// Awaits until every queued OPFS write-through is durable. Used after a
     /// backup import so the imported blobs are persisted before the RPC
     /// resolves — otherwise a reload before the async flusher drains them
     /// rebuilds the memfs from OPFS without those blobs (#77). No-op unless
     /// persistence is enabled.
     ///
-    /// Returns the number of writes that did NOT reach OPFS (reconcile failures
-    /// or still-queued at the timeout cap); 0 means fully durable. The caller
-    /// surfaces a non-zero result instead of reporting a false import success.
-    pub async fn fs_flush(&self) -> u32 {
-        tokio::fs::flush_pending().await
+    /// Returns the number of writes that did NOT reach OPFS since the
+    /// `failed_since` baseline (a [`Self::fs_failed`] snapshot from before the
+    /// work being verified) plus anything still queued at the timeout cap; 0
+    /// means fully durable. The caller surfaces a non-zero result instead of
+    /// reporting a false import success.
+    pub async fn fs_flush(&self, failed_since: u32) -> u32 {
+        tokio::fs::flush_pending(failed_since).await
     }
 }
 

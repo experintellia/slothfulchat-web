@@ -96,6 +96,14 @@ thread_local! {
     /// waitForOpfsSyncHandles until this worker is destroyed.
     static CONFIG_SAHS: RefCell<Option<(FileSystemSyncAccessHandle, FileSystemSyncAccessHandle)>> =
         const { RefCell::new(None) };
+    /// accounts.toml content last successfully committed through the main
+    /// handle this session — the only safe source for refreshing `.bak`.
+    /// After a failed `sah_write` (e.g. disk-full mid-write), main holds TORN
+    /// bytes (new prefix + old tail) that still read back complete and
+    /// plausible-looking; refreshing `.bak` from that read-back on the retry
+    /// would launder the torn registry into the last-good copy the orphan
+    /// sweep depends on — exactly on the disk-full path where it matters.
+    static LAST_COMMITTED: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
 }
 
 fn js_err(err: JsValue) -> String {
@@ -252,15 +260,21 @@ pub(crate) fn mark_dirty(path: &Path) {
 /// A generous cap keeps a genuinely stuck flusher from hanging the caller
 /// forever; hitting it is a bug worth the warning, not the normal path (the
 /// queue is typically already near-drained by the time import finishes).
-/// Returns the number of writes that did NOT become durable during this drain:
-/// reconcile failures observed while draining plus anything still queued if the
-/// cap is hit. 0 means everything queued is now durably in OPFS. The caller
-/// (backup import) surfaces a non-zero result instead of reporting success.
-pub async fn flush_pending() -> u32 {
+/// Returns the number of writes that did NOT become durable since the
+/// `failed_since` baseline: reconcile failures past the baseline plus anything
+/// still queued if the cap is hit. 0 means everything queued is now durably in
+/// OPFS. The caller (backup import) surfaces a non-zero result instead of
+/// reporting success.
+///
+/// `failed_since` is a [`failed_count`] snapshot taken BEFORE the work whose
+/// durability is being verified started. The flusher reconciles concurrently
+/// with that work, so a baseline taken here — at flush time — would bucket
+/// mid-work failures (storage filling during an import is the likeliest
+/// timing) into "before" and falsely report full durability.
+pub async fn flush_pending(failed_since: u32) -> u32 {
     if !ENABLED.load(Ordering::Relaxed) {
         return 0;
     }
-    let failed_before = FAILED.load(Ordering::SeqCst);
     // ~30s worst case (1500 * 20ms); real drains are far shorter.
     let mut still_queued = 0;
     for _ in 0..1500 {
@@ -275,9 +289,16 @@ pub async fn flush_pending() -> u32 {
             "opfs: flush_pending timed out with {still_queued} write(s) still queued"
         )));
     }
-    // failures seen during the drain + anything still in flight at the cap
-    let failed = FAILED.load(Ordering::SeqCst).saturating_sub(failed_before);
-    (failed + still_queued) as u32
+    // failures since the caller's baseline + anything still in flight at the cap
+    let failed = (FAILED.load(Ordering::SeqCst) as u32).saturating_sub(failed_since);
+    failed + still_queued as u32
+}
+
+/// Current value of the monotonic failed-write-through counter. Snapshot it
+/// before starting work whose durability [`flush_pending`] will verify, and
+/// pass it there as the baseline.
+pub fn failed_count() -> u32 {
+    FAILED.load(Ordering::SeqCst) as u32
 }
 
 /// Synchronous accounts.toml write-through. Returns false when the handles
@@ -318,42 +339,54 @@ fn write_config_through(
 ) -> Result<(), JsValue> {
     match fs::snapshot(Path::new(ACCOUNTS_TOML)) {
         Snapshot::File(data) => {
-            let old_len = main.get_size()? as usize;
-            if old_len > 0 && old_len <= CONFIG_BAK_MAX {
+            // The previous registry to preserve in `.bak`: the in-memory copy
+            // of what was last successfully committed (immune to a torn main
+            // left by a failed write — see LAST_COMMITTED), or, on the first
+            // write after boot, a guarded read-back of main. The read-back
+            // guards — complete read + core's leading key (its serialization
+            // starts with `selected_account`; the iOS garbage and a failed
+            // quarantine truncate both fail this) — cannot prove the content
+            // is not a clean-looking torn prefix from a crash last session;
+            // the in-memory copy exists to close that hole for every write
+            // after the first. A read failure just skips the refresh: the
+            // main commit below is the job that must not be blocked.
+            let prev = LAST_COMMITTED.with(|c| c.borrow().clone()).or_else(|| {
+                let old_len = main.get_size().ok()? as usize;
+                if old_len == 0 || old_len > CONFIG_BAK_MAX {
+                    return None;
+                }
                 let opts = FileSystemReadWriteOptions::new();
                 opts.set_at(0.0);
                 let mut old = vec![0u8; old_len];
-                let read = main.read_with_u8_array_and_options(&mut old, &opts)? as usize;
-                let full_read = read == old_len;
-                old.truncate(read);
-                if old == data {
-                    return Ok(()); // no-op sync (core re-syncs unconditionally)
-                }
-                // Refresh the backup only from a COMPLETE read of a plausible
-                // config: `full_read` guards against a short read laundering a
-                // truncated prefix into the last-good copy, and the prefix check
-                // (core's serialization starts with this key) keeps a failed
-                // quarantine truncate from laundering corrupt bytes in.
-                if full_read && old.starts_with(b"selected_account") {
-                    if let Err(err) = sah_write(bak, &old) {
-                        // never keep a torn backup (new prefix + stale tail);
-                        // empty is safely ignored by the heal
-                        let _ = bak.truncate_with_f64(0.0);
-                        let _ = bak.flush();
-                        web_sys::console::warn_2(
-                            &JsValue::from_str("opfs: accounts.toml.bak refresh failed; cleared"),
-                            &err,
-                        );
-                    }
+                let read = main.read_with_u8_array_and_options(&mut old, &opts).ok()? as usize;
+                (read == old_len && old.starts_with(b"selected_account")).then_some(old)
+            });
+            if prev.as_deref() == Some(data.as_slice()) {
+                return Ok(()); // no-op sync (core re-syncs unconditionally)
+            }
+            if let Some(prev) = prev.filter(|p| !p.is_empty()) {
+                if let Err(err) = sah_write(bak, &prev) {
+                    // never keep a torn backup (new prefix + stale tail);
+                    // empty is safely ignored by the heal
+                    let _ = bak.truncate_with_f64(0.0);
+                    let _ = bak.flush();
+                    web_sys::console::warn_2(
+                        &JsValue::from_str("opfs: accounts.toml.bak refresh failed; cleared"),
+                        &err,
+                    );
                 }
             }
             sah_write(main, &data)?;
+            LAST_COMMITTED.with(|c| *c.borrow_mut() = Some(data));
         }
         // removed from memfs (the heal's quarantine rename): the file itself
         // cannot be deleted while its SAH is held — empty = gone
         Snapshot::Missing => {
             main.truncate_with_f64(0.0)?;
             main.flush()?;
+            // quarantined = distrusted: the next rebuild's bak refresh must
+            // not source a pre-quarantine state from here
+            LAST_COMMITTED.with(|c| *c.borrow_mut() = None);
         }
         Snapshot::Dir => {}
     }

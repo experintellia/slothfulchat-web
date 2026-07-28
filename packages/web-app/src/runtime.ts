@@ -338,9 +338,10 @@ function getCore(): Core {
     // There is no server here, so rewrite it to a memfs dir before it reaches
     // the core. bundle.js stays untouched.
     const activeCore = core
-    // request ids of in-flight import_backup calls, so we can hold their
-    // success response until the imported blobs are durable (see below)
-    const pendingImports = new Set<number | string>()
+    // request ids of in-flight import_backup calls → failed-write baseline
+    // captured when the import was SENT, so we can hold their success response
+    // until the imported blobs are durable (see below)
+    const pendingImports = new Map<number | string, Promise<number>>()
     const originalSend = core.transport._send.bind(core.transport)
     core.transport._send = (message: any) => {
       if (
@@ -362,7 +363,16 @@ function getCore(): Core {
         (message?.method === 'import_backup' || message?.method === 'get_backup') &&
         message.id != null
       ) {
-        pendingImports.add(message.id)
+        // Snapshot the failed-write counter NOW — before the import request is
+        // even posted — so failures during the import are counted at flush
+        // time. The OPFS flusher reconciles concurrently with the import;
+        // a baseline captured when the response arrives would bucket
+        // mid-import failures (storage filling during the restore is the
+        // likeliest timing) into "before" and falsely report full durability.
+        // Ordering: fsFailed() posts its worker message here, ahead of
+        // originalSend below, and the worker handles messages in order — the
+        // snapshot is read before the import starts executing.
+        pendingImports.set(message.id, activeCore.fsFailed().catch(() => 0))
       }
       originalSend(message)
     }
@@ -373,18 +383,20 @@ function getCore(): Core {
     const transport = core.transport as any
     const originalOnMessage = transport._onmessage.bind(transport)
     transport._onmessage = (message: any) => {
-      if (message?.id != null && pendingImports.delete(message.id) && !message.error) {
-        activeCore
-          .fsFlush()
+      const baseline = message?.id != null ? pendingImports.get(message.id) : undefined
+      if (baseline !== undefined && pendingImports.delete(message.id) && !message.error) {
+        baseline
+          .then(since => activeCore.fsFlush(since))
           .then(failed => {
-            // fsFlush reports writes that never reached OPFS (e.g. the disk
-            // filled mid-drain). Don't silently claim a complete restore.
+            // fsFlush reports writes that never reached OPFS since the
+            // pre-import baseline (e.g. the disk filled mid-restore). Don't
+            // silently claim a complete restore.
             if (failed) {
-              console.error(
-                `slothfulchat: ${failed} restored write(s) did not reach persistent ` +
-                  'storage — some imported data may be missing after a reload ' +
-                  '(browser storage may be full).'
-              )
+              const text =
+                `${failed} restored item(s) did not reach persistent storage — ` +
+                'some data may be missing after a reload (browser storage may be full).'
+              console.error(`slothfulchat: ${text}`)
+              showWarningToast('sc-restore-warning-toast', `⚠ Restore incomplete: ${text}`)
             }
           })
           .catch(err => console.warn('post-import OPFS flush failed', err))
@@ -2505,8 +2517,9 @@ function showWelcomeHint() {
   group.prepend(hint)
 }
 
-function showBridgeToast() {
-  if (document.getElementById('sc-bridge-toast')) return
+/** Bottom-right warning toast; click runs `onClick` (default: dismiss). */
+function showWarningToast(id: string, text: string, onClick?: () => void) {
+  if (document.getElementById(id)) return
   const toast = el(
     'div',
     {
@@ -2526,10 +2539,10 @@ function showBridgeToast() {
       boxShadow: '0 2px 12px rgba(0,0,0,.35)',
       cursor: 'pointer',
     },
-    '⚠ Bridge not reachable — click to fix'
+    text
   )
-  toast.id = 'sc-bridge-toast'
-  toast.onclick = () => showBridgeDialog()
+  toast.id = id
+  toast.onclick = onClick ?? (() => toast.remove())
   document.body.appendChild(toast)
   // Upstream dialogs (welcome screen etc.) use showModal(), whose top layer
   // paints over any z-index — join it so the toast stays visible. Note it's
@@ -2539,6 +2552,12 @@ function showBridgeToast() {
     toast.popover = 'manual'
     toast.showPopover()
   }
+}
+
+function showBridgeToast() {
+  showWarningToast('sc-bridge-toast', '⚠ Bridge not reachable — click to fix', () =>
+    showBridgeDialog()
+  )
 }
 
 function showBridgeDialog() {

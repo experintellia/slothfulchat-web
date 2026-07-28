@@ -7,9 +7,9 @@
 
 use std::path::Path;
 
-/// True if `s` is shaped like an account uuid (8-4-4-4-12 hex). Cheap check —
-/// the shim has no `uuid` crate — good enough to tell an account dir name from
-/// anything else.
+/// True if `s` is shaped like an account uuid (8-4-4-4-12 hex).
+/// ponytail: hand-rolled shape check, the shim has no `uuid` crate — good
+/// enough to tell an account dir name from anything else.
 pub fn is_uuid(s: &str) -> bool {
     let b = s.as_bytes();
     if b.len() != 36 {
@@ -31,9 +31,10 @@ pub fn account_uuid_of_db(db_path: &str) -> Option<&str> {
 
 /// True if `text` is a plausible `accounts.toml` as core writes it (its
 /// serialization emits the scalar `selected_account` first). Binary garbage
-/// (the iOS ~1 MB incident) or a 0-byte file fails this. It is a proxy, not a
-/// full TOML parse — the shim has no parser — so the sweep also cross-checks
-/// the last-good backup before deleting anything (see [`is_orphan_slot`]).
+/// (the iOS ~1 MB incident) or a 0-byte file fails this.
+/// ponytail: prefix proxy, not a full TOML parse — the shim has no parser —
+/// so the sweep also cross-checks the last-good backup before deleting
+/// anything (see [`is_orphan_slot`]); upgrade path is a `toml` dependency.
 pub fn is_plausible_registry(text: &str) -> bool {
     text.trim_start().starts_with("selected_account")
 }
@@ -65,9 +66,9 @@ pub fn is_orphan_slot(db_path: &str, main: &str, bak: Option<&str>) -> bool {
     let Some(uuid) = account_uuid_of_db(db_path) else {
         return false; // unrecognized path shape → never delete
     };
-    // uuids are unique 36-char ids: a substring test can't false-match one live
-    // uuid against another, and a removed uuid cannot appear in a TOML that no
-    // longer mentions it.
+    // ponytail: substring test, not a parsed-field lookup — uuids are unique
+    // 36-char ids, so it can't false-match one live uuid against another, and
+    // a removed uuid cannot appear in a TOML that no longer mentions it.
     let in_main = main.contains(uuid);
     let in_bak = bak.is_some_and(|b| b.contains(uuid));
     !in_main && !in_bak
