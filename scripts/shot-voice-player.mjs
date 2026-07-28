@@ -380,6 +380,30 @@ try {
   await page.waitForTimeout(2500)
   await shot('02-custom-player-playing')
 
+  // #137 strip: on mobile the player pins under the navbar in BOTH views
+  if (MOBILE) {
+    try {
+      const strip = page.getByTestId('voice-message-strip')
+      await strip.waitFor({ state: 'visible', timeout: 10_000 })
+      await shot('12-strip-chat-view')
+      // the chat-view back button is icon-only (no accessible name); NB a
+      // name-based lookup like { name: 'Back' } substring-matches the speed
+      // pill's "Playback speed" label
+      await page.locator('button:has(.backButtonIcon)').click()
+      await strip.waitFor({ state: 'visible', timeout: 10_000 })
+      await page.waitForTimeout(400)
+      await shot('13-strip-list-view')
+      await page
+        .locator('.chat-list .chat-list-item')
+        .filter({ hasText: 'Bob' })
+        .first()
+        .click()
+      await incomingPlayer.waitFor({ state: 'visible', timeout: 15_000 })
+    } catch (err) {
+      console.warn('strip shots skipped:', err.message)
+    }
+  }
+
   // A3: playback survives a chat switch; the mini-player carries the controls
   try {
     await page
