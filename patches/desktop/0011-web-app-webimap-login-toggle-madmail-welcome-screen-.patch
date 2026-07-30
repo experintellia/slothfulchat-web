@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Tue, 7 Jul 2026 21:42:38 +0000
-Subject: [PATCH 11/58] web-app: webimap login toggle + madmail welcome-screen
+Subject: [PATCH 11/66] web-app: webimap login toggle + madmail welcome-screen
  entry
 
 Frontend surface for the madmail WebIMAP transport (HTTP mail access, no
@@ -127,7 +127,7 @@ index 58ab5d86d..dc53ee49e 100644
    // because that function is called on every keypress
    const saveDisplayName = () =>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
-index 780f5b3b1..c39e833ac 100644
+index 044ff4ca4..d22373f36 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 @@ -1,6 +1,7 @@

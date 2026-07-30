@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <claude@example.com>
 Date: Thu, 9 Jul 2026 16:17:40 +0000
-Subject: [PATCH 23/58] web-app: use the SlothfulChat icon in the About dialog
+Subject: [PATCH 23/66] web-app: use the SlothfulChat icon in the About dialog
  and welcome screen
 
 Replaces the upstream Delta Chat intro1.png logo with our own app icon
@@ -91,7 +91,7 @@ index 2052cfe8b..f3bd3a89c 100644
 +  }
  }
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
-index c39e833ac..ce5a87504 100644
+index d22373f36..3784a858e 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 @@ -5,7 +5,7 @@ import UseWebimapServerDialog from './UseWebimapServerDialog'

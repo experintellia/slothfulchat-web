@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Mon, 6 Jul 2026 00:57:11 +0000
-Subject: [PATCH 03/18] wasm: stub HTTP/proxy modules, rustls ring provider
+Subject: [PATCH 03/19] wasm: stub HTTP/proxy modules, rustls ring provider
 
 - net/http_wasm.rs, net/proxy_wasm.rs: compile-compatible stubs selected
   via #[cfg]+#[path]; every operation errors at runtime (fetch()/WS proxy
