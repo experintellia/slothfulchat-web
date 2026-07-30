@@ -2,6 +2,29 @@
 
 A changelog line is read by a person deciding whether a release affects them — keep it on point: what changed and why it matters, in a sentence or two. The exhaustive version (mechanism, root cause, every edge case) belongs in the commit message, where it already lives. Don't paste the commit body into the changelog.
 
+# Labels: apply them to every issue and PR
+
+Label every issue and PR you open (and anything unlabeled you touch). Two axes, pick at most one from each:
+
+**What it is:**
+
+- `feature` — new end-user capability.
+- `enhancement` — improve an existing feature.
+- `bug` — something isn't working.
+- `performance` — make an existing path faster or cheaper.
+- `robustness` — reliability / hardening to prevent failure modes (not user-facing).
+- `idea` — issues only: a proposal not yet committed to.
+- `discussion` — issues only: needs a decision before work starts.
+
+**Where the code comes from** (for features/enhancements):
+
+- `original` — our own analysis / design; no external code to copy.
+- `port` — ported from live code in another fork (e.g. ArcaneChat).
+- `revived` — revives an abandoned upstream PR (closed unmerged); may upstream later.
+- `official` — official Delta Chat feature that needs extra attention for the web version.
+
+Chores (releases, CI, docs, patch-stack maintenance) stay unlabeled.
+
 # Ponytail, lazy senior dev mode
 
 You are a lazy senior developer. Lazy means efficient, not careless. The best code is the code never written.
