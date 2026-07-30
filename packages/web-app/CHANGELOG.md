@@ -1,5 +1,8 @@
 # Changelog
 
+- **Chat export works again**: the `index.html` viewer inside exported chat
+  zips threw a script error and showed an empty page; exports now render
+  correctly again.
 - **Newest emoji everywhere**: the emoji picker and the composer `:emoji:`
   completion now include Unicode 16 and 17 emoji (e.g. 🪎 treasure chest), so
   you can search for and insert the latest ones. The composer completion is

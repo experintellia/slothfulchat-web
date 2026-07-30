@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 01:05:26 +0000
-Subject: [PATCH 32/58] web-app: export a chat as a zip (html viewer + txt +
+Subject: [PATCH 32/66] web-app: export a chat as a zip (html viewer + txt +
  json + media) from the three-dot menu
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -41,8 +41,8 @@ jumbomoji). New strings live in _untranslated_en.json.
 ---
  _locales/_untranslated_en.json                |    6 +
  .../src/components/chat/ChatContextMenu.tsx   |   11 +
- .../components/dialogs/ExportChatToHtml.tsx   | 1217 +++++++++++++++++
- 3 files changed, 1234 insertions(+)
+ .../components/dialogs/ExportChatToHtml.tsx   | 1228 +++++++++++++++++
+ 3 files changed, 1245 insertions(+)
  create mode 100644 packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
@@ -98,10 +98,10 @@ index ec54fd200..60d6f4352 100644
          (chatListItems.some(c => c.freshMessageCounter > 0)
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 new file mode 100644
-index 000000000..2831d5735
+index 000000000..9b31c4cc6
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-@@ -0,0 +1,1217 @@
+@@ -0,0 +1,1228 @@
 +import React, { useEffect, useRef, useState } from 'react'
 +import moment from 'moment'
 +import { T } from '@deltachat/jsonrpc-client'
@@ -475,8 +475,19 @@ index 000000000..2831d5735
 +  }
 +  const data = JSON.parse(dataEl.textContent || '{}') as any
 +  const s = data.styles || {}
++  // This function ships as Function.toString() into the exported file, so it
++  // must not reference module scope — after minification an outer const like
++  // HTML_ESCAPES becomes a mangled name that doesn't exist in the export
++  // (ReferenceError). Keep this map local; don't dedupe it with escapeHtml's.
++  const ESCAPES: Record<string, string> = {
++    '&': '&amp;',
++    '<': '&lt;',
++    '>': '&gt;',
++    '"': '&quot;',
++    "'": '&#39;',
++  }
 +  const esc = (raw: any) =>
-+    String(raw ?? '').replace(/[&<>"']/g, c => HTML_ESCAPES[c])
++    String(raw ?? '').replace(/[&<>"']/g, c => ESCAPES[c])
 +  const cls = (arr: any[]) => arr.filter(Boolean).join(' ')
 +  const fileHref = (path: any) => {
 +    const rel = path && data.files[path]
