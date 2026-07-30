@@ -12,9 +12,12 @@ import initWasm, { init } from '../wasm-dist/deltachat_wasm.js'
 interface FsRequest {
   type: 'fs'
   id: number
-  op: 'read' | 'write' | 'remove' | 'exists' | 'flush'
+  op: 'read' | 'write' | 'remove' | 'exists' | 'flush' | 'failed'
   path: string
   data?: Uint8Array
+  /** flush op: failed-counter baseline (a prior `failed` op result) taken
+   * before the work being verified started. */
+  since?: number
 }
 
 interface FsResponse {
@@ -23,6 +26,8 @@ interface FsResponse {
   ok: boolean
   data?: Uint8Array
   exists?: boolean
+  /** flush op: writes that did NOT reach OPFS (0 = fully durable). */
+  failed?: number
   error?: string
 }
 
@@ -98,10 +103,15 @@ async function waitForOpfsSyncHandles(): Promise<void> {
     try {
       const root = await (self as any).navigator.storage.getDirectory()
       // race a timeout: createSyncAccessHandle can HANG (not reject) while
-      // the previous worker is mid-teardown
+      // the previous worker is mid-teardown. The budget grows with each
+      // attempt: the pool has max(32, 2N+8) files and never shrinks, and on
+      // slow storage (low-end eMMC) probing them all can exceed a fixed 2s
+      // every time — which would misreport "already running in another tab"
+      // and brick boot with no other tab open. Later attempts allow more time.
+      const budgetMs = Math.min(2000 + (attempt - 1) * 1000, 12000)
       await Promise.race([
         probeAll(root),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('probe timeout')), 2000)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('probe timeout')), budgetMs)),
       ])
       return
     } catch (err) {
@@ -118,7 +128,7 @@ async function waitForOpfsSyncHandles(): Promise<void> {
       await new Promise(r => setTimeout(r, 500))
     }
   }
-  // still locked after 15s: almost certainly another live tab. Tell the page
+  // still locked after all 30 attempts: almost certainly another live tab. Tell the page
   // (it shows the "already running in another tab" dialog) and fail loudly —
   // proceeding into init would hang forever in the sahpool install.
   fatalReported = true
@@ -173,8 +183,15 @@ scope.onmessage = async (event: MessageEvent<string | FsRequest | ConfigMessage>
         break
       case 'flush':
         // awaits until every queued OPFS write-through is durable (backup
-        // import persistence, see DeltaChat.fs_flush)
-        await dc.fs_flush()
+        // import persistence, see DeltaChat.fs_flush); reports how many writes
+        // did NOT make it — since the caller's baseline (captured before the
+        // import started, so mid-import failures count) or, without one, since
+        // now — so the caller can avoid claiming a false success
+        response.failed = await dc.fs_flush(msg.since ?? dc.fs_failed())
+        break
+      case 'failed':
+        // snapshot of the monotonic failed-write counter, for a later flush
+        response.failed = dc.fs_failed()
         break
       default:
         throw new Error(`unknown fs op: ${(msg as FsRequest).op}`)

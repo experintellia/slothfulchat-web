@@ -1,5 +1,26 @@
 # Changelog
 
+Hardening of the account-storage subsystem against the known remaining ways a
+durable account could be lost or corrupted:
+
+- The self-heal now recognises an account by its database, not just its
+  folder, so an account whose folder mirror was lost is no longer dropped.
+- The boot slot-reclaim sweep cross-checks the last-good registry backup, so a
+  crash-torn `accounts.toml` can't authorise deleting a live account's
+  database — and that backup can no longer be overwritten with torn content by
+  a failed-write retry. Deleting an account now frees its database even when
+  the account folder was already gone (it could previously be resurrected by
+  a later self-heal). Crashed backup-export leftovers are reclaimed.
+- A failed backup import no longer leaves a half-written, undecryptable
+  database registered.
+- Second-device transfer (receiving a backup) now waits for its blobs to be
+  durable before reporting success, like file import already did, and both
+  report an honest failure count even when storage fills mid-restore (new
+  `Core.fsFailed()` baseline for `Core.fsFlush(since?)`; no-arg calls keep
+  the old behavior).
+- Boot no longer misreports "already running in another tab" on slow storage
+  with many accounts (the reload lock-probe budget now scales).
+
 ## 0.8.0 — 2026-07-24
 
 - Fixed total account loss on boot: the sahpool slot-reclaim sweep decided

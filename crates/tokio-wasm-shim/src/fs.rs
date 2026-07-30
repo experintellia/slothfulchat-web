@@ -25,7 +25,10 @@ static FS: Mutex<BTreeMap<PathBuf, Node>> = Mutex::new(BTreeMap::new());
 
 use crate::opfs::{mark_dirty, purge_pool_files_under};
 // re-exported here so the core can reach persistence entry points via `tokio::fs::*`
-pub use crate::opfs::{enable_persistence, flush_pending, sqlite_vfs_import, sqlite_vfs_take};
+pub use crate::opfs::{
+    enable_persistence, failed_count, flush_pending, sqlite_vfs_account_uuids, sqlite_vfs_import,
+    sqlite_vfs_take,
+};
 
 /// Point-in-time state of one memfs path, for the OPFS write-through.
 pub(crate) enum Snapshot {
@@ -176,6 +179,13 @@ pub fn sync_remove(path: impl AsRef<Path>) -> io::Result<()> {
         .cloned()
         .collect();
     if keys.is_empty() {
+        // Purge even with no memfs node: sqlite dbs live solely in the sahpool
+        // VFS, never in the memfs, so an account dir whose async mirror was
+        // lost still has its db holding pool slots — leaving it behind lets
+        // the next self-heal resurrect the deleted account (same gap
+        // `remove_file` closes below).
+        drop(fs);
+        purge_pool_files_under(&prefix);
         return Err(not_found());
     }
     for key in keys {
@@ -196,15 +206,19 @@ pub async fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
     // bind before matching: the scrutinee temporary would hold the FS lock
     // across mark_dirty, which re-locks for the accounts.toml write-through
     let removed = FS.lock().unwrap().remove(&path);
-    match removed {
-        Some(_) => {
-            mark_dirty(&path);
-            // Exact-path variant of the pool-slot reclaim (see sync_remove);
-            // harmless completeness — core removes db dirs via the subtree paths.
-            purge_pool_files_under(&path);
-            Ok(())
-        }
-        None => Err(not_found()),
+    if removed.is_some() {
+        mark_dirty(&path);
+    }
+    // Free the pool slot even when NO memfs node existed: sqlite dbs live solely
+    // in the sahpool VFS, never in the memfs, so a failed backup import's
+    // cleanup (`fs::remove_file(dbfile)`) would otherwise free nothing and leave
+    // a partial/undecryptable db registered forever. `purge_pool_files_under`
+    // is a no-op when no pool file matches, so this is safe for ordinary files.
+    purge_pool_files_under(&path);
+    if removed.is_some() {
+        Ok(())
+    } else {
+        Err(not_found())
     }
 }
 
@@ -221,6 +235,11 @@ pub async fn remove_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
         .cloned()
         .collect();
     if keys.is_empty() {
+        // Same as sync_remove: purge pool slots even when the memfs node is
+        // gone, or a deleted account whose dir mirror was lost leaks its db
+        // (and the next self-heal resurrects the account from it).
+        drop(fs);
+        purge_pool_files_under(&prefix);
         return Err(not_found());
     }
     for key in keys {
