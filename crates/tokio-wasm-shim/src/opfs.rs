@@ -43,6 +43,7 @@ use web_sys::{
 };
 
 use crate::fs::{self, Snapshot};
+use crate::registry;
 
 /// OPFS directory mirroring the memfs root ("/" ↔ "memfs/").
 /// Keeps the mirror clearly separated from sahpool's `.opfs-sahpool` dir.
@@ -62,6 +63,13 @@ static PENDING: Mutex<Option<(UnboundedSender<PathBuf>, HashSet<PathBuf>)>> = Mu
 /// drops only post-write is what makes "all imported blobs are durable"
 /// observable (the backup-import reload race, #77).
 static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
+/// Monotonic count of write-throughs whose OPFS reconcile FAILED. The flusher
+/// does not retry (a stuck path would starve the queue), so a failed write is
+/// decremented from INFLIGHT like any other — meaning "INFLIGHT == 0" alone
+/// cannot tell a fully-durable drain from one that silently dropped writes.
+/// [`flush_pending`] diffs this across a drain so a caller (backup import) can
+/// learn its data is NOT fully persisted instead of reporting a false success.
+static FAILED: AtomicUsize = AtomicUsize::new(0);
 
 /// memfs path of core's account registry. Too important for the async
 /// mirror: a reload can kill the worker between `get_file_handle(create)`
@@ -88,6 +96,14 @@ thread_local! {
     /// waitForOpfsSyncHandles until this worker is destroyed.
     static CONFIG_SAHS: RefCell<Option<(FileSystemSyncAccessHandle, FileSystemSyncAccessHandle)>> =
         const { RefCell::new(None) };
+    /// accounts.toml content last successfully committed through the main
+    /// handle this session — the only safe source for refreshing `.bak`.
+    /// After a failed `sah_write` (e.g. disk-full mid-write), main holds TORN
+    /// bytes (new prefix + old tail) that still read back complete and
+    /// plausible-looking; refreshing `.bak` from that read-back on the retry
+    /// would launder the torn registry into the last-good copy the orphan
+    /// sweep depends on — exactly on the disk-full path where it matters.
+    static LAST_COMMITTED: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
 }
 
 fn js_err(err: JsValue) -> String {
@@ -137,23 +153,22 @@ pub async fn enable_persistence() -> Result<(), String> {
     // `selected_account` first). Missing / empty / corrupt (e.g. the iOS ~1 MB
     // garbage) → skip the sweep entirely: never delete a db we cannot prove is
     // orphaned; the self-heal rebuilds the registry with every db left intact.
-    let registry = match fs::snapshot(Path::new(ACCOUNTS_TOML)) {
+    //
+    // Cross-check the last-good backup too: a crash mid-write can leave a
+    // *plausible-looking* but truncated accounts.toml missing some accounts
+    // (disk-full / power loss produces exactly this). accounts.toml.bak still
+    // lists every established account, so a db is reclaimed only when its uuid
+    // is absent from BOTH — see registry::is_orphan_slot (unit-tested).
+    let read_reg = |path| match fs::snapshot(path) {
         Snapshot::File(bytes) => String::from_utf8(bytes).ok(),
         _ => None,
-    }
-    .filter(|text| text.trim_start().starts_with("selected_account"));
+    };
+    let main_reg = read_reg(Path::new(ACCOUNTS_TOML)).filter(|t| registry::is_plausible_registry(t));
+    let bak_reg = read_reg(Path::new(ACCOUNTS_TOML_BAK_PATH));
     let mut reclaimed = 0u32;
-    if let Some(registry) = &registry {
+    if let Some(main_reg) = &main_reg {
         for name in util.list() {
-            // db logical path is /accounts/<uuid>/dc.db{,-wal,-journal}; the
-            // parent dir name IS the account uuid. Absent from the registry =
-            // a removed account's leaked slot (uuids are unique 36-char ids, so
-            // a substring test can't false-match one live uuid against another).
-            let uuid = Path::new(&name)
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str());
-            if uuid.is_some_and(|uuid| !registry.contains(uuid)) {
+            if registry::is_orphan_slot(&name, main_reg, bak_reg.as_deref()) {
                 match util.delete_db(&name) {
                     Ok(_) => reclaimed += 1,
                     Err(err) => web_sys::console::warn_1(&JsValue::from_str(&format!(
@@ -245,21 +260,45 @@ pub(crate) fn mark_dirty(path: &Path) {
 /// A generous cap keeps a genuinely stuck flusher from hanging the caller
 /// forever; hitting it is a bug worth the warning, not the normal path (the
 /// queue is typically already near-drained by the time import finishes).
-pub async fn flush_pending() {
+/// Returns the number of writes that did NOT become durable since the
+/// `failed_since` baseline: reconcile failures past the baseline plus anything
+/// still queued if the cap is hit. 0 means everything queued is now durably in
+/// OPFS. The caller (backup import) surfaces a non-zero result instead of
+/// reporting success.
+///
+/// `failed_since` is a [`failed_count`] snapshot taken BEFORE the work whose
+/// durability is being verified started. The flusher reconciles concurrently
+/// with that work, so a baseline taken here — at flush time — would bucket
+/// mid-work failures (storage filling during an import is the likeliest
+/// timing) into "before" and falsely report full durability.
+pub async fn flush_pending(failed_since: u32) -> u32 {
     if !ENABLED.load(Ordering::Relaxed) {
-        return;
+        return 0;
     }
     // ~30s worst case (1500 * 20ms); real drains are far shorter.
+    let mut still_queued = 0;
     for _ in 0..1500 {
-        if INFLIGHT.load(Ordering::SeqCst) == 0 {
-            return;
+        still_queued = INFLIGHT.load(Ordering::SeqCst);
+        if still_queued == 0 {
+            break;
         }
         wasmtimer::tokio::sleep(Duration::from_millis(20)).await;
     }
-    web_sys::console::warn_1(&JsValue::from_str(&format!(
-        "opfs: flush_pending timed out with {} write(s) still queued",
-        INFLIGHT.load(Ordering::SeqCst)
-    )));
+    if still_queued != 0 {
+        web_sys::console::warn_1(&JsValue::from_str(&format!(
+            "opfs: flush_pending timed out with {still_queued} write(s) still queued"
+        )));
+    }
+    // failures since the caller's baseline + anything still in flight at the cap
+    let failed = (FAILED.load(Ordering::SeqCst) as u32).saturating_sub(failed_since);
+    failed + still_queued as u32
+}
+
+/// Current value of the monotonic failed-write-through counter. Snapshot it
+/// before starting work whose durability [`flush_pending`] will verify, and
+/// pass it there as the baseline.
+pub fn failed_count() -> u32 {
+    FAILED.load(Ordering::SeqCst) as u32
 }
 
 /// Synchronous accounts.toml write-through. Returns false when the handles
@@ -300,40 +339,54 @@ fn write_config_through(
 ) -> Result<(), JsValue> {
     match fs::snapshot(Path::new(ACCOUNTS_TOML)) {
         Snapshot::File(data) => {
-            let old_len = main.get_size()? as usize;
-            if old_len > 0 && old_len <= CONFIG_BAK_MAX {
+            // The previous registry to preserve in `.bak`: the in-memory copy
+            // of what was last successfully committed (immune to a torn main
+            // left by a failed write — see LAST_COMMITTED), or, on the first
+            // write after boot, a guarded read-back of main. The read-back
+            // guards — complete read + core's leading key (its serialization
+            // starts with `selected_account`; the iOS garbage and a failed
+            // quarantine truncate both fail this) — cannot prove the content
+            // is not a clean-looking torn prefix from a crash last session;
+            // the in-memory copy exists to close that hole for every write
+            // after the first. A read failure just skips the refresh: the
+            // main commit below is the job that must not be blocked.
+            let prev = LAST_COMMITTED.with(|c| c.borrow().clone()).or_else(|| {
+                let old_len = main.get_size().ok()? as usize;
+                if old_len == 0 || old_len > CONFIG_BAK_MAX {
+                    return None;
+                }
                 let opts = FileSystemReadWriteOptions::new();
                 opts.set_at(0.0);
                 let mut old = vec![0u8; old_len];
-                let read = main.read_with_u8_array_and_options(&mut old, &opts)? as usize;
-                old.truncate(read);
-                if old == data {
-                    return Ok(()); // no-op sync (core re-syncs unconditionally)
-                }
-                // Refresh the backup only when the previous content plausibly
-                // IS a config (core's serialization starts with this key): a
-                // failed quarantine truncate must not launder corrupt bytes
-                // into the last-good copy.
-                if old.starts_with(b"selected_account") {
-                    if let Err(err) = sah_write(bak, &old) {
-                        // never keep a torn backup (new prefix + stale tail);
-                        // empty is safely ignored by the heal
-                        let _ = bak.truncate_with_f64(0.0);
-                        let _ = bak.flush();
-                        web_sys::console::warn_2(
-                            &JsValue::from_str("opfs: accounts.toml.bak refresh failed; cleared"),
-                            &err,
-                        );
-                    }
+                let read = main.read_with_u8_array_and_options(&mut old, &opts).ok()? as usize;
+                (read == old_len && old.starts_with(b"selected_account")).then_some(old)
+            });
+            if prev.as_deref() == Some(data.as_slice()) {
+                return Ok(()); // no-op sync (core re-syncs unconditionally)
+            }
+            if let Some(prev) = prev.filter(|p| !p.is_empty()) {
+                if let Err(err) = sah_write(bak, &prev) {
+                    // never keep a torn backup (new prefix + stale tail);
+                    // empty is safely ignored by the heal
+                    let _ = bak.truncate_with_f64(0.0);
+                    let _ = bak.flush();
+                    web_sys::console::warn_2(
+                        &JsValue::from_str("opfs: accounts.toml.bak refresh failed; cleared"),
+                        &err,
+                    );
                 }
             }
             sah_write(main, &data)?;
+            LAST_COMMITTED.with(|c| *c.borrow_mut() = Some(data));
         }
         // removed from memfs (the heal's quarantine rename): the file itself
         // cannot be deleted while its SAH is held — empty = gone
         Snapshot::Missing => {
             main.truncate_with_f64(0.0)?;
             main.flush()?;
+            // quarantined = distrusted: the next rebuild's bak refresh must
+            // not source a pre-quarantine state from here
+            LAST_COMMITTED.with(|c| *c.borrow_mut() = None);
         }
         Snapshot::Dir => {}
     }
@@ -381,6 +434,7 @@ async fn flusher(root: FileSystemDirectoryHandle, mut rx: UnboundedReceiver<Path
             pending.remove(&path);
         }
         if let Err(err) = reconcile(&root, &path).await {
+            FAILED.fetch_add(1, Ordering::SeqCst);
             web_sys::console::warn_2(
                 &JsValue::from_str(&format!("opfs write-through failed for {path:?}")),
                 &err,
@@ -591,7 +645,15 @@ pub fn sqlite_vfs_import(name: &str, bytes: &[u8]) -> Result<(), String> {
             let _ = util.delete_db(name); // overwrite: core pre-creates dc.db on account open
             let _ = util.delete_db(&format!("{name}-wal"));
             let _ = util.delete_db(&format!("{name}-journal"));
-            util.import_db(name, bytes).map_err(|e| e.to_string())
+            // A failed import (e.g. quota exhausted mid-write of a large backup)
+            // otherwise leaves a PARTIAL db registered under `name` — it looks
+            // like a real but undecryptable account forever, and `remove_file`
+            // on wasm can't reach it (dbs never touch the memfs). Delete the
+            // half-written slot so the account cleanly does not exist.
+            util.import_db(name, bytes).map_err(|e| {
+                let _ = util.delete_db(name);
+                e.to_string()
+            })
         }
         None => {
             let vfs = sqlite_wasm_rs::MemVfsUtil::<sqlite_wasm_rs::WasmOsCallback>::new();
@@ -600,6 +662,28 @@ pub fn sqlite_vfs_import(name: &str, bytes: &[u8]) -> Result<(), String> {
             vfs.delete_db(&format!("{name}-journal"));
             vfs.import_db(name, bytes).map_err(|e| e.to_string())
         }
+    })
+}
+
+/// Account uuids that have a database in the sahpool VFS — the ground truth of
+/// which accounts hold durable data (a db is written through synchronously and
+/// survives even when the account's async dir mirror was lost). The self-heal
+/// unions this with the memfs account dirs so a durable-db account is never
+/// dropped from a rebuilt registry (and, in turn, never swept). Sorted, deduped;
+/// empty when persistence is off.
+pub fn sqlite_vfs_account_uuids() -> Vec<String> {
+    SAHPOOL.with(|c| {
+        let borrow = c.borrow();
+        let Some(util) = borrow.as_ref() else {
+            return Vec::new();
+        };
+        let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for name in util.list() {
+            if let Some(uuid) = registry::account_uuid_of_db(&name) {
+                set.insert(uuid.to_owned());
+            }
+        }
+        set.into_iter().collect()
     })
 }
 

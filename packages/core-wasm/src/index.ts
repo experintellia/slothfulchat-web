@@ -40,6 +40,7 @@ interface FsResponse {
   ok: boolean
   data?: Uint8Array
   exists?: boolean
+  failed?: number
   error?: string
 }
 
@@ -55,8 +56,17 @@ export interface Core {
   fsRemove(path: string): Promise<void>
   fsExists(path: string): Promise<boolean>
   /** Resolves once every queued OPFS write-through is durable (backup-import
-   * persistence — see the worker `flush` op). No-op without persistence. */
-  fsFlush(): Promise<void>
+   * persistence — see the worker `flush` op). Resolves to the number of writes
+   * that did NOT reach OPFS (0 = fully durable) since the `since` baseline —
+   * an {@link fsFailed} snapshot taken before the work being verified started
+   * (omit to only count failures during the drain itself). No-op (0) without
+   * persistence. */
+  fsFlush(since?: number): Promise<number>
+  /** Snapshot of the monotonic failed-write counter, to pass to
+   * {@link fsFlush}. Capture it BEFORE starting the work whose durability the
+   * flush will verify — the OPFS flusher runs concurrently, so a later
+   * baseline silently absorbs mid-work failures. */
+  fsFailed(): Promise<number>
 }
 
 /** Spawns the core worker and returns the typed client.
@@ -90,9 +100,10 @@ export function startCore(
     pending.delete(msg.id)
   })
   const fsRequest = (
-    op: 'read' | 'write' | 'remove' | 'exists' | 'flush',
+    op: 'read' | 'write' | 'remove' | 'exists' | 'flush' | 'failed',
     path: string,
     data?: Uint8Array,
+    since?: number,
   ): Promise<FsResponse> =>
     new Promise((resolve, reject) => {
       const id = nextId++
@@ -101,7 +112,7 @@ export function startCore(
           ? resolve(response)
           : reject(new Error(response.error ?? `fs ${op} ${path} failed`)),
       )
-      worker.postMessage({ type: 'fs', id, op, path, data })
+      worker.postMessage({ type: 'fs', id, op, path, data, since })
     })
 
   return {
@@ -116,9 +127,8 @@ export function startCore(
       await fsRequest('remove', path)
     },
     fsExists: async (path) => (await fsRequest('exists', path)).exists === true,
-    fsFlush: async () => {
-      await fsRequest('flush', '')
-    },
+    fsFlush: async (since) => (await fsRequest('flush', '', undefined, since)).failed ?? 0,
+    fsFailed: async () => (await fsRequest('failed', '')).failed ?? 0,
   }
 }
 

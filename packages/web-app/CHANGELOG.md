@@ -13,6 +13,12 @@
   system provides). Each option shows a live preview, and only the set you
   actually pick is ever downloaded. This also fixes Firefox showing a broken
   emoji font and logging a "font rejected by sanitizer" error on every load.
+- **Restored data is verified as saved**: after restoring from a backup or
+  receiving a transfer from another device, the app now warns instead of
+  silently reporting success if some of it didn't make it into persistent
+  storage (e.g. the disk filled mid-restore), so you're not left thinking a
+  restore completed when part of it is missing. Part of a broader hardening of
+  account storage against loss — see the core-wasm changelog.
 
 ## 0.8.0 — 2026-07-24
 

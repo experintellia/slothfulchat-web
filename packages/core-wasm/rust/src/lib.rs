@@ -71,7 +71,7 @@ pub async fn init(
             let text = tokio::fs::read_to_string(ACCOUNTS_CONFIG)
                 .await
                 .unwrap_or_default();
-            let disk_uuids = disk_account_uuids().await.unwrap_or_default();
+            let disk_uuids = durable_account_uuids().await.unwrap_or_default();
             if config_is_plausible(&text, &disk_uuids) {
                 return Err(JsValue::from_str(&format!(
                     "failed to create accounts: {orig} (accounts.toml is valid and matches the \
@@ -116,8 +116,9 @@ const ACCOUNTS_CONFIG: &str = "/accounts/accounts.toml";
 const ACCOUNTS_CONFIG_BAK: &str = "/accounts/accounts.toml.bak";
 
 /// The account uuids present on disk: the uuid-named dirs directly under
-/// `/accounts` (a dir name IS its account uuid). Sorted. Shared by the
-/// self-heal rebuild and the heal gate ([`config_is_plausible`]).
+/// `/accounts` (a dir name IS its account uuid). Sorted. Unioned with the
+/// sahpool databases by [`durable_account_uuids`], which is what the self-heal
+/// rebuild and the heal gate ([`config_is_plausible`]) actually consult.
 async fn disk_account_uuids() -> std::io::Result<Vec<String>> {
     let mut entries = tokio::fs::read_dir("/accounts").await?;
     let mut uuids: Vec<String> = Vec::new();
@@ -132,6 +133,27 @@ async fn disk_account_uuids() -> std::io::Result<Vec<String>> {
     }
     uuids.sort();
     Ok(uuids)
+}
+
+/// UUIDs of accounts that have durable data: a uuid-named dir under `/accounts`
+/// (the async OPFS mirror) OR a database in the sahpool VFS (written through
+/// synchronously). The database is the ground truth — an account whose dir
+/// mirror was lost on tab close still has its sync-durable db — so unioning the
+/// pool's uuids keeps the self-heal from dropping (and the boot sweep from later
+/// deleting) a live account that momentarily lacks a mirrored dir. Sorted,
+/// deduped. This is what the heal gate and rebuild consult, not dirs alone.
+#[cfg(target_arch = "wasm32")]
+async fn durable_account_uuids() -> std::io::Result<Vec<String>> {
+    let mut set: std::collections::BTreeSet<String> =
+        disk_account_uuids().await?.into_iter().collect();
+    set.extend(tokio::fs::sqlite_vfs_account_uuids());
+    Ok(set.into_iter().collect())
+}
+/// Native has no sahpool VFS (dbs are real files under the account dirs), so
+/// the dirs already are the ground truth.
+#[cfg(not(target_arch = "wasm32"))]
+async fn durable_account_uuids() -> std::io::Result<Vec<String>> {
+    disk_account_uuids().await
 }
 
 /// Whether `text` is a usable accounts.toml for the accounts on disk — the gate
@@ -202,7 +224,7 @@ async fn heal_accounts_config(cause: &str) -> Result<Accounts, String> {
         .await
         .map_err(io)?;
 
-    let uuids = disk_account_uuids().await.map_err(io)?;
+    let uuids = durable_account_uuids().await.map_err(io)?;
 
     let bak = tokio::fs::read(ACCOUNTS_CONFIG_BAK)
         .await
@@ -483,13 +505,28 @@ impl DeltaChat {
         tokio::fs::sync_create_dir_all(&path).map_err(fs_err)
     }
 
+    /// Snapshot of the monotonic count of OPFS write-throughs that have failed.
+    /// Take it BEFORE starting an import and pass it to [`Self::fs_flush`]: the
+    /// OPFS flusher reconciles concurrently with the import, so a baseline
+    /// captured at flush time would bucket mid-import failures into "before"
+    /// and falsely report full durability.
+    pub fn fs_failed(&self) -> u32 {
+        tokio::fs::failed_count()
+    }
+
     /// Awaits until every queued OPFS write-through is durable. Used after a
     /// backup import so the imported blobs are persisted before the RPC
     /// resolves — otherwise a reload before the async flusher drains them
     /// rebuilds the memfs from OPFS without those blobs (#77). No-op unless
     /// persistence is enabled.
-    pub async fn fs_flush(&self) {
-        tokio::fs::flush_pending().await;
+    ///
+    /// Returns the number of writes that did NOT reach OPFS since the
+    /// `failed_since` baseline (a [`Self::fs_failed`] snapshot from before the
+    /// work being verified) plus anything still queued at the timeout cap; 0
+    /// means fully durable. The caller surfaces a non-zero result instead of
+    /// reporting a false import success.
+    pub async fn fs_flush(&self, failed_since: u32) -> u32 {
+        tokio::fs::flush_pending(failed_since).await
     }
 }
 

@@ -193,6 +193,47 @@ try {
   }
   console.log(`OK: account ${accountId} survived losing its memfs dir (db not swept)`)
 
+  // 6.6 REGRESSION (self-heal must rebuild from the sahpool db, not just dirs):
+  // drop the account's memfs dir AND corrupt accounts.toml so the self-heal
+  // runs — but keep the sahpool database. The heal keys on durable data =
+  // dirs UNION sahpool dbs, so it must rebuild the account from its still-
+  // present database. Before the fix the heal saw no dir, rebuilt an empty
+  // registry, and the account was lost.
+  await injectOpfsCorruption(async () => {
+    const root = await navigator.storage.getDirectory()
+    const accounts = await (
+      await root.getDirectoryHandle('memfs')
+    ).getDirectoryHandle('accounts')
+    // corrupt accounts.toml so Accounts::new fails and the heal engages
+    const file = await accounts.getFileHandle('accounts.toml')
+    const w = await file.createWritable()
+    await w.write(new Uint8Array(64).fill(0xff))
+    await w.close()
+    // remove the account dir(s); the sahpool (.opfs-sahpool) is untouched
+    const names = []
+    for await (const [name, handle] of accounts.entries()) {
+      if (handle.kind === 'directory') names.push(name)
+    }
+    for (const name of names) await accounts.removeEntry(name, { recursive: true })
+  })
+  console.log('OK: corrupted accounts.toml + dropped dirs, kept the sahpool db')
+  await page.goto(appUrl)
+  await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
+  await page
+    .locator('#new-chat-button')
+    .waitFor({ state: 'visible', timeout: 120_000 })
+  const healedFromDb = await rpc('getAllAccountIds')
+  if (!healedFromDb.includes(accountId)) {
+    throw new Error(
+      `account ${accountId} lost when only its sahpool db survived (got ${healedFromDb}) — the self-heal ignored the durable database`
+    )
+  }
+  const healedDbInfo = await rpc('getAccountInfo', accountId)
+  if (healedDbInfo.kind !== 'Configured' || healedDbInfo.addr !== alice.email) {
+    throw new Error(`account not rebuilt from its db: ${JSON.stringify(healedDbInfo)}`)
+  }
+  console.log(`OK: account ${accountId} rebuilt from its sahpool db after dir loss + toml corruption`)
+
   // 7. corrupt accounts.toml in OPFS (the iOS incident: mirror returned ~1MB
   // of garbage) → boot again → the wasm self-heal must quarantine it and
   // restore the last-good backup
@@ -249,18 +290,21 @@ try {
   }
   console.log('OK: corrupt accounts.toml self-healed from backup, quarantine kept')
 
-  // 8. the CI flake shape: 0-byte accounts.toml AND no account dirs → the
-  // heal must skip the (now stale) backup, rebuild a parseable config with
-  // `accounts = []` (a rebuild without the key boot-loops on `missing field
-  // accounts`) and boot empty
+  // 8. genuine total loss: 0-byte accounts.toml, no account dirs, AND no
+  // sahpool databases → the heal must skip the (now stale) backup, rebuild a
+  // parseable config with `accounts = []` (a rebuild without the key boot-loops
+  // on `missing field accounts`) and boot empty. The sahpool must be cleared
+  // too: with a db still present the pool-aware heal would (correctly) recover
+  // the account — see step 6.6 — so "boots empty" is only right when there is
+  // truly no durable data left.
   await injectOpfsCorruption(async () => {
     const root = await navigator.storage.getDirectory()
     const dir = await (
       await root.getDirectoryHandle('memfs')
     ).getDirectoryHandle('accounts')
     // truncate FIRST: createWritable is blocked until the old worker's lock
-    // releases, so the destructive dir removal below can't race a still-live
-    // worker flushing writes that recreate the dirs
+    // releases, so the destructive removals below can't race a still-live
+    // worker flushing writes that recreate the data
     const file = await dir.getFileHandle('accounts.toml')
     const w = await file.createWritable()
     await w.close() // truncates to 0 bytes
@@ -273,8 +317,10 @@ try {
     for (const name of names) {
       await dir.removeEntry(name, { recursive: true })
     }
+    // wipe the sqlite databases too, so no durable data remains
+    await root.removeEntry('.opfs-sahpool', { recursive: true }).catch(() => {})
   })
-  console.log('OK: truncated OPFS accounts.toml to 0 bytes, removed account dirs')
+  console.log('OK: cleared accounts.toml, account dirs, and the sahpool (genuine total loss)')
   await page.goto(appUrl)
   await page.waitForFunction(() => window.__coreSystemInfo, null, {
     timeout: 120_000,
