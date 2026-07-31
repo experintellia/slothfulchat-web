@@ -52,6 +52,8 @@ const HOSTILE = `
     <a id="jslink" href="javascript:window.__pwned = 'jsurl'">js link</a>
     <a id="weblink" href="https://example.com/page">web link</a>
     <svg width="20" height="20"><a id="svglink" href="https://example.com/svg"><circle r="9" cx="10" cy="10"/></a></svg>
+    <a id="frag" href="#section">jump</a>
+    <a id="relx" href="some/relative.html">relative</a>
     <img id="remote" src="${REMOTE_IMG}">
     <img id="inline" src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==">
     <form action="https://evil.invalid/submit"><input name="x"></form>
@@ -133,6 +135,14 @@ check(
   await frame.$eval('#svglink', e => e.getAttribute('target') === '_blank'),
   'SVG links rewritten too (would otherwise navigate the frame itself)'
 )
+check(
+  await frame.$eval('#frag', e => e.getAttribute('href') === '#section' && e.target !== '_blank'),
+  'fragment link kept for in-document jump, not sent to a new tab'
+)
+check(
+  await frame.$eval('#relx', e => e.getAttribute('href') === null),
+  'relative href dropped (would be a dead blob:-relative navigation)'
+)
 
 // -- no execution (layers 1+2): give onerror a moment, then look for markers
 await page.waitForTimeout(300)
@@ -190,6 +200,63 @@ await page.evaluate(
 const options = await page.$$eval('#remote-select option', els => els.map(o => o.value))
 check(options.join(',') === 'never,once', 'contact request offers only never/once')
 check(await page.$eval('#remote-select', e => e.value) === 'never', 'contact request starts blocked')
+check(
+  await page.$$eval('#menu button', els => els.map(b => b.dataset.state).join(',')) === 'never,once',
+  'contact request ⋮ menu offers only never/once'
+)
+
+// -- desktop layout (default wide viewport): exposed control + close, no back/menu
+const vis = sel => page.$eval(sel, e => getComputedStyle(e).display !== 'none')
+check((await vis('#close')) && (await vis('#remote')), 'desktop: close button + remote control exposed')
+check(!(await vis('#back')) && !(await vis('#menu-btn')), 'desktop: no back button / ⋮ menu button')
+
+// -- mobile layout (≤500px): back button left, remote control inside ⋮ menu
+const mpage = await context.newPage()
+await mpage.setViewportSize({ width: 400, height: 800 })
+const mrequests = new Map()
+mpage.on('request', r => mrequests.set(r.url(), 'pending'))
+mpage.on('requestfailed', r => mrequests.set(r.url(), r.failure()?.errorText ?? 'failed'))
+await mpage.goto(`http://localhost:${APP_PORT}/html-email.html`)
+await mpage.evaluate(
+  ([content]) => {
+    window.__closed = false
+    window.__alwaysCalls = []
+    const p = {
+      subject: 's', from: 'f', sentTime: 't', content,
+      isContactRequest: false,
+      alwaysLoadRemote: false,
+      labels: { loadRemoteImages: 'Load Remote Images', ask: 'ask', never: 'Never', once: 'Once', always: 'Always', close: 'Close' },
+      onClose: () => (window.__closed = true),
+      onSetAlwaysLoad: v => window.__alwaysCalls.push(v),
+    }
+    window.__initHtmlEmail(p)
+    window.__initHtmlEmail(p) // the wrapper is reused across opens — must not duplicate controls/handlers
+  },
+  [HOSTILE]
+)
+const mvis = sel => mpage.$eval(sel, e => getComputedStyle(e).display !== 'none')
+check((await mvis('#back')) && (await mvis('#menu-btn')), 'mobile: back button + ⋮ menu button shown')
+check(!(await mvis('#close')) && !(await mvis('#remote')), 'mobile: close button + exposed control hidden')
+check(
+  (await mpage.$$eval('#remote-select option', els => els.length)) === 3 &&
+    (await mpage.$$eval('#menu button', els => els.length)) === 3,
+  'double init does not duplicate controls'
+)
+await mpage.click('#menu-btn')
+check(await mvis('#menu'), '⋮ menu opens')
+await mpage.click('#menu button[data-state="once"]')
+check(!(await mvis('#menu')), '⋮ menu closes after choosing')
+await mpage.waitForTimeout(500)
+check(
+  [...mrequests].some(([u, o]) => u.startsWith('https://remote-tracker.invalid') && o !== 'csp'),
+  'menu "Once" loads remote images'
+)
+check(
+  await mpage.evaluate(() => JSON.stringify(window.__alwaysCalls)) === '[false]',
+  'change handler fired exactly once despite double init'
+)
+await mpage.click('#back')
+check(await mpage.evaluate(() => window.__closed === true), 'mobile back button calls onClose')
 
 await browser.close()
 if (failures) {

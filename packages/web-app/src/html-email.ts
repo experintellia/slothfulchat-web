@@ -3,8 +3,10 @@
  * wrapper (browser edition of desktop's windows/html_email.ts).
  *
  * runtime.ts (openMessageHTML) hosts this page in a fullscreen <dialog>
- * iframe and, being same-origin, calls window.__initHtmlEmail() directly with
- * the message and callbacks once the page has loaded.
+ * iframe or a desktop popup window and, being same-origin, calls
+ * window.__initHtmlEmail() directly with the message and callbacks. The
+ * wrapper is REUSED: init may run again for another message, so all handlers
+ * are assigned via on* properties (re-assignment replaces, never stacks).
  *
  * The email body is rendered with three independent layers between it and
  * everything else (any one alone would already stop script execution):
@@ -19,18 +21,24 @@
  *      the mail could only tighten this further, never loosen it (CSPs
  *      combine restrictively) — and DOMPurify strips <meta> anyway.
  *   3. DOMPurify sanitization: scripts, event handlers, javascript: URLs,
- *      <meta>/<base>/<link> and form controls removed; every link forced to
- *      target=_blank rel=noopener noreferrer (clicking is the only way to
- *      navigate — there is no JS — so in-frame navigation can't happen).
+ *      <meta>/<base>/<link> and form controls removed. Links: http(s)/
+ *      mailto:/tel: get target=_blank rel=noopener noreferrer (with no JS a
+ *      user click is the only possible navigation, and it leaves the
+ *      sandbox); pure-#fragment links stay untouched (same-document jumps
+ *      are allowed in the sandbox); anything else (relative hrefs would
+ *      resolve against the blob: base into dead or weird navigations) loses
+ *      its href.
  *
  * Remote content ("Load Remote Images", desktop parity): never / once /
- * always. Blocking is done by the authored CSP (layer 2) — the browser then
- * never issues the requests. "always" persists via the
- * HTMLEmailAlwaysLoadRemoteContent desktop setting through a callback; for
- * contact requests "always" is not offered and the initial state is always
- * blocked, exactly like desktop. When allowed, images load as ordinary
- * no-cors <img> fetches (missing CORS headers don't matter), with
- * referrer suppressed via <meta name=referrer> + rel=noreferrer.
+ * always — exposed as a labeled control on desktop widths and inside the ⋮
+ * menu on mobile (max-width 500px, the app's $dialog-breakpoint). Blocking is
+ * done by the authored CSP (layer 2) — the browser then never issues the
+ * requests. "always" persists via the HTMLEmailAlwaysLoadRemoteContent
+ * desktop setting through a callback; for contact requests "always" is not
+ * offered and the initial state is always blocked, exactly like desktop.
+ * When allowed, images load as ordinary no-cors <img> fetches (missing CORS
+ * headers don't matter), with referrer suppressed via <meta name=referrer> +
+ * rel=noreferrer.
  */
 import DOMPurify from 'dompurify'
 
@@ -54,6 +62,8 @@ export type HtmlEmailInit = {
   onSetAlwaysLoad: (value: boolean) => void
 }
 
+type RemoteState = 'never' | 'once' | 'always'
+
 // mirrors desktop's CSP_DENY / CSP_ALLOW (windows/html_email.ts): remote
 // opt-in adds http(s) to img/media/font only — remote stylesheets never load
 const contentCsp = (remote: boolean): string => {
@@ -66,16 +76,20 @@ const contentCsp = (remote: boolean): string => {
 }
 
 DOMPurify.addHook('afterSanitizeAttributes', node => {
-  // every link opens outside the sandbox (rewriting is safe because with no
-  // JS a user click is the only possible navigation); noreferrer keeps the
-  // instance URL out of the target's logs, matching the content doc's
-  // <meta name=referrer>. toUpperCase: SVG anchors report a lowercase 'a' —
-  // an unrewritten one would navigate the content frame itself on click,
-  // loading a remote page without the opt-in
+  // toUpperCase: SVG anchors report a lowercase 'a'
   const tag = node.tagName.toUpperCase()
-  if (tag === 'A' || tag === 'AREA') {
+  if (tag !== 'A' && tag !== 'AREA') return
+  const href = node.getAttribute('href') ?? node.getAttribute('xlink:href') ?? ''
+  if (/^(https?:|mailto:|tel:)/i.test(href)) {
+    // external link: open outside the sandbox, without referrer (matching the
+    // content doc's <meta name=referrer>)
     node.setAttribute('target', '_blank')
     node.setAttribute('rel', 'noopener noreferrer')
+  } else if (!href.startsWith('#')) {
+    // '#fragment' stays for in-document jumps; everything else would resolve
+    // against the blob: base into a dead navigation — drop it, keep the text
+    node.removeAttribute('href')
+    node.removeAttribute('xlink:href')
   }
 })
 
@@ -116,6 +130,8 @@ function buildContentDoc(sanitizedShared: HTMLElement, remote: boolean): string 
   return '<!doctype html>\n' + sanitized.outerHTML
 }
 
+let currentBlobUrl: string | undefined // survives re-init so the old email's blob is revoked
+
 function init(payload: HtmlEmailInit): void {
   const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
   document.title = `${payload.subject} – ${payload.from}`
@@ -124,27 +140,41 @@ function init(payload: HtmlEmailInit): void {
   $('date').textContent = payload.sentTime
   $('remote-caption').textContent = payload.labels.loadRemoteImages
 
-  const sanitized = sanitize(payload.content)
   const host = $('frame-host')
-  let blobUrl: string | undefined
+  host.replaceChildren() // drop previous email / the initial loading hint
+  const sanitized = sanitize(payload.content)
   const render = (remote: boolean) => {
-    if (blobUrl) URL.revokeObjectURL(blobUrl)
-    blobUrl = URL.createObjectURL(new Blob([buildContentDoc(sanitized, remote)], { type: 'text/html' }))
+    if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl)
+    currentBlobUrl = URL.createObjectURL(
+      new Blob([buildContentDoc(sanitized, remote)], { type: 'text/html' })
+    )
     const frame = document.createElement('iframe')
     // NO allow-scripts, NO allow-same-origin — see layer 1 in the header
     frame.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox')
     frame.setAttribute('referrerpolicy', 'no-referrer')
     frame.title = 'email content'
-    frame.src = blobUrl
+    frame.src = currentBlobUrl
     host.replaceChildren(frame)
   }
 
-  // never / once / always control (desktop's three-state remote-content
-  // dialog as a native <select>; contact requests never get "always")
+  // the never/once/always control exists twice — exposed <select> (desktop
+  // widths) and ⋮ popover menu (mobile); one state, both surfaces synced
+  const states: RemoteState[] = payload.isContactRequest ? ['never', 'once'] : ['never', 'once', 'always']
+  let current: RemoteState = payload.alwaysLoadRemote && !payload.isContactRequest ? 'always' : 'never'
   const select = $<HTMLSelectElement>('remote-select')
-  const states: Array<'never' | 'once' | 'always'> = payload.isContactRequest
-    ? ['never', 'once']
-    : ['never', 'once', 'always']
+  const menu = $('menu')
+  const syncControls = () => {
+    select.value = current
+    for (const b of menu.querySelectorAll('button')) {
+      b.textContent = `${(b.dataset.state as RemoteState) === current ? '✓ ' : ' '}${payload.labels[b.dataset.state as RemoteState]}`
+    }
+  }
+  const setState = (state: RemoteState) => {
+    current = state
+    if (!payload.isContactRequest) payload.onSetAlwaysLoad(state === 'always')
+    syncControls()
+    render(state !== 'never')
+  }
   select.replaceChildren(
     ...states.map(state => {
       const option = document.createElement('option')
@@ -153,23 +183,39 @@ function init(payload: HtmlEmailInit): void {
       return option
     })
   )
-  const initialRemote = payload.alwaysLoadRemote && !payload.isContactRequest
-  select.value = initialRemote ? 'always' : 'never'
+  select.onchange = () => setState(select.value as RemoteState)
   $('remote').title = payload.labels.ask
-  select.addEventListener('change', () => {
-    const state = select.value as (typeof states)[number]
-    if (!payload.isContactRequest) payload.onSetAlwaysLoad(state === 'always')
-    render(state !== 'never')
-  })
+  menu.replaceChildren(
+    Object.assign(document.createElement('div'), {
+      className: 'caption',
+      textContent: payload.labels.loadRemoteImages,
+    }),
+    ...states.map(state => {
+      const b = document.createElement('button')
+      b.dataset.state = state
+      b.onclick = () => {
+        menu.hidePopover?.()
+        setState(state)
+      }
+      return b
+    })
+  )
+  const menuBtn = $<HTMLButtonElement>('menu-btn')
+  if (typeof (menu as { togglePopover?: unknown }).togglePopover !== 'function') {
+    // pre-popover-API browsers: emulate open/close with the hidden attribute
+    menu.setAttribute('hidden', '')
+    menuBtn.onclick = () =>
+      menu.hasAttribute('hidden') ? menu.removeAttribute('hidden') : menu.setAttribute('hidden', '')
+  }
 
-  const close = $('close')
-  close.setAttribute('aria-label', payload.labels.close)
-  close.addEventListener('click', payload.onClose)
-  window.addEventListener('keydown', e => {
+  $('close').setAttribute('aria-label', payload.labels.close)
+  $('close').onclick = $('back').onclick = payload.onClose
+  window.onkeydown = e => {
     if (e.key === 'Escape') payload.onClose()
-  })
+  }
 
-  render(initialRemote)
+  syncControls()
+  render(current !== 'never')
 }
 
 ;(window as any).__initHtmlEmail = init

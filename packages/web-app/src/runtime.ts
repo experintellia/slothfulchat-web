@@ -697,6 +697,16 @@ class BrowserRuntime {
     // passed — release any held first-visit analytics if its 'welcome' hook
     // somehow didn't fire (a no-op on warm starts and once already released).
     analytics.releaseHeldEvents()
+    // where the HTML email viewer will use the in-app dialog (small screens /
+    // installed PWAs — desktop tabs get a popup window instead), pre-load its
+    // wrapper iframe at idle so the first "Show Full Message…" opens instantly
+    if (
+      !window.matchMedia('(min-width: 501px)').matches ||
+      window.matchMedia('(display-mode: standalone)').matches
+    ) {
+      const idle = (window as any).requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 2000))
+      idle(() => this.ensureHtmlEmailDialog())
+    }
   }
   emitUIReady(): void {
     perf.boot('ui-ready')
@@ -729,27 +739,100 @@ class BrowserRuntime {
 
   /**
    * "Show Full Message…" — browser edition of desktop's separate HTML email
-   * window: a fullscreen <dialog> (same top-layer pattern as consent.ts)
-   * hosting static/html-email.html, which sanitizes the mail and renders it
-   * into a fully sandboxed blob: iframe (see src/html-email.ts for the
-   * three-layer isolation story). Same-origin, so we hand the payload and
-   * callbacks to the wrapper with a direct function call — module scripts
-   * have run by the time the iframe fires 'load'.
+   * window. The viewer itself is static/html-email.html, which sanitizes the
+   * mail and renders it into a fully sandboxed blob: iframe (see
+   * src/html-email.ts for the three-layer isolation story). Two hosts:
+   *
+   * - Desktop-sized browser tab: a real separate window via window.open
+   *   (desktop parity — read mail and chat side by side); one window per
+   *   message, re-click focuses it. Not attempted in installed PWAs
+   *   (window.open there is unreliable) or on small screens.
+   * - Otherwise, or when the popup is blocked: a fullscreen <dialog> (same
+   *   top-layer pattern as consent.ts) hosting the viewer in an iframe. The
+   *   dialog + iframe are created ONCE and reused — re-opening only re-inits
+   *   the already-loaded wrapper, so repeat opens are instant.
+   *
+   * Same-origin either way, so the payload + callbacks go over with a direct
+   * function call; a short poll bridges "window exists" → "wrapper module
+   * ran" and fails loudly instead of leaving a silent dark screen.
    */
-  private htmlEmailDialog?: HTMLDialogElement
+  private htmlEmailDialog?: { dlg: HTMLDialogElement; frame: HTMLIFrameElement }
+  private htmlEmailPopups = new Map<string, Window>()
   openMessageHTML(
-    _accountId: number,
-    _messageId: number,
+    accountId: number,
+    messageId: number,
     isContactRequest: boolean,
     subject: string,
     sender: string,
     sentTime: string,
     content: string
   ): void {
-    this.htmlEmailDialog?.close() // ponytail: one viewer at a time, new one replaces
     // frontend is necessarily up (called from a message's button), so its
     // translation function exists; fall back to raw keys just in case
     const tx: (key: string) => string = (window as any).static_translate ?? ((key: string) => key)
+    const payload = (onClose: () => void) => ({
+      subject,
+      from: sender,
+      sentTime,
+      content,
+      isContactRequest,
+      alwaysLoadRemote: false, // patched in below once settings are read
+      labels: {
+        loadRemoteImages: tx('load_remote_content'),
+        ask: tx('load_remote_content_ask'),
+        never: tx('never'),
+        once: tx('once'),
+        always: tx('always'),
+        close: tx('close'),
+      },
+      onClose,
+      onSetAlwaysLoad: (value: boolean) =>
+        void this.setDesktopSetting('HTMLEmailAlwaysLoadRemoteContent', value),
+    })
+    void (async () => {
+      const settings = await this.getDesktopSettings()
+      const always = settings.HTMLEmailAlwaysLoadRemoteContent === true
+
+      const openInDialog = () => {
+        const { dlg, frame } = this.ensureHtmlEmailDialog()
+        dlg.showModal()
+        const p = { ...payload(() => dlg.close()), alwaysLoadRemote: always }
+        this.callHtmlEmailInit(frame.contentWindow, p, () => {
+          dlg.close()
+          this.log.error('html email viewer failed to load (html-email.html/js missing from dist?)')
+        })
+      }
+
+      // one window per message like desktop (window_id = accountid.msgid)
+      const id = `${accountId}.${messageId}`
+      const wantPopup =
+        window.matchMedia('(min-width: 501px)').matches &&
+        !window.matchMedia('(display-mode: standalone)').matches
+      if (wantPopup) {
+        const existing = this.htmlEmailPopups.get(id)
+        if (existing && !existing.closed) return existing.focus()
+        // same initial size as desktop's HTMLEmailWindow default bounds
+        const win = window.open('./html-email.html', '_blank', 'popup=yes,width=800,height=621')
+        if (win) {
+          this.htmlEmailPopups.set(id, win)
+          const p = { ...payload(() => win.close()), alwaysLoadRemote: always }
+          // popup exists but wrapper never booted (exotic blockers) → dialog
+          return this.callHtmlEmailInit(win, p, () => {
+            win.close()
+            this.htmlEmailPopups.delete(id)
+            openInDialog()
+          })
+        }
+        // window.open returned null (popup blocked) → dialog
+      }
+      openInDialog()
+    })()
+  }
+  /** The reusable dialog host; safe to call early (warm-up) — creating it does
+   * not show it, but lets the wrapper iframe load in the background so the
+   * first click doesn't pay the fetch+parse latency. */
+  private ensureHtmlEmailDialog(): { dlg: HTMLDialogElement; frame: HTMLIFrameElement } {
+    if (this.htmlEmailDialog) return this.htmlEmailDialog
     const dlg = el('dialog', {
       position: 'fixed',
       inset: '0',
@@ -765,37 +848,23 @@ class BrowserRuntime {
     const frame = document.createElement('iframe')
     frame.src = './html-email.html'
     frame.setAttribute('style', 'display:block;width:100%;height:100%;border:none;')
-    frame.title = subject
-    frame.addEventListener('load', async () => {
-      const settings = await this.getDesktopSettings()
-      ;(frame.contentWindow as any)?.__initHtmlEmail({
-        subject,
-        from: sender,
-        sentTime,
-        content,
-        isContactRequest,
-        alwaysLoadRemote: settings.HTMLEmailAlwaysLoadRemoteContent === true,
-        labels: {
-          loadRemoteImages: tx('load_remote_content'),
-          ask: tx('load_remote_content_ask'),
-          never: tx('never'),
-          once: tx('once'),
-          always: tx('always'),
-          close: tx('close'),
-        },
-        onClose: () => dlg.close(),
-        onSetAlwaysLoad: (value: boolean) =>
-          void this.setDesktopSetting('HTMLEmailAlwaysLoadRemoteContent', value),
-      })
-    })
-    dlg.addEventListener('close', () => {
-      dlg.remove()
-      if (this.htmlEmailDialog === dlg) this.htmlEmailDialog = undefined
-    })
+    frame.title = 'HTML Email'
     dlg.append(frame)
-    document.body.append(dlg)
-    dlg.showModal()
-    this.htmlEmailDialog = dlg
+    document.body.append(dlg) // stays in the DOM closed; reused across opens
+    this.htmlEmailDialog = { dlg, frame }
+    return this.htmlEmailDialog
+  }
+  /** Call the wrapper's __initHtmlEmail once its module has run: 'load'
+   * events race with when we get the window, so poll briefly instead. */
+  private callHtmlEmailInit(win: Window | null, payload: unknown, onFail: () => void): void {
+    const t0 = Date.now()
+    const tick = () => {
+      const init = win && (win as any).__initHtmlEmail
+      if (typeof init === 'function') return void init(payload)
+      if (!win || win.closed || Date.now() - t0 > 5000) return onFail()
+      setTimeout(tick, 50)
+    }
+    tick()
   }
   notifyWebxdcStatusUpdate(): void {
     this.log.critical('Method not implemented.')
