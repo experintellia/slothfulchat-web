@@ -258,6 +258,14 @@ jobs:
       - name: E2E test — bridge picker dialog
         run: node scripts/test-bridge-dialog.mjs
 
+      # HTML email viewer security check (fully offline, no core boot; builds
+      # its own bundle): sanitizer strips scripts/meta/base/javascript: URLs,
+      # sandbox gives the mail an opaque no-script origin, authored CSP keeps
+      # remote images off the network until the user opts in, links open
+      # target=_blank noopener noreferrer.
+      - name: Security check — HTML email viewer sandbox
+        run: node scripts/test-html-email.mjs
+
       # relay picker e2e (offline: the directory fetch and the bridge /dns +
       # /tcp probes are both mocked): the instant-onboarding relay dropdown
       # lists the directory relays default-first, lazily probes reachability +

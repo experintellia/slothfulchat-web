@@ -65,6 +65,16 @@ exists:
   back to whole-message downloads with a one-time device-message notice.
   `core/0020`–`core/0021`, `desktop/0067`; plus a `Fetch::body_origin()`
   accessor in the vendored async-imap (to be proposed upstream).
+- **HTML email viewer ("Show Full Message…")** — the browser edition of
+  desktop's sandboxed email window: a fullscreen in-app dialog whose content
+  is DOMPurify-sanitized and rendered in an iframe with an opaque no-script
+  origin and its own Content-Security-Policy. Remote images (tracking pixels)
+  never touch the network until the user opts in — Never / Once / Always,
+  "Always" persisted as the same desktop setting upstream uses and never
+  offered for contact requests; links open in a new tab without referrer.
+  Lives entirely in `packages/web-app` (`static/html-email.html`,
+  `src/html-email.ts`, `openMessageHTML` in `src/runtime.ts`) — no desktop
+  patch; guarded by `scripts/test-html-email.mjs`.
 - **webimap transport (madmail)** — a second mail transport speaking
   [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at
@@ -416,8 +426,6 @@ the full table with what re-enabling each one would take.
 - **Maps / location streaming** — no map UI ships (it's a webxdc upstream).
   When it lands, the plan is to adopt ArcaneChat's per-message POI location
   API so a shared pin is tappable (issue #36).
-- **HTML email viewing** — unimplemented in upstream's browser target too;
-  needs a sandboxed viewer.
 - **Database encryption (sqlcipher)** — doesn't build for wasm32; OPFS
   storage is origin-sandboxed by the browser instead.
 

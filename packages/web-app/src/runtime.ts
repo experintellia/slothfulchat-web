@@ -727,8 +727,75 @@ class BrowserRuntime {
     return dc
   }
 
-  openMessageHTML(): void {
-    throw new Error('Method not implemented.')
+  /**
+   * "Show Full Message…" — browser edition of desktop's separate HTML email
+   * window: a fullscreen <dialog> (same top-layer pattern as consent.ts)
+   * hosting static/html-email.html, which sanitizes the mail and renders it
+   * into a fully sandboxed blob: iframe (see src/html-email.ts for the
+   * three-layer isolation story). Same-origin, so we hand the payload and
+   * callbacks to the wrapper with a direct function call — module scripts
+   * have run by the time the iframe fires 'load'.
+   */
+  private htmlEmailDialog?: HTMLDialogElement
+  openMessageHTML(
+    _accountId: number,
+    _messageId: number,
+    isContactRequest: boolean,
+    subject: string,
+    sender: string,
+    sentTime: string,
+    content: string
+  ): void {
+    this.htmlEmailDialog?.close() // ponytail: one viewer at a time, new one replaces
+    // frontend is necessarily up (called from a message's button), so its
+    // translation function exists; fall back to raw keys just in case
+    const tx: (key: string) => string = (window as any).static_translate ?? ((key: string) => key)
+    const dlg = el('dialog', {
+      position: 'fixed',
+      inset: '0',
+      width: '100vw',
+      height: '100vh',
+      maxWidth: 'none',
+      maxHeight: 'none',
+      border: 'none',
+      padding: '0',
+      margin: '0',
+      background: '#282828',
+    })
+    const frame = document.createElement('iframe')
+    frame.src = './html-email.html'
+    frame.setAttribute('style', 'display:block;width:100%;height:100%;border:none;')
+    frame.title = subject
+    frame.addEventListener('load', async () => {
+      const settings = await this.getDesktopSettings()
+      ;(frame.contentWindow as any)?.__initHtmlEmail({
+        subject,
+        from: sender,
+        sentTime,
+        content,
+        isContactRequest,
+        alwaysLoadRemote: settings.HTMLEmailAlwaysLoadRemoteContent === true,
+        labels: {
+          loadRemoteImages: tx('load_remote_content'),
+          ask: tx('load_remote_content_ask'),
+          never: tx('never'),
+          once: tx('once'),
+          always: tx('always'),
+          close: tx('close'),
+        },
+        onClose: () => dlg.close(),
+        onSetAlwaysLoad: (value: boolean) =>
+          void this.setDesktopSetting('HTMLEmailAlwaysLoadRemoteContent', value),
+      })
+    })
+    dlg.addEventListener('close', () => {
+      dlg.remove()
+      if (this.htmlEmailDialog === dlg) this.htmlEmailDialog = undefined
+    })
+    dlg.append(frame)
+    document.body.append(dlg)
+    dlg.showModal()
+    this.htmlEmailDialog = dlg
   }
   notifyWebxdcStatusUpdate(): void {
     this.log.critical('Method not implemented.')
