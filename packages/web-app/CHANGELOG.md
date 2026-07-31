@@ -16,7 +16,12 @@
 - **"Show Full Message…" now works**: HTML emails open in a sandboxed viewer.
   Scripts in the mail are stripped and can never run, and remote images stay
   blocked — no tracking pixels — until you allow them (Never / Once / Always;
-  "Always" is remembered, and not offered for message requests).
+  "Always" is remembered, and not offered for message requests). Email
+  addresses and Delta Chat invite links inside a mail open right in the app
+  (new chat / invite dialog) instead of leaving it.
+- **More reliable link taps on iOS**: links in messages (and attachments,
+  Help) now open via real link navigation instead of `window.open()`, which
+  installed iOS web apps often silently ignore.
 - **Chat export works again**: the `index.html` viewer inside exported chat
   zips threw a script error and showed an empty page; exports now render
   correctly again.

@@ -75,12 +75,36 @@ const contentCsp = (remote: boolean): string => {
   )
 }
 
+/** Links the app handles itself (desktop's shouldHandleLinkInMainApp set +
+ * the dcaccount/dclogin QR schemes): rewritten to open a same-origin relay
+ * tab that forwards the URL to the app — see the relay bootstrap below. */
+const APP_LINK = /^(mailto:|openpgp4fpr:|dcaccount:|dclogin:|https:\/\/i\.delta\.chat\/)/i
+/** This page doubles as the relay target (see the bootstrap at the bottom). */
+const RELAY_URL = new URL('./html-email.html', location.href).href
+
+// DOMPurify's default ALLOWED_URI_REGEXP would strip the QR schemes before
+// the hook below can see them — same regexp with those schemes added
+const ALLOWED_URI_REGEXP =
+  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|openpgp4fpr|dcaccount|dclogin):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i
+
 DOMPurify.addHook('afterSanitizeAttributes', node => {
   // toUpperCase: SVG anchors report a lowercase 'a'
   const tag = node.tagName.toUpperCase()
   if (tag !== 'A' && tag !== 'AREA') return
   const href = node.getAttribute('href') ?? node.getAttribute('xlink:href') ?? ''
-  if (/^(https?:|mailto:|tel:)/i.test(href)) {
+  if (APP_LINK.test(href)) {
+    // handled inside the app: the sandboxed content frame has no scripts, so
+    // the click escapes as a popup to our relay page, which hands the URL up
+    // the opener chain and closes. Absolute URL: a relative one cannot
+    // resolve against the content doc's blob: base (the popup strands on
+    // about:blank). rel=opener is REQUIRED: browsers imply noopener on every
+    // target=_blank link, and the relay (a same-origin page we control)
+    // needs window.opener to find the app.
+    node.setAttribute('href', `${RELAY_URL}#open=${encodeURIComponent(href)}`)
+    node.removeAttribute('xlink:href')
+    node.setAttribute('target', '_blank')
+    node.setAttribute('rel', 'opener')
+  } else if (/^(https?:|tel:)/i.test(href)) {
     // external link: open outside the sandbox, without referrer (matching the
     // content doc's <meta name=referrer>)
     node.setAttribute('target', '_blank')
@@ -99,6 +123,7 @@ function sanitize(content: string): HTMLElement {
   return DOMPurify.sanitize(content, {
     WHOLE_DOCUMENT: true,
     RETURN_DOM: true,
+    ALLOWED_URI_REGEXP,
     // beyond DOMPurify's defaults: no policy/base/fetch tags (layer 2 blocks
     // their effects anyway) and no dead form controls (form-action 'none')
     FORBID_TAGS: ['meta', 'base', 'link', 'form', 'input', 'button', 'select', 'textarea'],
@@ -219,3 +244,31 @@ function init(payload: HtmlEmailInit): void {
 }
 
 ;(window as any).__initHtmlEmail = init
+
+// App-link plumbing. Two roles for this same page:
+//
+// Relay tab (`html-email.html#open=<url>`): opened by an app-link click
+// inside the sandboxed content frame (which has no scripts, so a popup
+// navigation is its only way out — and popups escape the sandbox as normal
+// same-origin pages). Hand the URL up the opener chain and close. opener is
+// the opaque-origin content frame; `.top` is on the cross-origin-allowed
+// property list and resolves to the viewer host (dialog: the app itself,
+// popup viewer: the wrapper window, which forwards below).
+//
+// Forwarder: when this page is the viewer, pass a relayed URL on to whoever
+// hosts it — window.opener when it's a popup window, window.parent when it's
+// the dialog iframe. The chain terminates at the app window, where runtime.ts
+// installs the real handler (which re-validates the URL).
+;(window as any).__slothfulOpenAppLink = (url: string) => {
+  const host: any = window.opener ?? (window.parent !== window ? window.parent : undefined)
+  host?.__slothfulOpenAppLink?.(url)
+}
+const openMatch = /^#open=(.+)$/.exec(location.hash)
+if (openMatch) {
+  try {
+    ;(window.opener?.top as any)?.__slothfulOpenAppLink?.(decodeURIComponent(openMatch[1]))
+  } catch {
+    // opener gone or cross-origin (page opened outside the viewer): nothing to do
+  }
+  window.close()
+}

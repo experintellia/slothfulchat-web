@@ -54,6 +54,9 @@ const HOSTILE = `
     <svg width="20" height="20"><a id="svglink" href="https://example.com/svg"><circle r="9" cx="10" cy="10"/></a></svg>
     <a id="frag" href="#section">jump</a>
     <a id="relx" href="some/relative.html">relative</a>
+    <a id="applink" href="OPENPGP4FPR:1234ABCD#a=1">verify contact</a>
+    <a id="mailtolink" href="mailto:friend@example.com?subject=Hi">mail</a>
+    <a id="invitelink" href="https://i.delta.chat/#82AB12">invite</a>
     <img id="remote" src="${REMOTE_IMG}">
     <img id="inline" src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==">
     <form action="https://evil.invalid/submit"><input name="x"></form>
@@ -178,6 +181,41 @@ check(await page.evaluate(() => window.__always === false), '"Once" reported alw
 // -- "Always" persists via callback
 await page.selectOption('#remote-select', 'always')
 check(await page.evaluate(() => window.__always === true), '"Always" persisted via onSetAlwaysLoad')
+
+// -- app links (mailto / openpgp4fpr / i.delta.chat invites): rewritten to the
+// same-origin relay page, keeping window.opener so the relay can find the app
+frame = await contentFrame()
+for (const [id, orig] of [
+  ['applink', 'OPENPGP4FPR:1234ABCD#a=1'],
+  ['mailtolink', 'mailto:friend@example.com?subject=Hi'],
+  ['invitelink', 'https://i.delta.chat/#82AB12'],
+]) {
+  const [href, target, rel] = await frame.$eval(`#${id}`, e => [
+    e.getAttribute('href'),
+    e.getAttribute('target'),
+    e.getAttribute('rel'),
+  ])
+  check(
+    href === `http://localhost:${APP_PORT}/html-email.html#open=${encodeURIComponent(orig)}` &&
+      target === '_blank' &&
+      rel === 'opener',
+    `app link #${id} rewritten to the relay page (absolute URL, explicit rel=opener)`
+  )
+}
+// click → relay tab escapes the sandbox, forwards the URL up the opener chain
+// (here: the wrapper page is the top-level host), closes itself
+await page.evaluate(() => {
+  window.__appLink = null
+  window.__slothfulOpenAppLink = u => (window.__appLink = u)
+})
+const [relayPage] = await Promise.all([context.waitForEvent('page'), frame.click('#applink')])
+await page.waitForFunction(() => window.__appLink !== null)
+check(
+  (await page.evaluate(() => window.__appLink)) === 'OPENPGP4FPR:1234ABCD#a=1',
+  'clicking an app link relays the original URL to the host app'
+)
+if (!relayPage.isClosed()) await relayPage.waitForEvent('close', { timeout: 5000 }).catch(() => {})
+check(relayPage.isClosed(), 'relay tab closes itself')
 
 // -- close button
 await page.click('#close')

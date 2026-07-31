@@ -71,7 +71,11 @@ exists:
   origin and its own Content-Security-Policy. Remote images (tracking pixels)
   never touch the network until the user opts in — Never / Once / Always,
   "Always" persisted as the same desktop setting upstream uses and never
-  offered for contact requests; links open in a new tab without referrer.
+  offered for contact requests; links open in a new tab without referrer,
+  except app links (`mailto:`, `openpgp4fpr:`, `dcaccount:`, `dclogin:`,
+  `i.delta.chat` invites — desktop's `shouldHandleLinkInMainApp` set), which
+  are relayed back into the app and handled by the same invite/mailto flows
+  as in-chat links.
   Lives almost entirely in `packages/web-app` (`static/html-email.html`,
   `src/html-email.ts`, `openMessageHTML` in `src/runtime.ts`); guarded by
   `scripts/test-html-email.mjs`. The one desktop change enlarges the

@@ -166,6 +166,21 @@ const QR_URL_PREFIXES = [
   'dclogin:', // scan-to-login
 ]
 
+/** Open a URL in a new tab via a synthesized anchor click instead of
+ * window.open(): iOS installed PWAs silently drop window.open() for many
+ * URLs (issue: unreliable link taps on iOS), while a real anchor navigation
+ * works everywhere — on iOS it opens the in-app browser sheet. Must run
+ * within the user gesture, which every caller does. */
+function openInNewTab(url: string): void {
+  const a = document.createElement('a')
+  a.href = url
+  a.target = '_blank'
+  a.rel = 'noopener noreferrer'
+  document.body.append(a)
+  a.click()
+  a.remove()
+}
+
 /** What the app was launched to do, sniffed out of the page URL at boot:
  *  - `qr`: an invite / login / verification payload → frontend `onOpenQrUrl`.
  *  - `text`: arbitrary shared text/link → frontend `onWebxdcSendToChat` as a
@@ -854,6 +869,31 @@ class BrowserRuntime {
     this.htmlEmailDialog = { dlg, frame }
     return this.htmlEmailDialog
   }
+  /**
+   * Terminal handler for app links clicked inside the HTML email viewer
+   * (mailto:, openpgp4fpr:, dcaccount:, dclogin:, i.delta.chat invites — the
+   * same set desktop's shouldHandleLinkInMainApp routes to the main window).
+   * The sandboxed content frame has no scripts, so such links are rewritten
+   * to open `html-email.html#open=<url>` as an (unsandboxed, same-origin)
+   * relay tab, which forwards the URL up the opener chain to this window's
+   * `__slothfulOpenAppLink` (installed in initialize()) and closes itself.
+   * Delivery is the frontend's onOpenQrUrl -> processQr, which handles all
+   * of these including mailto.
+   */
+  private openAppLink(url: string): void {
+    const lower = String(url).toLowerCase()
+    // re-validate: the relay page is reachable by anything same-origin
+    if (!lower.startsWith('mailto:') && !QR_URL_PREFIXES.some(p => lower.startsWith(p))) {
+      return void this.log.warn('ignoring relayed non-app link', url)
+    }
+    this.htmlEmailDialog?.dlg.close() // reveal the app (and its upcoming dialog)
+    window.focus() // best effort when the viewer is a popup window
+    try {
+      this._onOpenQrUrl?.(url)
+    } catch (err) {
+      this.log.error('app-link delivery failed', err)
+    }
+  }
   /** Call the wrapper's __initHtmlEmail once its module has run: 'load'
    * events race with when we get the window, so poll briefly instead. */
   private callHtmlEmailInit(win: Window | null, payload: unknown, onFail: () => void): void {
@@ -1194,13 +1234,7 @@ class BrowserRuntime {
   }
   async openPath(path: string): Promise<string> {
     if (path.includes('dc.db-blobs')) {
-      // 'noopener': the opened document is sender-controlled content on our own
-      // origin, so it must not keep a window.opener handle on the messenger tab
-      // (an opener handle can navigate that tab away, e.g. to a login phish).
-      // The blobs SW additionally serves it under a sandbox CSP. With noopener
-      // window.open returns null — nothing left to focus(), and browsers focus
-      // a freshly opened tab anyway.
-      window.open(this.transformBlobURL(path), '_blank', 'noopener')
+      openInNewTab(this.transformBlobURL(path))
       return ''
     }
     throw new Error(
@@ -1390,7 +1424,7 @@ class BrowserRuntime {
   openLink(link: string): void {
     // all in-app external links funnel through here (About dialog, ClickableLink)
     analytics.trackLink(link)
-    window.open(link, '_blank')?.focus()
+    openInNewTab(link)
   }
 
   private log: Logger = console as unknown as Logger
@@ -1402,6 +1436,9 @@ class BrowserRuntime {
     getLogger: (channel: string) => Logger
   ): Promise<void> {
     this.log = getLogger('runtime/wasm-browser')
+
+    // app-link relay target for the HTML email viewer (see openAppLink)
+    ;(window as any).__slothfulOpenAppLink = (url: string) => this.openAppLink(url)
 
     // no backend: rc_config / runtime_info are built locally,
     // mirroring target-browser/src/rc-config.ts and backendApi.ts.
@@ -1614,7 +1651,7 @@ class BrowserRuntime {
       method: 'HEAD',
     })
     const lang = response.ok ? curLang : 'en'
-    window.open(`/help/${lang}/help.html${anchorPath}`, '_blank')?.focus()
+    openInNewTab(`/help/${lang}/help.html${anchorPath}`)
   }
   openLogFile(): void {
     this.log.warn('no log file in wasm edition, logs are in the browser console')
