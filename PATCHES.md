@@ -72,9 +72,10 @@ exists:
   never touch the network until the user opts in — Never / Once / Always,
   "Always" persisted as the same desktop setting upstream uses and never
   offered for contact requests; links open in a new tab without referrer.
-  Lives entirely in `packages/web-app` (`static/html-email.html`,
-  `src/html-email.ts`, `openMessageHTML` in `src/runtime.ts`) — no desktop
-  patch; guarded by `scripts/test-html-email.mjs`.
+  Lives almost entirely in `packages/web-app` (`static/html-email.html`,
+  `src/html-email.ts`, `openMessageHTML` in `src/runtime.ts`); guarded by
+  `scripts/test-html-email.mjs`. The one desktop change enlarges the
+  "Show Full Message…" tap target on touch devices. `desktop/0069`
 - **webimap transport (madmail)** — a second mail transport speaking
   [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at
