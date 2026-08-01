@@ -190,6 +190,10 @@ await cp(join(here, 'static/viewport-keyboard.js'), join(dist, 'viewport-keyboar
 // (baked into the file), so — unlike main.html — it needs no assemble-time
 // rewrite.
 await cp(join(here, 'static/call-popup.html'), join(dist, 'call-popup.html'))
+// HTML email viewer wrapper (runtime.openMessageHTML): hosted in a dialog
+// iframe by the main tab; self-contained CSP like call-popup.html, its bundle
+// (dist/html-email.js) is emitted by esbuild in `pnpm build`.
+await cp(join(here, 'static/html-email.html'), join(dist, 'html-email.html'))
 await writeFile(join(dist, '.nojekyll'), '')
 
 // Webxdc origin-isolation test page + the Caddy config that serves it. The
