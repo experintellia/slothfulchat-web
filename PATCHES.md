@@ -273,7 +273,11 @@ exists:
   the real MIME type and a small blurred thumbnail preview, and the placeholder
   renders as a styled per-type card (image/video/audio/file/webxdc) with the
   attachment size, the live download percentage, and a big download button.
-  `core/0022`, `desktop/0068`
+  Videos get a preview too: core can't decode frames (its wasm has no DOM), so
+  the sender grabs one with `<video>` + canvas when the video is attached and
+  drops it in the `<blob>-preview.jpg` sidecar that core's housekeeping already
+  keeps alive — the same slot the mobile clients use, so no new param and no
+  storage of its own. `core/0022-0023`, `desktop/0068-0069`
 
 ## Bugfixes
 
