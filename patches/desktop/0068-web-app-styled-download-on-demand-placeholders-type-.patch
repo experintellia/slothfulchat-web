@@ -36,11 +36,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
 ---
  packages/frontend/scss/manifest.scss          |   1 +
- .../_message-download-placeholder.scss        | 184 ++++++++++++++
+ .../_message-download-placeholder.scss        | 188 ++++++++++++++
  .../MessageDetail/BasicMessageInfo.tsx        |   2 +-
  .../message/DownloadOnDemandPlaceholder.tsx   | 237 ++++++++++++++++++
  .../src/components/message/Message.tsx        |  94 ++++---
- 5 files changed, 489 insertions(+), 29 deletions(-)
+ 5 files changed, 493 insertions(+), 29 deletions(-)
  create mode 100644 packages/frontend/scss/message/_message-download-placeholder.scss
  create mode 100644 packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 
@@ -58,10 +58,10 @@ index b55d0eb..99294f1 100644
  @use 'misc/_avatar.scss';
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
 new file mode 100644
-index 0000000..7484d21
+index 0000000..f92018a
 --- /dev/null
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,188 @@
 +// Styled download-on-demand placeholders (see DownloadOnDemandPlaceholder.tsx).
 +// Reuses the .message-attachment-* / .webxdc boxes from _message-attachment.scss
 +// and adds: a blurred thumbnail, a grey fallback box, and a centered overlay
@@ -86,6 +86,10 @@ index 0000000..7484d21
 +
 +    & > .download-on-demand-empty {
 +      width: 100%;
++      // Intrinsic minimum so a thumbnail-less placeholder (e.g. video) doesn't
++      // let the bubble shrink-wrap to a sliver; matches upstream's
++      // .attachment-content min-width, and fits the download button + size.
++      min-width: 200px;
 +      min-height: 160px;
 +      background-color: var(--messageAttachmentIconBg);
 +    }
@@ -100,7 +104,7 @@ index 0000000..7484d21
 +      position: absolute;
 +      top: 50%;
 +      left: 50%;
-+      transform: translate(-40%, -140%);
++      transform: translate(-40%, -180%);
 +      width: 0;
 +      height: 0;
 +      border-style: solid;
