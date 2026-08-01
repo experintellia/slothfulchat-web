@@ -38,15 +38,15 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
 ---
  deltachat-jsonrpc/src/api/types/message.rs |   5 +
- src/blob.rs                                |  37 +++
- src/download/post_msg_metadata.rs          | 328 ++++++++++++++++++++-
+ src/blob.rs                                |  37 ++
+ src/download/post_msg_metadata.rs          | 371 ++++++++++++++++++++-
  src/imap.rs                                |   5 +-
  src/message.rs                             |   3 +-
  src/receive_imf.rs                         |   6 +-
  src/sql.rs                                 |   4 +-
- src/tests/pre_messages/receiving.rs        | 103 ++++++-
+ src/tests/pre_messages/receiving.rs        | 103 +++++-
  src/tests/pre_messages/util.rs             |  12 +-
- 9 files changed, 483 insertions(+), 20 deletions(-)
+ 9 files changed, 526 insertions(+), 20 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
 index 2b37fb5..b589893 100644
@@ -120,7 +120,7 @@ index a0c4e15..5cf5c2e 100644
      context: &Context,
      img: &DynamicImage,
 diff --git a/src/download/post_msg_metadata.rs b/src/download/post_msg_metadata.rs
-index 705a71a..55a6b72 100644
+index 705a71a..98bb696 100644
 --- a/src/download/post_msg_metadata.rs
 +++ b/src/download/post_msg_metadata.rs
 @@ -23,6 +23,12 @@ pub struct PostMsgMetadata {
@@ -189,7 +189,7 @@ index 705a71a..55a6b72 100644
      pub(crate) fn to_header_value(&self) -> Result<String> {
          Ok(serde_json::to_string(&self)?)
      }
-@@ -111,17 +153,75 @@ pub(crate) fn apply_post_msg_metadata(
+@@ -111,17 +153,95 @@ pub(crate) fn apply_post_msg_metadata(
      }
  }
  
@@ -210,6 +210,26 @@ index 705a71a..55a6b72 100644
 +    let Some(thumbnail) = &metadata.thumbnail else {
 +        return;
 +    };
++    // For placeholder types that display a file name (file card, webxdc card), an
++    // empty sender filename would make `get_filename()` fall back to the thumbnail
++    // blob's random name — better no preview than a wrong name.
++    if metadata.filename.is_empty()
++        && !matches!(
++            metadata.viewtype,
++            Viewtype::Image
++                | Viewtype::Gif
++                | Viewtype::Sticker
++                | Viewtype::Video
++                | Viewtype::Audio
++                | Viewtype::Voice
++        )
++    {
++        warn!(
++            context,
++            "Pre-message thumbnail without filename, skipping preview."
++        );
++        return;
++    }
 +    // Trust boundary: the base64 is attacker-controlled, so cap its length before decoding.
 +    // 60_000 chars ~ 45 KiB decoded, well above our 20_000-byte send cap.
 +    if thumbnail.len() > 60_000 {
@@ -266,7 +286,7 @@ index 705a71a..55a6b72 100644
  
      /// Build from message with file attachment
      #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-@@ -132,6 +232,7 @@ async fn test_build_from_file_msg() -> Result<()> {
+@@ -132,6 +252,7 @@ async fn test_build_from_file_msg() -> Result<()> {
          let mut file_msg = Message::new(Viewtype::File);
          file_msg.set_file_from_bytes(alice, "test.bin", &vec![0u8; 1_000_000], None)?;
          let post_msg_metadata = PostMsgMetadata::from_msg(alice, &file_msg).await?;
@@ -274,7 +294,7 @@ index 705a71a..55a6b72 100644
          assert_eq!(
              post_msg_metadata,
              Some(PostMsgMetadata {
-@@ -140,11 +241,186 @@ async fn test_build_from_file_msg() -> Result<()> {
+@@ -140,11 +261,209 @@ async fn test_build_from_file_msg() -> Result<()> {
                  filename: "test.bin".to_string(),
                  wh: None,
                  duration: None,
@@ -434,6 +454,29 @@ index 705a71a..55a6b72 100644
 +        Ok(())
 +    }
 +
++    /// Receive side: a name-displaying placeholder (webxdc/file card) with an empty sender
++    /// filename skips the thumbnail — otherwise `get_filename()` would fall back to the
++    /// thumbnail blob's random name and the UI would show it as the file name.
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_apply_received_metadata_thumbnail_without_filename() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++
++        let metadata = PostMsgMetadata {
++            size: 1_000_000,
++            viewtype: Viewtype::Webxdc,
++            filename: String::new(),
++            wh: None,
++            duration: None,
++            mime: None,
++            thumbnail: Some(base64::engine::general_purpose::STANDARD.encode(b"valid b64")),
++        };
++        let mut param = Params::new();
++        apply_received_metadata(alice, &mut param, &metadata);
++        assert!(!param.exists(Param::File));
++        Ok(())
++    }
++
 +    /// Receive side: invalid base64 in the thumbnail field doesn't crash and yields no preview
 +    /// (E4). (Valid base64 of non-image bytes is stored as a harmless capped blob by
 +    /// `store_from_base64`'s avatar semantics — see notes.)
@@ -461,7 +504,7 @@ index 705a71a..55a6b72 100644
      /// Build from message with image attachment
      #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
      async fn test_build_from_image_msg() -> Result<()> {
-@@ -158,17 +434,17 @@ async fn test_build_from_image_msg() -> Result<()> {
+@@ -158,17 +477,17 @@ async fn test_build_from_image_msg() -> Result<()> {
          // this is usually done while sending,
          // but we don't send it here, so we need to call it ourself
          image_msg.try_calc_and_set_dimensions(alice).await?;
@@ -490,7 +533,7 @@ index 705a71a..55a6b72 100644
  
          Ok(())
      }
-@@ -183,6 +459,8 @@ fn test_serialize_to_header() -> Result<()> {
+@@ -183,6 +502,8 @@ fn test_serialize_to_header() -> Result<()> {
                  filename: "test.bin".to_string(),
                  wh: None,
                  duration: None,
@@ -499,7 +542,7 @@ index 705a71a..55a6b72 100644
              }
              .to_header_value()?,
              "{\"size\":1000000,\"viewtype\":\"File\",\"filename\":\"test.bin\"}"
-@@ -194,6 +472,8 @@ fn test_serialize_to_header() -> Result<()> {
+@@ -194,6 +515,8 @@ fn test_serialize_to_header() -> Result<()> {
                  filename: "vacation.png".to_string(),
                  wh: Some((1080, 1920)),
                  duration: None,
@@ -508,7 +551,7 @@ index 705a71a..55a6b72 100644
              }
              .to_header_value()?,
              "{\"size\":5342765,\"viewtype\":\"Image\",\"filename\":\"vacation.png\",\"wh\":[1080,1920]}"
-@@ -205,6 +485,8 @@ fn test_serialize_to_header() -> Result<()> {
+@@ -205,6 +528,8 @@ fn test_serialize_to_header() -> Result<()> {
                  filename: "audio-DD-MM-YY.ogg".to_string(),
                  wh: None,
                  duration: Some(152_310),
@@ -517,7 +560,7 @@ index 705a71a..55a6b72 100644
              }
              .to_header_value()?,
              "{\"size\":5000,\"viewtype\":\"Audio\",\"filename\":\"audio-DD-MM-YY.ogg\",\"duration\":152310}"
-@@ -227,6 +509,8 @@ fn test_deserialize_from_header() -> Result<()> {
+@@ -227,6 +552,8 @@ fn test_deserialize_from_header() -> Result<()> {
                  filename: "test.bin".to_string(),
                  wh: None,
                  duration: None,
@@ -526,7 +569,7 @@ index 705a71a..55a6b72 100644
              }
          );
          assert_eq!(
-@@ -239,6 +523,8 @@ fn test_deserialize_from_header() -> Result<()> {
+@@ -239,6 +566,8 @@ fn test_deserialize_from_header() -> Result<()> {
                  filename: "vacation.png".to_string(),
                  wh: Some((1080, 1920)),
                  duration: None,
@@ -535,7 +578,7 @@ index 705a71a..55a6b72 100644
              }
          );
          assert_eq!(
-@@ -251,6 +537,24 @@ fn test_deserialize_from_header() -> Result<()> {
+@@ -251,6 +580,24 @@ fn test_deserialize_from_header() -> Result<()> {
                  filename: "audio-DD-MM-YY.ogg".to_string(),
                  wh: None,
                  duration: Some(152_310),

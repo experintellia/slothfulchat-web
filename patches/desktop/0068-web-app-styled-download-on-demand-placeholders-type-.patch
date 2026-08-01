@@ -36,13 +36,18 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
 ---
  packages/frontend/scss/manifest.scss          |   1 +
- .../_message-download-placeholder.scss        | 290 ++++++++++++++++++
+ .../_message-download-placeholder.scss        | 284 ++++++++++++++++++
+ .../components/dialogs/ExportChatToHtml.tsx   |  14 +-
  .../MessageDetail/BasicMessageInfo.tsx        |   2 +-
- .../message/DownloadOnDemandPlaceholder.tsx   | 282 +++++++++++++++++
- .../src/components/message/Message.tsx        | 114 +++++--
- 5 files changed, 656 insertions(+), 33 deletions(-)
+ .../message/DownloadOnDemandPlaceholder.tsx   | 263 ++++++++++++++++
+ .../src/components/message/Message.tsx        | 120 ++++++--
+ .../src/tests/placeholderCaption.test.ts      |  32 ++
+ .../frontend/src/utils/downloadPlaceholder.ts |  33 ++
+ 8 files changed, 712 insertions(+), 37 deletions(-)
  create mode 100644 packages/frontend/scss/message/_message-download-placeholder.scss
  create mode 100644 packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
+ create mode 100644 packages/frontend/src/tests/placeholderCaption.test.ts
+ create mode 100644 packages/frontend/src/utils/downloadPlaceholder.ts
 
 diff --git a/packages/frontend/scss/manifest.scss b/packages/frontend/scss/manifest.scss
 index b55d0eb..99294f1 100644
@@ -58,10 +63,10 @@ index b55d0eb..99294f1 100644
  @use 'misc/_avatar.scss';
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
 new file mode 100644
-index 0000000..3d746d0
+index 0000000..0145a65
 --- /dev/null
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
-@@ -0,0 +1,290 @@
+@@ -0,0 +1,284 @@
 +// Styled download-on-demand placeholders (see DownloadOnDemandPlaceholder.tsx).
 +// Reuses the .message-attachment-* / .webxdc boxes from _message-attachment.scss
 +// and adds: a blurred thumbnail, a grey fallback box, and a centered overlay
@@ -72,15 +77,11 @@ index 0000000..3d746d0
 +  &.message-attachment-media {
 +    display: block;
 +    min-height: 160px;
-+    // The bubble's own 16px radius rounds the top corners; the caption /
-+    // metadata strip sits below, so the preview keeps square bottom corners
-+    // instead of drawing a second arc above it.
-+    border-radius: 16px 16px 0 0;
 +
-+    // No caption: the preview IS the bubble bottom (metadata overlays it),
-+    // so round all corners to match the bubble.
-+    &.no-caption {
-+      border-radius: 16px;
++    // Upstream's .video margin-bottom (7px, clears native controls) leaves a
++    // strip under a caption-less placeholder; restore the full-bleed margin.
++    &.video:not(.content-below) {
++      margin-bottom: -12px;
 +    }
 +
 +    // Blur the thumbnail so it reads as "not yet downloaded".
@@ -101,7 +102,6 @@ index 0000000..3d746d0
 +      // .attachment-content min-width, and fits the download button + size.
 +      min-width: 200px;
 +      min-height: 160px;
-+      background-color: var(--messageAttachmentIconBg);
 +    }
 +
 +    &.video > .attachment-content,
@@ -181,11 +181,16 @@ index 0000000..3d746d0
 +    }
 +  }
 +
-+  // Non-media rows (audio / file / webxdc) lay controls out inline.
-+  &.message-attachment-audio,
-+  &.message-attachment-generic,
-+  &.webxdc {
-+    align-items: center;
++  // Grey fallback box shown when there is no thumbnail (any placement).
++  .download-on-demand-empty {
++    background-color: var(--messageAttachmentIconBg);
++  }
++
++  // Webxdc icon slot: same footprint as the real app icon (_message.scss).
++  &.webxdc > .download-on-demand-empty {
++    width: 171px;
++    height: 171px;
++    border-radius: 7%;
 +  }
 +
 +  &.message-attachment-audio .failed,
@@ -233,6 +238,7 @@ index 0000000..3d746d0
 +  // download circle trailing; long names wrap instead of stretching the row.
 +  &.message-attachment-generic {
 +    display: flex;
++    align-items: center;
 +    gap: 10px;
 +
 +    .text-part {
@@ -249,13 +255,6 @@ index 0000000..3d746d0
 +        margin-top: 3px;
 +      }
 +    }
-+  }
-+
-+  .text-part > .duration {
-+    color: var(--messageAttachmentFileInfo);
-+    font-size: 11px;
-+    line-height: 16px;
-+    margin-top: 3px;
 +  }
 +}
 +
@@ -352,6 +351,45 @@ index 0000000..3d746d0
 +    transform: rotate(270deg);
 +  }
 +}
+diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+index 00a3bed..565ea32 100644
+--- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
++++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+@@ -1047,7 +1047,10 @@ function chatExportViewer() {
+         lines.push(`* ${msg.text || ''}`)
+         continue
+       }
+-      const filePart = msg.file ? `[${msg.fileName || 'attachment'}] ` : ''
++      const filePart =
++      msg.file && msg.downloadState === 'Done'
++        ? `[${msg.fileName || 'attachment'}] `
++        : ''
+       lines.push(
+         `[${stamp(msg.timestamp)}] ${authorName(msg.sender.displayName, msg.overrideSenderName)}: ${filePart}${msg.text || ''}`
+       )
+@@ -1241,7 +1244,10 @@ function buildMessagesTxt(
+     }
+     const time = moment.unix(msg.timestamp).format('YYYY-MM-DD HH:mm')
+     const author = getAuthorName(msg.sender.displayName, msg.overrideSenderName)
+-    const filePart = msg.file ? `[${msg.fileName || 'attachment'}] ` : ''
++    const filePart =
++      msg.file && msg.downloadState === 'Done'
++        ? `[${msg.fileName || 'attachment'}] `
++        : ''
+     lines.push(`[${time}] ${author}: ${filePart}${msg.text || ''}`)
+   }
+   return lines.join('\n') + '\n'
+@@ -1477,7 +1483,9 @@ async function exportChatToZip(
+   for (const id of keptIds) {
+     const msg = messages[id]
+     if (msg) {
+-      await collect(msg.file)
++      if (msg.downloadState === 'Done') {
++        await collect(msg.file)
++      }
+       await collect(msg.sender.profileImage)
+       if (msg.quote?.kind === 'WithMessage') {
+         await collect(msg.quote.image)
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 index 5d3432a..b6e27a6 100644
 --- a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
@@ -367,10 +405,10 @@ index 5d3432a..b6e27a6 100644
    const minutes = Math.floor(totalSeconds / 60) % 60
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 new file mode 100644
-index 0000000..3642382
+index 0000000..ddc165b
 --- /dev/null
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,263 @@
 +import React from 'react'
 +import { filesize } from 'filesize'
 +import { T } from '@deltachat/jsonrpc-client'
@@ -381,34 +419,12 @@ index 0000000..3642382
 +import { formatDuration } from '../dialogs/MessageDetail/BasicMessageInfo'
 +import useTranslationFunction from '../../hooks/useTranslationFunction'
 +import Icon from '../Icon'
++import {
++  getPostMessageViewType,
++  placeholderCaption,
++} from '../../utils/downloadPlaceholder'
 +
-+/**
-+ * The type the message will have *after* it is downloaded. It's a fork-only
-+ * field on the pre-message placeholder that upstream's generated jsonrpc
-+ * bindings don't declare yet (core regenerates them later in the build), so we
-+ * read it through this one typed accessor.
-+ *
-+ * ponytail: single typed cast lives here instead of scattering `as any` at call
-+ * sites; drop the cast once the regenerated bindings carry `postMessageViewType`.
-+ */
-+export function getPostMessageViewType(message: T.Message): T.Viewtype | null {
-+  return (
-+    (message as { postMessageViewType?: T.Viewtype | null })
-+      .postMessageViewType ?? null
-+  )
-+}
-+
-+// Core appends " [Label – 123 KiB]" to the placeholder text (message.rs:645-674,
-+// bracketed, with an en-dash before the size). Strip that trailing tag so our
-+// own UI shows the size instead of duplicating it in the caption.
-+//
-+// ponytail: regex on the bracket/en-dash shape; upgrade path = a core field
-+// carrying the raw caption without the appended tag.
-+const DOWNLOAD_TAG_RE = /\s*\[[^\]]*–[^\]]*\]\s*$/
-+
-+export function placeholderCaption(text: string | null): string {
-+  return (text ?? '').replace(DOWNLOAD_TAG_RE, '').trim()
-+}
++export { getPostMessageViewType, placeholderCaption }
 +
 +// Telegram-style circular download indicator: spins while indeterminate
 +// (no DownloadProgress event yet), then the arc fills with the percentage.
@@ -475,7 +491,7 @@ index 0000000..3642382
 +  message: T.Message
 +  postMessageViewType: T.Viewtype
 +  accountId: number
-+  /** No caption below the preview: bubble bottom = preview bottom, so keep the full corner radius. */
++  /** No caption below the preview; with one, upstream's content-below class handles spacing/corners. */
 +  noCaption?: boolean
 +  /** Live percentage (0-100) from the DownloadProgress event, null before the first event. */
 +  downloadPercent: number | null
@@ -525,9 +541,12 @@ index 0000000..3642382
 +  tabindexForInteractiveContents,
 +}: PlaceholderProps) {
 +  const tx = useTranslationFunction()
++  // Upstream's content-below class neutralises the full-bleed negative bottom
++  // margin and squares the bottom corners whenever a caption follows - reuse it
++  // instead of reinventing the spacing.
++  const contentBelow = noCaption ? '' : ' content-below'
 +  const mediaBoxClass =
-+    'message-attachment-media download-on-demand' +
-+    (noCaption ? ' no-caption' : '')
++    'message-attachment-media download-on-demand' + contentBelow
 +  const controls = (
 +    <DownloadControls
 +      message={message}
@@ -586,7 +605,7 @@ index 0000000..3642382
 +  // a fake track, and the size. No filename — the real player shows none.
 +  if (viewType === 'Audio' || viewType === 'Voice') {
 +    return (
-+      <div className='message-attachment-audio download-on-demand'>
++      <div className={'message-attachment-audio download-on-demand' + contentBelow}>
 +        <div className='fake-audio-player'>
 +          {message.downloadState === 'InProgress' ? (
 +            <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
@@ -613,7 +632,7 @@ index 0000000..3642382
 +  // Webxdc: the app card, with the app icon (thumbnail) or default asset.
 +  if (viewType === 'Webxdc') {
 +    return (
-+      <div className='webxdc download-on-demand'>
++      <div className={'webxdc download-on-demand' + contentBelow}>
 +        {message.file ? (
 +          <img src={runtime.transformBlobURL(message.file)} alt='' />
 +        ) : (
@@ -633,7 +652,7 @@ index 0000000..3642382
 +  // Generic file (and any other type): the real card's layout, but the round
 +  // download button / progress ring sits where the file icon would be.
 +  return (
-+    <div className='message-attachment-generic download-on-demand'>
++    <div className={'message-attachment-generic download-on-demand' + contentBelow}>
 +      {message.downloadState === 'InProgress' ? (
 +        <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
 +      ) : (
@@ -654,7 +673,7 @@ index 0000000..3642382
 +  )
 +}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 4e50db2..bc4d8c7 100644
+index 4e50db2..551ce7e 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -47,6 +47,10 @@ import ShortcutMenu from '../ShortcutMenu'
@@ -668,7 +687,20 @@ index 4e50db2..bc4d8c7 100644
  
  import {
    matchesLetterShortcut,
-@@ -331,7 +335,10 @@ function buildContextMenu(
+@@ -310,7 +314,11 @@ function buildContextMenu(
+   let copy_item: ContextMenuItem | false = {
+     label: tx('menu_copy_text_to_clipboard'),
+     action: () => {
+-      text && runtime.writeClipboardText(text)
++      // On a placeholder, copy what's on screen: the caption without the
++      // appended "[Label - size]" tag the styled card already displays.
++      const copyText =
++        message.downloadState !== 'Done' ? placeholderCaption(text) : text
++      copyText && runtime.writeClipboardText(copyText)
+     },
+   }
+ 
+@@ -331,7 +339,10 @@ function buildContextMenu(
      copy_item = false
    }
  
@@ -680,7 +712,7 @@ index 4e50db2..bc4d8c7 100644
    const showCopyImage =
      !!message.file && isImage(message.viewType) && message.viewType !== 'Gif'
    const showResend =
-@@ -971,33 +978,62 @@ export default function Message(props: {
+@@ -971,33 +982,62 @@ export default function Message(props: {
    const { downloadState } = message
  
    if (downloadState !== 'Done') {
@@ -770,7 +802,7 @@ index 4e50db2..bc4d8c7 100644
    }
  
    /** Whether to show author name and avatar */
-@@ -1009,9 +1045,23 @@ export default function Message(props: {
+@@ -1009,9 +1049,23 @@ export default function Message(props: {
  
    const hasText = text !== null && text !== ''
    const fileMime = message.fileMime || null
@@ -795,7 +827,7 @@ index 4e50db2..bc4d8c7 100644
      message.viewType !== 'Webxdc' &&
      message.viewType !== 'Vcard'
  
-@@ -1024,7 +1074,7 @@ export default function Message(props: {
+@@ -1024,7 +1078,7 @@ export default function Message(props: {
          direction,
          styles.message,
          commonClassName,
@@ -804,7 +836,7 @@ index 4e50db2..bc4d8c7 100644
          {
            [styles.withReactions]: message.reactions,
            'type-sticker': viewType === 'Sticker',
-@@ -1149,13 +1199,13 @@ export default function Message(props: {
+@@ -1149,13 +1203,13 @@ export default function Message(props: {
                error={message.error || null}
                downloadState={downloadState}
                isEdited={message.isEdited}
@@ -820,3 +852,80 @@ index 4e50db2..bc4d8c7 100644
                chatType={chat.chatType}
                tabindexForInteractiveContents={tabindexForInteractiveContents}
              />
+diff --git a/packages/frontend/src/tests/placeholderCaption.test.ts b/packages/frontend/src/tests/placeholderCaption.test.ts
+new file mode 100644
+index 0000000..783ad54
+--- /dev/null
++++ b/packages/frontend/src/tests/placeholderCaption.test.ts
+@@ -0,0 +1,32 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import { placeholderCaption } from '../utils/downloadPlaceholder.js'
++
++describe('placeholderCaption', () => {
++  it('strips the appended "[Label – size]" tag', () => {
++    expect(placeholderCaption('hello [Image – 228.45 KiB]')).to.equal('hello')
++    expect(placeholderCaption('hi [voice.mp3 – 566.75 KiB]')).to.equal('hi')
++  })
++
++  it('returns empty for tag-only text (caption-less placeholder)', () => {
++    expect(placeholderCaption(' [Video – 3.52 MiB]')).to.equal('')
++    expect(placeholderCaption(null)).to.equal('')
++  })
++
++  it('keeps user brackets before the tag, strips only the last group', () => {
++    expect(placeholderCaption('see [a – b] [Image – 228 KiB]')).to.equal(
++      'see [a – b]'
++    )
++  })
++
++  it('handles the unknown-size "?" core falls back to', () => {
++    expect(placeholderCaption('x [file.bin – ?]')).to.equal('x')
++  })
++
++  it('known ceiling: filename containing brackets is left as-is', () => {
++    expect(placeholderCaption('x [report[final].pdf – 977 KiB]')).to.equal(
++      'x [report[final].pdf – 977 KiB]'
++    )
++  })
++})
+diff --git a/packages/frontend/src/utils/downloadPlaceholder.ts b/packages/frontend/src/utils/downloadPlaceholder.ts
+new file mode 100644
+index 0000000..af8be77
+--- /dev/null
++++ b/packages/frontend/src/utils/downloadPlaceholder.ts
+@@ -0,0 +1,33 @@
++import type { T } from '@deltachat/jsonrpc-client'
++
++/**
++ * The type the message will have *after* it is downloaded. It's a fork-only
++ * field on the pre-message placeholder that upstream's generated jsonrpc
++ * bindings don't declare yet (core regenerates them later in the build), so we
++ * read it through this one typed accessor.
++ *
++ * ponytail: single typed cast lives here instead of scattering `as any` at call
++ * sites; drop the cast once the regenerated bindings carry `postMessageViewType`.
++ */
++export function getPostMessageViewType(message: T.Message): T.Viewtype | null {
++  const viewType =
++    (message as { postMessageViewType?: T.Viewtype | null })
++      .postMessageViewType ?? null
++  // 'Unknown' would fall through to a nameless generic card; the plain-text
++  // fallback line is strictly better for it.
++  return viewType === 'Unknown' ? null : viewType
++}
++
++// Core appends " [Label – 123 KiB]" to the placeholder text (message.rs:645-674,
++// bracketed, with an en-dash before the size). Strip that trailing tag so our
++// own UI shows the size instead of duplicating it in the caption.
++//
++// ponytail: regex on the bracket/en-dash shape; known ceiling: a File tag whose
++// filename itself contains "[" or "]" is not stripped (caption then shows the
++// tag next to our size chip - cosmetic). Upgrade path = a core field carrying
++// the raw caption without the appended tag.
++const DOWNLOAD_TAG_RE = /\s*\[[^\]]*–[^\]]*\]\s*$/
++
++export function placeholderCaption(text: string | null | undefined): string {
++  return (text ?? '').replace(DOWNLOAD_TAG_RE, '').trim()
++}
