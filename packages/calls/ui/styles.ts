@@ -159,6 +159,10 @@ export const errorText: CSSProperties = {
 
 export const buttonRow: CSSProperties = {
   display: 'flex',
+  // Wrap rather than overflow the card: three ring buttons (Decline / Accept /
+  // Accept with video) or the in-call controls don't fit one line on a narrow
+  // viewport, and `buttonMobile`'s bigger tap targets are wider still.
+  flexWrap: 'wrap',
   gap: 8,
   justifyContent: 'center',
   marginTop: 4,

@@ -836,6 +836,52 @@ test('consent: accepting an incoming call NEVER requests the camera, even when t
   );
 });
 
+test('consent: accept({ withVideo: true }) DOES capture the camera — the local opt-in', async () => {
+  const gumCalls: MediaStreamConstraints[] = [];
+  const { engine, events, lastPc } = makeEngine({
+    seedRemoteVideoSender: true,
+    getUserMedia: async (constraints) => {
+      gumCalls.push(constraints);
+      return avStream() as unknown as MediaStream;
+    },
+  });
+  engine.receiveCall('OFFER_FROM_PEER');
+  await engine.accept({ withVideo: true });
+
+  assert.equal(gumCalls.length, 1);
+  assert.notEqual(gumCalls[0].video, false, 'the camera IS requested');
+  assert.ok(gumCalls[0].video, 'video constraints are truthy');
+  assert.equal(engine.hasVideo, true);
+  assert.equal(engine.cameraEnabled, true);
+  assert.equal(events.localVideoTrackChanges.length, 1, 'the local camera preview starts');
+  const pc = lastPc();
+  assert.equal(pc.addedTracks.length, 2, 'mic + camera');
+  assert.equal(pc.addTransceiverCount, 0, 'an answer still adds no m-line the offer lacked');
+});
+
+test('consent: only an explicit withVideo:true opts in — a caller-offered-video call is audio-only otherwise', async () => {
+  // hasVideo: true is the CALLER's `has_video` reaching the engine's options,
+  // exactly as the H-07 bug propagated it. Neither it nor an option-less /
+  // withVideo:false accept may reach the capture constraints.
+  for (const options of [undefined, {}, { withVideo: false }] as const) {
+    const gumCalls: MediaStreamConstraints[] = [];
+    const { engine } = makeEngine({
+      hasVideo: true,
+      seedRemoteVideoSender: true,
+      getUserMedia: async (constraints) => {
+        gumCalls.push(constraints);
+        return micStream() as unknown as MediaStream;
+      },
+    });
+    engine.receiveCall('OFFER_FROM_PEER');
+    await engine.accept(options);
+
+    assert.equal(gumCalls[0].video, false, `no camera for accept(${JSON.stringify(options)})`);
+    assert.equal(engine.hasVideo, false);
+    assert.equal(engine.cameraEnabled, false);
+  }
+});
+
 test('BUG 3: a video-started call with no camera degrades to audio-only (non-fatal, call proceeds)', async () => {
   let call = 0;
   const gumConstraints: MediaStreamConstraints[] = [];

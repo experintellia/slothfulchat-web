@@ -334,9 +334,10 @@ export interface IncomingCallParams {
   /** Preferred camera `deviceId`, seeding the camera the user may turn on
    * mid-call. There is deliberately NO `hasVideo` here: accepting answers
    * audio-only whatever the caller's `has_video` said (see
-   * `AudioCallEngine.receiveCall`). Offer/answer symmetry is unaffected — the
-   * video m-line is negotiated on every call — so the caller's video still
-   * arrives and the camera can be turned on from the in-call controls. */
+   * `AudioCallEngine.receiveCall`), and the only way to start our camera is the
+   * user's own {@link CallBridge.accept}`({ withVideo: true })`. Offer/answer
+   * symmetry is unaffected — the video m-line is negotiated on every call — so
+   * the caller's video still arrives either way. */
   cameraInputDeviceId?: string
   iceServers: RTCIceServer[]
 }
@@ -352,8 +353,9 @@ export class CallBridge {
   readonly accountId: number
   readonly chatId: number
   readonly direction: CallDirection
-  /** Whether we START with our camera on — outgoing only (it is the
-   * `has_video` sent to `placeOutgoingCall`); always `false` for incoming. */
+  /** The `has_video` sent to `placeOutgoingCall` — outgoing only; always
+   * `false` for incoming (an accept-with-video is signaled by the answer's
+   * video, not by this). Use `cameraEnabled` for the live camera state. */
   readonly hasVideo: boolean
   /** Known once placed (outgoing) or from the `IncomingCall` event (incoming). */
   callMessageId: number | null
@@ -661,9 +663,11 @@ export class CallBridge {
     }
   }
 
-  /** Incoming only: accept the ringing call (acquire mic → build answer → send). */
-  async accept(): Promise<void> {
-    await this.engine.accept()
+  /** Incoming only: accept the ringing call (acquire mic → build answer →
+   * send). `withVideo` is the user pressing "Accept with video" — their own
+   * intent, never the caller's `has_video` (see {@link IncomingCallParams}). */
+  async accept(options?: { withVideo?: boolean }): Promise<void> {
+    await this.engine.accept(options)
   }
 
   /** Outgoing only: feed the peer's answer from an `OutgoingCallAccepted` event. */

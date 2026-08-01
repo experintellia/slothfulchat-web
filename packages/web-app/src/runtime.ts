@@ -752,7 +752,8 @@ class BrowserRuntime {
    * the IncomingCall event subscription and the chat log's accept/redial
    * buttons. `startWithCameraEnabled` is upstream's name for the caller's
    * `has_video`; it says what THEY send, so we only record it — accepting
-   * answers audio-only and never starts our camera (see `openIncomingCall`).
+   * answers audio-only unless the user picks the ring's "Accept with video"
+   * (see `openIncomingCall`/`acceptCurrent`).
    */
   async openIncomingVideoCallWindow(params: {
     accountId: number
@@ -1794,6 +1795,10 @@ class CallManager {
      * Incoming: the CALLER's `has_video` — kept for analytics only, it never
      * turns our camera on (see `openIncomingCall`). */
     hasVideo: boolean
+    /** Incoming: the user answered with the ring's "Accept with video" — our
+     * OWN camera intent, the only thing that starts it. Kept on the slot
+     * because the popup→overlay fallback re-accepts without the click. */
+    acceptedWithVideo: boolean
     /** Best-effort chat/contact name (resolved by `decorateCallInfo`). */
     title: string
     /** Incoming: the caller's raw-SDP offer, retained so an accept can build
@@ -1838,7 +1843,7 @@ class CallManager {
     this.log = log
     this.transformBlobURL = transformBlobURL
     mountCallsUi(this.ui, {
-      onAccept: () => this.acceptCurrent(),
+      onAccept: options => this.acceptCurrent(options?.withVideo === true),
       onHangup: () => this.hangupCurrent(),
       onToggleMute: () => this.toggleMuteCurrent(),
       onSelectMicrophone: deviceId => this.selectMicrophone(deviceId),
@@ -1924,6 +1929,7 @@ class CallManager {
       chatId,
       direction: 'outgoing',
       hasVideo,
+      acceptedWithVideo: false, // incoming-only (there is no ring to accept here)
       title: 'Call',
       offerSdp: null,
       callMessageId: null,
@@ -2037,6 +2043,7 @@ class CallManager {
       chatId,
       direction: 'incoming',
       hasVideo,
+      acceptedWithVideo: false, // set by `acceptCurrent` iff the user picks it
       title: 'Call',
       offerSdp: callerWebrtcOffer,
       callMessageId,
@@ -2091,9 +2098,13 @@ class CallManager {
     )
   }
 
-  private acceptCurrent(): void {
+  /** The ring was answered. `withVideo` is the user's own camera opt-in
+   * ("Accept with video"); it is recorded on the slot so the popup handoff and
+   * the popup→overlay fallback both answer the way the user asked. */
+  private acceptCurrent(withVideo: boolean): void {
     const c = this.call
     if (!c || c.direction !== 'incoming' || c.mode === 'popup') return
+    c.acceptedWithVideo = withVideo
     // The ring is answered — silence it regardless of which path takes over.
     this.ringtone.stop()
     // Prefer handing the accepted call to a detached popup; the accept click
@@ -2108,7 +2119,7 @@ class CallManager {
     }
     // Overlay accept (popup blocked/disabled, or bridge not ready yet).
     if (!c.bridge) return
-    c.bridge.accept().catch(err => {
+    c.bridge.accept({ withVideo }).catch(err => {
       this.log.error('accept failed', err)
       this.onError(c, err instanceof Error ? err : new Error(String(err)))
     })
@@ -2299,8 +2310,9 @@ class CallManager {
       direction: slot.direction,
       accountId: slot.accountId,
       chatId: slot.chatId,
-      // Outgoing only — an accepted incoming call starts audio-only.
-      hasVideo: slot.direction === 'outgoing' && slot.hasVideo,
+      // Our OWN camera intent: the caller's choice when outgoing, the ring's
+      // "Accept with video" when incoming — never the caller's `has_video`.
+      hasVideo: slot.direction === 'outgoing' ? slot.hasVideo : slot.acceptedWithVideo,
       callMessageId: slot.callMessageId,
       offerSdp: slot.offerSdp,
       title: slot.title,
@@ -2351,7 +2363,11 @@ class CallManager {
       try {
         const iceServers = await fetchIceServers(this.rpc, slot.accountId)
         if (slot.cancelled || slot.mode !== 'overlay') return
-        this.ui.showCall({ direction: 'incoming', title: slot.title })
+        this.ui.showCall({
+          direction: 'incoming',
+          title: slot.title,
+          hasVideo: slot.acceptedWithVideo,
+        })
         const bridge = this.newIncomingBridge(slot, iceServers)
         slot.bridge = bridge
         void this.decorateCallInfo(slot)
@@ -2359,7 +2375,7 @@ class CallManager {
         // connecting, then async mic) run back-to-back so the store is already
         // past 'ringing' before React paints — no incoming-ring flash.
         void bridge.start()
-        void bridge.accept().catch(err => {
+        void bridge.accept({ withVideo: slot.acceptedWithVideo }).catch(err => {
           this.log.error('accept failed', err)
           this.onError(slot, err instanceof Error ? err : new Error(String(err)))
         })
