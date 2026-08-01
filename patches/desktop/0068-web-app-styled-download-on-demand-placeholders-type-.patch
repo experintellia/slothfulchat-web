@@ -36,11 +36,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
 ---
  packages/frontend/scss/manifest.scss          |   1 +
- .../_message-download-placeholder.scss        | 118 ++++++++++
+ .../_message-download-placeholder.scss        | 184 ++++++++++++++
  .../MessageDetail/BasicMessageInfo.tsx        |   2 +-
- .../message/DownloadOnDemandPlaceholder.tsx   | 207 ++++++++++++++++++
- .../src/components/message/Message.tsx        |  89 +++++---
- 5 files changed, 388 insertions(+), 29 deletions(-)
+ .../message/DownloadOnDemandPlaceholder.tsx   | 237 ++++++++++++++++++
+ .../src/components/message/Message.tsx        |  94 ++++---
+ 5 files changed, 489 insertions(+), 29 deletions(-)
  create mode 100644 packages/frontend/scss/message/_message-download-placeholder.scss
  create mode 100644 packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 
@@ -58,10 +58,10 @@ index b55d0eb..99294f1 100644
  @use 'misc/_avatar.scss';
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
 new file mode 100644
-index 0000000..289f18a
+index 0000000..7484d21
 --- /dev/null
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,184 @@
 +// Styled download-on-demand placeholders (see DownloadOnDemandPlaceholder.tsx).
 +// Reuses the .message-attachment-* / .webxdc boxes from _message-attachment.scss
 +// and adds: a blurred thumbnail, a grey fallback box, and a centered overlay
@@ -168,6 +168,72 @@ index 0000000..289f18a
 +    color: var(--messageAttachmentFileInfo);
 +  }
 +
++  // Telegram-style circular download indicator (ProgressCircle).
++  .download-progress-circle {
++    position: relative;
++    width: 40px;
++    height: 40px;
++
++    svg {
++      width: 100%;
++      height: 100%;
++      // Determinate fill starts at 12 o'clock.
++      transform: rotate(-90deg);
++
++      circle {
++        fill: none;
++        stroke-width: 3.5;
++        stroke-linecap: round;
++      }
++      .track {
++        stroke: var(--colorPrimary, #415e6b);
++        opacity: 0.25;
++      }
++      .bar {
++        stroke: var(--colorPrimary, #415e6b);
++        transition: stroke-dashoffset 0.3s linear;
++      }
++
++      &.indeterminate {
++        animation: download-progress-spin 1s linear infinite;
++      }
++    }
++
++    .pct {
++      position: absolute;
++      inset: 0;
++      display: flex;
++      align-items: center;
++      justify-content: center;
++      font-size: 11px;
++      color: var(--colorPrimary, #415e6b);
++    }
++
++    // Over a blurred thumbnail the ring needs contrast, like .size below.
++    .download-on-demand-overlay & {
++      .track {
++        stroke: rgba(255, 255, 255, 0.4);
++        opacity: 1;
++      }
++      .bar {
++        stroke: white;
++      }
++      .pct {
++        color: white;
++        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
++      }
++    }
++  }
++
++  @keyframes download-progress-spin {
++    from {
++      transform: rotate(-90deg);
++    }
++    to {
++      transform: rotate(270deg);
++    }
++  }
++
 +  // Over a blurred thumbnail the size text needs contrast.
 +  .download-on-demand-overlay & .size,
 +  .download-on-demand-overlay & .failed {
@@ -195,10 +261,10 @@ index 5d3432a..b6e27a6 100644
    const minutes = Math.floor(totalSeconds / 60) % 60
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 new file mode 100644
-index 0000000..6e2241a
+index 0000000..f5eea17
 --- /dev/null
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,237 @@
 +import React from 'react'
 +import { filesize } from 'filesize'
 +import { T } from '@deltachat/jsonrpc-client'
@@ -237,6 +303,44 @@ index 0000000..6e2241a
 +  return (text ?? '').replace(DOWNLOAD_TAG_RE, '').trim()
 +}
 +
++// Telegram-style circular download indicator: spins while indeterminate
++// (no DownloadProgress event yet), then the arc fills with the percentage.
++const RING_R = 16
++const RING_C = 2 * Math.PI * RING_R
++
++function ProgressCircle({
++  percent,
++  label,
++}: {
++  percent: number | null
++  label: string
++}) {
++  const indeterminate = percent === null
++  return (
++    <div
++      className='download-progress-circle'
++      role='progressbar'
++      aria-label={label}
++      aria-valuenow={indeterminate ? undefined : percent}
++    >
++      <svg viewBox='0 0 40 40' className={indeterminate ? 'indeterminate' : ''}>
++        <circle className='track' cx='20' cy='20' r={RING_R} />
++        <circle
++          className='bar'
++          cx='20'
++          cy='20'
++          r={RING_R}
++          strokeDasharray={RING_C}
++          strokeDashoffset={
++            indeterminate ? RING_C * 0.75 : RING_C * (1 - percent / 100)
++          }
++        />
++      </svg>
++      {!indeterminate && <span className='pct'>{percent}</span>}
++    </div>
++  )
++}
++
 +type PlaceholderProps = {
 +  message: T.Message
 +  postMessageViewType: T.Viewtype
@@ -260,15 +364,7 @@ index 0000000..6e2241a
 +        <span className='failed'>{tx('download_failed')}</span>
 +      )}
 +      {downloadState === 'InProgress' ? (
-+        <button
-+          type='button'
-+          className='download-button'
-+          disabled
-+          tabIndex={tabindexForInteractiveContents}
-+        >
-+          {tx('downloading')}
-+          {downloadPercent !== null && ` ${downloadPercent}%`}
-+        </button>
++        <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
 +      ) : (
 +        <button
 +          type='button'
@@ -407,7 +503,7 @@ index 0000000..6e2241a
 +  )
 +}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 4e50db2..641e0c3 100644
+index 4e50db2..308d04f 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -47,6 +47,10 @@ import ShortcutMenu from '../ShortcutMenu'
@@ -433,7 +529,7 @@ index 4e50db2..641e0c3 100644
    const showCopyImage =
      !!message.file && isImage(message.viewType) && message.viewType !== 'Gif'
    const showResend =
-@@ -971,33 +978,56 @@ export default function Message(props: {
+@@ -971,33 +978,61 @@ export default function Message(props: {
    const { downloadState } = message
  
    if (downloadState !== 'Done') {
@@ -467,9 +563,12 @@ index 4e50db2..641e0c3 100644
 +    const postMessageViewType = getPostMessageViewType(message)
 +    if (postMessageViewType) {
 +      // Fork placeholder: styled per-type box (thumbnail + download + size).
++      // Rendered as a SIBLING of the .text div — the same DOM shape as real
++      // attachments — so .message-attachment-media's negative margins bleed to
++      // the bubble edges and its corner radius lines up with the bubble's.
 +      const caption = placeholderCaption(text)
 +      content = (
-+        <div dir='auto' className='text download-on-demand-caption'>
++        <>
 +          <DownloadOnDemandPlaceholder
 +            message={message}
 +            postMessageViewType={postMessageViewType}
@@ -478,12 +577,14 @@ index 4e50db2..641e0c3 100644
 +            tabindexForInteractiveContents={tabindexForInteractiveContents}
 +          />
 +          {caption ? (
-+            <MessageBody
-+              text={caption}
-+              tabindexForInteractiveContents={tabindexForInteractiveContents}
-+            />
++            <div dir='auto' className='text'>
++              <MessageBody
++                text={caption}
++                tabindexForInteractiveContents={tabindexForInteractiveContents}
++              />
++            </div>
 +          ) : null}
-+        </div>
++        </>
 +      )
 +    } else {
 +      content = (
@@ -517,7 +618,7 @@ index 4e50db2..641e0c3 100644
    }
  
    /** Whether to show author name and avatar */
-@@ -1012,6 +1042,9 @@ export default function Message(props: {
+@@ -1012,6 +1047,9 @@ export default function Message(props: {
    const isWithoutText = isMediaWithoutText(hasText, message.viewType)
    const showAttachment = (message: T.Message) =>
      message.file &&
