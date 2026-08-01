@@ -34,6 +34,10 @@ Storage: the thumbnail is a normal blob keyed by Param::File, so housekeeping's
 remove_unused_files GCs it once the placeholder is trashed or the arriving
 post-message overwrites file/fileMime. No new table, no migration, no hooks.
 
+The metadata is applied after the `trash` decision: a pre-message whose
+post-message already arrived is trashed on insert and stores an empty `param`,
+so storing the preview there would orphan the blob in the same breath.
+
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
 ---
@@ -42,11 +46,11 @@ Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
  src/download/post_msg_metadata.rs          | 371 ++++++++++++++++++++-
  src/imap.rs                                |   5 +-
  src/message.rs                             |   3 +-
- src/receive_imf.rs                         |   6 +-
+ src/receive_imf.rs                         |  17 +-
  src/sql.rs                                 |   4 +-
- src/tests/pre_messages/receiving.rs        | 103 +++++-
+ src/tests/pre_messages/receiving.rs        | 123 ++++++-
  src/tests/pre_messages/util.rs             |  12 +-
- 9 files changed, 526 insertions(+), 20 deletions(-)
+ 9 files changed, 553 insertions(+), 24 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
 index 2b37fb5..b589893 100644
@@ -634,12 +638,24 @@ index 677b75e..4bbd12b 100644
              return self
                  .param
 diff --git a/src/receive_imf.rs b/src/receive_imf.rs
-index c91cdea..c641edd 100644
+index c91cdea..6e51913 100644
 --- a/src/receive_imf.rs
 +++ b/src/receive_imf.rs
-@@ -2170,7 +2170,11 @@ async fn add_parts(
+@@ -2165,18 +2165,25 @@ async fn add_parts(
+             }
+         };
+ 
++        // If you change which information is skipped if the message is trashed,
++        // also change `MsgId::trash()` and `delete_expired_messages()`
++        let trash = chat_id.is_trash() || (is_location_kml && part_is_empty && !save_mime_modified);
++
++        // After the `trash` decision: a trashed row stores an empty `param`, so applying the
++        // metadata there would write the preview blob and orphan it in the same breath.
+         if let PreMessageMode::Pre {
+             metadata: Some(metadata),
              ..
          } = &mime_parser.pre_message
++            && !trash
          {
 -            param.apply_post_msg_metadata(metadata);
 +            crate::download::post_msg_metadata::apply_received_metadata(
@@ -649,7 +665,13 @@ index c91cdea..c641edd 100644
 +            );
          };
  
-         // If you change which information is skipped if the message is trashed,
+-        // If you change which information is skipped if the message is trashed,
+-        // also change `MsgId::trash()` and `delete_expired_messages()`
+-        let trash = chat_id.is_trash() || (is_location_kml && part_is_empty && !save_mime_modified);
+-
+         let row_id = context
+             .sql
+             .call_write(|conn| {
 diff --git a/src/sql.rs b/src/sql.rs
 index 5c6ec77..12e507f 100644
 --- a/src/sql.rs
@@ -666,7 +688,7 @@ index 5c6ec77..12e507f 100644
      )
      .await?;
 diff --git a/src/tests/pre_messages/receiving.rs b/src/tests/pre_messages/receiving.rs
-index 7a2586e..bb55eb8 100644
+index 7a2586e..0f612af 100644
 --- a/src/tests/pre_messages/receiving.rs
 +++ b/src/tests/pre_messages/receiving.rs
 @@ -1,4 +1,6 @@
@@ -699,7 +721,7 @@ index 7a2586e..bb55eb8 100644
              })
          }
      );
-@@ -1007,3 +1013,96 @@ async fn test_bot_pre_message_notifications() -> Result<()> {
+@@ -1007,3 +1013,116 @@ async fn test_bot_pre_message_notifications() -> Result<()> {
  
      Ok(())
  }
@@ -784,6 +806,26 @@ index 7a2586e..bb55eb8 100644
 +    assert!(tokio::fs::try_exists(&preview_c).await?);
 +    assert_ne!(preview_c, preview_a);
 +    assert_ne!(preview_c, preview_b);
++
++    // Case D: the post-message arrived first, so the late pre-message is trashed on insert. A
++    // trashed row stores an empty `param`, so the preview must not be written in the first place.
++    async fn blob_count(ctx: &crate::context::Context) -> Result<usize> {
++        let mut dir = tokio::fs::read_dir(ctx.get_blobdir()).await?;
++        let mut count = 0;
++        while dir.next_entry().await?.is_some() {
++            count += 1;
++        }
++        Ok(count)
++    }
++    let (pre_d, post_d, _) = send_large_image_message_sized(alice, alice_group_id, 1500, 1700).await?;
++    bob.recv_msg(&post_d).await;
++    let blobs_before = blob_count(bob).await?;
++    bob.recv_msg_trash(&pre_d).await;
++    assert_eq!(
++        blob_count(bob).await?,
++        blobs_before,
++        "trashed pre-message must not store a preview blob"
++    );
 +
 +    // Age all blobs past the 1h grace and run housekeeping.
 +    SystemTime::shift(Duration::from_secs(65 * 60));
