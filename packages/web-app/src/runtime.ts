@@ -1044,7 +1044,13 @@ class BrowserRuntime {
   }
   async openPath(path: string): Promise<string> {
     if (path.includes('dc.db-blobs')) {
-      window.open(this.transformBlobURL(path), '_blank')?.focus()
+      // 'noopener': the opened document is sender-controlled content on our own
+      // origin, so it must not keep a window.opener handle on the messenger tab
+      // (an opener handle can navigate that tab away, e.g. to a login phish).
+      // The blobs SW additionally serves it under a sandbox CSP. With noopener
+      // window.open returns null — nothing left to focus(), and browsers focus
+      // a freshly opened tab anyway.
+      window.open(this.transformBlobURL(path), '_blank', 'noopener')
       return ''
     }
     throw new Error(
