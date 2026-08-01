@@ -17,13 +17,16 @@ gaps in its *version number* no longer happen).
 
 The version lives in each `packages/*/package.json` (the source of truth) —
 `node scripts/set-release-version.mjs X.Y.Z` (or `pnpm set-version X.Y.Z`)
-sets all of them at once. `publish-npm.yml` verifies on the tag that they all
-match `vX.Y.Z` and fails the run otherwise, so a half-bumped set never ships.
-It also refuses a tag whose commit isn't on `main`, or that moved after the run
-started: the tag is the only release authority, so nothing publishes without
-one. Re-running by hand works, but only with the tag itself as the ref
-(`gh workflow run publish-npm.yml --ref v0.3.0`) — a branch run publishes
-nothing.
+sets all of them at once. `verify-release-tag.yml` checks on the tag that they
+all match `vX.Y.Z` and fails the run otherwise, so a half-bumped set never
+ships. It also refuses a tag whose commit isn't on `main`, or that moved after
+the run started: the tag is the only release authority.
+
+Both `publish-npm.yml` (npm) and `deploy-pages.yml` (prod, web.slothful.chat)
+run that same gate as their first job, so neither can ship what the other
+would reject. Re-running either by hand works, but only with the tag itself as
+the ref (`gh workflow run publish-npm.yml --ref v0.3.0`) — a branch run
+publishes and deploys nothing.
 
 ## The flow
 

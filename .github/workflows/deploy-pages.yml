@@ -13,6 +13,14 @@
 # preview + next deploys); its step order is load-bearing — see that file.
 #
 # To enable: repo Settings -> Pages -> Source = "GitHub Actions".
+#
+# A TAG IS THE ONLY RELEASE AUTHORITY — this is PROD, held to the same gate as
+# npm publishing (verify-release-tag.yml, shared with publish-npm.yml so the two
+# can never drift apart on what counts as a release). Nothing builds and no job
+# holding pages/id-token privileges even exists until the ref is proven to be an
+# unmoved tag, on main, whose package versions match it. `workflow_dispatch`
+# stays as a manual fallback but only helps against a tag ref, where it passes
+# the identical gate — so it buys an attacker nothing a tag push wouldn't.
 
 name: Deploy web-app to GitHub Pages
 
@@ -21,10 +29,7 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+permissions: {}
 
 # One deploy at a time; never cancel an in-flight deploy.
 concurrency:
@@ -32,8 +37,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-tag:
+    # A called workflow can only ever DOWNGRADE the caller's token, so the gate
+    # needs its read grant handed to it here — top-level `permissions: {}` would
+    # otherwise cap it at nothing and its checkout would fail.
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify-release-tag.yml
+
   build:
+    needs: verify-tag
+    # Belt and braces: verify-tag failing already blocks this job, and this `if`
+    # keeps the deploy privileges out of reach of a branch run even if that gate
+    # is ever weakened. Both are needed.
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    # No id-token here: minting the OIDC token that authenticates the Pages
+    # deploy is the deploy job's business, and this job runs the build scripts.
+    # `pages: write` stays because actions/configure-pages reads/writes the Pages
+    # settings; it cannot deploy on its own, and the gate above means this job
+    # only ever runs on a merged, verified tag.
+    permissions:
+      contents: read
+      pages: write
     # Per-instance config baked into config.js by the composite action's
     # assemble step, which inherits these as process env. Set them under
     # Settings -> Secrets and variables -> Actions. All optional: unset ->
@@ -51,9 +77,13 @@ jobs:
       SLOTHFUL_PLAUSIBLE_DOMAIN: ${{ vars.SLOTHFUL_PLAUSIBLE_DOMAIN }}
       SLOTHFUL_PLAUSIBLE_API: ${{ vars.SLOTHFUL_PLAUSIBLE_API }}
     steps:
+      # Pinned to the SHA verify-tag checked, not to the tag name: the tag could
+      # be moved during the ~10-min build, and this job would otherwise pick up
+      # whatever it points at then.
       - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           submodules: recursive
 
       - name: Build web-app dist/
@@ -68,7 +98,14 @@ jobs:
 
   deploy:
     needs: build
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    # The privileged job, and the only one: id-token mints the OIDC token
+    # actions/deploy-pages authenticates prod with. It checks out nothing and
+    # runs no repository code — it only publishes the artifact build produced.
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -1,0 +1,80 @@
+# The single release gate, called by every workflow that can publish or deploy
+# production (publish-npm.yml, deploy-pages.yml).
+#
+# A TAG IS THE ONLY RELEASE AUTHORITY. It lives here, once, on purpose: two
+# copies of a security gate drift, and a drifted gate is a hole. Callers run it
+# as their first job and hang everything else off `needs:`, so no job holding
+# publish or deploy privileges even exists until this has passed.
+#
+# It proves three things about the ref, and nothing about the build:
+#   1. it is a tag (a branch — including a workflow_dispatch on one — cannot
+#      release);
+#   2. the tag still points where it did when the run started (nobody moved it
+#      underneath us);
+#   3. its commit is an ancestor of main (no releasing unmerged work).
+# Plus the synced-release-train check: a tag vX.Y.Z means EVERY package is at
+# X.Y.Z, so a half-bumped set never ships.
+#
+# Callers must ALSO pin their build checkout to `${{ github.sha }}` rather than
+# the tag name — otherwise a tag moved during the build would be built and
+# shipped despite having been verified here.
+
+name: Verify release tag
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # fetch-depth: 0 makes checkout fetch every branch and tag, so
+      # origin/main and the tag AS IT IS ON THE REMOTE are both present.
+      - name: Checkout (full history — the ancestor check needs main)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify the ref is a tag, unmoved, and on main
+        run: |
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "::error::$GITHUB_REF is not a tag — releases come from tags only. Tag the commit and push the tag (see RELEASING.md)."
+            exit 1
+          fi
+          git fetch --no-tags --force origin +refs/heads/main:refs/remotes/origin/main
+          tag_sha=$(git rev-list -n1 "refs/tags/$GITHUB_REF_NAME")
+          if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::tag $GITHUB_REF_NAME points at $tag_sha but this run is on $GITHUB_SHA — the tag moved; delete and re-create it, then re-run."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not an ancestor of origin/main — only tags of merged commits may be released."
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME = $GITHUB_SHA, on main"
+
+      # Synced release train: a tag vX.Y.Z means EVERY package is at X.Y.Z
+      # (see RELEASING.md). Fail fast — before the ~10-min wasm build — if any
+      # package drifted from the tag, so a half-bumped set never ships.
+      # grep/sed only: runs before Node is even set up. web-app is private (not
+      # published) but must still match, so the running version is one number.
+      - name: Verify all package versions match the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          fail=0
+          for dir in packages/ws-tcp-proxy packages/core-wasm packages/customize packages/web-app; do
+            v=$(grep -m1 '"version"' "$dir/package.json" | sed -E 's/.*"version":[[:space:]]*"([^"]+)".*/\1/')
+            if [ "$v" != "$tag" ]; then
+              echo "::error::$dir is at $v but the tag is v$tag"
+              fail=1
+            fi
+          done
+          if [ "$fail" != 0 ]; then
+            echo "Version drift — bump every package to $tag before tagging: node scripts/set-release-version.mjs $tag"
+            exit 1
+          fi
+          echo "all packages at $tag"
