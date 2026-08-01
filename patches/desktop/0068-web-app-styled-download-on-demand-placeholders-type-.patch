@@ -36,14 +36,14 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
 ---
  packages/frontend/scss/manifest.scss          |   1 +
- .../_message-download-placeholder.scss        | 284 ++++++++++++++++++
+ .../_message-download-placeholder.scss        | 300 ++++++++++++++++++
  .../components/dialogs/ExportChatToHtml.tsx   |  14 +-
  .../MessageDetail/BasicMessageInfo.tsx        |   2 +-
- .../message/DownloadOnDemandPlaceholder.tsx   | 263 ++++++++++++++++
- .../src/components/message/Message.tsx        | 120 ++++++--
+ .../message/DownloadOnDemandPlaceholder.tsx   | 284 +++++++++++++++++
+ .../src/components/message/Message.tsx        | 120 +++++--
  .../src/tests/placeholderCaption.test.ts      |  32 ++
  .../frontend/src/utils/downloadPlaceholder.ts |  33 ++
- 8 files changed, 712 insertions(+), 37 deletions(-)
+ 8 files changed, 749 insertions(+), 37 deletions(-)
  create mode 100644 packages/frontend/scss/message/_message-download-placeholder.scss
  create mode 100644 packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
  create mode 100644 packages/frontend/src/tests/placeholderCaption.test.ts
@@ -63,10 +63,10 @@ index b55d0eb..99294f1 100644
  @use 'misc/_avatar.scss';
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
 new file mode 100644
-index 0000000..0145a65
+index 0000000..6801460
 --- /dev/null
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,300 @@
 +// Styled download-on-demand placeholders (see DownloadOnDemandPlaceholder.tsx).
 +// Reuses the .message-attachment-* / .webxdc boxes from _message-attachment.scss
 +// and adds: a blurred thumbnail, a grey fallback box, and a centered overlay
@@ -193,8 +193,24 @@ index 0000000..0145a65
 +    border-radius: 7%;
 +  }
 +
++  // Webxdc card: center the ring like the Start button it stands in for,
++  // and give the size line breathing room under it.
++  &.webxdc {
++    .download-progress-circle {
++      margin: 10px 0;
++    }
++
++    & > .size {
++      display: block;
++      font-size: 11px;
++      color: var(--messageAttachmentFileInfo);
++      margin-top: 2px;
++    }
++  }
++
 +  &.message-attachment-audio .failed,
-+  &.message-attachment-generic .failed {
++  &.message-attachment-generic .failed,
++  &.webxdc .failed {
 +    color: var(--errorText, #e6512c);
 +    font-size: 12px;
 +  }
@@ -405,10 +421,10 @@ index 5d3432a..b6e27a6 100644
    const minutes = Math.floor(totalSeconds / 60) % 60
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 new file mode 100644
-index 0000000..ddc165b
+index 0000000..101bc86
 --- /dev/null
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,284 @@
 +import React from 'react'
 +import { filesize } from 'filesize'
 +import { T } from '@deltachat/jsonrpc-client'
@@ -419,6 +435,9 @@ index 0000000..ddc165b
 +import { formatDuration } from '../dialogs/MessageDetail/BasicMessageInfo'
 +import useTranslationFunction from '../../hooks/useTranslationFunction'
 +import Icon from '../Icon'
++import Button from '../Button'
++
++import styles from './styles.module.scss'
 +import {
 +  getPostMessageViewType,
 +  placeholderCaption,
@@ -644,7 +663,25 @@ index 0000000..ddc165b
 +        <div className='info-text'>
 +          <div className='name'>{message.fileName}</div>
 +        </div>
-+        {controls}
++        {message.downloadState === 'Failure' && (
++          <span className='failed'>{tx('download_failed')}</span>
++        )}
++        {message.downloadState === 'InProgress' ? (
++          <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
++        ) : (
++          // Mirror the real card's big primary "Start" button, labeled Download.
++          <Button
++            className={styles.startWebxdcButton}
++            styling='primary'
++            onClick={() =>
++              BackendRemote.rpc.downloadFullMessage(accountId, message.id)
++            }
++            tabIndex={tabindexForInteractiveContents}
++          >
++            {tx('download')}
++          </Button>
++        )}
++        <span className='size'>{filesize(message.fileBytes ?? 0)}</span>
 +      </div>
 +    )
 +  }
