@@ -36,11 +36,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
 ---
  packages/frontend/scss/manifest.scss          |   1 +
- .../_message-download-placeholder.scss        | 302 ++++++++++++++++++
+ .../_message-download-placeholder.scss        | 290 ++++++++++++++++++
  .../MessageDetail/BasicMessageInfo.tsx        |   2 +-
- .../message/DownloadOnDemandPlaceholder.tsx   | 282 ++++++++++++++++
+ .../message/DownloadOnDemandPlaceholder.tsx   | 282 +++++++++++++++++
  .../src/components/message/Message.tsx        | 114 +++++--
- 5 files changed, 668 insertions(+), 33 deletions(-)
+ 5 files changed, 656 insertions(+), 33 deletions(-)
  create mode 100644 packages/frontend/scss/message/_message-download-placeholder.scss
  create mode 100644 packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 
@@ -58,14 +58,14 @@ index b55d0eb..99294f1 100644
  @use 'misc/_avatar.scss';
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
 new file mode 100644
-index 0000000..b557127
+index 0000000..3d746d0
 --- /dev/null
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
-@@ -0,0 +1,302 @@
+@@ -0,0 +1,290 @@
 +// Styled download-on-demand placeholders (see DownloadOnDemandPlaceholder.tsx).
 +// Reuses the .message-attachment-* / .webxdc boxes from _message-attachment.scss
 +// and adds: a blurred thumbnail, a grey fallback box, and a centered overlay
-+// with a prominent download button plus the target file size.
++// with a circular download button plus the target file size.
 +
 +.download-on-demand {
 +  // Media types (image / gif / sticker / video) share the media box.
@@ -161,12 +161,6 @@ index 0000000..b557127
 +    border-radius: 20px;
 +    background-color: rgba(200, 200, 200, 0.3);
 +
-+    .download-progress-circle {
-+      flex-shrink: 0;
-+      width: 36px;
-+      height: 36px;
-+    }
-+
 +    .time {
 +      font-size: 12px;
 +      font-variant-numeric: tabular-nums;
@@ -200,7 +194,7 @@ index 0000000..b557127
 +    font-size: 12px;
 +  }
 +
-+  // Shared circular download button (audio player pill, file card).
++  // Shared circular download button (media overlay, audio pill, file card).
 +  .circle-download-button {
 +    flex-shrink: 0;
 +    width: 36px;
@@ -208,13 +202,31 @@ index 0000000..b557127
 +    border: none;
 +    border-radius: 50%;
 +    background-color: var(--colorPrimary, #415e6b);
-+    color: white;
-+    font-size: 17px;
-+    line-height: 1;
 +    cursor: pointer;
 +    display: flex;
 +    align-items: center;
 +    justify-content: center;
++
++    // The Icon component's css-masked span; its background-color IS the
++    // icon color.
++    & > span {
++      background-color: white;
++    }
++  }
++
++  // In-row ring/button sizing for the audio pill and file card.
++  .fake-audio-player,
++  &.message-attachment-generic {
++    .download-progress-circle {
++      flex-shrink: 0;
++      width: 36px;
++      height: 36px;
++      align-self: center;
++    }
++
++    .circle-download-button {
++      align-self: center;
++    }
 +  }
 +
 +  // File card: mirror the real generic attachment (icon | name+size column),
@@ -237,17 +249,6 @@ index 0000000..b557127
 +        margin-top: 3px;
 +      }
 +    }
-+
-+    .download-progress-circle {
-+      flex-shrink: 0;
-+      width: 36px;
-+      height: 36px;
-+      align-self: center;
-+    }
-+
-+    .circle-download-button {
-+      align-self: center;
-+    }
 +  }
 +
 +  .text-part > .duration {
@@ -264,92 +265,10 @@ index 0000000..b557127
 +  align-items: center;
 +  gap: 4px;
 +
-+  .download-button {
-+    padding: 8px 18px;
-+    border: none;
-+    border-radius: 18px;
-+    background-color: var(--colorPrimary, #415e6b);
-+    color: white;
-+    font-size: 14px;
-+    cursor: pointer;
-+
-+    &:disabled {
-+      opacity: 0.6;
-+      cursor: default;
-+    }
-+  }
-+
 +  .size {
 +    font-size: 11px;
 +    letter-spacing: 0.3px;
 +    color: var(--messageAttachmentFileInfo);
-+  }
-+
-+  // Telegram-style circular download indicator (ProgressCircle).
-+  .download-progress-circle {
-+    position: relative;
-+    width: 40px;
-+    height: 40px;
-+
-+    svg {
-+      width: 100%;
-+      height: 100%;
-+      // Determinate fill starts at 12 o'clock.
-+      transform: rotate(-90deg);
-+
-+      circle {
-+        fill: none;
-+        stroke-width: 3.5;
-+        stroke-linecap: round;
-+      }
-+      .track {
-+        stroke: var(--colorPrimary, #415e6b);
-+        opacity: 0.25;
-+      }
-+      .bar {
-+        stroke: var(--colorPrimary, #415e6b);
-+        transition: stroke-dashoffset 0.3s linear;
-+      }
-+
-+      &.indeterminate {
-+        animation: download-progress-spin 1s linear infinite;
-+      }
-+    }
-+
-+    .pct {
-+      position: absolute;
-+      inset: 0;
-+      display: flex;
-+      align-items: center;
-+      justify-content: center;
-+      font-size: 9px;
-+      letter-spacing: -0.2px;
-+      color: var(--colorPrimary, #415e6b);
-+    }
-+
-+    // Over a blurred thumbnail the ring needs contrast, like .size below.
-+    .download-on-demand-overlay & {
-+      .track {
-+        stroke: rgba(255, 255, 255, 0.4);
-+        opacity: 1;
-+      }
-+      .bar {
-+        stroke: white;
-+      }
-+      .pct {
-+        color: white;
-+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-+      }
-+    }
-+  }
-+
-+  @keyframes download-progress-spin {
-+    from {
-+      transform: rotate(-90deg);
-+    }
-+    to {
-+      transform: rotate(270deg);
-+    }
 +  }
 +
 +  // Over a blurred thumbnail the size text needs contrast.
@@ -362,6 +281,75 @@ index 0000000..b557127
 +  .failed {
 +    color: var(--errorText, #e6512c);
 +    font-size: 12px;
++  }
++}
++
++// Telegram-style circular download indicator (ProgressCircle). Top-level so
++// every placement (media overlay chip, audio pill, file card) gets the same
++// styling — svg circles MUST get fill: none or they render as filled discs.
++.download-progress-circle {
++  position: relative;
++  width: 40px;
++  height: 40px;
++
++  svg {
++    width: 100%;
++    height: 100%;
++    // Determinate fill starts at 12 o'clock.
++    transform: rotate(-90deg);
++
++    circle {
++      fill: none;
++      stroke-width: 3.5;
++      stroke-linecap: round;
++    }
++    .track {
++      stroke: var(--colorPrimary, #415e6b);
++      opacity: 0.25;
++    }
++    .bar {
++      stroke: var(--colorPrimary, #415e6b);
++      transition: stroke-dashoffset 0.3s linear;
++    }
++
++    &.indeterminate {
++      animation: download-progress-spin 1s linear infinite;
++    }
++  }
++
++  .pct {
++    position: absolute;
++    inset: 0;
++    display: flex;
++    align-items: center;
++    justify-content: center;
++    font-size: 9px;
++    letter-spacing: -0.2px;
++    color: var(--colorPrimary, #415e6b);
++  }
++
++  // Over a blurred thumbnail the ring needs contrast.
++  .download-on-demand-overlay & {
++    .track {
++      stroke: rgba(255, 255, 255, 0.4);
++      opacity: 1;
++    }
++    .bar {
++      stroke: white;
++    }
++    .pct {
++      color: white;
++      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
++    }
++  }
++}
++
++@keyframes download-progress-spin {
++  from {
++    transform: rotate(-90deg);
++  }
++  to {
++    transform: rotate(270deg);
 +  }
 +}
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
@@ -379,7 +367,7 @@ index 5d3432a..b6e27a6 100644
    const minutes = Math.floor(totalSeconds / 60) % 60
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 new file mode 100644
-index 0000000..d5099b6
+index 0000000..3642382
 --- /dev/null
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 @@ -0,0 +1,282 @@
@@ -389,9 +377,10 @@ index 0000000..d5099b6
 +
 +import { runtime } from '@deltachat-desktop/runtime-interface'
 +import { BackendRemote } from '../../backend-com'
-+import { getExtension, isImage } from '../attachment/Attachment'
++import { isImage } from '../attachment/Attachment'
 +import { formatDuration } from '../dialogs/MessageDetail/BasicMessageInfo'
 +import useTranslationFunction from '../../hooks/useTranslationFunction'
++import Icon from '../Icon'
 +
 +/**
 + * The type the message will have *after* it is downloaded. It's a fork-only
@@ -459,6 +448,29 @@ index 0000000..d5099b6
 +  )
 +}
 +
++function CircleDownloadButton({
++  messageId,
++  accountId,
++  tabIndex,
++}: {
++  messageId: number
++  accountId: number
++  tabIndex: -1 | 0
++}) {
++  const tx = useTranslationFunction()
++  return (
++    <button
++      type='button'
++      className='circle-download-button'
++      aria-label={tx('download')}
++      onClick={() => BackendRemote.rpc.downloadFullMessage(accountId, messageId)}
++      tabIndex={tabIndex}
++    >
++      <Icon icon='download' size={18} />
++    </button>
++  )
++}
++
 +type PlaceholderProps = {
 +  message: T.Message
 +  postMessageViewType: T.Viewtype
@@ -486,16 +498,11 @@ index 0000000..d5099b6
 +      {downloadState === 'InProgress' ? (
 +        <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
 +      ) : (
-+        <button
-+          type='button'
-+          className='download-button'
-+          onClick={() =>
-+            BackendRemote.rpc.downloadFullMessage(accountId, message.id)
-+          }
++        <CircleDownloadButton
++          messageId={message.id}
++          accountId={accountId}
 +          tabIndex={tabindexForInteractiveContents}
-+        >
-+          {tx('download')}
-+        </button>
++        />
 +      )}
 +      <span className='size'>{filesize(message.fileBytes ?? 0)}</span>
 +    </div>
@@ -584,17 +591,11 @@ index 0000000..d5099b6
 +          {message.downloadState === 'InProgress' ? (
 +            <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
 +          ) : (
-+            <button
-+              type='button'
-+              className='circle-download-button'
-+              aria-label={tx('download')}
-+              onClick={() =>
-+                BackendRemote.rpc.downloadFullMessage(accountId, message.id)
-+              }
++            <CircleDownloadButton
++              messageId={message.id}
++              accountId={accountId}
 +              tabIndex={tabindexForInteractiveContents}
-+            >
-+              ↓
-+            </button>
++            />
 +          )}
 +          <span className='time'>
 +            {message.duration > 0 ? formatDuration(message.duration) : '–:––'}
@@ -629,17 +630,19 @@ index 0000000..d5099b6
 +    )
 +  }
 +
-+  // Generic file (and any other type): the file card with extension + name.
-+  const extension = getExtension(message)
++  // Generic file (and any other type): the real card's layout, but the round
++  // download button / progress ring sits where the file icon would be.
 +  return (
 +    <div className='message-attachment-generic download-on-demand'>
-+      <div className='file-icon' title={message.fileMime || 'null'}>
-+        {extension ? (
-+          <div className='file-extension'>
-+            {message.fileMime === 'application/octet-stream' ? '' : extension}
-+          </div>
-+        ) : null}
-+      </div>
++      {message.downloadState === 'InProgress' ? (
++        <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
++      ) : (
++        <CircleDownloadButton
++          messageId={message.id}
++          accountId={accountId}
++          tabIndex={tabindexForInteractiveContents}
++        />
++      )}
 +      <div className='text-part'>
 +        <div className='name'>{message.fileName}</div>
 +        <div className='size'>{filesize(message.fileBytes ?? 0)}</div>
@@ -647,21 +650,6 @@ index 0000000..d5099b6
 +          <span className='failed'>{tx('download_failed')}</span>
 +        )}
 +      </div>
-+      {message.downloadState === 'InProgress' ? (
-+        <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
-+      ) : (
-+        <button
-+          type='button'
-+          className='circle-download-button'
-+          aria-label={tx('download')}
-+          onClick={() =>
-+            BackendRemote.rpc.downloadFullMessage(accountId, message.id)
-+          }
-+          tabIndex={tabindexForInteractiveContents}
-+        >
-+          ↓
-+        </button>
-+      )}
 +    </div>
 +  )
 +}
