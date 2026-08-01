@@ -5,6 +5,13 @@
 # npmjs.com Settings -> Trusted Publisher must point at this repo + this
 # workflow FILENAME (so never rename publish-npm.yml).
 #
+# A TAG IS THE ONLY RELEASE AUTHORITY. The trusted publisher will sign whatever
+# this workflow hands it, so nothing but a verified tag may reach it: the
+# verify-tag job gates everything, and id-token: write lives on the publish job
+# alone (permissions are per-job and can't be made conditional). Manual runs are
+# still allowed — but only against a tag ref, where they pass the same gate, so
+# `workflow_dispatch` buys an attacker nothing a tag push wouldn't.
+#
 # Versioning: synced release train — a `v*` tag means EVERY package is at that
 # version. Bump them all in lockstep first (node scripts/set-release-version.mjs
 # X.Y.Z), commit, tag, push; a guard step rejects a tag whose packages drifted.
@@ -26,18 +33,43 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
-permissions:
-  id-token: write # npm trusted publishing + provenance
-  contents: write # gh release create/upload
+permissions: {}
 
 jobs:
-  publish:
+  # The gate (see header). Cheap and first: no build runs, and no job holding
+  # id-token: write even exists, until the ref is proven to be a released tag.
+  verify-tag:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
+      # fetch-depth: 0 makes checkout fetch every branch and tag, so
+      # origin/main and the tag AS IT IS ON THE REMOTE are both present.
+      - name: Checkout (full history — the ancestor check needs main)
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          fetch-depth: 0
+
+      # A tag is only release authority if it is immutable and reviewed: it must
+      # still point where it did when this run started (nobody moved it under
+      # us) and its commit must be on main (no publishing an unmerged branch).
+      - name: Verify the ref is a tag, unmoved, and on main
+        run: |
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "::error::$GITHUB_REF is not a tag — this workflow only releases tags. Tag the commit and push the tag (see RELEASING.md)."
+            exit 1
+          fi
+          git fetch --no-tags --force origin +refs/heads/main:refs/remotes/origin/main
+          tag_sha=$(git rev-list -n1 "refs/tags/$GITHUB_REF_NAME")
+          if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::tag $GITHUB_REF_NAME points at $tag_sha but this run is on $GITHUB_SHA — the tag moved; delete and re-create it, then re-run."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not an ancestor of origin/main — only tags of merged commits may be released."
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME = $GITHUB_SHA, on main"
 
       # Synced release train: a tag vX.Y.Z means EVERY package is at X.Y.Z
       # (see RELEASING.md). Fail fast — before the ~10-min wasm build — if any
@@ -45,7 +77,6 @@ jobs:
       # grep/sed only: runs before Node is even set up. web-app is private (not
       # published) but must still match, so the running version is one number.
       - name: Verify all package versions match the tag
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
           tag="${GITHUB_REF_NAME#v}"
           fail=0
@@ -61,6 +92,26 @@ jobs:
             exit 1
           fi
           echo "all packages at $tag"
+
+  publish:
+    needs: verify-tag
+    # Belt and braces: verify-tag failing already blocks this job, and this `if`
+    # keeps id-token: write out of reach of a branch run even if that gate is
+    # ever weakened. Both are needed — see the header.
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # npm trusted publishing + provenance
+      contents: write # gh release create/upload
+    steps:
+      # Pinned to the SHA verify-tag checked, not to the tag name: the tag could
+      # be moved during the ~10-min build, and this job would otherwise pick up
+      # whatever it points at then.
+      - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
 
       - name: Configure git identity (required by `git am` in apply-patches)
         run: |
@@ -154,11 +205,9 @@ jobs:
         run: pnpm --filter @slothfulchat/customize build
 
       # ---- GitHub release: prebuilt web-app zip + customize script ----
-      # (tag pushes only; a plain workflow_dispatch just re-publishes npm)
 
       # mirrors deploy-pages.yml — see the comments there for the env quirks
       - name: Build upstream desktop browser frontend (release)
-        if: startsWith(github.ref, 'refs/tags/')
         working-directory: build/desktop
         run: |
           export VERSION_INFO_GIT_REF=$(git rev-parse --short HEAD)
@@ -168,7 +217,6 @@ jobs:
       # ORDER TRAP #2 (see deploy-pages.yml): build must come after assemble.
       # Deliberately NO SLOTHFUL_* vars — the zip stays generic (see header).
       - name: Assemble + build web-app dist/ (generic release build)
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           NODE_ENV: production
         run: |
@@ -178,7 +226,6 @@ jobs:
       # release first, npm publish after: a publish hiccup (e.g. a package's
       # trusted publisher not configured yet) must not block the release
       - name: Create GitHub release (web-app zip + customize script)
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
