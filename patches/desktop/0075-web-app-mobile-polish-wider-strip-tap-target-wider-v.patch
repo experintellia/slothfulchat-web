@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Sat, 1 Aug 2026 16:14:50 +0000
+Subject: [PATCH 75/75] =?UTF-8?q?web-app:=20mobile=20polish=20=E2=80=94=20?=
+ =?UTF-8?q?wider=20strip=20tap=20target,=20wider=20voice=20bubbles?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The strip's play/pause hit area grows to ~44px wide (13px inline padding
+around the 18px icon) for touch. Voice bubbles on narrow viewports claim
+min(78vw, 340px) instead of shrinking to content — a half-screen waveform
+was too cramped to seek by touch.
+---
+ .../src/components/AudioPlayer/styles.module.scss     | 11 +++++++----
+ .../GlobalVoiceMessagePlayer.tsx                      |  1 +
+ .../GlobalVoiceMessagePlayer/styles.module.scss       |  5 +++++
+ 3 files changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/packages/frontend/src/components/AudioPlayer/styles.module.scss b/packages/frontend/src/components/AudioPlayer/styles.module.scss
+index ef23e5830..cd6b04660 100644
+--- a/packages/frontend/src/components/AudioPlayer/styles.module.scss
++++ b/packages/frontend/src/components/AudioPlayer/styles.module.scss
+@@ -23,11 +23,14 @@
+   gap: 0.5rem;
+   min-width: 300px; // parity with the native element
+ 
+-  // Narrow viewports: bubbles are narrower than 300px + padding, and the
+-  // fixed min-width shoved the speed pill through the bubble's border. Let
+-  // the row shrink (the seek/waveform is the flexible part).
++  // Narrow viewports: the fixed 300px floor shoved the speed pill through
++  // the bubble's border, but shrink-to-content made voice bubbles only ~half
++  // the screen — a cramped waveform is hard to seek by touch. Claim ~78% of
++  // the viewport (capped for near-500px windows) so the seek area is wide.
++  // 70vw: leaves room for the bubble's own padding/margins — 78vw pushed the
++  // outgoing bubble's pill past the screen edge.
+   @media (max-width: 500px) {
+-    min-width: 0;
++    min-width: min(70vw, 340px);
+   }
+ }
+ // Mini-player: the chat-list column shrinks to ~295px, so drop the 300px floor
+diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
+index 1360c854c..da18ec4f0 100644
+--- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
++++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
+@@ -335,6 +335,7 @@ function VoiceMessageStrip({
+           icon={paused ? 'play' : 'pause'}
+           coloring='currentColor'
+           size={18}
++          className={styles.stripPlayButton}
+           aria-label={paused ? tx('menu_play') : tx('menu_pause')}
+           onClick={() => {
+             const el = audioRef.current
+diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
+index cdbec09fd..7b783842d 100644
+--- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
++++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
+@@ -118,6 +118,11 @@
+   height: 36px; // + the 2px hairline below
+   padding-inline: 0.25rem;
+ }
++// Bigger horizontal tap target for the primary action on touch screens: the
++// icon is 18px, the padding takes the hit area to ~44px wide in the 36px row.
++.stripPlayButton {
++  padding-inline: 13px;
++}
+ .stripLabel {
+   @include mixins.button-reset;
+   flex: 1;

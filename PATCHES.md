@@ -86,7 +86,7 @@ exists:
   the chat-list bar is hidden there while a chat is open; the strip stays
   visible in both views, reserves its space instead of covering content,
   and demotes the waveform to a 2px progress hairline).
-  `desktop/0064` – `desktop/0074`
+  `desktop/0064` – `desktop/0075`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
