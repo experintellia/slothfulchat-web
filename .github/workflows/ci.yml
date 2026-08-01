@@ -278,6 +278,12 @@ jobs:
       - name: E2E test — resizable chat-list sidebar
         run: node scripts/test-sidebar-resize-e2e.mjs
 
+      # video poster self-check (fully offline, no core-wasm needed): record a
+      # canvas of a known colour, grab a frame with the real videoPoster module,
+      # assert the JPEG decodes back to that colour (i.e. not a blank frame).
+      - name: Self-check — video poster frame grab
+        run: node scripts/test-video-poster.mjs
+
       # unfurl service self-check (fully offline): metadata + inline image,
       # SSRF guards (private-IP / literal-IP refusal), size cap, rate limit.
       - name: Self-check — unfurl service

@@ -256,6 +256,13 @@ const BOOT_SHARE = extractBootShareAction()
  * archives don't blow the call stack the way `btoa(String.fromCharCode(...))`
  * would. Used to hand a launched `.xdc` to the frontend's send-to-chat dialog,
  * which expects base64 `file_content` (same contract electron/tauri use). */
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64)
+  const data = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) data[i] = binary.charCodeAt(i)
+  return data
+}
+
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -888,12 +895,17 @@ class BrowserRuntime {
     return `/tmp/${crypto.randomUUID()}/${base}`
   }
   async writeTempFileFromBase64(name: string, content: string): Promise<string> {
-    const binary = atob(content)
-    const data = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) data[i] = binary.charCodeAt(i)
     const path = this.tmpPath(name)
-    await getCore().fsWrite(path, data)
+    await getCore().fsWrite(path, base64ToBytes(content))
     return path
+  }
+  async writeBlobPreview(blobPath: string, base64Jpeg: string): Promise<void> {
+    // Trust boundary: the path comes from the frontend, and the sidecar is only meaningful
+    // (and only GCed, see core's housekeeping) next to a blob. Same guard as downloadFile.
+    if (!blobPath.includes('dc.db-blobs')) {
+      throw new Error('writeBlobPreview: not a blobdir path')
+    }
+    await getCore().fsWrite(`${blobPath}-preview.jpg`, base64ToBytes(base64Jpeg))
   }
   async writeTempFile(name: string, content: string): Promise<string> {
     const path = this.tmpPath(name)
