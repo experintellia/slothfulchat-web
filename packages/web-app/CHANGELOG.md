@@ -1,5 +1,9 @@
 # Changelog
 
+- **Security**: opening a received attachment can no longer run its code as
+  part of the app. A scripted SVG sent to you could reach your local app data;
+  attachments now open isolated, and images, video and audio still display
+  inline as before.
 - Downloading a big message now shows a live percentage on the message bubble,
   and an interrupted download continues where it stopped.
 - **Chat export works again**: the `index.html` viewer inside exported chat
