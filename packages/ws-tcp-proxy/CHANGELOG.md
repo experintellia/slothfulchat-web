@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking, for hosted bridges:** the bridge now binds `127.0.0.1` instead of
+  every interface. If you host one for others, set `HOST=0.0.0.0` (or your
+  interface address) — and it will only start with a `CHATMAIL_ALLOWLIST`, since
+  a network-reachable bridge without one is an open relay to any mail server.
+  Local use is unaffected.
+- A malformed WebSocket frame (e.g. an unmasked client frame) no longer kills
+  the whole bridge process, taking every other user's connection with it.
+
 ## 0.6.0 — 2026-07-15
 
 - Unfurl SSRF fix: the private-IP guard only recognized the dotted form of
