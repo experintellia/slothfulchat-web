@@ -19,6 +19,11 @@ The version lives in each `packages/*/package.json` (the source of truth) —
 `node scripts/set-release-version.mjs X.Y.Z` (or `pnpm set-version X.Y.Z`)
 sets all of them at once. `publish-npm.yml` verifies on the tag that they all
 match `vX.Y.Z` and fails the run otherwise, so a half-bumped set never ships.
+It also refuses a tag whose commit isn't on `main`, or that moved after the run
+started: the tag is the only release authority, so nothing publishes without
+one. Re-running by hand works, but only with the tag itself as the ref
+(`gh workflow run publish-npm.yml --ref v0.3.0`) — a branch run publishes
+nothing.
 
 ## The flow
 
