@@ -1,5 +1,13 @@
 # Changelog
 
+- **Resumable, chunked big-message downloads**: "download on demand" messages
+  now arrive in chunks (IMAP partial fetch) — an interrupted download resumes
+  where it stopped instead of restarting from zero, new messages keep coming
+  in while a big one downloads (the download yields every 15 s), and new
+  `DownloadProgress` events report a percentage while it runs. Servers
+  without partial-fetch support keep the old whole-message download and get a
+  one-time notice.
+
 Hardening of the account-storage subsystem against the known remaining ways a
 durable account could be lost or corrupted:
 

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 28 Jul 2026 14:55:36 +0000
-Subject: [PATCH 66/67] web-app: update emoji data to Unicode 17 (picker +
+Subject: [PATCH 66/69] web-app: update emoji data to Unicode 17 (picker +
  completion)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -25,7 +25,7 @@ Additive only; the base dataset is untouched. Supplement versions are capped at
 
 diff --git a/packages/frontend/src/components/EmojiPicker/emoji-supplement.json b/packages/frontend/src/components/EmojiPicker/emoji-supplement.json
 new file mode 100644
-index 000000000..136f1f2c8
+index 0000000..136f1f2
 --- /dev/null
 +++ b/packages/frontend/src/components/EmojiPicker/emoji-supplement.json
 @@ -0,0 +1,991 @@
@@ -1022,7 +1022,7 @@ index 000000000..136f1f2c8
 +]
 diff --git a/packages/frontend/src/components/EmojiPicker/emojiDataExtended.ts b/packages/frontend/src/components/EmojiPicker/emojiDataExtended.ts
 new file mode 100644
-index 000000000..739d55e51
+index 0000000..739d55e
 --- /dev/null
 +++ b/packages/frontend/src/components/EmojiPicker/emojiDataExtended.ts
 @@ -0,0 +1,43 @@
@@ -1070,7 +1070,7 @@ index 000000000..739d55e51
 +
 +export default merged
 diff --git a/packages/frontend/src/components/EmojiPicker/index.tsx b/packages/frontend/src/components/EmojiPicker/index.tsx
-index 4b313e0cf..eeaf66ee9 100644
+index 4b313e0..eeaf66e 100644
 --- a/packages/frontend/src/components/EmojiPicker/index.tsx
 +++ b/packages/frontend/src/components/EmojiPicker/index.tsx
 @@ -1,6 +1,6 @@
@@ -1082,7 +1082,7 @@ index 4b313e0cf..eeaf66ee9 100644
  
  import useTranslationFunction from '../../hooks/useTranslationFunction'
 diff --git a/packages/frontend/src/components/composer/completion/emojiProvider.ts b/packages/frontend/src/components/composer/completion/emojiProvider.ts
-index be07e669b..4d7f67697 100644
+index be07e66..4d7f676 100644
 --- a/packages/frontend/src/components/composer/completion/emojiProvider.ts
 +++ b/packages/frontend/src/components/composer/completion/emojiProvider.ts
 @@ -1,4 +1,4 @@

@@ -128,6 +128,28 @@ impl Fetch {
         }
     }
 
+    /// The origin octet of a partial `BODY[]<origin>` FETCH response, if the
+    /// server returned one. `None` for a full `BODY[]` response or when no
+    /// body section is present.
+    pub fn body_origin(&self) -> Option<u32> {
+        if let Response::Fetch(_, attrs) = self.response.parsed() {
+            attrs
+                .iter()
+                .filter_map(|av| match av {
+                    AttributeValue::BodySection {
+                        section: None,
+                        index,
+                        ..
+                    } => Some(*index),
+                    _ => None,
+                })
+                .next()
+                .flatten()
+        } else {
+            unreachable!()
+        }
+    }
+
     /// The bytes that make up the text of this message, included if `BODY[TEXT]`, `RFC822.TEXT`,
     /// or `BODY.PEEK[TEXT]` was included in the `query` argument to `FETCH`. The bytes SHOULD be
     /// interpreted by the client according to the content transfer encoding, body type, and

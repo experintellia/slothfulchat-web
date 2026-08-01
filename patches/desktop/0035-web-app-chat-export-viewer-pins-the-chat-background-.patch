@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 16:32:03 +0000
-Subject: [PATCH 35/67] web-app: chat export viewer pins the chat background to
+Subject: [PATCH 35/69] web-app: chat export viewer pins the chat background to
  the viewport
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -22,7 +22,7 @@ and in the single-file snapshot alike.
  1 file changed, 21 insertions(+), 1 deletion(-)
 
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-index 9b31c4cc6..b7c1e1148 100644
+index 9b31c4c..b7c1e11 100644
 --- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 @@ -262,7 +262,27 @@ async function collectCss(): Promise<string> {

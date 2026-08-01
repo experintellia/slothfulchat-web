@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Thu, 23 Jul 2026 19:28:34 +0000
-Subject: [PATCH 19/20] wasm: report account storage size (db via PRAGMA +
+Subject: [PATCH 19/23] wasm: report account storage size (db via PRAGMA +
  blobs via tokio::fs)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -23,7 +23,7 @@ native path is unchanged.
  2 files changed, 49 insertions(+), 5 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
-index ab910004b..8281447d2 100644
+index ab91000..8281447 100644
 --- a/deltachat-jsonrpc/src/api.rs
 +++ b/deltachat-jsonrpc/src/api.rs
 @@ -35,7 +35,9 @@
@@ -61,7 +61,7 @@ index ab910004b..8281447d2 100644
  
      /// Returns provider for the given domain.
 diff --git a/src/storage_usage.rs b/src/storage_usage.rs
-index a2283bf56..84d026466 100644
+index a2283bf..84d0264 100644
 --- a/src/storage_usage.rs
 +++ b/src/storage_usage.rs
 @@ -132,3 +132,37 @@ pub fn get_blobdir_storage_usage(ctx: &Context) -> u64 {

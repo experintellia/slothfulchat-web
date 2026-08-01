@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 1 Aug 2026 12:22:50 +0000
-Subject: [PATCH 67/67] web-app: clamp long message text with CSS, add show
+Subject: [PATCH 69/69] web-app: clamp long message text with CSS, add show
  more/less toggle
 
 Core no longer truncates long message text when writing to the database, so
@@ -19,13 +19,13 @@ _locales/_untranslated_en.json, matching how every other fork-added label in
 this codebase is done (export dialog, invite-link cards, message info,
 sidebar resize) rather than hardcoding JSX string literals.
 ---
- _locales/_untranslated_en.json                |  6 ++++
+ _locales/_untranslated_en.json                |  6 +++
  packages/frontend/scss/message/_message.scss  | 11 +++++-
- .../src/components/message/Message.tsx        | 36 ++++++++++++++++++-
- 3 files changed, 51 insertions(+), 2 deletions(-)
+ .../src/components/message/Message.tsx        | 38 ++++++++++++++++++-
+ 3 files changed, 53 insertions(+), 2 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index ae030efa1..44b743992 100644
+index ae030ef..44b7439 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -127,5 +127,11 @@
@@ -41,7 +41,7 @@ index ae030efa1..44b743992 100644
    }
  }
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index 40ecad8c2..d2c58bdb1 100644
+index 40ecad8..d2c58bd 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
 @@ -131,6 +131,14 @@ $info-text-max-width: 400px;
@@ -70,10 +70,10 @@ index 40ecad8c2..d2c58bdb1 100644
  
      border: none;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 877772c20..159c34598 100644
+index 551ce7e..1163652 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -537,6 +537,21 @@ function buildMultiselectContextMenu(
+@@ -549,6 +549,21 @@ function buildMultiselectContextMenu(
    ]
  }
  
@@ -95,7 +95,7 @@ index 877772c20..159c34598 100644
  export default function Message(props: {
    chat: T.FullChat
    message: T.Message
-@@ -558,6 +573,7 @@ export default function Message(props: {
+@@ -570,6 +585,7 @@ export default function Message(props: {
    const openViewGroupDialog = useOpenViewGroupDialog()
    const { jumpToMessage } = useMessage()
    const [messageWidth, setMessageWidth] = useState(0)
@@ -103,11 +103,13 @@ index 877772c20..159c34598 100644
    const ref = useRef<any>(null)
  
    const focusAndMultiselect = useMessageFocusAndMultiselect(message.id, ref)
-@@ -942,8 +958,13 @@ export default function Message(props: {
+@@ -960,8 +976,15 @@ export default function Message(props: {
      ? true
      : !!message.savedMessageId
  
-+  const textIsLong = isLongText(text)
++  // Not while downloading: that branch replaces `content` below with the
++  // placeholder UI, so a toggle would expand something that isn't rendered.
++  const textIsLong = isLongText(text) && message.downloadState === 'Done'
 +
    let content = (
 -    <div dir='auto' className='text'>
@@ -118,7 +120,7 @@ index 877772c20..159c34598 100644
        {text !== null ? (
          <MessageBody
            text={text}
-@@ -1115,6 +1136,19 @@ export default function Message(props: {
+@@ -1179,6 +1202,19 @@ export default function Message(props: {
              ></VCardComponent>
            )}
            {content}

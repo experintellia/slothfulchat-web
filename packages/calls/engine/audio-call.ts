@@ -233,10 +233,13 @@ export interface AudioCallOptions {
    * changes go through {@link AudioCallEngine.switchMicrophone}. */
   audioInputDeviceId?: string;
   /**
-   * Whether a camera track is attached at START (a video sender is negotiated
-   * regardless — see class doc). Outgoing: the caller's choice (also passed as
-   * `has_video` to `rpc.placeOutgoingCall`). Incoming: should mirror the
-   * remote offer's `has_video`. Default `false`.
+   * Whether OUR camera is attached at START (a video sender is negotiated
+   * regardless — see class doc). OUTGOING ONLY: the caller's own choice, also
+   * passed as `has_video` to `rpc.placeOutgoingCall`. It is deliberately NOT
+   * the peer's `has_video` — that says what THEY send, not what we capture —
+   * and {@link AudioCallEngine.receiveCall} clears it so accepting a call can
+   * never start the recipient's camera; the only way an incoming call starts
+   * ours is the explicit `accept({ withVideo: true })`. Default `false`.
    */
   hasVideo?: boolean;
   /** Video track constraints (when {@link hasVideo}). Default: `true` (default camera). */
@@ -261,8 +264,10 @@ export class AudioCallEngine {
   private readonly audioConstraints: MediaTrackConstraints | boolean;
   /** Current mic selection; `null` = browser default. */
   private selectedAudioInputDeviceId: string | null = null;
-  /** See {@link AudioCallOptions.hasVideo}. */
-  private readonly wantsVideo: boolean;
+  /** See {@link AudioCallOptions.hasVideo} — outgoing only; cleared by
+   * {@link receiveCall}, and re-set on an incoming call ONLY by an explicit
+   * {@link accept}`({ withVideo: true })`. */
+  private wantsVideo: boolean;
   private readonly videoConstraints: MediaTrackConstraints | boolean;
   /** Current camera selection; `null` = browser default. */
   private selectedVideoInputDeviceId: string | null = null;
@@ -371,7 +376,9 @@ export class AudioCallEngine {
 
   /** Whether this call STARTED with the camera enabled. Initial choice only —
    * a video sender always exists regardless (see {@link addLocalTracks});
-   * use {@link cameraEnabled} for the live camera state. */
+   * use {@link cameraEnabled} for the live camera state. On an incoming call
+   * `false` unless the user accepted with video (see {@link receiveCall} /
+   * {@link accept}). */
   get hasVideo(): boolean {
     return this.wantsVideo;
   }
@@ -515,9 +522,9 @@ export class AudioCallEngine {
 
   /**
    * Register an incoming call from an `IncomingCall` event. Stores the remote
-   * offer and moves idle → ringing. Deliberately does NOT acquire the mic yet —
-   * that waits for {@link accept} so the permission prompt rides the user's
-   * accept gesture.
+   * offer and moves idle → ringing. Deliberately does NOT acquire the mic —
+   * nor the camera — yet: that waits for {@link accept} so the permission
+   * prompt rides the user's accept gesture.
    */
   receiveCall(placeCallInfo: string): void {
     if (this.machine.state !== 'idle') {
@@ -525,6 +532,13 @@ export class AudioCallEngine {
     }
     const remote = deserializeOffer(placeCallInfo); // validates non-empty SDP
     this.direction = 'incoming';
+    // Consent: answering is audio-only, whatever the caller's `has_video` said.
+    // A plain "Accept" must never start the recipient's camera — only their own
+    // explicit opt-in does ({@link accept}'s `withVideo`, or the in-call
+    // {@link setCameraEnabled}). The video sender is negotiated either way, so
+    // the CALLER's video still arrives. This is the choke point every incoming
+    // call passes through: clear here, opt in there, never from the wire.
+    this.wantsVideo = false;
     this.pendingRemoteOffer = remote.sdp;
     this.beginEpoch();
     this.machine.transition('ringing');
@@ -534,8 +548,13 @@ export class AudioCallEngine {
    * Incoming: accept the ringing call — acquire the mic, apply the stored
    * offer, gather ICE, build the answer, and surface it via
    * `callbacks.onLocalAnswer`. Moves ringing → connecting.
+   *
+   * `withVideo` also acquires the camera ("Accept with video"). It is LOCAL
+   * user intent and nothing else: the caller's `has_video` must never reach
+   * here (see {@link receiveCall}). Default — and any other call site —
+   * answers audio-only.
    */
-  async accept(): Promise<void> {
+  async accept(options?: { withVideo?: boolean }): Promise<void> {
     if (this.direction !== 'incoming') {
       throw new Error('accept: not an incoming call');
     }
@@ -546,6 +565,9 @@ export class AudioCallEngine {
     if (offerSdp == null) {
       throw new Error('accept: no pending offer');
     }
+    // The ONE place an incoming call may turn our camera on, and only on an
+    // explicit `true` — see this method's doc.
+    if (options?.withVideo === true) this.wantsVideo = true;
     if (!this.machine.transition('connecting')) return;
     const epoch = this.epoch;
     if (epoch == null) return;

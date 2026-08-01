@@ -57,12 +57,13 @@ jobs:
           exit $fail
 
       # dependency-free node:test suites for pure logic (config templating,
-      # translation-editor serialization)
+      # translation-editor serialization, blob response headers)
       - name: Unit-test pure helpers
         run: >-
           node --test
           packages/web-app/instance-config.test.mjs
           packages/web-app/src/translation-editor.test.mjs
+          packages/web-app/src/blob-response.test.mjs
 
       # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —
       # Node's built-in type-stripping test runner needs no pnpm install, only

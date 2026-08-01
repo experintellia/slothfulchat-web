@@ -1,5 +1,15 @@
 # Changelog
 
+- **Security**: opening a received attachment can no longer run its code as
+  part of the app. A scripted SVG sent to you could reach your local app data;
+  attachments now open isolated, and images, video and audio still display
+  inline as before.
+- **Answering a call no longer turns your camera on by itself.** An incoming
+  call now offers **Accept** (audio only) and **Accept with video**, so the
+  person calling you can't decide whether your camera starts. You can still
+  switch the camera on at any point once the call is connected.
+- Downloading a big message now shows a live percentage on the message bubble,
+  and an interrupted download continues where it stopped.
 - **Long messages are no longer cut off**: message text used to be trimmed to
   38 lines when it was saved, with the rest tucked away behind "Show Full
   Message" — which also made long messages uneditable. The full text is now

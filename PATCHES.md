@@ -53,6 +53,18 @@ exists:
   `packages/web-app` wiring — see [`docs/calls.md`](docs/calls.md); the one
   upstream change is un-gating the ChatView call button and the `WhoCanCallMe`
   setting for the browser target. `desktop/0048`
+- **Resumable chunked downloads with progress** — "download on demand"
+  messages are fetched with IMAP partial FETCH (`BODY.PEEK[]<offset.count>`,
+  mandatory RFC 3501) in adaptively-sized chunks (128 KiB doubling to 4 MiB)
+  appended to a blobdir staging file: an interrupted download resumes where it
+  stopped across reconnects and reloads, the download yields to new-mail
+  fetching every 15 s so a big attachment no longer delays incoming messages,
+  and a new `DownloadProgress` event drives a live percentage on the message
+  bubble (on native platforms peak download memory also drops from
+  message-size to chunk-size). Servers without working partial FETCH fall
+  back to whole-message downloads with a one-time device-message notice.
+  `core/0020`–`core/0021`, `desktop/0067`; plus a `Fetch::body_origin()`
+  accessor in the vendored async-imap (to be proposed upstream).
 - **webimap transport (madmail)** — a second mail transport speaking
   [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at
@@ -255,6 +267,14 @@ exists:
   (ArrowLeft/ArrowRight, RTL-aware) and is absent in the single-pane
   small-screen layout. `desktop/0064`
 
+- **Rich download-on-demand placeholders** — large attachments in encrypted
+  chats arrive as a placeholder before the real message; upstream shows a plain
+  "text [Image – 228 KiB] - Download" line. The pre-message metadata now carries
+  the real MIME type and a small blurred thumbnail preview, and the placeholder
+  renders as a styled per-type card (image/video/audio/file/webxdc) with the
+  attachment size, the live download percentage, and a big download button.
+  `core/0022`, `desktop/0068`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not
@@ -383,7 +403,7 @@ contribution intended.
   items, notifications, search hits) now bound themselves. The schema is
   unchanged and rows written by official core are never rewritten, so
   messages already in a database keep their truncated text and still open in
-  the HTML viewer. `core/0020`, `desktop/0067`
+  the HTML viewer. `core/0023`, `desktop/0069`
 - **Logging** — core Info/Warning/Error events are printed once by the
   core-wasm console bridge instead of twice, and the Log dialog points to the
   browser dev console instead of fetching a `/log` route this build never
