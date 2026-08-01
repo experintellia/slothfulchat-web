@@ -2,9 +2,25 @@
 # Caddy server, served at https://pr-<n>.preview.slothful.chat.
 #
 # Same-repo PRs only — fork PRs can't read the deploy secret and must not
-# publish under our domain. The job is gated on the PREVIEW_SSH_HOST repo
-# Variable (secrets aren't readable in a job-level `if`), so it no-ops cleanly
+# publish under our domain. Both jobs are gated on the PREVIEW_SSH_HOST repo
+# Variable (secrets aren't readable in a job-level `if`), so they no-op cleanly
 # until the server exists. See infra/flagship/README.md for bring-up.
+#
+# WHY TWO JOBS. The PR's own code decides how it is built: the build runs
+# repo-controlled scripts (apply-patches, assemble.mjs) and installs the PR's
+# package set, i.e. it executes whatever the PR author pushed, before review.
+# Anything that runs on a runner can outlive its step — background a process,
+# prepend a directory to $GITHUB_PATH, shadow `ssh`, or just use the runner's
+# passwordless sudo — so a build step and a step holding PREVIEW_SSH_KEY must
+# never share a machine. They don't: `build` checks out and builds the PR with
+# no secrets in the job at all, and hands over a dist/ artifact; `deploy` runs
+# on a fresh runner, checks out NOTHING, and only unpacks that artifact and
+# streams it to the server's forced-command gate. Adding a checkout or a build
+# step to `deploy` puts the key back next to PR code — don't.
+#
+# The bundle itself is still untrusted on the far side: the gate script
+# inspects the routes.caddy inside it before any of it goes live (see the TRUST
+# MODEL in infra/flagship/deploy-preview.sh).
 
 name: Preview deploy
 
@@ -17,19 +33,22 @@ concurrency:
   group: preview-pr-${{ github.event.number }}
   cancel-in-progress: true
 
+# Least privilege by default; only `deploy` needs to write the PR comment.
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
-  deploy:
+  build:
     # Fork PRs excluded (no secrets); Variable-gated so it no-ops until the
     # server exists (secrets can't be read in a job-level if).
     if: github.event.pull_request.head.repo.full_name == github.repository && vars.PREVIEW_SSH_HOST != ''
     runs-on: ubuntu-latest
-    # Same SLOTHFUL_* branding as prod (deploy-pages.yml) so previews match the
-    # flagship build — minus SLOTHFUL_PLAUSIBLE_*: analytics track prod only
-    # (issue #134). Inherited as process env by the composite assemble step.
+    # NO secrets in this job — it runs the PR's own build scripts. Only the
+    # same SLOTHFUL_* branding as prod (deploy-pages.yml) so previews match the
+    # flagship build, minus SLOTHFUL_PLAUSIBLE_*: analytics track prod only
+    # (issue #134). These are repo Variables, not secrets, and they have to be
+    # here rather than on `deploy` because the composite build action's
+    # assemble step reads them as inherited process env at build time.
     env:
       SLOTHFUL_INSTANCE_NAME: ${{ vars.SLOTHFUL_INSTANCE_NAME }}
       SLOTHFUL_INSTANCE_URL: ${{ vars.SLOTHFUL_INSTANCE_URL }}
@@ -48,9 +67,40 @@ jobs:
       - name: Build web-app dist/
         uses: ./.github/actions/build-web-app
 
+      # include-hidden-files is load-bearing: assemble writes dist/.nojekyll,
+      # and upload-artifact drops dotfiles by default.
+      - name: Upload dist/ for the deploy job
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-app-dist
+          path: packages/web-app/dist
+          include-hidden-files: true
+          retention-days: 1
+
+  deploy:
+    needs: build
+    # Repeated rather than inherited from `needs`: this is the gate that keeps
+    # the deploy key away from fork PRs, and it should not depend on how skip
+    # propagation happens to work.
+    if: github.event.pull_request.head.repo.full_name == github.repository && vars.PREVIEW_SSH_HOST != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # Deliberately NO actions/checkout here — see WHY TWO JOBS above. This
+      # runner must never execute PR-authored code while the deploy key is on
+      # it. Everything below is either a first-party action or `gh api`.
+      - name: Download the built dist/
+        uses: actions/download-artifact@v4
+        with:
+          name: web-app-dist
+          path: dist
+
       # Stream dist/ to the server; the deploy key's forced command runs the
-      # gate script (`upload <n>`), which stages, `caddy validate`s the full
-      # merged config and reloads on success. A non-zero exit fails the job.
+      # gate script (`upload <n>`), which enforces archive limits, allowlists
+      # the bundled routes.caddy, `caddy validate`s the full merged config and
+      # reloads on success. A non-zero exit fails the job.
       - name: Deploy dist/ to the preview server
         env:
           SSH_KEY: ${{ secrets.PREVIEW_SSH_KEY }}
@@ -62,7 +112,7 @@ jobs:
           key=$(mktemp); kh=$(mktemp)
           printf '%s\n' "$SSH_KEY" > "$key"; chmod 600 "$key"
           printf '%s\n' "$SSH_HOSTKEY" > "$kh"
-          tar -C packages/web-app -czf - dist \
+          tar -czf - dist \
             | ssh -i "$key" -o IdentitiesOnly=yes -o UserKnownHostsFile="$kh" \
                 deploy@"$SSH_HOST" "upload $PR"
 

@@ -56,6 +56,22 @@ no PR does. `deploy-preview.sh list` skips `_keep`.
 
 ## (e) Deploy user, forced-command key, gate script, sudoers
 
+Gate-script prerequisites — it treats every upload as untrusted input, so these
+are not optional; a missing one makes the gate fail closed and every deploy
+break:
+
+- **`python3`** — walks the adapted-JSON allowlist that vets each bundle's
+  `routes.caddy` (see the TRUST MODEL in `deploy-preview.sh`). Preinstalled on
+  Ubuntu Server and on Debian cloud images; on a truly minimal Debian,
+  `sudo apt-get install -y python3`. Chosen over `jq` because the check needs
+  `..` collapsed before comparing path prefixes (`os.path.normpath`), and
+  because it is one fewer thing to install here.
+- **GNU tar ≥ 1.29** and **GNU coreutils** (`stat`, `timeout`, `head`, `find`,
+  `awk`) — traversal refusal and the archive size/entry limits. Both are the
+  distro default on Debian/Ubuntu.
+- **`caddy`** on `deploy`'s `PATH` — the gate runs `caddy adapt` and
+  `caddy validate` unprivileged, from the same binary built in step (b).
+
 Install the gate script:
 
     sudo install -m 0755 deploy-preview.sh /usr/local/bin/deploy-preview.sh
@@ -76,6 +92,24 @@ readable by `deploy`):
     deploy ALL=(root) NOPASSWD: /usr/bin/systemctl reload caddy
 
 (Confirm the path with `command -v systemctl`.)
+
+### Disk quota for `/srv/slothfulchat` (operator action)
+
+The gate script caps every upload (128 MiB compressed on the wire, 512 MiB of
+declared content, 20 000 members — see the constants at the top of
+`deploy-preview.sh`), which stops a single archive from filling the disk. It
+does **not** bound the sum of many slots: enough concurrent PRs, each within
+budget, still add up. That ceiling belongs to the filesystem, not the script.
+
+Put `/srv/slothfulchat` on its own filesystem, or give `deploy` a quota, so a
+full previews tree can never take `next`, Caddy's cert storage or the system
+journal down with it:
+
+    # ext4/xfs with quotas enabled (mount option usrquota / uquota)
+    sudo setquota -u deploy 20G 24G 0 0 /srv
+
+Sizing: a preview slot is ~100 MB, so 20 GB is ~200 concurrent PRs — well past
+what `preview-cleanup.yml` ever leaves lying around.
 
 ## (f) Provider API token via systemd drop-in
 
@@ -129,6 +163,20 @@ serving):
 (Uploads can't actually do this — the gate generates site.caddy itself from the
 PR number and only accepts a `dist/` tarball — but the test proves validate is
 the backstop.)
+
+Hostile-bundle test — validate is only the backstop; the check that matters is
+the allowlist the gate runs over the *adapted* config of the `routes.caddy`
+inside the upload. Prove it rejects, and that `caddy validate` alone would not:
+
+    printf '{args[0]} {\n\troot * {args[1]}\n\treverse_proxy localhost:2019\n}\n' \
+      > /tmp/evil-routes.caddy
+    tar -C /tmp -czf - --transform 's|evil-routes.caddy|dist/caddy/routes.caddy|' \
+      evil-routes.caddy | ssh deploy@<host> "upload 1"   # must FAIL: "routes.caddy rejected"
+
+The full matrix (reverse_proxy, `{env.*}`, escaping `root`, `file_server
+browse`, a foreign hostname, and oversized/over-count/sparse archives) is
+covered offline by `bash infra/flagship/test-deploy-preview.sh`, which needs
+only a `caddy` binary — run that after any change to the gate script.
 
 Manual upload roundtrip from a machine holding the deploy key:
 
