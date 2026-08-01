@@ -100,6 +100,10 @@ export const EVENTS = [
     props: 'custom_range = yes · no',
   },
   {
+    name: 'voice_player_disabled',
+    what: 'That the custom voice-message player was switched off in settings (it is on by default) — the count only, never which setting page or when.',
+  },
+  {
     name: 'call',
     what: 'That a 1:1 call was placed or received, whether it carried video, and how it ended — never audio/video/screen content, and never who was on it.',
     props:
