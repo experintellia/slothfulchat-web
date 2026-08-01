@@ -900,9 +900,11 @@ class BrowserRuntime {
     return path
   }
   async writeBlobPreview(blobPath: string, base64Jpeg: string): Promise<void> {
-    // Trust boundary: the path comes from the frontend, and the sidecar is only meaningful
-    // (and only GCed, see core's housekeeping) next to a blob. Same guard as downloadFile.
-    if (!blobPath.includes('dc.db-blobs')) {
+    // Trust boundary: this writes, so it is stricter than the read-side guards. The path
+    // comes from the frontend, and the sidecar is only meaningful (and only GCed, see core's
+    // housekeeping) next to a blob. `..` is refused as in removeTempFile, so a traversal
+    // can't ride in on a path that merely contains the blobdir name.
+    if (!blobPath.includes('dc.db-blobs') || blobPath.includes('..')) {
       throw new Error('writeBlobPreview: not a blobdir path')
     }
     await getCore().fsWrite(`${blobPath}-preview.jpg`, base64ToBytes(base64Jpeg))
