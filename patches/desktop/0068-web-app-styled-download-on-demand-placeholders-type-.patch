@@ -36,11 +36,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
 ---
  packages/frontend/scss/manifest.scss          |   1 +
- .../_message-download-placeholder.scss        | 188 ++++++++++++++
+ .../_message-download-placeholder.scss        | 260 ++++++++++++++++++
  .../MessageDetail/BasicMessageInfo.tsx        |   2 +-
- .../message/DownloadOnDemandPlaceholder.tsx   | 237 ++++++++++++++++++
- .../src/components/message/Message.tsx        |  94 ++++---
- 5 files changed, 493 insertions(+), 29 deletions(-)
+ .../message/DownloadOnDemandPlaceholder.tsx   | 258 +++++++++++++++++
+ .../src/components/message/Message.tsx        |  94 +++++--
+ 5 files changed, 586 insertions(+), 29 deletions(-)
  create mode 100644 packages/frontend/scss/message/_message-download-placeholder.scss
  create mode 100644 packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 
@@ -58,10 +58,10 @@ index b55d0eb..99294f1 100644
  @use 'misc/_avatar.scss';
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
 new file mode 100644
-index 0000000..f92018a
+index 0000000..204a6da
 --- /dev/null
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,260 @@
 +// Styled download-on-demand placeholders (see DownloadOnDemandPlaceholder.tsx).
 +// Reuses the .message-attachment-* / .webxdc boxes from _message-attachment.scss
 +// and adds: a blurred thumbnail, a grey fallback box, and a centered overlay
@@ -72,6 +72,10 @@ index 0000000..f92018a
 +  &.message-attachment-media {
 +    display: block;
 +    min-height: 160px;
++    // The bubble's own 16px radius rounds the top corners; the caption /
++    // metadata strip sits below, so the preview keeps square bottom corners
++    // instead of drawing a second arc above it.
++    border-radius: 16px 16px 0 0;
 +
 +    // Blur the thumbnail so it reads as "not yet downloaded".
 +    & > .attachment-content {
@@ -123,10 +127,73 @@ index 0000000..f92018a
 +    justify-content: center;
 +    gap: 8px;
 +
++    // Text-shadow alone doesn't give enough contrast over a light blurred
++    // thumbnail; put the controls on a translucent dark chip.
++    .download-on-demand-controls {
++      background-color: rgba(0, 0, 0, 0.4);
++      border-radius: 16px;
++      padding: 10px 16px;
++    }
++
 +    .duration {
 +      color: white;
 +      font-size: 12px;
 +      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
++    }
++  }
++
++  // Fake audio player: mirrors the native <audio controls> bar the real
++  // message shows (AudioPlayer/styles.module.scss: min-width 300px, translucent
++  // grey panel), with a download circle where the play button sits.
++  .fake-audio-player {
++    display: flex;
++    align-items: center;
++    gap: 10px;
++    min-width: 300px;
++    max-width: 100%;
++    padding: 6px 12px;
++    border-radius: 20px;
++    background-color: rgba(200, 200, 200, 0.3);
++
++    .audio-download-button {
++      flex-shrink: 0;
++      width: 36px;
++      height: 36px;
++      border: none;
++      border-radius: 50%;
++      background-color: var(--colorPrimary, #415e6b);
++      color: white;
++      font-size: 17px;
++      line-height: 1;
++      cursor: pointer;
++      display: flex;
++      align-items: center;
++      justify-content: center;
++    }
++
++    .download-progress-circle {
++      flex-shrink: 0;
++      width: 36px;
++      height: 36px;
++    }
++
++    .time {
++      font-size: 12px;
++      font-variant-numeric: tabular-nums;
++    }
++
++    .fake-track {
++      flex: 1;
++      min-width: 40px;
++      height: 4px;
++      border-radius: 2px;
++      background-color: currentColor;
++      opacity: 0.35;
++    }
++
++    .size {
++      font-size: 11px;
++      color: var(--messageAttachmentFileInfo);
 +    }
 +  }
 +
@@ -135,6 +202,11 @@ index 0000000..f92018a
 +  &.message-attachment-generic,
 +  &.webxdc {
 +    align-items: center;
++  }
++
++  &.message-attachment-audio .failed {
++    color: var(--errorText, #e6512c);
++    font-size: 12px;
 +  }
 +
 +  .text-part > .duration {
@@ -265,10 +337,10 @@ index 5d3432a..b6e27a6 100644
    const minutes = Math.floor(totalSeconds / 60) % 60
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 new file mode 100644
-index 0000000..f5eea17
+index 0000000..44f4091
 --- /dev/null
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,258 @@
 +import React from 'react'
 +import { filesize } from 'filesize'
 +import { T } from '@deltachat/jsonrpc-client'
@@ -400,6 +472,7 @@ index 0000000..f5eea17
 +  downloadPercent,
 +  tabindexForInteractiveContents,
 +}: PlaceholderProps) {
++  const tx = useTranslationFunction()
 +  const controls = (
 +    <DownloadControls
 +      message={message}
@@ -453,17 +526,37 @@ index 0000000..f5eea17
 +    )
 +  }
 +
-+  // Audio / Voice: an icon-less row with name, optional duration, and controls.
++  // Audio / Voice: mimic the real player (a native <audio controls> bar):
++  // a pill with a circular download button where play sits, the duration,
++  // a fake track, and the size. No filename — the real player shows none.
 +  if (viewType === 'Audio' || viewType === 'Voice') {
 +    return (
 +      <div className='message-attachment-audio download-on-demand'>
-+        <div className='text-part'>
-+          <div className='name'>{message.fileName}</div>
-+          {message.duration > 0 && (
-+            <div className='duration'>{formatDuration(message.duration)}</div>
++        <div className='fake-audio-player'>
++          {message.downloadState === 'InProgress' ? (
++            <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
++          ) : (
++            <button
++              type='button'
++              className='audio-download-button'
++              aria-label={tx('download')}
++              onClick={() =>
++                BackendRemote.rpc.downloadFullMessage(accountId, message.id)
++              }
++              tabIndex={tabindexForInteractiveContents}
++            >
++              ↓
++            </button>
 +          )}
++          <span className='time'>
++            {message.duration > 0 ? formatDuration(message.duration) : '–:––'}
++          </span>
++          <div className='fake-track' aria-hidden='true' />
++          <span className='size'>{filesize(message.fileBytes ?? 0)}</span>
 +        </div>
-+        {controls}
++        {message.downloadState === 'Failure' && (
++          <span className='failed'>{tx('download_failed')}</span>
++        )}
 +      </div>
 +    )
 +  }
