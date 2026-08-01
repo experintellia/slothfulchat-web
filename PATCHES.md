@@ -53,6 +53,18 @@ exists:
   `packages/web-app` wiring — see [`docs/calls.md`](docs/calls.md); the one
   upstream change is un-gating the ChatView call button and the `WhoCanCallMe`
   setting for the browser target. `desktop/0048`
+- **Resumable chunked downloads with progress** — "download on demand"
+  messages are fetched with IMAP partial FETCH (`BODY.PEEK[]<offset.count>`,
+  mandatory RFC 3501) in adaptively-sized chunks (128 KiB doubling to 4 MiB)
+  appended to a blobdir staging file: an interrupted download resumes where it
+  stopped across reconnects and reloads, the download yields to new-mail
+  fetching every 15 s so a big attachment no longer delays incoming messages,
+  and a new `DownloadProgress` event drives a live percentage on the message
+  bubble (on native platforms peak download memory also drops from
+  message-size to chunk-size). Servers without working partial FETCH fall
+  back to whole-message downloads with a one-time device-message notice.
+  `core/0020`–`core/0021`, `desktop/0067`; plus a `Fetch::body_origin()`
+  accessor in the vendored async-imap (to be proposed upstream).
 - **webimap transport (madmail)** — a second mail transport speaking
   [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at

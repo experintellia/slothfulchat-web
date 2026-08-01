@@ -1,5 +1,7 @@
 # Changelog
 
+- Downloading a big message now shows a live percentage on the message bubble,
+  and an interrupted download continues where it stopped.
 - **Chat export works again**: the `index.html` viewer inside exported chat
   zips threw a script error and showed an empty page; exports now render
   correctly again.
