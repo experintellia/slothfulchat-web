@@ -99,6 +99,7 @@ function getDefaultSettings() {
     hideNewChatSuggestions: false,
     publicBotsRemoteLoadConsent: false,
     stripTrackingLinks: true,
+    experimentalAudioPlayerControls: true,
   }
 }
 
@@ -708,6 +709,18 @@ class BrowserRuntime {
       const idle = (window as any).requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 2000))
       idle(() => this.ensureHtmlEmailDialog())
     }
+    // Disable signal for the on-by-default custom voice player. Only an
+    // explicitly stored `false` counts: setDesktopSetting persists just the
+    // keys the user actually touched, so a legacy profile that never met this
+    // switch has no entry and falls back to the default (true) above. Sent
+    // here — after the notice — and once per visit, since ScreenController
+    // calls emitUIFullyReady exactly once.
+    void this.getDesktopSettings()
+      .then(s => {
+        if (s.experimentalAudioPlayerControls === false)
+          analytics.event('voice_player_disabled')
+      })
+      .catch(() => {})
   }
   emitUIReady(): void {
     perf.boot('ui-ready')
