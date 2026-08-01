@@ -22,9 +22,21 @@ npm install ws   # the single dependency (Node has no built-in WebSocket *server
 node ws-tcp-proxy.mjs
 ```
 
-Listens on `ws://localhost:8641` (override with `PORT`). Point the web app at a
-non-default bridge with `?proxy=wss://your-host` (or the `slothfulchat.proxyUrl`
-localStorage key).
+Listens on `ws://127.0.0.1:8641` — **loopback only** (override the port with
+`PORT`, the bind address with `HOST`). Point the web app at a non-default bridge
+with `?proxy=wss://your-host` (or the `slothfulchat.proxyUrl` localStorage key).
+
+Hosting it for others? Set **both** `HOST` and `CHATMAIL_ALLOWLIST` — the bridge
+refuses to start with a network-reachable bind and no allowlist, because that
+combination is an open relay to any mail server (see below):
+
+```sh
+HOST=0.0.0.0 CHATMAIL_ALLOWLIST=chatmail.example npx @slothfulchat/ws-tcp-proxy
+```
+
+There is still **no authentication and no Origin check** — anyone who can reach
+the port can use the bridge, within the allowlist. Put it behind your TLS
+reverse proxy and keep the allowlist tight.
 
 ## Endpoints
 
@@ -51,8 +63,17 @@ CHATMAIL_ALLOWLIST=nine.testrun.org,chatmail.example npx @slothfulchat/ws-tcp-pr
 - TCP tunnels are refused (`4003 forbidden`) unless the target IP is on that
   allow-list.
 
-Empty/unset `CHATMAIL_ALLOWLIST` = allow all (local-dev default).
+Empty/unset `CHATMAIL_ALLOWLIST` = allow all — only usable on the default
+loopback bind, where nobody else can reach it. A non-loopback `HOST` with an
+empty allowlist **refuses to start**.
 (`CHATMAIL_WHITELIST`, the pre-0.1.2 name, still works but warns.)
+
+| Variable | What it does | Default |
+|---|---|---|
+| `PORT` | Port to listen on. | `8641` |
+| `HOST` | Bind address. `0.0.0.0` (or one interface address) to expose it; then `CHATMAIL_ALLOWLIST` is mandatory. | `127.0.0.1` |
+| `CHATMAIL_ALLOWLIST` | Comma-separated chatmail domains the bridge may reach. | empty (allow all) |
+| `UNFURL` | `1`/`0` to force the link-preview endpoint on/off. | on iff no allowlist |
 
 ## Unfurl endpoint (link previews)
 

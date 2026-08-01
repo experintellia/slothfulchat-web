@@ -97,23 +97,33 @@ and deletion, and the flagship/preview deployment model — is in
 ## 2. Run the bridge
 
 **Just for yourself?** Run it locally with no config — it listens on
-`ws://localhost:8641` and the app talks to it directly:
+`ws://127.0.0.1:8641`, loopback only, and the app talks to it directly:
 
 ```sh
 npx @slothfulchat/ws-tcp-proxy
 ```
 
-**Hosting it publicly? You MUST restrict it to an allowlist**, or you're running
-an open relay: an unrestricted bridge will tunnel to *any* mail server's
-IMAP/SMTP ports for anyone on the internet — an abuse magnet (credential-stuffing
-against arbitrary servers, spam relaying). Set `CHATMAIL_ALLOWLIST` to only the
-chatmail/email servers you allow:
+**Hosting it for others?** Two variables, both required: `HOST` to bind an
+address the network can reach, and `CHATMAIL_ALLOWLIST` to restrict where it may
+tunnel. Without the allowlist you'd be running an open relay — an unrestricted
+bridge tunnels to *any* mail server's IMAP/SMTP ports for anyone who reaches it,
+an abuse magnet (credential-stuffing against arbitrary servers, spam relaying) —
+so **the bridge refuses to start** in that combination:
 
 ```sh
 # behind TLS (see below); only these servers are reachable
+HOST=0.0.0.0 \
 CHATMAIL_ALLOWLIST=nine.testrun.org,chatmail.example \
   npx @slothfulchat/ws-tcp-proxy
 ```
+
+> **Upgrading from ≤ 0.8?** Older versions bound every interface by default. If
+> your bridge stopped being reachable, add `HOST=0.0.0.0` (or your interface
+> address) — and note it now needs `CHATMAIL_ALLOWLIST` to start at all.
+
+The bridge authenticates nobody and does not check `Origin`: anyone who can
+reach the port may use it, bounded only by the allowlist. Keep the allowlist
+tight, and don't expose it more widely than you need.
 
 The bridge speaks plain **`ws://`** on `PORT` (default 8641). An `https://`
 site **cannot** connect to `ws://` (mixed content), so put a TLS-terminating
@@ -169,4 +179,5 @@ with `?proxy=wss://…` in the URL.
 | Variable | What it does | Default |
 |---|---|---|
 | `PORT` | Port the bridge listens on (`ws://`). | `8641` |
-| `CHATMAIL_ALLOWLIST` | Comma-separated chatmail domains the bridge may reach. Empty = allow any server (fine for local dev; **set it for a public bridge**). | empty (allow all) |
+| `HOST` | Address the bridge binds. The default is loopback-only, so a bridge you didn't configure for hosting can't be reached from the network. Set `0.0.0.0` (or one interface address) to host it — that requires `CHATMAIL_ALLOWLIST`. | `127.0.0.1` |
+| `CHATMAIL_ALLOWLIST` | Comma-separated chatmail domains the bridge may reach. Empty = allow any server (fine on the loopback default; a non-loopback `HOST` with an empty allowlist **refuses to start**). | empty (allow all) |
