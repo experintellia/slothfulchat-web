@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Tue, 28 Jul 2026 12:40:19 +0000
-Subject: [PATCH 65/66] web-app: emoji-set picker in Settings -> Appearance
+Subject: [PATCH 65/68] web-app: emoji-set picker in Settings -> Appearance
 
 Adds an "Emoji style" picker below the wallpaper options in Settings ->
 Appearance (browser edition only), reading window.__slothfulchatEmoji (the hook
@@ -19,7 +19,7 @@ renders nothing there.
  create mode 100644 packages/frontend/src/components/Settings/EmojiSetSelector.tsx
 
 diff --git a/packages/frontend/src/components/EmojiPicker/index.tsx b/packages/frontend/src/components/EmojiPicker/index.tsx
-index 4a1c02451..4b313e0cf 100644
+index 4a1c024..4b313e0 100644
 --- a/packages/frontend/src/components/EmojiPicker/index.tsx
 +++ b/packages/frontend/src/components/EmojiPicker/index.tsx
 @@ -52,7 +52,14 @@ export default function EmojiPicker({
@@ -39,7 +39,7 @@ index 4a1c02451..4b313e0cf 100644
      return () => {
        shadowRoot.removeChild(style)
 diff --git a/packages/frontend/src/components/Settings/Appearance.tsx b/packages/frontend/src/components/Settings/Appearance.tsx
-index c3a932aba..598f3e04e 100644
+index c3a932a..598f3e0 100644
 --- a/packages/frontend/src/components/Settings/Appearance.tsx
 +++ b/packages/frontend/src/components/Settings/Appearance.tsx
 @@ -13,6 +13,7 @@ import SettingsStoreInstance, {
@@ -60,7 +60,7 @@ index c3a932aba..598f3e04e 100644
        <SettingsTrayIcon settingsStore={settingsStore} />
 diff --git a/packages/frontend/src/components/Settings/EmojiSetSelector.tsx b/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
 new file mode 100644
-index 000000000..0d7da17ea
+index 0000000..0d7da17
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
 @@ -0,0 +1,116 @@

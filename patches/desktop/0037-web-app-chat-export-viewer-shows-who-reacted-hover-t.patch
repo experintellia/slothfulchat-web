@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: experintellia <280144245+experintellia@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 17:50:53 +0000
-Subject: [PATCH 37/66] web-app: chat export viewer shows who reacted (hover
+Subject: [PATCH 37/68] web-app: chat export viewer shows who reacted (hover
  title + click dialog)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -24,7 +24,7 @@ mirroring the app's reactions dialog.
  1 file changed, 120 insertions(+), 3 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-index b7c1e1148..b946ba268 100644
+index b7c1e11..b946ba2 100644
 --- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 @@ -357,6 +357,8 @@ body.html-export::before {
