@@ -13,23 +13,36 @@
 // is only allowed to an IP that was just resolved for an allowlisted domain —
 // so a hosted bridge can only reach vetted chatmail servers. Empty = allow all.
 //
+// Binds 127.0.0.1 by default: with no allowlist this is an open relay to any
+// mail server, so it must not be reachable from the network unless the operator
+// says so. HOST=0.0.0.0 (or one interface address) opts into a hosted bridge,
+// and that combination *requires* CHATMAIL_ALLOWLIST — startup refuses without.
+//
 // Optional unfurl endpoint: serves GET /unfurl?url=… on the same port for the
 // webapp's link previews — a hardened server-side metadata fetcher, NOT a
 // tunnel; see unfurl.mjs. On by default for an allow-all bridge, off once
 // CHATMAIL_ALLOWLIST is set (a vetted hosted bridge shouldn't silently fetch
 // arbitrary pages); UNFURL=1 / UNFURL=0 overrides either way.
 //
-// ponytail: still a single inspectable file — no auth, the port + optional
-// domain allowlist are the only guards. A hostile authoritative DNS server for
-// an allowlisted domain could point it at an internal IP (SSRF); acceptable for
-// vetted servers. Upgrade path: pin known IPs instead of trusting the resolver.
+// ponytail: still a single inspectable file — no auth, the bind address + the
+// optional domain allowlist are the only guards. A hostile authoritative DNS
+// server for an allowlisted domain could point it at an internal IP (SSRF);
+// acceptable for vetted servers. Upgrade path: pin known IPs instead of
+// trusting the resolver.
+// ponytail: a hosted bridge (non-loopback HOST) still authenticates nobody and
+// checks no Origin — anyone who can reach the port, including a hostile web
+// page, may relay to the allowlisted servers. Ceiling: the allowlist is all
+// that bounds the damage. Upgrade path (a design question, not a one-liner:
+// the app must learn to send it): a shared bearer token in the upgrade URL
+// plus an Origin allowlist for browser clients.
 import { createServer } from 'node:http';
-import { connect } from 'node:net';
+import { connect, isIP, BlockList } from 'node:net';
 import { resolve4, resolve6 } from 'node:dns/promises';
 import { WebSocketServer } from 'ws';
 import { unfurlHandler } from './unfurl.mjs';
 
 const PORT = Number(process.env.PORT ?? 8641);
+const HOST = process.env.HOST || '127.0.0.1'; // `||`: an empty HOST is unset, not a wildcard bind
 const ALLOWED_TCP_PORTS = new Set([143, 465, 587, 993]);
 
 // Allowlist mode: empty env => allow-all (unchanged behavior).
@@ -43,6 +56,29 @@ const ALLOWLIST = (process.env.CHATMAIL_ALLOWLIST ?? process.env.CHATMAIL_WHITEL
   .filter(Boolean);
 const ALLOW_TTL_MS = 10 * 60 * 1000; // temporary: resolved IPs expire after 10 min
 const allowedIps = new Map(); // ip -> expiresAt (ms)
+
+// Reachable-from-the-network + no allowlist = an open relay to every mail
+// server's IMAP/SMTP ports for anyone who can reach the port. Refuse that
+// combination outright; every other one is the operator's call. BlockList (as
+// in unfurl.mjs) so IPv4-mapped forms of ::1/127.x count as loopback too; a
+// bind that isn't an IP literal or 'localhost' is treated as public.
+const HOST_FAMILY = isIP(HOST);
+const LOOPBACK = new BlockList();
+LOOPBACK.addSubnet('127.0.0.0', 8, 'ipv4');
+LOOPBACK.addAddress('::1', 'ipv6');
+const BINDS_LOOPBACK_ONLY =
+  HOST === 'localhost' ||
+  (HOST_FAMILY !== 0 && LOOPBACK.check(HOST, HOST_FAMILY === 4 ? 'ipv4' : 'ipv6'));
+if (!BINDS_LOOPBACK_ONLY && !ALLOWLIST.length) {
+  console.error(
+    `refusing to start: HOST=${HOST} is reachable from the network but CHATMAIL_ALLOWLIST is empty.\n` +
+    "That is an open relay — anyone who reaches this port can tunnel to any host's IMAP/SMTP ports.\n" +
+    'Either set CHATMAIL_ALLOWLIST=your.chatmail.example (comma-separated) to host a bridge,\n' +
+    'or unset HOST to keep the loopback-only default (127.0.0.1, local use).'
+  );
+  process.exit(1);
+}
+const HOST_URL = HOST_FAMILY === 6 ? `[${HOST}]` : HOST; // IPv6 literals need brackets in a URL
 
 // Unfurl endpoint (link previews): on by default for an allow-all bridge — a
 // local/personal one, where the operator hasn't restricted reach anyway, so a
@@ -75,8 +111,22 @@ const server = createServer((req, res) => {
   res.end();
 });
 const wss = new WebSocketServer({ server });
+// 'error' on a ws/http server or a socket is an unhandled throw with no
+// listener, i.e. one bad client kills the bridge for every connected user.
+wss.on('error', err => console.error('ws server error:', err.message));
+server.on('clientError', (err, socket) => socket.destroy());
 
 wss.on('connection', async (ws, req) => {
+  // Attach before anything else, and before the first await below: a malformed
+  // frame (an unmasked client frame => WS_ERR_EXPECTED_MASK) or a send on an
+  // already-closed socket makes ws emit 'error' as soon as the next I/O tick
+  // runs — which is while this handler is still suspended in DNS resolution.
+  // ws has already closed the connection by then; we only clean up its tunnel.
+  let socket = null;
+  ws.on('error', err => {
+    console.warn(`ws ${req.url}: ${err.message}`);
+    socket?.destroy();
+  });
   const [, kind, host, port] = req.url.split('/');
   if (kind === 'dns') {
     // localhost is answered from a hardcoded reply, never the resolver: the
@@ -121,7 +171,7 @@ wss.on('connection', async (ws, req) => {
     return;
   }
   console.log(`tcp ${host}:${port} open`);
-  const socket = connect(Number(port), host);
+  socket = connect(Number(port), host);
   socket.on('data', (data) => ws.readyState === ws.OPEN && ws.send(data));
   socket.on('close', () => ws.close());
   socket.on('error', (err) => {
@@ -135,12 +185,12 @@ wss.on('connection', async (ws, req) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`ws-tcp proxy on ws://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`ws-tcp proxy on ws://${HOST_URL}:${PORT}`);
   if (ALLOWLIST.length) console.log(`allowlist: ${ALLOWLIST.join(', ')}`);
   console.log(
     UNFURL
-      ? `unfurl endpoint on http://localhost:${PORT}/unfurl?url=...`
+      ? `unfurl endpoint on http://${HOST_URL}:${PORT}/unfurl?url=...`
       : 'unfurl endpoint off (allowlist set; UNFURL=1 to enable)'
   );
 });
