@@ -572,7 +572,7 @@ impl OpenOptions {
     pub async fn open(&self, path: impl AsRef<Path>) -> io::Result<File> {
         let path = normalize(path.as_ref());
         // Directories open fine too: core opens parent dirs only to sync_all()
-        // them, and sync is a no-op here.
+        // them, which drains the write-through queue (see `File::sync_all`).
         let exists = FS.lock().unwrap().contains_key(&path);
         if self.create_new && exists {
             return Err(io::Error::new(
@@ -637,12 +637,23 @@ impl File {
         Ok(())
     }
 
+    /// Real durability barrier, not a no-op: awaits the OPFS write-through
+    /// queue and fails when a queued write was permanently lost, so core's
+    /// fsync points cannot report success over data that is still only in
+    /// memory (a reload right after would come back without it).
+    ///
+    /// Covers what core actually fsyncs — the accounts.toml tmp file and its
+    /// parent dir. Blob writes never reach here: core creates them from
+    /// synchronous `block_in_place` code that cannot await (see `sync_write` /
+    /// `sync_rename` above), so those still return before the mirror lands.
     pub async fn sync_all(&self) -> io::Result<()> {
-        Ok(())
+        crate::opfs::sync_barrier().await
     }
 
+    /// Same barrier as [`File::sync_all`] — the mirror has no data/metadata
+    /// split to sync separately.
     pub async fn sync_data(&self) -> io::Result<()> {
-        Ok(())
+        self.sync_all().await
     }
 }
 
