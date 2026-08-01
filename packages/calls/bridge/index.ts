@@ -331,11 +331,13 @@ export interface IncomingCallParams {
   callMessageId: number
   /** The caller's raw-SDP offer (`place_call_info`). */
   offerSdp: string
-  /** Mirrors the `IncomingCall` event's `has_video`: a peer that sent a video
-   * m-line expects one back (offer/answer symmetry) — `accept_incoming_call`
-   * has no `has_video` RPC parameter, so this is the only lever. */
-  hasVideo: boolean
-  /** Preferred camera `deviceId`, seeding the initial acquisition when `hasVideo`. */
+  /** Preferred camera `deviceId`, seeding the camera the user may turn on
+   * mid-call. There is deliberately NO `hasVideo` here: accepting answers
+   * audio-only whatever the caller's `has_video` said (see
+   * `AudioCallEngine.receiveCall`), and the only way to start our camera is the
+   * user's own {@link CallBridge.accept}`({ withVideo: true })`. Offer/answer
+   * symmetry is unaffected — the video m-line is negotiated on every call — so
+   * the caller's video still arrives either way. */
   cameraInputDeviceId?: string
   iceServers: RTCIceServer[]
 }
@@ -351,6 +353,9 @@ export class CallBridge {
   readonly accountId: number
   readonly chatId: number
   readonly direction: CallDirection
+  /** The `has_video` sent to `placeOutgoingCall` — outgoing only; always
+   * `false` for incoming (an accept-with-video is signaled by the answer's
+   * video, not by this). Use `cameraEnabled` for the live camera state. */
   readonly hasVideo: boolean
   /** Known once placed (outgoing) or from the `IncomingCall` event (incoming). */
   callMessageId: number | null
@@ -538,7 +543,7 @@ export class CallBridge {
       direction: 'incoming',
       accountId: params.accountId,
       chatId: params.chatId,
-      hasVideo: params.hasVideo,
+      hasVideo: false, // answering never starts our camera (see IncomingCallParams)
       cameraInputDeviceId: params.cameraInputDeviceId,
       callMessageId: params.callMessageId,
       pendingOfferSdp: params.offerSdp,
@@ -658,9 +663,11 @@ export class CallBridge {
     }
   }
 
-  /** Incoming only: accept the ringing call (acquire mic → build answer → send). */
-  async accept(): Promise<void> {
-    await this.engine.accept()
+  /** Incoming only: accept the ringing call (acquire mic → build answer →
+   * send). `withVideo` is the user pressing "Accept with video" — their own
+   * intent, never the caller's `has_video` (see {@link IncomingCallParams}). */
+  async accept(options?: { withVideo?: boolean }): Promise<void> {
+    await this.engine.accept(options)
   }
 
   /** Outgoing only: feed the peer's answer from an `OutgoingCallAccepted` event. */

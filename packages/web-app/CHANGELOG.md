@@ -4,6 +4,10 @@
   part of the app. A scripted SVG sent to you could reach your local app data;
   attachments now open isolated, and images, video and audio still display
   inline as before.
+- **Answering a call no longer turns your camera on by itself.** An incoming
+  call now offers **Accept** (audio only) and **Accept with video**, so the
+  person calling you can't decide whether your camera starts. You can still
+  switch the camera on at any point once the call is connected.
 - Downloading a big message now shows a live percentage on the message bubble,
   and an interrupted download continues where it stopped.
 - **Chat export works again**: the `index.html` viewer inside exported chat

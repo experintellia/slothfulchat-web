@@ -76,8 +76,8 @@ function main(): void {
     // window per docs/calls.md); incoming calls are auto-accepted below. This
     // is only reachable if a stray click hits an accept control, and is a
     // no-op unless still ringing (`AudioCallEngine.accept` guards state).
-    onAccept: () => {
-      bridge?.accept().catch(err => console.error('popup accept failed', err))
+    onAccept: options => {
+      bridge?.accept(options).catch(err => console.error('popup accept failed', err))
     },
     onHangup: hangup,
     onToggleMute: () => {
@@ -217,7 +217,6 @@ function main(): void {
             chatId: init.chatId,
             callMessageId: init.callMessageId,
             offerSdp: init.offerSdp,
-            hasVideo: init.hasVideo,
             iceServers,
           },
           factories,
@@ -225,12 +224,16 @@ function main(): void {
         )
         bridge = incoming
         // The user already accepted in the main window's ring — go straight to
-        // building the answer. start() (sync: register offer, ringing) and
+        // building the answer, with the camera only if they picked "Accept with
+        // video" there (`init.hasVideo` is that choice for an incoming call, not
+        // the caller's `has_video`). start() (sync: register offer, ringing) and
         // accept() (sync: → connecting, then async mic) run back-to-back with no
         // await between them, so the store is past 'ringing' before the popup
         // paints: the accept/decline dialog never flashes here.
         void incoming.start()
-        void incoming.accept().catch(err => onError(err instanceof Error ? err.message : String(err)))
+        void incoming
+          .accept({ withVideo: init.hasVideo })
+          .catch(err => onError(err instanceof Error ? err.message : String(err)))
       }
       // Re-enumerate on device hotplug for the life of the call.
       const handler = () => {
