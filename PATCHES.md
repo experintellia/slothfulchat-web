@@ -267,6 +267,14 @@ exists:
   (ArrowLeft/ArrowRight, RTL-aware) and is absent in the single-pane
   small-screen layout. `desktop/0064`
 
+- **Rich download-on-demand placeholders** — large attachments in encrypted
+  chats arrive as a placeholder before the real message; upstream shows a plain
+  "text [Image – 228 KiB] - Download" line. The pre-message metadata now carries
+  the real MIME type and a small blurred thumbnail preview, and the placeholder
+  renders as a styled per-type card (image/video/audio/file/webxdc) with the
+  attachment size, the live download percentage, and a big download button.
+  `core/0022`, `desktop/0068`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not

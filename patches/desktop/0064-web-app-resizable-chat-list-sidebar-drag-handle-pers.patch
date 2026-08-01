@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Sun, 26 Jul 2026 19:22:01 +0000
-Subject: [PATCH 64/66] web-app: resizable chat-list sidebar (drag handle,
+Subject: [PATCH 64/68] web-app: resizable chat-list sidebar (drag handle,
  persisted width)
 
 A 5px col-resize handle between the chat list and the chat view. Dragging
@@ -19,7 +19,7 @@ mode where only one pane is visible anyway.
  3 files changed, 90 insertions(+), 1 deletion(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 9e2638185..ae030efa1 100644
+index 9e26381..ae030ef 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -124,5 +124,8 @@
@@ -32,7 +32,7 @@ index 9e2638185..ae030efa1 100644
    }
  }
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index 1eb14a8cb..c0c8ac599 100644
+index 1eb14a8..c0c8ac5 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 @@ -34,6 +34,13 @@ import { GlobalVoiceMessagePlayer } from '../../GlobalVoiceMessagePlayer/GlobalV
@@ -135,7 +135,7 @@ index 1eb14a8cb..c0c8ac599 100644
          className={styles.chatView}
          accountId={accountId}
 diff --git a/packages/frontend/src/components/screens/MainScreen/styles.module.scss b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
-index d12e23b5a..ecb61801b 100644
+index d12e23b..ecb6180 100644
 --- a/packages/frontend/src/components/screens/MainScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
 @@ -50,6 +50,23 @@

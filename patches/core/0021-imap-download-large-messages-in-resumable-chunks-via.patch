@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 23 Jul 2026 03:23:39 +0000
-Subject: [PATCH] imap: download large messages in resumable chunks via partial
- FETCH
+Subject: [PATCH 21/22] imap: download large messages in resumable chunks via
+ partial FETCH
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -68,7 +68,7 @@ Claude-Session: https://claude.ai/code/session_019DhvV6wm3aXyrgHHXaefxw
  8 files changed, 1325 insertions(+), 14 deletions(-)
 
 diff --git a/deltachat-ffi/deltachat.h b/deltachat-ffi/deltachat.h
-index 223ec31cb..daec46966 100644
+index 223ec31..daec469 100644
 --- a/deltachat-ffi/deltachat.h
 +++ b/deltachat-ffi/deltachat.h
 @@ -6436,6 +6436,15 @@ void dc_event_unref(dc_event_t* event);
@@ -88,7 +88,7 @@ index 223ec31cb..daec46966 100644
   * Progress information of a secure-join handshake from the view of the inviter
   * (Alice, the person who shows the QR code).
 diff --git a/src/context.rs b/src/context.rs
-index 5a478ad39..18877918d 100644
+index 5a478ad..1887791 100644
 --- a/src/context.rs
 +++ b/src/context.rs
 @@ -1,6 +1,6 @@
@@ -122,7 +122,7 @@ index 5a478ad39..18877918d 100644
              last_error: parking_lot::RwLock::new("".to_string()),
              migration_error: parking_lot::RwLock::new(None),
 diff --git a/src/download.rs b/src/download.rs
-index b5f9ec0c1..310a8a20a 100644
+index b5f9ec0..310a8a2 100644
 --- a/src/download.rs
 +++ b/src/download.rs
 @@ -1,17 +1,28 @@
@@ -1304,7 +1304,7 @@ index b5f9ec0c1..310a8a20a 100644
 +    }
  }
 diff --git a/src/imap.rs b/src/imap.rs
-index 45374e646..d780f9fa8 100644
+index 45374e6..d780f9f 100644
 --- a/src/imap.rs
 +++ b/src/imap.rs
 @@ -1988,7 +1988,11 @@ pub(crate) async fn set_uidvalidity(
@@ -1321,7 +1321,7 @@ index 45374e646..d780f9fa8 100644
          .sql
          .query_get_value(
 diff --git a/src/imap/select_folder.rs b/src/imap/select_folder.rs
-index 78c743b33..2fa8bb664 100644
+index 78c743b..2fa8bb6 100644
 --- a/src/imap/select_folder.rs
 +++ b/src/imap/select_folder.rs
 @@ -219,6 +219,14 @@ pub(crate) async fn select_with_uidvalidity(
@@ -1340,7 +1340,7 @@ index 78c743b33..2fa8bb664 100644
              self.resync_request_sender.try_send(()).ok();
          }
 diff --git a/src/imap/session.rs b/src/imap/session.rs
-index 65d90d851..d158e1b69 100644
+index 65d90d8..d158e1b 100644
 --- a/src/imap/session.rs
 +++ b/src/imap/session.rs
 @@ -3,12 +3,46 @@
@@ -1496,7 +1496,7 @@ index 65d90d851..d158e1b69 100644
 +    }
  }
 diff --git a/src/sql.rs b/src/sql.rs
-index 433cfacf1..5c6ec77b0 100644
+index 433cfac..5c6ec77 100644
 --- a/src/sql.rs
 +++ b/src/sql.rs
 @@ -1029,6 +1029,43 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
@@ -1544,7 +1544,7 @@ index 433cfacf1..5c6ec77b0 100644
      /* go through directories and delete unused files */
      let blobdir = context.get_blobdir();
 diff --git a/src/sql/sql_tests.rs b/src/sql/sql_tests.rs
-index 1ae651bd7..944932b94 100644
+index 1ae651b..944932b 100644
 --- a/src/sql/sql_tests.rs
 +++ b/src/sql/sql_tests.rs
 @@ -367,3 +367,59 @@ async fn test_incremental_vacuum() -> Result<()> {
