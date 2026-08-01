@@ -31,8 +31,7 @@ durable account could be lost or corrupted:
 - A file whose write to persistent storage fails — a transient quota blip, a
   storage handle the browser invalidated — is now retried a few times instead
   of being dropped on the first error, and a write that is finally lost is
-  reported as an error rather than only counted. Saving the account registry
-  also really waits for storage now instead of returning immediately.
+  reported as an error rather than only counted.
 
 ## 0.8.0 — 2026-07-24
 

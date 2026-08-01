@@ -296,24 +296,6 @@ pub fn failed_count() -> u32 {
     durability::lost_count()
 }
 
-/// Durability barrier behind [`crate::fs::File::sync_all`]: awaits the queued
-/// write-throughs and turns a permanently lost one into an error, so an fsync
-/// cannot report success over data that never reached OPFS.
-///
-/// ponytail: drains the WHOLE queue, not just the file being synced —
-/// per-path completion would need a waiter map keyed by path, and core's only
-/// fsync points are the accounts.toml write (see the `sync_all` grep in
-/// vendor/core/src/accounts.rs), which is not a hot path. Upgrade there if a
-/// frequent fsync ever ends up waiting behind unrelated blob writes.
-pub(crate) async fn sync_barrier() -> std::io::Result<()> {
-    match flush_pending(failed_count()).await {
-        0 => Ok(()),
-        lost => Err(std::io::Error::other(format!(
-            "opfs: {lost} write-through(s) did not reach persistent storage"
-        ))),
-    }
-}
-
 /// Synchronous accounts.toml write-through. Returns false when the handles
 /// are not held (persistence setup failed half-way) or the write failed
 /// (e.g. the browser invalidated the handle) → the caller falls back to the

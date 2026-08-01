@@ -572,7 +572,7 @@ impl OpenOptions {
     pub async fn open(&self, path: impl AsRef<Path>) -> io::Result<File> {
         let path = normalize(path.as_ref());
         // Directories open fine too: core opens parent dirs only to sync_all()
-        // them, which drains the write-through queue (see `File::sync_all`).
+        // them, which is a no-op here (see `File::sync_all`).
         let exists = FS.lock().unwrap().contains_key(&path);
         if self.create_new && exists {
             return Err(io::Error::new(
@@ -637,21 +637,29 @@ impl File {
         Ok(())
     }
 
-    /// Real durability barrier, not a no-op: awaits the OPFS write-through
-    /// queue and fails when a queued write was permanently lost, so core's
-    /// fsync points cannot report success over data that is still only in
-    /// memory (a reload right after would come back without it).
+    /// No-op, deliberately. Core's only fsync points are the accounts.toml tmp
+    /// file and its parent dir (grep `sync_all` in vendor/core/src/accounts.rs;
+    /// `sync_data` has no callers at all), and accounts.toml is ALREADY
+    /// synchronously durable — it is written straight through the held sync
+    /// access handles, see `opfs::reconcile_config_sync`. So a barrier here
+    /// would guarantee nothing that is not already guaranteed.
     ///
-    /// Covers what core actually fsyncs — the accounts.toml tmp file and its
-    /// parent dir. Blob writes never reach here: core creates them from
-    /// synchronous `block_in_place` code that cannot await (see `sync_write` /
-    /// `sync_rename` above), so those still return before the mirror lands.
+    /// It would also cost: the write-through queue has no per-path completion,
+    /// so the only barrier available drains the WHOLE queue — and `Config::sync`
+    /// runs on `select_account`, making every account switch wait behind
+    /// unrelated blob writes (and fail if the drain timed out).
+    ///
+    /// Blob writes are the ones that actually need durability, and they cannot
+    /// use this: core creates them from synchronous `block_in_place` code that
+    /// cannot await (see `sync_write` / `sync_rename` above). Give them a real
+    /// completion point first — a per-path waiter, or synchronous write-through
+    /// like accounts.toml already gets — and wire this up to it then.
     pub async fn sync_all(&self) -> io::Result<()> {
-        crate::opfs::sync_barrier().await
+        Ok(())
     }
 
-    /// Same barrier as [`File::sync_all`] — the mirror has no data/metadata
-    /// split to sync separately.
+    /// See [`File::sync_all`] — the mirror has no data/metadata split to sync
+    /// separately, and core never calls this.
     pub async fn sync_data(&self) -> io::Result<()> {
         self.sync_all().await
     }
