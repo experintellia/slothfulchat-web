@@ -1,0 +1,774 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 1 Aug 2026 13:15:56 +0000
+Subject: [PATCH 20/20] msgs: store long message text in full, don't truncate
+ on write
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Core truncated message text to 38 lines x 100 chars when writing it to
+`msgs.txt` and stashed the full text in `mime_headers` behind a fake
+"Content-Type: text/plain" part, so a UI could offer it as an HTML
+message. That made long messages uneditable ("Cannot edit HTML
+messages"), stored every long body twice, and conflated "long text" with
+"this mail had HTML".
+
+Drop the truncation from both write paths — `MimeMessage` (incoming) and
+`Chat::prepare_msg_raw` (outgoing) — together with the `is_mime_modified`
+flag it set and the fabricated mime_headers part. `truncate_msg_text` and
+`truncate_by_lines` have no callers left and are deleted; `truncate`
+stays, it is what summaries use. Clamping long text for display is now
+the UI's job (CSS), which is where it belongs.
+
+Backup compatibility: the schema is unchanged, only which value lands in
+the existing `msgs.txt` column. The resulting row shape — full text in
+txt, mime_modified=0, empty mime_headers — is exactly what official core
+already writes for bot accounts and for edited messages on the sender's
+device, so old and new rows are the same shape. Rows written by official
+core are never rewritten: `MsgId::get_html()` and src/html.rs are
+untouched, so messages already in a database keep their truncated text
+plus stashed MIME and still open in the HTML viewer.
+
+Removing the write-time truncation also removes the implicit bound every
+string derived from `msg.text` relied on, so the derivations that are
+previews are now bounded explicitly:
+
+- `Message::get_summary_text_without_prefix()` truncates to
+  DC_DESIRED_TEXT_LEN before concatenating and collapsing whitespace.
+  This one line restores the exact ceiling `Summary::text` had before for
+  every consumer (chatlist, notifications, reactions, FFI) and keeps the
+  whitespace pass from allocating two copies of a megabyte body.
+- `Message::set_quote()` bounds the quoted text the same way. It is the
+  single funnel all quote producers pass through, and the only place
+  where an unbounded value would go out on the wire.
+- jsonrpc chatlist items, notification bodies and search results clamp to
+  500 chars: 3800 per list row is still the wrong payload for a preview.
+  `tools::truncate` becomes `pub` so jsonrpc can use it and search hits
+  stay verbatim text rather than becoming summaries.
+- The maps webxdc POI label clamps to one line.
+
+Deliberately not copied from upstream's draft: it truncates in
+`Message::load_from_db` behind a context flag. That silently shortens
+drafts, saved messages and resends — the text the user is still editing
+is not a preview — so the bound belongs at each preview site instead.
+---
+ deltachat-jsonrpc/src/api/types/chat_list.rs |  2 +-
+ deltachat-jsonrpc/src/api/types/message.rs   |  8 +-
+ src/chat.rs                                  | 10 +--
+ src/chat/chat_tests.rs                       | 54 +++++++++++--
+ src/constants.rs                             |  7 +-
+ src/decrypt.rs                               |  6 +-
+ src/html.rs                                  | 11 ++-
+ src/message.rs                               | 10 ++-
+ src/mimefactory/mimefactory_tests.rs         |  4 +-
+ src/mimeparser.rs                            |  8 +-
+ src/mimeparser/mimeparser_tests.rs           | 64 ++++------------
+ src/receive_imf/receive_imf_tests.rs         | 39 +++-------
+ src/summary.rs                               |  7 +-
+ src/tools.rs                                 | 81 +-------------------
+ src/tools/tools_tests.rs                     | 73 ------------------
+ src/webxdc/maps_integration.rs               |  5 +-
+ 16 files changed, 106 insertions(+), 283 deletions(-)
+
+diff --git a/deltachat-jsonrpc/src/api/types/chat_list.rs b/deltachat-jsonrpc/src/api/types/chat_list.rs
+index a07641b2b..615f004c1 100644
+--- a/deltachat-jsonrpc/src/api/types/chat_list.rs
++++ b/deltachat-jsonrpc/src/api/types/chat_list.rs
+@@ -98,8 +98,8 @@ pub(crate) async fn get_chat_list_item_by_id(
+         .await
+         .context("summary")?;
+ 
++    let summary_text2 = summary.truncated_text(500).into_owned();
+     let summary_text1 = summary.prefix.map_or_else(String::new, |s| s.to_string());
+-    let summary_text2 = summary.text.to_owned();
+ 
+     let summary_preview_image = summary.thumbnail_path;
+ 
+diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
+index 2b37fb507..f0175d715 100644
+--- a/deltachat-jsonrpc/src/api/types/message.rs
++++ b/deltachat-jsonrpc/src/api/types/message.rs
+@@ -12,6 +12,7 @@
+ use deltachat::message::MsgId;
+ use deltachat::message::Viewtype;
+ use deltachat::reaction::get_msg_reactions;
++use deltachat::tools::truncate;
+ use num_traits::cast::ToPrimitive;
+ use serde::{Deserialize, Serialize};
+ use typescript_type_def::TypeDef;
+@@ -510,8 +511,8 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Self> {
+             image_mime_type: message.get_filemime(),
+             chat_name: chat.name,
+             chat_profile_image,
+-            summary_prefix: summary.prefix.map(|s| s.to_string()),
+-            summary_text: summary.text,
++            summary_prefix: summary.prefix.as_ref().map(|s| s.to_string()),
++            summary_text: summary.truncated_text(500).into_owned(),
+         })
+     }
+ }
+@@ -571,7 +572,8 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Self> {
+             chat_profile_image,
+             is_chat_contact_request: chat.is_contact_request(),
+             is_chat_archived: chat.get_visibility() == ChatVisibility::Archived,
+-            message: message.get_text(),
++            // Search results are previews; up to 1000 of them are built per query.
++            message: truncate(&message.get_text(), 500).into_owned(),
+             timestamp: message.get_timestamp(),
+         })
+     }
+diff --git a/src/chat.rs b/src/chat.rs
+index 7c2a855a6..f2d408039 100644
+--- a/src/chat.rs
++++ b/src/chat.rs
+@@ -51,7 +51,6 @@
+ use crate::tools::{
+     IsNoneOrEmpty, SystemTime, buf_compress, create_broadcast_secret, create_id,
+     create_outgoing_rfc724_mid, get_abs_path, gm2local_offset, normalize_text, time,
+-    truncate_msg_text,
+ };
+ use crate::webxdc::StatusUpdateSerial;
+ 
+@@ -1896,7 +1895,7 @@ async fn prepare_msg_raw(
+             EphemeralTimer::Enabled { duration } => time().saturating_add(duration.into()),
+         };
+ 
+-        let (msg_text, was_truncated) = truncate_msg_text(context, msg.text.clone()).await?;
++        let msg_text = msg.text.clone();
+         let new_mime_headers = if msg.has_html() {
+             msg.param.get(Param::SendHtml).map(|s| s.to_string())
+         } else {
+@@ -1909,13 +1908,6 @@ async fn prepare_msg_raw(
+             html_part.write_part(cursor).ok();
+             String::from_utf8_lossy(&buffer).to_string()
+         });
+-        let new_mime_headers = new_mime_headers.or_else(|| match was_truncated {
+-            // We need to add some headers so that they are stripped before formatting HTML by
+-            // `MsgId::get_html()`, not a part of the actual text. Let's add "Content-Type", it's
+-            // anyway a useful metadata about the stored text.
+-            true => Some("Content-Type: text/plain; charset=utf-8\r\n\r\n".to_string() + &msg.text),
+-            false => None,
+-        });
+         let new_mime_headers = match new_mime_headers {
+             Some(h) => Some(tokio::task::block_in_place(move || {
+                 buf_compress(h.as_bytes())
+diff --git a/src/chat/chat_tests.rs b/src/chat/chat_tests.rs
+index a27b70670..afc9ae327 100644
+--- a/src/chat/chat_tests.rs
++++ b/src/chat/chat_tests.rs
+@@ -4,7 +4,7 @@
+ use crate::Event;
+ use crate::chatlist::get_archived_cnt;
+ use crate::constants::{
+-    self, DC_GCL_ARCHIVED_ONLY, DC_GCL_NO_SPECIALS, N_MSGS_TO_NEW_BROADCAST_MEMBER,
++    self, DC_ELLIPSIS, DC_GCL_ARCHIVED_ONLY, DC_GCL_NO_SPECIALS, N_MSGS_TO_NEW_BROADCAST_MEMBER,
+ };
+ use crate::ephemeral::Timer;
+ use crate::headerdef::HeaderDef;
+@@ -5884,8 +5884,8 @@ async fn test_send_edit_request() -> Result<()> {
+     let forwarded = alice2.get_last_msg().await;
+     assert!(!forwarded.is_edited());
+ 
+-    // If a message is too long after editing, it becomes an HTML message on the receiver side. On
+-    // the sender side it's still text so that it can be edited again.
++    // A message that is too long after editing stays plain text on both sides, so it can be
++    // edited again.
+     static REPEAT_TXT: &str = "this text with 42 chars is just repeated.\n";
+     static REPEAT_CNT: usize = constants::DC_DESIRED_TEXT_LEN / REPEAT_TXT.len() + 2;
+     let long_txt = REPEAT_TXT.repeat(REPEAT_CNT);
+@@ -5897,12 +5897,10 @@ async fn test_send_edit_request() -> Result<()> {
+     bob.recv_msg_opt(&sent).await;
+     let test = Message::load_from_db(bob, bob_msg.id).await?;
+     assert!(test.is_edited());
+-    assert!(test.has_html());
+-    let html = test.id.get_html(bob).await?.unwrap();
+-    assert_eq!(html.matches("just repeated.<br/>").count(), REPEAT_CNT);
+-    assert!(test.text.matches("just repeated.").count() > 0);
++    assert!(!test.has_html());
++    assert_eq!(test.text, long_txt.trim_end());
+ 
+-    // Alice shortens the message back so it's not HTML for Bob anymore.
++    // Alice shortens the message back.
+     send_edit_request(alice, alice_msg.id, "Text me on Delta.Chat".to_string()).await?;
+     let sent = alice.pop_sent_msg().await;
+     let test = Message::load_from_db(alice, alice_msg.id).await?;
+@@ -5916,6 +5914,46 @@ async fn test_send_edit_request() -> Result<()> {
+     Ok(())
+ }
+ 
++/// Long message text is stored in full: it is not turned into an HTML message, it survives a
++/// database round trip, the chatlist only gets a bounded preview of it, and it stays editable.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_long_text_is_stored_in_full() -> Result<()> {
++    let mut tcm = TestContextManager::new();
++    let alice = &tcm.alice().await;
++    let bob = &tcm.bob().await;
++
++    // Well over 38 lines and over DC_DESIRED_TEXT_LEN chars.
++    let long_txt = "this text with 42 chars is just repeated.\n".repeat(200);
++    assert!(long_txt.len() > constants::DC_DESIRED_TEXT_LEN);
++    let sent = alice
++        .send_text(alice.create_chat(bob).await.id, &long_txt)
++        .await;
++
++    // Bob gets the full text as text, not as an HTML message, and it round-trips through the db.
++    let rcvd = bob.recv_msg(&sent).await;
++    assert!(!rcvd.has_html());
++    assert_eq!(rcvd.get_text(), long_txt.trim_end());
++    let reloaded = Message::load_from_db(bob, rcvd.id).await?;
++    assert_eq!(reloaded.get_text(), long_txt.trim_end());
++
++    // The chatlist row is a preview, not the whole message.
++    let chatlist = Chatlist::try_load(bob, 0, None, None).await?;
++    let summary = chatlist.get_summary(bob, 0, None).await?;
++    assert!(summary.text.chars().count() <= constants::DC_DESIRED_TEXT_LEN + DC_ELLIPSIS.len());
++    assert!(summary.truncated_text(500).chars().count() <= 500 + DC_ELLIPSIS.len());
++
++    // Alice's own copy is still editable; this used to fail with "Cannot edit HTML messages".
++    let alice_msg = sent.load_from_db().await;
++    assert_eq!(alice_msg.get_text(), long_txt);
++    send_edit_request(alice, alice_msg.id, "short now".to_string()).await?;
++    assert_eq!(
++        Message::load_from_db(alice, alice_msg.id).await?.get_text(),
++        "short now"
++    );
++
++    Ok(())
++}
++
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn test_edit_saved_messages() -> Result<()> {
+     let mut tcm = TestContextManager::new();
+diff --git a/src/constants.rs b/src/constants.rs
+index 9b109c0f5..aed4650a4 100644
+--- a/src/constants.rs
++++ b/src/constants.rs
+@@ -152,11 +152,10 @@ pub enum Chattype {
+ // how many chars desktop can display per line (from "subjective" testing)
+ pub const DC_DESIRED_TEXT_LINE_LEN: usize = 100;
+ 
+-/// Message length limit.
++/// Summary length limit.
+ ///
+-/// To keep bubbles and chat flow usable and to avoid problems with controls using very long texts,
+-/// we limit the text length to `DC_DESIRED_TEXT_LEN`.  If the text is longer, the full text can be
+-/// retrieved using has_html()/get_html().
++/// Message texts are stored in full; this bounds the previews derived from them (chatlist
++/// summaries, notifications, quotes) so a huge message cannot blow up every list row.
+ ///
+ /// Note that for simplicity maximum length is defined as the number of Unicode Scalar Values (Rust
+ /// `char`s), not Unicode Grapheme Clusters.
+diff --git a/src/decrypt.rs b/src/decrypt.rs
+index eb335614d..0eba9e71c 100644
+--- a/src/decrypt.rs
++++ b/src/decrypt.rs
+@@ -442,9 +442,9 @@ async fn test_mixed_up_mime_long() -> Result<()> {
+         bob.allow_unencrypted().await?;
+         receive_imf(&bob, mixed_up_mime, false).await?;
+         let msg = bob.get_last_msg().await;
+-        assert!(!msg.get_text().is_empty());
+-        assert!(msg.has_html());
+-        assert!(msg.id.get_html(&bob).await?.unwrap().len() > 40000);
++        // The full body is the message text itself, no HTML view needed.
++        assert!(msg.get_text().len() > 40000);
++        assert!(!msg.has_html());
+         Ok(())
+     }
+ }
+diff --git a/src/html.rs b/src/html.rs
+index a72c7137c..2e2806460 100644
+--- a/src/html.rs
++++ b/src/html.rs
+@@ -551,18 +551,17 @@ async fn check_receiver(ctx: &TestContext, chat: &Chat, sender: &TestContext) {
+         check_sender(bob, &chat_bob).await;
+         check_receiver(alice, &chat_alice, bob).await;
+ 
+-        // Check cross-profile forwarding of long outgoing messages.
++        // Long outgoing messages are plain text, they have no HTML part to forward.
+         let line = "this text with 42 chars is just repeated.\n";
+         let long_txt = line.repeat(constants::DC_DESIRED_TEXT_LEN / line.len() + 2);
+-        let mut msg = Message::new_text(long_txt);
++        let mut msg = Message::new_text(long_txt.clone());
+         alice.send_msg(chat_alice.id, &mut msg).await;
+         let msg = alice.get_last_msg_in(chat_alice.id).await;
+-        assert!(msg.has_html());
+-        let html = msg.id.get_html(alice).await?.unwrap();
++        assert!(!msg.has_html());
+         chat::forward_msgs_2ctx(alice, &[msg.get_id()], bob, chat_bob.get_id()).await?;
+         let msg = bob.get_last_msg_in(chat_bob.id).await;
+-        assert!(msg.has_html());
+-        assert_eq!(msg.id.get_html(bob).await?.unwrap(), html);
++        assert!(!msg.has_html());
++        assert_eq!(msg.get_text(), long_txt);
+         Ok(())
+     }
+ 
+diff --git a/src/message.rs b/src/message.rs
+index 677b75e69..2d7e76455 100644
+--- a/src/message.rs
++++ b/src/message.rs
+@@ -17,7 +17,9 @@
+ use crate::chat::{Chat, ChatId, ChatIdBlocked, ChatVisibility, send_msg};
+ use crate::chatlist_events;
+ use crate::config::Config;
+-use crate::constants::{Blocked, Chattype, DC_CHAT_ID_TRASH, DC_MSG_ID_LAST_SPECIAL};
++use crate::constants::{
++    Blocked, Chattype, DC_CHAT_ID_TRASH, DC_DESIRED_TEXT_LEN, DC_MSG_ID_LAST_SPECIAL,
++};
+ use crate::contact::{self, Contact, ContactId};
+ use crate::context::Context;
+ use crate::debug_logging::set_debug_logging_xdc;
+@@ -35,7 +37,7 @@
+ use crate::tools::create_outgoing_rfc724_mid;
+ use crate::tools::{
+     get_filebytes, get_filemeta, gm2local_offset, read_file, sanitize_filename, time,
+-    timestamp_to_str,
++    timestamp_to_str, truncate,
+ };
+ 
+ /// Message ID, including reserved IDs.
+@@ -1265,7 +1267,9 @@ pub async fn set_quote(&mut self, context: &Context, quote: Option<&Message>) ->
+             );
+             self.in_reply_to = Some(quote.rfc724_mid.clone());
+ 
+-            let text = quote.get_text();
++            // The quote goes out on the wire as `> `-prefixed lines and into `msgs.param`,
++            // so bound it here, the single funnel all quote producers pass through.
++            let text = truncate(&quote.get_text(), DC_DESIRED_TEXT_LEN).into_owned();
+             let text = if text.is_empty() {
+                 // Use summary, similar to "Image" to avoid sending empty quote.
+                 quote
+diff --git a/src/mimefactory/mimefactory_tests.rs b/src/mimefactory/mimefactory_tests.rs
+index 32ee79849..ce8274f94 100644
+--- a/src/mimefactory/mimefactory_tests.rs
++++ b/src/mimefactory/mimefactory_tests.rs
+@@ -703,8 +703,8 @@ async fn test_protected_headers_directive() -> Result<()> {
+ 
+     // Now Bob can send an encrypted message to Alice.
+     let mut msg = Message::new(Viewtype::File);
+-    // Long messages are truncated and MimeMessage::decoded_data is set for them. We need
+-    // decoded_data to check presence of the necessary headers.
++    // MimeMessage::decoded_data is set for decrypted mail; we need it to check presence of the
++    // necessary headers.
+     msg.set_text("a".repeat(constants::DC_DESIRED_TEXT_LEN + 1));
+     msg.set_file_from_bytes(&bob, "foo.bar", "content".as_bytes(), None)?;
+     let sent = bob.send_msg(chat, &mut msg).await;
+diff --git a/src/mimeparser.rs b/src/mimeparser.rs
+index 357ea9f32..ebd4053b1 100644
+--- a/src/mimeparser.rs
++++ b/src/mimeparser.rs
+@@ -31,7 +31,7 @@
+ use crate::param::{Param, Params};
+ use crate::simplify::{SimplifiedText, simplify};
+ use crate::sync::SyncItems;
+-use crate::tools::{get_filemeta, parse_receive_headers, time, truncate_msg_text, validate_id};
++use crate::tools::{get_filemeta, parse_receive_headers, time, validate_id};
+ use crate::{chatlist_events, location, tools};
+ 
+ /// Public key extracted from `Autocrypt-Gossip`
+@@ -1446,12 +1446,6 @@ async fn add_single_part_if_known(
+                             (simplified_txt, top_quote)
+                         };
+ 
+-                        let (simplified_txt, was_truncated) =
+-                            truncate_msg_text(context, simplified_txt).await?;
+-                        if was_truncated {
+-                            self.is_mime_modified = was_truncated;
+-                        }
+-
+                         if !simplified_txt.is_empty() || simplified_quote.is_some() {
+                             let mut part = Part {
+                                 dehtml_failed,
+diff --git a/src/mimeparser/mimeparser_tests.rs b/src/mimeparser/mimeparser_tests.rs
+index 562ea644a..679fa62b3 100644
+--- a/src/mimeparser/mimeparser_tests.rs
++++ b/src/mimeparser/mimeparser_tests.rs
+@@ -5,7 +5,7 @@
+ use crate::{
+     chat,
+     chatlist::Chatlist,
+-    constants::{self, Blocked, DC_DESIRED_TEXT_LEN, DC_ELLIPSIS},
++    constants::{self, Blocked, DC_DESIRED_TEXT_LEN},
+     contact::Contact,
+     key,
+     message::{MessageState, MessengerMessage},
+@@ -1274,64 +1274,27 @@ async fn test_mime_modified_html() {
+     );
+ }
+ 
++/// Long plain text is kept as-is: it is neither truncated nor does it make the message
++/// "mime modified" (which would offer it as an HTML message).
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+-async fn test_mime_modified_large_plain() -> Result<()> {
++async fn test_large_plain_not_mime_modified() -> Result<()> {
+     let t = TestContext::new_alice().await;
+-    let t1 = TestContext::new_alice().await;
+ 
+     static REPEAT_TXT: &str = "this text with 42 chars is just repeated.\n";
+     static REPEAT_CNT: usize = DC_DESIRED_TEXT_LEN / REPEAT_TXT.len() + 2;
+     let long_txt = format!("From: alice@c.de\n\n{}", REPEAT_TXT.repeat(REPEAT_CNT));
+-    assert_eq!(long_txt.matches("just repeated").count(), REPEAT_CNT);
+-    assert!(long_txt.len() > DC_DESIRED_TEXT_LEN);
+-
+-    {
+-        let mimemsg = MimeMessage::from_bytes(&t, long_txt.as_ref()).await?;
+-        assert!(mimemsg.is_mime_modified);
+-        assert!(
+-            mimemsg.parts[0].msg.matches("just repeated").count()
+-                <= DC_DESIRED_TEXT_LEN / REPEAT_TXT.len()
+-        );
+-        assert!(mimemsg.parts[0].msg.len() <= DC_DESIRED_TEXT_LEN + DC_ELLIPSIS.len());
+-    }
+-
+-    for draft in [false, true] {
+-        let chat = t.get_self_chat().await;
+-        let mut msg = Message::new_text(long_txt.clone());
+-        if draft {
+-            chat.id.set_draft(&t, Some(&mut msg)).await?;
+-        }
+-        let sent_msg = t.send_msg(chat.id, &mut msg).await;
+-        let msg = t.get_last_msg_in(chat.id).await;
+-        assert!(msg.has_html());
+-        let html = msg.id.get_html(&t).await?.unwrap();
+-        assert_eq!(html.matches("<!DOCTYPE html>").count(), 1);
+-        assert_eq!(html.matches("just repeated.<br/>").count(), REPEAT_CNT);
+-        assert!(
+-            msg.text.matches("just repeated.").count() <= DC_DESIRED_TEXT_LEN / REPEAT_TXT.len()
+-        );
+-        assert!(msg.text.len() <= DC_DESIRED_TEXT_LEN + DC_ELLIPSIS.len());
+-
+-        let msg = t1.recv_msg(&sent_msg).await;
+-        assert!(msg.has_html());
+-        assert_eq!(msg.id.get_html(&t1).await?.unwrap(), html);
+-    }
+ 
+-    t.set_config(Config::Bot, Some("1")).await?;
+-    {
+-        let mimemsg = MimeMessage::from_bytes(&t, long_txt.as_ref()).await?;
+-        assert!(!mimemsg.is_mime_modified);
+-        assert_eq!(
+-            format!("{}\n", mimemsg.parts[0].msg),
+-            REPEAT_TXT.repeat(REPEAT_CNT)
+-        );
+-    }
++    let mimemsg = MimeMessage::from_bytes(&t, long_txt.as_ref()).await?;
++    assert!(!mimemsg.is_mime_modified);
++    assert_eq!(
++        format!("{}\n", mimemsg.parts[0].msg),
++        REPEAT_TXT.repeat(REPEAT_CNT)
++    );
+ 
+     Ok(())
+ }
+ 
+-/// Tests that sender status (signature) does not appear
+-/// in HTML view of a long message.
++/// Tests that sender status (signature) does not appear in the text of a long message.
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn test_large_message_no_signature() -> Result<()> {
+     let mut tcm = TestContextManager::new();
+@@ -1346,9 +1309,8 @@ async fn test_large_message_no_signature() -> Result<()> {
+     let sent = alice.send_text(chat.id, &txt).await;
+     let msg = bob.recv_msg(&sent).await;
+ 
+-    assert_eq!(msg.has_html(), true);
+-    let html = msg.id.get_html(bob).await?.unwrap();
+-    assert_eq!(html.contains("Some signature"), false);
++    assert_eq!(msg.has_html(), false);
++    assert_eq!(msg.get_text(), txt.trim_end());
+     Ok(())
+ }
+ 
+diff --git a/src/receive_imf/receive_imf_tests.rs b/src/receive_imf/receive_imf_tests.rs
+index cc6c8af5b..bc0261f36 100644
+--- a/src/receive_imf/receive_imf_tests.rs
++++ b/src/receive_imf/receive_imf_tests.rs
+@@ -3609,40 +3609,19 @@ async fn test_big_forwarded_with_big_attachment() -> Result<()> {
+         msg.get_text()
+             .starts_with("this text with 42 chars is just repeated.")
+     );
+-    assert!(msg.get_text().ends_with("[...]"));
+-    assert!(!msg.has_html());
+-
+-    let msg = Message::load_from_db(bob, rcvd.msg_ids[2]).await?;
+-    assert_eq!(msg.get_viewtype(), Viewtype::File);
+-    assert!(msg.has_html());
+-    let html = msg.id.get_html(bob).await?.unwrap();
+-    let tail = html
+-        .split_once("Hello!")
+-        .unwrap()
+-        .1
+-        .split_once("From: AAA")
+-        .unwrap()
+-        .1
+-        .split_once("aaa@example.org")
+-        .unwrap()
+-        .1
+-        .split_once("To: Alice")
+-        .unwrap()
+-        .1
+-        .split_once("alice@example.org")
+-        .unwrap()
+-        .1
+-        .split_once("Subject: Some subject")
+-        .unwrap()
+-        .1
+-        .split_once("Date: Fri, 2 Jun 2023 12:29:17 +0000")
+-        .unwrap()
+-        .1;
++    // The long text is stored in full rather than truncated into an HTML message.
++    assert!(!msg.get_text().ends_with("[...]"));
+     assert_eq!(
+-        tail.matches("this text with 42 chars is just repeated.")
++        msg.get_text()
++            .matches("this text with 42 chars is just repeated.")
+             .count(),
+         128
+     );
++    assert!(!msg.has_html());
++
++    let msg = Message::load_from_db(bob, rcvd.msg_ids[2]).await?;
++    assert_eq!(msg.get_viewtype(), Viewtype::File);
++    assert!(!msg.has_html());
+     Ok(())
+ }
+ 
+diff --git a/src/summary.rs b/src/summary.rs
+index 9f665f386..d209b39a6 100644
+--- a/src/summary.rs
++++ b/src/summary.rs
+@@ -9,7 +9,7 @@
+ 
+ use crate::calls::{CallState, call_state};
+ use crate::chat::Chat;
+-use crate::constants::Chattype;
++use crate::constants::{Chattype, DC_DESIRED_TEXT_LEN};
+ use crate::contact::{Contact, ContactId};
+ use crate::context::Context;
+ use crate::message::{Message, MessageState, Viewtype};
+@@ -281,7 +281,10 @@ async fn get_summary_text_without_prefix(&self, context: &Context) -> String {
+             }
+         };
+ 
+-        let text = self.text.clone();
++        // A summary is a preview: bound it here, before the concatenation and the
++        // whitespace-collapsing pass below, so neither allocates a copy of a whole
++        // multi-megabyte message text.
++        let text = truncate(&self.text, DC_DESIRED_TEXT_LEN).into_owned();
+ 
+         let summary = if let Some(type_file) = type_file {
+             if append_text && !text.is_empty() {
+diff --git a/src/tools.rs b/src/tools.rs
+index f2984f784..f8b02bafd 100644
+--- a/src/tools.rs
++++ b/src/tools.rs
+@@ -39,8 +39,7 @@
+ use uuid::Uuid;
+ 
+ use crate::chat::{add_device_msg, add_device_msg_with_importance};
+-use crate::config::Config;
+-use crate::constants::{self, DC_ELLIPSIS, DC_OUTDATED_WARNING_DAYS};
++use crate::constants::{DC_ELLIPSIS, DC_OUTDATED_WARNING_DAYS};
+ use crate::context::Context;
+ use crate::events::EventType;
+ use crate::log::warn;
+@@ -50,7 +49,7 @@
+ /// Shortens a string to a specified length and adds "[...]" to the
+ /// end of the shortened string.
+ #[expect(clippy::arithmetic_side_effects)]
+-pub(crate) fn truncate(buf: &str, approx_chars: usize) -> Cow<'_, str> {
++pub fn truncate(buf: &str, approx_chars: usize) -> Cow<'_, str> {
+     let count = buf.chars().count();
+     if count <= approx_chars + DC_ELLIPSIS.len() {
+         return Cow::Borrowed(buf);
+@@ -76,82 +75,6 @@ pub(crate) fn truncate(buf: &str, approx_chars: usize) -> Cow<'_, str> {
+     }
+ }
+ 
+-/// Shortens a string to a specified line count and adds "[...]" to the
+-/// end of the shortened string.
+-///
+-/// returns tuple with the String and a boolean whether is was truncated
+-#[expect(clippy::arithmetic_side_effects)]
+-pub(crate) fn truncate_by_lines(
+-    buf: String,
+-    max_lines: usize,
+-    max_line_len: usize,
+-) -> (String, bool) {
+-    let mut lines = 0;
+-    let mut line_chars = 0;
+-    let mut break_point: Option<usize> = None;
+-
+-    for (index, char) in buf.char_indices() {
+-        if char == '\n' {
+-            line_chars = 0;
+-            lines += 1;
+-        } else {
+-            line_chars += 1;
+-            if line_chars > max_line_len {
+-                line_chars = 1;
+-                lines += 1;
+-            }
+-        }
+-        if lines == max_lines {
+-            break_point = Some(index);
+-            break;
+-        }
+-    }
+-
+-    if let Some(end_pos) = break_point {
+-        // Text has too many lines and needs to be truncated.
+-        let text = {
+-            if let Some(buffer) = buf.get(..end_pos) {
+-                if let Some(index) = buffer.rfind([' ', '\n']) {
+-                    buf.get(..=index)
+-                } else {
+-                    buf.get(..end_pos)
+-                }
+-            } else {
+-                None
+-            }
+-        };
+-
+-        if let Some(truncated_text) = text {
+-            (format!("{truncated_text}{DC_ELLIPSIS}"), true)
+-        } else {
+-            // In case of indexing/slicing error, we return an error
+-            // message as a preview and add HTML version. This should
+-            // never happen.
+-            let error_text = "[Truncation of the message failed, this is a bug in the Delta Chat core. Please report it.\nYou can still open the full text to view the original message.]";
+-            (error_text.to_string(), true)
+-        }
+-    } else {
+-        // text is unchanged
+-        (buf, false)
+-    }
+-}
+-
+-/// Shortens a message text if necessary according to the configuration. Adds "[...]" to the end of
+-/// the shortened text.
+-///
+-/// Returns the resulting text and a bool telling whether a truncation was done.
+-pub(crate) async fn truncate_msg_text(context: &Context, text: String) -> Result<(String, bool)> {
+-    if context.get_config_bool(Config::Bot).await? {
+-        return Ok((text, false));
+-    }
+-    // Truncate text if it has too many lines
+-    Ok(truncate_by_lines(
+-        text,
+-        constants::DC_DESIRED_TEXT_LINES,
+-        constants::DC_DESIRED_TEXT_LINE_LEN,
+-    ))
+-}
+-
+ /* ******************************************************************************
+  * date/time tools
+  ******************************************************************************/
+diff --git a/src/tools/tools_tests.rs b/src/tools/tools_tests.rs
+index 77bde4fbf..989501047 100644
+--- a/src/tools/tools_tests.rs
++++ b/src/tools/tools_tests.rs
+@@ -124,79 +124,6 @@ fn test_truncate_edge() {
+     );
+ }
+ 
+-mod truncate_by_lines {
+-    use super::*;
+-
+-    #[test]
+-    fn test_just_text() {
+-        let s = "this is a little test string".to_string();
+-        assert_eq!(
+-            truncate_by_lines(s, 4, 6),
+-            ("this is a little test [...]".to_string(), true)
+-        );
+-    }
+-
+-    #[test]
+-    fn test_with_linebreaks() {
+-        let s = "this\n is\n a little test string".to_string();
+-        assert_eq!(
+-            truncate_by_lines(s, 4, 6),
+-            ("this\n is\n a little [...]".to_string(), true)
+-        );
+-    }
+-
+-    #[test]
+-    fn test_only_linebreaks() {
+-        let s = "\n\n\n\n\n\n\n".to_string();
+-        assert_eq!(
+-            truncate_by_lines(s, 4, 5),
+-            ("\n\n\n[...]".to_string(), true)
+-        );
+-    }
+-
+-    #[test]
+-    fn limit_hits_end() {
+-        let s = "hello\n world !".to_string();
+-        assert_eq!(
+-            truncate_by_lines(s, 2, 8),
+-            ("hello\n world !".to_string(), false)
+-        );
+-    }
+-
+-    #[test]
+-    fn test_edge() {
+-        assert_eq!(
+-            truncate_by_lines("".to_string(), 2, 4),
+-            ("".to_string(), false)
+-        );
+-
+-        assert_eq!(
+-            truncate_by_lines("\n  hello \n world".to_string(), 2, 4),
+-            ("\n  [...]".to_string(), true)
+-        );
+-        assert_eq!(
+-            truncate_by_lines("𐠈0Aᝮa𫝀®!ꫛa¡0A𐢧00𐹠®A  丽ⷐએ".to_string(), 1, 2),
+-            ("𐠈0[...]".to_string(), true)
+-        );
+-        assert_eq!(
+-            truncate_by_lines("𐠈0Aᝮa𫝀®!ꫛa¡0A𐢧00𐹠®A  丽ⷐએ".to_string(), 1, 0),
+-            ("[...]".to_string(), true)
+-        );
+-
+-        // 9 characters, so no truncation
+-        assert_eq!(
+-            truncate_by_lines("𑒀ὐ￠🜀\u{1e01b}A a🟠".to_string(), 1, 12),
+-            ("𑒀ὐ￠🜀\u{1e01b}A a🟠".to_string(), false),
+-        );
+-
+-        // 12 characters, truncation
+-        assert_eq!(
+-            truncate_by_lines("𑒀ὐ￠🜀\u{1e01b}A a🟠bcd".to_string(), 1, 7),
+-            ("𑒀ὐ￠🜀\u{1e01b}A [...]".to_string(), true),
+-        );
+-    }
+-}
+-
+ #[test]
+ fn test_create_id() {
+     let buf = create_id();
+diff --git a/src/webxdc/maps_integration.rs b/src/webxdc/maps_integration.rs
+index 49c6bd9eb..2bd82e272 100644
+--- a/src/webxdc/maps_integration.rs
++++ b/src/webxdc/maps_integration.rs
+@@ -42,7 +42,8 @@
+ use crate::color::color_int_to_hex_string;
+ use crate::contact::{Contact, ContactId};
+ use crate::log::warn;
+-use crate::tools::time;
++use crate::constants::DC_DESIRED_TEXT_LINE_LEN;
++use crate::tools::{time, truncate};
+ use crate::webxdc::{StatusUpdateItem, StatusUpdateItemAndSerial, StatusUpdateSerial};
+ use anyhow::Result;
+ use serde::{Deserialize, Serialize};
+@@ -127,7 +128,7 @@ pub(crate) async fn intercept_get_updates(
+                     && let Some(msg) =
+                         Message::load_from_db_optional(context, MsgId::new(location.msg_id)).await?
+                 {
+-                    label = msg.get_text()
++                    label = truncate(&msg.get_text(), DC_DESIRED_TEXT_LINE_LEN).into_owned()
+                 }
+             }
+ 

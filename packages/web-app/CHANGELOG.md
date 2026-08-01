@@ -1,5 +1,11 @@
 # Changelog
 
+- **Long messages are no longer cut off**: message text used to be trimmed to
+  38 lines when it was saved, with the rest tucked away behind "Show Full
+  Message" — which also made long messages uneditable. The full text is now
+  kept as written: long messages get a "Show more"/"Show less" toggle, stay
+  editable, and are searchable and copyable in full. Messages already stored
+  on your device are left as they are.
 - **Chat export works again**: the `index.html` viewer inside exported chat
   zips threw a script error and showed an empty page; exports now render
   correctly again.
