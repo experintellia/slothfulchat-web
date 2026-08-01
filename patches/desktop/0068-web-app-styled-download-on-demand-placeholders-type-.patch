@@ -36,11 +36,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
 ---
  packages/frontend/scss/manifest.scss          |   1 +
- .../_message-download-placeholder.scss        | 260 ++++++++++++++++++
+ .../_message-download-placeholder.scss        | 302 ++++++++++++++++++
  .../MessageDetail/BasicMessageInfo.tsx        |   2 +-
- .../message/DownloadOnDemandPlaceholder.tsx   | 258 +++++++++++++++++
- .../src/components/message/Message.tsx        |  94 +++++--
- 5 files changed, 586 insertions(+), 29 deletions(-)
+ .../message/DownloadOnDemandPlaceholder.tsx   | 282 ++++++++++++++++
+ .../src/components/message/Message.tsx        | 114 +++++--
+ 5 files changed, 668 insertions(+), 33 deletions(-)
  create mode 100644 packages/frontend/scss/message/_message-download-placeholder.scss
  create mode 100644 packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 
@@ -58,10 +58,10 @@ index b55d0eb..99294f1 100644
  @use 'misc/_avatar.scss';
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
 new file mode 100644
-index 0000000..204a6da
+index 0000000..b557127
 --- /dev/null
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,302 @@
 +// Styled download-on-demand placeholders (see DownloadOnDemandPlaceholder.tsx).
 +// Reuses the .message-attachment-* / .webxdc boxes from _message-attachment.scss
 +// and adds: a blurred thumbnail, a grey fallback box, and a centered overlay
@@ -76,6 +76,12 @@ index 0000000..204a6da
 +    // metadata strip sits below, so the preview keeps square bottom corners
 +    // instead of drawing a second arc above it.
 +    border-radius: 16px 16px 0 0;
++
++    // No caption: the preview IS the bubble bottom (metadata overlays it),
++    // so round all corners to match the bubble.
++    &.no-caption {
++      border-radius: 16px;
++    }
 +
 +    // Blur the thumbnail so it reads as "not yet downloaded".
 +    & > .attachment-content {
@@ -155,22 +161,6 @@ index 0000000..204a6da
 +    border-radius: 20px;
 +    background-color: rgba(200, 200, 200, 0.3);
 +
-+    .audio-download-button {
-+      flex-shrink: 0;
-+      width: 36px;
-+      height: 36px;
-+      border: none;
-+      border-radius: 50%;
-+      background-color: var(--colorPrimary, #415e6b);
-+      color: white;
-+      font-size: 17px;
-+      line-height: 1;
-+      cursor: pointer;
-+      display: flex;
-+      align-items: center;
-+      justify-content: center;
-+    }
-+
 +    .download-progress-circle {
 +      flex-shrink: 0;
 +      width: 36px;
@@ -204,9 +194,60 @@ index 0000000..204a6da
 +    align-items: center;
 +  }
 +
-+  &.message-attachment-audio .failed {
++  &.message-attachment-audio .failed,
++  &.message-attachment-generic .failed {
 +    color: var(--errorText, #e6512c);
 +    font-size: 12px;
++  }
++
++  // Shared circular download button (audio player pill, file card).
++  .circle-download-button {
++    flex-shrink: 0;
++    width: 36px;
++    height: 36px;
++    border: none;
++    border-radius: 50%;
++    background-color: var(--colorPrimary, #415e6b);
++    color: white;
++    font-size: 17px;
++    line-height: 1;
++    cursor: pointer;
++    display: flex;
++    align-items: center;
++    justify-content: center;
++  }
++
++  // File card: mirror the real generic attachment (icon | name+size column),
++  // download circle trailing; long names wrap instead of stretching the row.
++  &.message-attachment-generic {
++    display: flex;
++    gap: 10px;
++
++    .text-part {
++      flex: 1;
++      min-width: 0;
++
++      .name {
++        overflow-wrap: anywhere;
++      }
++
++      .size {
++        font-size: 11px;
++        color: var(--messageAttachmentFileInfo);
++        margin-top: 3px;
++      }
++    }
++
++    .download-progress-circle {
++      flex-shrink: 0;
++      width: 36px;
++      height: 36px;
++      align-self: center;
++    }
++
++    .circle-download-button {
++      align-self: center;
++    }
 +  }
 +
 +  .text-part > .duration {
@@ -281,7 +322,8 @@ index 0000000..204a6da
 +      display: flex;
 +      align-items: center;
 +      justify-content: center;
-+      font-size: 11px;
++      font-size: 9px;
++      letter-spacing: -0.2px;
 +      color: var(--colorPrimary, #415e6b);
 +    }
 +
@@ -337,10 +379,10 @@ index 5d3432a..b6e27a6 100644
    const minutes = Math.floor(totalSeconds / 60) % 60
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 new file mode 100644
-index 0000000..44f4091
+index 0000000..d5099b6
 --- /dev/null
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,282 @@
 +import React from 'react'
 +import { filesize } from 'filesize'
 +import { T } from '@deltachat/jsonrpc-client'
@@ -412,7 +454,7 @@ index 0000000..44f4091
 +          }
 +        />
 +      </svg>
-+      {!indeterminate && <span className='pct'>{percent}</span>}
++      {!indeterminate && <span className='pct'>{percent}%</span>}
 +    </div>
 +  )
 +}
@@ -421,6 +463,8 @@ index 0000000..44f4091
 +  message: T.Message
 +  postMessageViewType: T.Viewtype
 +  accountId: number
++  /** No caption below the preview: bubble bottom = preview bottom, so keep the full corner radius. */
++  noCaption?: boolean
 +  /** Live percentage (0-100) from the DownloadProgress event, null before the first event. */
 +  downloadPercent: number | null
 +  tabindexForInteractiveContents: -1 | 0
@@ -470,9 +514,13 @@ index 0000000..44f4091
 +  postMessageViewType,
 +  accountId,
 +  downloadPercent,
++  noCaption,
 +  tabindexForInteractiveContents,
 +}: PlaceholderProps) {
 +  const tx = useTranslationFunction()
++  const mediaBoxClass =
++    'message-attachment-media download-on-demand' +
++    (noCaption ? ' no-caption' : '')
 +  const controls = (
 +    <DownloadControls
 +      message={message}
@@ -487,7 +535,7 @@ index 0000000..44f4091
 +  // Image / Gif / Sticker: blurred thumbnail (or grey box) with centered overlay.
 +  if (isImage(viewType) || viewType === 'Sticker') {
 +    return (
-+      <div className='message-attachment-media download-on-demand'>
++      <div className={mediaBoxClass}>
 +        {message.file ? (
 +          <img
 +            className='attachment-content'
@@ -505,7 +553,7 @@ index 0000000..44f4091
 +  // Video: same media box, black background, play glyph behind the overlay.
 +  if (viewType === 'Video') {
 +    return (
-+      <div className='message-attachment-media video download-on-demand'>
++      <div className={mediaBoxClass + ' video'}>
 +        {message.file ? (
 +          <img
 +            className='attachment-content'
@@ -538,7 +586,7 @@ index 0000000..44f4091
 +          ) : (
 +            <button
 +              type='button'
-+              className='audio-download-button'
++              className='circle-download-button'
 +              aria-label={tx('download')}
 +              onClick={() =>
 +                BackendRemote.rpc.downloadFullMessage(accountId, message.id)
@@ -594,13 +642,31 @@ index 0000000..44f4091
 +      </div>
 +      <div className='text-part'>
 +        <div className='name'>{message.fileName}</div>
-+        {controls}
++        <div className='size'>{filesize(message.fileBytes ?? 0)}</div>
++        {message.downloadState === 'Failure' && (
++          <span className='failed'>{tx('download_failed')}</span>
++        )}
 +      </div>
++      {message.downloadState === 'InProgress' ? (
++        <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
++      ) : (
++        <button
++          type='button'
++          className='circle-download-button'
++          aria-label={tx('download')}
++          onClick={() =>
++            BackendRemote.rpc.downloadFullMessage(accountId, message.id)
++          }
++          tabIndex={tabindexForInteractiveContents}
++        >
++          ↓
++        </button>
++      )}
 +    </div>
 +  )
 +}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 4e50db2..308d04f 100644
+index 4e50db2..bc4d8c7 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -47,6 +47,10 @@ import ShortcutMenu from '../ShortcutMenu'
@@ -626,7 +692,7 @@ index 4e50db2..308d04f 100644
    const showCopyImage =
      !!message.file && isImage(message.viewType) && message.viewType !== 'Gif'
    const showResend =
-@@ -971,33 +978,61 @@ export default function Message(props: {
+@@ -971,33 +978,62 @@ export default function Message(props: {
    const { downloadState } = message
  
    if (downloadState !== 'Done') {
@@ -671,6 +737,7 @@ index 4e50db2..308d04f 100644
 +            postMessageViewType={postMessageViewType}
 +            accountId={accountId}
 +            downloadPercent={downloadPercent}
++            noCaption={!caption}
 +            tabindexForInteractiveContents={tabindexForInteractiveContents}
 +          />
 +          {caption ? (
@@ -715,8 +782,23 @@ index 4e50db2..308d04f 100644
    }
  
    /** Whether to show author name and avatar */
-@@ -1012,6 +1047,9 @@ export default function Message(props: {
-   const isWithoutText = isMediaWithoutText(hasText, message.viewType)
+@@ -1009,9 +1045,23 @@ export default function Message(props: {
+ 
+   const hasText = text !== null && text !== ''
+   const fileMime = message.fileMime || null
+-  const isWithoutText = isMediaWithoutText(hasText, message.viewType)
++  // For a caption-less download-on-demand placeholder, treat the message as
++  // its future media type so the timestamp overlays the preview (dark chip)
++  // exactly like a real image/video without text would.
++  const placeholderViewType =
++    message.downloadState !== 'Done' ? getPostMessageViewType(message) : null
++  const placeholderNoCaption =
++    placeholderViewType !== null && placeholderCaption(text) === ''
++  const effectiveViewType = placeholderNoCaption
++    ? placeholderViewType
++    : message.viewType
++  const effectiveHasText = placeholderNoCaption ? false : hasText
++  const isWithoutText = isMediaWithoutText(effectiveHasText, effectiveViewType)
    const showAttachment = (message: T.Message) =>
      message.file &&
 +    // Placeholders carry a thumbnail in `file`; don't render it as a real
@@ -725,3 +807,28 @@ index 4e50db2..308d04f 100644
      message.viewType !== 'Webxdc' &&
      message.viewType !== 'Vcard'
  
+@@ -1024,7 +1074,7 @@ export default function Message(props: {
+         direction,
+         styles.message,
+         commonClassName,
+-        isWithoutText && viewType === 'Video' ? 'video-only' : '',
++        isWithoutText && effectiveViewType === 'Video' ? 'video-only' : '',
+         {
+           [styles.withReactions]: message.reactions,
+           'type-sticker': viewType === 'Sticker',
+@@ -1149,13 +1199,13 @@ export default function Message(props: {
+               error={message.error || null}
+               downloadState={downloadState}
+               isEdited={message.isEdited}
+-              hasText={hasText}
++              hasText={effectiveHasText}
+               hasLocation={hasLocation}
+               timestamp={message.timestamp * 1000}
+               encrypted={message.showPadlock}
+               isSavedMessage={isOrHasSavedMessage}
+               onClickError={() => openDialog(MessageDetail, { id: message.id })}
+-              viewType={message.viewType}
++              viewType={effectiveViewType}
+               chatType={chat.chatType}
+               tabindexForInteractiveContents={tabindexForInteractiveContents}
+             />
