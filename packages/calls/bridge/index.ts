@@ -331,11 +331,12 @@ export interface IncomingCallParams {
   callMessageId: number
   /** The caller's raw-SDP offer (`place_call_info`). */
   offerSdp: string
-  /** Mirrors the `IncomingCall` event's `has_video`: a peer that sent a video
-   * m-line expects one back (offer/answer symmetry) — `accept_incoming_call`
-   * has no `has_video` RPC parameter, so this is the only lever. */
-  hasVideo: boolean
-  /** Preferred camera `deviceId`, seeding the initial acquisition when `hasVideo`. */
+  /** Preferred camera `deviceId`, seeding the camera the user may turn on
+   * mid-call. There is deliberately NO `hasVideo` here: accepting answers
+   * audio-only whatever the caller's `has_video` said (see
+   * `AudioCallEngine.receiveCall`). Offer/answer symmetry is unaffected — the
+   * video m-line is negotiated on every call — so the caller's video still
+   * arrives and the camera can be turned on from the in-call controls. */
   cameraInputDeviceId?: string
   iceServers: RTCIceServer[]
 }
@@ -351,6 +352,8 @@ export class CallBridge {
   readonly accountId: number
   readonly chatId: number
   readonly direction: CallDirection
+  /** Whether we START with our camera on — outgoing only (it is the
+   * `has_video` sent to `placeOutgoingCall`); always `false` for incoming. */
   readonly hasVideo: boolean
   /** Known once placed (outgoing) or from the `IncomingCall` event (incoming). */
   callMessageId: number | null
@@ -538,7 +541,7 @@ export class CallBridge {
       direction: 'incoming',
       accountId: params.accountId,
       chatId: params.chatId,
-      hasVideo: params.hasVideo,
+      hasVideo: false, // answering never starts our camera (see IncomingCallParams)
       cameraInputDeviceId: params.cameraInputDeviceId,
       callMessageId: params.callMessageId,
       pendingOfferSdp: params.offerSdp,

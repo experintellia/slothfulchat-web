@@ -799,14 +799,41 @@ test('hasVideo: placeCall adds a video track/sender alongside the mic', async ()
   );
 });
 
-test('hasVideo: accept adds a video track/sender alongside the mic', async () => {
-  const { engine, lastPc } = makeEngine({ hasVideo: true });
+test('consent: accepting an incoming call NEVER requests the camera, even when the caller offered video', async () => {
+  const gumCalls: MediaStreamConstraints[] = [];
+  // hasVideo: true is the caller's `has_video` as the old code propagated it —
+  // accepting must still answer audio-only (H-07).
+  const { engine, events, lastPc } = makeEngine({
+    hasVideo: true,
+    seedRemoteVideoSender: true,
+    getUserMedia: async (constraints) => {
+      gumCalls.push(constraints);
+      return micStream() as unknown as MediaStream;
+    },
+  });
   engine.receiveCall('OFFER_FROM_PEER');
   await engine.accept();
 
+  assert.equal(gumCalls.length, 1, 'one acquisition — no audio-only retry needed');
+  assert.equal(gumCalls[0].video, false, 'no camera in the constraints handed to getUserMedia');
+  assert.equal(engine.hasVideo, false, 'answered audio-only');
+  assert.equal(engine.cameraEnabled, false);
+  assert.deepEqual(events.localVideoTrackChanges, [], 'no local camera preview started');
+  // The caller's video must still ARRIVE: the video m-line is adopted and
+  // promoted to sendrecv exactly as before, so remote video/screen-share render
+  // and the user can turn their own camera on mid-call.
   const pc = lastPc();
-  assert.equal(pc.addedTracks.length, 2);
-  assert.ok(pc.senders.some((s) => (s.track as unknown as { kind: string } | null)?.kind === 'video'));
+  assert.equal(pc.addedTracks.length, 1, 'only the mic is addTrack-ed');
+  assert.deepEqual(
+    pc.seededVideoSender!.setStreamsCalls,
+    [[engine.localMediaStream]],
+    'the peer video m-line is still adopted (msid-associated)'
+  );
+  assert.equal(
+    pc.transceivers.find((t) => t.sender === pc.seededVideoSender)!.direction,
+    'sendrecv',
+    'still promoted to sendrecv, so a mid-call camera can flow'
+  );
 });
 
 test('BUG 3: a video-started call with no camera degrades to audio-only (non-fatal, call proceeds)', async () => {

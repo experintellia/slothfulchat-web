@@ -217,7 +217,6 @@ function main(): void {
             chatId: init.chatId,
             callMessageId: init.callMessageId,
             offerSdp: init.offerSdp,
-            hasVideo: init.hasVideo,
             iceServers,
           },
           factories,

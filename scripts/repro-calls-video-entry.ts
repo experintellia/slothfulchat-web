@@ -87,6 +87,9 @@ async function setupCall(opts: { aHasVideo?: boolean; bHasVideo?: boolean }): Pr
     return st;
   };
 
+  // NOTE: bHasVideo is a no-op — B is the answerer, and receiveCall() clears
+  // hasVideo (accepting never starts the recipient's camera). Drive B's camera
+  // with setCameraEnabled('B', true) after connect instead.
   const b = mk('B', opts.bHasVideo ?? false, {
     onLocalAnswer: (sdp: string) => {
       sdps.answer = sdp;

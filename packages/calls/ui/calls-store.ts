@@ -49,10 +49,11 @@ export type CallUiSnapshot =
       /** The chat's theme color (hex); `null` until resolved. */
       avatarColor: string | null
       muted: boolean
-      /** Whether this call STARTED with the camera on. Only seeds the initial
-       * camera state — does NOT gate the camera/screen-share controls (the
-       * video sender is always negotiated). Use `localHasVideo`/
-       * `remoteHasVideo` to decide whether to render video tiles. */
+      /** Whether this call STARTED with the camera on — outgoing only; an
+       * accepted incoming call is always audio-only. Seeds the initial camera
+       * state; does NOT gate the camera/screen-share controls (the video
+       * sender is always negotiated). Use `localHasVideo`/`remoteHasVideo` to
+       * decide whether to render video tiles. */
       hasVideo: boolean
       /** Whether the local camera is currently ON — camera button pressed
        * state. Starts equal to `hasVideo`. */

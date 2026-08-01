@@ -750,8 +750,9 @@ class BrowserRuntime {
   /**
    * Show the incoming-call ring and, on accept, answer the call. Called from
    * the IncomingCall event subscription and the chat log's accept/redial
-   * buttons. `startWithCameraEnabled` mirrors the caller's `has_video` (see
-   * `IncomingCallParams.hasVideo`).
+   * buttons. `startWithCameraEnabled` is upstream's name for the caller's
+   * `has_video`; it says what THEY send, so we only record it — accepting
+   * answers audio-only and never starts our camera (see `openIncomingCall`).
    */
   async openIncomingVideoCallWindow(params: {
     accountId: number
@@ -1789,6 +1790,9 @@ class CallManager {
     accountId: number
     chatId: number
     direction: CallDirection
+    /** Outgoing: our own audio-vs-video choice (the `has_video` we send).
+     * Incoming: the CALLER's `has_video` — kept for analytics only, it never
+     * turns our camera on (see `openIncomingCall`). */
     hasVideo: boolean
     /** Best-effort chat/contact name (resolved by `decorateCallInfo`). */
     title: string
@@ -2025,8 +2029,9 @@ class CallManager {
     }
     // Ringing ALWAYS renders in the main window — the popup only opens on
     // accept. The ringing engine holds no media/pc yet (mic untouched until
-    // accept), so a later popup handoff is cheap.
-    this.ui.showCall({ direction: 'incoming', title: 'Call', hasVideo })
+    // accept), so a later popup handoff is cheap. `hasVideo` is omitted on
+    // purpose: it seeds the camera-on UI state, and we answer audio-only.
+    this.ui.showCall({ direction: 'incoming', title: 'Call' })
     const slot: NonNullable<CallManager['call']> = {
       accountId,
       chatId,
@@ -2079,7 +2084,6 @@ class CallManager {
         chatId: slot.chatId,
         callMessageId: slot.callMessageId ?? 0,
         offerSdp: slot.offerSdp ?? '',
-        hasVideo: slot.hasVideo,
         iceServers,
       },
       this.factories,
@@ -2295,7 +2299,8 @@ class CallManager {
       direction: slot.direction,
       accountId: slot.accountId,
       chatId: slot.chatId,
-      hasVideo: slot.hasVideo,
+      // Outgoing only — an accepted incoming call starts audio-only.
+      hasVideo: slot.direction === 'outgoing' && slot.hasVideo,
       callMessageId: slot.callMessageId,
       offerSdp: slot.offerSdp,
       title: slot.title,
@@ -2346,7 +2351,7 @@ class CallManager {
       try {
         const iceServers = await fetchIceServers(this.rpc, slot.accountId)
         if (slot.cancelled || slot.mode !== 'overlay') return
-        this.ui.showCall({ direction: 'incoming', title: slot.title, hasVideo: slot.hasVideo })
+        this.ui.showCall({ direction: 'incoming', title: slot.title })
         const bridge = this.newIncomingBridge(slot, iceServers)
         slot.bridge = bridge
         void this.decorateCallInfo(slot)

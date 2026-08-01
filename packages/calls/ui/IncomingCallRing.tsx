@@ -2,7 +2,10 @@
  * The incoming-ring dialog. Rendered only for an incoming, still-ringing
  * call (see `CallsRoot`); it renders in the always-mounted main window so
  * it can never be popup-blocked (docs/calls.md §Windowing). The mic is
- * deliberately not touched until the user presses Accept.
+ * deliberately not touched until the user presses Accept — and the CAMERA is
+ * not touched at all: Accept answers audio-only however the caller's
+ * `has_video` was set, so one generic button can never start filming the user.
+ * Turning the camera on is an explicit in-call control.
  */
 import { useIsMobileViewport } from './useIsMobileViewport.ts'
 import * as styles from './styles.ts'
