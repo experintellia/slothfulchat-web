@@ -19,6 +19,10 @@ pub use tokio::{io, join, pin, select, sync, task_local, try_join};
 // on every target, since a sweep mistake permanently deletes a user's account.
 pub mod registry;
 
+// Same deal for the OPFS write-through's retry/give-up decision: dropping a
+// write silently loses whatever the database already references.
+pub mod durability;
+
 #[cfg(target_arch = "wasm32")]
 pub mod fs;
 #[cfg(target_arch = "wasm32")]
