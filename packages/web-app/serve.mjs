@@ -4,7 +4,8 @@ import { readFile, stat } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const root = fileURLToPath(new URL('./dist', import.meta.url))
+// SERVE_ROOT: alternate absolute dir to serve (tests serve a minimal temp dir)
+const root = process.env.SERVE_ROOT ?? fileURLToPath(new URL('./dist', import.meta.url))
 const PORT = Number(process.env.PORT ?? 8642)
 
 const types = {

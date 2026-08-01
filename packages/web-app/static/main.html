@@ -41,6 +41,9 @@
       SLOTHFUL_PLAUSIBLE_DOMAIN, so keep the values here in sync with the base
       list + default pin there.
       * style-src 'unsafe-inline' is needed for theming and the virtual list.
+      * child-src 'self' lets the HTML email viewer dialog embed
+        html-email.html (which carries its own, stricter CSP; frame-src falls
+        back to child-src here). blob: stays for workers created from blobs.
       * Calls (WebRTC, docs/calls.md) need NOTHING added here. STUN/TURN and the
         media/ICE traffic are NOT governed by connect-src — WebRTC does not pass
         through Fetch — so the (dynamic, per-relay) hosts `ice_servers()` returns
@@ -61,7 +64,7 @@
                    font-src 'self';
                    script-src 'self' 'wasm-unsafe-eval';
                    worker-src 'self' blob: ;
-                   child-src blob: ;
+                   child-src 'self' blob: ;
                    img-src 'self' data: blob: file: webxdc-icon: ;
                    media-src 'self' file: blob: ;
                    connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl https://raw.githubusercontent.com/experintellia/chatmail-relays-mirror/refs/heads/data/relays.json"

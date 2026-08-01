@@ -7,7 +7,7 @@
   "license": "GPL-3.0-or-later",
   "scripts": {
     "assemble": "node assemble.mjs",
-    "build": "tsc --noEmit && esbuild --format=esm --bundle src/runtime.ts --outfile=dist/runtime.js && esbuild --format=esm --bundle src/call-popup.ts --outfile=dist/call-popup.js && esbuild --format=esm --bundle src/blobs-sw.ts --outfile=dist/blobs-sw.js && node sw-manifest.mjs",
+    "build": "tsc --noEmit && esbuild --format=esm --bundle src/runtime.ts --outfile=dist/runtime.js && esbuild --format=esm --bundle src/call-popup.ts --outfile=dist/call-popup.js && esbuild --format=esm --bundle src/html-email.ts --outfile=dist/html-email.js && esbuild --format=esm --bundle src/blobs-sw.ts --outfile=dist/blobs-sw.js && node sw-manifest.mjs",
     "dev:webxdc": "node dev-caddy.mjs",
     "serve": "node serve.mjs",
     "start": "pnpm assemble && pnpm build && pnpm serve",
@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@slothfulchat/calls": "workspace:*",
-    "@slothfulchat/core-wasm": "workspace:*"
+    "@slothfulchat/core-wasm": "workspace:*",
+    "dompurify": "^3.2.6"
   },
   "devDependencies": {
     "esbuild": "^0.25.5",

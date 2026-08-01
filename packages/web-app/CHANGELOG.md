@@ -13,6 +13,14 @@
   recipient sees what is coming before spending the bandwidth.
 - Downloading a big message now shows a live percentage on the message bubble,
   and an interrupted download continues where it stopped.
+- **"Show Full Message…" now works**: HTML emails open in a sandboxed viewer.
+  Scripts in the mail are stripped and can never run, and remote images stay
+  blocked — no tracking pixels — until you allow them (Never / Once / Always;
+  "Always" is remembered, and not offered for message requests). Email
+  addresses and Delta Chat invite links inside a mail open right in the app
+  (new chat / invite dialog, on the account the mail belongs to) instead of
+  leaving it, and ordinary web links get the same tracking-parameter
+  stripping as links in a chat.
 - **Chat export works again**: the `index.html` viewer inside exported chat
   zips threw a script error and showed an empty page; exports now render
   correctly again.

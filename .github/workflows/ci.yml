@@ -258,6 +258,24 @@ jobs:
       - name: E2E test — bridge picker dialog
         run: node scripts/test-bridge-dialog.mjs
 
+      # HTML email viewer security check (fully offline, no core boot; builds
+      # its own bundle): sanitizer strips scripts/meta/base/javascript: URLs,
+      # sandbox gives the mail an opaque no-script origin, authored CSP keeps
+      # remote images off the network until the user opts in, links open
+      # target=_blank noopener noreferrer.
+      - name: Security check — HTML email viewer sandbox
+        run: node scripts/test-html-email.mjs
+
+      # HTML email viewer e2e (offline, mock madmail, real wasm core): one
+      # account sends a message with crafted hostile HTML to a second; the
+      # receiver's "Show Full Message…" button opens the viewer; asserts the
+      # crafted script never runs, the frame is cross-origin isolated, and the
+      # remote tracking image is CSP-blocked until the ⋮-menu opt-in, then
+      # reaches the network. Verifies the whole path the unit check above can't:
+      # core has_html -> frontend button -> openMessageHTML -> sandboxed render.
+      - name: E2E test — HTML email viewer on the wasm core
+        run: node scripts/test-html-email-e2e.mjs
+
       # relay picker e2e (offline: the directory fetch and the bridge /dns +
       # /tcp probes are both mocked): the instant-onboarding relay dropdown
       # lists the directory relays default-first, lazily probes reachability +
