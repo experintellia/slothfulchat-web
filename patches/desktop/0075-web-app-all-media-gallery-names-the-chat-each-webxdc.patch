@@ -1,0 +1,286 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <claude.ai.2026@simonlaux.de>
+Date: Sat, 1 Aug 2026 23:18:44 +0000
+Subject: [PATCH 75/75] web-app: all-media gallery names the chat each webxdc
+ app came from
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Apps tab of "All Media" mixes apps from every chat, and nothing in the
+row said where an app came from — the only way to find out was the context
+menu's "Show in chat".
+
+Each row now carries its chat twice over: the chat avatar badged onto the
+bottom-right corner of the app icon (same construction as the message search
+results in the chat list — 20px avatar with a 1.6px outline in the surface
+colour so it reads as a badge over the icon), and the chat name in front of
+the app's own summary, separated by a middle dot. Apps mostly have an empty
+summary, so the second line usually just reads as the chat name.
+
+Only in the global gallery: `Gallery` passes `showChat` (chatId === 'all')
+through the grid's itemData to the item component, and per-chat galleries
+render exactly as before.
+
+Three layout fixes the added text made necessary:
+
+- The summary is now a single ellipsized line instead of wrapping into a
+  second line that the fixed 61px row height clipped mid-sentence. The chat
+  name comes first, so it is the app's own summary that gets cut.
+- A `button` is shrink-to-fit, so with a non-wrapping summary the row grew
+  past its grid cell and was clipped by the cell's overflow, i.e. cut
+  mid-word with no ellipsis. The row now fills the cell (minus its margins),
+  which also makes the hover background span the whole cell.
+- `.text-part`'s max-width subtracted 37px for a 44px icon plus its 8px
+  margin; with the row now exactly cell-width, the missing 15px pushed the
+  text out of the cell. It subtracts 52px.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .../scss/gallery/_media-attachment.scss       | 50 +++++++++++++++++--
+ packages/frontend/src/components/Gallery.tsx  |  7 +++
+ .../attachment/galleryAttachment.tsx          | 46 +++++++++++++++--
+ 3 files changed, 95 insertions(+), 8 deletions(-)
+
+diff --git a/packages/frontend/scss/gallery/_media-attachment.scss b/packages/frontend/scss/gallery/_media-attachment.scss
+index edb2bf6..bbe5f56 100644
+--- a/packages/frontend/scss/gallery/_media-attachment.scss
++++ b/packages/frontend/scss/gallery/_media-attachment.scss
+@@ -204,23 +204,54 @@
+   display: flex;
+   flex-direction: row;
+   margin: 3.5px 3px;
++  // A `button` is shrink-to-fit, so with a single-line summary it would grow
++  // past its grid cell and get clipped without an ellipsis. Minus the margins.
++  width: calc(100% - 6px);
+ 
+   &:hover {
+     background-color: var(--galleryWebxdcItem);
+     border-radius: calc(44px * 0.07); // same radius as webxdc icon
+   }
+ 
+-  & > .icon {
++  .icon {
+     height: 44px;
+     width: 44px;
+     border-radius: 7%;
+   }
+ 
++  // "All media" gallery only: the chat an app came from, badged onto its
++  // icon (like the message search results) and named in front of the summary.
++  .icon-part {
++    position: relative;
++    flex: none;
++    // Not `stretch`, otherwise the badge drops to the bottom of the row.
++    align-self: flex-start;
++    height: 44px;
++  }
++
++  .chat-badge {
++    position: absolute;
++    inset-block-end: -2px;
++    inset-inline-end: -3px;
++    --local-avatar-size: 20px;
++    --local-avatar-font-size: 10px;
++    --local-avatar-vertical-margin: 0;
++
++    & > .content {
++      outline: 1.6px solid;
++      outline-color: var(--bgPrimary);
++    }
++  }
++
++  &:hover .chat-badge > .content {
++    outline-color: var(--galleryWebxdcItem);
++  }
++
+   & > .text-part {
+     flex-grow: 1;
+     margin-inline-start: 8px;
+     // The width of the icon plus our 8px margin
+-    max-width: calc(100% - 37px);
++    max-width: calc(100% - 52px);
+ 
+     & > .name {
+       color: var(--messageAttachmentFileInfo);
+@@ -236,6 +267,19 @@
+       line-height: 16px;
+       letter-spacing: 0.3px;
+       margin-top: 3px;
++      // One line: the chat name comes first and survives, the app's own
++      // summary is what gets cut off.
++      white-space: nowrap;
++      text-overflow: ellipsis;
++
++      & > .chat-name {
++        font-weight: 500;
++      }
++
++      & > .separator {
++        margin: 0 4px;
++        opacity: 0.5;
++      }
+     }
+ 
+     & > .name,
+@@ -249,7 +293,7 @@
+   }
+ 
+   &.broken {
+-    & > .icon {
++    .icon {
+       background-color: var(--colorDanger);
+     }
+     .name {
+diff --git a/packages/frontend/src/components/Gallery.tsx b/packages/frontend/src/components/Gallery.tsx
+index f9c891d..f73a52f 100644
+--- a/packages/frontend/src/components/Gallery.tsx
++++ b/packages/frontend/src/components/Gallery.tsx
+@@ -406,6 +406,7 @@ export default class Gallery extends Component<
+             {currentTab !== 'files' && (
+               <GridGallery
+                 currentTab={currentTab}
++                showChat={this.props.chatId === 'all'}
+                 element={this.state.element}
+                 openFullscreenMedia={this.openFullscreenMedia.bind(this)}
+                 mediaMessageIds={mediaMessageIds}
+@@ -424,6 +425,7 @@ export default class Gallery extends Component<
+ 
+ function GridGallery({
+   currentTab,
++  showChat,
+   mediaMessageIds,
+   galleryItemsRef,
+   updateFirstVisibleMessage,
+@@ -431,6 +433,7 @@ function GridGallery({
+   openFullscreenMedia,
+ }: {
+   currentTab: MediaTabKey
++  showChat: boolean
+   mediaMessageIds: number[]
+   galleryItemsRef: React.RefObject<HTMLDivElement | null>
+   updateFirstVisibleMessage: (msg: T.MessageLoadResult) => void
+@@ -559,6 +562,7 @@ function GridGallery({
+                     messageCache,
+                     openFullscreenMedia,
+                     itemsPerRow,
++                    showChat,
+                   }}
+                   itemKey={({ rowIndex, columnIndex, data }) =>
+                     data.mediaMessageIds[rowIndex * itemsPerRow + columnIndex]
+@@ -590,6 +594,7 @@ function GalleryGridCell({
+     messageCache: Record<number, Type.MessageLoadResult | undefined>
+     openFullscreenMedia: (message: Type.Message) => void
+     itemsPerRow: number
++    showChat: boolean
+   }
+ }) {
+   const {
+@@ -598,6 +603,7 @@ function GalleryGridCell({
+     messageCache,
+     openFullscreenMedia,
+     itemsPerRow,
++    showChat,
+   } = data
+ 
+   const msgId = mediaMessageIds[rowIndex * itemsPerRow + columnIndex]
+@@ -612,6 +618,7 @@ function GalleryGridCell({
+         messageId={msgId}
+         loadResult={message}
+         openFullscreenMedia={openFullscreenMedia}
++        showChat={showChat}
+       />
+     </div>
+   )
+diff --git a/packages/frontend/src/components/attachment/galleryAttachment.tsx b/packages/frontend/src/components/attachment/galleryAttachment.tsx
+index 5e21ff9..e0f5e84 100644
+--- a/packages/frontend/src/components/attachment/galleryAttachment.tsx
++++ b/packages/frontend/src/components/attachment/galleryAttachment.tsx
+@@ -19,6 +19,7 @@ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import useMessage from '../../hooks/chat/useMessage'
+ import MessageDetail from '../dialogs/MessageDetail/MessageDetail'
+ import { ContextMenuContext } from '../../contexts/ContextMenuContext'
++import { Avatar } from '../Avatar'
+ import { AudioPlayer } from '../AudioPlayer'
+ import { NextVoiceMessagePlayerContext } from '../../contexts/NextVoiceMessagePlayerContext'
+ 
+@@ -164,6 +165,11 @@ function squareBrokenMediaContent() {
+ export type GalleryAttachmentElementProps = {
+   messageId: number
+   loadResult: T.MessageLoadResult
++  /**
++   * Whether the gallery shows media from all chats, in which case the item
++   * has to say which chat it came from. Only `WebxdcAttachment` honors it.
++   */
++  showChat?: boolean
+ }
+ 
+ export function ImageAttachment({
+@@ -599,6 +605,7 @@ const highlightQuery = (msg: string, query: string) => {
+ export function WebxdcAttachment({
+   messageId,
+   loadResult,
++  showChat,
+ }: GalleryAttachmentElementProps) {
+   const { openDialog } = useDialog()
+   const contextMenu = useContext(ContextMenuContext)
+@@ -629,6 +636,19 @@ export function WebxdcAttachment({
+     ? webxdcInfoFetch.result.value
+     : null
+ 
++  // In the "all media" gallery apps from every chat are mixed together,
++  // so name the chat each app came from.
++  // ponytail: one `getBasicChatInfo` per rendered row, no cache, because
++  // the grid only renders what's on screen and the call is a local DB read.
++  // If that ever shows up in a profile, memoize it per chat id.
++  const chatFetch = useRpcFetch(
++    BackendRemote.rpc.getBasicChatInfo,
++    showChat && loadResult.kind === 'message'
++      ? [accountId, loadResult.chatId]
++      : null
++  )
++  const chat = chatFetch?.result?.ok ? chatFetch.result.value : null
++
+   if (webxdcInfoFetch?.loading) {
+     const onContextMenu = getBrokenMediaContextMenu(
+       contextMenu.openContextMenu,
+@@ -704,10 +724,22 @@ export function WebxdcAttachment({
+         onClick={openWebxdc.bind(null, loadResult, webxdcInfo ?? undefined)}
+         {...rovingTabindexProps}
+       >
+-        <img
+-          className='icon'
+-          src={runtime.getWebxdcIconURL(selectedAccountId(), loadResult.id)}
+-        />
++        <div className='icon-part'>
++          <img
++            className='icon'
++            src={runtime.getWebxdcIconURL(selectedAccountId(), loadResult.id)}
++          />
++          {/* Decorative: the chat name is spelled out right next to it. */}
++          {chat && (
++            <Avatar
++              className='chat-badge'
++              avatarPath={chat.profileImage}
++              color={chat.color}
++              displayName={chat.name}
++              aria-hidden={true}
++            />
++          )}
++        </div>
+         <div className='text-part'>
+           <div
+             className='name'
+@@ -716,7 +748,11 @@ export function WebxdcAttachment({
+             {document && truncateText(document, 25) + ' - '}
+             {name}
+           </div>
+-          <div className='summary'>{summary}</div>
++          <div className='summary'>
++            {chat && <span className='chat-name'>{chat.name}</span>}
++            {chat && summary && <span className='separator'>·</span>}
++            {summary}
++          </div>
+         </div>
+       </button>
+     )

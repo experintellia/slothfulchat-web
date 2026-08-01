@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 1 Aug 2026 17:29:03 +0000
-Subject: [PATCH 74/74] =?UTF-8?q?web-app:=20global=20voice=20player=20?=
+Subject: [PATCH 74/75] =?UTF-8?q?web-app:=20global=20voice=20player=20?=
  =?UTF-8?q?=E2=80=94=20custom=20mini-player,=20Media=20Session,=20mobile?=
  =?UTF-8?q?=20strip?=
 MIME-Version: 1.0
@@ -94,7 +94,7 @@ suite (lands here because it imports mediaSession.ts).
  create mode 100644 packages/frontend/src/tests/audioPlayer.test.ts
 
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
-index 49a037ccd..b6ce21553 100644
+index 49a037c..b6ce215 100644
 --- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
 +++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
 @@ -1,20 +1,286 @@
@@ -647,7 +647,7 @@ index 49a037ccd..b6ce21553 100644
 +}
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts b/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
 new file mode 100644
-index 000000000..a2a8e05e9
+index 0000000..a2a8e05
 --- /dev/null
 +++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
 @@ -0,0 +1,78 @@
@@ -730,7 +730,7 @@ index 000000000..a2a8e05e9
 +  return next
 +}
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
-index 9b4893c81..7b783842d 100644
+index 9b4893c..7b78384 100644
 --- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
 +++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
 @@ -41,3 +41,135 @@
@@ -870,7 +870,7 @@ index 9b4893c81..7b783842d 100644
 +  }
 +}
 diff --git a/packages/frontend/src/components/Settings/Notifications.tsx b/packages/frontend/src/components/Settings/Notifications.tsx
-index b29ea71e1..aeb247755 100644
+index b29ea71..aeb2477 100644
 --- a/packages/frontend/src/components/Settings/Notifications.tsx
 +++ b/packages/frontend/src/components/Settings/Notifications.tsx
 @@ -118,6 +118,15 @@ export default function Notifications({ desktopSettings }: Props) {
@@ -890,7 +890,7 @@ index b29ea71e1..aeb247755 100644
          settingsKey='notifications'
          label={tx('pref_notifications_explain')}
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index c0c8ac599..5c77d5f8b 100644
+index c0c8ac5..5c77d5f 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 @@ -298,6 +298,16 @@ export default function MainScreen({ accountId }: Props) {
@@ -920,7 +920,7 @@ index c0c8ac599..5c77d5f8b 100644
        {!smallScreenMode && (
          <div
 diff --git a/packages/frontend/src/components/screens/MainScreen/styles.module.scss b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
-index ecb61801b..821e9bc36 100644
+index ecb6180..821e9bc 100644
 --- a/packages/frontend/src/components/screens/MainScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
 @@ -14,6 +14,25 @@
@@ -951,7 +951,7 @@ index ecb61801b..821e9bc36 100644
    flex-direction: column;
 diff --git a/packages/frontend/src/tests/audioPlayer.test.ts b/packages/frontend/src/tests/audioPlayer.test.ts
 new file mode 100644
-index 000000000..1c0f28e0a
+index 0000000..1c0f28e
 --- /dev/null
 +++ b/packages/frontend/src/tests/audioPlayer.test.ts
 @@ -0,0 +1,178 @@
