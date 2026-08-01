@@ -82,9 +82,9 @@ exists:
   `src/html-email.ts`, `openMessageHTML` in `src/runtime.ts`); guarded by
   `scripts/test-html-email.mjs` and the `scripts/test-html-email-e2e.mjs`
   end-to-end check. Two small desktop changes: enlarge the "Show Full
-  Message…" tap target on touch devices (`desktop/0069`), and expose the
+  Message…" tap target on touch devices (`desktop/0070`), and expose the
   frontend safe-link opener the viewer routes `http(s)` links through
-  (`desktop/0070`).
+  (`desktop/0071`).
 - **webimap transport (madmail)** — a second mail transport speaking
   [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at

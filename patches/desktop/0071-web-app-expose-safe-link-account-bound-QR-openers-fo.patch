@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothfulchat.local>
-Date: Sat, 1 Aug 2026 17:03:56 +0000
-Subject: [PATCH 70/70] web-app: expose safe-link + account-bound QR openers
+Date: Sat, 1 Aug 2026 19:09:44 +0000
+Subject: [PATCH 71/71] web-app: expose safe-link + account-bound QR openers
  for the HTML-email viewer
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -22,11 +22,11 @@ link clicked inside it can't reach React. It relays such links to the app
 Only the web-app runtime ever sets/uses these; upstream/electron never
 touch them.
 ---
- .../src/components/RuntimeAdapter.tsx         | 25 +++++++++++++++++++
- 1 file changed, 25 insertions(+)
+ .../src/components/RuntimeAdapter.tsx         | 26 +++++++++++++++++++
+ 1 file changed, 26 insertions(+)
 
 diff --git a/packages/frontend/src/components/RuntimeAdapter.tsx b/packages/frontend/src/components/RuntimeAdapter.tsx
-index 88876b50d..5e78bad4e 100644
+index 88876b50d..42bcdd0f7 100644
 --- a/packages/frontend/src/components/RuntimeAdapter.tsx
 +++ b/packages/frontend/src/components/RuntimeAdapter.tsx
 @@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react'
@@ -37,15 +37,16 @@ index 88876b50d..5e78bad4e 100644
  import { clearNotificationsForChat } from '../system-integration/notifications'
  import { runtime } from '@deltachat-desktop/runtime-interface'
  
-@@ -33,6 +34,30 @@ export default function RuntimeAdapter({
+@@ -33,6 +34,31 @@ export default function RuntimeAdapter({
  
    const { closeDialog, openDialog, closeAllDialogs } = useDialog()
    const openSendToDialogId = useRef<string | undefined>(undefined)
 +  const openNonMailtoLinkSafely = useOpenNonMailtoLinkSafely()
 +
-+  // web-app (SlothfulChat): the HTML-email viewer has no access to React, so it
-+  // relays links clicked inside the sandboxed mail to the runtime, which calls
-+  // these globals. Both are no-ops upstream/electron never touches.
++  // web-app (SlothfulChat): the HTML-email viewer renders sender HTML in a
++  // script-less sandbox, so a link clicked inside it can't reach React. It
++  // relays such links to the runtime, which calls these globals. Both are
++  // no-ops upstream/electron never touch.
 +  //  - http(s) links -> the safe-link path (tracking-param stripping), same as
 +  //    a pasted or in-chat link. Account-agnostic.
 +  //  - app links (mailto/openpgp4fpr/dcaccount/dclogin/i.delta.chat invites) ->
