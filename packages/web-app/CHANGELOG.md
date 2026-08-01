@@ -1,5 +1,33 @@
 # Changelog
 
+- **Custom voice-message player** — voice and audio messages
+  get proper controls: play/pause, a waveform you can click to seek (with a
+  plain seek bar as fallback), elapsed time, and a playback-speed pill
+  (1×/1.5×/2×, applies to all voice messages). Half-listened messages resume
+  where you left off. The mini-player that keeps playing while you switch
+  chats gets the same controls plus the sender's name — click it to jump back
+  to the message — and your lock screen / headset buttons control playback
+  (without showing who sent the message, unless you opt in). Recording is
+  polished too: pause and resume while recording, listen to your recording
+  before sending it (send, re-record or discard), hold the mic and slide up
+  to record hands-free or slide left to cancel, and an "original audio"
+  option that skips noise suppression for music or ambience. If you have
+  several microphones you can pick one right in the recorder (with a live
+  level meter), even mid-recording — and if no sound is coming in, an inline
+  hint says so instead of cancelling your recording. On by default now —
+  turn it off in Settings → Advanced → Experimental features if it gives
+  you trouble. The setting for showing sender and chat details in the
+  system media controls has moved to Settings → Notifications, next to
+  "show notification content" (it is the same lock-screen question). On
+  phone-sized screens the playing voice message shows as a slim bar pinned
+  under the top bar — visible inside the chat too, with play/pause, the
+  sender (tap to jump to the message), speed and a thin progress line.
+
+- **Voice-message position stays in sync**: switching profiles or chats while
+  a voice message plays no longer resets the message's displayed position to
+  0:00 — it picks up where the audio actually is. The recorder also fits
+  phone-sized windows now instead of pushing its buttons off-screen.
+
 - **Security**: opening a received attachment can no longer run its code as
   part of the app. A scripted SVG sent to you could reach your local app data;
   attachments now open isolated, and images, video and audio still display
