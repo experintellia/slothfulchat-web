@@ -166,20 +166,6 @@ const QR_URL_PREFIXES = [
   'dclogin:', // scan-to-login
 ]
 
-/** Open a URL in a new tab via a synthesized anchor click instead of
- * window.open(): iOS installed PWAs silently drop window.open() for many
- * URLs (issue: unreliable link taps on iOS), while a real anchor navigation
- * works everywhere — on iOS it opens the in-app browser sheet. Must run
- * within the user gesture, which every caller does. */
-function openInNewTab(url: string): void {
-  const a = document.createElement('a')
-  a.href = url
-  a.target = '_blank'
-  a.rel = 'noopener noreferrer'
-  document.body.append(a)
-  a.click()
-  a.remove()
-}
 
 /** What the app was launched to do, sniffed out of the page URL at boot:
  *  - `qr`: an invite / login / verification payload → frontend `onOpenQrUrl`.
@@ -1234,7 +1220,7 @@ class BrowserRuntime {
   }
   async openPath(path: string): Promise<string> {
     if (path.includes('dc.db-blobs')) {
-      openInNewTab(this.transformBlobURL(path))
+      window.open(this.transformBlobURL(path), '_blank')?.focus()
       return ''
     }
     throw new Error(
@@ -1424,7 +1410,7 @@ class BrowserRuntime {
   openLink(link: string): void {
     // all in-app external links funnel through here (About dialog, ClickableLink)
     analytics.trackLink(link)
-    openInNewTab(link)
+    window.open(link, '_blank')?.focus()
   }
 
   private log: Logger = console as unknown as Logger
@@ -1651,7 +1637,7 @@ class BrowserRuntime {
       method: 'HEAD',
     })
     const lang = response.ok ? curLang : 'en'
-    openInNewTab(`/help/${lang}/help.html${anchorPath}`)
+    window.open(`/help/${lang}/help.html${anchorPath}`, '_blank')?.focus()
   }
   openLogFile(): void {
     this.log.warn('no log file in wasm edition, logs are in the browser console')
