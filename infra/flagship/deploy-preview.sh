@@ -108,7 +108,16 @@ cfg_path, dist_root, host = sys.argv[1:4]
 # speculative. A directive added there adds its handler name here, in the same
 # commit; anything else is an upload trying to do something routes.caddy has
 # never done.
-ALLOWED_HANDLERS = {"subroute", "vars", "encode", "error", "file_server", "rewrite"}
+ALLOWED_HANDLERS = {
+    "subroute", "vars", "encode", "error", "file_server", "rewrite",
+    # `header` (security response headers). Note this permits an upload to set
+    # ARBITRARY response headers on its own slot — including relaxing the very
+    # headers it is here to add. That is contained: a preview slot serves only
+    # its own bundle on its own hostname, the host allowlist below stops it
+    # claiming anyone else's, and headers cannot read the filesystem or reach
+    # the network the way reverse_proxy or {env.*} could.
+    "headers",
+}
 # The two site addresses this slot owns, and no others. Every other name on the
 # box (next, prod, another PR's slot) is off limits.
 ALLOWED_HOSTS = {host, "*.webxdc." + host}
