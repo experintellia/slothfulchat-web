@@ -32,6 +32,10 @@ export interface CallPopupInit {
   direction: CallDirection
   accountId: number
   chatId: number
+  /** Start with the local camera on. Outgoing: the caller's own choice.
+   * Incoming: whether the user pressed "Accept with video" in the opener's ring
+   * — their explicit local intent, NEVER the caller's `has_video` (see
+   * `IncomingCallParams`); a plain Accept sends `false`. */
   hasVideo: boolean
   /** Incoming: the info-message id (from the `IncomingCall` event), needed for
    * `acceptIncomingCall`/`endCall`. Outgoing: `null` — the popup learns its own
