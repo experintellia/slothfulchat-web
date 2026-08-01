@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 23 Jul 2026 02:27:26 +0000
-Subject: [PATCH 20/21] event: add DownloadProgress for chunked message
+Subject: [PATCH 20/22] event: add DownloadProgress for chunked message
  downloads
 
 Reports permille progress (1..=999, 1000 = done) while a large message
@@ -16,7 +16,7 @@ Claude-Session: https://claude.ai/code/session_019DhvV6wm3aXyrgHHXaefxw
  3 files changed, 33 insertions(+), 2 deletions(-)
 
 diff --git a/deltachat-ffi/src/lib.rs b/deltachat-ffi/src/lib.rs
-index abea9ebba..adcf7f75c 100644
+index abea9eb..adcf7f7 100644
 --- a/deltachat-ffi/src/lib.rs
 +++ b/deltachat-ffi/src/lib.rs
 @@ -537,6 +537,7 @@ fn spawn_configure(ctx: Context) {
@@ -58,7 +58,7 @@ index abea9ebba..adcf7f75c 100644
          EventType::IncomingCall {
              place_call_info, ..
 diff --git a/deltachat-jsonrpc/src/api/types/events.rs b/deltachat-jsonrpc/src/api/types/events.rs
-index 64ab1a3a4..16f4ee7d8 100644
+index 64ab1a3..16f4ee7 100644
 --- a/deltachat-jsonrpc/src/api/types/events.rs
 +++ b/deltachat-jsonrpc/src/api/types/events.rs
 @@ -296,6 +296,16 @@ pub enum EventType {
@@ -90,7 +90,7 @@ index 64ab1a3a4..16f4ee7d8 100644
                  path: path.to_str().unwrap_or_default().to_owned(),
              },
 diff --git a/src/events/payload.rs b/src/events/payload.rs
-index 8300f02b1..8e88e92a7 100644
+index 8300f02..8e88e92 100644
 --- a/src/events/payload.rs
 +++ b/src/events/payload.rs
 @@ -265,6 +265,17 @@ pub enum EventType {

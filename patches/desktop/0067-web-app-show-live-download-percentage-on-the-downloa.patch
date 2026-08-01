@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 23 Jul 2026 02:43:20 +0000
-Subject: [PATCH] web-app: show live download percentage on the 'downloading'
- message bubble
+Subject: [PATCH 67/68] web-app: show live download percentage on the
+ 'downloading' message bubble
 
 Core now emits DownloadProgress (msgId, permille) while fetching a message
 in chunks. useDownloadProgress listens for it per-message and appends the
@@ -24,7 +24,7 @@ Claude-Session: https://claude.ai/code/session_019DhvV6wm3aXyrgHHXaefxw
  create mode 100644 packages/frontend/src/utils/downloadProgress.ts
 
 diff --git a/packages/frontend/src/backend-com.ts b/packages/frontend/src/backend-com.ts
-index 1c6e35c2c..6ba14188c 100644
+index 1c6e35c..6ba1418 100644
 --- a/packages/frontend/src/backend-com.ts
 +++ b/packages/frontend/src/backend-com.ts
 @@ -1,8 +1,22 @@
@@ -66,7 +66,7 @@ index 1c6e35c2c..6ba14188c 100644
    }
  }
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 877772c20..4e50db212 100644
+index 877772c..4e50db2 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -64,6 +64,7 @@ import { avatarInitial } from '@deltachat-desktop/shared/avatarInitial'
@@ -104,7 +104,7 @@ index 877772c20..4e50db212 100644
            <button
 diff --git a/packages/frontend/src/hooks/useDownloadProgress.ts b/packages/frontend/src/hooks/useDownloadProgress.ts
 new file mode 100644
-index 000000000..11d920f91
+index 0000000..11d920f
 --- /dev/null
 +++ b/packages/frontend/src/hooks/useDownloadProgress.ts
 @@ -0,0 +1,31 @@
@@ -141,7 +141,7 @@ index 000000000..11d920f91
 +}
 diff --git a/packages/frontend/src/tests/downloadProgress.test.ts b/packages/frontend/src/tests/downloadProgress.test.ts
 new file mode 100644
-index 000000000..2b4701496
+index 0000000..2b47014
 --- /dev/null
 +++ b/packages/frontend/src/tests/downloadProgress.test.ts
 @@ -0,0 +1,14 @@
@@ -161,7 +161,7 @@ index 000000000..2b4701496
 +})
 diff --git a/packages/frontend/src/utils/downloadProgress.ts b/packages/frontend/src/utils/downloadProgress.ts
 new file mode 100644
-index 000000000..592044888
+index 0000000..5920448
 --- /dev/null
 +++ b/packages/frontend/src/utils/downloadProgress.ts
 @@ -0,0 +1,7 @@
