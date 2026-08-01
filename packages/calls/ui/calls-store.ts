@@ -11,8 +11,10 @@ import type { CallDeviceInfo, CallDirection, CallState, ConnectionRoute } from '
 /** Callbacks the mounted UI invokes on user action; supplied by whatever owns
  * the active call (the runtime's call manager). */
 export interface CallsUiCallbacks {
-  /** Incoming ring only: the user accepted. */
-  onAccept(): void
+  /** Incoming ring only: the user accepted. `withVideo` means they pressed
+   * "Accept with video" — the only thing that starts their camera; a plain
+   * Accept answers audio-only. */
+  onAccept(options?: { withVideo?: boolean }): void
   /** Hang up / decline / dismiss-after-error. */
   onHangup(): void
   /** Toggle local mic mute. */
@@ -49,10 +51,12 @@ export type CallUiSnapshot =
       /** The chat's theme color (hex); `null` until resolved. */
       avatarColor: string | null
       muted: boolean
-      /** Whether this call STARTED with the camera on. Only seeds the initial
-       * camera state — does NOT gate the camera/screen-share controls (the
-       * video sender is always negotiated). Use `localHasVideo`/
-       * `remoteHasVideo` to decide whether to render video tiles. */
+      /** Whether this call STARTED with the camera on — the caller's own
+       * choice, or an incoming call the user answered with "Accept with
+       * video"; never the caller's `has_video`. Seeds the initial camera
+       * state; does NOT gate the camera/screen-share controls (the video
+       * sender is always negotiated). Use `localHasVideo`/`remoteHasVideo` to
+       * decide whether to render video tiles. */
       hasVideo: boolean
       /** Whether the local camera is currently ON — camera button pressed
        * state. Starts equal to `hasVideo`. */
