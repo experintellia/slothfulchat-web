@@ -60,6 +60,9 @@ export type HtmlEmailInit = {
   }
   onClose: () => void
   onSetAlwaysLoad: (value: boolean) => void
+  /** account the mail was opened from; tags relayed links so app links run
+   * under the originating account, not whatever is selected now (#3) */
+  accountId?: number
 }
 
 type RemoteState = 'never' | 'once' | 'always'
@@ -82,6 +85,14 @@ const APP_LINK = /^(mailto:|openpgp4fpr:|dcaccount:|dclogin:|https:\/\/i\.delta\
 /** This page doubles as the relay target (see the bootstrap at the bottom). */
 const RELAY_URL = new URL('./html-email.html', location.href).href
 
+// Account the current mail was opened from; set by init() before sanitizing so
+// the module-level rewrite hook can tag every relayed link with it (#3). The
+// hook runs synchronously inside sanitize(), so a plain module var is safe.
+let currentAccountId: number | undefined
+const relayHref = (href: string) =>
+  `${RELAY_URL}#open=${encodeURIComponent(href)}` +
+  (currentAccountId != null ? `&acct=${currentAccountId}` : '')
+
 // DOMPurify's default ALLOWED_URI_REGEXP would strip the QR schemes before
 // the hook below can see them — same regexp with those schemes added
 const ALLOWED_URI_REGEXP =
@@ -92,21 +103,23 @@ DOMPurify.addHook('afterSanitizeAttributes', node => {
   const tag = node.tagName.toUpperCase()
   if (tag !== 'A' && tag !== 'AREA') return
   const href = node.getAttribute('href') ?? node.getAttribute('xlink:href') ?? ''
-  if (APP_LINK.test(href)) {
-    // handled inside the app: the sandboxed content frame has no scripts, so
-    // the click escapes as a popup to our relay page, which hands the URL up
-    // the opener chain and closes. Absolute URL: a relative one cannot
-    // resolve against the content doc's blob: base (the popup strands on
-    // about:blank). rel=opener is REQUIRED: browsers imply noopener on every
-    // target=_blank link, and the relay (a same-origin page we control)
-    // needs window.opener to find the app.
-    node.setAttribute('href', `${RELAY_URL}#open=${encodeURIComponent(href)}`)
+  if (APP_LINK.test(href) || /^https?:/i.test(href)) {
+    // Route through the app via the relay page: the sandboxed content frame
+    // has no scripts, so the click escapes as a popup to our relay, which
+    // hands the URL (+ originating account) up the opener chain and closes.
+    // App schemes (mailto/openpgp4fpr/dcaccount/dclogin/i.delta.chat) reach
+    // the invite/mailto flow bound to that account (#3); http(s) links reach
+    // the safe-link path so they get tracking-param stripping like a pasted
+    // link (#4). Absolute URL: a relative one can't resolve against the
+    // content doc's blob: base (the popup strands on about:blank). rel=opener
+    // is REQUIRED: browsers imply noopener on target=_blank, and the relay
+    // (a same-origin page we control) needs window.opener to find the app.
+    node.setAttribute('href', relayHref(href))
     node.removeAttribute('xlink:href')
     node.setAttribute('target', '_blank')
     node.setAttribute('rel', 'opener')
-  } else if (/^(https?:|tel:)/i.test(href)) {
-    // external link: open outside the sandbox, without referrer (matching the
-    // content doc's <meta name=referrer>)
+  } else if (/^tel:/i.test(href)) {
+    // dialer link: open directly (no tracking/punycode concern, no app flow)
     node.setAttribute('target', '_blank')
     node.setAttribute('rel', 'noopener noreferrer')
   } else if (!href.startsWith('#')) {
@@ -158,6 +171,7 @@ function buildContentDoc(sanitizedShared: HTMLElement, remote: boolean): string 
 let currentBlobUrl: string | undefined // survives re-init so the old email's blob is revoked
 
 function init(payload: HtmlEmailInit): void {
+  currentAccountId = payload.accountId // tag relayed links before we sanitize (#3)
   const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
   document.title = `${payload.subject} – ${payload.from}`
   $('subject').textContent = payload.subject
@@ -259,14 +273,18 @@ function init(payload: HtmlEmailInit): void {
 // hosts it — window.opener when it's a popup window, window.parent when it's
 // the dialog iframe. The chain terminates at the app window, where runtime.ts
 // installs the real handler (which re-validates the URL).
-;(window as any).__slothfulOpenAppLink = (url: string) => {
+;(window as any).__slothfulOpenAppLink = (url: string, accountId?: number) => {
   const host: any = window.opener ?? (window.parent !== window ? window.parent : undefined)
-  host?.__slothfulOpenAppLink?.(url)
+  host?.__slothfulOpenAppLink?.(url, accountId)
 }
-const openMatch = /^#open=(.+)$/.exec(location.hash)
+// `#open=<enc-url>&acct=<id>` — the encoded URL never contains a raw '&'
+// (encodeURIComponent escapes it), so [^&]* captures it whole; acct is the
+// originating account (#3), optional for backward safety.
+const openMatch = /^#open=([^&]*)(?:&acct=(\d+))?$/.exec(location.hash)
 if (openMatch) {
+  const acct = openMatch[2] ? Number(openMatch[2]) : undefined
   try {
-    ;(window.opener?.top as any)?.__slothfulOpenAppLink?.(decodeURIComponent(openMatch[1]))
+    ;(window.opener?.top as any)?.__slothfulOpenAppLink?.(decodeURIComponent(openMatch[1]), acct)
   } catch {
     // opener gone or cross-origin (page opened outside the viewer): nothing to do
   }

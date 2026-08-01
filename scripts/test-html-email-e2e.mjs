@@ -29,6 +29,9 @@
 //   - the content frame is cross-origin isolated from the app
 //   - the remote tracking image is NOT fetched while blocked (default)
 //   - after choosing "Always" in the ⋮ menu, the remote image IS attempted
+//   - an app link (invite) clicked in the viewer after switching the main app
+//     to the other account still runs under the ORIGINATING account (#3)
+//   - opening a file attachment yields a tab with window.opener === null (#2)
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
@@ -49,6 +52,7 @@ const CRAFTED_HTML = `<!doctype html><html><head>
     <img src="broken.png" onerror="window.top.__e2ePwned = true">
     <p id="e2e-body">${BODY_TEXT}</p>
     <img id="e2e-remote" src="${REMOTE_IMG}">
+    <a id="e2e-invite" href="https://i.delta.chat/#e2einvite">join</a>
   </body></html>`
 
 // --- mock madmail (message-serving + delivery, from test-export-chat-html) ---
@@ -271,14 +275,17 @@ try {
     .locator('[data-testid^="selected-account:"]:not([data-testid="selected-account:undefined"])')
     .waitFor({ state: 'attached', timeout: 120_000 })
 
-  // account ids may be renumbered by the boot self-heal after reload
-  const bob = await (async () => {
+  // account ids may be renumbered by the boot self-heal after reload — resolve
+  // both by display name
+  const idByName = async name => {
     for (const id of await rpc('getAllAccountIds')) {
       const info = await rpc('getAccountInfo', id).catch(() => null)
-      if (info?.displayName === 'Bob Reader') return id
+      if (info?.displayName === name) return id
     }
-    throw new Error('no account named Bob Reader after reload')
-  })()
+    throw new Error(`no account named ${name} after reload`)
+  }
+  const bob = await idByName('Bob Reader')
+  const alice = await idByName('Alice Sender')
   const bobItem = page.getByTestId(`account-item-${bob}`)
   await bobItem.waitFor({ state: 'visible', timeout: 60_000 })
   await bobItem.click()
@@ -374,6 +381,85 @@ try {
     remoteOutcome().some(settled),
     `remote image reached the network after opting in (saw: ${remoteOutcome().join(',')})`
   )
+
+  // #3: an app link clicked inside the viewer must run under the account the
+  // mail belongs to (bob), even after the user switches the MAIN app to another
+  // account (alice). Spy on checkQr — processQr's first call — to see which
+  // account it runs under (window.exp.rpc IS BackendRemote.rpc, what processQr
+  // uses).
+  await page.evaluate(() => {
+    const rpc = window.exp.rpc
+    const orig = rpc.checkQr.bind(rpc)
+    window.__checkQrAccts = []
+    rpc.checkQr = (accountId, ...a) => {
+      window.__checkQrAccts.push(accountId)
+      return orig(accountId, ...a)
+    }
+  })
+  await page.evaluate(a => window.__selectAccount(a), alice)
+  await page.waitForFunction(a => window.__selectedAccountId === a, alice, { timeout: 30_000 })
+  // the invite link is in the (re-rendered) content frame — locate it afresh
+  const inviteFrame = await (async () => {
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      for (const f of page.frames()) {
+        if (f.url().startsWith('blob:')) {
+          try {
+            if (await f.$('#e2e-invite')) return f
+          } catch {
+            /* frame navigating */
+          }
+        }
+      }
+      await sleep(200)
+    }
+    throw new Error('invite-link content frame not found')
+  })()
+  const [inviteRelay] = await Promise.all([
+    context.waitForEvent('page'),
+    inviteFrame.click('#e2e-invite'),
+  ])
+  // delivery is async: openAppLink(url, bob) sees selected=alice≠bob, switches
+  // to bob, and the onOpenQrUrl re-bind flushes the pending url to processQr(bob)
+  await page
+    .waitForFunction(() => (window.__checkQrAccts || []).length > 0, { timeout: 20_000 })
+    .catch(() => {})
+  const accts = await page.evaluate(() => window.__checkQrAccts || [])
+  // the definitive #3 check: processQr ran under bob (the mail's account),
+  // NOT alice (the selected one). The main app is NOT force-switched — a bogus
+  // invite triggers no selectChat; a valid mailto/invite would switch via its
+  // own selectChat, under bob.
+  check(
+    accts.includes(bob) && !accts.includes(alice),
+    `app link processed under originating account bob=${bob}, not selected alice=${alice} (checkQr accts: ${accts.join(',') || 'none'})`
+  )
+  if (!inviteRelay.isClosed()) await inviteRelay.waitForEvent('close', { timeout: 5000 }).catch(() => {})
+
+  // #2 (regression guard for PR #157, which this branch's revert could silently
+  // undo): opening a file attachment must not keep a window.opener handle back
+  // onto the messenger tab — openPath opens with 'noopener'. Drive openPath with
+  // a real self-chat file blob and assert the opened tab's opener is null.
+  const selfChat = await rpc('createChatByContactId', bob, 1) // contact 1 = self
+  const filePath = await page.evaluate(
+    b64 => window.exp.runtime.writeTempFileFromBase64('note.txt', b64),
+    Buffer.from('opener-check').toString('base64')
+  )
+  const fileMsgId = await rpc('sendMsg', bob, selfChat, {
+    file: filePath,
+    filename: 'note.txt',
+    viewtype: 'File',
+  })
+  const fileMsg = await rpc('getMessage', bob, fileMsgId)
+  const [attachmentTab] = await Promise.all([
+    context.waitForEvent('page'),
+    page.evaluate(p => window.exp.runtime.openPath(p), fileMsg.file),
+  ])
+  await attachmentTab.waitForLoadState().catch(() => {})
+  check(
+    await attachmentTab.evaluate(() => window.opener === null),
+    'opened attachment tab has window.opener === null (#2 noopener survived the rebase)'
+  )
+  await attachmentTab.close().catch(() => {})
 } catch (err) {
   console.error('FAIL: exception', err)
   failed++

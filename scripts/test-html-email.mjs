@@ -5,11 +5,13 @@
 // Drives window.__initHtmlEmail with hostile mail content and asserts:
 //   - no script executes (inline, onerror handler, javascript: URL)
 //   - attacker <meta> CSP / <base> / <link rel=stylesheet> are stripped
-//   - links are rewritten to target=_blank rel=noopener noreferrer
 //   - the content document cannot reach its parent (opaque origin sandbox)
 //   - remote images are NOT fetched until the user opts in, then they are
 //   - never/once/always control: "always" persists via callback, contact
 //     requests don't offer "always"
+//   - app links AND http(s) links are routed through the app via the relay
+//     page, tagged with the originating account (#3); http(s) goes to the
+//     safe-link path (#4). Fragment/relative/tel handled distinctly.
 // Modeled on scripts/test-bridge-dialog.mjs.
 import { execFileSync, spawn } from 'node:child_process'
 import { mkdtempSync, copyFileSync } from 'node:fs'
@@ -21,6 +23,7 @@ import { chromium } from 'playwright'
 const script = p => fileURLToPath(new URL(p, import.meta.url))
 const webApp = script('../packages/web-app')
 const APP_PORT = Number(process.env.APP_PORT ?? 8663)
+const ACCT = 7 // originating account id; relayed links must carry it (#3)
 
 // build the two files under test into a temp dir
 const dir = mkdtempSync(join(tmpdir(), 'html-email-test-'))
@@ -90,7 +93,7 @@ const remoteOutcome = () =>
 
 await page.goto(`http://localhost:${APP_PORT}/html-email.html`)
 await page.evaluate(
-  ([content, isContactRequest]) => {
+  ([content, isContactRequest, accountId]) => {
     window.__closed = false
     window.__always = null
     window.__initHtmlEmail({
@@ -98,6 +101,7 @@ await page.evaluate(
       from: 'Sender <sender@example.com>',
       sentTime: 'Friday, July 31, 2026 12:00 PM',
       content,
+      accountId,
       isContactRequest,
       alwaysLoadRemote: false,
       labels: { loadRemoteImages: 'Load Remote Images', ask: 'ask', never: 'Never', once: 'Once', always: 'Always', close: 'Close' },
@@ -105,7 +109,7 @@ await page.evaluate(
       onSetAlwaysLoad: v => (window.__always = v),
     })
   },
-  [HOSTILE, false]
+  [HOSTILE, false, ACCT]
 )
 
 const contentFrame = async () => {
@@ -130,9 +134,20 @@ check(await frame.$eval('#text', e => e.textContent) === 'hello', 'benign conten
 check(await frame.$eval('p', e => getComputedStyle(e).color) === 'rgb(1, 2, 3)', 'benign <style> kept')
 const jslink = await frame.$eval('#jslink', e => e.getAttribute('href') ?? '')
 check(!jslink.startsWith('javascript:'), 'javascript: href stripped')
+// #4: http(s) links are routed through the app's safe-link path (relay page,
+// same as app links) so they get tracking-param stripping — no longer a direct
+// sandbox escape. Full click->deliver behavior is asserted below + in the e2e.
 check(
-  await frame.$eval('#weblink', e => e.target === '_blank' && e.rel.includes('noopener') && e.rel.includes('noreferrer')),
-  'links rewritten to target=_blank noopener noreferrer'
+  await frame.$eval(
+    '#weblink',
+    (e, port) =>
+      e.getAttribute('href') ===
+        `http://localhost:${port}/html-email.html#open=${encodeURIComponent('https://example.com/page')}&acct=7` &&
+      e.target === '_blank' &&
+      e.getAttribute('rel') === 'opener',
+    APP_PORT
+  ),
+  'http(s) link routed through the app relay (safe-link path), not a direct escape'
 )
 check(
   await frame.$eval('#svglink', e => e.getAttribute('target') === '_blank'),
@@ -183,7 +198,8 @@ await page.selectOption('#remote-select', 'always')
 check(await page.evaluate(() => window.__always === true), '"Always" persisted via onSetAlwaysLoad')
 
 // -- app links (mailto / openpgp4fpr / i.delta.chat invites): rewritten to the
-// same-origin relay page, keeping window.opener so the relay can find the app
+// same-origin relay page carrying the originating account (#3), keeping
+// window.opener so the relay can find the app
 frame = await contentFrame()
 for (const [id, orig] of [
   ['applink', 'OPENPGP4FPR:1234ABCD#a=1'],
@@ -196,23 +212,31 @@ for (const [id, orig] of [
     e.getAttribute('rel'),
   ])
   check(
-    href === `http://localhost:${APP_PORT}/html-email.html#open=${encodeURIComponent(orig)}` &&
+    href === `http://localhost:${APP_PORT}/html-email.html#open=${encodeURIComponent(orig)}&acct=${ACCT}` &&
       target === '_blank' &&
       rel === 'opener',
-    `app link #${id} rewritten to the relay page (absolute URL, explicit rel=opener)`
+    `app link #${id} rewritten to the relay page with &acct (absolute URL, rel=opener)`
   )
 }
-// click → relay tab escapes the sandbox, forwards the URL up the opener chain
-// (here: the wrapper page is the top-level host), closes itself
+// click → relay tab escapes the sandbox, forwards (url, accountId) up the
+// opener chain (here: the wrapper page is the top-level host), closes itself
 await page.evaluate(() => {
   window.__appLink = null
-  window.__slothfulOpenAppLink = u => (window.__appLink = u)
+  window.__appLinkAcct = null
+  window.__slothfulOpenAppLink = (u, acct) => {
+    window.__appLink = u
+    window.__appLinkAcct = acct
+  }
 })
 const [relayPage] = await Promise.all([context.waitForEvent('page'), frame.click('#applink')])
 await page.waitForFunction(() => window.__appLink !== null)
 check(
   (await page.evaluate(() => window.__appLink)) === 'OPENPGP4FPR:1234ABCD#a=1',
   'clicking an app link relays the original URL to the host app'
+)
+check(
+  (await page.evaluate(() => window.__appLinkAcct)) === ACCT,
+  'relayed app link carries the originating account id (#3)'
 )
 if (!relayPage.isClosed()) await relayPage.waitForEvent('close', { timeout: 5000 }).catch(() => {})
 check(relayPage.isClosed(), 'relay tab closes itself')

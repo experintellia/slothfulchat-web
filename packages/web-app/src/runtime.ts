@@ -776,6 +776,11 @@ class BrowserRuntime {
       from: sender,
       sentTime,
       content,
+      // #3: the account the mail was opened from. App links clicked inside the
+      // viewer must run under THIS account even if the user has since switched
+      // the main app to another one — the viewer tags every relayed link with
+      // it (see html-email.ts) and openAppLink delivers it explicitly.
+      accountId,
       isContactRequest,
       alwaysLoadRemote: false, // patched in below once settings are read
       labels: {
@@ -856,24 +861,65 @@ class BrowserRuntime {
     return this.htmlEmailDialog
   }
   /**
-   * Terminal handler for app links clicked inside the HTML email viewer
-   * (mailto:, openpgp4fpr:, dcaccount:, dclogin:, i.delta.chat invites — the
-   * same set desktop's shouldHandleLinkInMainApp routes to the main window).
-   * The sandboxed content frame has no scripts, so such links are rewritten
-   * to open `html-email.html#open=<url>` as an (unsandboxed, same-origin)
-   * relay tab, which forwards the URL up the opener chain to this window's
-   * `__slothfulOpenAppLink` (installed in initialize()) and closes itself.
-   * Delivery is the frontend's onOpenQrUrl -> processQr, which handles all
-   * of these including mailto.
+   * Terminal handler for links clicked inside the HTML email viewer that must
+   * be handled by the app rather than opened raw. The sandboxed content frame
+   * has no scripts, so every such link is rewritten to open
+   * `html-email.html#open=<url>&acct=<accountId>` as an (unsandboxed,
+   * same-origin) relay tab, which forwards the URL + originating account up
+   * the opener chain to this window's `__slothfulOpenAppLink` (installed in
+   * initialize()) and closes itself. Two kinds:
+   *
+   *  - App links (mailto:, openpgp4fpr:, dcaccount:, dclogin:, i.delta.chat
+   *    invites — desktop's shouldHandleLinkInMainApp set): delivered to the
+   *    frontend's onOpenQrUrl -> processQr, bound to the ORIGINATING account
+   *    (#3), not whatever account is selected now.
+   *  - http(s) links: routed through the app's safe-link path (#4) so they get
+   *    the same tracking-parameter stripping a pasted/in-chat link gets;
+   *    openLink opens them with noreferrer so the untrusted mail leaks
+   *    neither the app URL nor an opener handle.
    */
-  private openAppLink(url: string): void {
+  private openAppLink(url: string, accountId?: number): void {
     const lower = String(url).toLowerCase()
-    // re-validate: the relay page is reachable by anything same-origin
-    if (!lower.startsWith('mailto:') && !QR_URL_PREFIXES.some(p => lower.startsWith(p))) {
+    // check app schemes FIRST: an i.delta.chat invite is also an https: URL,
+    // and it must go to the invite flow, not the generic web-link path
+    const isApp =
+      lower.startsWith('mailto:') || QR_URL_PREFIXES.some(p => lower.startsWith(p))
+    const isWeb = lower.startsWith('http:') || lower.startsWith('https:')
+    if (!isApp && !isWeb) {
+      // the relay page is reachable by anything same-origin — only open what
+      // the viewer is meant to hand us
       return void this.log.warn('ignoring relayed non-app link', url)
     }
     this.htmlEmailDialog?.dlg.close() // reveal the app (and its upcoming dialog)
     window.focus() // best effort when the viewer is a popup window
+    if (isApp) return this.deliverAppLinkToAccount(url, accountId)
+    // #4: web link -> safe-link path (tracking-strip). Falls back to a plain
+    // (noreferrer) open if the frontend hook isn't registered yet.
+    const safe = (window as any).__slothfulOpenLinkSafely
+    if (typeof safe === 'function') safe(url)
+    else this.openLink(url)
+  }
+  /**
+   * Deliver an app link to a SPECIFIC account (#3). The frontend's onOpenQrUrl
+   * is bound to the currently selected account, so delivering through it would
+   * run the link (compose / login / group-join) under whatever account is
+   * selected now — wrong if the user switched accounts while the viewer was
+   * open. processQr already takes the account as an explicit argument, so we
+   * call it directly with the originating one via a small exposed hook (#3
+   * desktop patch); it runs under that account and switches the view to it as
+   * needed. Falls back to onOpenQrUrl (current account) only if the hook isn't
+   * registered — it always is by the time a viewer can be opened.
+   */
+  private deliverAppLinkToAccount(url: string, accountId?: number): void {
+    const processQr = (window as any).__slothfulProcessQr
+    if (typeof processQr === 'function' && accountId != null) {
+      try {
+        return void processQr(accountId, url)
+      } catch (err) {
+        this.log.error('app-link delivery failed', err)
+        return
+      }
+    }
     try {
       this._onOpenQrUrl?.(url)
     } catch (err) {
@@ -1220,7 +1266,13 @@ class BrowserRuntime {
   }
   async openPath(path: string): Promise<string> {
     if (path.includes('dc.db-blobs')) {
-      window.open(this.transformBlobURL(path), '_blank')?.focus()
+      // 'noopener': the opened document is sender-controlled content on our own
+      // origin, so it must not keep a window.opener handle on the messenger tab
+      // (an opener handle can navigate that tab away, e.g. to a login phish).
+      // The blobs SW additionally serves it under a sandbox CSP. With noopener
+      // window.open returns null — nothing left to focus(), and browsers focus
+      // a freshly opened tab anyway.
+      window.open(this.transformBlobURL(path), '_blank', 'noopener')
       return ''
     }
     throw new Error(
@@ -1408,9 +1460,14 @@ class BrowserRuntime {
   }
 
   openLink(link: string): void {
-    // all in-app external links funnel through here (About dialog, ClickableLink)
+    // all in-app external links funnel through here (About dialog,
+    // ClickableLink, and HTML-email http(s) links routed via the safe-link
+    // path — see openAppLink). 'noreferrer' (implies noopener): an external
+    // site must not receive the app's URL as referrer nor keep a window.opener
+    // handle back onto the messenger tab. window.open then returns null —
+    // nothing to focus(), browsers focus a new tab anyway.
     analytics.trackLink(link)
-    window.open(link, '_blank')?.focus()
+    window.open(link, '_blank', 'noreferrer')
   }
 
   private log: Logger = console as unknown as Logger
@@ -1423,8 +1480,10 @@ class BrowserRuntime {
   ): Promise<void> {
     this.log = getLogger('runtime/wasm-browser')
 
-    // app-link relay target for the HTML email viewer (see openAppLink)
-    ;(window as any).__slothfulOpenAppLink = (url: string) => this.openAppLink(url)
+    // app-link relay target for the HTML email viewer (see openAppLink); the
+    // second arg is the account the mail was opened from (#3)
+    ;(window as any).__slothfulOpenAppLink = (url: string, accountId?: number) =>
+      this.openAppLink(url, accountId)
 
     // no backend: rc_config / runtime_info are built locally,
     // mirroring target-browser/src/rc-config.ts and backendApi.ts.

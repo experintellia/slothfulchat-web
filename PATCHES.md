@@ -71,15 +71,20 @@ exists:
   origin and its own Content-Security-Policy. Remote images (tracking pixels)
   never touch the network until the user opts in — Never / Once / Always,
   "Always" persisted as the same desktop setting upstream uses and never
-  offered for contact requests; links open in a new tab without referrer,
-  except app links (`mailto:`, `openpgp4fpr:`, `dcaccount:`, `dclogin:`,
-  `i.delta.chat` invites — desktop's `shouldHandleLinkInMainApp` set), which
-  are relayed back into the app and handled by the same invite/mailto flows
-  as in-chat links.
+  offered for contact requests. Links inside the mail are handled by the app,
+  not opened raw: app links (`mailto:`, `openpgp4fpr:`, `dcaccount:`,
+  `dclogin:`, `i.delta.chat` invites — desktop's `shouldHandleLinkInMainApp`
+  set) run the invite/mailto flow bound to the account the mail was opened
+  from (not whatever account is selected when the link is clicked), and
+  `http(s)` links go through the app's safe-link path so they get the same
+  tracking-parameter stripping a pasted link gets, opened `noreferrer`.
   Lives almost entirely in `packages/web-app` (`static/html-email.html`,
   `src/html-email.ts`, `openMessageHTML` in `src/runtime.ts`); guarded by
-  `scripts/test-html-email.mjs`. The one desktop change enlarges the
-  "Show Full Message…" tap target on touch devices. `desktop/0069`
+  `scripts/test-html-email.mjs` and the `scripts/test-html-email-e2e.mjs`
+  end-to-end check. Two small desktop changes: enlarge the "Show Full
+  Message…" tap target on touch devices (`desktop/0069`), and expose the
+  frontend safe-link opener the viewer routes `http(s)` links through
+  (`desktop/0070`).
 - **webimap transport (madmail)** — a second mail transport speaking
   [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at
