@@ -31,9 +31,10 @@ draft.
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  src/blob.rs                       | 14 +++++++++++
- src/download/post_msg_metadata.rs | 39 ++++++++++++++++++++++++++++---
+ src/download/post_msg_metadata.rs | 39 +++++++++++++++++++++++++++---
  src/sql.rs                        |  6 ++++-
- 3 files changed, 55 insertions(+), 4 deletions(-)
+ src/sql/sql_tests.rs              | 40 ++++++++++++++++++++++++++++++-
+ 4 files changed, 94 insertions(+), 5 deletions(-)
 
 diff --git a/src/blob.rs b/src/blob.rs
 index 5cf5c2e..cd0e145 100644
@@ -157,3 +158,56 @@ index 12e507f..406d7c5 100644
                      {
                          continue;
                      }
+diff --git a/src/sql/sql_tests.rs b/src/sql/sql_tests.rs
+index 944932b..4914dd6 100644
+--- a/src/sql/sql_tests.rs
++++ b/src/sql/sql_tests.rs
+@@ -1,5 +1,5 @@
+ use super::*;
+-use crate::message::Message;
++use crate::message::{Message, Viewtype};
+ use crate::{EventType, test_utils::TestContext};
+ 
+ #[test]
+@@ -423,3 +423,41 @@ async fn test_housekeeping_keeps_pending_download_staging() -> Result<()> {
+ 
+     Ok(())
+ }
++
++/// A video's `-preview.jpg` poster lives and dies with the video blob it belongs to:
++/// housekeeping keeps it while the message exists and removes it in the same pass that
++/// removes the video once the message is deleted. This is what buys the poster its lack of a
++/// `Param` — nothing else references it.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_housekeeping_video_preview_follows_the_blob() -> Result<()> {
++    let mut tcm = crate::test_utils::TestContextManager::new();
++    let t = tcm.alice().await;
++    let bob = tcm.bob().await;
++    // A keyed peer: chatmail core refuses to send without e2e encryption.
++    let chat = t.create_chat(&bob).await;
++
++    let mut msg = Message::new(Viewtype::Video);
++    msg.set_file_from_bytes(&t, "clip.mp4", b"not really a video", None)?;
++    let msg_id = crate::chat::send_msg(&t, chat.id, &mut msg).await?;
++    let blob = Message::load_from_db(&t, msg_id)
++        .await?
++        .get_file(&t)
++        .context("sent video has a file")?;
++    // What the UI writes next to the blob after grabbing a frame.
++    let preview = crate::blob::video_preview_path(blob.clone());
++    tokio::fs::write(&preview, b"poster").await?;
++
++    // Past the "keep anything touched in the last hour" window, so both files are candidates.
++    SystemTime::shift(Duration::from_secs(65 * 60));
++    remove_unused_files(&t).await?;
++    assert!(blob.exists(), "video blob of a live message was deleted");
++    assert!(preview.exists(), "poster of a live message was deleted");
++
++    crate::message::delete_msgs(&t, &[msg_id]).await?;
++    SystemTime::shift(Duration::from_secs(65 * 60));
++    remove_unused_files(&t).await?;
++    assert!(!blob.exists(), "video blob outlived its message");
++    assert!(!preview.exists(), "poster outlived its message");
++
++    Ok(())
++}
