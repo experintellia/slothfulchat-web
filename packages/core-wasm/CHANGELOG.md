@@ -28,6 +28,10 @@ durable account could be lost or corrupted:
   the old behavior).
 - Boot no longer misreports "already running in another tab" on slow storage
   with many accounts (the reload lock-probe budget now scales).
+- A file whose write to persistent storage fails — a transient quota blip, a
+  storage handle the browser invalidated — is now retried a few times instead
+  of being dropped on the first error, and a write that is finally lost is
+  reported as an error rather than only counted.
 
 ## 0.8.0 — 2026-07-24
 

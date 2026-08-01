@@ -42,6 +42,7 @@ use web_sys::{
     FileSystemSyncAccessHandle, WorkerGlobalScope,
 };
 
+use crate::durability::{self, Next};
 use crate::fs::{self, Snapshot};
 use crate::registry;
 
@@ -63,13 +64,6 @@ static PENDING: Mutex<Option<(UnboundedSender<PathBuf>, HashSet<PathBuf>)>> = Mu
 /// drops only post-write is what makes "all imported blobs are durable"
 /// observable (the backup-import reload race, #77).
 static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
-/// Monotonic count of write-throughs whose OPFS reconcile FAILED. The flusher
-/// does not retry (a stuck path would starve the queue), so a failed write is
-/// decremented from INFLIGHT like any other — meaning "INFLIGHT == 0" alone
-/// cannot tell a fully-durable drain from one that silently dropped writes.
-/// [`flush_pending`] diffs this across a drain so a caller (backup import) can
-/// learn its data is NOT fully persisted instead of reporting a false success.
-static FAILED: AtomicUsize = AtomicUsize::new(0);
 
 /// memfs path of core's account registry. Too important for the async
 /// mirror: a reload can kill the worker between `get_file_handle(create)`
@@ -261,8 +255,8 @@ pub(crate) fn mark_dirty(path: &Path) {
 /// forever; hitting it is a bug worth the warning, not the normal path (the
 /// queue is typically already near-drained by the time import finishes).
 /// Returns the number of writes that did NOT become durable since the
-/// `failed_since` baseline: reconcile failures past the baseline plus anything
-/// still queued if the cap is hit. 0 means everything queued is now durably in
+/// `failed_since` baseline: writes given up on past the baseline (after their
+/// retries, see [`crate::durability`]) plus anything still queued at the cap. 0 means everything queued is now durably in
 /// OPFS. The caller (backup import) surfaces a non-zero result instead of
 /// reporting success.
 ///
@@ -290,15 +284,16 @@ pub async fn flush_pending(failed_since: u32) -> u32 {
         )));
     }
     // failures since the caller's baseline + anything still in flight at the cap
-    let failed = (FAILED.load(Ordering::SeqCst) as u32).saturating_sub(failed_since);
+    let failed = failed_count().saturating_sub(failed_since);
     failed + still_queued as u32
 }
 
-/// Current value of the monotonic failed-write-through counter. Snapshot it
+/// Current value of the monotonic lost-write-through counter. Snapshot it
 /// before starting work whose durability [`flush_pending`] will verify, and
-/// pass it there as the baseline.
+/// pass it there as the baseline. Only *permanently* lost writes count — one
+/// that failed and succeeded on retry is durable (see [`crate::durability`]).
 pub fn failed_count() -> u32 {
-    FAILED.load(Ordering::SeqCst) as u32
+    durability::lost_count()
 }
 
 /// Synchronous accounts.toml write-through. Returns false when the handles
@@ -433,17 +428,48 @@ async fn flusher(root: FileSystemDirectoryHandle, mut rx: UnboundedReceiver<Path
         if let Some((_, pending)) = PENDING.lock().unwrap().as_mut() {
             pending.remove(&path);
         }
-        if let Err(err) = reconcile(&root, &path).await {
-            FAILED.fetch_add(1, Ordering::SeqCst);
-            web_sys::console::warn_2(
-                &JsValue::from_str(&format!("opfs write-through failed for {path:?}")),
-                &err,
-            );
+        // Retry transient failures — a quota blip that a concurrent delete
+        // relieves, a sync access handle the browser invalidated — instead of
+        // losing the write on the first error. Each attempt re-snapshots the
+        // memfs, so a retry writes current state, never a stale one.
+        // ponytail: the retries block this FIFO, so a doomed path stalls the
+        // paths behind it for the whole (bounded, ~1s) budget; per-path retry
+        // tasks are the upgrade if that ever shows up as a stall.
+        let mut attempt = 1;
+        loop {
+            let err = reconcile(&root, &path).await.err();
+            match durability::next_step(err.is_none(), attempt) {
+                Next::Done => break,
+                Next::Retry(after) => {
+                    web_sys::console::warn_2(
+                        &JsValue::from_str(&format!(
+                            "opfs write-through failed for {path:?} (attempt {attempt}), retrying"
+                        )),
+                        &err.unwrap_or(JsValue::UNDEFINED),
+                    );
+                    wasmtimer::tokio::sleep(after).await;
+                    attempt += 1;
+                }
+                Next::Permanent => {
+                    // Permanent loss: count it (so `flush_pending` and any
+                    // barrier can report it) and say so loudly — this is data
+                    // the database may already reference.
+                    durability::record_lost();
+                    web_sys::console::error_2(
+                        &JsValue::from_str(&format!(
+                            "opfs: giving up on {path:?} after {attempt} attempts \
+                             — this write is NOT persisted"
+                        )),
+                        &err.unwrap_or(JsValue::UNDEFINED),
+                    );
+                    break;
+                }
+            }
         }
-        // Decrement AFTER the reconcile (success or failure) so `flush_pending`
-        // only observes 0 once the write has actually reached OPFS. Failure
-        // still counts as "no longer in flight" — retrying is not this task's
-        // job and a stuck non-zero counter would hang `flush_pending`.
+        // Decrement AFTER the reconcile (durable, or declared lost) so
+        // `flush_pending` only observes 0 once the write has actually reached
+        // OPFS. A given-up write still counts as "no longer in flight" — a
+        // stuck non-zero counter would hang `flush_pending` forever.
         INFLIGHT.fetch_sub(1, Ordering::SeqCst);
     }
 }

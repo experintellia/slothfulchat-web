@@ -572,7 +572,7 @@ impl OpenOptions {
     pub async fn open(&self, path: impl AsRef<Path>) -> io::Result<File> {
         let path = normalize(path.as_ref());
         // Directories open fine too: core opens parent dirs only to sync_all()
-        // them, and sync is a no-op here.
+        // them, which is a no-op here (see `File::sync_all`).
         let exists = FS.lock().unwrap().contains_key(&path);
         if self.create_new && exists {
             return Err(io::Error::new(
@@ -637,12 +637,31 @@ impl File {
         Ok(())
     }
 
+    /// No-op, deliberately. Core's only fsync points are the accounts.toml tmp
+    /// file and its parent dir (grep `sync_all` in vendor/core/src/accounts.rs;
+    /// `sync_data` has no callers at all), and accounts.toml is ALREADY
+    /// synchronously durable — it is written straight through the held sync
+    /// access handles, see `opfs::reconcile_config_sync`. So a barrier here
+    /// would guarantee nothing that is not already guaranteed.
+    ///
+    /// It would also cost: the write-through queue has no per-path completion,
+    /// so the only barrier available drains the WHOLE queue — and `Config::sync`
+    /// runs on `select_account`, making every account switch wait behind
+    /// unrelated blob writes (and fail if the drain timed out).
+    ///
+    /// Blob writes are the ones that actually need durability, and they cannot
+    /// use this: core creates them from synchronous `block_in_place` code that
+    /// cannot await (see `sync_write` / `sync_rename` above). Give them a real
+    /// completion point first — a per-path waiter, or synchronous write-through
+    /// like accounts.toml already gets — and wire this up to it then.
     pub async fn sync_all(&self) -> io::Result<()> {
         Ok(())
     }
 
+    /// See [`File::sync_all`] — the mirror has no data/metadata split to sync
+    /// separately, and core never calls this.
     pub async fn sync_data(&self) -> io::Result<()> {
-        Ok(())
+        self.sync_all().await
     }
 }
 
