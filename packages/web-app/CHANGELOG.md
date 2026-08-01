@@ -8,6 +8,9 @@
   call now offers **Accept** (audio only) and **Accept with video**, so the
   person calling you can't decide whether your camera starts. You can still
   switch the camera on at any point once the call is connected.
+- Large videos now show a preview frame while they are still waiting to be
+  downloaded: the poster is grabbed from the video when you attach it, so the
+  recipient sees what is coming before spending the bandwidth.
 - Downloading a big message now shows a live percentage on the message bubble,
   and an interrupted download continues where it stopped.
 - **Chat export works again**: the `index.html` viewer inside exported chat
