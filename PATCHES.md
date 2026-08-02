@@ -406,6 +406,17 @@ contribution intended.
   errored. A new `storage_usage::get_account_size` sizes the database
   logically (`page_size * page_count`) and sums the blobdir via `tokio::fs`;
   the RPC uses it on wasm, native path unchanged. `core/0019`
+- Marking the archived-chats list as noticed didn't refresh its chatlist item
+  (unread badge) until something else re-rendered it, and marking a single
+  chat noticed while archived double-emitted the archived-list event.
+  `on_archived_chats_maybe_noticed` now also emits `ChatlistItemChanged`, and
+  `marknoticed_chat` skips the redundant call for the archived-link itself.
+  Backport of upstream chatmail/core#7721. `core/0025`
+- Setup-contact secure-join left the new 1:1 chat's composer stuck showing
+  "can't send" after the handshake finished: `can_send` flipped in the
+  database but no `ChatModified` event told the UI to re-check it (broadcast
+  joins already worked, since a broadcast's `can_send` doesn't depend on the
+  handshake). Backport of upstream chatmail/core#7735. `core/0026`, `core/0027`
 
 ## UI & mobile polish
 

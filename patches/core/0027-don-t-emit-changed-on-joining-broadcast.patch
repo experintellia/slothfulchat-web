@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Simon Laux <git@simonlaux.de>
+Date: Sat, 17 Jan 2026 16:26:58 +0100
+Subject: [PATCH 27/27] don't emit changed on joining broadcast
+
+---
+ src/securejoin/bob.rs | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/securejoin/bob.rs b/src/securejoin/bob.rs
+index 52b545e..29ec3a2 100644
+--- a/src/securejoin/bob.rs
++++ b/src/securejoin/bob.rs
+@@ -285,7 +285,8 @@ pub(super) async fn handle_auth_required_or_pubkey(
+             .await?;
+ 
+         match invite {
+-            QrInvite::Contact { .. } | QrInvite::Broadcast { .. } => {
++            QrInvite::Broadcast { .. } => {}
++            QrInvite::Contact { .. } => {
+                 // This is to tell UI that Chat.can_send has changed
+                 context.emit_event(EventType::ChatModified(chat_id));
+             }
