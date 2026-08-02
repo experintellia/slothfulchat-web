@@ -4,6 +4,14 @@ You host **two things**:
 
 1. **The web app** — a static site (`packages/web-app/dist`). Serve it from
    anywhere: GitHub Pages, Netlify, an S3 bucket, your own nginx.
+
+   > **Prefer a host that lets you set response headers.** `dist/caddy/routes.caddy`
+   > sends `Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options`,
+   > `X-Content-Type-Options` and `Referrer-Policy`. A page cannot set
+   > `frame-ancestors` for itself — `<meta>` CSP ignores it — so on a host that
+   > serves fixed headers only (GitHub Pages among them) the app can be framed
+   > by a hostile site and attacked by clickjacking. Everything else works
+   > there; this one protection needs a real server or a CDN edge in front.
 2. **A WS→TCP bridge** — the one server piece, because browsers can't open raw
    TCP. See [`packages/ws-tcp-proxy`](packages/ws-tcp-proxy/README.md). TLS
    terminates inside the browser, so the bridge only ever relays ciphertext.

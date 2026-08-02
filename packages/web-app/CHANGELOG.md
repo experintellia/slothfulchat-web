@@ -33,6 +33,10 @@
   0:00 — it picks up where the audio actually is. The recorder also fits
   phone-sized windows now instead of pushing its buttons off-screen.
 
+- **Security**: a link you open from the app can no longer reach back and
+  navigate SlothfulChat away to somewhere else — a favourite trick for pointing
+  you at a fake login page. Self-hosted setups using the shipped Caddy config
+  also now refuse to be embedded in other people's pages.
 - **Security**: opening a received attachment can no longer run its code as
   part of the app. A scripted SVG sent to you could reach your local app data;
   attachments now open isolated, and images, video and audio still display

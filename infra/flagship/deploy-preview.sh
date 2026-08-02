@@ -108,7 +108,28 @@ cfg_path, dist_root, host = sys.argv[1:4]
 # speculative. A directive added there adds its handler name here, in the same
 # commit; anything else is an upload trying to do something routes.caddy has
 # never done.
-ALLOWED_HANDLERS = {"subroute", "vars", "encode", "error", "file_server", "rewrite"}
+ALLOWED_HANDLERS = {
+    "subroute", "vars", "encode", "error", "file_server", "rewrite",
+    "headers",  # `header` — see ALLOWED_HEADERS
+}
+# Allowing the `headers` handler is NOT enough on its own: a response header is
+# not confined to the host that sends it. `Set-Cookie: ...; Domain=slothful.chat`
+# from pr-N.preview.slothful.chat is accepted by browsers for the PARENT domain,
+# so an upload could plant cookies on next/prod and every sibling slot. So the
+# header NAMES are allowlisted too — same rule as the handlers: a header added
+# to routes.caddy is added here, in the same commit.
+#
+# Set and delete are separate lists on purpose. Being allowed to SET a header is
+# not permission to REMOVE it: `header -Content-Security-Policy` would strip the
+# slot's own frame-ancestors back off, which is the one thing this file exists
+# to guarantee. Only the Server banner may be deleted.
+ALLOWED_SET_HEADERS = {
+    "content-security-policy",
+    "referrer-policy",
+    "x-content-type-options",
+    "x-frame-options",
+}
+ALLOWED_DELETE_HEADERS = {"server"}
 # The two site addresses this slot owns, and no others. Every other name on the
 # box (next, prod, another PR's slot) is off limits.
 ALLOWED_HOSTS = {host, "*.webxdc." + host}
@@ -148,6 +169,19 @@ def walk(node):
             reject("uses the %r handler" % handler)
         if handler == "file_server" and "browse" in node:
             reject("enables file_server browse — it would index the whole slot")
+        if handler == "headers":
+            # Only response headers, and only the ones routes.caddy sends. A
+            # `request_header` directive would put a "request" key here instead;
+            # anything but the shapes we know rejects.
+            keys_within(node, {"handler", "response"}, "headers handler")
+            resp = node.get("response") or {}
+            keys_within(resp, {"deferred", "set", "delete"}, "headers response")
+            for name in (resp.get("set") or {}):
+                if str(name).lower() not in ALLOWED_SET_HEADERS:
+                    reject("sets the %r header" % name)
+            for name in (resp.get("delete") or []):
+                if str(name).lower() not in ALLOWED_DELETE_HEADERS:
+                    reject("deletes the %r header" % name)
     if "root" in node:
         root = node["root"]
         if not isinstance(root, str):
