@@ -50,6 +50,12 @@
   recipient sees what is coming before spending the bandwidth.
 - Downloading a big message now shows a live percentage on the message bubble,
   and an interrupted download continues where it stopped.
+- **Long messages are no longer cut off**: message text used to be trimmed to
+  38 lines when it was saved, with the rest tucked away behind "Show Full
+  Message" — which also made long messages uneditable. The full text is now
+  kept as written: long messages get a "Show more"/"Show less" toggle, stay
+  editable, and are searchable and copyable in full. Messages already stored
+  on your device are left as they are.
 - **"Show Full Message…" now works**: HTML emails open in a sandboxed viewer.
   Scripts in the mail are stripped and can never run, and remote images stay
   blocked — no tracking pixels — until you allow them (Never / Once / Always;

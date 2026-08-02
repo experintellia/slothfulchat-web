@@ -1,0 +1,145 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 2 Aug 2026 10:39:42 +0000
+Subject: [PATCH 76/76] web-app: clamp long message text with CSS, add show
+ more/less toggle
+
+Core no longer truncates long message text when writing to the database, so
+the full text now reaches the UI. Clamp it visually instead: CSS
+-webkit-line-clamp on the message body, with a "Show more"/"Show less"
+button that only appears when the text is actually long (ported from core's
+former truncation thresholds: >3800 chars or >38 lines). Text is never cut
+in JS, so copy/select, in-page search and link parsing stay intact.
+
+The toggle is suppressed while a message is still downloading: that branch
+replaces the rendered content with the placeholder UI, so expanding would
+reveal nothing.
+
+The existing hasHtml "Show Full Message" button is untouched; it still
+covers real HTML mail and legacy truncated messages.
+
+Show more/less labels go through tx() with new keys in
+_locales/_untranslated_en.json, matching how every other fork-added label in
+this codebase is done.
+---
+ _locales/_untranslated_en.json                |  6 +++
+ packages/frontend/scss/message/_message.scss  | 11 +++++-
+ .../src/components/message/Message.tsx        | 38 ++++++++++++++++++-
+ 3 files changed, 53 insertions(+), 2 deletions(-)
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 898bac5..1b737f4 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -163,5 +163,11 @@
+   },
+   "recording_no_sound": {
+     "message": "No sound — check your microphone"
++  },
++  "message_text_show_more": {
++    "message": "Show more"
++  },
++  "message_text_show_less": {
++    "message": "Show less"
+   }
+ }
+diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
+index 768fec1..0785495 100644
+--- a/packages/frontend/scss/message/_message.scss
++++ b/packages/frontend/scss/message/_message.scss
+@@ -131,6 +131,14 @@ $info-text-max-width: 400px;
+         cursor: default;
+ 
+         margin-inline-end: 10px;
++
++        &.clamped {
++          display: -webkit-box;
++          -webkit-line-clamp: 24;
++          line-clamp: 24;
++          -webkit-box-orient: vertical;
++          overflow: hidden;
++        }
+       }
+     }
+ 
+@@ -205,7 +213,8 @@ $info-text-max-width: 400px;
+     margin-bottom: -7px;
+   }
+ 
+-  .show-html {
++  .show-html,
++  .show-more {
+     @include mixins.button-reset;
+ 
+     border: none;
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index 5920895..6cd9f5a 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -549,6 +549,21 @@ function buildMultiselectContextMenu(
+   ]
+ }
+ 
++// ponytail: these are core's former truncation limits (38 lines x 100 chars),
++// ported here only as the "is this text long enough to clamp" heuristic.
++// LONG_TEXT_LINES must stay above the -webkit-line-clamp value in
++// _message.scss (.text.clamped, currently 24), otherwise a text could trip
++// this check and show a toggle that reveals nothing new once expanded.
++const LONG_TEXT_CHARS = 3800
++const LONG_TEXT_LINES = 38
++
++function isLongText(text: string | null): boolean {
++  if (!text) return false
++  return (
++    text.length > LONG_TEXT_CHARS || text.split('\n').length > LONG_TEXT_LINES
++  )
++}
++
+ export default function Message(props: {
+   chat: T.FullChat
+   message: T.Message
+@@ -570,6 +585,7 @@ export default function Message(props: {
+   const openViewGroupDialog = useOpenViewGroupDialog()
+   const { jumpToMessage } = useMessage()
+   const [messageWidth, setMessageWidth] = useState(0)
++  const [textExpanded, setTextExpanded] = useState(false)
+   const ref = useRef<any>(null)
+ 
+   const focusAndMultiselect = useMessageFocusAndMultiselect(message.id, ref)
+@@ -964,8 +980,15 @@ export default function Message(props: {
+     ? true
+     : !!message.savedMessageId
+ 
++  // Not while downloading: that branch replaces `content` below with the
++  // placeholder UI, so a toggle would expand something that isn't rendered.
++  const textIsLong = isLongText(text) && message.downloadState === 'Done'
++
+   let content = (
+-    <div dir='auto' className='text'>
++    <div
++      dir='auto'
++      className={classNames('text', { clamped: textIsLong && !textExpanded })}
++    >
+       {text !== null ? (
+         <MessageBody
+           text={text}
+@@ -1183,6 +1206,19 @@ export default function Message(props: {
+             ></VCardComponent>
+           )}
+           {content}
++          {textIsLong && (
++            <button
++              type='button'
++              onClick={() => setTextExpanded(expanded => !expanded)}
++              className='show-more'
++              aria-expanded={textExpanded}
++              tabIndex={tabindexForInteractiveContents}
++            >
++              {textExpanded
++                ? tx('message_text_show_less')
++                : tx('message_text_show_more')}
++            </button>
++          )}
+           {hasHtml && (
+             <button
+               type='button'
