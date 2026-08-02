@@ -1,5 +1,10 @@
 # Changelog
 
+- **Apps in "All Media" say which chat they came from**: in the global gallery
+  the Apps tab now shows each app's chat — its avatar badged onto the app icon
+  and its name in front of the app's own status line. Per-chat galleries are
+  unchanged.
+
 - **Custom voice-message player** — voice and audio messages
   get proper controls: play/pause, a waveform you can click to seek (with a
   plain seek bar as fallback), elapsed time, and a playback-speed pill

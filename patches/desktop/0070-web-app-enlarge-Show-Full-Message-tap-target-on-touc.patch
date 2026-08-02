@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothfulchat.local>
 Date: Sat, 1 Aug 2026 19:09:14 +0000
-Subject: [PATCH 70/71] web-app: enlarge Show Full Message tap target on touch
+Subject: [PATCH 70/75] web-app: enlarge Show Full Message tap target on touch
  devices
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -17,7 +17,7 @@ buttons (0047) — so the bubble layout stays pixel-for-pixel identical.
  1 file changed, 12 insertions(+)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index 40ecad8c2..768fec1ec 100644
+index 40ecad8..768fec1 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
 @@ -215,6 +215,18 @@ $info-text-max-width: 400px;
