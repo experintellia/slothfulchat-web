@@ -33,6 +33,11 @@
   0:00 — it picks up where the audio actually is. The recorder also fits
   phone-sized windows now instead of pushing its buttons off-screen.
 
+- **Security**: a link can no longer silently route your traffic through
+  someone else's bridge. A `?proxy=` in the page URL that isn't one this
+  instance offers, one you already picked, or one on your own machine is now
+  ignored until you confirm it — the app keeps using its usual bridge and shows
+  you which bridge the link wanted, and what it would learn about you.
 - **Security**: a link you open from the app can no longer reach back and
   navigate SlothfulChat away to somewhere else — a favourite trick for pointing
   you at a fake login page. Self-hosted setups using the shipped Caddy config

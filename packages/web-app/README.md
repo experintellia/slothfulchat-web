@@ -82,8 +82,12 @@ cannot do without in-wasm HTTP). Bridge URL defaults to `ws://localhost:8641`;
 override with `?proxy=` (highest precedence, used by tests) or persistently via
 the bridge dialog (warning toast when the bridge is down, or Settings →
 Connectivity → "Change…"), which saves to the `slothfulchat.proxyUrl`
-localStorage key. Persistence (OPFS) is on by default; `?persist=0` gives a
-throwaway session.
+localStorage key. A `?proxy=` only takes effect unasked when it is already
+trusted — a bridge on this device (any loopback host/port), one the instance
+offers (`SLOTHFUL_DEFAULT_PROXY` / `SLOTHFUL_PUBLIC_BRIDGES`), or the one
+already saved; anything else is ignored and confirmed with the user first, so a
+link can't quietly route a session through someone else's relay. Persistence
+(OPFS) is on by default; `?persist=0` gives a throwaway session.
 
 **Install as PWA:** browsers only offer install from a secure context —
 `http://localhost` (dev) or any `https://` host (e.g. the GitHub Pages deploy);
@@ -120,9 +124,10 @@ proxy, and Pages provides none:
   content), and the bundled proxy speaks `ws` on localhost only.
 
 To get a working client from the deployed site, run a `wss://` proxy
-somewhere reachable and point the app at it with `?proxy=wss://your-host` (or
-the `slothfulchat.proxyUrl` localStorage key). Without that, the deploy is a
-UI/PWA demo only.
+somewhere reachable and point the app at it with `?proxy=wss://your-host` (which
+asks for confirmation unless the instance already offers that bridge), the
+bridge dialog, or the `slothfulchat.proxyUrl` localStorage key. Without that,
+the deploy is a UI/PWA demo only.
 
 ### Per-instance config (build-time env vars)
 
