@@ -1709,7 +1709,9 @@ class BrowserRuntime {
       method: 'HEAD',
     })
     const lang = response.ok ? curLang : 'en'
-    window.open(`/help/${lang}/help.html${anchorPath}`, '_blank')?.focus()
+    // same-origin static help, so the opener handle is not a phishing lever
+    // here — but there is no reason for the help window to hold one either.
+    window.open(`/help/${lang}/help.html${anchorPath}`, '_blank', 'noopener')
   }
   openLogFile(): void {
     this.log.warn('no log file in wasm edition, logs are in the browser console')

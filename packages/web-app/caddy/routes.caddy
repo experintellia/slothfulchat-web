@@ -5,6 +5,21 @@
 # *.webxdc. wildcard — see Caddyfile.example).
 {args[0]} {
 	root * {args[1]}
+	# Response headers the app cannot set for itself: a <meta> CSP cannot express
+	# frame-ancestors, so clickjacking protection only exists where a real server
+	# sets it. (GitHub Pages, which serves prod, cannot — see SELFHOSTING.md.)
+	# NB: a second CSP header does NOT relax main.html's <meta> policy — multiple
+	# policies are enforced independently, so this only ever adds a restriction.
+	# Spelled out per site rather than shared via a snippet: this file is
+	# imported once PER SLOT (next + every preview) into one config, and a
+	# snippet defined here would be a duplicate definition on the second import.
+	header {
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Frame-Options DENY
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
 	# Never serve the shipped webserver config back out: dist/caddy/ sits inside
 	# the web root, and an in-place-edited Caddyfile.example may carry hardcoded
 	# DNS API credentials (they belong in env vars, but belt and braces).
@@ -15,6 +30,19 @@
 *.webxdc.{args[0]} {
 	import wildcard_tls
 	root * {args[1]}
+	# Headers are spelled out here rather than reusing (app_headers): a webxdc
+	# origin is MEANT to be framed by the app (WEBXDC.md — the app embeds it in
+	# an iframe, and deletion uses a hidden one), so frame-ancestors 'none' /
+	# X-Frame-Options DENY would break the feature outright. Naming the app host
+	# instead still keeps a hostile site from framing someone's webxdc app.
+	# `{args[0]}` also cannot be read from inside a snippet: there it would mean
+	# the snippet's own import args, not this file's.
+	header {
+		Content-Security-Policy "frame-ancestors https://{args[0]}"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
 	encode zstd gzip
 	# For now every path serves the isolation test page; becomes the webxdc
 	# bootstrap + wipe routes as the feature develops (see WEBXDC.md).

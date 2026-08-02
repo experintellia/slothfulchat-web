@@ -170,6 +170,19 @@ web.slothful.chat {
 	root * {args[1]}
 	file_server
 }'
+# A header is NOT confined to the host that sends it: a cookie scoped to the
+# parent domain lands on next, prod and every sibling slot. Allowing the
+# `headers` handler is why the header NAMES are allowlisted too.
+hostile 'a cookie scoped to the parent domain' '{args[0]} {
+	root * {args[1]}
+	header Set-Cookie "session=attacker; Domain=slothful.chat; Path=/"
+	file_server
+}'
+hostile 'unpicking its own frame-ancestors' '{args[0]} {
+	root * {args[1]}
+	header -Content-Security-Policy
+	file_server
+}'
 
 # 10. archive limits — all enforced BEFORE extraction, so nothing large ever
 #     lands. Limits are read out of the script itself so these fixtures cannot
