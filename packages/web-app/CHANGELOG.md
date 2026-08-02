@@ -1,5 +1,38 @@
 # Changelog
 
+- **Apps in "All Media" say which chat they came from**: in the global gallery
+  the Apps tab now shows each app's chat — its avatar badged onto the app icon
+  and its name in front of the app's own status line. Per-chat galleries are
+  unchanged.
+
+- **Custom voice-message player** — voice and audio messages
+  get proper controls: play/pause, a waveform you can click to seek (with a
+  plain seek bar as fallback), elapsed time, and a playback-speed pill
+  (1×/1.5×/2×, applies to all voice messages). Half-listened messages resume
+  where you left off. The mini-player that keeps playing while you switch
+  chats gets the same controls plus the sender's name — click it to jump back
+  to the message — and your lock screen / headset buttons control playback
+  (without showing who sent the message, unless you opt in). Recording is
+  polished too: pause and resume while recording, listen to your recording
+  before sending it (send, re-record or discard), hold the mic and slide up
+  to record hands-free or slide left to cancel, and an "original audio"
+  option that skips noise suppression for music or ambience. If you have
+  several microphones you can pick one right in the recorder (with a live
+  level meter), even mid-recording — and if no sound is coming in, an inline
+  hint says so instead of cancelling your recording. On by default now —
+  turn it off in Settings → Advanced → Experimental features if it gives
+  you trouble. The setting for showing sender and chat details in the
+  system media controls has moved to Settings → Notifications, next to
+  "show notification content" (it is the same lock-screen question). On
+  phone-sized screens the playing voice message shows as a slim bar pinned
+  under the top bar — visible inside the chat too, with play/pause, the
+  sender (tap to jump to the message), speed and a thin progress line.
+
+- **Voice-message position stays in sync**: switching profiles or chats while
+  a voice message plays no longer resets the message's displayed position to
+  0:00 — it picks up where the audio actually is. The recorder also fits
+  phone-sized windows now instead of pushing its buttons off-screen.
+
 - **Security**: opening a received attachment can no longer run its code as
   part of the app. A scripted SVG sent to you could reach your local app data;
   attachments now open isolated, and images, video and audio still display
@@ -8,6 +41,9 @@
   call now offers **Accept** (audio only) and **Accept with video**, so the
   person calling you can't decide whether your camera starts. You can still
   switch the camera on at any point once the call is connected.
+- Large videos now show a preview frame while they are still waiting to be
+  downloaded: the poster is grabbed from the video when you attach it, so the
+  recipient sees what is coming before spending the bandwidth.
 - Downloading a big message now shows a live percentage on the message bubble,
   and an interrupted download continues where it stopped.
 - **Long messages are no longer cut off**: message text used to be trimmed to
@@ -16,6 +52,14 @@
   kept as written: long messages get a "Show more"/"Show less" toggle, stay
   editable, and are searchable and copyable in full. Messages already stored
   on your device are left as they are.
+- **"Show Full Message…" now works**: HTML emails open in a sandboxed viewer.
+  Scripts in the mail are stripped and can never run, and remote images stay
+  blocked — no tracking pixels — until you allow them (Never / Once / Always;
+  "Always" is remembered, and not offered for message requests). Email
+  addresses and Delta Chat invite links inside a mail open right in the app
+  (new chat / invite dialog, on the account the mail belongs to) instead of
+  leaving it, and ordinary web links get the same tracking-parameter
+  stripping as links in a chat.
 - **Chat export works again**: the `index.html` viewer inside exported chat
   zips threw a script error and showed an empty page; exports now render
   correctly again.

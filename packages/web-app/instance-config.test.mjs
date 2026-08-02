@@ -166,6 +166,9 @@ test('isCatalogEvent: enforces the closed catalogue', () => {
   ok(!isCatalogEvent('link_preview', { action: 'user@example.org' }))
   // props on an event that declares none
   ok(!isCatalogEvent('qr_scan', { action: 'accept' }))
+  // the on-by-default voice player's disable signal: the bare name, never a payload
+  ok(isCatalogEvent('voice_player_disabled'))
+  ok(!isCatalogEvent('voice_player_disabled', { setting: 'off' }))
 })
 
 test('isCatalogEvent: the M5 "call" event (content-free call analytics)', () => {

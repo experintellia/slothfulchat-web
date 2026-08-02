@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 23 Jul 2026 01:40:02 +0000
-Subject: [PATCH 68/69] web-app: styled download-on-demand placeholders (type,
+Subject: [PATCH 68/76] web-app: styled download-on-demand placeholders (type,
  thumbnail, size)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -32,6 +32,11 @@ postMessageViewType isn't in the pinned @deltachat/jsonrpc-client bindings
 yet (core regenerates them later in the build); it's read through one typed
 accessor rather than scattered casts.
 
+The thumbnail goes through a small Preview component that falls back to the
+grey box when the image fails to load, so a blob that has gone missing (GC'd,
+or an OPFS write-through lost across a reload) shows the placeholder instead of
+the browser's broken-image glyph.
+
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
 ---
@@ -39,11 +44,11 @@ Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
  .../_message-download-placeholder.scss        | 300 ++++++++++++++++++
  .../components/dialogs/ExportChatToHtml.tsx   |  14 +-
  .../MessageDetail/BasicMessageInfo.tsx        |   2 +-
- .../message/DownloadOnDemandPlaceholder.tsx   | 284 +++++++++++++++++
+ .../message/DownloadOnDemandPlaceholder.tsx   | 289 +++++++++++++++++
  .../src/components/message/Message.tsx        | 120 +++++--
  .../src/tests/placeholderCaption.test.ts      |  32 ++
  .../frontend/src/utils/downloadPlaceholder.ts |  33 ++
- 8 files changed, 749 insertions(+), 37 deletions(-)
+ 8 files changed, 754 insertions(+), 37 deletions(-)
  create mode 100644 packages/frontend/scss/message/_message-download-placeholder.scss
  create mode 100644 packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
  create mode 100644 packages/frontend/src/tests/placeholderCaption.test.ts
@@ -421,10 +426,10 @@ index 5d3432a..b6e27a6 100644
    const minutes = Math.floor(totalSeconds / 60) % 60
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 new file mode 100644
-index 0000000..101bc86
+index 0000000..f59ca4c
 --- /dev/null
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,289 @@
 +import React from 'react'
 +import { filesize } from 'filesize'
 +import { T } from '@deltachat/jsonrpc-client'
@@ -480,6 +485,31 @@ index 0000000..101bc86
 +      </svg>
 +      {!indeterminate && <span className='pct'>{percent}%</span>}
 +    </div>
++  )
++}
++
++/**
++ * The preview thumbnail, or the grey fallback box when there is none — or when the blob has
++ * gone missing (housekeeping GC, or an OPFS write-through lost across a reload), which would
++ * otherwise render as the browser's broken-image glyph inside the bubble.
++ */
++function Preview({
++  file,
++  className,
++}: {
++  file: string | null | undefined
++  className?: string
++}) {
++  const [broken, setBroken] = React.useState(false)
++  return file && !broken ? (
++    <img
++      className={className}
++      src={runtime.transformBlobURL(file)}
++      alt=''
++      onError={() => setBroken(true)}
++    />
++  ) : (
++    <div className='download-on-demand-empty' />
 +  )
 +}
 +
@@ -581,15 +611,7 @@ index 0000000..101bc86
 +  if (isImage(viewType) || viewType === 'Sticker') {
 +    return (
 +      <div className={mediaBoxClass}>
-+        {message.file ? (
-+          <img
-+            className='attachment-content'
-+            src={runtime.transformBlobURL(message.file)}
-+            alt=''
-+          />
-+        ) : (
-+          <div className='download-on-demand-empty' />
-+        )}
++        <Preview file={message.file} className='attachment-content' />
 +        <div className='download-on-demand-overlay'>{controls}</div>
 +      </div>
 +    )
@@ -599,15 +621,7 @@ index 0000000..101bc86
 +  if (viewType === 'Video') {
 +    return (
 +      <div className={mediaBoxClass + ' video'}>
-+        {message.file ? (
-+          <img
-+            className='attachment-content'
-+            src={runtime.transformBlobURL(message.file)}
-+            alt=''
-+          />
-+        ) : (
-+          <div className='download-on-demand-empty' />
-+        )}
++        <Preview file={message.file} className='attachment-content' />
 +        <div className='play-glyph' aria-hidden='true' />
 +        <div className='download-on-demand-overlay'>
 +          {message.duration > 0 && (
@@ -652,14 +666,10 @@ index 0000000..101bc86
 +  if (viewType === 'Webxdc') {
 +    return (
 +      <div className={'webxdc download-on-demand' + contentBelow}>
-+        {message.file ? (
-+          <img src={runtime.transformBlobURL(message.file)} alt='' />
-+        ) : (
-+          // No thumbnail yet and no .xdc downloaded to derive an icon from, so
-+          // fall back to the grey box rather than getWebxdcIconURL (which is
-+          // unimplemented on target-browser and can't work for a pre-message).
-+          <div className='download-on-demand-empty' />
-+        )}
++        {/* No thumbnail yet and no .xdc downloaded to derive an icon from, so the fallback is
++            the grey box rather than getWebxdcIconURL (which is unimplemented on
++            target-browser and can't work for a pre-message). */}
++        <Preview file={message.file} />
 +        <div className='info-text'>
 +          <div className='name'>{message.fileName}</div>
 +        </div>

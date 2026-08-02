@@ -184,12 +184,19 @@ await writeFile(
   patchBootError(await readFile(join(here, 'static/boot-error.js'), 'utf-8'), config.instanceName)
 )
 await cp(join(here, 'static/viewport-keyboard.js'), join(dist, 'viewport-keyboard.js'))
+// Voice-message waveform bucketing worker (progressive enhancement; the player
+// falls back to the plain seek bar if this file isn't served).
+await cp(join(here, 'static/waveform-worker.js'), join(dist, 'waveform-worker.js'))
 // Detached call window (docs/calls.md §Windowing, M4): a standalone same-origin
 // page the main tab opens with window.open. Its bundle (dist/call-popup.js) is
 // emitted by esbuild in `pnpm build`, alongside runtime.js. Self-contained CSP
 // (baked into the file), so — unlike main.html — it needs no assemble-time
 // rewrite.
 await cp(join(here, 'static/call-popup.html'), join(dist, 'call-popup.html'))
+// HTML email viewer wrapper (runtime.openMessageHTML): hosted in a dialog
+// iframe by the main tab; self-contained CSP like call-popup.html, its bundle
+// (dist/html-email.js) is emitted by esbuild in `pnpm build`.
+await cp(join(here, 'static/html-email.html'), join(dist, 'html-email.html'))
 await writeFile(join(dist, '.nojekyll'), '')
 
 // Webxdc origin-isolation test page + the Caddy config that serves it. The

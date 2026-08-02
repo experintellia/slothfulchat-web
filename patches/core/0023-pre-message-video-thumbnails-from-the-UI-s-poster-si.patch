@@ -1,0 +1,213 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 1 Aug 2026 16:58:23 +0000
+Subject: [PATCH 23/24] pre-message: video thumbnails from the UI's poster
+ sidecar
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Video was the one placeholder type left without a preview: core cannot decode
+video frames, and its wasm runs in a Web Worker with no DOM, so the pixels can
+only come from the UI.
+
+Rather than invent a param for that, read the `<blob>-preview.jpg` sidecar
+convention housekeeping already reserves (`is_file_in_use(.., "-preview.jpg")`,
+the slot the mobile clients use for video thumbnails). It costs no `Param`, no
+migration and no housekeeping change, and the poster is GCed exactly when the
+video blob is — a param-referenced blob would instead be invisible to the scan,
+which only extracts `Param::File` on msgs, and get deleted under a lingering
+draft.
+
+- blob: `VIDEO_PREVIEW_SUFFIX` + `video_preview_path()`; housekeeping now uses
+  the constant, so renaming the convention is a compile error rather than a
+  silently dead preview.
+- `PostMsgMetadata::thumbnail()`: `Viewtype::Video` reads the sidecar when it
+  exists, through the same `thumbnail_base64()` as every other type, so the
+  128px/q40/20 KB budget stays enforced in one place. `path_exists` gates the
+  read: videos from clients that write no sidecar are the normal case, not a
+  warning.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ src/blob.rs                       | 14 +++++++++++
+ src/download/post_msg_metadata.rs | 39 +++++++++++++++++++++++++++---
+ src/sql.rs                        |  6 ++++-
+ src/sql/sql_tests.rs              | 40 ++++++++++++++++++++++++++++++-
+ 4 files changed, 94 insertions(+), 5 deletions(-)
+
+diff --git a/src/blob.rs b/src/blob.rs
+index 5cf5c2e..cd0e145 100644
+--- a/src/blob.rs
++++ b/src/blob.rs
+@@ -725,6 +725,20 @@ fn encode_img(
+     Ok(())
+ }
+ 
++/// Suffix of the poster a UI may write next to a video blob, as `<blobname>-preview.jpg`.
++///
++/// Core cannot decode video frames, so a video preview can only come from the UI. Housekeeping
++/// keeps a sidecar with this suffix alive for as long as its parent blob is in use, which is why
++/// the poster needs no `Param` of its own and is GCed together with the video.
++pub(crate) const VIDEO_PREVIEW_SUFFIX: &str = "-preview.jpg";
++
++/// Path of the sidecar poster belonging to the video blob at `path`.
++pub(crate) fn video_preview_path(path: PathBuf) -> PathBuf {
++    let mut path = path.into_os_string();
++    path.push(VIDEO_PREVIEW_SUFFIX);
++    path.into()
++}
++
+ /// Encodes a small JPEG thumbnail (longest edge 128px, quality 40) of `bytes` as base64.
+ ///
+ /// `bytes` may be any image the `image` crate can guess (in-memory, so it also works for the
+diff --git a/src/download/post_msg_metadata.rs b/src/download/post_msg_metadata.rs
+index 98bb696..8d46cd3 100644
+--- a/src/download/post_msg_metadata.rs
++++ b/src/download/post_msg_metadata.rs
+@@ -2,6 +2,7 @@
+ use num_traits::ToPrimitive;
+ use serde::{Deserialize, Serialize};
+ 
++use crate::blob::video_preview_path;
+ use crate::context::Context;
+ use crate::log::warn;
+ use crate::message::Message;
+@@ -86,10 +87,10 @@ pub(crate) async fn from_msg(context: &Context, message: &Message) -> Result<Opt
+         }))
+     }
+ 
+-    /// Best-effort small preview JPEG (base64) for image-like and webxdc messages.
++    /// Best-effort small preview JPEG (base64) for image-like, video and webxdc messages.
+     ///
+     /// A preview is never worth failing a send over, so every failure path warns and
+-    /// yields `None`. Video/Audio/File get no thumbnail (frame extraction = new dep).
++    /// yields `None`. Audio/File get no thumbnail.
+     async fn thumbnail(context: &Context, message: &Message) -> Option<String> {
+         let bytes = match message.viewtype {
+             Viewtype::Image | Viewtype::Gif | Viewtype::Sticker => {
+@@ -97,6 +98,18 @@ async fn thumbnail(context: &Context, message: &Message) -> Option<String> {
+                 // read_file is wasm-safe and warns on failure itself.
+                 crate::tools::read_file(context, &path).await.ok()?
+             }
++            Viewtype::Video => {
++                // Core cannot decode video frames, so the poster is the `<blob>-preview.jpg`
++                // sidecar the UI writes next to the attachment. Housekeeping already keeps
++                // that name alive for as long as the video blob is in use (see `sql.rs`), so
++                // it needs no param of its own and is GCed together with the video.
++                let path = video_preview_path(message.get_file(context)?);
++                if !crate::tools::path_exists(&path) {
++                    // Videos from clients that write no sidecar are the normal case here.
++                    return None;
++                }
++                crate::tools::read_file(context, &path).await.ok()?
++            }
+             Viewtype::Webxdc => {
+                 let info = message.get_webxdc_info(context).await.ok()?;
+                 match message.get_webxdc_blob(context, &info.icon).await {
+@@ -227,7 +240,7 @@ mod tests {
+         test_utils::{TestContextManager, create_test_image},
+     };
+ 
+-    use super::{PostMsgMetadata, apply_received_metadata};
++    use super::{PostMsgMetadata, apply_received_metadata, video_preview_path};
+ 
+     /// Decodes a base64 JPEG thumbnail, asserting it is a valid JPEG no larger than 128px per edge.
+     fn decode_thumbnail(thumbnail: &str) -> image::DynamicImage {
+@@ -288,6 +301,26 @@ async fn test_build_from_video_msg() -> Result<()> {
+         Ok(())
+     }
+ 
++    /// Video with a `<blob>-preview.jpg` sidecar: the poster becomes the thumbnail.
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_build_from_video_msg_with_preview() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++
++        let mut video_msg = Message::new(Viewtype::Video);
++        video_msg.set_file_from_bytes(alice, "clip.mp4", &vec![0u8; 1_000_000], None)?;
++        // What the UI writes next to the blob after grabbing a frame.
++        let blob = video_msg.get_file(alice).expect("video has a file");
++        tokio::fs::write(video_preview_path(blob), create_test_image(1080, 1920)?).await?;
++
++        let post_msg_metadata = PostMsgMetadata::from_msg(alice, &video_msg)
++            .await?
++            .expect("video has a file");
++        let thumbnail = post_msg_metadata.thumbnail.expect("poster becomes thumbnail");
++        decode_thumbnail(&thumbnail);
++        Ok(())
++    }
++
+     /// Corrupt/truncated image bytes: send still succeeds, thumbnail is `None` (E1).
+     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+     async fn test_build_from_corrupt_image_msg() -> Result<()> {
+diff --git a/src/sql.rs b/src/sql.rs
+index 12e507f..406d7c5 100644
+--- a/src/sql.rs
++++ b/src/sql.rs
+@@ -1087,7 +1087,11 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
+                     if p == blobdir
+                         && (is_file_in_use(&files_in_use, None, &name_s)
+                             || is_file_in_use(&files_in_use, Some(".waveform"), &name_s)
+-                            || is_file_in_use(&files_in_use, Some("-preview.jpg"), &name_s))
++                            || is_file_in_use(
++                                &files_in_use,
++                                Some(crate::blob::VIDEO_PREVIEW_SUFFIX),
++                                &name_s,
++                            ))
+                     {
+                         continue;
+                     }
+diff --git a/src/sql/sql_tests.rs b/src/sql/sql_tests.rs
+index 944932b..4914dd6 100644
+--- a/src/sql/sql_tests.rs
++++ b/src/sql/sql_tests.rs
+@@ -1,5 +1,5 @@
+ use super::*;
+-use crate::message::Message;
++use crate::message::{Message, Viewtype};
+ use crate::{EventType, test_utils::TestContext};
+ 
+ #[test]
+@@ -423,3 +423,41 @@ async fn test_housekeeping_keeps_pending_download_staging() -> Result<()> {
+ 
+     Ok(())
+ }
++
++/// A video's `-preview.jpg` poster lives and dies with the video blob it belongs to:
++/// housekeeping keeps it while the message exists and removes it in the same pass that
++/// removes the video once the message is deleted. This is what buys the poster its lack of a
++/// `Param` — nothing else references it.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_housekeeping_video_preview_follows_the_blob() -> Result<()> {
++    let mut tcm = crate::test_utils::TestContextManager::new();
++    let t = tcm.alice().await;
++    let bob = tcm.bob().await;
++    // A keyed peer: chatmail core refuses to send without e2e encryption.
++    let chat = t.create_chat(&bob).await;
++
++    let mut msg = Message::new(Viewtype::Video);
++    msg.set_file_from_bytes(&t, "clip.mp4", b"not really a video", None)?;
++    let msg_id = crate::chat::send_msg(&t, chat.id, &mut msg).await?;
++    let blob = Message::load_from_db(&t, msg_id)
++        .await?
++        .get_file(&t)
++        .context("sent video has a file")?;
++    // What the UI writes next to the blob after grabbing a frame.
++    let preview = crate::blob::video_preview_path(blob.clone());
++    tokio::fs::write(&preview, b"poster").await?;
++
++    // Past the "keep anything touched in the last hour" window, so both files are candidates.
++    SystemTime::shift(Duration::from_secs(65 * 60));
++    remove_unused_files(&t).await?;
++    assert!(blob.exists(), "video blob of a live message was deleted");
++    assert!(preview.exists(), "poster of a live message was deleted");
++
++    crate::message::delete_msgs(&t, &[msg_id]).await?;
++    SystemTime::shift(Duration::from_secs(65 * 60));
++    remove_unused_files(&t).await?;
++    assert!(!blob.exists(), "video blob outlived its message");
++    assert!(!preview.exists(), "poster outlived its message");
++
++    Ok(())
++}

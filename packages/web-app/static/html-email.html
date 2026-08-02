@@ -1,0 +1,209 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/png" href="./images/icon-256.png" />
+    <!--
+      HTML email viewer wrapper — the browser edition of desktop's
+      windows/html_email.ts. Hosted by runtime.ts (openMessageHTML) either in
+      a fullscreen <dialog> iframe (mobile / installed PWA / popup-blocked
+      fallback) or as a separate popup window on desktop-sized browser tabs.
+      Either way the host calls window.__initHtmlEmail() with the message +
+      callbacks (same-origin, no postMessage protocol needed), possibly more
+      than once — the wrapper is reused across messages.
+
+      Two-layer isolation, mirroring desktop's wrapper-window + sandboxed
+      WebContentsView: this page is OUR code (script-src 'self'); the email
+      body goes into a nested blob: iframe that html-email.ts creates with
+      sandbox="allow-popups allow-popups-to-escape-sandbox" — no scripts, no
+      same-origin, opaque origin — after DOMPurify sanitization.
+
+      This CSP is the CEILING for the email content: a blob: document inherits
+      its creator's policy, and CSPs only combine downwards, so img/media/font
+      must allow http(s) HERE for the "load remote images" opt-in to be able
+      to work at all. The actual default-deny lives in the <meta> CSP that
+      html-email.ts writes into the blob document itself (img-src data: only
+      until the user opts in — see CONTENT_CSP there). The app's main.html CSP
+      does NOT apply here: this is a real navigation (iframe src= or a popup),
+      not a srcdoc/about:blank child, so it gets only this document's policy.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none';
+                   style-src 'unsafe-inline';
+                   script-src 'self';
+                   img-src 'self' data: blob: http: https:;
+                   media-src data: blob: http: https:;
+                   font-src data: http: https:;
+                   frame-src blob:"
+    />
+    <style>
+      /* fixed dark chrome like desktop's email window (#282828, darkTheme),
+         independent of the app theme; the content frame is forced to
+         black-on-white by the base style injected into the blob document */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #282828;
+        color: #eee;
+        font: 14px/1.4 system-ui, sans-serif;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        flex: none;
+      }
+      #meta {
+        flex: 1;
+        min-width: 0;
+      }
+      #subject {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #from,
+      #date {
+        font-size: 12px;
+        color: #aaa;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #remote {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #ccc;
+      }
+      #remote select {
+        font: inherit;
+        background: #3a3a3a;
+        color: #eee;
+        border: 1px solid #555;
+        border-radius: 4px;
+        padding: 3px 4px;
+      }
+      header button {
+        flex: none;
+        font: inherit;
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+        background: transparent;
+        color: #eee;
+        border: none;
+        padding: 6px 10px;
+        border-radius: 6px;
+      }
+      header button:hover {
+        background: #444;
+      }
+      /* mobile layout (app's $dialog-breakpoint): back button left, remote
+         control tucked into the ⋮ menu; desktop keeps it exposed + ✕ */
+      #back,
+      #menu-btn {
+        display: none;
+      }
+      @media (max-width: 500px) {
+        #back,
+        #menu-btn {
+          display: block;
+        }
+        #remote,
+        #close {
+          display: none;
+        }
+      }
+      #menu {
+        position: fixed;
+        inset: 44px 8px auto auto; /* under the header, right-aligned */
+        margin: 0;
+        min-width: 12em;
+        background: #3a3a3a;
+        color: #eee;
+        border: 1px solid #555;
+        border-radius: 8px;
+        padding: 4px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+      }
+      #menu .caption {
+        font-size: 12px;
+        color: #aaa;
+        padding: 6px 10px;
+      }
+      #menu button {
+        display: block;
+        width: 100%;
+        text-align: left;
+        font: inherit;
+        background: transparent;
+        color: #eee;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 10px;
+        cursor: pointer;
+      }
+      #menu button:hover {
+        background: #4a4a4a;
+      }
+      #frame-host {
+        flex: 1;
+        min-height: 0;
+        background: #fff;
+        position: relative;
+      }
+      #frame-host iframe {
+        display: block;
+        width: 100%;
+        height: 100%;
+        border: none;
+        background: #fff;
+      }
+      #loading {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #666;
+        background: #fff;
+        font-size: 13px;
+      }
+    </style>
+    <title>HTML Email</title>
+  </head>
+  <body>
+    <header>
+      <button id="back" aria-label="Back">←</button>
+      <div id="meta">
+        <h1 id="subject"></h1>
+        <div id="from"></div>
+        <div id="date"></div>
+      </div>
+      <label id="remote">
+        <span id="remote-caption"></span>
+        <select id="remote-select"></select>
+      </label>
+      <button id="menu-btn" popovertarget="menu" aria-label="Menu">⋮</button>
+      <button id="close" aria-label="Close">✕</button>
+    </header>
+    <div id="menu" popover></div>
+    <div id="frame-host"><div id="loading">…</div></div>
+    <script src="./html-email.js" type="module"></script>
+  </body>
+</html>

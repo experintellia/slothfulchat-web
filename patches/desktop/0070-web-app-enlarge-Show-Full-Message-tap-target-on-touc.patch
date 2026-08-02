@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <dev@slothfulchat.local>
+Date: Sat, 1 Aug 2026 19:09:14 +0000
+Subject: [PATCH 70/76] web-app: enlarge Show Full Message tap target on touch
+ devices
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The .show-html button is a bare text line (~17px tall, no padding), so
+tapping "Show Full Message…" on phones often missed and hit the message
+bubble instead. On coarse pointers, grow the hit box to ~37px with
+padding canceled by negative margins — same trick as the navbar
+buttons (0047) — so the bubble layout stays pixel-for-pixel identical.
+---
+ packages/frontend/scss/message/_message.scss | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
+index 40ecad8..768fec1 100644
+--- a/packages/frontend/scss/message/_message.scss
++++ b/packages/frontend/scss/message/_message.scss
+@@ -215,6 +215,18 @@ $info-text-max-width: 400px;
+     &:hover {
+       cursor: pointer;
+     }
++
++    // Touch devices: the bare text line is a ~17px-tall tap target, so
++    // "Show Full Message…" taps often miss on phones. Grow the hit box with
++    // padding and cancel it with negative margins so the bubble layout stays
++    // pixel-for-pixel identical (same trick as the navbar buttons);
++    // position: relative paints the grown box above its neighbors so it wins
++    // the overlapped strip — a fingertip landing there meant the button.
++    @media (pointer: coarse) {
++      position: relative;
++      padding: 10px 12px 10px 0;
++      margin: -10px -12px -10px 0;
++    }
+   }
+ 
+   .download {

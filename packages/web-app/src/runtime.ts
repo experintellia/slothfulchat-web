@@ -99,6 +99,7 @@ function getDefaultSettings() {
     hideNewChatSuggestions: false,
     publicBotsRemoteLoadConsent: false,
     stripTrackingLinks: true,
+    experimentalAudioPlayerControls: true,
   }
 }
 
@@ -165,6 +166,7 @@ const QR_URL_PREFIXES = [
   'dcaccount:', // scan-to-configure a chatmail account
   'dclogin:', // scan-to-login
 ]
+
 
 /** What the app was launched to do, sniffed out of the page URL at boot:
  *  - `qr`: an invite / login / verification payload → frontend `onOpenQrUrl`.
@@ -256,6 +258,13 @@ const BOOT_SHARE = extractBootShareAction()
  * archives don't blow the call stack the way `btoa(String.fromCharCode(...))`
  * would. Used to hand a launched `.xdc` to the frontend's send-to-chat dialog,
  * which expects base64 `file_content` (same contract electron/tauri use). */
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64)
+  const data = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) data[i] = binary.charCodeAt(i)
+  return data
+}
+
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -690,6 +699,28 @@ class BrowserRuntime {
     // passed — release any held first-visit analytics if its 'welcome' hook
     // somehow didn't fire (a no-op on warm starts and once already released).
     analytics.releaseHeldEvents()
+    // where the HTML email viewer will use the in-app dialog (small screens /
+    // installed PWAs — desktop tabs get a popup window instead), pre-load its
+    // wrapper iframe at idle so the first "Show Full Message…" opens instantly
+    if (
+      !window.matchMedia('(min-width: 501px)').matches ||
+      window.matchMedia('(display-mode: standalone)').matches
+    ) {
+      const idle = (window as any).requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 2000))
+      idle(() => this.ensureHtmlEmailDialog())
+    }
+    // Disable signal for the on-by-default custom voice player. Only an
+    // explicitly stored `false` counts: setDesktopSetting persists just the
+    // keys the user actually touched, so a legacy profile that never met this
+    // switch has no entry and falls back to the default (true) above. Sent
+    // here — after the notice — and once per visit, since ScreenController
+    // calls emitUIFullyReady exactly once.
+    void this.getDesktopSettings()
+      .then(s => {
+        if (s.experimentalAudioPlayerControls === false)
+          analytics.event('voice_player_disabled')
+      })
+      .catch(() => {})
   }
   emitUIReady(): void {
     perf.boot('ui-ready')
@@ -720,8 +751,205 @@ class BrowserRuntime {
     return dc
   }
 
-  openMessageHTML(): void {
-    throw new Error('Method not implemented.')
+  /**
+   * "Show Full Message…" — browser edition of desktop's separate HTML email
+   * window. The viewer itself is static/html-email.html, which sanitizes the
+   * mail and renders it into a fully sandboxed blob: iframe (see
+   * src/html-email.ts for the three-layer isolation story). Two hosts:
+   *
+   * - Desktop-sized browser tab: a real separate window via window.open
+   *   (desktop parity — read mail and chat side by side); one window per
+   *   message, re-click focuses it. Not attempted in installed PWAs
+   *   (window.open there is unreliable) or on small screens.
+   * - Otherwise, or when the popup is blocked: a fullscreen <dialog> (same
+   *   top-layer pattern as consent.ts) hosting the viewer in an iframe. The
+   *   dialog + iframe are created ONCE and reused — re-opening only re-inits
+   *   the already-loaded wrapper, so repeat opens are instant.
+   *
+   * Same-origin either way, so the payload + callbacks go over with a direct
+   * function call; a short poll bridges "window exists" → "wrapper module
+   * ran" and fails loudly instead of leaving a silent dark screen.
+   */
+  private htmlEmailDialog?: { dlg: HTMLDialogElement; frame: HTMLIFrameElement }
+  private htmlEmailPopups = new Map<string, Window>()
+  openMessageHTML(
+    accountId: number,
+    messageId: number,
+    isContactRequest: boolean,
+    subject: string,
+    sender: string,
+    sentTime: string,
+    content: string
+  ): void {
+    // frontend is necessarily up (called from a message's button), so its
+    // translation function exists; fall back to raw keys just in case
+    const tx: (key: string) => string = (window as any).static_translate ?? ((key: string) => key)
+    const payload = (onClose: () => void) => ({
+      subject,
+      from: sender,
+      sentTime,
+      content,
+      // #3: the account the mail was opened from. App links clicked inside the
+      // viewer must run under THIS account even if the user has since switched
+      // the main app to another one — the viewer tags every relayed link with
+      // it (see html-email.ts) and openAppLink delivers it explicitly.
+      accountId,
+      isContactRequest,
+      alwaysLoadRemote: false, // patched in below once settings are read
+      labels: {
+        loadRemoteImages: tx('load_remote_content'),
+        ask: tx('load_remote_content_ask'),
+        never: tx('never'),
+        once: tx('once'),
+        always: tx('always'),
+        close: tx('close'),
+      },
+      onClose,
+      onSetAlwaysLoad: (value: boolean) =>
+        void this.setDesktopSetting('HTMLEmailAlwaysLoadRemoteContent', value),
+    })
+    void (async () => {
+      const settings = await this.getDesktopSettings()
+      const always = settings.HTMLEmailAlwaysLoadRemoteContent === true
+
+      const openInDialog = () => {
+        const { dlg, frame } = this.ensureHtmlEmailDialog()
+        dlg.showModal()
+        const p = { ...payload(() => dlg.close()), alwaysLoadRemote: always }
+        this.callHtmlEmailInit(frame.contentWindow, p, () => {
+          dlg.close()
+          this.log.error('html email viewer failed to load (html-email.html/js missing from dist?)')
+        })
+      }
+
+      // one window per message like desktop (window_id = accountid.msgid)
+      const id = `${accountId}.${messageId}`
+      const wantPopup =
+        window.matchMedia('(min-width: 501px)').matches &&
+        !window.matchMedia('(display-mode: standalone)').matches
+      if (wantPopup) {
+        const existing = this.htmlEmailPopups.get(id)
+        if (existing && !existing.closed) return existing.focus()
+        // same initial size as desktop's HTMLEmailWindow default bounds
+        const win = window.open('./html-email.html', '_blank', 'popup=yes,width=800,height=621')
+        if (win) {
+          this.htmlEmailPopups.set(id, win)
+          const p = { ...payload(() => win.close()), alwaysLoadRemote: always }
+          // popup exists but wrapper never booted (exotic blockers) → dialog
+          return this.callHtmlEmailInit(win, p, () => {
+            win.close()
+            this.htmlEmailPopups.delete(id)
+            openInDialog()
+          })
+        }
+        // window.open returned null (popup blocked) → dialog
+      }
+      openInDialog()
+    })()
+  }
+  /** The reusable dialog host; safe to call early (warm-up) — creating it does
+   * not show it, but lets the wrapper iframe load in the background so the
+   * first click doesn't pay the fetch+parse latency. */
+  private ensureHtmlEmailDialog(): { dlg: HTMLDialogElement; frame: HTMLIFrameElement } {
+    if (this.htmlEmailDialog) return this.htmlEmailDialog
+    const dlg = el('dialog', {
+      position: 'fixed',
+      inset: '0',
+      width: '100vw',
+      height: '100vh',
+      maxWidth: 'none',
+      maxHeight: 'none',
+      border: 'none',
+      padding: '0',
+      margin: '0',
+      background: '#282828',
+    })
+    const frame = document.createElement('iframe')
+    frame.src = './html-email.html'
+    frame.setAttribute('style', 'display:block;width:100%;height:100%;border:none;')
+    frame.title = 'HTML Email'
+    dlg.append(frame)
+    document.body.append(dlg) // stays in the DOM closed; reused across opens
+    this.htmlEmailDialog = { dlg, frame }
+    return this.htmlEmailDialog
+  }
+  /**
+   * Terminal handler for links clicked inside the HTML email viewer that must
+   * be handled by the app rather than opened raw. The sandboxed content frame
+   * has no scripts, so every such link is rewritten to open
+   * `html-email.html#open=<url>&acct=<accountId>` as an (unsandboxed,
+   * same-origin) relay tab, which forwards the URL + originating account up
+   * the opener chain to this window's `__slothfulOpenAppLink` (installed in
+   * initialize()) and closes itself. Two kinds:
+   *
+   *  - App links (mailto:, openpgp4fpr:, dcaccount:, dclogin:, i.delta.chat
+   *    invites — desktop's shouldHandleLinkInMainApp set): delivered to the
+   *    frontend's onOpenQrUrl -> processQr, bound to the ORIGINATING account
+   *    (#3), not whatever account is selected now.
+   *  - http(s) links: routed through the app's safe-link path (#4) so they get
+   *    the same tracking-parameter stripping a pasted/in-chat link gets;
+   *    openLink opens them with noreferrer so the untrusted mail leaks
+   *    neither the app URL nor an opener handle.
+   */
+  private openAppLink(url: string, accountId?: number): void {
+    const lower = String(url).toLowerCase()
+    // check app schemes FIRST: an i.delta.chat invite is also an https: URL,
+    // and it must go to the invite flow, not the generic web-link path
+    const isApp =
+      lower.startsWith('mailto:') || QR_URL_PREFIXES.some(p => lower.startsWith(p))
+    const isWeb = lower.startsWith('http:') || lower.startsWith('https:')
+    if (!isApp && !isWeb) {
+      // the relay page is reachable by anything same-origin — only open what
+      // the viewer is meant to hand us
+      return void this.log.warn('ignoring relayed non-app link', url)
+    }
+    this.htmlEmailDialog?.dlg.close() // reveal the app (and its upcoming dialog)
+    window.focus() // best effort when the viewer is a popup window
+    if (isApp) return this.deliverAppLinkToAccount(url, accountId)
+    // #4: web link -> safe-link path (tracking-strip). Falls back to a plain
+    // (noreferrer) open if the frontend hook isn't registered yet.
+    const safe = (window as any).__slothfulOpenLinkSafely
+    if (typeof safe === 'function') safe(url)
+    else this.openLink(url)
+  }
+  /**
+   * Deliver an app link to a SPECIFIC account (#3). The frontend's onOpenQrUrl
+   * is bound to the currently selected account, so delivering through it would
+   * run the link (compose / login / group-join) under whatever account is
+   * selected now — wrong if the user switched accounts while the viewer was
+   * open. processQr already takes the account as an explicit argument, so we
+   * call it directly with the originating one via a small exposed hook (#3
+   * desktop patch); it runs under that account and switches the view to it as
+   * needed. Falls back to onOpenQrUrl (current account) only if the hook isn't
+   * registered — it always is by the time a viewer can be opened.
+   */
+  private deliverAppLinkToAccount(url: string, accountId?: number): void {
+    const processQr = (window as any).__slothfulProcessQr
+    if (typeof processQr === 'function' && accountId != null) {
+      try {
+        return void processQr(accountId, url)
+      } catch (err) {
+        this.log.error('app-link delivery failed', err)
+        return
+      }
+    }
+    try {
+      this._onOpenQrUrl?.(url)
+    } catch (err) {
+      this.log.error('app-link delivery failed', err)
+    }
+  }
+  /** Call the wrapper's __initHtmlEmail once its module has run: 'load'
+   * events race with when we get the window, so poll briefly instead. */
+  private callHtmlEmailInit(win: Window | null, payload: unknown, onFail: () => void): void {
+    const t0 = Date.now()
+    const tick = () => {
+      const init = win && (win as any).__initHtmlEmail
+      if (typeof init === 'function') return void init(payload)
+      if (!win || win.closed || Date.now() - t0 > 5000) return onFail()
+      setTimeout(tick, 50)
+    }
+    tick()
   }
   notifyWebxdcStatusUpdate(): void {
     this.log.critical('Method not implemented.')
@@ -888,12 +1116,19 @@ class BrowserRuntime {
     return `/tmp/${crypto.randomUUID()}/${base}`
   }
   async writeTempFileFromBase64(name: string, content: string): Promise<string> {
-    const binary = atob(content)
-    const data = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) data[i] = binary.charCodeAt(i)
     const path = this.tmpPath(name)
-    await getCore().fsWrite(path, data)
+    await getCore().fsWrite(path, base64ToBytes(content))
     return path
+  }
+  async writeBlobPreview(blobPath: string, base64Jpeg: string): Promise<void> {
+    // Trust boundary: this writes, so it is stricter than the read-side guards. The path
+    // comes from the frontend, and the sidecar is only meaningful (and only GCed, see core's
+    // housekeeping) next to a blob. `..` is refused as in removeTempFile, so a traversal
+    // can't ride in on a path that merely contains the blobdir name.
+    if (!blobPath.includes('dc.db-blobs') || blobPath.includes('..')) {
+      throw new Error('writeBlobPreview: not a blobdir path')
+    }
+    await getCore().fsWrite(`${blobPath}-preview.jpg`, base64ToBytes(base64Jpeg))
   }
   async writeTempFile(name: string, content: string): Promise<string> {
     const path = this.tmpPath(name)
@@ -1238,9 +1473,14 @@ class BrowserRuntime {
   }
 
   openLink(link: string): void {
-    // all in-app external links funnel through here (About dialog, ClickableLink)
+    // all in-app external links funnel through here (About dialog,
+    // ClickableLink, and HTML-email http(s) links routed via the safe-link
+    // path — see openAppLink). 'noreferrer' (implies noopener): an external
+    // site must not receive the app's URL as referrer nor keep a window.opener
+    // handle back onto the messenger tab. window.open then returns null —
+    // nothing to focus(), browsers focus a new tab anyway.
     analytics.trackLink(link)
-    window.open(link, '_blank')?.focus()
+    window.open(link, '_blank', 'noreferrer')
   }
 
   private log: Logger = console as unknown as Logger
@@ -1252,6 +1492,11 @@ class BrowserRuntime {
     getLogger: (channel: string) => Logger
   ): Promise<void> {
     this.log = getLogger('runtime/wasm-browser')
+
+    // app-link relay target for the HTML email viewer (see openAppLink); the
+    // second arg is the account the mail was opened from (#3)
+    ;(window as any).__slothfulOpenAppLink = (url: string, accountId?: number) =>
+      this.openAppLink(url, accountId)
 
     // no backend: rc_config / runtime_info are built locally,
     // mirroring target-browser/src/rc-config.ts and backendApi.ts.
