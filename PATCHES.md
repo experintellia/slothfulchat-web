@@ -465,6 +465,18 @@ contribution intended.
   webxdc iframe — a browser's built-in dev tools can't be gated by the app,
   and webxdc apps don't run in this build anyway). `desktop/0001`,
   `desktop/0014`, `desktop/0041`
+- **Long message text is stored in full** — core truncates message text to
+  38 lines × 100 chars when writing `msgs.txt`, stashing the full body in
+  `mime_headers` so a UI can re-offer it as an HTML message; that stores
+  every long body twice and leaves it uneditable ("Cannot edit HTML
+  messages"). We drop the truncation from both write paths and clamp the
+  text visually instead — CSS line-clamp plus a Show more/less toggle — so
+  copy, in-page search and link parsing all see the whole body. The previews
+  that used to lean on the write-time bound (summaries, quotes, chatlist
+  items, notifications, search hits) now bound themselves. The schema is
+  unchanged and rows written by official core are never rewritten, so
+  messages already in a database keep their truncated text and still open in
+  the HTML viewer. `core/0024`, `desktop/0076`
 - **Logging** — core Info/Warning/Error events are printed once by the
   core-wasm console bridge instead of twice, and the Log dialog points to the
   browser dev console instead of fetching a `/log` route this build never
