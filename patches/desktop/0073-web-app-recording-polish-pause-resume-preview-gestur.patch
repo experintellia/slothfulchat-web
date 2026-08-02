@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 1 Aug 2026 17:28:37 +0000
-Subject: [PATCH 73/74] =?UTF-8?q?web-app:=20recording=20polish=20=E2=80=94?=
+Subject: [PATCH 73/75] =?UTF-8?q?web-app:=20recording=20polish=20=E2=80=94?=
  =?UTF-8?q?=20pause/resume,=20preview,=20gestures,=20original=20audio,=20m?=
  =?UTF-8?q?ic=20picker?=
 MIME-Version: 1.0
@@ -94,7 +94,7 @@ unit suite.
  create mode 100644 packages/frontend/src/tests/audioRecorder.test.ts
 
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-index 2b0ec2238..dc14d0ae0 100644
+index 2b0ec22..dc14d0a 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 +++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 @@ -1,4 +1,10 @@
@@ -951,7 +951,7 @@ index 2b0ec2238..dc14d0ae0 100644
 +  )
  }
 diff --git a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
-index 2e3e0799a..9ba7f21fe 100644
+index 2e3e079..9ba7f21 100644
 --- a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
 +++ b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
 @@ -11,6 +11,11 @@ interface MicRecorderConfig {
@@ -1154,7 +1154,7 @@ index 2e3e0799a..9ba7f21fe 100644
     * @return {number}
 diff --git a/packages/frontend/src/components/AudioRecorder/recorderLogic.ts b/packages/frontend/src/components/AudioRecorder/recorderLogic.ts
 new file mode 100644
-index 000000000..3bbb9979b
+index 0000000..3bbb997
 --- /dev/null
 +++ b/packages/frontend/src/components/AudioRecorder/recorderLogic.ts
 @@ -0,0 +1,159 @@
@@ -1318,7 +1318,7 @@ index 000000000..3bbb9979b
 +  return [{ quietSinceMs: quietSince }, nowMs - quietSince >= SILENCE_HOLD_MS]
 +}
 diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
-index 32e591947..576489f8c 100644
+index 32e5919..576489f 100644
 --- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
 +++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
 @@ -1,3 +1,13 @@
@@ -1628,7 +1628,7 @@ index 32e591947..576489f8c 100644
  }
 diff --git a/packages/frontend/src/tests/audioRecorder.test.ts b/packages/frontend/src/tests/audioRecorder.test.ts
 new file mode 100644
-index 000000000..854c6746f
+index 0000000..854c674
 --- /dev/null
 +++ b/packages/frontend/src/tests/audioRecorder.test.ts
 @@ -0,0 +1,172 @@

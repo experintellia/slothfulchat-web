@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <dev@slothfulchat.local>
 Date: Sat, 1 Aug 2026 19:09:44 +0000
-Subject: [PATCH 71/71] web-app: expose safe-link + account-bound QR openers
+Subject: [PATCH 71/75] web-app: expose safe-link + account-bound QR openers
  for the HTML-email viewer
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -26,7 +26,7 @@ touch them.
  1 file changed, 26 insertions(+)
 
 diff --git a/packages/frontend/src/components/RuntimeAdapter.tsx b/packages/frontend/src/components/RuntimeAdapter.tsx
-index 88876b50d..42bcdd0f7 100644
+index 88876b5..42bcdd0 100644
 --- a/packages/frontend/src/components/RuntimeAdapter.tsx
 +++ b/packages/frontend/src/components/RuntimeAdapter.tsx
 @@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react'

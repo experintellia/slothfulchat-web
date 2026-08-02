@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 1 Aug 2026 17:28:12 +0000
-Subject: [PATCH 72/74] =?UTF-8?q?web-app:=20custom=20voice-message=20playe?=
+Subject: [PATCH 72/75] =?UTF-8?q?web-app:=20custom=20voice-message=20playe?=
  =?UTF-8?q?r=20=E2=80=94=20controls,=20waveform,=20remembered=20position?=
  =?UTF-8?q?=20(on=20by=20default)?=
 MIME-Version: 1.0
@@ -134,7 +134,7 @@ covers voicePlayerSurface from there).
  create mode 100644 packages/frontend/src/components/AudioPlayer/utils.ts
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index ae030efa1..898bac5ea 100644
+index ae030ef..898bac5 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -127,5 +127,41 @@
@@ -181,7 +181,7 @@ index ae030efa1..898bac5ea 100644
  }
 diff --git a/images/icons/pause.svg b/images/icons/pause.svg
 new file mode 100644
-index 000000000..dadf44a1c
+index 0000000..dadf44a
 --- /dev/null
 +++ b/images/icons/pause.svg
 @@ -0,0 +1 @@
@@ -189,7 +189,7 @@ index 000000000..dadf44a1c
 \ No newline at end of file
 diff --git a/images/icons/play.svg b/images/icons/play.svg
 new file mode 100644
-index 000000000..7dc99be0d
+index 0000000..7dc99be
 --- /dev/null
 +++ b/images/icons/play.svg
 @@ -0,0 +1 @@
@@ -197,7 +197,7 @@ index 000000000..7dc99be0d
 \ No newline at end of file
 diff --git a/packages/frontend/src/components/AudioPlayer/Waveform.tsx b/packages/frontend/src/components/AudioPlayer/Waveform.tsx
 new file mode 100644
-index 000000000..15aa4bee0
+index 0000000..15aa4be
 --- /dev/null
 +++ b/packages/frontend/src/components/AudioPlayer/Waveform.tsx
 @@ -0,0 +1,74 @@
@@ -276,7 +276,7 @@ index 000000000..15aa4bee0
 +  return <canvas ref={ref} className={className} aria-hidden='true' />
 +}
 diff --git a/packages/frontend/src/components/AudioPlayer/index.tsx b/packages/frontend/src/components/AudioPlayer/index.tsx
-index b53150047..56781c51a 100644
+index b531500..56781c5 100644
 --- a/packages/frontend/src/components/AudioPlayer/index.tsx
 +++ b/packages/frontend/src/components/AudioPlayer/index.tsx
 @@ -1,4 +1,4 @@
@@ -767,7 +767,7 @@ index b53150047..56781c51a 100644
  
 diff --git a/packages/frontend/src/components/AudioPlayer/peaks.ts b/packages/frontend/src/components/AudioPlayer/peaks.ts
 new file mode 100644
-index 000000000..3295eeff6
+index 0000000..3295eef
 --- /dev/null
 +++ b/packages/frontend/src/components/AudioPlayer/peaks.ts
 @@ -0,0 +1,211 @@
@@ -984,7 +984,7 @@ index 000000000..3295eeff6
 +}
 diff --git a/packages/frontend/src/components/AudioPlayer/positionStore.ts b/packages/frontend/src/components/AudioPlayer/positionStore.ts
 new file mode 100644
-index 000000000..613ad8dab
+index 0000000..613ad8d
 --- /dev/null
 +++ b/packages/frontend/src/components/AudioPlayer/positionStore.ts
 @@ -0,0 +1,83 @@
@@ -1072,7 +1072,7 @@ index 000000000..613ad8dab
 +    ? makePositionStore(localStorage)
 +    : makePositionStore({ getItem: () => null, setItem: () => {} })
 diff --git a/packages/frontend/src/components/AudioPlayer/styles.module.scss b/packages/frontend/src/components/AudioPlayer/styles.module.scss
-index 44a8c6ff0..cd6b04660 100644
+index 44a8c6f..cd6b046 100644
 --- a/packages/frontend/src/components/AudioPlayer/styles.module.scss
 +++ b/packages/frontend/src/components/AudioPlayer/styles.module.scss
 @@ -1,3 +1,5 @@
@@ -1193,7 +1193,7 @@ index 44a8c6ff0..cd6b04660 100644
 +}
 diff --git a/packages/frontend/src/components/AudioPlayer/utils.ts b/packages/frontend/src/components/AudioPlayer/utils.ts
 new file mode 100644
-index 000000000..f20f6b454
+index 0000000..f20f6b4
 --- /dev/null
 +++ b/packages/frontend/src/components/AudioPlayer/utils.ts
 @@ -0,0 +1,24 @@
@@ -1222,7 +1222,7 @@ index 000000000..f20f6b454
 +  return PLAYBACK_RATES[(i + 1) % PLAYBACK_RATES.length] ?? 1
 +}
 diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
-index 6225d0d3c..a3d7bba94 100644
+index 6225d0d..a3d7bba 100644
 --- a/packages/frontend/src/components/Icon/index.tsx
 +++ b/packages/frontend/src/components/Icon/index.tsx
 @@ -34,6 +34,8 @@ export type IconName =
@@ -1235,7 +1235,7 @@ index 6225d0d3c..a3d7bba94 100644
    | 'person-filled'
    | 'phone'
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 3704aa87c..c74636f2f 100644
+index 3704aa8..c74636f 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -95,6 +95,12 @@ export function ExperimentalFeatures() {
@@ -1252,7 +1252,7 @@ index 3704aa87c..c74636f2f 100644
        <SettingsHeading>System</SettingsHeading>
        {runtime.getRuntimeInfo().isContentProtectionSupported && (
 diff --git a/packages/frontend/src/components/attachment/galleryAttachment.tsx b/packages/frontend/src/components/attachment/galleryAttachment.tsx
-index cb7a06b4c..5e21ff935 100644
+index cb7a06b..5e21ff9 100644
 --- a/packages/frontend/src/components/attachment/galleryAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/galleryAttachment.tsx
 @@ -393,7 +393,8 @@ export function AudioAttachment({
@@ -1266,7 +1266,7 @@ index cb7a06b4c..5e21ff935 100644
      return (
        <div
 diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
-index 3447fe74c..ca9c68d6f 100644
+index 3447fe7..ca9c68d 100644
 --- a/packages/frontend/src/components/attachment/messageAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
 @@ -299,8 +299,13 @@ function AudioAttachment(props: {
@@ -1286,7 +1286,7 @@ index 3447fe74c..ca9c68d6f 100644
  
    return (
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 551ce7ea5..59208950f 100644
+index 551ce7e..5920895 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -794,7 +794,11 @@ export default function Message(props: {
@@ -1303,7 +1303,7 @@ index 551ce7ea5..59208950f 100644
          // the media element is a direct item of the roving tabindex widget,
          // and not merely a child of such an item.
 diff --git a/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx b/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
-index e1060bcf9..5ef1c94e0 100644
+index e1060bc..5ef1c94 100644
 --- a/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
 +++ b/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
 @@ -2,6 +2,7 @@ import React, { createContext, useCallback, useState } from 'react'
@@ -1404,7 +1404,7 @@ index e1060bcf9..5ef1c94e0 100644
      >
        {children}
 diff --git a/packages/frontend/src/contexts/NextVoiceMessagePlayerContext.tsx b/packages/frontend/src/contexts/NextVoiceMessagePlayerContext.tsx
-index 4da058e9e..e27ce66a2 100644
+index 4da058e..e27ce66 100644
 --- a/packages/frontend/src/contexts/NextVoiceMessagePlayerContext.tsx
 +++ b/packages/frontend/src/contexts/NextVoiceMessagePlayerContext.tsx
 @@ -26,9 +26,22 @@ type AudioMessageInfo = {
@@ -1526,7 +1526,7 @@ index 4da058e9e..e27ce66a2 100644
      </NextVoiceMessagePlayerContext.Provider>
    )
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 00c76415d..9bce88b69 100644
+index 00c7641..9bce88b 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -47,6 +47,14 @@ export interface DesktopSettingsType {
@@ -1545,7 +1545,7 @@ index 00c76415d..9bce88b69 100644
    locale: string | null
    notifications: boolean
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 7488ea78b..667b0ee33 100644
+index 7488ea7..667b0ee 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -18,6 +18,10 @@ export function getDefaultState(): DesktopSettingsType {
