@@ -24,6 +24,11 @@ console_error_panic_hook = "0.1"
 uuid = "1"
 console_log = "1"
 log = "0.4"
+# bench-only (BenchPgp, issue #3): rPGP + friends, exactly the versions core
+# already resolves to in Cargo.lock (pgp 0.20.0, rand 0.8 = core's rand-old)
+pgp = { version = "0.20.0", default-features = false }
+rand = "0.8"
+smallvec = "1"
 
 [patch.crates-io]
 async-imap = { path = "../../../vendor-crates/async-imap" }

@@ -26,6 +26,7 @@
     "build:wasm:ci": "cd rust && wasm-pack build --target web --release --no-opt --out-dir ../wasm-dist && rm -f ../wasm-dist/.gitignore",
     "build": "tsc --emitDeclarationOnly && esbuild --format=esm --bundle src/index.ts --outfile=dist/index.js && esbuild --format=esm --bundle src/worker.ts '--external:../wasm-dist/*' --outfile=dist/worker.js",
     "example": "node ../../scripts/serve-example.mjs",
+    "bench:pgp": "node ../../scripts/bench-pgp-offload.mjs",
     "test": "node ../../scripts/smoke-core-wasm.mjs"
   },
   "dependencies": {

@@ -471,6 +471,7 @@ Operator and legal notice: see the <a href="./imprint.html">imprint</a>.</p>
 export const precacheSkip = f =>
   f.endsWith('.map') ||
   f.startsWith('demo/') ||
+  f.startsWith('bench/') ||
   f.startsWith('changelog/') ||
   // webserver config ships in dist/ but isn't an app-shell asset; the webxdc
   // test page must never be served from the app's SW cache (it belongs to the
