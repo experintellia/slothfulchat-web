@@ -346,7 +346,9 @@ exists:
   the sender grabs one with `<video>` + canvas when the video is attached and
   drops it in the `<blob>-preview.jpg` sidecar that core's housekeeping already
   keeps alive — the same slot the mobile clients use, so no new param and no
-  storage of its own. `core/0022-0023`, `desktop/0068-0069`
+  storage of its own. The video card labels itself "Video · 0:23" rather than
+  showing a play glyph, which would offer a click that cannot do anything until
+  the attachment is downloaded. `core/0022-0023`, `desktop/0068-0069`
 
 - **Length and size of the media we send** — core measures images itself, but it
   has no audio or video decoder, so nothing ever set `Param::Duration` on an
