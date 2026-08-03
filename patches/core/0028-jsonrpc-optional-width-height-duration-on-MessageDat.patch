@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 2 Aug 2026 10:06:28 +0000
+Subject: [PATCH 28/28] jsonrpc: optional width/height/duration on MessageData
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Core measures images itself at send time (`try_calc_and_set_dimensions`), but it
+has no audio or video decoder and never will — on wasm it runs in a Web Worker
+with no DOM. So `Param::Duration` currently has exactly two sources: the
+`Chat-Duration` header of an incoming message, and `dc_msg_set_duration`, which
+only the mobile UIs call. Nothing on the jsonrpc API sets it.
+
+The consequence is silent: `mimefactory` only writes `Chat-Duration` when the
+param is > 0, so every voice message sent from desktop or the web app goes out
+without one, and `PostMsgMetadata` carries `duration: None`, which is what the
+receiver's download-on-demand placeholder has to render before the attachment
+exists. Same for a video's pixel size, which no code path derives at all.
+
+`MessageData` is the right place: the desktop composer does not send its draft,
+it builds a fresh `MessageData` from the draft state and calls `send_msg`, so
+params written onto the draft never reach the wire.
+
+Passthrough only — `set_dimension`/`set_duration` are the same setters the C API
+has always exposed, and the receiving side already rejects implausible durations
+in `mimeparser`.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ deltachat-jsonrpc/src/api/types/message.rs | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
+index 8884765..92b75f6 100644
+--- a/deltachat-jsonrpc/src/api/types/message.rs
++++ b/deltachat-jsonrpc/src/api/types/message.rs
+@@ -623,6 +623,20 @@ pub struct MessageData {
+     /// Quoted message id. Takes preference over `quoted_text` (see below).
+     pub quoted_message_id: Option<u32>,
+     pub quoted_text: Option<String>,
++    /// Pixel size of an image or video attachment.
++    ///
++    /// Optional, and only needed for video: core measures images itself when the message is
++    /// sent, but it has no video decoder, so a UI that has one should pass the size here.
++    /// Both must be given for either to be used.
++    pub width: Option<i32>,
++    /// See [`MessageData::width`].
++    pub height: Option<i32>,
++    /// Duration of an audio, voice or video attachment, in milliseconds.
++    ///
++    /// Optional, and never derived by core, which cannot decode media. Passing it is what
++    /// makes the message carry a `Chat-Duration` header, which is what lets receivers show
++    /// the length before downloading the attachment.
++    pub duration: Option<i32>,
+ }
+ 
+ impl MessageData {
+@@ -652,6 +666,12 @@ pub(crate) async fn create_message(self, context: &Context) -> Result<Message> {
+         if let Some((latitude, longitude)) = self.location {
+             message.set_location(latitude, longitude);
+         }
++        if let (Some(width), Some(height)) = (self.width, self.height) {
++            message.set_dimension(width, height);
++        }
++        if let Some(duration) = self.duration {
++            message.set_duration(duration);
++        }
+         if let Some(id) = self.quoted_message_id {
+             let quoted_message = Message::load_from_db(context, MsgId::new(id))
+                 .await
