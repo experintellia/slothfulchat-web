@@ -239,6 +239,17 @@ await writeFile(
   demoHtml.replace("'../dist/index.js'", "'../core/index.js'")
 )
 
+// PGP-offload benchmark page at /bench/ (issue #3), same import rewrite as
+// /demo/. bench/worker.js imports ../wasm-dist/deltachat_wasm.js, which
+// resolves identically in this layout — copied verbatim.
+await mkdir(join(dist, 'bench'))
+const benchHtml = await readFile(join(coreWasm, 'bench/index.html'), 'utf8')
+await writeFile(
+  join(dist, 'bench/index.html'),
+  benchHtml.replace("'../dist/index.js'", "'../core/index.js'")
+)
+await cp(join(coreWasm, 'bench/worker.js'), join(dist, 'bench/worker.js'))
+
 // changelog viewer at /changelog/ (web.slothful.chat/changelog): the vendored
 // single-page viewer + markdown-it, plus the web app's and each published
 // package's CHANGELOG.md copied in beside it as <name>.md. The page fetches

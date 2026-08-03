@@ -530,6 +530,196 @@ impl DeltaChat {
     }
 }
 
+// ---------------------------------------------------------------------------
+// BenchPgp — bench-only surface for issue #3 (offload PGP crypto to a worker).
+//
+// Exposes raw keygen/encrypt/decrypt so a plain web worker can run the exact
+// workload core executes inside its `spawn_blocking` closures, with timing
+// done in JS around the calls. Synchronous on purpose: it models the blocking
+// closure bodies, not core's async wrappers.
+//
+// This replicates core's crypto with rPGP directly instead of calling
+// `deltachat::pgp`, because core keeps it unreachable: `mod pgp` is private
+// unless the "internals" feature is on (src/lib.rs), `create_keypair` is
+// `pub(crate)` even then, `pk_encrypt` is async (spawn_blocking inside), and
+// the receive-side composition lives in the private `mod decrypt`. Bodies are
+// copied from chatmail/core @ 446cdabd (src/pgp.rs, src/decrypt.rs) against
+// the same locked rPGP (pgp 0.20.0), so the primitives and parameters match.
+//
+// Fidelity vs core:
+// - new(): `create_keypair` verbatim — Ed25519Legacy signing key + Cv25519
+//   ECDH subkey, same preference lists, `verify_bindings` included.
+// - encrypt(): `pk_encrypt`'s SeipdVersion::V2 branch with compress = true
+//   (what core uses between current Delta Chat clients; fresh keys advertise
+//   SEIPDv2), including subpacket construction, signing and armoring.
+// - decrypt(): the asymmetric `decrypt_the_ring` closure (streaming SEIPDv1
+//   read mode, decompress) + reading the data + signature verification,
+//   mirroring decrypt::decrypt + valid_signature_fingerprints.
+// - Not modeled: the MIME wrapper around the armored payload, the symmetric
+//   (securejoin/broadcast) path, SEIPDv1 sending to legacy peers.
+//
+// Runnable check: the JS bench harness must assert
+// decrypt(encrypt(x)) == x — decrypt() already fails on a bad signature.
+
+use pgp::composed::{
+    DecryptionOptions, Deserializable as _, EncryptionCaps, KeyType as PgpKeyType,
+    Message as PgpMessage, MessageBuilder, SecretKeyParamsBuilder, SignedPublicKey,
+    SignedSecretKey, SubkeyParamsBuilder, SubpacketConfig, TheRing,
+};
+use pgp::crypto::aead::{AeadAlgorithm, ChunkSize};
+use pgp::crypto::ecc_curve::ECCCurve;
+use pgp::crypto::hash::HashAlgorithm;
+use pgp::crypto::sym::SymmetricKeyAlgorithm;
+use pgp::packet::{Subpacket, SubpacketData};
+use pgp::types::{
+    CompressionAlgorithm, KeyDetails as _, KeyVersion, Password, Seipdv1ReadMode, SigningKey as _,
+};
+
+fn js_err(e: impl std::fmt::Display) -> JsValue {
+    JsValue::from_str(&e.to_string())
+}
+
+#[wasm_bindgen]
+pub struct BenchPgp {
+    secret: SignedSecretKey,
+    public: SignedPublicKey,
+}
+
+#[wasm_bindgen]
+impl BenchPgp {
+    /// Full keygen, identical parameters to core's `create_keypair`.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Result<BenchPgp, JsValue> {
+        use smallvec::smallvec;
+        let key_params = SecretKeyParamsBuilder::default()
+            .key_type(PgpKeyType::Ed25519Legacy)
+            .can_certify(true)
+            .can_sign(true)
+            .feature_seipd_v2(true)
+            .primary_user_id("<bench@example.org>".to_string())
+            .passphrase(None)
+            .preferred_symmetric_algorithms(smallvec![
+                SymmetricKeyAlgorithm::AES256,
+                SymmetricKeyAlgorithm::AES192,
+                SymmetricKeyAlgorithm::AES128,
+            ])
+            .preferred_hash_algorithms(smallvec![
+                HashAlgorithm::Sha256,
+                HashAlgorithm::Sha384,
+                HashAlgorithm::Sha512,
+                HashAlgorithm::Sha224,
+            ])
+            .preferred_compression_algorithms(smallvec![
+                CompressionAlgorithm::ZLIB,
+                CompressionAlgorithm::ZIP,
+            ])
+            .subkey(
+                SubkeyParamsBuilder::default()
+                    .key_type(PgpKeyType::ECDH(ECCCurve::Curve25519Legacy))
+                    .can_encrypt(EncryptionCaps::All)
+                    .passphrase(None)
+                    .build()
+                    .map_err(js_err)?,
+            )
+            .build()
+            .map_err(js_err)?;
+
+        let mut rng = rand::thread_rng();
+        let secret = key_params.generate(&mut rng).map_err(js_err)?;
+        secret.verify_bindings().map_err(js_err)?;
+        let public = secret.to_public_key();
+        Ok(BenchPgp { secret, public })
+    }
+
+    /// Sign + public-key encrypt to our own key: core `pk_encrypt`,
+    /// SeipdVersion::V2 branch, compress = true. Returns the ASCII-armored
+    /// message bytes.
+    pub fn encrypt(&self, plain: &[u8]) -> Result<Vec<u8>, JsValue> {
+        let mut rng = rand::thread_rng();
+
+        // core's select_pk_for_encryption
+        let pkey = self
+            .public
+            .public_subkeys
+            .iter()
+            .find(|subkey| subkey.algorithm().can_encrypt())
+            .ok_or_else(|| JsValue::from_str("key has no encryption subkey"))?;
+
+        // core's subpacket construction (single recipient = ourselves)
+        let mut hashed = Vec::with_capacity(3);
+        hashed.push(
+            Subpacket::critical(SubpacketData::SignatureCreationTime(
+                pgp::types::Timestamp::now(),
+            ))
+            .map_err(js_err)?,
+        );
+        let data = SubpacketData::IntendedRecipientFingerprint(self.public.fingerprint());
+        hashed.push(
+            match self.secret.version() < KeyVersion::V6 {
+                true => Subpacket::regular(data),
+                false => Subpacket::critical(data),
+            }
+            .map_err(js_err)?,
+        );
+        hashed.push(
+            Subpacket::regular(SubpacketData::IssuerFingerprint(self.secret.fingerprint()))
+                .map_err(js_err)?,
+        );
+        let mut unhashed = vec![];
+        if self.secret.version() <= KeyVersion::V4 {
+            unhashed.push(
+                Subpacket::regular(SubpacketData::IssuerKeyId(self.secret.legacy_key_id()))
+                    .map_err(js_err)?,
+            );
+        }
+        let subpkts = SubpacketConfig::UserDefined { hashed, unhashed };
+
+        let msg = MessageBuilder::from_bytes("", plain.to_vec());
+        let mut msg = msg.seipd_v2(
+            &mut rng,
+            SymmetricKeyAlgorithm::AES128, // core's SYMMETRIC_KEY_ALGORITHM
+            AeadAlgorithm::Ocb,
+            ChunkSize::C8KiB,
+        );
+        msg.encrypt_to_key_anonymous(&mut rng, &pkey).map_err(js_err)?;
+        let hash_algorithm = self.secret.hash_alg();
+        msg.sign_with_subpackets(&*self.secret, Password::empty(), hash_algorithm, subpkts);
+        msg.compression(CompressionAlgorithm::ZLIB);
+        let armored = msg
+            .to_armored_string(&mut rng, Default::default())
+            .map_err(js_err)?;
+        Ok(armored.into_bytes())
+    }
+
+    /// Decrypt + decompress + read + verify our own signature: the asymmetric
+    /// branch of core's `decrypt::decrypt` closure plus the receive path's
+    /// signature validation.
+    pub fn decrypt(&self, cipher: &[u8]) -> Result<Vec<u8>, JsValue> {
+        let (msg, _headers) =
+            PgpMessage::from_armor(std::io::Cursor::new(cipher.to_vec())).map_err(js_err)?;
+
+        let ring = TheRing {
+            secret_keys: vec![&self.secret],
+            decrypt_options: DecryptionOptions::new()
+                .set_seipdv1_read_mode(Seipdv1ReadMode::Streaming),
+            ..Default::default()
+        };
+        let abort_early = true;
+        let (plain, _ring_result) = msg.decrypt_the_ring(ring, abort_early).map_err(js_err)?;
+        let mut plain = plain.decompress().map_err(js_err)?;
+        let content = plain.as_data_vec().map_err(js_err)?;
+
+        // valid_signature_fingerprints equivalent; every bench message is
+        // self-signed, so an unsigned or wrongly signed one is a bug.
+        if !plain.is_signed() {
+            return Err(JsValue::from_str("message unexpectedly unsigned"));
+        }
+        plain.verify(&self.public.primary_key).map_err(js_err)?;
+
+        Ok(content)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{config_is_plausible, rebuild_config};

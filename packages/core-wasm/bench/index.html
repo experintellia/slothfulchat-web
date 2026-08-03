@@ -1,0 +1,391 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PGP offload benchmark</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 1rem auto; padding: 0 1rem; }
+    .hint { color: #555; font-size: 0.9rem; }
+    .fatal-hint { color: #a00; border-left: 3px solid #a00; padding-left: 0.75rem; }
+    button { font-size: 1.2rem; padding: 0.8rem 1rem; width: 100%; margin: 0.5rem 0; }
+    #status { font-weight: bold; min-height: 1.5em; }
+    .scroll { overflow-x: auto; }
+    table { border-collapse: collapse; margin: 0.5rem 0 1rem; }
+    th, td { border: 1px solid #ccc; padding: 0.3rem 0.6rem; text-align: right; white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; }
+    h3 { margin-bottom: 0.2rem; }
+  </style>
+</head>
+<body>
+  <h1>PGP offload benchmark</h1>
+  <p class="hint">
+    Issue #3: measures how much inline PGP crypto blocks the single-threaded
+    core worker (CURRENT), vs running crypto in a dedicated worker (NEW).
+    Runs ~1–2 minutes, fully in-memory — no network, nothing stored.
+  </p>
+  <p id="device" class="hint"></p>
+  <button id="run">Run benchmark</button>
+  <p id="status">idle — tap the button</p>
+  <p id="fatal-hint" class="fatal-hint" style="display: none;"></p>
+  <div id="results"></div>
+  <button id="copy" style="display: none;">Copy results JSON</button>
+
+  <script type="module">
+    import { startCore } from '../dist/index.js'
+
+    const $ = (id) => document.getElementById(id)
+    const setProgress = (t) => { $('status').textContent = t }
+    const fail = (msg) => {
+      window.__benchError = msg
+      $('fatal-hint').textContent = msg
+      $('fatal-hint').style.display = 'block'
+      setProgress('failed ✖')
+    }
+
+    $('device').textContent =
+      `${navigator.userAgent} — cores: ${navigator.hardwareConcurrency}, ` +
+      `deviceMemory: ${navigator.deviceMemory ?? 'n/a'}`
+
+    // --- helpers -----------------------------------------------------------
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+    const median = (xs) => {
+      const s = [...xs].sort((a, b) => a - b)
+      const m = Math.floor(s.length / 2)
+      return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
+    }
+    const stats = (xs) =>
+      xs.length
+        ? {
+            n: xs.length,
+            median: median(xs),
+            p95: [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(0.95 * xs.length))],
+            max: Math.max(...xs),
+          }
+        : { n: 0, median: null, p95: null, max: null }
+
+    function randomBytes(size) {
+      const u = new Uint8Array(size)
+      for (let i = 0; i < size; i += 65536)
+        crypto.getRandomValues(u.subarray(i, Math.min(i + 65536, size)))
+      return u
+    }
+
+    let core, dc
+
+    // Latency probe against the CORE worker: pings every 25ms, NOT serialized —
+    // while the core worker is blocked, pings queue up and their latencies show
+    // exactly how long UI-ish rpc calls would stall.
+    function startPingProbe(intervalMs = 25) {
+      const latencies = []
+      let inflight = 0
+      const timer = setInterval(() => {
+        const t = performance.now()
+        inflight++
+        dc.rpc
+          .getSystemInfo()
+          .then(() => latencies.push(performance.now() - t))
+          .catch(() => {})
+          .finally(() => inflight--)
+      }, intervalMs)
+      return {
+        async finish() {
+          clearInterval(timer)
+          while (inflight > 0) await sleep(10)
+          return { pings: latencies, stats: stats(latencies) }
+        },
+      }
+    }
+
+    async function bootCore() {
+      const t0 = performance.now()
+      core = startCore({ persist: false }) // always ephemeral
+      dc = core.dc
+      // same fatal states example/index.html handles; persist:false makes
+      // fatal-opfs-locked impossible, but fatal-init-error can still happen
+      core.worker.addEventListener('message', (event) => {
+        const type = event.data?.type
+        if (typeof type === 'string' && type.startsWith('fatal-'))
+          fail(`core worker: ${type}${event.data.message ? ' — ' + event.data.message : ''}`)
+      })
+      await dc.rpc.getSystemInfo()
+      return performance.now() - t0
+    }
+
+    // --- bench crypto worker (the NEW approach) ----------------------------
+
+    function spawnBenchWorker() {
+      const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })
+      let readyResolve, readyReject
+      const ready = new Promise((res, rej) => { readyResolve = res; readyReject = rej })
+      let nextId = 1
+      const pending = new Map()
+      worker.onmessage = (e) => {
+        const m = e.data
+        if (m.type === 'ready') { readyResolve(m); return }
+        const cb = pending.get(m.id)
+        if (cb) { pending.delete(m.id); cb(m) }
+      }
+      worker.onerror = (e) => {
+        const error = 'bench worker: ' + (e.message ?? 'load error')
+        readyReject(new Error(error))
+        for (const cb of pending.values()) cb({ error })
+        pending.clear()
+      }
+      const call = (op, data) =>
+        new Promise((resolve, reject) => {
+          const id = nextId++
+          pending.set(id, (m) => (m.error ? reject(new Error(m.error)) : resolve(m)))
+          if (data) worker.postMessage({ id, op, data }, [data])
+          else worker.postMessage({ id, op })
+        })
+      return { worker, ready, call }
+    }
+
+    // --- scenarios ---------------------------------------------------------
+
+    window.runBench = async function runBench() {
+      const btn = $('run')
+      btn.disabled = true
+      const tStart = performance.now()
+      const results = {
+        device: {
+          userAgent: navigator.userAgent,
+          hardwareConcurrency: navigator.hardwareConcurrency,
+          deviceMemory: navigator.deviceMemory ?? null,
+        },
+      }
+      try {
+        // S0: boot
+        setProgress('S0: booting core worker…')
+        results.bootMs = await bootCore()
+
+        // S1: idle ping baseline (~40 pings @ 25ms)
+        setProgress('S1: idle ping baseline…')
+        {
+          const probe = startPingProbe()
+          await sleep(40 * 25 + 100)
+          results.idle = await probe.finish()
+        }
+
+        // S2: CURRENT — keygen inline in the core worker (exportSelfKeys
+        // forces keygen; fresh account per sample), pings running throughout
+        const keygenMs = []
+        let aid
+        let s2reduced = false
+        {
+          const probe = startPingProbe()
+          for (let i = 0; i < 5; i++) {
+            setProgress(`S2: inline keygen ${i + 1}/5 (core worker)…`)
+            aid = await dc.rpc.addAccount()
+            await dc.rpc.setConfig(aid, 'configured_addr', `bench${i}@example.org`)
+            const t = performance.now()
+            await dc.rpc.exportSelfKeys(aid, '/keys-' + aid, null)
+            const ms = performance.now() - t
+            keygenMs.push(ms)
+            if (ms > 15000) { s2reduced = true; break } // ponytail: phone-time guard, keep total < ~2min
+          }
+          results.inlineKeygen = { samples: keygenMs, reduced: s2reduced, ...(await probe.finish()) }
+        }
+
+        // S3: CURRENT — encrypt via real message building: self-chat sends on
+        // the last (keyed) account; encrypts the MIME, no network
+        {
+          setProgress('S3: inline encrypt (self-chat sends)…')
+          const chatId = await dc.rpc.createChatByContactId(aid, 1) // contact 1 = self
+          const probe = startPingProbe()
+          const sendMs = []
+          for (let i = 0; i < 10; i++) {
+            const t = performance.now()
+            await dc.rpc.miscSendTextMessage(aid, chatId, 'x'.repeat(2000))
+            sendMs.push(performance.now() - t)
+          }
+          const tBig = performance.now()
+          await dc.rpc.miscSendTextMessage(aid, chatId, 'x'.repeat(100000))
+          const bigSendMs = performance.now() - tBig
+          results.inlineEncrypt = { sendMs, sendStats: stats(sendMs), bigSendMs, ...(await probe.finish()) }
+        }
+
+        // S4: NEW — dedicated crypto worker
+        setProgress('S4: spawning crypto worker…')
+        const tSpawn = performance.now()
+        const bench = spawnBenchWorker()
+        const ready = await bench.ready
+        results.worker = {
+          spawnTotalMs: performance.now() - tSpawn, // includes wasm fetch+init
+          workerInitMs: ready.initMs, // the worker's own initWasm() measurement
+        }
+
+        // S4a: keygen in the crypto worker; pings against the CORE worker
+        // should stay at baseline — that's the headline number
+        {
+          const probe = startPingProbe()
+          const samples = []
+          let reduced = false
+          for (let i = 0; i < 5; i++) {
+            setProgress(`S4: keygen ${i + 1}/5 (crypto worker)…`)
+            const t = performance.now()
+            const reply = await bench.call('keygen')
+            samples.push({ computeMs: reply.computeMs, roundTripMs: performance.now() - t })
+            if (reply.computeMs > 15000) { reduced = true; break }
+          }
+          results.worker.keygen = { samples, reduced, ...(await probe.finish()) }
+        }
+
+        // S4b: encrypt/decrypt payload sweep — overheadMs isolates the
+        // postMessage + copy cost of offloading
+        {
+          const sweep = []
+          for (const size of [1024, 102400, 1048576, 5242880]) {
+            const reps = []
+            for (let rep = 0; rep < 3; rep++) {
+              setProgress(`S4: sweep ${size} B, rep ${rep + 1}/3…`)
+              const payload = randomBytes(size)
+              const t1 = performance.now()
+              const enc = await bench.call('encrypt', payload.buffer)
+              const encryptRoundTripMs = performance.now() - t1
+              const ciphertextBytes = enc.data.byteLength // before transfer detaches it
+              const t2 = performance.now()
+              const dec = await bench.call('decrypt', enc.data)
+              const decryptRoundTripMs = performance.now() - t2
+              if (dec.data.byteLength !== size)
+                throw new Error(`decrypt roundtrip mismatch: ${dec.data.byteLength} != ${size}`)
+              reps.push({
+                encryptComputeMs: enc.computeMs,
+                encryptRoundTripMs,
+                encryptOverheadMs: encryptRoundTripMs - enc.computeMs,
+                decryptComputeMs: dec.computeMs,
+                decryptRoundTripMs,
+                decryptOverheadMs: decryptRoundTripMs - dec.computeMs,
+                ciphertextBytes,
+              })
+            }
+            sweep.push({ size, reps })
+          }
+          results.worker.sweep = sweep
+        }
+        bench.worker.terminate()
+
+        // S5: verdict
+        results.verdict = {
+          pingIdleP95Ms: results.idle.stats.p95,
+          pingInlineKeygenP95Ms: results.inlineKeygen.stats.p95,
+          pingWorkerKeygenP95Ms: results.worker.keygen.stats.p95,
+          keygenInlineMedianMs: median(keygenMs),
+          keygenWorkerMedianMs: median(results.worker.keygen.samples.map((s) => s.computeMs)),
+          totalMs: performance.now() - tStart,
+        }
+
+        window.__benchResults = results
+        render(results)
+        $('copy').style.display = ''
+        setProgress(`done in ${Math.round(results.verdict.totalMs / 1000)}s ✔`)
+      } catch (err) {
+        console.error(err)
+        fail(String((err && err.stack) || err))
+      } finally {
+        btn.disabled = false
+      }
+    }
+
+    // --- rendering ---------------------------------------------------------
+
+    const fmt = (x) => (typeof x === 'number' ? String(Math.round(x * 10) / 10) : (x ?? 'n/a'))
+
+    function render(res) {
+      const out = $('results')
+      out.innerHTML = ''
+      const tbl = (title, headers, rows) => {
+        const h = document.createElement('h3')
+        h.textContent = title
+        out.appendChild(h)
+        const div = document.createElement('div')
+        div.className = 'scroll'
+        const table = document.createElement('table')
+        const tr = document.createElement('tr')
+        for (const th of headers) {
+          const el = document.createElement('th')
+          el.textContent = th
+          tr.appendChild(el)
+        }
+        table.appendChild(tr)
+        for (const row of rows) {
+          const tr = document.createElement('tr')
+          for (const cell of row) {
+            const td = document.createElement('td')
+            td.textContent = fmt(cell)
+            tr.appendChild(td)
+          }
+          table.appendChild(tr)
+        }
+        div.appendChild(table)
+        out.appendChild(div)
+      }
+
+      const v = res.verdict
+      tbl('S5 · Verdict', ['metric', 'ms'], [
+        ['core-worker ping p95, idle', v.pingIdleP95Ms],
+        ['core-worker ping p95, during INLINE keygen', v.pingInlineKeygenP95Ms],
+        ['core-worker ping p95, during WORKER keygen', v.pingWorkerKeygenP95Ms],
+        ['keygen median, inline (jsonrpc)', v.keygenInlineMedianMs],
+        ['keygen median, crypto worker (compute)', v.keygenWorkerMedianMs],
+        ['total bench runtime', v.totalMs],
+      ])
+
+      tbl('Startup costs', ['what', 'ms'], [
+        ['S0 core boot → first rpc', res.bootMs],
+        ['crypto worker spawn → ready (total)', res.worker.spawnTotalMs],
+        ['crypto worker wasm init (own measurement)', res.worker.workerInitMs],
+      ])
+
+      tbl('Core-worker ping latency', ['scenario', 'n', 'median', 'p95', 'max'], [
+        ['S1 idle', res.idle.stats.n, res.idle.stats.median, res.idle.stats.p95, res.idle.stats.max],
+        ['S2 inline keygen', res.inlineKeygen.stats.n, res.inlineKeygen.stats.median, res.inlineKeygen.stats.p95, res.inlineKeygen.stats.max],
+        ['S3 inline sends', res.inlineEncrypt.stats.n, res.inlineEncrypt.stats.median, res.inlineEncrypt.stats.p95, res.inlineEncrypt.stats.max],
+        ['S4 worker keygen', res.worker.keygen.stats.n, res.worker.keygen.stats.median, res.worker.keygen.stats.p95, res.worker.keygen.stats.max],
+      ])
+
+      tbl('Keygen samples (ms)', ['#', 'S2 inline (jsonrpc)', 'S4 worker compute', 'S4 worker roundtrip'],
+        res.inlineKeygen.samples.map((ms, i) => [
+          i + 1, ms,
+          res.worker.keygen.samples[i]?.computeMs ?? '—',
+          res.worker.keygen.samples[i]?.roundTripMs ?? '—',
+        ]))
+
+      tbl('S3 inline sends (2000 chars ×10 + one 100KB)', ['metric', 'ms'], [
+        ['send median', res.inlineEncrypt.sendStats.median],
+        ['send p95', res.inlineEncrypt.sendStats.p95],
+        ['send max', res.inlineEncrypt.sendStats.max],
+        ['100KB send', res.inlineEncrypt.bigSendMs],
+      ])
+
+      tbl('S4 crypto-worker sweep (median of 3, ms)',
+        ['payload B', 'enc compute', 'enc overhead', 'dec compute', 'dec overhead', 'cipher B'],
+        res.worker.sweep.map(({ size, reps }) => {
+          const m = (k) => median(reps.map((x) => x[k]))
+          return [size, m('encryptComputeMs'), m('encryptOverheadMs'),
+            m('decryptComputeMs'), m('decryptOverheadMs'), reps[0].ciphertextBytes]
+        }))
+    }
+
+    $('copy').onclick = async () => {
+      const text = JSON.stringify(window.__benchResults, null, 2)
+      try {
+        await navigator.clipboard.writeText(text)
+      } catch {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        ta.remove()
+      }
+      $('copy').textContent = 'Copied ✔ — Copy results JSON'
+    }
+
+    $('run').onclick = () => window.runBench()
+    if (new URL(location.href).searchParams.get('autorun') === '1') window.runBench()
+  </script>
+</body>
+</html>
