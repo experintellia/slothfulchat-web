@@ -699,6 +699,7 @@ class BrowserRuntime {
     // passed — release any held first-visit analytics if its 'welcome' hook
     // somehow didn't fire (a no-op on warm starts and once already released).
     analytics.releaseHeldEvents()
+    const idle = (window as any).requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 2000))
     // where the HTML email viewer will use the in-app dialog (small screens /
     // installed PWAs — desktop tabs get a popup window instead), pre-load its
     // wrapper iframe at idle so the first "Show Full Message…" opens instantly
@@ -706,9 +707,14 @@ class BrowserRuntime {
       !window.matchMedia('(min-width: 501px)').matches ||
       window.matchMedia('(display-mode: standalone)').matches
     ) {
-      const idle = (window as any).requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 2000))
       idle(() => this.ensureHtmlEmailDialog())
     }
+    // Ask about a link-supplied bridge only now: <dialog>.showModal() stacks in
+    // the top layer, so a prompt opened before the frontend's own modals (the
+    // welcome screen is one) would end up underneath them and inert. At idle
+    // after startup, ours opens last. Nothing has been sent to that bridge in
+    // the meantime — resolveBridgeUrl never resolved to it (see trustedBridge).
+    idle(() => confirmQueryBridge())
     // Disable signal for the on-by-default custom voice player. Only an
     // explicitly stored `false` counts: setDesktopSetting persists just the
     // keys the user actually touched, so a legacy profile that never met this
@@ -1799,17 +1805,39 @@ const browserRuntime = new BrowserRuntime()
 const BRIDGE_HELP_URL =
   'https://github.com/experintellia/slothfulchat-web/tree/main/packages/ws-tcp-proxy'
 
-// priority: ?proxy= > saved > per-instance default (assemble.mjs) > localhost.
-// The one resolver for both the actual connection (getCore) and the
-// probe/toast/picker UI below — they must agree on the URL in use.
+// priority: ?proxy= (if trusted, see below) > saved > per-instance default
+// (assemble.mjs) > localhost. The one resolver for both the actual connection
+// (getCore) and the probe/toast/picker UI below — they must agree on the URL
+// in use.
 function resolveBridgeUrl(): string {
-  const params = new URLSearchParams(location.search)
+  const query = new URLSearchParams(location.search).get('proxy')
   return (
-    params.get('proxy') ||
+    (query && trustedBridge(query) ? query : null) ||
     localStorage.getItem(PROXY_KEY) ||
     (window as any).__slothfulConfig?.defaultProxyUrl ||
     DEFAULT_LOCAL_BRIDGE
   )
+}
+
+/** May a bridge URL taken straight out of the page URL be used without asking?
+ * A `?proxy=` in a link routes the whole session through a relay the user never
+ * chose — it sees their IP, which mail servers they use, and the timing/volume
+ * of that traffic. So only URLs that are already trusted here count: one the
+ * instance ships (picker options), one the user picked before, or a bridge on
+ * their own machine (never leaves the device, and every dev/test setup passes
+ * one on a random port). Everything else has to be confirmed. */
+function trustedBridge(url: string): boolean {
+  const n = normBridgeUrl(url)
+  let host: string
+  try {
+    host = new URL(url).hostname
+  } catch {
+    return false // unparseable: not usable anyway, and never silently adopted
+  }
+  if (host === 'localhost' || host === '[::1]' || /^127\./.test(host)) return true
+  const saved = localStorage.getItem(PROXY_KEY)
+  if (saved && normBridgeUrl(saved) === n) return true
+  return bridgeOptions().some(o => normBridgeUrl(o.url) === n)
 }
 
 // for option dedupe/matching only — the raw URL is what gets stored/connected
@@ -3161,6 +3189,132 @@ function showBridgeDialog() {
   // which paints a stray focus ring. The checked radio is the better start
   // (arrow keys then move the selection).
   radios.find(r => r.checked)?.focus()
+}
+
+/** Confirm an unrecognised bridge that arrived as `?proxy=` in the page URL.
+ * Accepting stores it exactly like a pick in the bridge dialog and reloads onto
+ * it; declining (or dismissing) leaves the app on the bridge it resolved to
+ * anyway — `resolveBridgeUrl` already ignored the untrusted param, so nothing
+ * has been sent to it by the time this is answered. */
+function showBridgeConfirmDialog(url: string) {
+  if (document.getElementById('sc-bridge-confirm-dialog')) return
+  const overlay = el('dialog', {
+    position: 'fixed',
+    inset: '0',
+    width: '100%',
+    height: '100%',
+    maxWidth: 'none',
+    maxHeight: 'none',
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,.5)',
+  })
+  overlay.id = 'sc-bridge-confirm-dialog'
+  overlay.onclose = () => overlay.remove()
+
+  const panel = el('div', {
+    width: 'min(460px, 92vw)',
+    maxHeight: '90vh',
+    overflowY: 'auto',
+    boxSizing: 'border-box',
+    padding: '20px',
+    borderRadius: '10px',
+    background: '#1e1e1e',
+    color: '#eee',
+    font: '14px/1.5 system-ui, sans-serif',
+    boxShadow: '0 8px 40px rgba(0,0,0,.5)',
+  })
+  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'Use a different bridge?')
+  const body = el(
+    'p',
+    { margin: '0 0 10px', color: '#bbb' },
+    'The link you opened asks this app to send all of its traffic through ' +
+      'the bridge below, instead of its usual one. Your messages stay ' +
+      'encrypted, but whoever runs that bridge can see your IP address, ' +
+      'which mail servers you connect to, and when. Only accept if you ' +
+      'trust whoever gave you the link.'
+  )
+  const urlBox = el(
+    'pre',
+    {
+      margin: '0 0 10px',
+      padding: '8px 10px',
+      borderRadius: '6px',
+      background: '#161616',
+      color: '#9cdcfe',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-all',
+      fontSize: '12px',
+    },
+    url
+  )
+  const note = el(
+    'p',
+    { margin: '0', fontSize: '12px', color: '#a8a8a8' },
+    `Until you accept, ${APP_NAME} keeps using its usual bridge. You can ` +
+      'change this any time under Settings → Connectivity.'
+  )
+
+  const row = el('div', {
+    display: 'flex',
+    gap: '8px',
+    justifyContent: 'flex-end',
+    marginTop: '16px',
+  })
+  const mkBtn = (text: string, primary: boolean) =>
+    el(
+      'button',
+      {
+        padding: '8px 14px',
+        borderRadius: '6px',
+        border: 'none',
+        cursor: 'pointer',
+        fontSize: '13px',
+        background: primary ? '#2d7dff' : '#333',
+        color: '#fff',
+      },
+      text
+    )
+  const keepBtn = mkBtn('Keep current bridge', false)
+  keepBtn.onclick = () => overlay.remove()
+  const useBtn = mkBtn('Use this bridge', true)
+  useBtn.onclick = () => {
+    localStorage.setItem(PROXY_KEY, url)
+    location.reload()
+  }
+  row.append(keepBtn, useBtn)
+
+  panel.append(title, body, urlBox, note, row)
+  overlay.append(panel)
+  overlay.onclick = e => {
+    if (e.target === overlay) overlay.remove()
+  }
+  document.body.appendChild(overlay)
+  overlay.showModal()
+  keepBtn.focus() // the safe option, not the one that adopts the bridge
+}
+
+/** Boot gate for `?proxy=`: an untrusted one is dropped from the page URL (so a
+ * reload, and the picker's own reload, don't replay it) and confirmed with the
+ * user. Must run before anything contacts the bridge — `resolveBridgeUrl`
+ * ignores it either way, this only asks. */
+function confirmQueryBridge(): void {
+  const params = new URLSearchParams(location.search)
+  const url = params.get('proxy')
+  if (!url || trustedBridge(url)) return
+  params.delete('proxy')
+  try {
+    const clean = new URL(location.href)
+    clean.search = params.toString()
+    history.replaceState(history.state, '', clean.toString())
+  } catch {
+    /* replaceState can throw in exotic sandboxes; the param stays ignored */
+  }
+  showBridgeConfirmDialog(url)
 }
 
 // Last bridge probe result, surfaced to the (patched) ConnectivityDialog via

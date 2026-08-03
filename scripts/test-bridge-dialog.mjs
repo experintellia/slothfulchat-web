@@ -216,6 +216,95 @@ try {
     throw new Error(`expected no stored key on unconfigured instance, got ${JSON.stringify(stored)}`)
   }
   console.log('OK: unconfigured instance offers localhost + custom, stores nothing')
+
+  // --- M-07: a ?proxy= in the page URL must be confirmed --------------------
+  await page.unroute('**/config.js')
+  await page.route('**/config.js', route =>
+    route.fulfill({
+      contentType: 'text/javascript',
+      body: `window.__slothfulConfig=${JSON.stringify(config)}\n`,
+    })
+  )
+
+  const EVIL = 'wss://evil.example/bridge'
+  const confirmState = () =>
+    page.evaluate(() => {
+      const dlg = document.getElementById('sc-bridge-confirm-dialog')
+      return { open: !!dlg, text: dlg?.innerText ?? '', search: location.search }
+    })
+
+  // The prompt is deliberately opened at idle AFTER the frontend's startup —
+  // a <dialog> shown earlier would sit under the welcome screen's own modal —
+  // so both the "asks" and the "stays silent" cases have to wait for it.
+  const gotoWithProxy = async proxy => {
+    await page.evaluate(k => localStorage.removeItem(k), PROXY_KEY)
+    await page.goto(
+      `http://localhost:${APP_PORT}/main.html?persist=0&proxy=${encodeURIComponent(proxy)}`
+    )
+    await waitForBridgeHook()
+  }
+  const waitForConfirm = (state = 'attached') =>
+    page.waitForSelector('#sc-bridge-confirm-dialog', { state, timeout: 30_000 })
+
+  await gotoWithProxy(EVIL)
+  await waitForConfirm()
+  let confirm = await confirmState()
+  if (!confirm.text.includes(EVIL)) {
+    throw new Error(`confirmation does not show the URL: ${JSON.stringify(confirm.text)}`)
+  }
+  if (confirm.search.includes('proxy=')) {
+    throw new Error(`?proxy= was not scrubbed from the URL: ${confirm.search}`)
+  }
+  url = await page.evaluate(() => window.__slothfulchatBridge.url())
+  if (url !== DEFAULT_BRIDGE) {
+    throw new Error(`unconfirmed bridge was used: got ${url}`)
+  }
+  console.log('OK: untrusted ?proxy= is ignored and confirmed instead')
+
+  // declining leaves the app on the bridge it resolved to anyway
+  await page.getByRole('button', { name: 'Keep current bridge' }).click()
+  if ((await confirmState()).open) throw new Error('declining left the dialog open')
+  stored = await page.evaluate(k => localStorage.getItem(k), PROXY_KEY)
+  if (stored !== null) throw new Error(`declining stored ${JSON.stringify(stored)}`)
+  console.log('OK: declining keeps the current bridge and stores nothing')
+
+  // accepting stores it like any other pick and reloads onto it
+  await gotoWithProxy(EVIL)
+  await waitForConfirm()
+  await page.evaluate(() => (window.__scPreReload = true))
+  await page
+    .locator('#sc-bridge-confirm-dialog')
+    .getByRole('button', { name: 'Use this bridge' })
+    .click()
+  await page.waitForFunction(
+    () => !window.__scPreReload && window.__slothfulchatBridge,
+    null,
+    { timeout: 60_000, polling: 100 }
+  )
+  stored = await page.evaluate(k => localStorage.getItem(k), PROXY_KEY)
+  if (stored !== EVIL) throw new Error(`expected ${EVIL} stored, got ${JSON.stringify(stored)}`)
+  url = await page.evaluate(() => window.__slothfulchatBridge.url())
+  if (url !== EVIL) throw new Error(`expected ${EVIL} after confirming, got ${url}`)
+  console.log('OK: confirming adopts the bridge')
+
+  // already-trusted URLs stay silent: a bridge on this device (every dev/test
+  // setup passes one on a random port) and one the instance itself offers
+  for (const trusted of ['ws://localhost:9999', 'ws://127.0.0.1:9999', PUBLIC_BRIDGES[0].url]) {
+    await gotoWithProxy(trusted)
+    // the prompt fires at idle after startup: wait past that point, then give
+    // the idle callback a moment, before concluding it stayed silent
+    await page.waitForFunction(
+      () => performance.getEntriesByName('sc:ui-fully-ready').length > 0,
+      null,
+      { timeout: 60_000, polling: 100 }
+    )
+    await page.waitForTimeout(2000)
+    confirm = await confirmState()
+    if (confirm.open) throw new Error(`trusted ${trusted} asked for confirmation`)
+    url = await page.evaluate(() => window.__slothfulchatBridge.url())
+    if (url !== trusted) throw new Error(`expected ${trusted} honored, got ${url}`)
+  }
+  console.log('OK: loopback and instance-offered ?proxy= are honored silently')
 } catch (err) {
   failed = true
   console.error('FAIL:', err)
