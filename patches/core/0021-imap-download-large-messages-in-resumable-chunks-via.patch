@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 23 Jul 2026 03:23:39 +0000
-Subject: [PATCH 21/27] imap: download large messages in resumable chunks via
+Subject: [PATCH 21/28] imap: download large messages in resumable chunks via
  partial FETCH
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
