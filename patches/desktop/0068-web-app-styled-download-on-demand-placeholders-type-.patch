@@ -16,7 +16,11 @@ New DownloadOnDemandPlaceholder component renders the fork's thumbnail
 (blob referenced by Param::File, exposed as message.file) and target size:
 - image/gif/sticker: blurred thumbnail (or grey box) in the
   .message-attachment-media box with a centered download+size overlay
-- video: same media box, black bg, CSS play glyph
+- video: same media box, black bg, labelled "Video · 0:23" (just "Video"
+  when the sender sent no Chat-Duration). Deliberately not a play glyph:
+  it would invite a click that cannot do anything, because a pre-message
+  has no video to play until it is downloaded — and centered in the box it
+  would sit on top of the length.
 - audio/voice: .message-attachment-audio-style row
 - file: .message-attachment-generic card with extension + name
 - webxdc: .webxdc card with the app icon (thumbnail or default asset)
@@ -38,17 +42,17 @@ or an OPFS write-through lost across a reload) shows the placeholder instead of
 the browser's broken-image glyph.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
-Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
+Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  packages/frontend/scss/manifest.scss          |   1 +
- .../_message-download-placeholder.scss        | 300 ++++++++++++++++++
+ .../_message-download-placeholder.scss        | 287 +++++++++++++++++
  .../components/dialogs/ExportChatToHtml.tsx   |  14 +-
  .../MessageDetail/BasicMessageInfo.tsx        |   2 +-
- .../message/DownloadOnDemandPlaceholder.tsx   | 289 +++++++++++++++++
+ .../message/DownloadOnDemandPlaceholder.tsx   | 303 ++++++++++++++++++
  .../src/components/message/Message.tsx        | 120 +++++--
  .../src/tests/placeholderCaption.test.ts      |  32 ++
  .../frontend/src/utils/downloadPlaceholder.ts |  33 ++
- 8 files changed, 754 insertions(+), 37 deletions(-)
+ 8 files changed, 755 insertions(+), 37 deletions(-)
  create mode 100644 packages/frontend/scss/message/_message-download-placeholder.scss
  create mode 100644 packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
  create mode 100644 packages/frontend/src/tests/placeholderCaption.test.ts
@@ -68,10 +72,10 @@ index b55d0eb..99294f1 100644
  @use 'misc/_avatar.scss';
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
 new file mode 100644
-index 0000000..6801460
+index 0000000..fb2417d
 --- /dev/null
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
-@@ -0,0 +1,300 @@
+@@ -0,0 +1,287 @@
 +// Styled download-on-demand placeholders (see DownloadOnDemandPlaceholder.tsx).
 +// Reuses the .message-attachment-* / .webxdc boxes from _message-attachment.scss
 +// and adds: a blurred thumbnail, a grey fallback box, and a centered overlay
@@ -113,20 +117,6 @@ index 0000000..6801460
 +    &.video > .download-on-demand-empty {
 +      background-color: black;
 +    }
-+
-+    // CSS play triangle, centered behind the overlay controls.
-+    & > .play-glyph {
-+      position: absolute;
-+      top: 50%;
-+      left: 50%;
-+      transform: translate(-40%, -180%);
-+      width: 0;
-+      height: 0;
-+      border-style: solid;
-+      border-width: 14px 0 14px 24px;
-+      border-color: transparent transparent transparent
-+        rgba(255, 255, 255, 0.85);
-+    }
 +  }
 +
 +  .download-on-demand-overlay {
@@ -146,7 +136,8 @@ index 0000000..6801460
 +      padding: 10px 16px;
 +    }
 +
-+    .duration {
++    // "Video · 0:23" above the download chip.
++    .media-label {
 +      color: white;
 +      font-size: 12px;
 +      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
@@ -426,10 +417,10 @@ index 5d3432a..b6e27a6 100644
    const minutes = Math.floor(totalSeconds / 60) % 60
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 new file mode 100644
-index 0000000..f59ca4c
+index 0000000..6402583
 --- /dev/null
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,303 @@
 +import React from 'react'
 +import { filesize } from 'filesize'
 +import { T } from '@deltachat/jsonrpc-client'
@@ -528,7 +519,9 @@ index 0000000..f59ca4c
 +      type='button'
 +      className='circle-download-button'
 +      aria-label={tx('download')}
-+      onClick={() => BackendRemote.rpc.downloadFullMessage(accountId, messageId)}
++      onClick={() =>
++        BackendRemote.rpc.downloadFullMessage(accountId, messageId)
++      }
 +      tabIndex={tabIndex}
 +    >
 +      <Icon icon='download' size={18} />
@@ -617,16 +610,21 @@ index 0000000..f59ca4c
 +    )
 +  }
 +
-+  // Video: same media box, black background, play glyph behind the overlay.
++  // Video: same media box, black background, and a label — "Video · 0:23" —
++  // where a play glyph would go. A glyph would invite a click that cannot do
++  // anything, since a pre-message has no video to play until it is downloaded,
++  // and being centered it would sit on top of the length. Senders that predate
++  // `Chat-Duration` leave the duration at 0; the label is then just the type.
 +  if (viewType === 'Video') {
 +    return (
 +      <div className={mediaBoxClass + ' video'}>
 +        <Preview file={message.file} className='attachment-content' />
-+        <div className='play-glyph' aria-hidden='true' />
 +        <div className='download-on-demand-overlay'>
-+          {message.duration > 0 && (
-+            <span className='duration'>{formatDuration(message.duration)}</span>
-+          )}
++          <span className='media-label'>
++            {message.duration > 0
++              ? `${tx('video')} · ${formatDuration(message.duration)}`
++              : tx('video')}
++          </span>
 +          {controls}
 +        </div>
 +      </div>
@@ -638,10 +636,15 @@ index 0000000..f59ca4c
 +  // a fake track, and the size. No filename — the real player shows none.
 +  if (viewType === 'Audio' || viewType === 'Voice') {
 +    return (
-+      <div className={'message-attachment-audio download-on-demand' + contentBelow}>
++      <div
++        className={'message-attachment-audio download-on-demand' + contentBelow}
++      >
 +        <div className='fake-audio-player'>
 +          {message.downloadState === 'InProgress' ? (
-+            <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
++            <ProgressCircle
++              percent={downloadPercent}
++              label={tx('downloading')}
++            />
 +          ) : (
 +            <CircleDownloadButton
 +              messageId={message.id}
@@ -699,7 +702,9 @@ index 0000000..f59ca4c
 +  // Generic file (and any other type): the real card's layout, but the round
 +  // download button / progress ring sits where the file icon would be.
 +  return (
-+    <div className={'message-attachment-generic download-on-demand' + contentBelow}>
++    <div
++      className={'message-attachment-generic download-on-demand' + contentBelow}
++    >
 +      {message.downloadState === 'InProgress' ? (
 +        <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
 +      ) : (
