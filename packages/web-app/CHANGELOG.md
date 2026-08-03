@@ -1,5 +1,14 @@
 # Changelog
 
+- **When the app can't start, you can now copy the error.** The failure screen
+  shows the technical details as selectable text with a "Copy details" button,
+  so you can paste them into a bug report instead of retyping them from a
+  screenshot.
+
+- **Lockdown Mode is named as the cause it usually is**: if your browser has
+  WebAssembly switched off, the app now says so and explains how to allow just
+  this site, instead of reporting a storage problem you don't have.
+
 - **Voice messages and videos you send now carry their length** — the person
   receiving one sees how long it is (and how tall a video is) straight away,
   instead of a "–:––" placeholder they have to download first. Works with every
