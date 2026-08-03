@@ -47,6 +47,8 @@ type Config = {
 const cfg = (): Config => (window as any).__slothfulConfig ?? {}
 
 const CONSENT_KEY = 'slothfulchat.analyticsConsent' // 'granted' | 'denied'
+// set once the opt-out notice has actually been on screen (see the gate below)
+const NOTICE_KEY = 'slothfulchat.analyticsNoticeShown'
 export type Consent = 'granted' | 'denied' | 'unset'
 
 /** True when this build was configured for analytics at all. Everything else
@@ -102,10 +104,10 @@ export function event(name: string, props?: Props): void {
   // run before the hold, or this event would queue itself and never release.
   if (name === 'onboarding' && (props as Props | undefined)?.step === 'welcome')
     releaseHeldForNotice()
-  // Delayed opt-out: on a cold start nothing may leave before the notice is on
-  // screen. The gate lives here rather than at the call sites so a new event
-  // cannot reintroduce a pre-notice send by forgetting to opt into it.
-  if (!noticeReleased && session.startupMode() !== 'warm') {
+  // Delayed opt-out: nothing may leave before the notice has been on screen.
+  // The gate lives here rather than at the call sites so a new event cannot
+  // reintroduce a pre-notice send by forgetting to opt into it.
+  if (!noticeReleased && !noticeShownBefore()) {
     heldForNotice.push(() => event(name, props))
     return
   }
@@ -145,33 +147,52 @@ export function event(name: string, props?: Props): void {
   }
 }
 
-// --- delayed opt-out: hold everything until the notice is shown -------------
+// --- delayed opt-out: hold everything until the notice has been shown -------
 //
-// On a COLD start (onboarding) the WelcomeScreen — which shows the opt-out
-// checkbox — has not rendered when the core first answers, so any event sent
-// there leaves before the user could see or act on the notice. That is not just
-// the first-visit burst: `bridge` fires from getCore(), `boot_error` from the
+// On a first visit the WelcomeScreen — which shows the opt-out checkbox — has
+// not rendered when the core first answers, so any event sent there leaves
+// before the user could see or act on the notice. That is not just the
+// first-visit burst: `bridge` fires from getCore(), `boot_error` from the
 // startup failure paths, `emoji_set` from settings hydration. So event() holds
 // them all until the WelcomeScreen mounts (it fires the 'onboarding'/'welcome'
-// event, which calls releaseHeldForNotice). WARM starts (returning users who
-// already saw the notice during a previous onboarding) send immediately, and so
-// does anything queued after the release. Opting out before the release drops
-// the held events, since the queued call re-enters event() and re-checks
-// isEnabled(). Still opt-out: non-interaction leaves the user enabled once the
-// notice is on screen.
+// event, which calls releaseHeldForNotice). Anything queued after the release
+// sends immediately. Opting out before the release drops the held events, since
+// the queued call re-enters event() and re-checks isEnabled(). Still opt-out:
+// non-interaction leaves the user enabled once the notice is on screen.
 //
-// A cold start that never reaches the welcome screen (core init fails outright)
-// therefore sends nothing at all — including the `boot_error` describing that
-// failure. Losing that sample is the right side to err on: the alternative is
-// transmitting before consent, which is the bug this gate exists to close.
+// The "has this browser seen the notice" test is a persisted flag, NOT
+// session.startupMode(). A warm start is only known to be warm after the core
+// answers get_all_account_ids — so on the one path where telemetry matters most,
+// a core that never starts, the mode is stuck at 'unknown' and a startupMode
+// test would hold `boot_error` for returning users too, not just first-timers.
+// The flag is set at release and survives the reload, which is exactly the fact
+// the gate needs: this browser has had the notice on screen before.
+//
+// Remaining hole: a first-ever visit whose core dies before the welcome screen
+// renders sends nothing, including the boot_error describing that failure. Not
+// transmitting pre-notice is the right side to err on, but it does mean a
+// first-run-only boot failure is invisible here — the crash dialog itself has
+// to ask (see showFatalDialog in runtime.ts).
 let noticeReleased = false
 // ponytail: unbounded queue. Bounded in practice — only boot-time events can
 // fire before the welcome screen mounts, and the user cannot act until it does.
 // Cap it if anything ever emits events in a loop pre-notice.
 const heldForNotice: Array<() => void> = []
+function noticeShownBefore(): boolean {
+  try {
+    return localStorage.getItem(NOTICE_KEY) === '1'
+  } catch {
+    return false // storage blocked: hold, and rely on this session's release
+  }
+}
 function releaseHeldForNotice(): void {
   if (noticeReleased) return
   noticeReleased = true
+  try {
+    localStorage.setItem(NOTICE_KEY, '1')
+  } catch {
+    // storage blocked — this session still releases; the next one holds again
+  }
   for (const run of heldForNotice.splice(0)) run()
 }
 /** Fallback release once the UI is fully up (runtime.emitUIFullyReady): by then

@@ -41,7 +41,8 @@
 - **Privacy**: on instances with usage statistics enabled, no statistics event
   of any kind leaves the app before the welcome screen has shown you the opt-out
   checkbox. A few startup events (which bridge you connect through, startup
-  errors) still slipped out ahead of it.
+  errors) still slipped out ahead of it. Once you have seen that notice, later
+  visits report as before — including a visit where the app fails to start.
 - **Security**: a link can no longer silently route your traffic through
   someone else's bridge. A `?proxy=` in the page URL that isn't one this
   instance offers, one you already picked, or one on your own machine is now
