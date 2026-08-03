@@ -1965,9 +1965,51 @@ function showFatalDialog(id: string, titleText: string, bodyText: string) {
   retryBtn.onclick = () => location.reload()
   row.append(retryBtn)
   panel.append(title, body, row)
+  // This screen is the only one a first-time visitor gets when the core dies
+  // before onboarding, so it has to carry the usage-statistics notice the
+  // welcome screen would have shown — otherwise the boot_error describing the
+  // failure stays held forever and we never learn the app is broken for them
+  // (see the gate in analytics.ts). Showing it here is what lets it send.
+  const notify = analytics.isEnabled()
+  if (notify) panel.append(analyticsNoticeLine())
   overlay.append(panel)
   document.body.appendChild(overlay)
   overlay.showModal()
+  // only once the notice is actually on screen — releaseHeldEvents() records
+  // that it was shown, so calling it without showing it would be a lie
+  if (notify) analytics.releaseHeldEvents()
+}
+
+/** The one-line "we count this" notice + a link into the existing info dialog
+ * (whose buttons record a choice). Same wording contract as the welcome
+ * screen's checkbox: opt-out, and this counts as the ask. */
+function analyticsNoticeLine(): HTMLElement {
+  const note = el('p', {
+    margin: '16px 0 0',
+    paddingTop: '12px',
+    borderTop: '1px solid #333',
+    color: '#888',
+    fontSize: '12px',
+  })
+  note.append('This failure is counted in anonymous usage statistics. ')
+  // a button, not an <a>: it opens a dialog rather than navigating, and screen
+  // readers should say so
+  const link = el(
+    'button',
+    {
+      background: 'none',
+      border: 'none',
+      padding: '0',
+      font: 'inherit',
+      color: '#6aa9ff',
+      textDecoration: 'underline',
+      cursor: 'pointer',
+    },
+    'Details or opt out'
+  )
+  link.onclick = () => void showAnalyticsInfoDialog()
+  note.append(link)
+  return note
 }
 
 const WEBXDC_ISSUE_URL =
