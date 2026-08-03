@@ -57,11 +57,13 @@ jobs:
           exit $fail
 
       # dependency-free node:test suites for pure logic (config templating,
-      # translation-editor serialization, blob response headers)
+      # the analytics pre-notice gate, translation-editor serialization, blob
+      # response headers)
       - name: Unit-test pure helpers
         run: >-
           node --test
           packages/web-app/instance-config.test.mjs
+          packages/web-app/analytics-gate.test.mjs
           packages/web-app/src/translation-editor.test.mjs
           packages/web-app/src/blob-response.test.mjs
 

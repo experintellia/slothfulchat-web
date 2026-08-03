@@ -97,6 +97,18 @@ type Props = Record<string, string | number | boolean>
 /** Send one event to Plausible's events API. Best-effort and silent: analytics
  * must never break the app or spam the console, so failures are swallowed. */
 export function event(name: string, props?: Props): void {
+  // The WelcomeScreen mounting fires this event, which means the opt-out
+  // checkbox is now on screen — release anything held for it (see below). Must
+  // run before the hold, or this event would queue itself and never release.
+  if (name === 'onboarding' && (props as Props | undefined)?.step === 'welcome')
+    releaseHeldForNotice()
+  // Delayed opt-out: on a cold start nothing may leave before the notice is on
+  // screen. The gate lives here rather than at the call sites so a new event
+  // cannot reintroduce a pre-notice send by forgetting to opt into it.
+  if (!noticeReleased && session.startupMode() !== 'warm') {
+    heldForNotice.push(() => event(name, props))
+    return
+  }
   if (!isEnabled()) return
   const c = cfg()
   // Runtime enforcement of the closed catalogue: anything outside events.mjs
@@ -108,12 +120,6 @@ export function event(name: string, props?: Props): void {
     if (c.devmode) console.warn('[analytics] dropped non-catalogue event:', name, props)
     return
   }
-  // Delayed opt-out: the WelcomeScreen mounting fires this event, which means
-  // the opt-out checkbox is now on screen — release the first-visit pageview +
-  // startup held for it (see afterNoticeShown). Runs before this event sends;
-  // reentrant event() calls from the queue are fine.
-  if (name === 'onboarding' && (props as Props | undefined)?.step === 'welcome')
-    releaseHeldForNotice()
   const body = {
     name,
     // Plausible needs a domain (its "site" id) and a url. We deliberately send
@@ -139,32 +145,38 @@ export function event(name: string, props?: Props): void {
   }
 }
 
-// --- delayed opt-out: hold the first-visit burst until the notice is shown ---
+// --- delayed opt-out: hold everything until the notice is shown -------------
 //
 // On a COLD start (onboarding) the WelcomeScreen — which shows the opt-out
-// checkbox — has not rendered when the core first answers, so sending the
-// pageview + startup sample there would transmit them before the user could
-// see or act on the notice. Hold them until the WelcomeScreen mounts (it fires
-// the 'onboarding'/'welcome' event, which calls releaseHeldForNotice) so
-// nothing leaves pre-notice. WARM starts (returning users who already saw the
-// notice during a previous onboarding) send immediately. Opting out before the
-// release just drops the held events, since event() re-checks isEnabled() at
-// send time. Still opt-out: non-interaction leaves the user enabled once the
+// checkbox — has not rendered when the core first answers, so any event sent
+// there leaves before the user could see or act on the notice. That is not just
+// the first-visit burst: `bridge` fires from getCore(), `boot_error` from the
+// startup failure paths, `emoji_set` from settings hydration. So event() holds
+// them all until the WelcomeScreen mounts (it fires the 'onboarding'/'welcome'
+// event, which calls releaseHeldForNotice). WARM starts (returning users who
+// already saw the notice during a previous onboarding) send immediately, and so
+// does anything queued after the release. Opting out before the release drops
+// the held events, since the queued call re-enters event() and re-checks
+// isEnabled(). Still opt-out: non-interaction leaves the user enabled once the
 // notice is on screen.
+//
+// A cold start that never reaches the welcome screen (core init fails outright)
+// therefore sends nothing at all — including the `boot_error` describing that
+// failure. Losing that sample is the right side to err on: the alternative is
+// transmitting before consent, which is the bug this gate exists to close.
 let noticeReleased = false
+// ponytail: unbounded queue. Bounded in practice — only boot-time events can
+// fire before the welcome screen mounts, and the user cannot act until it does.
+// Cap it if anything ever emits events in a loop pre-notice.
 const heldForNotice: Array<() => void> = []
-function afterNoticeShown(run: () => void): void {
-  if (noticeReleased || session.startupMode() === 'warm') return run()
-  heldForNotice.push(run)
-}
 function releaseHeldForNotice(): void {
   if (noticeReleased) return
   noticeReleased = true
   for (const run of heldForNotice.splice(0)) run()
 }
 /** Fallback release once the UI is fully up (runtime.emitUIFullyReady): by then
- * the user has necessarily passed the welcome notice, so the held first-visit
- * events are never stranded if the WelcomeScreen 'welcome' hook didn't fire. */
+ * the user has necessarily passed the welcome notice, so held events are never
+ * stranded if the WelcomeScreen 'welcome' hook didn't fire. */
 export function releaseHeldEvents(): void {
   releaseHeldForNotice()
 }
@@ -205,9 +217,7 @@ let pageviewQueued = false
 export function pageview(): void {
   if (pageviewQueued) return // once per visit, even before the notice releases it
   pageviewQueued = true
-  afterNoticeShown(() =>
-    event('pageview', { mode: session.visitorMode(), display: session.displayMode() })
-  )
+  event('pageview', { mode: session.visitorMode(), display: session.displayMode() })
 }
 
 /**
@@ -248,25 +258,21 @@ export function trackCall(params: {
   })
 }
 
-let startupSent = false
 let startupQueued = false
 /** Turn a startup duration (ms) into one of the fixed buckets and send it,
  * tagged cold (onboarding) vs warm (had an account). Fires at most once, and
  * waits until the cold/warm mode is known (callers invoke it both when the UI
  * becomes ready and when account state resolves — whichever satisfies both
- * conditions sends it). Bucketing keeps it non-identifying. On a cold start the
- * send is held until the welcome notice is shown (see afterNoticeShown). */
+ * conditions sends it). Bucketing keeps it non-identifying. On a cold start
+ * event() holds the send until the welcome notice is shown. */
 export function trackStartup(ms: number | null): void {
-  if (startupSent || startupQueued || ms == null) return
+  if (startupQueued || ms == null) return
   const mode = session.startupMode()
   if (mode === 'unknown') return // account state not known yet — try again later
   const bucket =
     ms < 500 ? '<0.5s' : ms < 1000 ? '0.5-1s' : ms < 2000 ? '1-2s' : ms < 4000 ? '2-4s' : '>4s'
   startupQueued = true
-  afterNoticeShown(() => {
-    startupSent = true
-    event('startup', { bucket, mode })
-  })
+  event('startup', { bucket, mode })
 }
 
 // build a stable, param-free url for Plausible: origin + path only — never

@@ -696,7 +696,7 @@ class BrowserRuntime {
     this.flushPendingQrUrl()
     this.flushPendingSendToChat()
     // fallback: the UI is fully up, so the welcome notice has necessarily been
-    // passed — release any held first-visit analytics if its 'welcome' hook
+    // passed — release any held analytics events if its 'welcome' hook
     // somehow didn't fire (a no-op on warm starts and once already released).
     analytics.releaseHeldEvents()
     const idle = (window as any).requestIdleCallback ?? ((cb: () => void) => setTimeout(cb, 2000))

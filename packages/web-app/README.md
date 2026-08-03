@@ -173,6 +173,9 @@ for the user-facing summary):
   Opt-out: on by default on a configured instance; a checkbox on the welcome
   screen (and in Settings → Advanced / Diagnostics → Usage statistics) opens an
   info dialog (`src/consent.ts`) whose Accept/Opt-out buttons set the choice.
+  On a cold start `event()` holds *every* event until that welcome screen mounts
+  (`releaseHeldForNotice`, with `emitUIFullyReady` as a fallback), so nothing is
+  transmitted before the notice is on screen — see `analytics-gate.test.mjs`.
   The **closed** event list lives in `src/events.mjs` — the single source that
   the generated `privacy.html` renders and `event()` enforces at runtime.
   Most events are derived from JSON-RPC method names / a
