@@ -56,25 +56,27 @@ function printSummary(res) {
       `(wasm init ${r(res.worker.workerInitMs)}ms)`,
   );
 
-  console.log('\ncore-worker ping latency (ms):');
-  console.log('  scenario                 n  median     p95     max');
+  console.log('\nping latency (ms):');
+  console.log('  probe / scenario                        n  median     p95     max');
   for (const [name, s] of [
-    ['S1 idle', res.idle.stats],
-    ['S2 inline keygen', res.inlineKeygen.stats],
-    ['S3 inline sends', res.inlineEncrypt.stats],
-    ['S4 worker keygen', res.worker.keygen.stats],
+    ['core / S1 idle', res.idle.stats],
+    ['core / S2 inline account+keygen', res.inlineKeygen.stats],
+    ['core / S3 inline sends (+2s tail)', res.inlineEncrypt.stats],
+    ['core / S4 during worker crypto (NEW)', res.worker.corePings.stats],
+    ['busy crypto worker / S4 (≈ CURRENT)', res.worker.busyPings.stats],
   ]) {
     console.log(
-      `  ${name.padEnd(22)} ${pad(s.n, 4)} ${pad(r(s.median), 7)} ${pad(r(s.p95), 7)} ${pad(r(s.max), 7)}`,
+      `  ${name.padEnd(37)} ${pad(s.n, 4)} ${pad(r(s.median), 7)} ${pad(r(s.p95), 7)} ${pad(r(s.max), 7)}`,
     );
   }
 
   console.log(
-    `\nkeygen (ms): inline [${res.inlineKeygen.samples.map(r)}] median ${r(v.keygenInlineMedianMs)}` +
+    `\naccount setup (ms): addAccount [${res.inlineKeygen.samples.map((s) => r(s.addAccountMs))}]` +
+      ` | keygen inline [${res.inlineKeygen.samples.map((s) => r(s.keygenMs))}] median ${r(v.keygenInlineMedianMs)}` +
       (res.inlineKeygen.reduced ? ' (reduced: sample >15s)' : ''),
   );
   console.log(
-    `             worker [${res.worker.keygen.samples.map((s) => r(s.computeMs))}] median ${r(v.keygenWorkerMedianMs)}` +
+    `                    keygen worker [${res.worker.keygen.samples.map((s) => r(s.computeMs))}] median ${r(v.keygenWorkerMedianMs)}` +
       (res.worker.keygen.reduced ? ' (reduced: sample >15s)' : ''),
   );
 
@@ -95,13 +97,16 @@ function printSummary(res) {
   }
 
   console.log(
-    `\nverdict: inline keygen stalls core rpc to p95 ${r(v.pingInlineKeygenP95Ms)}ms ` +
-      `(idle baseline ${r(v.pingIdleP95Ms)}ms); with the crypto worker it stays at ` +
-      `p95 ${r(v.pingWorkerKeygenP95Ms)}ms. total ${r(v.totalMs / 1000)}s`,
+    `\nverdict: rpc on a worker doing crypto inline queues to p95 ${r(v.pingBusyWorkerP95Ms)}ms ` +
+      `(≈ CURRENT); with crypto offloaded the core worker stays at p95 ` +
+      `${r(v.pingCoreDuringWorkerCryptoP95Ms)}ms (idle baseline ${r(v.pingIdleP95Ms)}ms). ` +
+      `inline account+keygen stalls: p95 ${r(v.pingInlineAccountP95Ms)}ms. total ${r(v.totalMs / 1000)}s`,
   );
 }
 
-const browser = await chromium.launch();
+// CHROMIUM=/path/to/chrome overrides the browser binary (sandboxes that ship
+// a Chromium not matching the installed Playwright version)
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined });
 const page = await browser.newPage();
 page.on('pageerror', (e) => console.error('[pageerror]', e.message));
 page.on('console', (m) => {

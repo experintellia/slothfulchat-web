@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:," />
   <title>PGP offload benchmark</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 1rem auto; padding: 0 1rem; }
@@ -74,17 +75,16 @@
 
     let core, dc
 
-    // Latency probe against the CORE worker: pings every 25ms, NOT serialized —
-    // while the core worker is blocked, pings queue up and their latencies show
-    // exactly how long UI-ish rpc calls would stall.
-    function startPingProbe(intervalMs = 25) {
+    // Latency probe: pings a worker every 25ms, NOT serialized — while that
+    // worker is blocked, pings queue up and their latencies show exactly how
+    // long UI-ish rpc calls would stall. `ping` is any () => Promise.
+    function startPingProbe(ping, intervalMs = 25) {
       const latencies = []
       let inflight = 0
       const timer = setInterval(() => {
         const t = performance.now()
         inflight++
-        dc.rpc
-          .getSystemInfo()
+        ping()
           .then(() => latencies.push(performance.now() - t))
           .catch(() => {})
           .finally(() => inflight--)
@@ -163,30 +163,37 @@
 
         // S1: idle ping baseline (~40 pings @ 25ms)
         setProgress('S1: idle ping baseline…')
+        const pingCore = () => dc.rpc.getSystemInfo()
         {
-          const probe = startPingProbe()
+          const probe = startPingProbe(pingCore)
           await sleep(40 * 25 + 100)
           results.idle = await probe.finish()
         }
 
-        // S2: CURRENT — keygen inline in the core worker (exportSelfKeys
-        // forces keygen; fresh account per sample), pings running throughout
+        // S2: CURRENT — account setup + keygen inline in the core worker
+        // (exportSelfKeys forces keygen; fresh account per sample), pings
+        // running throughout. Per-step timings attribute the blocking:
+        // addAccount = sqlite/db work, exportSelfKeys = keygen + export.
         const keygenMs = []
         let aid
-        let s2reduced = false
         {
-          const probe = startPingProbe()
+          const samples = []
+          let reduced = false
+          const probe = startPingProbe(pingCore)
           for (let i = 0; i < 5; i++) {
-            setProgress(`S2: inline keygen ${i + 1}/5 (core worker)…`)
+            setProgress(`S2: inline account+keygen ${i + 1}/5 (core worker)…`)
+            let t = performance.now()
             aid = await dc.rpc.addAccount()
+            const addAccountMs = performance.now() - t
             await dc.rpc.setConfig(aid, 'configured_addr', `bench${i}@example.org`)
-            const t = performance.now()
+            t = performance.now()
             await dc.rpc.exportSelfKeys(aid, '/keys-' + aid, null)
             const ms = performance.now() - t
+            samples.push({ addAccountMs, keygenMs: ms })
             keygenMs.push(ms)
-            if (ms > 15000) { s2reduced = true; break } // ponytail: phone-time guard, keep total < ~2min
+            if (ms > 15000) { reduced = true; break } // ponytail: phone-time guard, keep total < ~2min
           }
-          results.inlineKeygen = { samples: keygenMs, reduced: s2reduced, ...(await probe.finish()) }
+          results.inlineKeygen = { samples, reduced, ...(await probe.finish()) }
         }
 
         // S3: CURRENT — encrypt via real message building: self-chat sends on
@@ -194,7 +201,7 @@
         {
           setProgress('S3: inline encrypt (self-chat sends)…')
           const chatId = await dc.rpc.createChatByContactId(aid, 1) // contact 1 = self
-          const probe = startPingProbe()
+          const probe = startPingProbe(pingCore)
           const sendMs = []
           for (let i = 0; i < 10; i++) {
             const t = performance.now()
@@ -204,6 +211,10 @@
           const tBig = performance.now()
           await dc.rpc.miscSendTextMessage(aid, chatId, 'x'.repeat(100000))
           const bigSendMs = performance.now() - tBig
+          // MIME building + pk_encrypt for queued messages runs async in the
+          // send loop on this same worker — keep probing to catch it
+          setProgress('S3: probing post-send async work…')
+          await sleep(2000)
           results.inlineEncrypt = { sendMs, sendStats: stats(sendMs), bigSendMs, ...(await probe.finish()) }
         }
 
@@ -217,10 +228,17 @@
           workerInitMs: ready.initMs, // the worker's own initWasm() measurement
         }
 
-        // S4a: keygen in the crypto worker; pings against the CORE worker
-        // should stay at baseline — that's the headline number
+        // S4: keygen + encrypt/decrypt payload sweep in the crypto worker,
+        // with TWO probes running the whole time:
+        // - corePings: the CORE worker during sustained worker-side crypto —
+        //   should stay at the idle baseline (the NEW approach's win)
+        // - busyPings: the CRYPTO worker itself — its pings queue behind the
+        //   running crypto, which is architecturally exactly what inline
+        //   crypto does to every rpc call today (the CURRENT approach's cost)
         {
-          const probe = startPingProbe()
+          const coreProbe = startPingProbe(pingCore)
+          const busyProbe = startPingProbe(() => bench.call('ping'))
+
           const samples = []
           let reduced = false
           for (let i = 0; i < 5; i++) {
@@ -230,12 +248,9 @@
             samples.push({ computeMs: reply.computeMs, roundTripMs: performance.now() - t })
             if (reply.computeMs > 15000) { reduced = true; break }
           }
-          results.worker.keygen = { samples, reduced, ...(await probe.finish()) }
-        }
+          results.worker.keygen = { samples, reduced }
 
-        // S4b: encrypt/decrypt payload sweep — overheadMs isolates the
-        // postMessage + copy cost of offloading
-        {
+          // overheadMs isolates the postMessage + copy cost of offloading
           const sweep = []
           for (const size of [1024, 102400, 1048576, 5242880]) {
             const reps = []
@@ -264,14 +279,17 @@
             sweep.push({ size, reps })
           }
           results.worker.sweep = sweep
+          results.worker.corePings = await coreProbe.finish()
+          results.worker.busyPings = await busyProbe.finish()
         }
         bench.worker.terminate()
 
         // S5: verdict
         results.verdict = {
           pingIdleP95Ms: results.idle.stats.p95,
-          pingInlineKeygenP95Ms: results.inlineKeygen.stats.p95,
-          pingWorkerKeygenP95Ms: results.worker.keygen.stats.p95,
+          pingInlineAccountP95Ms: results.inlineKeygen.stats.p95,
+          pingBusyWorkerP95Ms: results.worker.busyPings.stats.p95, // ≈ CURRENT: rpc queued behind inline crypto
+          pingCoreDuringWorkerCryptoP95Ms: results.worker.corePings.stats.p95, // ≈ NEW: core unaffected
           keygenInlineMedianMs: median(keygenMs),
           keygenWorkerMedianMs: median(results.worker.keygen.samples.map((s) => s.computeMs)),
           totalMs: performance.now() - tStart,
@@ -326,8 +344,9 @@
       const v = res.verdict
       tbl('S5 · Verdict', ['metric', 'ms'], [
         ['core-worker ping p95, idle', v.pingIdleP95Ms],
-        ['core-worker ping p95, during INLINE keygen', v.pingInlineKeygenP95Ms],
-        ['core-worker ping p95, during WORKER keygen', v.pingWorkerKeygenP95Ms],
+        ['core-worker ping p95, during inline account+keygen', v.pingInlineAccountP95Ms],
+        ['busy-worker ping p95 during crypto (≈ CURRENT inline)', v.pingBusyWorkerP95Ms],
+        ['core-worker ping p95 during worker crypto (NEW)', v.pingCoreDuringWorkerCryptoP95Ms],
         ['keygen median, inline (jsonrpc)', v.keygenInlineMedianMs],
         ['keygen median, crypto worker (compute)', v.keygenWorkerMedianMs],
         ['total bench runtime', v.totalMs],
@@ -339,18 +358,19 @@
         ['crypto worker wasm init (own measurement)', res.worker.workerInitMs],
       ])
 
-      tbl('Core-worker ping latency', ['scenario', 'n', 'median', 'p95', 'max'], [
-        ['S1 idle', res.idle.stats.n, res.idle.stats.median, res.idle.stats.p95, res.idle.stats.max],
-        ['S2 inline keygen', res.inlineKeygen.stats.n, res.inlineKeygen.stats.median, res.inlineKeygen.stats.p95, res.inlineKeygen.stats.max],
-        ['S3 inline sends', res.inlineEncrypt.stats.n, res.inlineEncrypt.stats.median, res.inlineEncrypt.stats.p95, res.inlineEncrypt.stats.max],
-        ['S4 worker keygen', res.worker.keygen.stats.n, res.worker.keygen.stats.median, res.worker.keygen.stats.p95, res.worker.keygen.stats.max],
+      const pingRow = (name, s) => [name, s.n, s.median, s.p95, s.max]
+      tbl('Ping latency', ['probe target / scenario', 'n', 'median', 'p95', 'max'], [
+        pingRow('core · S1 idle', res.idle.stats),
+        pingRow('core · S2 inline account+keygen', res.inlineKeygen.stats),
+        pingRow('core · S3 inline sends (+2s tail)', res.inlineEncrypt.stats),
+        pingRow('core · S4 during worker crypto (NEW)', res.worker.corePings.stats),
+        pingRow('crypto worker · S4 while computing (≈ CURRENT)', res.worker.busyPings.stats),
       ])
 
-      tbl('Keygen samples (ms)', ['#', 'S2 inline (jsonrpc)', 'S4 worker compute', 'S4 worker roundtrip'],
-        res.inlineKeygen.samples.map((ms, i) => [
-          i + 1, ms,
+      tbl('Account setup samples (ms)', ['#', 'addAccount (db)', 'exportSelfKeys (keygen)', 'S4 worker keygen'],
+        res.inlineKeygen.samples.map((s, i) => [
+          i + 1, s.addAccountMs, s.keygenMs,
           res.worker.keygen.samples[i]?.computeMs ?? '—',
-          res.worker.keygen.samples[i]?.roundTripMs ?? '—',
         ]))
 
       tbl('S3 inline sends (2000 chars ×10 + one 100KB)', ['metric', 'ms'], [
