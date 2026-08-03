@@ -188,10 +188,17 @@ function noticeShownBefore(): boolean {
 function releaseHeldForNotice(): void {
   if (noticeReleased) return
   noticeReleased = true
-  try {
-    localStorage.setItem(NOTICE_KEY, '1')
-  } catch {
-    // storage blocked — this session still releases; the next one holds again
+  // Only record it when there was a notice to show. An unconfigured (self-
+  // hosted) build renders no consent UI at all, yet still reaches this via the
+  // 'welcome' hook and the emitUIFullyReady fallback — persisting there would
+  // let a later analytics-enable flip on the same origin send to a user who has
+  // never had the notice on screen.
+  if (isConfigured()) {
+    try {
+      localStorage.setItem(NOTICE_KEY, '1')
+    } catch {
+      // storage blocked — this session still releases; the next one holds again
+    }
   }
   for (const run of heldForNotice.splice(0)) run()
 }

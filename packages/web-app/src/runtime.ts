@@ -1991,7 +1991,10 @@ function analyticsNoticeLine(): HTMLElement {
     color: '#888',
     fontSize: '12px',
   })
-  note.append('This failure is counted in anonymous usage statistics. ')
+  // covers the whole held queue, not just this failure: releasing here also
+  // flushes the startup events (which bridge, cold/warm, pageview) queued
+  // before the core died
+  note.append('This failure and how the app started are counted in anonymous usage statistics. ')
   // a button, not an <a>: it opens a dialog rather than navigating, and screen
   // readers should say so
   const link = el(

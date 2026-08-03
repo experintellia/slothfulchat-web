@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 // --- harness: a fresh gate + fake sender per scenario ---
 // `store` stands in for localStorage and is shared across gates in a scenario
 // to model separate visits by the same browser.
-function makeGate({ enabled, store = new Map() }) {
+function makeGate({ enabled, store = new Map(), configured = () => true }) {
   const sent = [];
 
   let noticeReleased = false;
@@ -24,7 +24,7 @@ function makeGate({ enabled, store = new Map() }) {
   const releaseHeldForNotice = () => {
     if (noticeReleased) return;
     noticeReleased = true;
-    store.set('noticeShown', '1');
+    if (configured()) store.set('noticeShown', '1');
     for (const run of heldForNotice.splice(0)) run();
   };
 
@@ -141,6 +141,23 @@ function makeGate({ enabled, store = new Map() }) {
   const g = makeGate({ enabled: () => true });
   g.event('boot_error', { kind: 'init-error' });
   assert.deepEqual(g.sent, [], 'first visit, no notice yet, no send');
+}
+
+// 10) an UNCONFIGURED build shows no consent UI, but still reaches the release
+// via the 'welcome' hook and the emitUIFullyReady fallback. It must not record
+// "notice shown", or enabling analytics later on the same origin would send to
+// a user who never saw one.
+{
+  const store = new Map();
+  const off = makeGate({ enabled: () => false, configured: () => false, store });
+  off.event('bridge', { kind: 'local' });
+  off.releaseHeldForNotice();
+  assert.equal(store.get('noticeShown'), undefined, 'no notice shown, nothing recorded');
+
+  // operator flips analytics on for the same origin
+  const on = makeGate({ enabled: () => true, store });
+  on.event('bridge', { kind: 'local' });
+  assert.deepEqual(on.sent, [], 'still held: this browser has never seen a notice');
 }
 
 console.log('analytics delayed-opt-out gate: all assertions passed');
