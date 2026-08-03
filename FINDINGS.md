@@ -702,3 +702,55 @@ provision→`reload()`→main-UI, and that path isn't yet solid (probable
 account-persist-before-reload race, or the reloaded app landing on onboarding
 instead of the chat list). Needs a run against a real wasm build to debug;
 kept as a local script (like `test-web-app-e2e.mjs`) until then.
+
+## Issue #3 step 0 — PGP-offload profiling verdict (2026-08-03)
+
+`/bench/` results from four real browser/device runs (desktop Chrome 150,
+desktop Firefox 152, Chrome Android 152 on a 4-core/4GB phone, Safari iOS 18.7
+on a 4-core phone), each comparing CURRENT (crypto inline on the core worker)
+against the issue's proposed NEW design (crypto in a dedicated worker):
+
+| | idle p95 | inline account+keygen p95 (CURRENT) | core p95 during offloaded crypto (NEW) | keygen median: inline / worker |
+|---|---|---|---|---|
+| Chrome desktop | 0.5ms | 58.8ms | 0.5ms | 2.7 / 0.8ms |
+| Firefox desktop | 0ms | 83.3ms | 0ms | 0 / 0ms |
+| Chrome Android | 7.7ms | 999.2ms | 8.2ms | 20 / 5.5ms |
+| Safari iOS | 3ms | 1007.0ms | 1.0ms | 25 / 13ms |
+
+### VERDICT: gate stays open — proceed with the offload (issue not closed)
+- **The offload works as designed**: with crypto on a dedicated worker, core
+  RPC latency (`pingCoreDuringWorkerCryptoP95Ms`) sits at each device's own
+  idle baseline regardless of how heavy the concurrent crypto load is,
+  confirmed on all four combos. That's the entire thesis of the proposed
+  design, and it holds.
+- **The stall is real and mobile-dominant**: inline account creation
+  (`addAccount` + keygen, CURRENT) queues core RPC to ~1s p95 on both mobile
+  browsers tested vs 59–83ms on desktop — an order of magnitude worse on the
+  devices people actually create accounts on.
+- **Large-message crypto is unambiguously PGP-bound and scales badly on
+  iOS**: the isolated crypto-worker sweep (pure compute, no RPC queueing)
+  shows a 5MB encrypt taking 275–450ms on desktop/Android but **10.4–11.3s on
+  the iPhone tested** (WebKit) — a ~25x gap vs desktop, wider than that
+  device's CPU alone explains (its keygen is only ~2–10x slower than
+  desktop's, not 25x). If that holds beyond one device, a large
+  attachment/message send on iOS would inline-stall the whole core for
+  multiple seconds under CURRENT — the worst case for the "large-message
+  encrypt/decrypt" symptom the issue names.
+- **Caveat — account creation isn't purely PGP**: on the iPhone, `addAccountMs`
+  (sqlite/OPFS setup, not one of the issue's `spawn_blocking` PGP call sites)
+  is ~1050–1098ms on *every* sample vs keygen's ~25–27ms — keygen is a minor
+  fraction of that stall there. Android is closer (addAccount 363–1167ms vs
+  keygen 17–219ms, cold-cache skew on the first sample). Only desktop keeps
+  both trivial. So: the large-message path belongs fully in this issue's
+  scope; the account-creation stall is part `key.rs` keygen and part
+  non-PGP setup cost outside this issue — worth a separate look, not a
+  blocker here.
+- **Pool should be pre-warmed, not spawned per call**: crypto-worker
+  spawn+wasm-init cost varies widely — 200ms (Chrome desktop), 472ms
+  (Android), 579ms (iPhone), **1.7s on Firefox desktop** despite Firefox
+  otherwise having the lowest idle/ping latencies of the four. The issue's
+  proposed pool (spun up once at core-boot) amortizes this; spawning fresh
+  per operation would not.
+
+Raw per-device JSON kept on the issue thread. Bench page/driver:
+`packages/core-wasm/bench/index.html`, `scripts/bench-pgp-offload.mjs`.
