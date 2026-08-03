@@ -348,6 +348,17 @@ exists:
   keeps alive — the same slot the mobile clients use, so no new param and no
   storage of its own. `core/0022-0023`, `desktop/0068-0069`
 
+- **Length and size of the media we send** — core measures images itself, but it
+  has no audio or video decoder, so nothing ever set `Param::Duration` on an
+  outgoing message and no message we sent carried a `Chat-Duration` header: our
+  own placeholders (above) rendered "–:––" for our own voice messages, and so
+  did every other client. `MessageData` grew optional `width`/`height`/
+  `duration`, and the send path fills them in from a `<video>` element, which
+  reads audio files just as well. It hangs off `sendMessage` rather than off the
+  draft because the composer does not send its draft — it rebuilds a fresh
+  `MessageData` from the draft state, so anything stored on the draft would be
+  dropped. `core/0028`, `desktop/0077`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not

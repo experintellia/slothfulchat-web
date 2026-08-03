@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 20 Jul 2026 16:56:38 +0000
-Subject: [PATCH 57/76] web-app: move Experimental features to their own
+Subject: [PATCH 57/77] web-app: move Experimental features to their own
  settings section
 
 Advanced had grown into a grab bag: log, server, multi-device, the

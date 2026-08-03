@@ -1,5 +1,10 @@
 # Changelog
 
+- **Voice messages and videos you send now carry their length** — the person
+  receiving one sees how long it is (and how tall a video is) straight away,
+  instead of a "–:––" placeholder they have to download first. Works with every
+  Delta Chat client, since it travels in the standard `Chat-Duration` header.
+
 - **Apps in "All Media" say which chat they came from**: in the global gallery
   the Apps tab now shows each app's chat — its avatar badged onto the app icon
   and its name in front of the app's own status line. Per-chat galleries are
