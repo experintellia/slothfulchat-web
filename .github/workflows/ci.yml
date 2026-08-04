@@ -102,7 +102,7 @@ jobs:
   # behind each step (apt/microsoft-repo removal, order traps, env quirks).
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
     steps:
       - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
         uses: actions/checkout@v4
@@ -329,6 +329,39 @@ jobs:
       # the CORS-blocked→unfurl fallback path.
       - name: E2E test — link-preview ghost UI
         run: node scripts/test-link-preview-e2e.mjs
+
+      # boot-error screen smoke (fully offline): breaks the built bundles and
+      # asserts static/boot-error.js renders the failure detail instead of a
+      # blank page. The only coverage boot-error.js has.
+      - name: Smoke test — pre-bundle boot-error screen
+        run: node scripts/smoke-boot-error.mjs
+
+      # two-tab handling (fully offline): the core holds an exclusive OPFS lock,
+      # so a second tab must show the "already running in another tab" dialog —
+      # and a plain single-tab reload must NOT false-positive it.
+      - name: E2E test — second tab is told, single-tab reload is not
+        run: node scripts/test-two-tabs.mjs
+
+      # hard reload (fully offline, SW-only): a SW-bypassing reload must
+      # auto-reload once so blobs are served again, rather than leaving the
+      # page with a dead /blobs/ route.
+      - name: E2E test — hard reload recovers the blobs service worker
+        run: node scripts/test-pwa-hard-reload.mjs
+
+      # WS→TCP proxy allowlist guard: DNS for an allowlisted domain populates
+      # the IP allow-list, a tunnel to a never-resolved IP is refused, the
+      # default bind stays loopback-only, and a malformed frame kills only its
+      # own connection. Needs network for the two allowlisted-domain cases
+      # (nine.testrun.org) — the bind/frame cases are offline.
+      - name: Security check — WS→TCP proxy chatmail allowlist
+        run: node scripts/test-ws-tcp-proxy-allowlist.mjs
+
+      # NOTE: scripts/test-read-time-e2e.mjs (estimated time-to-read badge) and
+      # scripts/test-webxdc-isolation.mjs (per-subdomain webxdc storage) are
+      # kept but NOT wired in: the first provisions a real chatmail account
+      # (nine.testrun.org/new) rather than a mock madmail server, and the second
+      # needs the `caddy` binary for the wildcard-subdomain harness. Both run
+      # locally; porting the first to mock madmail would make it CI-able.
 
       # NOTE: scripts/test-calls-e2e.mjs (loopback audio call) is intentionally
       # NOT wired in yet. It is designed to run offline in CI, but currently
