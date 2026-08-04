@@ -31,9 +31,20 @@
 #   commit, rather than making the check advisory.
 #
 # Dispatched from $SSH_ORIGINAL_COMMAND:
-#   upload <n|next>   receive dist/ tarball on STDIN, stage, swap, validate, reload
+#   upload <n|next>   receive dist/ tarball on STDIN, stage, swap, validate,
+#                     reload, health-check — roll back if it doesn't come up
 #   delete <n>        remove pr-<n>, validate, reload (stops its cert renewals)
 #   list              print pr-<n> directory names, one per line (cleanup sweep)
+#
+# SERIALISATION
+#   Every slot shares one thing: the merged Caddy config this box loads. An
+#   upload swaps a directory that config points into, then validates and
+#   reloads it; a delete removes one. The GitHub concurrency groups serialise
+#   per PR at best (and the cleanup workflow has none), which says nothing
+#   about two different PRs, or a PR and next, landing in the same second. So
+#   upload and delete both take one server-wide lock, held across the whole
+#   transaction: receive, inspect, swap, validate, reload, health check,
+#   rollback. Nothing outside the lock touches a live slot.
 
 set -euo pipefail
 
@@ -54,8 +65,32 @@ MAX_ENTRY_BYTES=134217728  # 128 MiB declared by any one member
 MAX_TOTAL_BYTES=536870912  # 512 MiB declared across all members
 TAR_TIMEOUT=120            # seconds, per tar pass
 
+# A transaction is bounded by the two TAR_TIMEOUTs plus the health check, so a
+# queued deploy waits minutes at worst; longer than that means a wedged run,
+# and failing the deploy beats piling up.
+LOCK_WAIT=${SLOTHFUL_DEPLOY_LOCK_WAIT:-900}        # wait for the server lock
+HEALTH_TIMEOUT=${SLOTHFUL_DEPLOY_HEALTH_TIMEOUT:-180}  # for the slot to answer
+HEALTH_PROBE_LABEL=deploy-health   # label used to probe a *.webxdc. wildcard
+
 log() { printf 'deploy-preview: %s\n' "$*" >&2; }
 die() { log "$*"; exit 1; }
+
+# take_lock — one server-wide deploy lock, released when this process exits
+# (the fd is inherited by nothing that outlives us). flock is util-linux, i.e.
+# already on any Debian/Ubuntu box.
+#
+# ponytail: one lock for the whole server, not one per slot. Different slots
+# could receive and inspect in parallel, but they all end at the same `caddy
+# validate` over the same merged config and the same reload, so a per-slot lock
+# would still need this one around the tail — for deploys that arrive minutes
+# apart, one lock is the whole win. If upload concurrency ever becomes the
+# bottleneck, split it: per-slot lock for receive/inspect/swap, this one for
+# validate/reload/health/rollback.
+take_lock() {
+	exec 9>"$ROOT/.deploy.lock"
+	flock -w "$LOCK_WAIT" 9 \
+		|| die "another deploy is holding the server lock (waited ${LOCK_WAIT}s)"
+}
 
 # caddy validate needs no root (it only reads the config); reload does.
 validate_and_reload() {
@@ -63,7 +98,42 @@ validate_and_reload() {
 	sudo systemctl reload caddy
 }
 
-# inspect_routes <dist-dir> <host> — allowlist the bundled routes.caddy.
+# health_check <host>... — "does it actually serve?", bounded.
+#
+# validate + reload only prove the config loads. A slot whose files never
+# landed, whose directory the caddy user cannot read, or whose cert never
+# issued loads perfectly and serves nothing — and the old rollback copy was
+# already deleted by the time anyone noticed. So each host this slot owns gets
+# a real request through the running server before that copy goes away.
+#
+# --resolve pins the connection to this box's own listener: no dependency on
+# DNS propagation for a brand-new pr-N name, and no NAT-hairpin requirement.
+# The TLS handshake still uses the site name, so an unissued or wrong cert
+# fails here — which is the point for the *.webxdc. wildcard, whose DNS-01
+# issuance is the slowest, most silently-broken part of a deploy.
+#
+# Retry rather than one shot: a fresh slot's cert is issued in the background
+# after the reload, so "not yet" is normal for the first seconds.
+health_check() {
+	local host deadline=$((SECONDS + HEALTH_TIMEOUT))
+	for host in "$@"; do
+		until curl -fs --max-time 15 --resolve "$host:443:127.0.0.1" \
+			-o /dev/null "https://$host/"; do
+			if [ "$SECONDS" -ge "$deadline" ]; then
+				log "health check: https://$host/ never answered (${HEALTH_TIMEOUT}s)"
+				return 1
+			fi
+			sleep 3
+		done
+		log "health check: https://$host/ ok"
+	done
+}
+
+# inspect_routes <dist-dir> <host> — allowlist the bundled routes.caddy, and
+# print the site addresses it claims (one per line) for the health check to
+# probe. The addresses come out of the same adapted JSON the allowlist walks,
+# so a bundle that ships no *.webxdc. block is simply not probed for one — no
+# second, textual reading of routes.caddy that could disagree with the first.
 #
 # `caddy validate` is not an authorisation check (see TRUST MODEL), so we look
 # at what the config MEANS instead: `caddy adapt` lowers the Caddyfile to the
@@ -207,6 +277,7 @@ try:
     keys_within(cfg, {"apps"}, "adapted config")
     keys_within(cfg["apps"], {"http"}, "apps")
     keys_within(cfg["apps"]["http"], {"servers"}, "http app")
+    claimed = set()
     for name, server in cfg["apps"]["http"]["servers"].items():
         keys_within(server, {"listen", "routes"}, "server %s" % name)
         if server["listen"] != [":443"]:
@@ -219,7 +290,10 @@ try:
                 for site in matcher["host"]:
                     if site not in ALLOWED_HOSTS:
                         reject("claims the site address %r" % site)
+                    claimed.add(site)
     walk(cfg)
+    # Only reached when nothing rejected: the hosts to health-check.
+    print("\n".join(sorted(claimed)))
 except (ValueError, LookupError, TypeError, AttributeError) as exc:
     # Fail closed. Unparseable JSON, or a shape this checker does not
     # recognise, rejects the upload — breaking a deploy beats loading config
@@ -232,7 +306,7 @@ PY
 }
 
 do_upload() {
-	local target=$1 name parent host dir staging archive site backup
+	local target=$1 name parent host dir staging archive site backup claimed probes
 	if [ "$target" = next ]; then
 		name=next
 		parent=$ROOT
@@ -245,8 +319,21 @@ do_upload() {
 		die "upload: invalid target '$target' (expected a number or 'next')"
 	fi
 	dir=$parent/$name
-	staging=$parent/.incoming-$name
-	archive=$parent/.incoming-$name.tgz
+
+	take_lock
+
+	# Scratch paths are unique per run (mktemp), not a fixed .incoming-$name
+	# shared by every upload to this slot: the lock is what keeps two runs
+	# apart, and a fixed path would silently make a lock bug into "one deploy
+	# extracts into the other's staging dir". Unique names cannot collide even
+	# if the lock is ever weakened or bypassed. They live in $parent so the
+	# later `mv` into place stays a rename on the same filesystem.
+	#
+	# Sweep stale scratch from a run that was killed before its trap fired —
+	# safe here because we hold the lock, so no other run owns one.
+	rm -rf -- "$parent"/.incoming-"$name".*
+	staging=$(mktemp -d -- "$parent/.incoming-$name.XXXXXXXX")
+	archive=$(mktemp -- "$parent/.incoming-$name.XXXXXXXX.tgz")
 
 	# One cleanup for both scratch paths, covering every exit: die, set -e, and
 	# the success path (where $staging has already been moved away, so the rm is
@@ -256,9 +343,9 @@ do_upload() {
 	# other holds no site.caddy until it becomes a slot.
 	trap "rm -rf -- '$staging' '$archive'" EXIT
 
-	# Fresh staging dir (wipe any stale leftover from a crashed run).
-	rm -rf -- "$staging" "$archive"
-	mkdir -p -- "$staging"
+	# mktemp -d is 0700; this directory becomes the live slot, which the caddy
+	# user has to read.
+	chmod 755 -- "$staging"
 
 	# --- resource limits, enforced BEFORE anything grows on disk -------------
 	# The uploader is untrusted (see TRUST MODEL) and this box also carries
@@ -329,14 +416,22 @@ do_upload() {
 	# Allowlist the bundled routes.caddy while it is still in staging, so a
 	# rejected bundle never touches the live slot at all — the previous
 	# deployment keeps serving, untouched, with no swap to roll back.
-	inspect_routes "$staging/dist" "$host" || die "upload $name: routes.caddy rejected"
+	claimed=$(inspect_routes "$staging/dist" "$host") \
+		|| die "upload $name: routes.caddy rejected"
+	# The site addresses to probe once it is live. A wildcard is not a name you
+	# can request, so `*.webxdc.<host>` is probed at one concrete label under
+	# it — which is what exercises the wildcard cert.
+	mapfile -t probes < <(printf '%s\n' "$claimed" | sed "s/^\\*\\./$HEALTH_PROBE_LABEL./")
 
-	# Swap, keeping the previous slot in $ROOT/.rollback until validate passes:
-	# if the new bundle's routes.caddy doesn't validate, the on-disk config
-	# must end up loadable again (the static next import and the preview glob
-	# point into these dirs) — otherwise the next caddy RESTART (reboot,
-	# upgrade) would fail config load and take down every site on the box,
-	# even though the running instance kept serving from memory.
+	# Swap, keeping the previous slot in $ROOT/.rollback until the new one is
+	# validated, reloaded AND answering over HTTPS: if the new bundle's
+	# routes.caddy doesn't validate, the on-disk config must end up loadable
+	# again (the static next import and the preview glob point into these dirs)
+	# — otherwise the next caddy RESTART (reboot, upgrade) would fail config
+	# load and take down every site on the box, even though the running
+	# instance kept serving from memory. And if it validates but does not
+	# serve, the rollback copy is the only way back, so it is kept until the
+	# health check says the deploy is real.
 	# The backup lives OUTSIDE previews/ deliberately: a pr-N.old sibling
 	# would still match the `previews/*/site.caddy` glob (Go's filepath.Glob
 	# `*` matches dots too), and its stale site.caddy would make every update
@@ -356,18 +451,28 @@ do_upload() {
 			"$dir" "$host" "$dir" >"$site"
 	fi
 
-	if ! validate_and_reload; then
+	if ! validate_and_reload || ! health_check "${probes[@]}"; then
 		rm -rf -- "$dir"
 		if [ -e "$backup" ]; then mv -- "$backup" "$dir"; fi
-		die "upload $name: caddy validate failed; previous deployment restored"
+		# A health-check failure means the new config is already LOADED (the
+		# reload succeeded, it just doesn't serve), so restoring the directory
+		# is not enough — caddy has to be pointed back at it. Harmless after a
+		# validate failure, where nothing was reloaded in the first place.
+		validate_and_reload || log "upload $name: reload after rollback failed"
+		die "upload $name: validate or health check failed; rolled back"
 	fi
 	rm -rf -- "$backup"
-	log "upload $name: deployed and reloaded"
+	log "upload $name: deployed, reloaded and answering"
 }
 
 do_delete() {
 	local n=$1
 	[[ "$n" =~ ^[0-9]+$ ]] || die "delete: invalid pr number '$n' (next is not deletable)"
+	# Same lock as upload: this removes a directory the merged config imports
+	# and then validates/reloads that config, so it is the same transaction
+	# against the same shared state (and preview-cleanup.yml has no GitHub-side
+	# concurrency group at all).
+	take_lock
 	if [ ! -d "$PREVIEWS/pr-$n" ]; then
 		# close event + weekly sweep can both fire — nothing to do, no reload
 		log "delete pr-$n: not deployed, nothing to do"
