@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 23 Jul 2026 01:40:02 +0000
-Subject: [PATCH 68/77] web-app: styled download-on-demand placeholders (type,
+Subject: [PATCH 68/78] web-app: styled download-on-demand placeholders (type,
  thumbnail, size)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

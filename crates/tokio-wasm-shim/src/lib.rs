@@ -30,6 +30,8 @@ mod opfs;
 #[cfg(target_arch = "wasm32")]
 pub mod net;
 #[cfg(target_arch = "wasm32")]
+pub mod offload;
+#[cfg(target_arch = "wasm32")]
 pub mod runtime;
 #[cfg(target_arch = "wasm32")]
 pub mod task;

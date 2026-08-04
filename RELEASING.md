@@ -58,6 +58,9 @@ any `v*` tag. The workflow rebuilds from a clean checkout and does two things:
    upstream patch stack — whenever `patches/` changed since the last release:
    go over the patch files (each starts with its commit message) and fold
    anything new or removed into the fitting section there.
+   Finally write the release device message — see
+   ["What's new" device message](#whats-new-device-message) below. It ships in
+   the app, so it has to be in before the tag.
 2. Commit, then tag and push (the tag must match the version you just set —
    `publish-npm.yml` rejects a tag whose packages drifted):
 
@@ -69,6 +72,58 @@ any `v*` tag. The workflow rebuilds from a clean checkout and does two things:
 3. Watch the Actions run (`gh run watch`). The core-wasm wasm build takes
    ~10 min uncached; publish happens at the end.
 4. Verify: `npm view @slothfulchat/<pkg> version` shows the new version.
+
+## "What's new" device message
+
+Every existing account gets one short message in its device chat per release,
+from `updateDeviceChat()` in `build/desktop/packages/frontend/src/deviceMessages.ts`
+under the label `changelog-version-X.Y.Z` (brand-new accounts skip it, and the
+label makes it a no-op once added). For most users this is the only release
+note they will ever read — treat it as the release's user-facing summary, not
+as a changelog dump.
+
+Where it goes: keep all release messages in **one** desktop patch and amend it
+each release, so the stack doesn't grow a patch per version. The text is a
+plain literal in `deviceMessages.ts`, not an `_untranslated_en.json` key —
+release-specific blurbs go stale before anyone could translate them.
+
+**A human approves the text before it is committed. Always.** Drafting it with
+an AI is fine and is what the recipe below is for; shipping a draft nobody
+read is not. It reaches every user, and it cannot be edited or withdrawn once
+released.
+
+Recipe — hand this to whoever (or whatever) drafts it:
+
+> 1. Gather from the repo:
+>    - the last released tag: `git fetch --tags; git tag --sort=-v:refname | head -3`
+>    - the version being released — **the one you are about to tag.**
+>      `packages/*/package.json` still holds the *previous* version until step 1
+>      of the release runs, so don't read it from there unless the bump already
+>      happened.
+>    - what changed: `git log --oneline <last-tag>..HEAD` plus the new
+>      `## <version>` sections of `packages/*/CHANGELOG.md`.
+> 2. Write it:
+>    - 3-4 bullets, lead with the single biggest thing.
+>    - Only what a user notices, in their words. No mechanism, no root cause —
+>      those live in the commit message. Drop refactors, CI, patch-stack
+>      chores, dependency bumps, internal hardening.
+>    - Operator-facing changes (bridge config, self-hosting) count only through
+>      their user-visible result — describe what someone using the app would
+>      see, never the flag or the deployment step.
+>    - Plain text: device messages are not markdown, URLs autolink. Emoji
+>      sparingly.
+>    - Under ~600 characters including the header and the link line.
+>    - Close with the version's own anchor on the public instance, e.g.
+>      `https://web.slothful.chat/changelog/?p=web-app#v-0.9.0` — the anchor
+>      carries the version, so the link keeps pointing at this release once
+>      later ones ship. Check the `## X.Y.Z` heading exists first, or it
+>      resolves to nothing.
+>    - Never claim a change you can't point at a commit or changelog entry for.
+> 3. Deliver a "changes since <last tag>" list for the release engineer, plus
+>    **three variants** to choose between, and say what you had to guess.
+
+The variants are for a person to pick from and edit — expect to refine the
+chosen one before it goes in.
 
 ## Auth
 

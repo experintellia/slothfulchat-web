@@ -38,6 +38,15 @@ exists:
   VFS (sqlite-wasm-rs has no `sqlcipher_export`, so the database bytes are
   swapped at the VFS level; encrypted backups stay unsupported on wasm).
   `core/0008`, `core/0009`
+- **Crypto offload** — PGP key generation, encryption and decryption ran
+  inline on the core worker (wasm has no real `spawn_blocking`), so every
+  jsonrpc call queued behind them — up to ~1s on phones for account creation,
+  and seconds for a large message. The tokio facade gains a JS offload bridge
+  and the four crypto call sites hand the work to a web-worker pool running
+  the same wasm build, falling back to the inline path whenever the pool is
+  unregistered, dead, erroring or too slow; decrypted messages are re-encoded
+  at the OpenPGP packet level so core still verifies signatures itself.
+  Native builds unchanged. `core/0029`
 
 ## New features
 
@@ -482,6 +491,13 @@ contribution intended.
   `desktop/0006`, `desktop/0017`, `desktop/0023`
 - **Imprint links** on the About dialog and welcome screen — a hosted web app
   needs a legal-notice page. `desktop/0004`, `desktop/0005`
+- **Device chat** — core's welcome image is Delta Chat branding, so it is
+  dropped until we have our own (the `core-welcome-image` label is untouched,
+  so adding one later is the same code with a different file). After core's
+  welcome message the app adds one of its own: what the fork does differently,
+  that everything lives in this browser and should be backed up (unencrypted),
+  that it's a prototyping ground, and where to report bugs / self-host.
+  `core/0030`, `desktop/0078`
 - **Hidden upstream UI that can't work in this build** — proxy settings
   (unimplemented on wasm), the second-device / multi-device backup
   transfer flow (iroh doesn't run in browsers yet), and the experimental

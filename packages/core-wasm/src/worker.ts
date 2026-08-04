@@ -7,7 +7,7 @@
  * backup import/export), and a one-shot `{ type: 'config', ... }` from
  * startCore delivers proxy/persist settings before init.
  */
-import initWasm, { init } from '../wasm-dist/deltachat_wasm.js'
+import initWasm, { init, set_crypto_offload } from '../wasm-dist/deltachat_wasm.js'
 
 interface FsRequest {
   type: 'fs'
@@ -52,6 +52,175 @@ let resolveConfig: (config: ConfigMessage) => void
 const config = new Promise<ConfigMessage>(resolve => {
   resolveConfig = resolve
 })
+
+/** One reply from crypto-worker.ts: the ready handshake or an op result. */
+interface CryptoReply {
+  type?: 'ready'
+  id?: number
+  ok?: boolean
+  reply?: Uint8Array
+  error?: string
+  /** wasm trap — the worker's instance is poisoned, respawn it. */
+  fatal?: boolean
+}
+
+/** Asks the pool how many ops it has run — see {@link CryptoPool.stats}. */
+interface CryptoStatsRequest {
+  type: 'crypto-stats'
+}
+
+/** One queued or running op. */
+interface CryptoJob {
+  id: number
+  op: string
+  payload: Uint8Array
+  resolve: (reply: Uint8Array) => void
+  reject: (err: Error) => void
+  timer?: ReturnType<typeof setTimeout>
+}
+
+/** Beyond this many waiting ops, `run()` rejects so core computes them
+ * inline instead of piling up copies of large payloads in memory. */
+const MAX_QUEUED = 8
+
+/**
+ * Per-op deadline. A worker that answered `ready` and then goes silent — the
+ * OS reclaiming it under memory pressure, a wedged instance — would
+ * otherwise leave core awaiting a promise that never settles, which no error
+ * path can rescue. Calibrated from the issue #3 device runs: keygen is
+ * milliseconds and the slowest measured payload op was a 5 MB encrypt at
+ * 11.3 s on an iPhone, so 15 s + 4 s/MB keeps >2x headroom everywhere we
+ * measured while still recovering a dead worker promptly.
+ */
+const opTimeoutMs = (payload: Uint8Array) => 15_000 + (payload.byteLength / 1e6) * 4_000
+
+/**
+ * Prewarmed worker that runs offloaded PGP ops (issue #3) so core's thread
+ * stays responsive. Registered with the wasm side via `set_crypto_offload`
+ * only once its worker is ready. Never a correctness dependency: core
+ * computes the op inline whenever this is unregistered, dead, erroring, or
+ * too slow to answer.
+ * ponytail: pool of one, so one op runs at a time; bump to N workers (and N
+ * concurrent jobs) if parallel crypto ever matters.
+ */
+class CryptoPool {
+  private worker: Worker | null = null
+  private nextId = 1
+  private active: CryptoJob | null = null
+  private queue: CryptoJob[] = []
+  private resolveReady!: () => void
+  /** Resolves once a worker has loaded the wasm artifact. Never resolves if
+   * spawning fails for good — then registration never happens (inline). */
+  readonly ready = new Promise<void>(resolve => {
+    this.resolveReady = resolve
+  })
+  private spawnFailures = 0
+  /** Ops completed on the pool, by op name. Pulled by tests via the
+   * `crypto-stats` message rather than pushed per op — offloading is on the
+   * hot path of every message, so it must stay silent when nobody asks. */
+  private readonly offloaded = new Map<string, number>()
+
+  constructor() {
+    this.spawn()
+  }
+
+  private spawn(): void {
+    let worker: Worker
+    try {
+      // nested workers are unsupported in some engines → die permanently
+      // (spawnFailures exhausts) and stay inline forever
+      worker = new Worker(new URL('./crypto-worker.js', import.meta.url), { type: 'module' })
+    } catch (err) {
+      this.die(new Error(`crypto worker spawn failed: ${String(err)}`))
+      return
+    }
+    this.worker = worker
+    worker.onmessage = (event: MessageEvent<CryptoReply>) => {
+      const msg = event.data
+      if (msg.type === 'ready') {
+        if (msg.error !== undefined) this.die(new Error(msg.error))
+        else this.resolveReady()
+        return
+      }
+      // ignore replies that don't match the running op: a late answer from a
+      // worker we already gave up on must not settle its successor's job
+      const job = this.active
+      if (job && msg.id === job.id) {
+        clearTimeout(job.timer)
+        this.active = null
+        if (msg.ok && msg.reply) {
+          // reset on useful work, not on the ready handshake: a payload that
+          // reliably traps the instance would otherwise respawn forever
+          this.spawnFailures = 0
+          this.offloaded.set(job.op, (this.offloaded.get(job.op) ?? 0) + 1)
+          job.resolve(msg.reply)
+        } else {
+          job.reject(new Error(msg.error ?? `crypto op ${job.op} failed`))
+        }
+      }
+      if (msg.fatal) this.die(new Error(msg.error ?? 'crypto worker trapped'))
+      else this.pump()
+    }
+    worker.onerror = event => {
+      this.die(new Error(`crypto worker error: ${event.message ?? 'unknown'}`))
+    }
+    // a reply that can't be deserialized never reaches onmessage, so without
+    // this the running op would wait out its whole deadline
+    worker.onmessageerror = () => this.die(new Error('crypto worker reply was undeserializable'))
+  }
+
+  private die(cause: Error): void {
+    // reject the running op AND everything queued: each one falls back to
+    // core's inline path immediately instead of waiting on the respawn
+    if (this.active) clearTimeout(this.active.timer)
+    for (const job of [this.active, ...this.queue]) job?.reject(cause)
+    this.active = null
+    this.queue = []
+    this.worker?.terminate()
+    this.worker = null
+    // >3 failures without a single completed op = permanently dead; run()
+    // then rejects every op and core computes it inline instead
+    if (++this.spawnFailures > 3) return
+    this.spawn()
+  }
+
+  /** Starts the next queued op if the worker is free. */
+  private pump(): void {
+    const worker = this.worker
+    if (this.active || !worker) return
+    const job = this.queue.shift()
+    if (!job) return
+    this.active = job
+    // set before posting: transferring detaches the buffer, zeroing its length
+    job.timer = setTimeout(
+      () => this.die(new Error(`crypto op ${job.op} timed out`)),
+      opTimeoutMs(job.payload),
+    )
+    worker.postMessage({ id: job.id, op: job.op, payload: job.payload }, [job.payload.buffer])
+  }
+
+  /** How many ops of each kind the pool has completed, e.g. `{ keygen: 2 }`.
+   * Empty means core computed everything inline. */
+  stats(): Record<string, number> {
+    return Object.fromEntries(this.offloaded)
+  }
+
+  /** Queues one op for the pool worker. The payload's buffer is transferred —
+   * safe, and never retried here: core recomputes inline if this rejects. */
+  run(op: string, payload: Uint8Array): Promise<Uint8Array> {
+    if (!this.worker) return Promise.reject(new Error('crypto pool is dead'))
+    if (this.queue.length >= MAX_QUEUED) {
+      return Promise.reject(new Error('crypto pool queue is full'))
+    }
+    return new Promise((resolve, reject) => {
+      this.queue.push({ id: this.nextId++, op, payload, resolve, reject })
+      this.pump()
+    })
+  }
+}
+
+// module-level: prewarms the pool worker in parallel with core's own initWasm
+const pool = new CryptoPool()
 
 /** Reload race: the previous worker's OPFS sync access handles release only
  * once that worker is fully destroyed, and a fast reload (service-worker
@@ -143,6 +312,11 @@ let fatalReported = false
 const ready = (async () => {
   const { proxyUrl, persist } = await config
   await initWasm()
+  // non-blocking: boot never waits on the pool — until it registers, core
+  // computes crypto inline (the correct fallback)
+  void pool.ready.then(() =>
+    set_crypto_offload((op: string, payload: Uint8Array) => pool.run(op, payload))
+  )
   if (persist) await waitForOpfsSyncHandles()
   return await init((message: string) => scope.postMessage(message), proxyUrl, persist)
 })()
@@ -154,10 +328,18 @@ ready.catch(err => {
   scope.postMessage({ type: 'fatal-init-error', message: String(err) } as unknown as string)
 })
 
-scope.onmessage = async (event: MessageEvent<string | FsRequest | ConfigMessage>) => {
+scope.onmessage = async (
+  event: MessageEvent<string | FsRequest | ConfigMessage | CryptoStatsRequest>,
+) => {
   const msg = event.data
   if (typeof msg !== 'string' && msg?.type === 'config') {
     resolveConfig(msg)
+    return
+  }
+  // answered before `await ready` so it works even while core is still
+  // booting, and so it never perturbs the crypto path it reports on
+  if (typeof msg !== 'string' && msg?.type === 'crypto-stats') {
+    scope.postMessage({ type: 'crypto-stats', offloaded: pool.stats() } as unknown as string)
     return
   }
   const dc = await ready
