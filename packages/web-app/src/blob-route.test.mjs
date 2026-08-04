@@ -36,9 +36,21 @@ test('a dotted filename is still allowed — .. is a component, not a substring'
   strictEqual(resolveBlobRoute('/blobs/1/..hidden').filename, '..hidden')
 })
 
-test('the account id must be digits — it is interpolated into the path', () => {
+// The account segment is the account DIRECTORY name, which is a UUID — not the
+// numeric account id RPC uses. Constraining it to digits 404s every real blob.
+test('the account segment accepts a real account directory (a UUID)', () => {
+  const uuid = '11900ee1-f762-43e5-8283-eedbabb791e8'
+  deepStrictEqual(resolveBlobRoute(`/blobs/${uuid}/photo.jpg`), {
+    kind: 'blob',
+    accountId: uuid,
+    filename: 'photo.jpg',
+  })
+})
+
+test('the account segment still cannot climb or carry separators', () => {
   strictEqual(resolveBlobRoute('/blobs/%2e%2e/dc.db'), null)
-  strictEqual(resolveBlobRoute('/blobs/1a/x.png'), null)
+  strictEqual(resolveBlobRoute('/blobs/a%2Fb/x.png'), null)
+  strictEqual(resolveBlobRoute('/blobs/a%00/x.png'), null)
 })
 
 test('a malformed escape is refused rather than half-decoded', () => {

@@ -56,13 +56,16 @@ export function resolveBlobRoute(pathname) {
   // match the tail so the app works under any base path (e.g. /repo/ on Pages)
   const blob = pathname.match(/\/blobs\/([^/]+)\/(.+)$/)
   if (blob) {
-    // digits only: it is interpolated into the account directory, and every
-    // real account id is a number
-    if (!/^\d+$/.test(blob[1])) return null
+    // NB: not a number. This is the account *directory* name, which
+    // transformBlobURL lifts out of the core's blob path — a UUID like
+    // 11900ee1-f762-43e5-8283-eedbabb791e8. (The numeric account id that RPC
+    // uses appears in /webxdc-icon/ below; same word, different value.) So
+    // constrain it to a safe single path component rather than to a format.
+    const accountId = safeSegment(blob[1])
     const filename = safeSegment(blob[2], { allowSlashes: true })
     // blobdir files are flat, but historical paths may carry a subdirectory;
     // allow the separator and rely on the dot-segment check above
-    return filename ? { kind: 'blob', accountId: blob[1], filename } : null
+    return accountId && filename ? { kind: 'blob', accountId, filename } : null
   }
 
   const backup = pathname.match(/\/download-backup\/([^/]+)$/)
