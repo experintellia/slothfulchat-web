@@ -89,7 +89,9 @@ already saved; anything else is ignored and confirmed with the user first, so a
 link can't quietly route a session through someone else's relay. Persistence
 (OPFS) is on by default; `?persist=0` gives a throwaway session. Like `?proxy=`
 it is not honoured unasked: nothing starts until the tab confirms the gate
-dialog. Tests acknowledge it by pre-setting the `slothfulchat.throwawayConfirmed`
+dialog, and a confirmed throwaway session runs with a yellow navbar (a `:root`
+override of the theme's own `--navBarBackground`, so no patch is involved).
+Tests acknowledge it by pre-setting the `slothfulchat.throwawayConfirmed`
 sessionStorage key (see `scripts/test-throwaway-gate.mjs`).
 
 **Install as PWA:** browsers only offer install from a secure context —

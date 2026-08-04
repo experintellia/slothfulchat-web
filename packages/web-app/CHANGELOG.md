@@ -3,7 +3,8 @@
 - **A link can no longer start a session that quietly saves nothing.** The
   `?persist=0` test switch made the app run memory-only — your accounts appear
   missing and anything you set up or receive is lost when the tab closes. It
-  now has to be confirmed before anything starts.
+  now has to be confirmed before anything starts, and such a session runs with
+  a yellow navbar so you can tell at a glance.
 
 - **Links into the changelog keep working across releases** — a link to a
   specific version used to slide down to the wrong one as soon as the next

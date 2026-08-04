@@ -3530,10 +3530,23 @@ function throwawayConfirmed(): boolean {
   }
 }
 
-// ponytail: no permanent on-screen marker while a throwaway session runs — the
-// gate below already spells out what is lost, and a fixed corner toast sits on
-// the app for the whole session to repeat it. Tint the navbar if the reminder
-// turns out to be needed after all.
+/** Running reminder that this session saves nothing: a yellow navbar. Costs no
+ * screen space, unlike a toast parked over the app (which had no free corner —
+ * the bridge toast owns bottom-right, the composer bottom-left).
+ *
+ * Just the two theme vars, overridden on `:root` with `!important`: every theme
+ * sets them plainly, so this wins over whichever one is loaded — including one
+ * switched to later, since this <style> is not the theme's own. No patch, no
+ * frontend code. --navBarText comes along because it is dark-on-light in some
+ * themes and light-on-dark in others; only one of those is readable on yellow
+ * (it also carries the navbar's icon masks). */
+function tintNavBarThrowaway(): void {
+  const style = document.createElement('style')
+  style.id = 'sc-throwaway-tint'
+  style.textContent =
+    ':root{--navBarBackground:#f5c518!important;--navBarText:#1a1a1a!important}'
+  document.head.appendChild(style)
+}
 
 /** Boot gate for `?persist=0`, the memory-only mode the fresh-core tests use.
  * Silently honouring it from a link is a data-loss trap: existing accounts look
@@ -3728,9 +3741,13 @@ async function checkBridge(): Promise<boolean> {
 // wiring core connectivity events — cheap (one WS open/close) and works
 // before any account exists (when no IO events fire yet).
 if (typeof window !== 'undefined') {
-  // `?persist=0` in the page URL: ask before anything starts. Before the bridge
-  // poll, whose toast the gate suppresses.
-  if (throwawayRequested() && !throwawayConfirmed()) showThrowawayGate()
+  // `?persist=0` in the page URL: ask before anything starts, and once this tab
+  // has said yes, keep the navbar yellow for the rest of the session. Before
+  // the bridge poll, whose toast the gate suppresses.
+  if (throwawayRequested()) {
+    if (throwawayConfirmed()) tintNavBarThrowaway()
+    else showThrowawayGate()
+  }
   let bridgeUp = false
   const pollBridge = async () => {
     if (document.visibilityState === 'visible') bridgeUp = await checkBridge()

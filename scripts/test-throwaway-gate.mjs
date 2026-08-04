@@ -7,7 +7,8 @@
 //   - an unconfirmed ?persist=0 opens the gate and starts NOTHING (the core
 //     worker is never even fetched)
 //   - "Keep my data" reloads into a normal, saved session
-//   - "Start throwaway session" reloads into the memory-only one
+//   - "Start throwaway session" reloads into the memory-only one, whose navbar
+//     is then yellow for as long as it runs
 //   - the consent is per tab: another tab on the same link is asked again, but
 //     the tab that gave it is not re-asked on reload
 // No ws-tcp-proxy and no core boot needed — the gate lives in runtime.js, and
@@ -55,6 +56,14 @@ async function newPage() {
 }
 
 const gate = page => page.locator('#sc-throwaway-dialog')
+// The running reminder is a :root override of the navbar's own theme var. That
+// it out-!importants a loaded theme is CSS doing its job; what can actually
+// break here is the var name or the injection, which is what this reads back.
+const TINT = '#f5c518'
+const navBarTint = page =>
+  page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--navBarBackground').trim()
+  )
 
 /** Wait until the page asked for the core worker (see newPage), or give up. */
 async function coreStarted(page, started, ms = 30000) {
@@ -88,6 +97,7 @@ if (!(await coreStarted(page, started))) {
   throw new Error('the normal session never started the core')
 }
 if (await gate(page).count()) throw new Error('the gate is still up after keeping the data')
+if ((await navBarTint(page)) === TINT) throw new Error('a saved session tints the navbar')
 console.log('OK: "Keep my data" drops the flag and starts a normal session')
 
 // --- 3) accepting reloads into the memory-only session ---------------------
@@ -101,13 +111,17 @@ if (await gate(tab2).count()) throw new Error('still asking after the session wa
 if (!(await coreStarted(tab2, started2))) {
   throw new Error('the confirmed throwaway session never started the core')
 }
-console.log('OK: accepting starts the throwaway session')
+if ((await navBarTint(tab2)) !== TINT) {
+  throw new Error(`the throwaway session's navbar is not tinted: ${await navBarTint(tab2)}`)
+}
+console.log('OK: accepting starts the throwaway session, with a tinted navbar')
 
-// --- 4) the consent survives a reload of the tab that gave it -------------
+// --- 4) the consent (and the tint) survive a reload of the tab that gave it -
 await tab2.reload({ waitUntil: 'domcontentloaded' })
 await tab2.waitForTimeout(3000) // the gate would be up by now if it were coming
 if (await gate(tab2).count()) throw new Error('the confirmed tab is asked again on reload')
-console.log('OK: the confirmed tab is not re-asked on reload')
+if ((await navBarTint(tab2)) !== TINT) throw new Error('the tint is gone after a reload')
+console.log('OK: the confirmed tab is not re-asked on reload, and stays tinted')
 
 // --- 5) the consent is per tab, not per browser ---------------------------
 // A second link opened later is a second decision — the first one must not

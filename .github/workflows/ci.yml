@@ -313,8 +313,8 @@ jobs:
         run: node scripts/test-fatal-dialog.mjs
 
       # throwaway-session gate e2e (no proxy, no core boot): a link carrying
-      # ?persist=0 must be confirmed before a memory-only session starts, and
-      # the consent must be per tab.
+      # ?persist=0 must be confirmed before a memory-only session starts, the
+      # consent must be per tab, and such a session must show its yellow navbar.
       - name: E2E test — throwaway-session gate
         run: node scripts/test-throwaway-gate.mjs
 
