@@ -1,10 +1,10 @@
 // Unit tests for the blobs SW's route resolution — dependency-free
 // (node:test), so they run in CI's lint job without pnpm install / submodules.
-//   node --test packages/web-app/src/blob-route.test.mjs
+//   node --test packages/web-app/src/blob-route.test.ts
 import { deepStrictEqual, strictEqual } from 'node:assert'
 import { test } from 'node:test'
 
-import { isBlobRoute, resolveBlobRoute } from './blob-route.mjs'
+import { isBlobRoute, resolveBlobRoute } from './blob-route.ts'
 
 test('a blobdir file resolves to its account and name', () => {
   deepStrictEqual(resolveBlobRoute('/blobs/1/photo.jpg'), {

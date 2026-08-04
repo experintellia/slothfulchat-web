@@ -1,10 +1,10 @@
 // Unit tests for the blobs SW's response shaping — dependency-free
 // (node:test), so they run in CI's lint job without pnpm install / submodules.
-//   node --test packages/web-app/src/blob-response.test.mjs
+//   node --test packages/web-app/src/blob-response.test.ts
 import { deepStrictEqual, match, strictEqual } from 'node:assert'
 import { test } from 'node:test'
 
-import { blobResponseInit } from './blob-response.mjs'
+import { blobResponseInit } from './blob-response.ts'
 
 test('a sent .svg cannot become a same-origin scripted document (H-02)', () => {
   const { status, headers } = blobResponseInit(10, 'image/svg+xml', null, null)

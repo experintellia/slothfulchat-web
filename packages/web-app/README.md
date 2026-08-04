@@ -176,7 +176,7 @@ for the user-facing summary):
   On a cold start `event()` holds *every* event until that welcome screen mounts
   (`releaseHeldForNotice`, with `emitUIFullyReady` as a fallback), so nothing is
   transmitted before the notice is on screen — see `analytics-gate.test.mjs`.
-  The **closed** event list lives in `src/events.mjs` — the single source that
+  The **closed** event list lives in `src/events.ts` — the single source that
   the generated `privacy.html` renders and `event()` enforces at runtime.
   Most events are derived from JSON-RPC method names / a
   message `viewtype` / a chat-list length in `src/telemetry.ts` — never from

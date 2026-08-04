@@ -13,7 +13,7 @@ import {
   patchCsp,
   privacyHtml,
 } from './instance-config.mjs'
-import { EVENTS, isCatalogEvent } from './src/events.mjs'
+import { EVENTS, isCatalogEvent } from './src/events.ts'
 
 test('parsePublicBridges: multiple entries, URL up to first space', () => {
   deepStrictEqual(

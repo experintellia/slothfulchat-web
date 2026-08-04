@@ -4,21 +4,31 @@
 // security headers live in this function and not at the call sites: a
 // per-route guard is a guard the next route forgets.
 //
-// Plain .mjs with no DOM/SW globals (same idiom as translation-editor.mjs) so
-// `node --test src/blob-response.test.mjs` can check it without a browser.
+// No DOM/SW globals here (same idiom as translation-serialize.ts), so
+// `node --test src/blob-response.test.ts` can check it without a browser.
+
+/** `start`/`end` are an exclusive-end slice of the blob to send as the body
+ * (empty on 416). */
+export type BlobResponseInit = {
+  status: number
+  headers: Record<string, string>
+  start: number
+  end: number
+}
 
 /**
- * @param {number} total byte length of the whole blob
- * @param {string | undefined} mime MIME the page derived from the filename
- * @param {string | null} downloadName if set, serve as a download under this name
- * @param {string | null} range the request's `Range` header, if any
- * @returns {{ status: number, headers: Record<string, string>, start: number, end: number }}
- *   `start`/`end` are an exclusive-end slice of the blob to send as the body
- *   (empty on 416).
+ * @param total byte length of the whole blob
+ * @param mime MIME the page derived from the filename
+ * @param downloadName if set, serve as a download under this name
+ * @param range the request's `Range` header, if any
  */
-export function blobResponseInit(total, mime, downloadName, range) {
-  /** @type {Record<string, string>} */
-  const headers = {
+export function blobResponseInit(
+  total: number,
+  mime: string | undefined,
+  downloadName: string | null,
+  range: string | null
+): BlobResponseInit {
+  const headers: Record<string, string> = {
     'content-type': mime ?? 'application/octet-stream',
     // advertise range support so <video>/<audio> expose a working seek bar;
     // without this browsers treat the media as non-seekable

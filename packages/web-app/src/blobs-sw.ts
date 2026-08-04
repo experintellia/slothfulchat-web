@@ -13,8 +13,8 @@
  * GitHub Pages regenerates every ETag per deploy, so HTTP caching alone would
  * re-download the world (including the 10MB emoji font) after each deploy.
  */
-import { blobResponseInit } from './blob-response.mjs'
-import { isBlobRoute, resolveBlobRoute } from './blob-route.mjs'
+import { blobResponseInit } from './blob-response.ts'
+import { isBlobRoute, resolveBlobRoute } from './blob-route.ts'
 
 const sw = self as any
 
@@ -147,7 +147,7 @@ sw.addEventListener('fetch', (event: any) => {
     return // fall through to network
   }
   // one resolver for every /blobs/ route, so no route can be added without a
-  // traversal check (blob-route.mjs; it is where the guards live and is tested
+  // traversal check (blob-route.ts; it is where the guards live and is tested
   // there). A refused route returns null and is dropped, not passed to the page.
   const route = resolveBlobRoute(url.pathname)
   if (!route) {
@@ -193,7 +193,7 @@ sw.addEventListener('fetch', (event: any) => {
         return new Response('blob not found', { status: 404 })
       }
       // status, headers (incl. the sandbox CSP every blob response needs) and
-      // the byte slice to send — see blob-response.mjs
+      // the byte slice to send — see blob-response.ts
       const { status, headers, start, end } = blobResponseInit(
         result.data.byteLength,
         result.mime,

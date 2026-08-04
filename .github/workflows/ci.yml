@@ -64,10 +64,11 @@ jobs:
           node --test
           packages/web-app/instance-config.test.mjs
           packages/web-app/analytics-gate.test.mjs
-          packages/web-app/src/translation-editor.test.mjs
-          packages/web-app/src/blob-response.test.mjs
-          packages/web-app/src/blob-route.test.mjs
-          packages/web-app/src/fatal-report.test.mjs
+          packages/web-app/src/translation-serialize.test.ts
+          packages/web-app/src/blob-response.test.ts
+          packages/web-app/src/blob-route.test.ts
+          packages/web-app/src/fatal-report.test.ts
+          packages/web-app/src/emoji-sets.test.ts
           packages/web-app/serve.test.mjs
 
       # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —
