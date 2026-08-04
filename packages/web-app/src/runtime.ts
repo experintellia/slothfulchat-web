@@ -3542,7 +3542,17 @@ function showThrowawayBanner(): void {
     () => {}
   )
   const toast = document.getElementById('sc-throwaway-toast')
-  if (toast) Object.assign(toast.style, { cursor: 'default', pointerEvents: 'none' })
+  // bottom-LEFT, unlike every other toast: the bridge one is a popover too and
+  // shows up later (so on top) in exactly the session where this matters most —
+  // a throwaway session started on a machine with no bridge running.
+  if (toast) {
+    Object.assign(toast.style, {
+      cursor: 'default',
+      pointerEvents: 'none',
+      right: 'auto',
+      left: '16px',
+    })
+  }
 }
 
 /** Boot gate for `?persist=0`, the memory-only mode the fresh-core tests use.
@@ -3630,7 +3640,9 @@ function showThrowawayGate(): void {
   keepBtn.onclick = () => {
     const clean = new URL(location.href)
     clean.searchParams.delete('persist')
-    location.href = clean.toString() // reload into a normal, saved session
+    // replace, not assign: leaving the ?persist=0 URL in history means Back
+    // walks straight back into the gate (same reason ?proxy= uses replaceState)
+    location.replace(clean.toString()) // reload into a normal, saved session
   }
   const throwawayBtn = mkBtn('Start throwaway session', false)
   throwawayBtn.onclick = () => {

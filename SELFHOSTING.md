@@ -48,8 +48,14 @@ release also ships the script standalone as `slothfulchat-customize.mjs`
 **GitHub Pages:** the repo ships
 [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml).
 Set the variables below under **Settings → Secrets and variables → Actions →
-Variables**, then enable **Settings → Pages → Source = "GitHub Actions"** and
-push. The app auto-detects its URL base, so a project site
+Variables**, then enable **Settings → Pages → Source = "GitHub Actions"**. It
+deploys on **`v*` release tags**, not on pushes to main: the workflow's first
+job ([`verify-release-tag.yml`](.github/workflows/verify-release-tag.yml))
+requires the ref to be an unmoved tag whose commit is on `main` and whose
+package versions match it (see [RELEASING.md](RELEASING.md)). The
+`github-pages` environment also needs a `v*` tag deployment rule (Settings →
+Environments → github-pages), or the deploy is rejected by environment
+protection rules. The app auto-detects its URL base, so a project site
 (`https://<you>.github.io/<repo>/`) or a custom domain both work.
 
 **Building it yourself:** build locally and upload `packages/web-app/dist`:

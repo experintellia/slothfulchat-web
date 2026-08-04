@@ -111,15 +111,24 @@ node scripts/test-export-chat-html.mjs  # chat → zip export: html viewer/txt/j
 node scripts/test-calls-e2e.mjs     # outgoing audio call vs. a second local core; asserts connected (offline)
 ```
 
-## Deployment (GitHub Pages)
+## Deployment
 
-Pushes to the default branch auto-build and deploy `dist/` to GitHub Pages
-via [`.github/workflows/deploy-pages.yml`](../../.github/workflows/deploy-pages.yml).
+**Production** (`web.slothful.chat`) is the GitHub Pages deploy, and it builds
+only from a **`v*` release tag** —
+[`.github/workflows/deploy-pages.yml`](../../.github/workflows/deploy-pages.yml)
+runs [`verify-release-tag.yml`](../../.github/workflows/verify-release-tag.yml)
+first and does nothing until the ref is proven to be an unmoved tag, on main,
+whose package versions match it (see [RELEASING.md](../../RELEASING.md)).
 Enable it once under repo **Settings → Pages → Source = "GitHub Actions"**.
 The app derives its base path at runtime, so a project site
 (`https://<user>.github.io/<repo>/`) works with no build-time config.
 
-**The deployed site is a static PWA shell** — it boots, is installable, and
+**Pushes to the default branch** deploy to `next.slothful.chat` instead, via
+[`.github/workflows/deploy-next.yml`](../../.github/workflows/deploy-next.yml)
+(same build, uploaded to the flagship Caddy server; see
+[`infra/flagship`](../../infra/flagship/README.md)).
+
+**The Pages site is a static PWA shell** — it boots, is installable, and
 renders the full UI, but it can only send/receive with a reachable WS→TCP
 proxy, and Pages provides none:
 
