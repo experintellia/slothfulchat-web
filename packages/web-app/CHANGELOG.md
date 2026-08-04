@@ -1,5 +1,11 @@
 # Changelog
 
+- **A link can no longer start a session that quietly saves nothing.** The
+  `?persist=0` test switch made the app run memory-only — your accounts appear
+  missing and anything you set up or receive is lost when the tab closes. It
+  now has to be confirmed before anything starts, and such a session is marked
+  as throwaway on screen for as long as it runs.
+
 - **Hardening**: the internal address the app uses to fetch attachments now
   refuses to point anywhere outside the attachment folder. No known way to
   trigger it from a message — the other layers around attachments already
