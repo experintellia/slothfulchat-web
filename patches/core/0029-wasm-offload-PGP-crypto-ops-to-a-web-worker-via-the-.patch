@@ -54,20 +54,28 @@ content equality and that signatures verify after re-encoding.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
- src/decrypt.rs     |  93 +++++++++----
+ src/decrypt.rs     | 105 +++++++++++----
  src/e2ee.rs        |  20 +++
  src/key.rs         |  24 ++++
  src/lib.rs         |   1 +
  src/offload_ops.rs | 324 +++++++++++++++++++++++++++++++++++++++++++++
  src/pgp.rs         | 186 +++++++++++++++-----------
- 6 files changed, 551 insertions(+), 97 deletions(-)
+ 6 files changed, 558 insertions(+), 102 deletions(-)
  create mode 100644 src/offload_ops.rs
 
 diff --git a/src/decrypt.rs b/src/decrypt.rs
-index 0eba9e7..0f1775d 100644
+index 0eba9e7..1b64c47 100644
 --- a/src/decrypt.rs
 +++ b/src/decrypt.rs
-@@ -24,8 +24,33 @@
+@@ -3,6 +3,7 @@
+ 
+ use std::collections::HashSet;
+ use std::io::Cursor;
++use std::sync::Arc;
+ 
+ use anyhow::{Context as _, Result, bail};
+ use mailparse::ParsedMail;
+@@ -24,8 +25,33 @@
  use crate::context::Context;
  use crate::key::self_fingerprint;
  use crate::key::{Fingerprint, SignedPublicKey, load_self_secret_keyring};
@@ -101,8 +109,17 @@ index 0eba9e7..0f1775d 100644
  /// Tries to decrypt the message,
  /// returning a tuple of `(decrypted message, fingerprint)`.
  ///
-@@ -51,14 +76,7 @@ pub(crate) async fn decrypt(
+@@ -46,19 +72,15 @@ pub(crate) async fn decrypt(
+     mail: &mailparse::ParsedMail<'_>,
+ ) -> Result<Option<(Message<'static>, Option<String>)>> {
+     // `pgp::composed::Message` is huge (>4kb), so, make sure that it is in a Box when held over an await point
+-    let Some(msg) = get_encrypted_pgp_message_boxed(mail)? else {
++    let Some((msg, ctext)) = get_encrypted_pgp_message_boxed(mail)? else {
+         return Ok(None);
      };
++    // only the offloaded paths below read the armored bytes back
++    #[cfg(not(target_arch = "wasm32"))]
++    let _ = ctext;
      let expected_sender_fingerprint: Option<String>;
  
 -    let abort_early = true;
@@ -117,18 +134,15 @@ index 0eba9e7..0f1775d 100644
  
      let plain = if let Message::Encrypted { esk, .. } = &*msg
          // We only allow one ESK for symmetrically encrypted messages
-@@ -72,19 +90,34 @@ pub(crate) async fn decrypt(
+@@ -72,19 +94,31 @@ pub(crate) async fn decrypt(
              .context("decrypt_session_key_symmetrically")?;
          expected_sender_fingerprint = fingerprint;
  
 -        tokio::task::spawn_blocking(move || -> Result<Message<'_>> {
 +        #[cfg(target_arch = "wasm32")]
 +        if tokio::offload::available() {
-+            // The `Message` reader cannot be serialized;
-+            // re-extract the raw armored body it was parsed from.
-+            let ctext = get_encrypted_mime(mail)
-+                .context("no encrypted part")?
-+                .get_body_raw()?;
++            // the `Message` reader cannot be serialized, so the worker gets
++            // the armored bytes it was parsed from
 +            let payload = crate::offload_ops::encode_decrypt_psk(&psk, &ctext);
 +            match tokio::offload::offload("decrypt_psk", payload)
 +                .await
@@ -160,18 +174,14 @@ index 0eba9e7..0f1775d 100644
          })
          .await??
      } else {
-@@ -92,19 +125,33 @@ pub(crate) async fn decrypt(
+@@ -92,19 +126,29 @@ pub(crate) async fn decrypt(
          let secret_keys: Vec<SignedSecretKey> = load_self_secret_keyring(context).await?;
          expected_sender_fingerprint = None;
  
 -        tokio::task::spawn_blocking(move || -> Result<Message<'_>> {
 +        #[cfg(target_arch = "wasm32")]
 +        if tokio::offload::available() {
-+            // The `Message` reader cannot be serialized;
-+            // re-extract the raw armored body it was parsed from.
-+            let ctext = get_encrypted_mime(mail)
-+                .context("no encrypted part")?
-+                .get_body_raw()?;
++            // see the symmetric branch: the worker gets the armored bytes
 +            let payload = crate::offload_ops::encode_decrypt_keys(&ctext, &secret_keys);
 +            match tokio::offload::offload("decrypt_keys", payload)
 +                .await
@@ -201,6 +211,32 @@ index 0eba9e7..0f1775d 100644
          })
          .await??
      };
+@@ -259,16 +303,21 @@ pub(crate) fn check_symmetric_encryption(esk: &SymKeyEncryptedSessionKey) -> Res
+ /// Turns a [`ParsedMail`] into [`pgp::composed::Message`].
+ /// [`pgp::composed::Message`] is huge (over 4kb),
+ /// so, it is put on the heap using [`Box`].
++/// Also hands back the armored bytes it parsed. They are shared with the
++/// message rather than copied — the offloaded decryption path ships them to
++/// the crypto worker, and decoding the part a second time would put a full
++/// transfer-encoding decode of a large attachment back on the core thread
++/// this offload exists to keep free.
+ pub fn get_encrypted_pgp_message_boxed<'a>(
+     mail: &'a ParsedMail<'a>,
+-) -> Result<Option<Box<Message<'static>>>> {
++) -> Result<Option<(Box<Message<'static>>, Arc<[u8]>)>> {
+     let Some(encrypted_data_part) = get_encrypted_mime(mail) else {
+         return Ok(None);
+     };
+-    let data = encrypted_data_part.get_body_raw()?;
+-    let cursor = Cursor::new(data);
++    let data: Arc<[u8]> = encrypted_data_part.get_body_raw()?.into();
++    let cursor = Cursor::new(Arc::clone(&data));
+     let (msg, _headers) = Message::from_armor(cursor)?;
+-    Ok(Some(Box::new(msg)))
++    Ok(Some((Box::new(msg), data)))
+ }
+ 
+ /// Returns a reference to the encrypted payload of a message.
 diff --git a/src/e2ee.rs b/src/e2ee.rs
 index 7760641..381a653 100644
 --- a/src/e2ee.rs
