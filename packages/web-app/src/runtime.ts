@@ -34,6 +34,7 @@ import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
 import { el } from './ui-shared'
 import { fatalReportText } from './fatal-report.ts'
+import { tempRemovalPath } from './temp-paths.mjs'
 import { initDiagnostics } from './diagnostics'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
 
@@ -326,6 +327,17 @@ function getCore(): Core {
     core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))
     // time selected RPC round-trips (local) + derive anonymous usage events
     observeTransport(core.transport as any)
+    // Scrub archives left over from an earlier session. Backup exports land in
+    // EXPORTS_DIR and picked files (backup imports, attachments) are staged
+    // under /tmp — both are plaintext, and the memfs is mirrored into OPFS, so
+    // whatever a crash, a closed tab or a killed import left there would sit in
+    // browser storage forever (M-03). Nothing in either tree is meant to
+    // outlive a page load, and this runs before anything can write into them
+    // (the worker handles fs messages in order, after core init). fs_remove
+    // rejects when the tree is absent — the normal case, hence the empty catch.
+    for (const stale of [EXPORTS_DIR, '/tmp']) {
+      core.fsRemove(stale).catch(() => {})
+    }
     // the worker reports when it gave up waiting for the OPFS lock — the core
     // is (almost certainly) running in another tab. ponytail: no faster
     // web-lock detection — its release lags on reloads and false-positives
@@ -377,6 +389,9 @@ function getCore(): Core {
     // captured when the import was SENT, so we can hold their success response
     // until the imported blobs are durable (see below)
     const pendingImports = new Map<number | string, Promise<number>>()
+    // request ids of in-flight import_backup calls → the staged archive they
+    // read from, removed once the call is done (see the _onmessage wrap)
+    const stagedImports = new Map<number | string, string>()
     const originalSend = core.transport._send.bind(core.transport)
     core.transport._send = (message: any) => {
       if (
@@ -408,6 +423,14 @@ function getCore(): Core {
         // originalSend below, and the worker handles messages in order — the
         // snapshot is read before the import starts executing.
         pendingImports.set(message.id, activeCore.fsFailed().catch(() => 0))
+        // import_backup reads the .tar the file picker staged under /tmp
+        // (showOpenFileDialog). The frontend's import dialog never removes it —
+        // upstream doesn't have to, its staging dir belongs to the node backend
+        // and the OS — so remember it here and drop it when the call finishes,
+        // however it finishes (M-03). get_backup has no such file.
+        if (message.method === 'import_backup' && typeof message.params?.[1] === 'string') {
+          stagedImports.set(message.id, message.params[1])
+        }
       }
       originalSend(message)
     }
@@ -418,6 +441,20 @@ function getCore(): Core {
     const transport = core.transport as any
     const originalOnMessage = transport._onmessage.bind(transport)
     transport._onmessage = (message: any) => {
+      // The core is done with the staged archive by the time it answers —
+      // success, failure, or a cancel via stopOngoingProcess (which makes the
+      // call reject). Remove it either way; it is a plaintext copy of an
+      // entire account and OPFS would keep it forever.
+      const staged = message?.id != null && stagedImports.get(message.id)
+      if (staged) {
+        stagedImports.delete(message.id)
+        const path = tempRemovalPath(staged)
+        if (path) {
+          activeCore
+            .fsRemove(path)
+            .catch(err => console.warn('removing the imported backup failed', err))
+        }
+      }
       const baseline = message?.id != null ? pendingImports.get(message.id) : undefined
       if (baseline !== undefined && pendingImports.delete(message.id) && !message.error) {
         baseline
@@ -493,15 +530,17 @@ const isIOS =
  * the share sheet ("Save to Files"); everywhere else a plain download anchor is
  * simplest. Callers must invoke this within a user gesture — fsRead is a fast
  * worker round-trip so navigator.share still runs inside the tap's transient
- * activation window (~5s). */
-async function saveFile(data: Uint8Array, name: string): Promise<void> {
+ * activation window (~5s). Returns false when the user dismissed the share
+ * sheet without saving — nothing left the app, so callers that delete the
+ * source afterwards must not. */
+async function saveFile(data: Uint8Array, name: string): Promise<boolean> {
   const file = new File([data as BlobPart], name, { type: mimeFromName(name) })
   if (isIOS && navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file] })
-      return
+      return true
     } catch (err) {
-      if ((err as Error)?.name === 'AbortError') return // user closed the sheet
+      if ((err as Error)?.name === 'AbortError') return false // user closed the sheet
       // otherwise fall through to the anchor download as a last resort
     }
   }
@@ -511,6 +550,7 @@ async function saveFile(data: Uint8Array, name: string): Promise<void> {
   a.download = name
   a.click()
   setTimeout(() => URL.revokeObjectURL(objUrl), 10_000)
+  return true
 }
 
 // The frontend downloads a finished backup by window.open('/download-backup/
@@ -526,9 +566,21 @@ window.open = ((url?: string | URL, ...rest: any[]) => {
     const name = decodeURIComponent(
       new URL(url, location.href).pathname.split('/').pop() || 'backup.tar'
     )
+    const path = `${EXPORTS_DIR}/${name}`
     getCore()
-      .fsRead(`${EXPORTS_DIR}/${name}`)
-      .then(data => saveFile(data, name))
+      .fsRead(path)
+      // Delete the export as soon as the bytes are in the user's hands: it is
+      // a full plaintext copy of the account and the memfs is mirrored into
+      // OPFS, so keeping it means a second copy of everything sits in browser
+      // storage indefinitely (M-03). The File/objectURL holds the bytes
+      // independently of the memfs, so the download is unaffected. Upstream's
+      // node server does the same 10s after the download finishes
+      // (target-browser/src/index.ts). Not deleted when saveFile reports the
+      // iOS share sheet was cancelled — nothing was saved, so leave the export
+      // for a second attempt (boot scrubs it otherwise).
+      .then(async data => {
+        if (await saveFile(data, name)) await getCore().fsRemove(path)
+      })
       .catch(err => console.error('backup download failed', err))
     return null
   }
@@ -1193,9 +1245,11 @@ class BrowserRuntime {
     return path
   }
   async removeTempFile(name: string): Promise<void> {
-    // same guard as upstream backendApi
-    if (name.includes('tmp') && !name.includes('..')) {
-      await getCore().fsRemove(name)
+    // guard (same as upstream backendApi) + collapse to the random parent dir
+    // tmpPath() made, so no empty directory is left in OPFS — see temp-paths
+    const path = tempRemovalPath(name)
+    if (path) {
+      await getCore().fsRemove(path)
     }
   }
   // #endregion
