@@ -16,7 +16,6 @@ import { chromium } from 'playwright'
 
 const script = (p) => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8679)
-const DEVICE_CONTACT_ID = 2 // C.DC_CONTACT_ID_DEVICE
 
 // --- mock madmail server (no mail ever arrives; just enough to configure) ---
 const users = new Map()
@@ -88,14 +87,21 @@ await page.addInitScript(() => {
 const rpc = (method, ...args) =>
   page.evaluate(([m, a]) => window.exp.rpc[m](...a), [method, args])
 
-const deviceChatTexts = async (accountId) => {
-  const chatId = await rpc('getChatIdByContactId', accountId, DEVICE_CONTACT_ID)
-  if (!chatId) throw new Error('no device chat')
+// the device chat is not reachable via getChatIdByContactId in this core
+// (ContactId::DEVICE has no chats_contacts row), so pick it off the chatlist
+const deviceChatMessages = async (accountId) => {
+  let chatId = null
+  for (const id of await rpc('getChatlistEntries', accountId, 0, null, null)) {
+    const info = await rpc('getBasicChatInfo', accountId, id)
+    if (info.isDeviceChat) chatId = id
+  }
+  if (!chatId) throw new Error('FAIL: no device chat')
   const items = await rpc('getMessageListItems', accountId, chatId, false, false)
   const msgs = []
   for (const item of items) {
+    // MessageListItem keeps snake_case on the wire
     if (item.kind === 'message') {
-      msgs.push(await rpc('getMessage', accountId, item.msgId))
+      msgs.push(await rpc('getMessage', accountId, item.msg_id))
     }
   }
   return msgs
@@ -120,7 +126,7 @@ try {
   await page.locator('#new-chat-button').waitFor({ state: 'visible', timeout: 60_000 })
   console.log('OK: MainScreen up on a configured account')
 
-  const msgs = await deviceChatTexts(aliceId)
+  const msgs = await deviceChatMessages(aliceId)
   const welcomeIndex = msgs.findIndex((m) =>
     (m.text || '').includes('runs entirely in your web browser')
   )
@@ -147,9 +153,12 @@ try {
   }
   console.log('OK: no upstream welcome image')
 
-  // the label makes re-adding a no-op — switching accounts must not duplicate it
-  await rpc('selectAccount', aliceId)
-  const again = await deviceChatTexts(aliceId)
+  // the label makes re-adding a no-op — a second app start (which runs
+  // selectAccount() again) must not append the message twice
+  await page.reload()
+  await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
+  await page.locator('#new-chat-button').waitFor({ state: 'visible', timeout: 60_000 })
+  const again = await deviceChatMessages(aliceId)
   if (again.length !== msgs.length) {
     throw new Error(
       `FAIL: device chat grew on re-select (${msgs.length} -> ${again.length})`
