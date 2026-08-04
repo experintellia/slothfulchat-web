@@ -67,8 +67,8 @@ interface CryptoReply {
 /**
  * Prewarmed worker that runs offloaded PGP ops (issue #3) so core's thread
  * stays responsive. Registered with the wasm side via `set_crypto_offload`
- * only once its worker is ready; until then (and whenever it's dead) core
- * computes inline — the always-correct fallback.
+ * only once its worker is ready. Never a correctness dependency: core
+ * computes the op inline whenever this is unregistered, dead, or errors.
  * ponytail: pool of one; bump to N workers if parallel crypto ever matters.
  */
 class CryptoPool {
@@ -105,18 +105,17 @@ class CryptoPool {
     worker.onmessage = (event: MessageEvent<CryptoReply>) => {
       const msg = event.data
       if (msg.type === 'ready') {
-        if (msg.error !== undefined) {
-          this.die(new Error(msg.error))
-        } else {
-          this.spawnFailures = 0
-          this.resolveReady()
-        }
+        if (msg.error !== undefined) this.die(new Error(msg.error))
+        else this.resolveReady()
         return
       }
       const entry = msg.id === undefined ? undefined : this.inflight.get(msg.id)
       if (entry) {
         this.inflight.delete(msg.id!)
         if (msg.ok && msg.reply) {
+          // reset on useful work, not on the ready handshake: a payload that
+          // reliably traps the instance would otherwise respawn forever
+          this.spawnFailures = 0
           this.offloaded++
           // observable marker for tests; every other listener ignores it
           scope.postMessage({ type: 'crypto-offload', op: entry.op, count: this.offloaded } as unknown as string)
@@ -137,21 +136,21 @@ class CryptoPool {
     this.inflight.clear()
     this.worker?.terminate()
     this.worker = null
-    // ponytail: >3 failures = permanently dead, run() rejects every op from
-    // then on; the upgrade path is a shim unset-handler API so core falls
-    // back to inline per-op instead
+    // >3 failures without a single completed op = permanently dead; run()
+    // then rejects every op and core computes it inline instead
     if (++this.spawnFailures > 3) return
     this.spawn()
   }
 
-  /** Runs one op on the pool worker. The payload's buffer is transferred. */
+  /** Runs one op on the pool worker. The payload's buffer is transferred —
+   * safe, and never retried here: core recomputes inline if this rejects. */
   run(op: string, payload: Uint8Array): Promise<Uint8Array> {
     const worker = this.worker
     if (!worker) return Promise.reject(new Error('crypto pool is dead'))
     return new Promise((resolve, reject) => {
       const id = this.nextId++
-      this.inflight.set(id, { resolve, reject, op })
       worker.postMessage({ id, op, payload }, [payload.buffer])
+      this.inflight.set(id, { resolve, reject, op })
     })
   }
 }
