@@ -129,6 +129,20 @@ try {
   if (!aliceId) throw new Error('FAIL: no account after onboarding')
   console.log(`OK: onboarded account ${aliceId} through the UI`)
 
+  // visible in this session, in the UI — not just present in the database
+  const deviceChatItem = page
+    .locator('.chat-list .chat-list-item')
+    .filter({ hasText: 'Device Messages' })
+    .first()
+  await deviceChatItem.waitFor({ state: 'visible', timeout: 30_000 })
+  await deviceChatItem.click()
+  await page
+    .locator('.message .msg-body .text')
+    .filter({ hasText: 'runs entirely in your web browser' })
+    .first()
+    .waitFor({ state: 'visible', timeout: 30_000 })
+  console.log('OK: visible in the device chat without a restart')
+
   const msgs = await deviceChatMessages(aliceId)
   const welcomeIndex = msgs.findIndex((m) =>
     (m.text || '').includes('runs entirely in your web browser')
@@ -168,6 +182,29 @@ try {
     )
   }
   console.log('OK: a restart does not add it twice')
+
+  // and again for a second profile added from the account sidebar — that
+  // flow enters onboarding through addAndSelectAccount(), not at boot
+  const add = page.getByTestId('add-account-button')
+  await add.hover()
+  await add.click()
+  await page
+    .getByRole('button', { name: /madmail server/ })
+    .click({ timeout: 60_000 })
+  await page.locator('#webimapHost').fill(`127.0.0.1:${mock.address().port}`)
+  await page.getByRole('button', { name: 'Use this server' }).click()
+  await page.locator('#displayName').fill('Bob')
+  await page.getByTestId('login-button').click()
+  await page.locator('#new-chat-button').waitFor({ state: 'visible', timeout: 120_000 })
+  const bobId = await page.evaluate(() => window.__selectedAccountId)
+  if (!bobId || bobId === aliceId) throw new Error('FAIL: no second account')
+  const bobMsgs = await deviceChatMessages(bobId)
+  if (!bobMsgs.some((m) => (m.text || '').includes('runs entirely in your web browser'))) {
+    throw new Error(
+      `FAIL: second profile ${bobId} has no welcome message (${bobMsgs.length} message(s))`
+    )
+  }
+  console.log(`OK: second profile ${bobId} gets it without switching away`)
 
   console.log('OK: welcome device message verified')
 } catch (err) {
