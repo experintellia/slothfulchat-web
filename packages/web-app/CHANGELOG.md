@@ -14,6 +14,12 @@
   WebAssembly switched off, the app now says so and explains how to allow just
   this site, instead of reporting a storage problem you don't have.
 
+- **A welcome message that's actually about this app** — the device chat now
+  explains what SlothfulChat does differently: it runs entirely in your
+  browser, which is also why you should export a backup and keep it safe
+  (backups are unencrypted). Delta Chat's welcome image is gone until we have
+  one of our own.
+
 - **Voice messages and videos you send now carry their length** — the person
   receiving one sees how long it is (and how tall a video is) straight away,
   instead of a "–:––" placeholder they have to download first. Works with every

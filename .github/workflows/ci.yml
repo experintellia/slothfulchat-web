@@ -335,6 +335,12 @@ jobs:
       - name: E2E test — resizable chat-list sidebar
         run: node scripts/test-sidebar-resize-e2e.mjs
 
+      # welcome device message e2e (fully offline, mock madmail): our message
+      # lands in the device chat after core's own, the upstream welcome image
+      # is gone, and the label keeps it from being added twice.
+      - name: E2E test — welcome device message
+        run: node scripts/test-welcome-message-e2e.mjs
+
       # video poster self-check (fully offline, no core-wasm needed): record a
       # canvas of a known colour, grab a frame with the real videoPoster module,
       # assert the JPEG decodes back to that colour (i.e. not a blank frame).
