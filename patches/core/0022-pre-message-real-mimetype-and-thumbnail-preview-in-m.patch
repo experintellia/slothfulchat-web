@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 23 Jul 2026 01:48:04 +0000
-Subject: [PATCH 22/29] pre-message: real mimetype and thumbnail preview in
+Subject: [PATCH 22/30] pre-message: real mimetype and thumbnail preview in
  metadata
 
 Extend the encrypted Chat-Post-Message-Metadata header so a large-attachment
