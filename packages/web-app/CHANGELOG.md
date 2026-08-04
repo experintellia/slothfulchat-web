@@ -1,5 +1,12 @@
 # Changelog
 
+- **Self-hosting: the documented `wss://…/bridge` URL now actually works.** The
+  shipped Caddy example gained a `/bridge` route that strips the prefix before
+  handing the connection to the bridge — without that the bridge sees the wrong
+  path and fails every request while looking connected. The app's bridge test
+  no longer falls for that either: it waits for a real answer instead of just
+  the connection opening, so a misconfigured proxy now reports as unreachable.
+
 - **HTML emails open again on phones and installed PWAs of self-hosted
   instances.** The webserver config forbade framing the app's own pages, which
   also blocked the HTML-mail viewer the mobile layout embeds; only that one
