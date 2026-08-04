@@ -1,5 +1,10 @@
 # Changelog
 
+- **Hardening**: the internal address the app uses to fetch attachments now
+  refuses to point anywhere outside the attachment folder. No known way to
+  trigger it from a message — the other layers around attachments already
+  blocked that — but the check belongs there and its siblings already had it.
+
 - **When the app can't start, you can now copy the error.** The failure screen
   shows the technical details as selectable text with a "Copy details" button,
   so you can paste them into a bug report instead of retyping them from a
