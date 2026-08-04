@@ -38,13 +38,15 @@ exists:
   VFS (sqlite-wasm-rs has no `sqlcipher_export`, so the database bytes are
   swapped at the VFS level; encrypted backups stay unsupported on wasm).
   `core/0008`, `core/0009`
-- **Crypto offload** — PGP key generation, encryption and decryption ran on
-  the browser main thread (wasm has no `spawn_blocking`), freezing the UI for
-  seconds. The tokio facade gains a JS offload bridge and the four crypto call
-  sites hand the work to a web-worker pool running the same wasm build,
-  falling back to the inline path when no handler is registered; decrypted
-  messages are re-encoded at the OpenPGP packet level so signature
-  verification still happens main-side. Native builds unchanged. `core/0029`
+- **Crypto offload** — PGP key generation, encryption and decryption ran
+  inline on the core worker (wasm has no real `spawn_blocking`), so every
+  jsonrpc call queued behind them — up to ~1s on phones for account creation,
+  and seconds for a large message. The tokio facade gains a JS offload bridge
+  and the four crypto call sites hand the work to a web-worker pool running
+  the same wasm build, falling back to the inline path whenever the pool is
+  unregistered, dead, erroring or too slow; decrypted messages are re-encoded
+  at the OpenPGP packet level so core still verifies signatures itself.
+  Native builds unchanged. `core/0029`
 
 ## New features
 

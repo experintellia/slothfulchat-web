@@ -54,20 +54,20 @@ content equality and that signatures verify after re-encoding.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
- src/decrypt.rs     |  94 +++++++++----
+ src/decrypt.rs     |  93 +++++++++----
  src/e2ee.rs        |  20 +++
  src/key.rs         |  24 ++++
  src/lib.rs         |   1 +
  src/offload_ops.rs | 324 +++++++++++++++++++++++++++++++++++++++++++++
  src/pgp.rs         | 186 +++++++++++++++-----------
- 6 files changed, 552 insertions(+), 97 deletions(-)
+ 6 files changed, 551 insertions(+), 97 deletions(-)
  create mode 100644 src/offload_ops.rs
 
 diff --git a/src/decrypt.rs b/src/decrypt.rs
-index 0eba9e7..86dca62 100644
+index 0eba9e7..0f1775d 100644
 --- a/src/decrypt.rs
 +++ b/src/decrypt.rs
-@@ -24,8 +24,34 @@
+@@ -24,8 +24,33 @@
  use crate::context::Context;
  use crate::key::self_fingerprint;
  use crate::key::{Fingerprint, SignedPublicKey, load_self_secret_keyring};
@@ -75,8 +75,6 @@ index 0eba9e7..86dca62 100644
 +use crate::log::warn;
  use crate::token::Namespace;
  
-+pub(crate) const ABORT_EARLY: bool = true;
-+
 +/// Options every decryption path uses — shared so the inline path and the
 +/// offloaded one (`offload_ops`) can never drift apart.
 +///
@@ -93,8 +91,9 @@ index 0eba9e7..86dca62 100644
 +/// the offloaded worker (`crate::offload_ops`) both call this, so the two
 +/// can never run different rPGP calls.
 +pub(crate) fn decrypt_ring(msg: Message<'static>, ring: TheRing<'_>) -> Result<Message<'static>> {
++    let abort_early = true;
 +    let (plain, _ring_result) = msg
-+        .decrypt_the_ring(ring, ABORT_EARLY)
++        .decrypt_the_ring(ring, abort_early)
 +        .context("decrypt_the_ring")?;
 +    Ok(plain.decompress()?)
 +}
@@ -102,7 +101,7 @@ index 0eba9e7..86dca62 100644
  /// Tries to decrypt the message,
  /// returning a tuple of `(decrypted message, fingerprint)`.
  ///
-@@ -51,14 +77,7 @@ pub(crate) async fn decrypt(
+@@ -51,14 +76,7 @@ pub(crate) async fn decrypt(
      };
      let expected_sender_fingerprint: Option<String>;
  
@@ -118,7 +117,7 @@ index 0eba9e7..86dca62 100644
  
      let plain = if let Message::Encrypted { esk, .. } = &*msg
          // We only allow one ESK for symmetrically encrypted messages
-@@ -72,19 +91,34 @@ pub(crate) async fn decrypt(
+@@ -72,19 +90,34 @@ pub(crate) async fn decrypt(
              .context("decrypt_session_key_symmetrically")?;
          expected_sender_fingerprint = fingerprint;
  
@@ -161,7 +160,7 @@ index 0eba9e7..86dca62 100644
          })
          .await??
      } else {
-@@ -92,19 +126,33 @@ pub(crate) async fn decrypt(
+@@ -92,19 +125,33 @@ pub(crate) async fn decrypt(
          let secret_keys: Vec<SignedSecretKey> = load_self_secret_keyring(context).await?;
          expected_sender_fingerprint = None;
  

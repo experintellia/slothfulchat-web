@@ -1,6 +1,8 @@
-// End-to-end check for the PGP offload (issue #3): boots the example page,
-// creates an account and forces keygen, and asserts the op ran on the crypto
-// pool worker (observed via the { type: 'crypto-offload' } marker messages).
+// Offline check for the PGP offload (issue #3): boots the example page,
+// forces key generation, and asserts it ran on the crypto pool worker — then
+// that a broken pool never costs correctness. Pool activity is read back with
+// the core worker's { type: 'crypto-stats' } query.
+// Encryption and decryption are covered by test-crypto-offload-e2e.mjs.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
@@ -61,26 +63,34 @@ const server = createServer(async (req, res) => {
 await new Promise((resolve) => server.listen(0, resolve));
 const port = server.address().port;
 
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined });
+// CHROMIUM_BIN=/path/to/chrome overrides the browser binary, for sandboxes
+// that ship a Chromium not matching the installed Playwright version
+const browser = await chromium.launch(
+  process.env.CHROMIUM_BIN ? { executablePath: process.env.CHROMIUM_BIN } : {},
+);
 const page = await browser.newPage();
 page.on('pageerror', (e) => console.error('[pageerror]', e.message));
 page.on('console', (m) => {
   if (m.type() === 'error') console.error('[page]', m.text().slice(0, 200));
 });
 
-// Boots the page and forces `accounts` key generations through jsonrpc —
-// the one PGP op reachable without a relay (encryption happens in the SMTP
-// send loop, decryption on receive). Reports which ops the pool actually ran,
-// observed through the { type: 'crypto-offload' } markers.
+// Boots the page and forces `accounts` key generations through jsonrpc, then
+// reports how many ops the pool actually completed.
 async function runScenario({ accounts = 1, sequential = false } = {}) {
   await page.goto(`http://localhost:${port}/example/index.html?persist=0`);
   await page.waitForFunction(() => window.__systemInfo, null, { timeout: 60_000 });
   return page.evaluate(async ({ accounts, sequential }) => {
-    const offloaded = [];
+    // asks the core worker how many ops its crypto pool actually ran
+    const cryptoStats = () =>
+      new Promise((resolve) => {
+        window.core.worker.addEventListener('message', function onStats(event) {
+          if (event.data?.type !== 'crypto-stats') return;
+          window.core.worker.removeEventListener('message', onStats);
+          resolve(event.data.offloaded);
+        });
+        window.core.worker.postMessage({ type: 'crypto-stats' });
+      });
     const warnings = [];
-    window.core.worker.addEventListener('message', (event) => {
-      if (event.data?.type === 'crypto-offload') offloaded.push(event.data.op);
-    });
     window.dc.on('Warning', (_accountId, event) => warnings.push(String(event?.msg ?? '')));
     // give the prewarmed pool a moment to register (it races core boot)
     await new Promise((r) => setTimeout(r, 3000));
@@ -111,10 +121,8 @@ async function runScenario({ accounts = 1, sequential = false } = {}) {
       results.push(...(await Promise.allSettled(Array.from({ length: accounts }, (_u, i) => keygen(i)))));
     }
     const keygenMs = performance.now() - t;
-    // marker messages may still be in flight
-    await new Promise((r) => setTimeout(r, 500));
     return {
-      offloaded,
+      offloaded: await cryptoStats(),
       keygenMs,
       keyed: results.filter((r) => r.status === 'fulfilled').length,
       failure: results.find((r) => r.status === 'rejected')?.reason?.message ?? null,
@@ -129,11 +137,11 @@ let failed = false;
 try {
   const offloadRun = await runScenario({ accounts: ACCOUNTS });
   console.log(
-    `ops on the crypto pool worker: ${offloadRun.offloaded.length}` +
+    `ops on the crypto pool worker: ${JSON.stringify(offloadRun.offloaded)}` +
       ` (${ACCOUNTS} concurrent keygens in ${Math.round(offloadRun.keygenMs)} ms)`,
   );
-  if (!offloadRun.offloaded.includes('keygen')) {
-    throw new Error('keygen did NOT run on the pool worker (no crypto-offload marker)');
+  if (!offloadRun.offloaded.keygen) {
+    throw new Error('keygen did NOT run on the pool worker');
   }
   // whatever the queue did with them — pool or inline — all keys must exist
   if (offloadRun.keyed !== ACCOUNTS) {
@@ -153,7 +161,8 @@ try {
   ]) {
     sabotage = mode;
     const run = await runScenario();
-    if (run.offloaded.length) throw new Error(`${mode} pool still reported ops: ${run.offloaded}`);
+    const ran = Object.keys(run.offloaded);
+    if (ran.length) throw new Error(`${mode} pool still completed ops: ${ran}`);
     // the warning proves core took the offload branch and recovered, rather
     // than the pool never having registered in the first place
     if (!run.fellBackInline) {
@@ -173,7 +182,7 @@ try {
   if (!respawnRun.fellBackInline) {
     throw new Error('fatalOnce: the trapped op did not fall back inline');
   }
-  if (!respawnRun.offloaded.length) {
+  if (!respawnRun.offloaded.keygen) {
     throw new Error('fatalOnce: pool never recovered — nothing ran on it after the trap');
   }
   if (respawnRun.keyed !== 2) {
