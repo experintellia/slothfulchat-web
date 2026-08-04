@@ -33,10 +33,10 @@
 //     to the other account still runs under the ORIGINATING account (#3)
 //   - opening a file attachment yields a tab with window.opener === null (#2)
 import { spawn } from 'node:child_process'
-import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startMockMadmail } from './mock-madmail.mjs'
 
 const script = p => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8646)
@@ -55,115 +55,10 @@ const CRAFTED_HTML = `<!doctype html><html><head>
     <a id="e2e-invite" href="https://i.delta.chat/#e2einvite">join</a>
   </body></html>`
 
-// --- mock madmail (message-serving + delivery, from test-export-chat-html) ---
-const users = new Map()
-let userSeq = 0
-const readBody = req =>
-  new Promise(resolve => {
-    let b = ''
-    req.on('data', c => (b += c))
-    req.on('end', () => resolve(b))
-  })
-const json = (res, code, obj) => {
-  res.statusCode = code
-  res.setHeader('content-type', 'application/json')
-  res.end(JSON.stringify(obj))
-}
-const meta = (uid, raw) => ({
-  uid,
-  seq_num: uid,
-  flags: [],
-  size: Buffer.byteLength(raw),
-  date: new Date('2026-08-01T12:00:00Z').toISOString(),
-  envelope: {},
-})
-const respondMessages = (res, user, sinceUid) => {
-  const out = []
-  for (const [uid, raw] of user.msgs) if (uid > sinceUid) out.push(meta(uid, raw))
-  json(res, 200, out)
-}
-const mock = createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Headers', 'X-Email, X-Password, Content-Type')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
-  if (req.method === 'OPTIONS') return void ((res.statusCode = 204), res.end())
-  const url = new URL(req.url, 'http://mock')
-  const path = url.pathname
-  if (req.method === 'POST' && path === '/new') {
-    const email = `u${++userSeq}@webimap.example`
-    const password = randomBytes(9).toString('hex')
-    users.set(email, { password, nextUid: 1, msgs: new Map(), waiters: [] })
-    return void json(res, 200, { email, password, dclogin_url: '' })
-  }
-  if (path.startsWith('/webimap/')) {
-    const user = users.get(req.headers['x-email'])
-    if (!user || user.password !== req.headers['x-password']) {
-      return void json(res, 401, { error: 'bad credentials' })
-    }
-    if (path === '/webimap/mailboxes') {
-      const n = user.msgs.size
-      return void json(res, 200, [{ name: 'INBOX', messages: n, unseen: n }])
-    }
-    if (path === '/webimap/messages') {
-      const sinceUid = Number(url.searchParams.get('since_uid') ?? '0') || 0
-      const wait = Math.min(Number(url.searchParams.get('wait') ?? '0') || 0, 120)
-      const hasNew = [...user.msgs.keys()].some(uid => uid > sinceUid)
-      if (hasNew || wait <= 0) return void respondMessages(res, user, sinceUid)
-      const waiter = {
-        timer: setTimeout(() => {
-          user.waiters = user.waiters.filter(w => w !== waiter)
-          respondMessages(res, user, sinceUid)
-        }, wait * 1000),
-        respond: () => respondMessages(res, user, sinceUid),
-      }
-      user.waiters.push(waiter)
-      return
-    }
-    const m = path.match(/^\/webimap\/message\/(\d+)$/)
-    if (m) {
-      const uid = Number(m[1])
-      if (req.method === 'GET') {
-        const raw = user.msgs.get(uid)
-        if (raw === undefined) return void json(res, 404, { error: 'no such message' })
-        return void json(res, 200, { ...meta(uid, raw), body: raw })
-      }
-      if (req.method === 'DELETE') {
-        user.msgs.delete(uid)
-        return void json(res, 200, { status: 'ok' })
-      }
-    }
-    if (req.method === 'POST' && path === '/webimap/send') {
-      let payload = {}
-      try {
-        payload = JSON.parse(await readBody(req))
-      } catch {
-        /* keep {} */
-      }
-      const recipients = []
-        .concat(payload.to ?? [])
-        .flatMap(r => (typeof r === 'string' ? r.split(/[,\s]+/) : []))
-        .map(r => r.trim())
-        .filter(Boolean)
-      for (const rcpt of recipients) {
-        const dest = users.get(rcpt)
-        if (!dest) continue
-        const uid = dest.nextUid++
-        dest.msgs.set(uid, payload.body ?? '')
-        const waiters = dest.waiters
-        dest.waiters = []
-        for (const w of waiters) {
-          clearTimeout(w.timer)
-          w.respond()
-        }
-      }
-      return void json(res, 200, { status: 'sent' })
-    }
-  }
-  json(res, 404, { error: 'not found' })
-})
-await new Promise(r => mock.listen(0, '127.0.0.1', r))
-const QR = `webimapaccount:127.0.0.1:${mock.address().port}`
-console.log(`mock madmail on 127.0.0.1:${mock.address().port}`)
+// --- mock madmail (shared: scripts/mock-madmail.mjs) ---
+const mock = await startMockMadmail()
+const QR = `webimapaccount:127.0.0.1:${mock.port}`
+console.log(`mock madmail on 127.0.0.1:${mock.port}`)
 
 // --- web-app server ---
 const appServer = spawn('node', [script('../packages/web-app/serve.mjs')], {

@@ -20,190 +20,18 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
 import { chromium } from 'playwright';
+import { startMockMadmail } from './mock-madmail.mjs';
 
 // ---------------------------------------------------------------------------
 // MOCK madmail server (in-process, 127.0.0.1, random free port)
 // ---------------------------------------------------------------------------
-// users: email -> { password, nextUid, msgs: Map<uid, rawString>, waiters: [] }
-const users = new Map();
-const counters = { newCalls: 0, sendCalls: 0, deleteCalls: 0, phantom404Gets: 0, delete404s: 0 };
-let userSeq = 0;
-
-const readBody = (req) =>
-  new Promise((resolve) => {
-    let b = '';
-    req.on('data', (c) => (b += c));
-    req.on('end', () => resolve(b));
-  });
-
-const json = (res, code, obj) => {
-  res.statusCode = code;
-  res.setHeader('content-type', 'application/json');
-  res.end(JSON.stringify(obj));
-};
-
-// message metadata shape the transport expects (body only on the single-message route)
-const meta = (uid, raw) => ({
-  uid,
-  seq_num: uid,
-  flags: [],
-  size: Buffer.byteLength(raw),
-  date: new Date().toISOString(),
-  envelope: {},
-});
-
-// respond to a /webimap/messages request with everything newer than sinceUid
-const respondMessages = (res, user, sinceUid) => {
-  const out = [];
-  if (user.phantomOnce !== undefined) {
-    out.push(meta(user.phantomOnce, ''));
-    user.phantomOnce = undefined;
-  }
-  for (const [uid, raw] of user.msgs) if (uid > sinceUid) out.push(meta(uid, raw));
-  json(res, 200, out);
-};
-
-const mock = createServer(async (req, res) => {
-  // CORS on EVERY response — browser preflights the custom auth headers.
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'X-Email, X-Password, Content-Type');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  if (req.method === 'OPTIONS') {
-    res.statusCode = 204;
-    res.end();
-    return;
-  }
-
-  const url = new URL(req.url, 'http://mock');
-  const path = url.pathname;
-
-  // -- provisioning -------------------------------------------------------
-  if (req.method === 'POST' && path === '/new') {
-    counters.newCalls++;
-    const email = `u${++userSeq}@webimap.example`;
-    const password = randomBytes(9).toString('hex');
-    // 404-tolerance probes (core must skip these, not back off — see core
-    // patch "webimap: treat 404 on GET/DELETE as already-gone"):
-    // a phantom UID listed once but gone on GET, and one DELETE answered 404
-    // although the message IS deleted (late-landing-delete shape).
-    users.set(email, {
-      password,
-      nextUid: 2,
-      msgs: new Map(),
-      waiters: [],
-      phantomOnce: 1,
-      delete404Once: true,
-    });
-    json(res, 200, { email, password, dclogin_url: '' });
-    return;
-  }
-
-  // -- everything under /webimap requires valid auth ----------------------
-  if (path.startsWith('/webimap/')) {
-    const email = req.headers['x-email'];
-    const password = req.headers['x-password'];
-    const user = email && users.get(email);
-    if (!user || user.password !== password) {
-      json(res, 401, { error: 'bad credentials' });
-      return;
-    }
-
-    // configure/verify hits this during addTransportFromQr
-    if (req.method === 'GET' && path === '/webimap/mailboxes') {
-      const n = user.msgs.size;
-      json(res, 200, [{ name: 'INBOX', messages: n, unseen: n }]);
-      return;
-    }
-
-    // long-pollable fetch of new messages
-    if (req.method === 'GET' && path === '/webimap/messages') {
-      const sinceUid = Number(url.searchParams.get('since_uid') ?? '0') || 0;
-      const wait = Math.min(Number(url.searchParams.get('wait') ?? '0') || 0, 120);
-      const hasNew =
-        user.phantomOnce !== undefined || [...user.msgs.keys()].some((uid) => uid > sinceUid);
-      if (hasNew || wait <= 0) {
-        respondMessages(res, user, sinceUid);
-        return;
-      }
-      // park until a message arrives for this user or `wait` seconds elapse
-      const waiter = {
-        sinceUid,
-        timer: setTimeout(() => {
-          user.waiters = user.waiters.filter((w) => w !== waiter);
-          respondMessages(res, user, sinceUid);
-        }, wait * 1000),
-        respond: () => respondMessages(res, user, sinceUid),
-      };
-      user.waiters.push(waiter);
-      return;
-    }
-
-    // single message (with body) / delete
-    const m = path.match(/^\/webimap\/message\/(\d+)$/);
-    if (m) {
-      const uid = Number(m[1]);
-      if (req.method === 'GET') {
-        const raw = user.msgs.get(uid);
-        if (raw === undefined) {
-          counters.phantom404Gets++;
-          json(res, 404, { error: 'no such message' });
-          return;
-        }
-        json(res, 200, { ...meta(uid, raw), body: raw });
-        return;
-      }
-      if (req.method === 'DELETE') {
-        counters.deleteCalls++;
-        user.msgs.delete(uid);
-        if (user.delete404Once) {
-          user.delete404Once = false;
-          counters.delete404s++;
-          json(res, 404, { error: 'no such message' });
-          return;
-        }
-        json(res, 200, { status: 'ok' });
-        return;
-      }
-    }
-
-    // send: append body to every locally-known recipient, wake their pollers
-    if (req.method === 'POST' && path === '/webimap/send') {
-      counters.sendCalls++;
-      let payload = {};
-      try {
-        payload = JSON.parse(await readBody(req));
-      } catch {
-        /* tolerate — treat as empty */
-      }
-      const recipients = []
-        .concat(payload.to ?? [])
-        .flatMap((r) => (typeof r === 'string' ? r.split(/[,\s]+/) : []))
-        .map((r) => r.trim())
-        .filter(Boolean);
-      const body = payload.body ?? '';
-      for (const rcpt of recipients) {
-        const dest = users.get(rcpt);
-        if (!dest) continue; // unknown domain / external recipient: silently accept
-        const uid = dest.nextUid++;
-        dest.msgs.set(uid, body);
-        const waiters = dest.waiters;
-        dest.waiters = [];
-        for (const w of waiters) {
-          clearTimeout(w.timer);
-          w.respond();
-        }
-      }
-      json(res, 200, { status: 'sent' });
-      return;
-    }
-  }
-
-  json(res, 404, { error: 'not found' });
-});
-await new Promise((r) => mock.listen(0, '127.0.0.1', r));
-const mockPort = mock.address().port;
+// probes: this is the one script that exists to test the webimap transport
+// itself, so it asks the shared server for the two 404-tolerance shapes the
+// core must skip rather than back off from — a phantom UID listed once but
+// gone on GET, and one DELETE answered 404 although the message really is
+// deleted. The counters below assert the core actually walked into both.
+const { port: mockPort, counters, close: closeMock } = await startMockMadmail({ probes: true })
 console.log(`mock madmail server on 127.0.0.1:${mockPort} (no proxy, fully offline)`);
 
 // ---------------------------------------------------------------------------
@@ -355,6 +183,6 @@ try {
   clearTimeout(watchdog);
   await browser.close();
   server.close();
-  mock.close();
+  closeMock();
 }
 process.exit(failed ? 1 : 0);

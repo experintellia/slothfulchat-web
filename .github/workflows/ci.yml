@@ -70,6 +70,7 @@ jobs:
           packages/web-app/src/fatal-report.test.ts
           packages/web-app/src/emoji-sets.test.ts
           packages/web-app/serve.test.mjs
+          scripts/mock-madmail.test.mjs
 
       # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —
       # Node's built-in type-stripping test runner needs no pnpm install, only
