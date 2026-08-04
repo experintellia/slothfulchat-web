@@ -6,6 +6,11 @@
   now has to be confirmed before anything starts, and such a session runs with
   a yellow navbar so you can tell at a glance.
 
+- **HTML emails open again on phones and installed PWAs of self-hosted
+  instances.** The webserver config forbade framing the app's own pages, which
+  also blocked the HTML-mail viewer the mobile layout embeds; only that one
+  page is now allowed to be framed, and only by the app itself.
+
 - **Links into the changelog keep working across releases** — a link to a
   specific version used to slide down to the wrong one as soon as the next
   release shipped, because it pointed at a position in the page rather than at

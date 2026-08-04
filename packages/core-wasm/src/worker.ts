@@ -157,9 +157,11 @@ class CryptoPool {
         } else {
           job.reject(new Error(msg.error ?? `crypto op ${job.op} failed`))
         }
+        // only the running job's reply can attest that its own worker
+        // trapped; checked outside, a late one killed the replacement
+        if (msg.fatal) return this.die(new Error(msg.error ?? 'crypto worker trapped'))
       }
-      if (msg.fatal) this.die(new Error(msg.error ?? 'crypto worker trapped'))
-      else this.pump()
+      this.pump()
     }
     worker.onerror = event => {
       this.die(new Error(`crypto worker error: ${event.message ?? 'unknown'}`))
@@ -196,7 +198,16 @@ class CryptoPool {
       () => this.die(new Error(`crypto op ${job.op} timed out`)),
       opTimeoutMs(job.payload),
     )
-    worker.postMessage({ id: job.id, op: job.op, payload: job.payload }, [job.payload.buffer])
+    try {
+      worker.postMessage({ id: job.id, op: job.op, payload: job.payload }, [job.payload.buffer])
+    } catch (err) {
+      // no reply is coming for a message that never left: settle it here
+      // instead of stranding the slot until the deadline kills the worker
+      clearTimeout(job.timer)
+      this.active = null
+      job.reject(new Error(`crypto op ${job.op} could not be posted: ${String(err)}`))
+      this.pump()
+    }
   }
 
   /** How many ops of each kind the pool has completed, e.g. `{ keygen: 2 }`.

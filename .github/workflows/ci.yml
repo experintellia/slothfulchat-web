@@ -67,12 +67,13 @@ jobs:
           exit $fail
 
       # dependency-free node:test suites for pure logic (config templating,
-      # the analytics pre-notice gate, translation-editor serialization, blob
-      # response headers)
+      # release-asset pinning/digest/size caps, the analytics pre-notice gate,
+      # translation-editor serialization, blob response headers)
       - name: Unit-test pure helpers
         run: >-
           node --test
           packages/web-app/instance-config.test.mjs
+          packages/web-app/release-asset.test.mjs
           packages/web-app/analytics-gate.test.mjs
           packages/web-app/src/translation-editor.test.mjs
           packages/web-app/src/blob-response.test.mjs
@@ -381,7 +382,8 @@ jobs:
         run: node scripts/test-media-metadata.mjs
 
       # unfurl service self-check (fully offline): metadata + inline image,
-      # SSRF guards (private-IP / literal-IP refusal), size cap, rate limit.
+      # SSRF guards (the non-global address table, private-IP / literal-IP
+      # refusal), size cap, absolute deadline vs. a slow drip, rate limit.
       - name: Self-check — unfurl service
         run: node scripts/test-unfurl.mjs
 

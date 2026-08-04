@@ -35,9 +35,11 @@ scope.onmessage = async (event: MessageEvent<CryptoRequest>) => {
       id,
       ok: false,
       error: String(err),
-      // a wasm trap (OOM, unreachable) poisons this instance for good —
-      // tell the pool so it respawns instead of feeding it more ops
-      fatal: err instanceof WebAssembly.RuntimeError,
+      // RuntimeError is a trap (or a Rust panic — wasm32 has no unwinding);
+      // RangeError is the glue failing to allocate the reply out of wasm,
+      // which doesn't corrupt this instance but means its heap is the full
+      // one. Respawn on both: a needless restart is the cheaper mistake.
+      fatal: err instanceof WebAssembly.RuntimeError || err instanceof RangeError,
     })
   }
 }

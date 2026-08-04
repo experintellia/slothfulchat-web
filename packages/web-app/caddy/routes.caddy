@@ -13,12 +13,30 @@
 	# Spelled out per site rather than shared via a snippet: this file is
 	# imported once PER SLOT (next + every preview) into one config, and a
 	# snippet defined here would be a duplicate definition on the second import.
+	# All of it is checked by scripts/test-selfhost-caddy.mjs, against a real caddy.
 	header {
-		Content-Security-Policy "frame-ancestors 'none'"
-		X-Frame-Options DENY
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
 		-Server
+	}
+	# The frame policy is split by path, and the two matchers are deliberately
+	# DISJOINT rather than a site-wide default plus an override: Caddy sorts a
+	# path-matched `header` route ahead of the unmatched one, so the unmatched
+	# one would run last and win — an "override" would silently be dead config.
+	@notmail not path /html-email.html
+	header @notmail {
+		Content-Security-Policy "frame-ancestors 'none'"
+		X-Frame-Options DENY
+	}
+	# The HTML-mail viewer is the one document of ours that gets framed: on
+	# mobile/PWA the app shows it in a SAME-ORIGIN iframe of this very origin
+	# (ensureHtmlEmailDialog in runtime.ts). Desktop opens a popup window
+	# instead, which is why 'none' looked harmless. 'self' keeps every foreign
+	# origin out and still lets the app frame its own viewer.
+	@htmlmail path /html-email.html
+	header @htmlmail {
+		Content-Security-Policy "frame-ancestors 'self'"
+		X-Frame-Options SAMEORIGIN
 	}
 	# Never serve the shipped webserver config back out: dist/caddy/ sits inside
 	# the web root, and an in-place-edited Caddyfile.example may carry hardcoded
