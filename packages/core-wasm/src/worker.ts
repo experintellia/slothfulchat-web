@@ -157,10 +157,8 @@ class CryptoPool {
         } else {
           job.reject(new Error(msg.error ?? `crypto op ${job.op} failed`))
         }
-        // a trap poisons the instance that reported it — but only the running
-        // job's reply can say so. Handling `fatal` outside this block let a
-        // late reply from a worker we had already replaced terminate its
-        // healthy successor.
+        // only the running job's reply can attest that its own worker
+        // trapped; checked outside, a late one killed the replacement
         if (msg.fatal) return this.die(new Error(msg.error ?? 'crypto worker trapped'))
       }
       this.pump()
@@ -203,9 +201,8 @@ class CryptoPool {
     try {
       worker.postMessage({ id: job.id, op: job.op, payload: job.payload }, [job.payload.buffer])
     } catch (err) {
-      // the job never reached the worker, so no reply is coming: settle it
-      // here (core recomputes it inline) instead of holding the slot until
-      // the deadline fires and takes a healthy worker down with it
+      // no reply is coming for a message that never left: settle it here
+      // instead of stranding the slot until the deadline kills the worker
       clearTimeout(job.timer)
       this.active = null
       job.reject(new Error(`crypto op ${job.op} could not be posted: ${String(err)}`))
