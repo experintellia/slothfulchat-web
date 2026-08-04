@@ -12,10 +12,18 @@
 // Values come from the SLOTHFUL_* env vars (see SELFHOSTING.md); anything not
 // set in the environment is prompted for interactively. Empty = unset (sane
 // defaults + placeholder imprint).
-import { readFile, writeFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
 import { unzipSync, zipSync } from 'fflate'
+import {
+  MAX_ZIP_BYTES,
+  boundedUnzipFilter,
+  pickReleaseAsset,
+  readCapped,
+  verifyAssetDigest,
+} from './release-asset.mjs'
 import {
   analyticsOrigin,
   buildConfig,
@@ -96,10 +104,12 @@ if (missing.length && process.stdin.isTTY) {
   console.log(`not set (no TTY to prompt): ${missing.map(([v]) => v).join(', ')}`)
 }
 
-// --- get the release zip ---
+// --- get the release zip (see release-asset.mjs for the limits and checks) ---
 let zipBytes
 if (opts.in) {
-  zipBytes = new Uint8Array(await readFile(opts.in))
+  // streamed rather than readFile()'d so an oversized archive is rejected
+  // while reading, before it is buffered and handed to unzipSync
+  zipBytes = await readCapped(createReadStream(opts.in), MAX_ZIP_BYTES, opts.in)
 } else {
   const api = `https://api.github.com/repos/${REPO}/releases/latest`
   const headers = { 'user-agent': 'slothfulchat-customize' }
@@ -108,15 +118,16 @@ if (opts.in) {
     throw new Error(`GitHub API ${res.status} ${res.statusText} for ${api} (rate limit? no release yet?)`)
   }
   const release = await res.json()
-  const asset = (release.assets ?? []).find(a => a.name.endsWith('.zip'))
-  if (!asset) throw new Error(`no zip asset in the latest release (${api})`)
+  const asset = pickReleaseAsset(release)
   console.log(`downloading ${asset.name} (${release.tag_name}, ${(asset.size / 1e6).toFixed(1)} MB)…`)
   const dl = await fetch(asset.browser_download_url, { headers })
   if (!dl.ok) throw new Error(`download failed: ${dl.status} ${dl.statusText}`)
-  zipBytes = new Uint8Array(await dl.arrayBuffer())
+  zipBytes = await readCapped(dl.body, MAX_ZIP_BYTES, asset.name)
+  verifyAssetDigest(asset, zipBytes)
+  console.log(`sha256 verified against the release metadata (${asset.digest})`)
 }
 
-const files = unzipSync(zipBytes)
+const files = unzipSync(zipBytes, { filter: boundedUnzipFilter() })
 for (const f of Object.keys(files)) if (f.endsWith('/')) delete files[f]
 for (const f of ['config.js', 'index.html', 'main.html', 'manifest.webmanifest', 'boot-error.js']) {
   if (!files[f]) {
