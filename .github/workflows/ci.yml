@@ -1,9 +1,10 @@
 # CI: run the project's tests on pull requests (and pushes to main).
 #
 # Two jobs:
-#   lint   — fast, no submodules, no wasm build: syntax-checks every .mjs and
-#            type/compile-checks the standalone Rust shim crate. Gives quick
-#            feedback on obvious breakage in seconds.
+#   lint   — fast, no submodules, no wasm build: syntax-checks every .mjs,
+#            type/compile-checks the standalone Rust shim crate, and audits the
+#            checked-in dependency lockfiles. Gives quick feedback on obvious
+#            breakage in seconds.
 #   test   — the real test suite. Builds the whole app exactly like
 #            deploy-pages.yml (patched core + upstream desktop bundle + release
 #            wasm), then runs the headless Playwright smoke suites plus the
@@ -42,6 +43,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Enable corepack (provides the pinned pnpm)
+        run: corepack enable
+
+      # Audit finding L-05: the JS half of the dependency gate. Reads
+      # pnpm-lock.yaml directly, so it needs no `pnpm install` (which can't run
+      # here anyway — see below). --prod skips devDependencies: playwright/ws
+      # never ship to a user.
+      - name: Audit JavaScript dependencies (pnpm-lock.yaml, prod only)
+        run: pnpm audit --prod
 
       # `pnpm install` can't run here (the jsonrpc-client file: dep doesn't
       # exist until apply-patches), but `node --check` needs no deps — it just
@@ -96,6 +106,25 @@ jobs:
         run: |
           cargo check --all-targets
           cargo clippy --all-targets
+
+      # Audit finding L-05: the Rust half. Costs a few minutes cold (builds
+      # from source — the prebuilt binaries live on GitHub releases, which this
+      # repo's other install steps have had trouble with); rust-cache above
+      # caches ~/.cargo/bin, so warm runs are a no-op "already installed".
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Only lockfiles that are actually checked in — build/core/Cargo.lock
+      # does not exist until `pnpm apply-patches` runs, and core-wasm's lock is
+      # a superset of it anyway (its path deps pull in all of patched core).
+      # Exceptions + rationale live in .cargo/audit.toml, read from the repo
+      # root; -D unsound makes unsoundness advisories gate too, --no-yanked
+      # skips the per-crate crates.io round trip (yanks have no advisory id, so
+      # they can't be excepted — see the config).
+      - name: Audit Rust dependencies (checked-in lockfiles)
+        run: |
+          cargo audit -D unsound --no-yanked --file packages/core-wasm/rust/Cargo.lock
+          cargo audit -D unsound --no-yanked --file crates/tokio-wasm-shim/Cargo.lock
 
   # ---- real test suite: full build + headless smoke/E2E tests ----
   # Mirrors deploy-pages.yml's build; see that file for the detailed rationale
