@@ -13,6 +13,11 @@
 # actionable here; when the pinned core graph moves, delete the ones that go
 # away rather than letting the list rot.
 #
+# "Not actionable" must mean the vulnerable CODE is not reached, not merely
+# that no upgrade is available. If you cannot show that, leave the id out and
+# let the gate go red — a list of things we have decided to live with, mixed in
+# with things that genuinely cannot fire, is worth nothing to the next reader.
+#
 # Reachability was checked with, from packages/core-wasm/rust:
 #   cargo tree --target wasm32-unknown-unknown --edges normal -i <crate>
 # (requires build/core, i.e. `pnpm apply-patches` first). Last done 2026-08-04.
@@ -30,26 +35,56 @@ ignore = [
   "RUSTSEC-2026-0119", # hickory-proto 0.25.2 — O(n^2) name compression, CPU exhaustion
   "RUSTSEC-2026-0118", # hickory-proto 0.25.2 — NSEC3 proof unbounded loop
 
-  # --- present in the wasm32 graph, no upgrade available on the pinned graph -
-  # These DO compile into the wasm core. No exploit path has been demonstrated
-  # against this build (see audit finding L-05), but do not read the entries
-  # below as "unreachable" — they are accepted risk, not absent code.
+  # --- linked into the wasm core, but the vulnerable code is not reached ------
+  # Each entry below was checked against the built wasm binary's symbol table,
+  # not just `cargo tree`. Being in the graph is not the same as being called.
 
-  # ml-dsa 0.0.4 <- pgp 0.20 <- deltachat. Timing side-channel in ML-DSA
-  # decomposition. Fix is ml-dsa >=0.1.0-rc.3, which rpgp 0.20 does not take.
-  "RUSTSEC-2025-0144",
-
-  # rsa 0.9.10 <- pgp 0.20 <- deltachat. Marvin attack (timing key recovery).
-  # Upstream says "no fixed upgrade is available" — the whole 0.9 line is
-  # affected and rpgp has not moved off it.
-  "RUSTSEC-2023-0071",
-
-  # rustls-webpki 0.102.8 <- iroh 0.35 / iroh-relay 0.35 <- deltachat. Four
-  # cert/CRL-validation defects. Fixed in 0.103.13+, which needs an iroh bump.
+  # rustls-webpki: the graph carries TWO copies, and the live one is patched.
+  #
+  #   rustls-webpki 0.102.8  <- iroh 0.35 / iroh-relay 0.35
+  #   rustls-webpki 0.103.13 <- rustls 0.23.41 <- tokio-rustls <- deltachat
+  #
+  # IMAP/SMTP TLS terminates inside the core on rustls 0.23.41 (patch
+  # core/0003 routes the wasm non-strict branch to wrap_rustls too), so the
+  # verifier that actually validates mail-server certificates is 0.103.13 —
+  # at or above every patched range below (0.103.10 / .12 / .12 / .13).
+  #
+  # The 0.102.8 copy is iroh's, and iroh imports exactly three things from it:
+  # `Error`, `ring_algs` (algorithm constants handed to rustls) and a
+  # `types` re-export. It parses certificates with x509-parser, and its
+  # verifier checks for a single self-signed cert with a libp2p extension —
+  # no chain building, no trust anchors, no name constraints, no CRLs. The
+  # built wasm confirms it: the 0.102.8 instance contributes 16 symbols, all
+  # of them Error/DerType/RingAlgorithm, and nothing from verify_cert,
+  # subject_name or crl.
+  #
+  # Do NOT re-justify these as "iroh is unused" — iroh IS linked (~2687
+  # symbols) and a scanned backup2 QR still reaches Endpoint::bind. The
+  # argument is about which webpki APIs iroh calls, which holds either way.
   "RUSTSEC-2026-0099", # name constraints accepted for wildcard-name certs
   "RUSTSEC-2026-0104", # reachable panic parsing a CRL
   "RUSTSEC-2026-0098", # name constraints for URI names incorrectly accepted
   "RUSTSEC-2026-0049", # CRLs not authoritative by distribution point
+
+  # ml-dsa 0.0.4 <- pgp 0.20 (draft-pqc feature) <- deltachat. Timing leak in
+  # `decompose` over values derived from the SECRET components s2/t0 — a
+  # signing-side leak; verification touches only public data. Reaching it
+  # needs an ML-DSA *self* key, and core hardcodes Ed25519Legacy +
+  # ECDH(Curve25519Legacy) at src/pgp.rs:36-37 with no algorithm choice
+  # anywhere. No supported action produces one.
+  "RUSTSEC-2025-0144",
+
+  # rsa 0.9.10 <- pgp 0.20 <- deltachat. Marvin attack: a PRIVATE-key timing
+  # leak. Sorting the paths — verifying a signature from, or encrypting to, an
+  # RSA-keyed contact are public-key ops and unaffected; decrypting and
+  # signing use OUR key, which is Ed25519/X25519 per src/pgp.rs:36-37. So the
+  # vulnerable code runs only with an RSA self key.
+  #
+  # TRIP-WIRE: `import_self_keys` exists on the JSON-RPC surface with no UI
+  # caller today (no key-management screen, no Autocrypt Setup Message). If
+  # key import or management ever ships, this becomes reachable without the
+  # dependency graph changing — re-review this entry then.
+  "RUSTSEC-2023-0071",
 
   # --- unsoundness (gated by CI's `-D unsound`) -----------------------------
   # event-listener 5.4.1 <- async-broadcast / async-lock / event-listener-strategy.
