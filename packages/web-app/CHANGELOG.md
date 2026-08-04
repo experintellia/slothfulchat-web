@@ -1,5 +1,11 @@
 # Changelog
 
+- **A link can no longer start a session that quietly saves nothing.** The
+  `?persist=0` test switch made the app run memory-only — your accounts appear
+  missing and anything you set up or receive is lost when the tab closes. It
+  now has to be confirmed before anything starts, and such a session runs with
+  a yellow navbar so you can tell at a glance.
+
 - **HTML emails open again on phones and installed PWAs of self-hosted
   instances.** The webserver config forbade framing the app's own pages, which
   also blocked the HTML-mail viewer the mobile layout embeds; only that one

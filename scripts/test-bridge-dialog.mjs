@@ -47,6 +47,11 @@ page.on('pageerror', e => console.error('[pageerror]', e.message))
 await page.addInitScript(() => {
   Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
 })
+// This test's acknowledgement of the throwaway-session gate (?persist=0 below):
+// the same per-tab marker the gate dialog's "Start throwaway session" sets.
+await page.addInitScript(() =>
+  sessionStorage.setItem('slothfulchat.throwawayConfirmed', '1')
+)
 
 // Serve a synthetic instance config instead of the build's config.js — an
 // init script would not work, the real config.js would overwrite it.
