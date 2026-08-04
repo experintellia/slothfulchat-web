@@ -1,0 +1,841 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 4 Aug 2026 00:16:28 +0000
+Subject: [PATCH 29/29] wasm: offload PGP crypto ops to a web worker via the JS
+ bridge
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On wasm, PGP operations (keygen, encrypt, decrypt) ran on the main
+browser event loop through the shim's spawn_blocking, janking the UI
+for seconds. The tokio facade now exposes tokio::offload — a JS-side
+handler (op: string, payload: Uint8Array) -> Promise<Uint8Array>
+backed by a worker pool running this same crate's wasm build — and the
+four crypto call sites take a cfg(wasm32)-gated early return through it
+when a handler is registered, falling back to the unchanged inline code
+otherwise. Native builds are untouched.
+
+Op surface (src/offload_ops.rs, compiled on all targets; both the
+call-site encoders and the worker-side handle_op dispatcher live in one
+module so the wire format cannot diverge; fields are [u32 LE len][bytes]
+after 1-2 raw flag/meta bytes, keys travel in core's sqlite
+serialization, DcKey::to_bytes/from_slice):
+
+- keygen        addr -> secret key           (key.rs generate_keypair)
+- pk_encrypt    seckey, plain, pubkeys*      (pgp.rs pk_encrypt; the
+                closure body is extracted into pk_encrypt_sync so both
+                the native spawn_blocking path and the worker share it)
+- symm_encrypt  secret, plain, [sign key]    (e2ee.rs encrypt_symmetrically)
+- decrypt_keys  ctext, seckeys*              (decrypt.rs, asymmetric arm)
+- decrypt_psk   session key, ctext           (decrypt.rs, symmetric arm;
+                the session key is looked up in sqlite main-side as
+                before, only the packet decryption is offloaded)
+
+Decryption replies: rPGP's Message is a streaming reader with no
+serializer, so the worker re-encodes the decrypted message at the
+packet level — read the data to the end (finalizing the running
+signature hashes), rebuild the literal packet from the data (keeping
+the file name; the literal header is not covered by OpenPGP
+signatures), and write one-pass-signature/signature packets around it
+in their original structure. Main-side Message::from_bytes + verify
+then sees identical hashes, so signature validation still happens in
+the trusted main instance. The encrypted-message side cannot be
+serialized either, so the call sites re-extract the raw armored body
+from the MIME part it was originally parsed from.
+
+Secret keys and session keys do cross postMessage to the worker; both
+ends are same-origin contexts of the same app that can already read
+the key from sqlite, so this widens no trust boundary.
+
+Round-trip tests (offload_ops::tests) cover keygen -> pk_encrypt ->
+decrypt_keys for SEIPD v1+v2 and symm_encrypt -> decrypt_psk, asserting
+content equality and that signatures verify after re-encoding.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ src/decrypt.rs     |  94 +++++++++----
+ src/e2ee.rs        |  20 +++
+ src/key.rs         |  24 ++++
+ src/lib.rs         |   1 +
+ src/offload_ops.rs | 324 +++++++++++++++++++++++++++++++++++++++++++++
+ src/pgp.rs         | 186 +++++++++++++++-----------
+ 6 files changed, 552 insertions(+), 97 deletions(-)
+ create mode 100644 src/offload_ops.rs
+
+diff --git a/src/decrypt.rs b/src/decrypt.rs
+index 0eba9e7..86dca62 100644
+--- a/src/decrypt.rs
++++ b/src/decrypt.rs
+@@ -24,8 +24,34 @@
+ use crate::context::Context;
+ use crate::key::self_fingerprint;
+ use crate::key::{Fingerprint, SignedPublicKey, load_self_secret_keyring};
++#[cfg(target_arch = "wasm32")]
++use crate::log::warn;
+ use crate::token::Namespace;
+ 
++pub(crate) const ABORT_EARLY: bool = true;
++
++/// Options every decryption path uses — shared so the inline path and the
++/// offloaded one (`offload_ops`) can never drift apart.
++///
++/// Streaming mode for SEIPDv1 decryption saves memory. It was the default in
++/// rPGP 0.19.0 and requires explicitly changing the mode in rPGP 0.20.0.
++/// SEIPDv2 is decrypted in streaming mode in any case.
++pub(crate) fn decrypt_options() -> DecryptionOptions {
++    DecryptionOptions::new().set_seipdv1_read_mode(Seipdv1ReadMode::Streaming)
++}
++
++/// Decrypts `msg` with `ring`, then decompresses it.
++///
++/// The single place decryption actually happens: the inline path below and
++/// the offloaded worker (`crate::offload_ops`) both call this, so the two
++/// can never run different rPGP calls.
++pub(crate) fn decrypt_ring(msg: Message<'static>, ring: TheRing<'_>) -> Result<Message<'static>> {
++    let (plain, _ring_result) = msg
++        .decrypt_the_ring(ring, ABORT_EARLY)
++        .context("decrypt_the_ring")?;
++    Ok(plain.decompress()?)
++}
++
+ /// Tries to decrypt the message,
+ /// returning a tuple of `(decrypted message, fingerprint)`.
+ ///
+@@ -51,14 +77,7 @@ pub(crate) async fn decrypt(
+     };
+     let expected_sender_fingerprint: Option<String>;
+ 
+-    let abort_early = true;
+-
+-    // Use streaming mode for SEIPDv1 decryption to save memory.
+-    // This was the default in rPGP 0.19.0
+-    // and requires explicitly changing the mode in rPGP 0.20.0.
+-    // SEPIDv2 is decrypted in streaming mode in any case.
+-    let decrypt_options =
+-        DecryptionOptions::new().set_seipdv1_read_mode(Seipdv1ReadMode::Streaming);
++    let decrypt_options = decrypt_options();
+ 
+     let plain = if let Message::Encrypted { esk, .. } = &*msg
+         // We only allow one ESK for symmetrically encrypted messages
+@@ -72,19 +91,34 @@ pub(crate) async fn decrypt(
+             .context("decrypt_session_key_symmetrically")?;
+         expected_sender_fingerprint = fingerprint;
+ 
+-        tokio::task::spawn_blocking(move || -> Result<Message<'_>> {
++        #[cfg(target_arch = "wasm32")]
++        if tokio::offload::available() {
++            // The `Message` reader cannot be serialized;
++            // re-extract the raw armored body it was parsed from.
++            let ctext = get_encrypted_mime(mail)
++                .context("no encrypted part")?
++                .get_body_raw()?;
++            let payload = crate::offload_ops::encode_decrypt_psk(&psk, &ctext);
++            match tokio::offload::offload("decrypt_psk", payload)
++                .await
++                .and_then(|reply| {
++                    Message::from_bytes(Cursor::new(reply)).map_err(|e| e.to_string())
++                }) {
++                Ok(plain) => return Ok(Some((plain, expected_sender_fingerprint))),
++                // Fall through and decrypt inline: a failing pool must never
++                // turn a decryptable message into a permanent "cannot be
++                // decrypted" (the caller stores that verdict for good).
++                Err(e) => warn!(context, "decrypt_psk offload, decrypting inline: {e}"),
++            }
++        }
++
++        tokio::task::spawn_blocking(move || {
+             let ring = TheRing {
+                 session_keys: vec![psk],
+                 decrypt_options,
+                 ..Default::default()
+             };
+-
+-            let (plain, _ring_result) = msg
+-                .decrypt_the_ring(ring, abort_early)
+-                .context("decrypt_the_ring")?;
+-
+-            let plain: Message<'static> = plain.decompress()?;
+-            Ok(plain)
++            decrypt_ring(*msg, ring)
+         })
+         .await??
+     } else {
+@@ -92,19 +126,33 @@ pub(crate) async fn decrypt(
+         let secret_keys: Vec<SignedSecretKey> = load_self_secret_keyring(context).await?;
+         expected_sender_fingerprint = None;
+ 
+-        tokio::task::spawn_blocking(move || -> Result<Message<'_>> {
++        #[cfg(target_arch = "wasm32")]
++        if tokio::offload::available() {
++            // The `Message` reader cannot be serialized;
++            // re-extract the raw armored body it was parsed from.
++            let ctext = get_encrypted_mime(mail)
++                .context("no encrypted part")?
++                .get_body_raw()?;
++            let payload = crate::offload_ops::encode_decrypt_keys(&ctext, &secret_keys);
++            match tokio::offload::offload("decrypt_keys", payload)
++                .await
++                .and_then(|reply| {
++                    Message::from_bytes(Cursor::new(reply)).map_err(|e| e.to_string())
++                }) {
++                Ok(plain) => return Ok(Some((plain, expected_sender_fingerprint))),
++                // see the symmetric branch above: never a permanent failure
++                Err(e) => warn!(context, "decrypt_keys offload, decrypting inline: {e}"),
++            }
++        }
++
++        tokio::task::spawn_blocking(move || {
+             let secret_keys: Vec<&SignedSecretKey> = secret_keys.iter().collect();
+             let ring = TheRing {
+                 secret_keys,
+                 decrypt_options,
+                 ..Default::default()
+             };
+-            let (plain, _ring_result) = msg
+-                .decrypt_the_ring(ring, abort_early)
+-                .context("decrypt_the_ring")?;
+-
+-            let plain: Message<'static> = plain.decompress()?;
+-            Ok(plain)
++            decrypt_ring(*msg, ring)
+         })
+         .await??
+     };
+diff --git a/src/e2ee.rs b/src/e2ee.rs
+index 7760641..381a653 100644
+--- a/src/e2ee.rs
++++ b/src/e2ee.rs
+@@ -8,6 +8,8 @@
+ use crate::aheader::{Aheader, EncryptPreference};
+ use crate::context::Context;
+ use crate::key::{SignedPublicKey, load_self_public_key, load_self_secret_key};
++#[cfg(target_arch = "wasm32")]
++use crate::log::warn;
+ use crate::pgp::{self, SeipdVersion};
+ 
+ #[derive(Debug)]
+@@ -88,6 +90,24 @@ pub async fn encrypt_symmetrically(
+         let cursor = Cursor::new(&mut raw_message);
+         mail_to_encrypt.clone().write_part(cursor).ok();
+ 
++        #[cfg(target_arch = "wasm32")]
++        if tokio::offload::available() {
++            let payload = crate::offload_ops::encode_symm_encrypt(
++                &shared_secret,
++                &raw_message,
++                sign_key.as_ref(),
++                compress,
++            );
++            match tokio::offload::offload("symm_encrypt", payload)
++                .await
++                .and_then(|reply| String::from_utf8(reply).map_err(|e| e.to_string()))
++            {
++                Ok(ctext) => return Ok(ctext),
++                // the pool is an optimization; encrypt inline if it fails
++                Err(e) => warn!(context, "symm_encrypt offload, encrypting inline: {e}"),
++            }
++        }
++
+         let ctext = tokio::task::spawn_blocking(move || {
+             pgp::symm_encrypt_message(raw_message, sign_key, shared_secret, compress)
+         })
+diff --git a/src/key.rs b/src/key.rs
+index 1f3ade7..0728a20 100644
+--- a/src/key.rs
++++ b/src/key.rs
+@@ -24,6 +24,8 @@
+ use crate::context::Context;
+ use crate::events::EventType;
+ use crate::log::LogExt;
++#[cfg(target_arch = "wasm32")]
++use crate::log::warn;
+ use crate::tools::{self, time_elapsed};
+ 
+ /// Convenience trait for working with keys.
+@@ -474,6 +476,28 @@ async fn generate_keypair(context: &Context) -> Result<SignedSecretKey> {
+         None => {
+             let start = tools::time_now();
+             info!(context, "Generating keypair.");
++
++            #[cfg(target_arch = "wasm32")]
++            if tokio::offload::available() {
++                match tokio::offload::offload("keygen", addr.to_string().into_bytes())
++                    .await
++                    .and_then(|reply| {
++                        SignedSecretKey::from_slice(&reply).map_err(|e| e.to_string())
++                    }) {
++                    Ok(keypair) => {
++                        store_self_keypair(context, &keypair).await?;
++                        info!(
++                            context,
++                            "Keypair generated in {:.3}s.",
++                            time_elapsed(&start).as_secs(),
++                        );
++                        return Ok(keypair);
++                    }
++                    // the pool is an optimization; generate inline if it fails
++                    Err(e) => warn!(context, "keygen offload, generating inline: {e}"),
++                }
++            }
++
+             let keypair = Handle::current()
+                 .spawn_blocking(move || crate::pgp::create_keypair(addr))
+                 .await??;
+diff --git a/src/lib.rs b/src/lib.rs
+index f30aa4f..6b1e2a0 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -77,6 +77,7 @@
+ mod mimefactory;
+ pub mod mimeparser;
+ pub mod oauth2;
++pub mod offload_ops;
+ mod param;
+ #[cfg(not(feature = "internals"))]
+ mod pgp;
+diff --git a/src/offload_ops.rs b/src/offload_ops.rs
+new file mode 100644
+index 0000000..2a6cdf8
+--- /dev/null
++++ b/src/offload_ops.rs
+@@ -0,0 +1,324 @@
++//! Payload codecs and the worker-side dispatcher for offloaded PGP operations.
++//!
++//! On wasm, heavy PGP work is handed to a JS-side worker pool via
++//! `tokio::offload` (see the tokio facade). Call sites encode their arguments
++//! with the `encode_*` functions below; the worker (another instance of this
++//! crate compiled to wasm) runs [`handle_op`] and returns the reply bytes.
++//! Both sides live in this module so the wire format cannot diverge.
++//!
++//! Wire format: ops start with 0-2 raw flag/meta bytes, followed by
++//! length-prefixed fields (`[u32 LE length][bytes]`). Keys travel in core's
++//! sqlite serialization ([`DcKey::to_bytes`] / [`DcKey::from_slice`]).
++//! The crypto bodies reuse core's own functions, nothing is reimplemented.
++
++use std::io::Cursor;
++
++use anyhow::{Context as _, Result, bail, ensure};
++use deltachat_contact_tools::EmailAddress;
++use pgp::composed::{FullSignaturePacket, Message, PlainSessionKey, TheRing};
++use pgp::crypto::sym::SymmetricKeyAlgorithm;
++use pgp::packet::{LiteralData, PacketTrait as _};
++
++use crate::key::{DcKey, SignedPublicKey, SignedSecretKey};
++use crate::pgp::{SeipdVersion, create_keypair, pk_encrypt_sync, symm_encrypt_message};
++
++/// Appends a `[u32 LE length][bytes]` field to `out`.
++pub fn push_field(out: &mut Vec<u8>, field: &[u8]) {
++    let len = u32::try_from(field.len()).expect("offload field fits in u32");
++    out.extend_from_slice(&len.to_le_bytes());
++    out.extend_from_slice(field);
++}
++
++/// Takes the next `[u32 LE length][bytes]` field off the front of `p`.
++pub fn next_field<'a>(p: &mut &'a [u8]) -> Result<&'a [u8]> {
++    let (len, rest) = p
++        .split_first_chunk::<4>()
++        .context("truncated field length")?;
++    let len = u32::from_le_bytes(*len) as usize;
++    ensure!(rest.len() >= len, "truncated field");
++    let (field, rest) = rest.split_at(len);
++    *p = rest;
++    Ok(field)
++}
++
++/// Encodes a `pk_encrypt` payload:
++/// `[flags 1B: bit0 compress, bit1 seipd_v2][seckey][plain][pubkey]*`.
++pub fn encode_pk_encrypt(
++    private_key_for_signing: &SignedSecretKey,
++    plain: &[u8],
++    public_keys_for_encryption: &[SignedPublicKey],
++    compress: bool,
++    seipd_version: &SeipdVersion,
++) -> Vec<u8> {
++    let mut flags = 0u8;
++    if compress {
++        flags |= 1;
++    }
++    if matches!(seipd_version, SeipdVersion::V2) {
++        flags |= 2;
++    }
++    let mut out = vec![flags];
++    push_field(&mut out, &DcKey::to_bytes(private_key_for_signing));
++    push_field(&mut out, plain);
++    for key in public_keys_for_encryption {
++        push_field(&mut out, &DcKey::to_bytes(key));
++    }
++    out
++}
++
++/// Encodes a `symm_encrypt` payload:
++/// `[flags 1B: bit0 compress, bit1 has_sign_key][shared_secret][plain][sign_key iff bit1]`.
++pub fn encode_symm_encrypt(
++    shared_secret: &str,
++    plain: &[u8],
++    sign_key: Option<&SignedSecretKey>,
++    compress: bool,
++) -> Vec<u8> {
++    let mut flags = 0u8;
++    if compress {
++        flags |= 1;
++    }
++    if sign_key.is_some() {
++        flags |= 2;
++    }
++    let mut out = vec![flags];
++    push_field(&mut out, shared_secret.as_bytes());
++    push_field(&mut out, plain);
++    if let Some(key) = sign_key {
++        push_field(&mut out, &DcKey::to_bytes(key));
++    }
++    out
++}
++
++/// Encodes a `decrypt_keys` payload: `[ctext armored][seckey]*`.
++pub fn encode_decrypt_keys(ctext: &[u8], secret_keys: &[SignedSecretKey]) -> Vec<u8> {
++    let mut out = Vec::new();
++    push_field(&mut out, ctext);
++    for key in secret_keys {
++        push_field(&mut out, &DcKey::to_bytes(key));
++    }
++    out
++}
++
++/// Encodes a `decrypt_psk` payload:
++/// `[version_tag 1B (3/5/6)][sym_alg 1B (tag 3 only)][session key][ctext armored]`.
++pub fn encode_decrypt_psk(psk: &PlainSessionKey, ctext: &[u8]) -> Vec<u8> {
++    let (tag, alg, key): (u8, u8, &[u8]) = match psk {
++        PlainSessionKey::V3_4 { sym_alg, key } => (3, (*sym_alg).into(), key.as_ref()),
++        PlainSessionKey::V5 { key } => (5, 0, key.as_ref()),
++        PlainSessionKey::V6 { key } => (6, 0, key.as_ref()),
++    };
++    let mut out = vec![tag, alg];
++    push_field(&mut out, key);
++    push_field(&mut out, ctext);
++    out
++}
++
++/// Dispatches an offloaded PGP operation. Runs inside the worker.
++pub fn handle_op(op: &str, payload: &[u8]) -> Result<Vec<u8>> {
++    match op {
++        "keygen" => {
++            let addr = EmailAddress::new(str::from_utf8(payload)?)?;
++            let secret = create_keypair(addr)?;
++            Ok(DcKey::to_bytes(&secret))
++        }
++        "pk_encrypt" => {
++            let (&flags, mut p) = payload.split_first().context("empty pk_encrypt payload")?;
++            let seckey = SignedSecretKey::from_slice(next_field(&mut p)?)?;
++            let plain = next_field(&mut p)?.to_vec();
++            let mut pubkeys = Vec::new();
++            while !p.is_empty() {
++                pubkeys.push(SignedPublicKey::from_slice(next_field(&mut p)?)?);
++            }
++            let seipd_version = match flags & 2 != 0 {
++                true => SeipdVersion::V2,
++                false => SeipdVersion::V1,
++            };
++            let armored = pk_encrypt_sync(plain, pubkeys, seckey, flags & 1 != 0, seipd_version)?;
++            Ok(armored.into_bytes())
++        }
++        "symm_encrypt" => {
++            let (&flags, mut p) = payload
++                .split_first()
++                .context("empty symm_encrypt payload")?;
++            let shared_secret = str::from_utf8(next_field(&mut p)?)?.to_string();
++            let plain = next_field(&mut p)?.to_vec();
++            let sign_key = match flags & 2 != 0 {
++                true => Some(SignedSecretKey::from_slice(next_field(&mut p)?)?),
++                false => None,
++            };
++            let armored = symm_encrypt_message(plain, sign_key, shared_secret, flags & 1 != 0)?;
++            Ok(armored.into_bytes())
++        }
++        "decrypt_keys" => {
++            let mut p = payload;
++            let ctext = next_field(&mut p)?;
++            let mut secret_keys = Vec::new();
++            while !p.is_empty() {
++                secret_keys.push(SignedSecretKey::from_slice(next_field(&mut p)?)?);
++            }
++            let secret_keys: Vec<&SignedSecretKey> = secret_keys.iter().collect();
++            let ring = TheRing {
++                secret_keys,
++                decrypt_options: crate::decrypt::decrypt_options(),
++                ..Default::default()
++            };
++            decrypt_reencode(ctext, ring)
++        }
++        "decrypt_psk" => {
++            let (meta, mut p) = payload
++                .split_first_chunk::<2>()
++                .context("truncated decrypt_psk payload")?;
++            let [tag, sym_alg] = *meta;
++            let key = next_field(&mut p)?.to_vec();
++            let ctext = next_field(&mut p)?;
++            let psk = match tag {
++                3 => PlainSessionKey::V3_4 {
++                    sym_alg: SymmetricKeyAlgorithm::from(sym_alg),
++                    key: key.into(),
++                },
++                5 => PlainSessionKey::V5 { key: key.into() },
++                6 => PlainSessionKey::V6 { key: key.into() },
++                v => bail!("unknown session key version tag {v}"),
++            };
++            let ring = TheRing {
++                session_keys: vec![psk],
++                decrypt_options: crate::decrypt::decrypt_options(),
++                ..Default::default()
++            };
++            decrypt_reencode(ctext, ring)
++        }
++        _ => bail!("unknown offload op {op:?}"),
++    }
++}
++
++/// Parses the armored ciphertext, decrypts it (same calls, and the same
++/// shared options, as the inline closures in `crate::decrypt::decrypt`) and
++/// re-encodes the plain message so it can cross the JS boundary as bytes.
++fn decrypt_reencode(ctext: &[u8], ring: TheRing<'_>) -> Result<Vec<u8>> {
++    let (msg, _headers) = Message::from_armor(Cursor::new(ctext.to_vec()))?;
++    reencode_plain(crate::decrypt::decrypt_ring(msg, ring)?)
++}
++
++/// Re-encodes a decrypted [`Message`] at the packet level; rPGP has no
++/// serializer for `Message`, which is a streaming reader.
++///
++/// Reading the data to the end finalizes the running signature hashes, then
++/// the literal packet is rebuilt from the data (preserving the file name; the
++/// literal header is not covered by OpenPGP signatures) and written between
++/// the one-pass-signature/signature packets in their original structure, so
++/// that core-side `Message::from_bytes` + `verify` sees identical hashes.
++fn reencode_plain(mut plain: Message<'_>) -> Result<Vec<u8>> {
++    let file_name = plain
++        .literal_data_header()
++        .map(|h| h.file_name().clone())
++        .unwrap_or_default();
++    // Reads the message to the end, finalizing signature hashes.
++    let data = plain.as_data_vec()?;
++    let literal = LiteralData::from_bytes(file_name, data.into())?;
++
++    let mut out = Vec::new();
++    match &plain {
++        Message::Literal { .. } => {
++            literal.to_writer_with_header(&mut out)?;
++        }
++        // ponytail: only the outermost signature layer is re-encoded. Nested
++        // `Signed` sources (a signed-inside-signed plaintext) lose their inner
++        // signatures — harmless while consumers only read index 0 of the outer
++        // reader (mimeparser's `signature(0)`, `verify` = `verify_nested(0)`);
++        // if anything ever calls `verify_nested()` deeper, recurse here.
++        Message::Signed { reader, .. } => {
++            let sigs = reader
++                .signatures()
++                .context("signatures not finalized after reading message")?;
++            // Prefix packets (one-pass-signature and old-style signature
++            // packets) in their original parse order, ...
++            for sig in sigs {
++                match sig {
++                    FullSignaturePacket::Ops { ops, .. } => ops.to_writer_with_header(&mut out)?,
++                    FullSignaturePacket::Signature { signature } => {
++                        signature.to_writer_with_header(&mut out)?
++                    }
++                }
++            }
++            // ... then the literal data, ...
++            literal.to_writer_with_header(&mut out)?;
++            // ... then the trailing signatures of the one-pass signatures in
++            // reverse (innermost one-pass signature closed first).
++            for sig in sigs.iter().rev() {
++                if let FullSignaturePacket::Ops { signature, .. } = sig {
++                    signature.to_writer_with_header(&mut out)?;
++                }
++            }
++        }
++        // ponytail: inline decryption tolerated other shapes as garbage bytes;
++        // mimeparser treats this error the same way (warn + not decryptable).
++        _ => bail!("unsupported decrypted message shape for offload"),
++    }
++    Ok(out)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use pgp::composed::Esk;
++    use pgp::composed::decrypt_session_key_with_password;
++    use pgp::types::Password;
++
++    #[test]
++    fn test_offload_keys_round_trip() -> Result<()> {
++        let secret_bytes = handle_op("keygen", b"offload@example.org")?;
++        let secret = SignedSecretKey::from_slice(&secret_bytes)?;
++        let public = secret.to_public_key();
++        let plain = b"this is the offloaded message".to_vec();
++
++        for seipd_version in [SeipdVersion::V1, SeipdVersion::V2] {
++            let payload = encode_pk_encrypt(
++                &secret,
++                &plain,
++                std::slice::from_ref(&public),
++                true,
++                &seipd_version,
++            );
++            let armored = handle_op("pk_encrypt", &payload)?;
++            assert!(armored.starts_with(b"-----BEGIN PGP MESSAGE-----"));
++
++            let payload = encode_decrypt_keys(&armored, std::slice::from_ref(&secret));
++            let reply = handle_op("decrypt_keys", &payload)?;
++            let mut msg = Message::from_bytes(Cursor::new(reply))?;
++            assert_eq!(msg.as_data_vec()?, plain);
++            msg.verify(&public.primary_key)
++                .expect("signature must verify after re-encoding");
++        }
++        Ok(())
++    }
++
++    #[test]
++    fn test_offload_psk_round_trip() -> Result<()> {
++        let secret_bytes = handle_op("keygen", b"psk@example.org")?;
++        let secret = SignedSecretKey::from_slice(&secret_bytes)?;
++        let public = secret.to_public_key();
++        let plain = b"broadcast secret message".to_vec();
++
++        let payload = encode_symm_encrypt("shared secret", &plain, Some(&secret), true);
++        let armored = handle_op("symm_encrypt", &payload)?;
++
++        // Extract the session key the same way `crate::decrypt` does.
++        let (msg, _headers) = Message::from_armor(Cursor::new(armored.clone()))?;
++        let Message::Encrypted { esk, .. } = msg else {
++            panic!("expected encrypted message");
++        };
++        let [Esk::SymKeyEncryptedSessionKey(esk)] = &esk[..] else {
++            panic!("expected a single SKESK");
++        };
++        let psk = decrypt_session_key_with_password(esk, &Password::from("shared secret"))?;
++
++        let payload = encode_decrypt_psk(&psk, &armored);
++        let reply = handle_op("decrypt_psk", &payload)?;
++        let mut msg = Message::from_bytes(Cursor::new(reply))?;
++        assert_eq!(msg.as_data_vec()?, plain);
++        msg.verify(&public.primary_key)
++            .expect("signature must verify after re-encoding");
++        Ok(())
++    }
++}
+diff --git a/src/pgp.rs b/src/pgp.rs
+index 8821d36..505d1e2 100644
+--- a/src/pgp.rs
++++ b/src/pgp.rs
+@@ -108,7 +108,6 @@ pub enum SeipdVersion {
+ 
+ /// Encrypts `plain` text using `public_keys_for_encryption`
+ /// and signs it using `private_key_for_signing`.
+-#[expect(clippy::arithmetic_side_effects)]
+ pub async fn pk_encrypt(
+     plain: Vec<u8>,
+     public_keys_for_encryption: Vec<SignedPublicKey>,
+@@ -116,90 +115,129 @@ pub async fn pk_encrypt(
+     compress: bool,
+     seipd_version: SeipdVersion,
+ ) -> Result<String> {
++    #[cfg(target_arch = "wasm32")]
++    if tokio::offload::available() {
++        let payload = crate::offload_ops::encode_pk_encrypt(
++            &private_key_for_signing,
++            &plain,
++            &public_keys_for_encryption,
++            compress,
++            &seipd_version,
++        );
++        match tokio::offload::offload("pk_encrypt", payload)
++            .await
++            .and_then(|reply| String::from_utf8(reply).map_err(|e| e.to_string()))
++        {
++            Ok(ctext) => return Ok(ctext),
++            // The pool is an optimization: encrypt inline if it fails. Silent
++            // because there is no `Context` here to warn! on, and a failing
++            // pool already logs on the decrypt and keygen paths.
++            Err(_) => {}
++        }
++    }
++
+     Handle::current()
+         .spawn_blocking(move || {
+-            let mut rng = thread_rng();
++            pk_encrypt_sync(
++                plain,
++                public_keys_for_encryption,
++                private_key_for_signing,
++                compress,
++                seipd_version,
++            )
++        })
++        .await?
++}
+ 
+-            let pkeys = public_keys_for_encryption
+-                .iter()
+-                .filter_map(select_pk_for_encryption);
+-            let subpkts = {
+-                let mut hashed = Vec::with_capacity(1 + public_keys_for_encryption.len() + 1);
+-                hashed.push(Subpacket::critical(SubpacketData::SignatureCreationTime(
+-                    pgp::types::Timestamp::now(),
+-                ))?);
+-                for key in &public_keys_for_encryption {
+-                    let data = SubpacketData::IntendedRecipientFingerprint(key.fingerprint());
+-                    let subpkt = match private_key_for_signing.version() < KeyVersion::V6 {
+-                        true => Subpacket::regular(data)?,
+-                        false => Subpacket::critical(data)?,
+-                    };
+-                    hashed.push(subpkt);
+-                }
+-                hashed.push(Subpacket::regular(SubpacketData::IssuerFingerprint(
+-                    private_key_for_signing.fingerprint(),
+-                ))?);
+-                let mut unhashed = vec![];
+-                if private_key_for_signing.version() <= KeyVersion::V4 {
+-                    unhashed.push(Subpacket::regular(SubpacketData::IssuerKeyId(
+-                        private_key_for_signing.legacy_key_id(),
+-                    ))?);
+-                }
+-                SubpacketConfig::UserDefined { hashed, unhashed }
+-            };
++/// Synchronous body of [`pk_encrypt`]; also runs in the wasm offload worker.
++#[expect(clippy::arithmetic_side_effects)]
++pub(crate) fn pk_encrypt_sync(
++    plain: Vec<u8>,
++    public_keys_for_encryption: Vec<SignedPublicKey>,
++    private_key_for_signing: SignedSecretKey,
++    compress: bool,
++    seipd_version: SeipdVersion,
++) -> Result<String> {
++    let mut rng = thread_rng();
+ 
+-            let msg = MessageBuilder::from_bytes("", plain);
+-            let encoded_msg = match seipd_version {
+-                SeipdVersion::V1 => {
+-                    let mut msg = msg.seipd_v1(&mut rng, SYMMETRIC_KEY_ALGORITHM);
++    let pkeys = public_keys_for_encryption
++        .iter()
++        .filter_map(select_pk_for_encryption);
++    let subpkts = {
++        let mut hashed = Vec::with_capacity(1 + public_keys_for_encryption.len() + 1);
++        hashed.push(Subpacket::critical(SubpacketData::SignatureCreationTime(
++            pgp::types::Timestamp::now(),
++        ))?);
++        for key in &public_keys_for_encryption {
++            let data = SubpacketData::IntendedRecipientFingerprint(key.fingerprint());
++            let subpkt = match private_key_for_signing.version() < KeyVersion::V6 {
++                true => Subpacket::regular(data)?,
++                false => Subpacket::critical(data)?,
++            };
++            hashed.push(subpkt);
++        }
++        hashed.push(Subpacket::regular(SubpacketData::IssuerFingerprint(
++            private_key_for_signing.fingerprint(),
++        ))?);
++        let mut unhashed = vec![];
++        if private_key_for_signing.version() <= KeyVersion::V4 {
++            unhashed.push(Subpacket::regular(SubpacketData::IssuerKeyId(
++                private_key_for_signing.legacy_key_id(),
++            ))?);
++        }
++        SubpacketConfig::UserDefined { hashed, unhashed }
++    };
+ 
+-                    for pkey in pkeys {
+-                        msg.encrypt_to_key_anonymous(&mut rng, &pkey)?;
+-                    }
++    let msg = MessageBuilder::from_bytes("", plain);
++    let encoded_msg = match seipd_version {
++        SeipdVersion::V1 => {
++            let mut msg = msg.seipd_v1(&mut rng, SYMMETRIC_KEY_ALGORITHM);
+ 
+-                    let hash_algorithm = private_key_for_signing.hash_alg();
+-                    msg.sign_with_subpackets(
+-                        &*private_key_for_signing,
+-                        Password::empty(),
+-                        hash_algorithm,
+-                        subpkts,
+-                    );
+-                    if compress {
+-                        msg.compression(CompressionAlgorithm::ZLIB);
+-                    }
++            for pkey in pkeys {
++                msg.encrypt_to_key_anonymous(&mut rng, &pkey)?;
++            }
+ 
+-                    msg.to_armored_string(&mut rng, Default::default())?
+-                }
+-                SeipdVersion::V2 => {
+-                    let mut msg = msg.seipd_v2(
+-                        &mut rng,
+-                        SYMMETRIC_KEY_ALGORITHM,
+-                        AeadAlgorithm::Ocb,
+-                        ChunkSize::C8KiB,
+-                    );
++            let hash_algorithm = private_key_for_signing.hash_alg();
++            msg.sign_with_subpackets(
++                &*private_key_for_signing,
++                Password::empty(),
++                hash_algorithm,
++                subpkts,
++            );
++            if compress {
++                msg.compression(CompressionAlgorithm::ZLIB);
++            }
+ 
+-                    for pkey in pkeys {
+-                        msg.encrypt_to_key_anonymous(&mut rng, &pkey)?;
+-                    }
++            msg.to_armored_string(&mut rng, Default::default())?
++        }
++        SeipdVersion::V2 => {
++            let mut msg = msg.seipd_v2(
++                &mut rng,
++                SYMMETRIC_KEY_ALGORITHM,
++                AeadAlgorithm::Ocb,
++                ChunkSize::C8KiB,
++            );
++
++            for pkey in pkeys {
++                msg.encrypt_to_key_anonymous(&mut rng, &pkey)?;
++            }
+ 
+-                    let hash_algorithm = private_key_for_signing.hash_alg();
+-                    msg.sign_with_subpackets(
+-                        &*private_key_for_signing,
+-                        Password::empty(),
+-                        hash_algorithm,
+-                        subpkts,
+-                    );
+-                    if compress {
+-                        msg.compression(CompressionAlgorithm::ZLIB);
+-                    }
++            let hash_algorithm = private_key_for_signing.hash_alg();
++            msg.sign_with_subpackets(
++                &*private_key_for_signing,
++                Password::empty(),
++                hash_algorithm,
++                subpkts,
++            );
++            if compress {
++                msg.compression(CompressionAlgorithm::ZLIB);
++            }
+ 
+-                    msg.to_armored_string(&mut rng, Default::default())?
+-                }
+-            };
++            msg.to_armored_string(&mut rng, Default::default())?
++        }
++    };
+ 
+-            Ok(encoded_msg)
+-        })
+-        .await?
++    Ok(encoded_msg)
+ }
+ 
+ /// Returns fingerprints

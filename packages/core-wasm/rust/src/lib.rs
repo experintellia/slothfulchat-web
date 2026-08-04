@@ -110,6 +110,24 @@ pub async fn init(
     Ok(DeltaChat { session })
 }
 
+/// Registers the JS handler that runs offloaded crypto ops on the pool
+/// worker: `(op: string, payload: Uint8Array) -> Promise<Uint8Array>`.
+///
+/// Until this is called (or if it never is), core computes the ops inline
+/// on this thread — registering late or never is always safe.
+#[wasm_bindgen]
+pub fn set_crypto_offload(handler: js_sys::Function) {
+    tokio::offload::set_handler(handler);
+}
+
+/// Crypto-worker entry point: runs one op synchronously in THIS wasm
+/// instance (the pool worker loads the same artifact and only ever calls
+/// this — it never runs [`init`]).
+#[wasm_bindgen]
+pub fn crypto_op(op: String, payload: &[u8]) -> Result<Vec<u8>, JsValue> {
+    deltachat::offload_ops::handle_op(&op, payload).map_err(|e| JsValue::from_str(&format!("{e:#}")))
+}
+
 const ACCOUNTS_CONFIG: &str = "/accounts/accounts.toml";
 /// Last-good copy, refreshed by the fs shim before every accounts.toml
 /// overwrite (crates/tokio-wasm-shim/src/opfs.rs).

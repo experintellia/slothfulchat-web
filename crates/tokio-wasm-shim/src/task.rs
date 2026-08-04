@@ -1,8 +1,9 @@
 //! Task spawning on the browser event loop.
 //!
 //! ponytail: single-threaded — `spawn` has no `Send` bound, `spawn_blocking`
-//! and `block_in_place` run inline (a web-worker pool is the upgrade path if
-//! long PGP operations blocking the UI become a problem).
+//! and `block_in_place` run inline. The web-worker pool now exists (see
+//! `offload`; core's PGP call sites use it when a handler is registered);
+//! inline `spawn_blocking` stays as the no-handler fallback.
 
 use std::future::Future;
 use std::pin::Pin;
