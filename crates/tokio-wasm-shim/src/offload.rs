@@ -27,7 +27,21 @@ fn err(context: &str, e: JsValue) -> String {
 }
 
 /// Calls the registered JS handler (op: string, payload: Uint8Array) -> Promise<Uint8Array>.
+///
+/// The JS interaction (all `!Send` values) runs on a `spawn_local` task; this
+/// future only holds the `Send` oneshot receiver, so callers stay compatible
+/// with the `dyn Future + Send` boxing yerpc's rpc macro applies.
 pub async fn offload(op: &str, payload: Vec<u8>) -> Result<Vec<u8>, String> {
+    let (tx, rx) = futures::channel::oneshot::channel();
+    let op = op.to_string();
+    wasm_bindgen_futures::spawn_local(async move {
+        let _ = tx.send(offload_inner(&op, payload).await);
+    });
+    rx.await
+        .map_err(|_| "offload task dropped".to_string())?
+}
+
+async fn offload_inner(op: &str, payload: Vec<u8>) -> Result<Vec<u8>, String> {
     let handler = HANDLER
         .with(|h| h.borrow().clone())
         .ok_or_else(|| "no offload handler".to_string())?;
