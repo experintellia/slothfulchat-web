@@ -14,6 +14,7 @@
  * re-download the world (including the 10MB emoji font) after each deploy.
  */
 import { blobResponseInit } from './blob-response.mjs'
+import { isBlobRoute, resolveBlobRoute } from './blob-route.mjs'
 
 const sw = self as any
 
@@ -145,42 +146,31 @@ sw.addEventListener('fetch', (event: any) => {
   if (event.request.method !== 'GET' || url.origin !== location.origin) {
     return // fall through to network
   }
-  // match the tail so the app works under any base path (e.g. /repo/ on Pages)
-  const blob = url.pathname.match(/\/blobs\/([^/]+)\/(.+)$/)
-  const backup = url.pathname.match(/\/download-backup\/([^/]+)$/)
-  // /blob-path/<uri-encoded absolute memfs path>: temp files outside the
-  // blobdir, e.g. /tmp/<uuid>/<file> (see runtime.ts transformBlobURL)
-  const bypath = url.pathname.match(/\/blob-path\/([^/]+)$/)
-  // /webxdc-icon/:accountId/:msgId — icon from inside a .xdc archive; the
-  // page resolves it via get_webxdc_info + get_webxdc_blob
-  const xdcIcon = url.pathname.match(/\/webxdc-icon\/(\d+)\/(\d+)$/)
-  if (!blob && !backup && !bypath && !xdcIcon) {
+  // one resolver for every /blobs/ route, so no route can be added without a
+  // traversal check (blob-route.mjs; it is where the guards live and is tested
+  // there). A refused route returns null and is dropped, not passed to the page.
+  const route = resolveBlobRoute(url.pathname)
+  if (!route) {
+    // Not one of ours: serve the app shell. A route we recognised but refused
+    // must NOT land here — it would answer a probe for a forbidden path with
+    // the shell instead of nothing — so tell the two apart first.
+    if (isBlobRoute(url.pathname)) return
     // Range requests (media seeking) need 206 semantics the cache can't give
     if (!event.request.headers.has('range')) {
       event.respondWith(serveShell(event))
     }
     return
   }
-  let filename = decodeURIComponent(blob ? blob[2] : backup ? backup[1] : '')
-  const accountId = blob?.[1]
-  // backup exports live in the memfs /exports dir (see runtime.ts EXPORTS_DIR)
-  // and are always served as an attachment
-  let path: string | undefined
+  const filename = route.kind === 'xdc-icon' ? '' : route.filename
+  const accountId = route.kind === 'blob' ? route.accountId : undefined
+  const path = 'path' in route ? route.path : undefined
   let downloadName = url.searchParams.get('download_with_filename')
-  if (backup) {
-    if (filename.includes('/') || filename.includes('..')) return
-    path = `/exports/${filename}`
-    downloadName = filename
-  }
-  if (bypath) {
-    const decoded = decodeURIComponent(bypath[1])
-    if (!decoded.startsWith('/') || decoded.includes('..')) return
-    path = decoded
-    filename = decoded.split('/').pop()! // page side derives MIME from this
-  }
-  const webxdcIcon = xdcIcon
-    ? { accountId: Number(xdcIcon[1]), msgId: Number(xdcIcon[2]) }
-    : undefined
+  // backup exports are always served as an attachment
+  if (route.kind === 'backup') downloadName = route.filename ?? null
+  const webxdcIcon =
+    route.kind === 'xdc-icon'
+      ? { accountId: route.accountId, msgId: route.msgId }
+      : undefined
   event.respondWith(
     (async () => {
       const clients = await sw.clients.matchAll({ type: 'window' })
