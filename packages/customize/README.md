@@ -10,8 +10,10 @@ host.
 npx @slothfulchat/customize
 ```
 
-It downloads the latest release zip, prompts for the values (Enter skips one),
-and writes `slothfulchat-web-custom.zip`. Options:
+It downloads the latest release zip — pinned by name and checked against the
+sha256 digest GitHub publishes for the asset, so a corrupt or swapped download
+stops the run — prompts for the values (Enter skips one), and writes
+`slothfulchat-web-custom.zip`. Options:
 
 ```sh
 npx @slothfulchat/customize --in slothfulchat-web-v0.2.0.zip --out my-instance.zip

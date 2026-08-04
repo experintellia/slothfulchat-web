@@ -1,5 +1,13 @@
 # Changelog
 
+- The downloaded release zip is now verified before it is used: the asset is
+  picked by its published name (`slothfulchat-web-<tag>.zip`) instead of "the
+  first `.zip`", and its sha256 digest is checked against the release metadata.
+  A missing digest or a mismatch aborts the run rather than customizing
+  whatever arrived.
+- Archive size is capped as well — download bytes, entry count and total
+  expanded size — so a corrupt or hostile zip (including an oversized `--in`
+  file) is rejected instead of exhausting memory while unpacking.
 - `SLOTHFUL_RELAY_DIRECTORY` is now offered like every other variable: it was
   supported but never prompted for, so anyone using the interactive flow ended
   up with the default relay directory whether they wanted it or not.
