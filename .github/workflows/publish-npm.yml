@@ -89,15 +89,6 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-        env:
-          CACHE_ON_FAILURE: true
-        with:
-          workspaces: |
-            build/core
-            packages/core-wasm/rust
-
       # NO registry-url here: it makes setup-node write an .npmrc with a
       # placeholder NODE_AUTH_TOKEN, which npm then uses INSTEAD of the OIDC
       # trusted-publishing exchange (unauthenticated PUT -> 404).
@@ -133,7 +124,21 @@ jobs:
       - name: Apply patch stacks (creates build/core, build/desktop)
         run: pnpm apply-patches
 
-      # ORDER TRAP: the workspace override points @deltachat/jsonrpc-client at
+      # ORDER TRAP #3: this MUST run after apply-patches. rust-cache hashes the
+      # workspaces' Cargo.lock files at restore time — build/core only exists
+      # once apply-patches has created it, so running earlier computes a key
+      # blind to the core dependency graph. Worse, apply-patches recreates
+      # build/core with `rm -rf`, which would wipe a restored build/core/target.
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        env:
+          CACHE_ON_FAILURE: true
+        with:
+          workspaces: |
+            build/core
+            packages/core-wasm/rust
+
+      # ORDER TRAP #1: the workspace override points @deltachat/jsonrpc-client at
       # this file: path, so it must be generated + built before `pnpm install`.
       - name: Generate + build @deltachat/jsonrpc-client (before root install)
         working-directory: build/core/deltachat-jsonrpc/typescript
