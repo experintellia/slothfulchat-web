@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
 const here = fileURLToPath(new URL('.', import.meta.url))
-const dist = '/home/dev/work/slothfulchat-web/packages/web-app/dist'
+const dist = join(here, '../packages/web-app/dist')
 const PORT = 8649
 
 const types = {

@@ -8,7 +8,12 @@
 #   test   — the real test suite. Builds the whole app exactly like
 #            deploy-pages.yml (patched core + upstream desktop bundle + release
 #            wasm), then runs the headless Playwright smoke suites plus the
-#            bridge-picker and chat-export E2E suites on top of it.
+#            offline E2E suites (UI flows, PWA update/offline/multi-tab, bridge
+#            allowlist) on top of it.
+#
+# A suite belongs in `test` only if it is offline and deterministic. The
+# scripts/test-*.mjs suites that create throwaway accounts on nine.testrun.org
+# stay out on purpose — see the NOTE at the bottom of this file.
 #
 # The build half of `test` is a faithful copy of deploy-pages.yml — the same
 # three ordering traps apply (jsonrpc-client generated before the root install;
@@ -131,7 +136,7 @@ jobs:
   # behind each step (apt/microsoft-repo removal, order traps, env quirks).
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
     steps:
       - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
         uses: actions/checkout@v4
@@ -211,6 +216,16 @@ jobs:
       - name: Install workspace deps
         run: pnpm install
 
+      # ws-tcp bridge security guards (no browser, no wasm — only `ws`, so it
+      # runs right after install and fails fast): the CHATMAIL_ALLOWLIST refuses
+      # tunnels to IPs nobody resolved, the default bind stays loopback-only, an
+      # allow-all bridge on a public HOST refuses to start, and a malformed
+      # client frame kills one connection instead of the whole bridge.
+      # ALLOWLIST_NET=0 skips the two cases that dial nine.testrun.org, so the
+      # gate cannot go red because a third-party relay is down.
+      - name: Security check — WS→TCP bridge allowlist + bind guards
+        run: ALLOWLIST_NET=0 node scripts/test-ws-tcp-proxy-allowlist.mjs
+
       # packages/calls (docs/calls.md M0): per-subfolder typecheck now that
       # real @types/node / @types/react / react are installed — engine/'s
       # narrower tsconfig (no "jsx", see engine/tsconfig.json) is what actually
@@ -280,6 +295,33 @@ jobs:
       # SW-controlled reload.
       - name: Smoke test — frontend boots on the wasm core
         run: pnpm --filter @slothfulchat/web-app test
+
+      # PWA update path (offline, no core boot — serves a throwaway copy of
+      # dist/ with GitHub-Pages-like headers): a deploy propagates past a
+      # "fresh" HTTP cache, unchanged files are copy-forwarded instead of
+      # re-downloaded, a file missing from the server doesn't brick the install,
+      # old shell caches are dropped, and the result still works offline. A
+      # broken update here bricks every installed app on the next deploy.
+      - name: E2E test — PWA hashed-precache update path
+        run: node scripts/test-pwa-update.mjs
+
+      # hard reload (SW bypass), offline, no core boot: the page notices it came
+      # up uncontrolled, reloads itself exactly once, and blob:// URLs are served
+      # by the SW again — without looping.
+      - name: E2E test — hard reload returns under service-worker control
+        run: node scripts/test-pwa-hard-reload.mjs
+
+      # PWA offline app shell (kills the static server for real, then cold-
+      # starts): frontend AND wasm core boot from the SW cache alone, and Chrome
+      # reports no installability errors.
+      - name: E2E test — app boots offline from the service-worker cache
+        run: node scripts/test-pwa-offline.mjs
+
+      # two tabs on one origin (offline): the core's exclusive OPFS lock means
+      # the second tab must get the "already running in another tab" dialog
+      # instead of a silently dead app — and a plain reload must not fake it.
+      - name: E2E test — second tab shows the already-running dialog
+        run: node scripts/test-two-tabs.mjs
 
       # translation editor e2e (offline, onboarding screen): the editor opens in
       # a separate popup window and editing a string live-refreshes the app.
@@ -372,3 +414,13 @@ jobs:
       # untested (test-webimap.mjs only ever drives via rpc, never reloads into
       # the UI), likely an accounts-persist-before-reload race. Needs debugging
       # against a real wasm build before it can be a CI gate; run locally for now.
+      #
+      # NOTE: the remaining scripts/test-*.mjs suites are deliberately not gated:
+      #   - test-networking / test-persistence / test-imex / test-web-app-e2e /
+      #     test-web-app-imex / test-read-time-e2e / test-webimap each POST to
+      #     https://nine.testrun.org/new for a throwaway account and then talk
+      #     real IMAP/SMTP. Gating them would make every PR depend on a
+      #     third-party relay (and litter it with accounts). Run them locally,
+      #     or point CHATMAIL_NEW at your own relay.
+      #   - test-webxdc-isolation needs the `caddy` binary (dev-caddy.mjs) for
+      #     wildcard-subdomain routing, which the runner image doesn't have.
