@@ -127,6 +127,16 @@ if (await page.locator('#sc-init-error-dialog').count()) {
 }
 console.log('OK: the worker’s later init-error does not bury the specific dialog')
 
+// --- 6) nothing else piles onto the error screen ---------------------------
+// The bridge probe runs at startup and its toast opens the bridge dialog on
+// click — over the explanation of what actually broke, and about a problem the
+// user does not have: the core never started, so the bridge is irrelevant.
+const toasts = await page.locator('#sc-bridge-toast, #sc-bridge-hint').count()
+if (toasts) {
+  throw new Error('the bridge warning is still on screen next to a fatal dialog')
+}
+console.log('OK: the bridge warning stays out of the way of a fatal dialog')
+
 await browser.close()
 server.kill()
 console.log('\nfatal-start dialog: all checks passed')

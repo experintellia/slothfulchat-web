@@ -1943,6 +1943,10 @@ function showFatalDialog(
   // bury the first and its more specific explanation.
   if (fatalShown) return
   fatalShown = true
+  // a probe that already ran may have left the bridge warning on screen; from
+  // here on it is noise about the wrong problem (see checkBridge)
+  hideBridgeToast()
+  hideWelcomeHint()
   const overlay = el('dialog', {
     position: 'fixed',
     inset: '0',
@@ -3514,6 +3518,15 @@ async function bridgeNeed(): Promise<'none' | 'required' | 'fallback'> {
 }
 
 async function checkBridge(): Promise<boolean> {
+  // A fatal dialog means the core never started, so the bridge is not the
+  // user's problem and its toast is one more thing piled on the error screen —
+  // clicking it even opens the bridge dialog over the explanation of what
+  // actually broke. Say nothing.
+  if (fatalShown) {
+    hideBridgeToast()
+    hideWelcomeHint()
+    return true
+  }
   // The frontend sets this while onboarding a bridge-free account (madmail
   // webimap) — suppress the notice so it doesn't wrongly nag on that flow.
   if ((window as any).__slothfulchatSuppressBridgeWarning) {
