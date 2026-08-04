@@ -64,20 +64,45 @@ interface CryptoReply {
   fatal?: boolean
 }
 
+/** One queued or running op. */
+interface CryptoJob {
+  id: number
+  op: string
+  payload: Uint8Array
+  resolve: (reply: Uint8Array) => void
+  reject: (err: Error) => void
+  timer?: ReturnType<typeof setTimeout>
+}
+
+/** Beyond this many waiting ops, `run()` rejects so core computes them
+ * inline instead of piling up copies of large payloads in memory. */
+const MAX_QUEUED = 8
+
+/**
+ * Per-op deadline. A worker that answered `ready` and then goes silent — the
+ * OS reclaiming it under memory pressure, a wedged instance — would
+ * otherwise leave core awaiting a promise that never settles, which no error
+ * path can rescue. Calibrated from the issue #3 device runs: keygen is
+ * milliseconds and the slowest measured payload op was a 5 MB encrypt at
+ * 11.3 s on an iPhone, so 15 s + 4 s/MB keeps >2x headroom everywhere we
+ * measured while still recovering a dead worker promptly.
+ */
+const opTimeoutMs = (payload: Uint8Array) => 15_000 + (payload.byteLength / 1e6) * 4_000
+
 /**
  * Prewarmed worker that runs offloaded PGP ops (issue #3) so core's thread
  * stays responsive. Registered with the wasm side via `set_crypto_offload`
  * only once its worker is ready. Never a correctness dependency: core
- * computes the op inline whenever this is unregistered, dead, or errors.
- * ponytail: pool of one; bump to N workers if parallel crypto ever matters.
+ * computes the op inline whenever this is unregistered, dead, erroring, or
+ * too slow to answer.
+ * ponytail: pool of one, so one op runs at a time; bump to N workers (and N
+ * concurrent jobs) if parallel crypto ever matters.
  */
 class CryptoPool {
   private worker: Worker | null = null
   private nextId = 1
-  private inflight = new Map<
-    number,
-    { resolve: (reply: Uint8Array) => void; reject: (err: Error) => void; op: string }
-  >()
+  private active: CryptoJob | null = null
+  private queue: CryptoJob[] = []
   private resolveReady!: () => void
   /** Resolves once a worker has loaded the wasm artifact. Never resolves if
    * spawning fails for good — then registration never happens (inline). */
@@ -109,31 +134,42 @@ class CryptoPool {
         else this.resolveReady()
         return
       }
-      const entry = msg.id === undefined ? undefined : this.inflight.get(msg.id)
-      if (entry) {
-        this.inflight.delete(msg.id!)
+      // ignore replies that don't match the running op: a late answer from a
+      // worker we already gave up on must not settle its successor's job
+      const job = this.active
+      if (job && msg.id === job.id) {
+        clearTimeout(job.timer)
+        this.active = null
         if (msg.ok && msg.reply) {
           // reset on useful work, not on the ready handshake: a payload that
           // reliably traps the instance would otherwise respawn forever
           this.spawnFailures = 0
           this.offloaded++
           // observable marker for tests; every other listener ignores it
-          scope.postMessage({ type: 'crypto-offload', op: entry.op, count: this.offloaded } as unknown as string)
-          entry.resolve(msg.reply)
+          scope.postMessage({ type: 'crypto-offload', op: job.op, count: this.offloaded } as unknown as string)
+          job.resolve(msg.reply)
         } else {
-          entry.reject(new Error(msg.error ?? `crypto op ${entry.op} failed`))
+          job.reject(new Error(msg.error ?? `crypto op ${job.op} failed`))
         }
       }
       if (msg.fatal) this.die(new Error(msg.error ?? 'crypto worker trapped'))
+      else this.pump()
     }
     worker.onerror = event => {
       this.die(new Error(`crypto worker error: ${event.message ?? 'unknown'}`))
     }
+    // a reply that can't be deserialized never reaches onmessage, so without
+    // this the running op would wait out its whole deadline
+    worker.onmessageerror = () => this.die(new Error('crypto worker reply was undeserializable'))
   }
 
   private die(cause: Error): void {
-    for (const { reject } of this.inflight.values()) reject(cause)
-    this.inflight.clear()
+    // reject the running op AND everything queued: each one falls back to
+    // core's inline path immediately instead of waiting on the respawn
+    if (this.active) clearTimeout(this.active.timer)
+    for (const job of [this.active, ...this.queue]) job?.reject(cause)
+    this.active = null
+    this.queue = []
     this.worker?.terminate()
     this.worker = null
     // >3 failures without a single completed op = permanently dead; run()
@@ -142,15 +178,31 @@ class CryptoPool {
     this.spawn()
   }
 
-  /** Runs one op on the pool worker. The payload's buffer is transferred —
+  /** Starts the next queued op if the worker is free. */
+  private pump(): void {
+    const worker = this.worker
+    if (this.active || !worker) return
+    const job = this.queue.shift()
+    if (!job) return
+    this.active = job
+    // set before posting: transferring detaches the buffer, zeroing its length
+    job.timer = setTimeout(
+      () => this.die(new Error(`crypto op ${job.op} timed out`)),
+      opTimeoutMs(job.payload),
+    )
+    worker.postMessage({ id: job.id, op: job.op, payload: job.payload }, [job.payload.buffer])
+  }
+
+  /** Queues one op for the pool worker. The payload's buffer is transferred —
    * safe, and never retried here: core recomputes inline if this rejects. */
   run(op: string, payload: Uint8Array): Promise<Uint8Array> {
-    const worker = this.worker
-    if (!worker) return Promise.reject(new Error('crypto pool is dead'))
+    if (!this.worker) return Promise.reject(new Error('crypto pool is dead'))
+    if (this.queue.length >= MAX_QUEUED) {
+      return Promise.reject(new Error('crypto pool queue is full'))
+    }
     return new Promise((resolve, reject) => {
-      const id = this.nextId++
-      worker.postMessage({ id, op, payload }, [payload.buffer])
-      this.inflight.set(id, { resolve, reject, op })
+      this.queue.push({ id: this.nextId++, op, payload, resolve, reject })
+      this.pump()
     })
   }
 }
