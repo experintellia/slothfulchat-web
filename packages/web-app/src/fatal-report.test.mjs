@@ -44,3 +44,8 @@ test('no arguments does not throw', () => {
 test('a version with no commit hash still renders a build line', () => {
   match(fatalReportText({ kind: 'x', version: '0.9.0' }), /^build: 0\.9\.0$/m)
 })
+
+test('a dirty-build hash is abbreviated without its suffix', () => {
+  const report = fatalReportText({ kind: 'x', version: '0.9.0', commitHash: 'c381266-dirty' })
+  match(report, /^build: 0\.9\.0 c381266$/m, 'no trailing dash from the suffix')
+})

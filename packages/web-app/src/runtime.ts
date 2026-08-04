@@ -316,6 +316,12 @@ function getCore(): Core {
     // web-lock detection — its release lags on reloads and false-positives
     core.worker.addEventListener('message', event => {
       const type = (event as MessageEvent).data?.type
+      // Something more specific is already explained on screen — the no-wasm
+      // check, or an earlier fatal from this worker. Return before the event()
+      // calls, not just before the dialog: a browser with WebAssembly off makes
+      // the worker report a generic init-error too, and counting that as well
+      // would attribute every Lockdown Mode user to a bug that isn't theirs.
+      if (fatalShown) return
       if (type === 'fatal-opfs-locked') {
         analytics.event('boot_error', { kind: 'opfs-locked' })
         showFatalDialog(
@@ -2034,6 +2040,10 @@ function warnIfNoWebAssembly(): void {
   // X — so the bare form throws ReferenceError on precisely the browsers this
   // exists to help, taking the app down before it can explain anything.
   if (typeof globalThis.WebAssembly?.instantiate === 'function') return
+  // its own kind, not the init-error the doomed worker reports a moment later:
+  // the dialog already tells these apart, and counting every Lockdown Mode user
+  // as an init-error puts a phantom population in front of a real bug
+  analytics.event('boot_error', { kind: 'no-wasm' })
   showFatalDialog(
     'sc-no-wasm-dialog',
     `${APP_NAME} can't run in this browser`,
@@ -2046,8 +2056,11 @@ function warnIfNoWebAssembly(): void {
   )
 }
 
-/** The report itself, shown so the user can see what they would be sharing —
- * and selectable, so it still works where the clipboard API doesn't. */
+/** The report itself, shown so the user can see what they would be sharing, and
+ * left selectable so a manual copy still works where the clipboard API doesn't.
+ * `userSelect: 'text'` is belt-and-braces: the app's global stylesheet turns
+ * selection off for headings and buttons but not for a bare <pre>. It is here
+ * so a future global rule cannot quietly take the fallback away. */
 function reportBlock(report: string): HTMLElement {
   return el(
     'pre',
@@ -2946,6 +2959,7 @@ function hideWelcomeHint() {
  * screen itself — inside the modal it stays interactive. Re-injected by the
  * poll if a React re-render wipes it. */
 function showWelcomeHint() {
+  if (fatalShown) return // see showBridgeToast
   if (document.getElementById('sc-bridge-hint')) return
   // Anchor on data-testid, NOT the CSS-module class name: production builds
   // minify local class names (welcomeScreenButtonGroup → "xo"), so a
@@ -3021,6 +3035,12 @@ function showWarningToast(id: string, text: string, onClick?: () => void) {
 }
 
 function showBridgeToast() {
+  // Checked here, not only at the top of checkBridge: the probe in between can
+  // take seconds (a black-holed bridge host runs to its timeout), and a fatal
+  // can arrive during it. The toast is a popover, so showing it after the modal
+  // opened would put it in the top layer ABOVE the dialog explaining the real
+  // failure — the exact stacking this is meant to prevent.
+  if (fatalShown) return
   showWarningToast('sc-bridge-toast', '⚠ Bridge not reachable — click to fix', () =>
     showBridgeDialog()
   )

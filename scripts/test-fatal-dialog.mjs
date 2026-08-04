@@ -82,9 +82,11 @@ if (!/^browser: .*(Chrome|HeadlessChrome)/m.test(report)) {
 }
 console.log('OK: the report names the failure and the browser')
 
-// --- 3) the report stays selectable under the app's global user-select -----
-// _global.scss turns selection off app-wide; a report you cannot select is a
-// report you cannot copy where the clipboard API is refused.
+// --- 3) the report stays selectable ---------------------------------------
+// A report you cannot select is a report you cannot copy where the clipboard
+// API is refused. Nothing targets a bare <pre> today (the app's global
+// user-select:none covers headings and buttons), so this guards the inline
+// userSelect against a future global rule rather than an existing one.
 const selectable = await dialog
   .locator('pre')
   .evaluate(el => getComputedStyle(el).userSelect)
@@ -113,29 +115,60 @@ if ((await copyBtn.innerText()) !== 'Copied') {
 }
 console.log('OK: Copy details copies the report and says so')
 
-// --- 5) a second fatal must not bury the first, more specific one ----------
-// The worker (broken the same way, above) reports its own generic init-error
-// moments later. <dialog> stacks in the top layer, so a second one would bury
-// the Lockdown Mode explanation under "the stored data could not be loaded".
-await page.waitForTimeout(3000) // let the worker's fatal-init-error land
-const dialogCount = await page.locator('dialog[id^="sc-"]').count()
-if (dialogCount !== 1) {
-  throw new Error(`expected exactly one fatal dialog, found ${dialogCount}`)
-}
-if (await page.locator('#sc-init-error-dialog').count()) {
-  throw new Error('the generic init-error dialog buried the specific one')
-}
-console.log('OK: the worker’s later init-error does not bury the specific dialog')
-
-// --- 6) nothing else piles onto the error screen ---------------------------
+// --- 5) nothing else piles onto the error screen ---------------------------
 // The bridge probe runs at startup and its toast opens the bridge dialog on
 // click — over the explanation of what actually broke, and about a problem the
 // user does not have: the core never started, so the bridge is irrelevant.
-const toasts = await page.locator('#sc-bridge-toast, #sc-bridge-hint').count()
-if (toasts) {
+await page.waitForTimeout(3000) // long enough for the probe to time out
+if (await page.locator('#sc-bridge-toast, #sc-bridge-hint').count()) {
   throw new Error('the bridge warning is still on screen next to a fatal dialog')
 }
 console.log('OK: the bridge warning stays out of the way of a fatal dialog')
+
+await context.close()
+
+// --- 6) a second fatal must not bury the first, more specific one ----------
+// Driven by a stub worker rather than the real one, so the second fatal is
+// definitely sent: asserting "only one dialog" against a worker that might
+// never have reported twice would pass whether or not anything was suppressed.
+// Check 6a proves the stub's messages do reach the page's handler; 6b then
+// shows the second one being swallowed.
+async function withStubWorker(body) {
+  const ctx = await browser.newContext({ serviceWorkers: 'block' })
+  const p = await ctx.newPage()
+  await p.addInitScript(() => {
+    Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
+  })
+  await p.route('**/core/worker.js', route =>
+    route.fulfill({ contentType: 'text/javascript', body })
+  )
+  await p.goto(url, { waitUntil: 'domcontentloaded' })
+  await p.waitForTimeout(4000)
+  const ids = await p.evaluate(() =>
+    [...document.querySelectorAll('dialog')].filter(d => d.open).map(d => d.id)
+  )
+  await ctx.close()
+  return ids
+}
+
+// 6a) one fatal from the stub — proves delivery, so 6b cannot pass vacuously
+const single = await withStubWorker(
+  `self.postMessage({ type: 'fatal-opfs-locked' })`
+)
+if (!single.includes('sc-already-running-dialog')) {
+  throw new Error(`stub worker's fatal never reached the page: ${JSON.stringify(single)}`)
+}
+console.log('OK: a fatal posted by the worker opens its dialog')
+
+// 6b) the specific one first, then a generic one 800ms later
+const both = await withStubWorker(`
+  self.postMessage({ type: 'fatal-init-error', message: 'Error: sahpool install failed' })
+  setTimeout(() => self.postMessage({ type: 'fatal-opfs-locked' }), 800)
+`)
+if (both.length !== 1 || both[0] !== 'sc-init-error-dialog') {
+  throw new Error(`the later generic fatal buried the specific one: ${JSON.stringify(both)}`)
+}
+console.log('OK: a later, less specific fatal does not bury the first')
 
 await browser.close()
 server.kill()

@@ -22,7 +22,10 @@ export function fatalReportText({
   userAgent = '',
   displayMode = '',
 } = {}) {
-  const build = [version, commitHash && commitHash.slice(0, 8)].filter(Boolean).join(' ')
+  // leading hex run only: a dirty build's hash carries a suffix ('abc1234-dirty'),
+  // and a blind slice(0, 8) would render it as 'abc1234-'
+  const short = String(commitHash).match(/^[0-9a-f]+/)?.[0].slice(0, 8) ?? ''
+  const build = [version, short].filter(Boolean).join(' ')
   return [
     ['failure', kind],
     ['details', collapse(details)],
