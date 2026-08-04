@@ -113,9 +113,11 @@ Recipe — hand this to whoever (or whatever) drafts it:
 >    - Plain text: device messages are not markdown, URLs autolink. Emoji
 >      sparingly.
 >    - Under ~600 characters including the header and the link line.
->    - Close with `https://web.slothful.chat/changelog/?p=web-app`. **No `#v-…`
->      anchor** — those are positional and drift to the wrong version at the
->      next release (#180); once that's fixed, link the version anchor.
+>    - Close with the version's own anchor on the public instance, e.g.
+>      `https://web.slothful.chat/changelog/?p=web-app#v-0.9.0` — the anchor
+>      carries the version, so the link keeps pointing at this release once
+>      later ones ship. Check the `## X.Y.Z` heading exists first, or it
+>      resolves to nothing.
 >    - Never claim a change you can't point at a commit or changelog entry for.
 > 3. Deliver a "changes since <last tag>" list for the release engineer, plus
 >    **three variants** to choose between, and say what you had to guess.

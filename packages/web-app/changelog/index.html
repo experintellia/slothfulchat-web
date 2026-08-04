@@ -149,7 +149,7 @@ const byId = id => PROJECTS.find(p => p.id === id);
 // the raw <a id> anchors and matches marked's old passthrough behaviour.
 const md = markdownit({ html: true });
 const cache = {};
-let entries = [];      // [{i, ver, date, raw}]
+let entries = [];      // [{i, id, ver, date, raw}]
 let relative = false;
 let activeId = null;
 let spy = null;
@@ -242,7 +242,7 @@ function renderLinkbar(p) {
 
 // Group each version (h2 → next h2) into a <section> so content-visibility can skip
 // off-screen ones. Nodes before the first h2 stay at top level. The h2 keeps its id,
-// so scroll-spy and #v-i scroll targets are unaffected.
+// so scroll-spy and #v-<version> scroll targets are unaffected.
 function wrapSections() {
   let sec = null;
   for (const n of [...contentEl.childNodes]) {
@@ -308,10 +308,20 @@ async function show(id) {
     done("render", t0);
 
     t0 = performance.now();
+    // Anchor on the version, not the position in the document: with `v-<i>`,
+    // `#v-0` meant "whatever shipped last", so every link shared or bookmarked
+    // before a release silently pointed at the wrong version after it. Ids keep
+    // their dots (`v-0.8.0`) and are looked up with getElementById, which takes
+    // a plain string — as a CSS selector `#v-0.8.0` would parse as `#v-0`.
+    const taken = new Set();
     entries = [...contentEl.querySelectorAll("h2")].map((h, i) => {
-      h.id = "v-" + i;
       const e = parseHeading(h.textContent);
-      return { i, ...e };
+      // headings that don't carry a version (and repeats) fall back to position
+      let id = /^\d+\.\d+(?:\.\d+)?$/.test(e.ver) ? "v-" + e.ver : "v-i" + i;
+      while (taken.has(id)) id += "-" + i;
+      taken.add(id);
+      h.id = id;
+      return { i, id, ...e };
     });
     wrapSections();
     ms.index = Math.round(performance.now() - t0);
@@ -329,7 +339,10 @@ async function show(id) {
       order.filter(([k]) => ms[k] != null).map(([k, l]) => `${l} ${ms[k]} ms`).join(" · ");
     contentEl.appendChild(foot);
 
-    if (location.hash) { const t = contentEl.querySelector(location.hash); if (t) t.scrollIntoView(); }
+    if (location.hash) {
+      const t = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+      if (t) t.scrollIntoView();
+    }
     else mainEl.scrollTop = 0; // new project starts at top → header re-expands on mobile
   } catch (e) {
     contentEl.className = "status err";
@@ -351,15 +364,15 @@ function renderSidebar() {
       tocEl.appendChild(h);
     }
     const a = document.createElement("a");
-    a.href = `?p=${curId}#v-${en.i}`;
-    a.dataset.id = "v-" + en.i;
+    a.href = `?p=${curId}#${en.id}`;
+    a.dataset.id = en.id;
     a.onclick = e => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; // let browser open new tab/window
       e.preventDefault();
       // Update the URL without setting location.hash — a real fragment nav flips :target and
       // forces a full-document style recalc (~250ms on large changelogs). pushState skips that.
       history.pushState({}, "", a.getAttribute("href"));
-      contentEl.querySelector("#v-" + en.i)?.scrollIntoView();
+      document.getElementById(en.id)?.scrollIntoView();
       document.body.classList.remove("drawer-open"); // close the mobile drawer on select
     };
     a.innerHTML = `<span class="ver"></span>` + (en.date ? `<span class="date"></span>` : "");
