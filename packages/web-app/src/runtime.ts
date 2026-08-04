@@ -299,10 +299,16 @@ async function requestPersistentStorage(): Promise<void> {
 let core: Core | null = null
 function getCore(): Core {
   if (!core) {
-    const params = new URLSearchParams(location.search)
     const wsProxyUrl = resolveBridgeUrl()
-    // OPFS persistence is on by default; ?persist=0 opts out (fresh-core tests)
-    const persist = params.get('persist') !== '0'
+    // OPFS persistence is on by default; ?persist=0 opts out (fresh-core
+    // tests). Any link can carry that flag, so it only counts once THIS TAB
+    // has confirmed it (see showThrowawayGate) — the gate normally stops the
+    // app long before here; this is the guard that makes it unbypassable.
+    const persist = !throwawayRequested()
+    if (!persist && !throwawayConfirmed()) {
+      showThrowawayGate()
+      throw new Error('throwaway session not confirmed')
+    }
     // which kind of bridge this session uses (local device / instance-provided /
     // user-custom); no-op unless analytics is enabled
     analytics.event('bridge', { kind: bridgeKind(wsProxyUrl) })
@@ -1508,6 +1514,12 @@ class BrowserRuntime {
     ) => void,
     getLogger: (channel: string) => Logger
   ): Promise<void> {
+    // An unconfirmed ?persist=0 session must not start (see showThrowawayGate,
+    // which is already on screen by now). Hang instead of throwing: an
+    // exception here would put boot-error.js's "could not start — your browser
+    // may be too old" screen behind the dialog, blaming the browser for a
+    // question the user simply hasn't answered yet. Either answer reloads.
+    if (throwawayRequested() && !throwawayConfirmed()) return new Promise<void>(() => {})
     this.log = getLogger('runtime/wasm-browser')
 
     // app-link relay target for the HTML email viewer (see openAppLink); the
@@ -3501,6 +3513,148 @@ function confirmQueryBridge(): void {
   showBridgeConfirmDialog(url)
 }
 
+// Marks that THIS TAB agreed to run without saving anything. sessionStorage,
+// not localStorage: the permission has to die with the tab, exactly like the
+// session it authorises.
+const THROWAWAY_KEY = 'slothfulchat.throwawayConfirmed'
+
+function throwawayRequested(): boolean {
+  return new URLSearchParams(location.search).get('persist') === '0'
+}
+
+function throwawayConfirmed(): boolean {
+  try {
+    return sessionStorage.getItem(THROWAWAY_KEY) === '1'
+  } catch {
+    return false // storage blocked: unconfirmable, so keep the safe mode
+  }
+}
+
+/** Running reminder that this session saves nothing: a yellow navbar. Costs no
+ * screen space, unlike a toast parked over the app (which had no free corner —
+ * the bridge toast owns bottom-right, the composer bottom-left).
+ *
+ * Just the two theme vars, overridden on `:root` with `!important`: every theme
+ * sets them plainly, so this wins over whichever one is loaded — including one
+ * switched to later, since this <style> is not the theme's own. No patch, no
+ * frontend code. --navBarText comes along because it is dark-on-light in some
+ * themes and light-on-dark in others; only one of those is readable on yellow
+ * (it also carries the navbar's icon masks). */
+function tintNavBarThrowaway(): void {
+  const style = document.createElement('style')
+  style.id = 'sc-throwaway-tint'
+  style.textContent =
+    ':root{--navBarBackground:#f5c518!important;--navBarText:#1a1a1a!important}'
+  document.head.appendChild(style)
+}
+
+/** Boot gate for `?persist=0`, the memory-only mode the fresh-core tests use.
+ * Silently honouring it from a link is a data-loss trap: existing accounts look
+ * gone, and an account configured (or messages received) in that session vanish
+ * with the tab — on chatmail/webimap the server copy is deleted by then, so it
+ * is unrecoverable. So getCore refuses to start until the user has answered
+ * this, which is also why it can be a plain modal like the fatal-start dialog:
+ * the frontend never gets a core, so no upstream dialog opens above it. */
+function showThrowawayGate(): void {
+  if (document.getElementById('sc-throwaway-dialog')) return
+  // nothing else may pile onto a blocking start screen — same reason the fatal
+  // dialog sets this (the bridge probe's toast is the one thing still running)
+  fatalShown = true
+  hideBridgeToast()
+  hideWelcomeHint()
+  const overlay = el('dialog', {
+    position: 'fixed',
+    inset: '0',
+    width: '100%',
+    height: '100%',
+    maxWidth: 'none',
+    maxHeight: 'none',
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,.5)',
+  })
+  overlay.id = 'sc-throwaway-dialog'
+  overlay.oncancel = e => e.preventDefault() // Esc must not reveal a dead app
+
+  const panel = el('div', {
+    width: 'min(460px, 92vw)',
+    maxHeight: '90vh',
+    overflowY: 'auto',
+    boxSizing: 'border-box',
+    padding: '20px',
+    borderRadius: '10px',
+    background: '#1e1e1e',
+    color: '#eee',
+    font: '14px/1.5 system-ui, sans-serif',
+    boxShadow: '0 8px 40px rgba(0,0,0,.5)',
+  })
+  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'Start a throwaway session?')
+  const body = el(
+    'p',
+    { margin: '0 0 10px', color: '#bbb' },
+    `The link you opened asks ${APP_NAME} to run without saving anything. ` +
+      'Your existing accounts and chats will not be shown, and whatever you ' +
+      'do in such a session — setting up an account, messages you receive — ' +
+      'is erased for good when the tab closes. Received messages cannot be ' +
+      'fetched again: the server deletes them once delivered.'
+  )
+  const note = el(
+    'p',
+    { margin: '0', fontSize: '12px', color: '#a8a8a8' },
+    'Only useful for testing. If you did not mean to do this, keep your data.'
+  )
+
+  const row = el('div', {
+    display: 'flex',
+    gap: '8px',
+    justifyContent: 'flex-end',
+    marginTop: '16px',
+    flexWrap: 'wrap',
+  })
+  const mkBtn = (text: string, primary: boolean) =>
+    el(
+      'button',
+      {
+        padding: '8px 14px',
+        borderRadius: '6px',
+        border: 'none',
+        cursor: 'pointer',
+        fontSize: '13px',
+        background: primary ? '#2d7dff' : '#333',
+        color: '#fff',
+      },
+      text
+    )
+  const keepBtn = mkBtn('Keep my data', true)
+  keepBtn.onclick = () => {
+    const clean = new URL(location.href)
+    clean.searchParams.delete('persist')
+    // replace, not assign: leaving the ?persist=0 URL in history means Back
+    // walks straight back into the gate (same reason ?proxy= uses replaceState)
+    location.replace(clean.toString()) // reload into a normal, saved session
+  }
+  const throwawayBtn = mkBtn('Start throwaway session', false)
+  throwawayBtn.onclick = () => {
+    try {
+      sessionStorage.setItem(THROWAWAY_KEY, '1')
+    } catch {
+      /* storage blocked — the reload lands back here rather than losing data */
+    }
+    location.reload()
+  }
+  row.append(throwawayBtn, keepBtn)
+
+  panel.append(title, body, note, row)
+  overlay.append(panel)
+  document.body.appendChild(overlay)
+  overlay.showModal()
+  keepBtn.focus() // the safe option, not the one that throws the data away
+}
+
 // Last bridge probe result, surfaced to the (patched) ConnectivityDialog via
 // window.__slothfulchatBridge.reachable(). null = unknown / not probed.
 let bridgeReachable: boolean | null = null
@@ -3587,6 +3741,13 @@ async function checkBridge(): Promise<boolean> {
 // wiring core connectivity events — cheap (one WS open/close) and works
 // before any account exists (when no IO events fire yet).
 if (typeof window !== 'undefined') {
+  // `?persist=0` in the page URL: ask before anything starts, and once this tab
+  // has said yes, keep the navbar yellow for the rest of the session. Before
+  // the bridge poll, whose toast the gate suppresses.
+  if (throwawayRequested()) {
+    if (throwawayConfirmed()) tintNavBarThrowaway()
+    else showThrowawayGate()
+  }
   let bridgeUp = false
   const pollBridge = async () => {
     if (document.visibilityState === 'visible') bridgeUp = await checkBridge()
