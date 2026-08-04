@@ -157,9 +157,13 @@ class CryptoPool {
         } else {
           job.reject(new Error(msg.error ?? `crypto op ${job.op} failed`))
         }
+        // a trap poisons the instance that reported it — but only the running
+        // job's reply can say so. Handling `fatal` outside this block let a
+        // late reply from a worker we had already replaced terminate its
+        // healthy successor.
+        if (msg.fatal) return this.die(new Error(msg.error ?? 'crypto worker trapped'))
       }
-      if (msg.fatal) this.die(new Error(msg.error ?? 'crypto worker trapped'))
-      else this.pump()
+      this.pump()
     }
     worker.onerror = event => {
       this.die(new Error(`crypto worker error: ${event.message ?? 'unknown'}`))
