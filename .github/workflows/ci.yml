@@ -356,6 +356,12 @@ jobs:
       - name: E2E test — welcome device message
         run: node scripts/test-welcome-message-e2e.mjs
 
+      # changelog viewer self-check (fully offline, no core-wasm needed): the
+      # version anchors have to survive a release — a link shared before one
+      # must still open the same version afterwards (issue #180).
+      - name: Self-check — changelog version anchors
+        run: node scripts/test-changelog-anchors.mjs
+
       # video poster self-check (fully offline, no core-wasm needed): record a
       # canvas of a known colour, grab a frame with the real videoPoster module,
       # assert the JPEG decodes back to that colour (i.e. not a blank frame).
