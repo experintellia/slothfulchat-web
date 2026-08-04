@@ -314,7 +314,7 @@ jobs:
 
       # throwaway-session gate e2e (no proxy, no core boot): a link carrying
       # ?persist=0 must be confirmed before a memory-only session starts, and
-      # such a session must say so, undismissably, for as long as it runs.
+      # the consent must be per tab.
       - name: E2E test — throwaway-session gate
         run: node scripts/test-throwaway-gate.mjs
 

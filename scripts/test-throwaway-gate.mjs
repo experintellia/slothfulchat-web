@@ -1,15 +1,15 @@
 // Throwaway-session gate e2e: `?persist=0` boots a memory-only core, which is
 // a test switch but also a data-loss trap in a link — accounts look gone, and
 // anything set up or received in such a session dies with the tab. So it must
-// be confirmed before anything starts, and be visible while it runs.
+// be confirmed before anything starts.
 //
 // Covers:
 //   - an unconfirmed ?persist=0 opens the gate and starts NOTHING (the core
 //     worker is never even fetched)
 //   - "Keep my data" reloads into a normal, saved session
-//   - "Start throwaway session" reloads into the memory-only one, which then
-//     says so permanently and non-dismissably
-//   - the consent is per tab: another tab on the same link is asked again
+//   - "Start throwaway session" reloads into the memory-only one
+//   - the consent is per tab: another tab on the same link is asked again, but
+//     the tab that gave it is not re-asked on reload
 // No ws-tcp-proxy and no core boot needed — the gate lives in runtime.js, and
 // the core worker is stubbed out. Modeled on scripts/test-fatal-dialog.mjs.
 import { spawn } from 'node:child_process'
@@ -55,7 +55,6 @@ async function newPage() {
 }
 
 const gate = page => page.locator('#sc-throwaway-dialog')
-const banner = page => page.locator('#sc-throwaway-toast')
 
 /** Wait until the page asked for the core worker (see newPage), or give up. */
 async function coreStarted(page, started, ms = 30000) {
@@ -75,9 +74,6 @@ for (const phrase of ['without saving anything', 'erased for good']) {
     throw new Error(`gate does not say what is lost (${phrase}): ${gateText}`)
   }
 }
-if (await banner(page).count()) {
-  throw new Error('a throwaway session is flagged as running before it was agreed to')
-}
 // long enough for the frontend to have asked for a core if it were going to
 await page.waitForTimeout(3000)
 if (started.core) {
@@ -92,37 +88,26 @@ if (!(await coreStarted(page, started))) {
   throw new Error('the normal session never started the core')
 }
 if (await gate(page).count()) throw new Error('the gate is still up after keeping the data')
-if (await banner(page).count()) {
-  throw new Error('a saved session is flagged as throwaway')
-}
 console.log('OK: "Keep my data" drops the flag and starts a normal session')
 
-// --- 3) accepting reloads into the memory-only session, permanently flagged -
+// --- 3) accepting reloads into the memory-only session ---------------------
 const [tab2, started2] = await newPage()
 await tab2.goto(THROWAWAY_URL, { waitUntil: 'domcontentloaded' })
 await gate(tab2).waitFor({ state: 'attached', timeout: 20000 })
 await tab2.evaluate(() => (window.__scPreReload = true))
 await tab2.getByRole('button', { name: 'Start throwaway session' }).click()
 await tab2.waitForFunction(() => !window.__scPreReload, null, { timeout: 20000 })
-await banner(tab2).waitFor({ state: 'attached', timeout: 20000 })
 if (await gate(tab2).count()) throw new Error('still asking after the session was confirmed')
-if (!/nothing is being saved/i.test(await banner(tab2).innerText())) {
-  throw new Error(`the throwaway banner does not say so: ${await banner(tab2).innerText()}`)
-}
 if (!(await coreStarted(tab2, started2))) {
   throw new Error('the confirmed throwaway session never started the core')
 }
-console.log('OK: accepting starts the throwaway session and flags it')
+console.log('OK: accepting starts the throwaway session')
 
-// --- 4) the flag cannot be dismissed, and survives a reload ---------------
-// It is the only sign that everything on screen is about to be thrown away.
-await banner(tab2).evaluate(el => el.click())
-await tab2.waitForTimeout(200)
-if (!(await banner(tab2).count())) throw new Error('the throwaway banner can be dismissed')
+// --- 4) the consent survives a reload of the tab that gave it -------------
 await tab2.reload({ waitUntil: 'domcontentloaded' })
-await banner(tab2).waitFor({ state: 'attached', timeout: 20000 })
+await tab2.waitForTimeout(3000) // the gate would be up by now if it were coming
 if (await gate(tab2).count()) throw new Error('the confirmed tab is asked again on reload')
-console.log('OK: the flag stays put and the confirmed tab is not re-asked')
+console.log('OK: the confirmed tab is not re-asked on reload')
 
 // --- 5) the consent is per tab, not per browser ---------------------------
 // A second link opened later is a second decision — the first one must not

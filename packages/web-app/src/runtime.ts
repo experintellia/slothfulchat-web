@@ -3530,30 +3530,10 @@ function throwawayConfirmed(): boolean {
   }
 }
 
-/** Permanent, non-dismissable marker that this session saves nothing. Reuses
- * the bridge toast (same top-layer popover, so upstream's modal dialogs can't
- * hide it), minus the click-to-dismiss: it is a state, not a notification, and
- * it must not swallow clicks meant for the app underneath. */
-function showThrowawayBanner(): void {
-  showWarningToast(
-    'sc-throwaway-toast',
-    '⚠ Throwaway session — nothing is being saved. Everything, including any ' +
-      'account set up or message received now, is gone when this tab closes.',
-    () => {}
-  )
-  const toast = document.getElementById('sc-throwaway-toast')
-  // bottom-LEFT, unlike every other toast: the bridge one is a popover too and
-  // shows up later (so on top) in exactly the session where this matters most —
-  // a throwaway session started on a machine with no bridge running.
-  if (toast) {
-    Object.assign(toast.style, {
-      cursor: 'default',
-      pointerEvents: 'none',
-      right: 'auto',
-      left: '16px',
-    })
-  }
-}
+// ponytail: no permanent on-screen marker while a throwaway session runs — the
+// gate below already spells out what is lost, and a fixed corner toast sits on
+// the app for the whole session to repeat it. Tint the navbar if the reminder
+// turns out to be needed after all.
 
 /** Boot gate for `?persist=0`, the memory-only mode the fresh-core tests use.
  * Silently honouring it from a link is a data-loss trap: existing accounts look
@@ -3748,13 +3728,9 @@ async function checkBridge(): Promise<boolean> {
 // wiring core connectivity events — cheap (one WS open/close) and works
 // before any account exists (when no IO events fire yet).
 if (typeof window !== 'undefined') {
-  // `?persist=0` in the page URL: ask before anything starts, and once this tab
-  // has said yes, keep saying so on screen for as long as the session runs.
-  // Before the bridge poll, whose toast the gate suppresses.
-  if (throwawayRequested()) {
-    if (throwawayConfirmed()) showThrowawayBanner()
-    else showThrowawayGate()
-  }
+  // `?persist=0` in the page URL: ask before anything starts. Before the bridge
+  // poll, whose toast the gate suppresses.
+  if (throwawayRequested() && !throwawayConfirmed()) showThrowawayGate()
   let bridgeUp = false
   const pollBridge = async () => {
     if (document.visibilityState === 'visible') bridgeUp = await checkBridge()
