@@ -31,9 +31,9 @@ for the instance, so a self-hosted build never sends its users looking
 for something it doesn't ship.
 ---
  _locales/_untranslated_en.json             |  9 ++++++
- packages/frontend/src/ScreenController.tsx | 14 ++++++++-
- packages/frontend/src/deviceMessages.ts    | 36 ++++++++++++++++++++++
- 3 files changed, 58 insertions(+), 1 deletion(-)
+ packages/frontend/src/ScreenController.tsx | 18 ++++++++++-
+ packages/frontend/src/deviceMessages.ts    | 37 ++++++++++++++++++++++
+ 3 files changed, 63 insertions(+), 1 deletion(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
 index 1b737f4..169a8e9 100644
@@ -55,7 +55,7 @@ index 1b737f4..169a8e9 100644
    }
  }
 diff --git a/packages/frontend/src/ScreenController.tsx b/packages/frontend/src/ScreenController.tsx
-index 9157df1..9c61be2 100644
+index 9157df1..393034c 100644
 --- a/packages/frontend/src/ScreenController.tsx
 +++ b/packages/frontend/src/ScreenController.tsx
 @@ -8,7 +8,11 @@ import { getLogger } from '@deltachat-desktop/shared/logger'
@@ -71,7 +71,7 @@ index 9157df1..9c61be2 100644
  import { runtime } from '@deltachat-desktop/runtime-interface'
  import { updateTimestamps } from './components/conversations/Timestamp'
  import { ScreenContext } from './contexts/ScreenContext'
-@@ -272,6 +276,14 @@ export default class ScreenController extends Component {
+@@ -272,6 +276,18 @@ export default class ScreenController extends Component {
  
    changeScreen(screen: Screens) {
      log.debug('Changing screen to:', screen)
@@ -81,13 +81,17 @@ index 9157df1..9c61be2 100644
 +    // — hooking that one instead would hold the message back until the next
 +    // app start. The device-message label makes the repeats free.
 +    if (screen === Screens.Main && this.selectedAccountId !== undefined) {
-+      addSlothfulWelcomeMessage(this.selectedAccountId)
++      // not awaited (changeScreen is sync), so swallow-and-log rather than
++      // leaving an unhandled rejection if the rpc fails
++      addSlothfulWelcomeMessage(this.selectedAccountId).catch(err =>
++        log.error('failed to add the SlothfulChat welcome message', err)
++      )
 +    }
      this.setState({ screen })
      window.__screen = screen
      if (Screens.Welcome) {
 diff --git a/packages/frontend/src/deviceMessages.ts b/packages/frontend/src/deviceMessages.ts
-index 6e9bd09..52d2163 100644
+index 6e9bd09..3b180fa 100644
 --- a/packages/frontend/src/deviceMessages.ts
 +++ b/packages/frontend/src/deviceMessages.ts
 @@ -1,5 +1,6 @@
@@ -97,7 +101,7 @@ index 6e9bd09..52d2163 100644
  
  export async function updateDeviceChat(
    accountId: number,
-@@ -32,6 +33,41 @@ export async function updateDeviceChat(
+@@ -32,6 +33,42 @@ export async function updateDeviceChat(
    })
  }
  
@@ -107,9 +111,10 @@ index 6e9bd09..52d2163 100644
 + *
 + * Not part of updateDeviceChat(): that one is skipped for freshly created
 + * accounts, and it runs before configure(), which is when core adds its own
-+ * welcome message — ours has to land after it. Called from selectAccount()
-+ * instead, once the account is configured; the label makes core drop every
-+ * repeat, so re-running it on each account switch is free.
++ * welcome message — ours has to land after it. Called from changeScreen()
++ * instead, on every route into the main screen (all of which mean the account
++ * is configured); the label makes core drop every repeat, so the re-runs on
++ * each account switch are free.
 + */
 +export async function addSlothfulWelcomeMessage(accountId: number) {
 +  const tx = window.static_translate
