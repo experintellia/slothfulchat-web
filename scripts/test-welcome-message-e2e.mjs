@@ -1,9 +1,10 @@
 // E2E check for the SlothfulChat welcome device message (desktop/0078) and the
 // dropped upstream welcome image (core/0029) — runs FULLY OFFLINE. One webimap
-// account against an in-process mock madmail server (trimmed from
-// scripts/test-sidebar-resize-e2e.mjs) configures an account through the real
-// frontend, which is what triggers the message; then the device chat is read
-// back over rpc.
+// account is created through the real onboarding UI against an in-process mock
+// madmail server (trimmed from scripts/test-sidebar-resize-e2e.mjs) — that path
+// enters the main screen without going through selectAccount(), which is what
+// used to hold the message back until the next app start; then the device chat
+// is read back over rpc.
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/test-welcome-message-e2e.mjs
@@ -112,19 +113,21 @@ try {
   await page.goto(`http://localhost:${APP_PORT}/main.html`)
   await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
 
-  // configure an account and let the frontend select it — selectAccount() is
-  // what adds our message, on the unconfigured -> configured transition
-  const aliceId = await rpc('addAccount')
-  await rpc('addTransportFromQr', aliceId, QR)
-  await rpc('setConfig', aliceId, 'displayname', 'Alice')
-  for (const id of await rpc('getAllAccountIds')) {
-    if (id !== aliceId) await rpc('removeAccount', id)
-  }
-  await rpc('selectAccount', aliceId)
-  await page.reload()
-  await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
-  await page.locator('#new-chat-button').waitFor({ state: 'visible', timeout: 60_000 })
-  console.log('OK: MainScreen up on a configured account')
+  // Real onboarding, through the UI — an rpc shortcut plus a reload would go
+  // in through selectAccount() at boot and hide the case that matters: instant
+  // onboarding jumps to the main screen on its own, and the message has to be
+  // there in that same session, not after a restart.
+  await page
+    .getByRole('button', { name: /madmail server/ })
+    .click({ timeout: 60_000 })
+  await page.locator('#webimapHost').fill(`127.0.0.1:${mock.address().port}`)
+  await page.getByRole('button', { name: 'Use this server' }).click()
+  await page.locator('#displayName').fill('Alice')
+  await page.getByTestId('login-button').click()
+  await page.locator('#new-chat-button').waitFor({ state: 'visible', timeout: 120_000 })
+  const aliceId = await page.evaluate(() => window.__selectedAccountId)
+  if (!aliceId) throw new Error('FAIL: no account after onboarding')
+  console.log(`OK: onboarded account ${aliceId} through the UI`)
 
   const msgs = await deviceChatMessages(aliceId)
   const welcomeIndex = msgs.findIndex((m) =>
@@ -153,18 +156,18 @@ try {
   }
   console.log('OK: no upstream welcome image')
 
-  // the label makes re-adding a no-op — a second app start (which runs
-  // selectAccount() again) must not append the message twice
+  // the label makes re-adding a no-op — a second app start (which enters the
+  // main screen again) must not append the message twice
   await page.reload()
   await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
   await page.locator('#new-chat-button').waitFor({ state: 'visible', timeout: 60_000 })
   const again = await deviceChatMessages(aliceId)
   if (again.length !== msgs.length) {
     throw new Error(
-      `FAIL: device chat grew on re-select (${msgs.length} -> ${again.length})`
+      `FAIL: device chat grew on restart (${msgs.length} -> ${again.length})`
     )
   }
-  console.log('OK: re-selecting the account does not add it twice')
+  console.log('OK: a restart does not add it twice')
 
   console.log('OK: welcome device message verified')
 } catch (err) {

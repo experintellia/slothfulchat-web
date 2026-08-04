@@ -31,9 +31,9 @@ for the instance, so a self-hosted build never sends its users looking
 for something it doesn't ship.
 ---
  _locales/_untranslated_en.json             |  9 ++++++
- packages/frontend/src/ScreenController.tsx |  9 +++++-
+ packages/frontend/src/ScreenController.tsx | 14 ++++++++-
  packages/frontend/src/deviceMessages.ts    | 36 ++++++++++++++++++++++
- 3 files changed, 53 insertions(+), 1 deletion(-)
+ 3 files changed, 58 insertions(+), 1 deletion(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
 index 1b737f4..169a8e9 100644
@@ -55,7 +55,7 @@ index 1b737f4..169a8e9 100644
    }
  }
 diff --git a/packages/frontend/src/ScreenController.tsx b/packages/frontend/src/ScreenController.tsx
-index 9157df1..ea9aa3b 100644
+index 9157df1..9c61be2 100644
 --- a/packages/frontend/src/ScreenController.tsx
 +++ b/packages/frontend/src/ScreenController.tsx
 @@ -8,7 +8,11 @@ import { getLogger } from '@deltachat-desktop/shared/logger'
@@ -71,16 +71,21 @@ index 9157df1..ea9aa3b 100644
  import { runtime } from '@deltachat-desktop/runtime-interface'
  import { updateTimestamps } from './components/conversations/Timestamp'
  import { ScreenContext } from './contexts/ScreenContext'
-@@ -157,6 +161,9 @@ export default class ScreenController extends Component {
-       this.selectedAccountId
-     )
-     if (account.kind === 'Configured') {
-+      // Also reached on the unconfigured -> configured transition, i.e. right
-+      // after onboarding, so a brand-new account gets the message too.
+@@ -272,6 +276,14 @@ export default class ScreenController extends Component {
+ 
+   changeScreen(screen: Screens) {
+     log.debug('Changing screen to:', screen)
++    // Every route into the main screen means the account is configured, and
++    // this is the only choke point they share: instant onboarding jumps here
++    // itself once configure() succeeded, without going through selectAccount()
++    // — hooking that one instead would hold the message back until the next
++    // app start. The device-message label makes the repeats free.
++    if (screen === Screens.Main && this.selectedAccountId !== undefined) {
 +      addSlothfulWelcomeMessage(this.selectedAccountId)
-       this.changeScreen(Screens.Main)
-     } else {
-       this.changeScreen(Screens.Welcome)
++    }
+     this.setState({ screen })
+     window.__screen = screen
+     if (Screens.Welcome) {
 diff --git a/packages/frontend/src/deviceMessages.ts b/packages/frontend/src/deviceMessages.ts
 index 6e9bd09..52d2163 100644
 --- a/packages/frontend/src/deviceMessages.ts
