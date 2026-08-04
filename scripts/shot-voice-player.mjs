@@ -8,11 +8,11 @@
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/shot-voice-player.mjs
 // (CHROMIUM_BIN=/path/to/chrome overrides the playwright-managed browser.)
-import { spawn } from 'node:child_process'
 import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 import { startMockMadmail } from './mock-madmail.mjs'
 
 const script = (p) => fileURLToPath(new URL(p, import.meta.url))
@@ -63,18 +63,11 @@ console.log(`mock madmail on 127.0.0.1:${mockPort}`)
 const QR = `webimapaccount:127.0.0.1:${mockPort}`
 
 // --- web-app server ---
-const appServer = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
+const { cleanup, watchdog } = await startServers({
+  app: APP_PORT,
+  settleMs: 700,
+  watchdogMs: 360_000,
 })
-const cleanup = () => appServer.kill()
-process.on('exit', cleanup)
-const watchdog = setTimeout(() => {
-  console.error('FAIL: watchdog (6 min)')
-  cleanup()
-  process.exit(1)
-}, 360_000)
-await new Promise((r) => setTimeout(r, 700))
 
 // --- browser ---
 const launchOpts = process.env.CHROMIUM_BIN

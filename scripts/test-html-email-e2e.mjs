@@ -32,13 +32,11 @@
 //   - an app link (invite) clicked in the viewer after switching the main app
 //     to the other account still runs under the ORIGINATING account (#3)
 //   - opening a file attachment yields a tab with window.opener === null (#2)
-import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 import { startMockMadmail } from './mock-madmail.mjs'
 
-const script = p => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8646)
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
@@ -61,18 +59,14 @@ const QR = `webimapaccount:127.0.0.1:${mock.port}`
 console.log(`mock madmail on 127.0.0.1:${mock.port}`)
 
 // --- web-app server ---
-const appServer = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
+const { cleanup: stopServers, watchdog } = await startServers({
+  app: APP_PORT,
+  settleMs: 700,
+  watchdogMs: 360_000,
 })
-const cleanup = () => (appServer.kill(), mock.close())
+// the mock is ours, not the harness's, so it needs closing alongside
+const cleanup = () => (stopServers(), mock.close())
 process.on('exit', cleanup)
-const watchdog = setTimeout(() => {
-  console.error('FAIL: watchdog (6 min) — test hung')
-  cleanup()
-  process.exit(1)
-}, 360_000)
-await sleep(700)
 
 // --- browser ---
 const launchOpts = process.env.CHROMIUM_BIN ? { executablePath: process.env.CHROMIUM_BIN } : {}

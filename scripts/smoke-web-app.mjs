@@ -1,28 +1,16 @@
 // Web-app boot smoke test: start the ws-tcp proxy + web-app static server,
 // load main.html headless, assert the frontend renders past a blank screen
 // and the wasm core answers rpc. Modeled on scripts/smoke-core-wasm.mjs.
-import { spawn } from 'node:child_process'
 import { writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 
 const script = p => fileURLToPath(new URL(p, import.meta.url))
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
 const APP_PORT = Number(process.env.APP_PORT ?? 8642)
 
-const procs = [
-  spawn('node', [script('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs')], {
-    env: { ...process.env, PORT: String(PROXY_PORT) },
-    stdio: 'inherit',
-  }),
-  spawn('node', [script('../packages/web-app/serve.mjs')], {
-    env: { ...process.env, PORT: String(APP_PORT) },
-    stdio: 'inherit',
-  }),
-]
-const cleanup = () => procs.forEach(p => p.kill())
-process.on('exit', cleanup)
-await new Promise(r => setTimeout(r, 500)) // let servers bind
+const { cleanup } = await startServers({ app: APP_PORT, proxy: PROXY_PORT })
 
 const browser = await chromium.launch()
 const page = await browser.newPage()

@@ -16,11 +16,11 @@
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/test-export-chat-html.mjs
 // (CHROMIUM_BIN=/path/to/chrome overrides the playwright-managed browser.)
-import { spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { deflateSync } from 'node:zlib'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 import { startMockMadmail } from './mock-madmail.mjs'
 
 const script = (p) => fileURLToPath(new URL(p, import.meta.url))
@@ -79,18 +79,11 @@ console.log(`mock madmail on 127.0.0.1:${mockPort}`)
 const QR = `webimapaccount:127.0.0.1:${mockPort}`
 
 // --- web-app server ---
-const appServer = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
+const { cleanup, watchdog } = await startServers({
+  app: APP_PORT,
+  settleMs: 700,
+  watchdogMs: 360_000,
 })
-const cleanup = () => appServer.kill()
-process.on('exit', cleanup)
-const watchdog = setTimeout(() => {
-  console.error('FAIL: watchdog (6 min)')
-  cleanup()
-  process.exit(1)
-}, 360_000)
-await new Promise((r) => setTimeout(r, 700))
 
 // --- browser ---
 // CHROMIUM_BIN overrides the browser binary (e.g. a preinstalled system

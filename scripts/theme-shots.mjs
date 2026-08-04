@@ -6,11 +6,11 @@
 //   node scripts/theme-shots.mjs [dc:rocket] [--fresh]
 //
 // Login/seed flow copied from scripts/test-web-app-e2e.mjs.
-import { spawn } from 'node:child_process'
 import { mkdir, rm } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 
 // minimal PNG encoder: 48x48 two-tone image so profile-photo avatars are
 // visually distinct from initial-block fallbacks in the screenshots
@@ -91,24 +91,11 @@ await mkdir(SHOTS, { recursive: true })
 }
 
 // -- servers --
-const procs = [
-  spawn('node', [script('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs')], {
-    env: { ...process.env, PORT: String(PROXY_PORT) },
-    stdio: 'inherit',
-  }),
-  spawn('node', [script('../packages/web-app/serve.mjs')], {
-    env: { ...process.env, PORT: String(APP_PORT) },
-    stdio: 'inherit',
-  }),
-]
-const cleanup = () => procs.forEach(p => p.kill())
-process.on('exit', cleanup)
-const watchdog = setTimeout(() => {
-  console.error('FAIL: watchdog (8 min)')
-  cleanup()
-  process.exit(1)
-}, 480_000)
-await new Promise(r => setTimeout(r, 500))
+const { cleanup, watchdog } = await startServers({
+  app: APP_PORT,
+  proxy: PROXY_PORT,
+  watchdogMs: 480_000,
+})
 
 const context = await chromium.launchPersistentContext(PROFILE, {
   viewport: { width: 1280, height: 800 },

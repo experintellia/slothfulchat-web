@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 
 const script = p => fileURLToPath(new URL(p, import.meta.url))
 const webApp = script('../packages/web-app')
@@ -34,13 +35,7 @@ execFileSync(
 )
 copyFileSync(join(webApp, 'static/html-email.html'), join(dir, 'html-email.html'))
 
-const server = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT), SERVE_ROOT: dir },
-  stdio: 'inherit',
-})
-const cleanup = () => server.kill()
-process.on('exit', cleanup)
-await new Promise(r => setTimeout(r, 500)) // let the server bind
+const { cleanup } = await startServers({ app: APP_PORT, appRoot: dir })
 
 const REMOTE_IMG = 'https://remote-tracker.invalid/pixel.png'
 const HOSTILE = `

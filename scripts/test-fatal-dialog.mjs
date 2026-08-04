@@ -10,20 +10,12 @@
 //   - only one fatal dialog is ever shown, however many fatals arrive
 // No ws-tcp-proxy and no core boot needed — the dialog lives in runtime.js.
 // Modeled on scripts/test-bridge-dialog.mjs.
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 
-const script = p => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8646)
 
-const server = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
-})
-const cleanup = () => server.kill()
-process.on('exit', cleanup)
-await new Promise(r => setTimeout(r, 500)) // let the server bind
+const { cleanup } = await startServers({ app: APP_PORT })
 
 const browser = await chromium.launch(
   process.env.CHROMIUM_BIN ? { executablePath: process.env.CHROMIUM_BIN } : {}
@@ -171,5 +163,5 @@ if (both.length !== 1 || both[0] !== 'sc-init-error-dialog') {
 console.log('OK: a later, less specific fatal does not bury the first')
 
 await browser.close()
-server.kill()
+cleanup()
 console.log('\nfatal-start dialog: all checks passed')

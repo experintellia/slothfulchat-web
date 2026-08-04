@@ -10,12 +10,10 @@
 // Run:  node scripts/test-sidebar-resize-e2e.mjs
 // (CHROMIUM_BIN=/path/to/chrome overrides the playwright-managed browser.)
 import { createServer } from 'node:http'
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { randomBytes } from 'node:crypto'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 
-const script = (p) => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8676)
 
 // --- mock madmail server (no mail ever arrives; just enough to configure) ---
@@ -62,18 +60,11 @@ await new Promise((r) => mock.listen(0, '127.0.0.1', r))
 const QR = `webimapaccount:127.0.0.1:${mock.address().port}`
 
 // --- web-app server ---
-const appServer = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
+const { cleanup, watchdog } = await startServers({
+  app: APP_PORT,
+  settleMs: 700,
+  watchdogMs: 300_000,
 })
-const cleanup = () => appServer.kill()
-process.on('exit', cleanup)
-const watchdog = setTimeout(() => {
-  console.error('FAIL: watchdog (5 min)')
-  cleanup()
-  process.exit(1)
-}, 300_000)
-await new Promise((r) => setTimeout(r, 700))
 
 // --- browser ---
 const launchOpts = process.env.CHROMIUM_BIN

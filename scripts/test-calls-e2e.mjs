@@ -50,12 +50,10 @@
 // run locally for now.
 //
 // Run:  node scripts/test-calls-e2e.mjs        (VERBOSE=1 for full page logs)
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 import { startMockMadmail } from './mock-madmail.mjs'
 
-const script = p => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8644)
 const verbose = !!process.env.VERBOSE
 
@@ -74,19 +72,7 @@ const qr = `webimapaccount:localhost:${mockPort}`
 // ---------------------------------------------------------------------------
 // serve the built web-app (pnpm assemble && pnpm build must have run already)
 // ---------------------------------------------------------------------------
-const appServer = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
-})
-const procs = [appServer]
-const cleanup = () => procs.forEach(p => p.kill())
-process.on('exit', cleanup)
-const watchdog = setTimeout(() => {
-  console.error('FAIL: global watchdog (6 min) — test hung')
-  cleanup()
-  process.exit(1)
-}, 360_000)
-await new Promise(r => setTimeout(r, 500)) // let the static server bind
+const { cleanup, watchdog } = await startServers({ app: APP_PORT, watchdogMs: 360_000 })
 
 let failed = false
 let browser
