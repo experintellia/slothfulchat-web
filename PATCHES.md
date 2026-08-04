@@ -495,7 +495,7 @@ contribution intended.
   welcome message the app adds one of its own: what the fork does differently,
   that everything lives in this browser and should be backed up (unencrypted),
   that it's a prototyping ground, and where to report bugs / self-host.
-  `core/0029`, `desktop/0078`
+  `core/0030`, `desktop/0078`
 - **Hidden upstream UI that can't work in this build** — proxy settings
   (unimplemented on wasm), the second-device / multi-device backup
   transfer flow (iroh doesn't run in browsers yet), and the experimental
