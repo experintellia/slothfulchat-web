@@ -9,6 +9,14 @@
   Local use is unaffected.
 - A malformed WebSocket frame (e.g. an unmasked client frame) no longer kills
   the whole bridge process, taking every other user's connection with it.
+- Unfurl logs no longer print the target URL's path or query string, only its
+  scheme and host. If you host a bridge for other people, their share and
+  session tokens are no longer sitting in your logs.
+- Unfurl now refuses every non-globally-routable address, not just the common
+  private ones — documentation, benchmark, multicast and reserved ranges are
+  blocked too — and one absolute deadline (20 s, `UNFURL_DEADLINE_MS`) now
+  covers redirects, page and image together, so a slow-drip server can't hold
+  a request open indefinitely.
 
 ## 0.6.0 — 2026-07-15
 

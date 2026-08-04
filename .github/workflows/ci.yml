@@ -354,7 +354,8 @@ jobs:
         run: node scripts/test-media-metadata.mjs
 
       # unfurl service self-check (fully offline): metadata + inline image,
-      # SSRF guards (private-IP / literal-IP refusal), size cap, rate limit.
+      # SSRF guards (the non-global address table, private-IP / literal-IP
+      # refusal), size cap, absolute deadline vs. a slow drip, rate limit.
       - name: Self-check — unfurl service
         run: node scripts/test-unfurl.mjs
 
