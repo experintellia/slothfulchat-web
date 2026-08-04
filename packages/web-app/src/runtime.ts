@@ -32,6 +32,7 @@ import { EMOJI_SETS, DEFAULT_EMOJI_SET, emojiFonts } from './emoji-sets.mjs'
 import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
+import { fatalReportText } from './fatal-report.mjs'
 import { initDiagnostics } from './diagnostics'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
 
@@ -305,6 +306,7 @@ function getCore(): Core {
     // which kind of bridge this session uses (local device / instance-provided /
     // user-custom); no-op unless analytics is enabled
     analytics.event('bridge', { kind: bridgeKind(wsProxyUrl) })
+    warnIfNoWebAssembly()
     perf.boot('worker-spawn')
     core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))
     // time selected RPC round-trips (local) + derive anonymous usage events
@@ -314,13 +316,20 @@ function getCore(): Core {
     // web-lock detection — its release lags on reloads and false-positives
     core.worker.addEventListener('message', event => {
       const type = (event as MessageEvent).data?.type
+      // Something more specific is already explained on screen — the no-wasm
+      // check, or an earlier fatal from this worker. Return before the event()
+      // calls, not just before the dialog: a browser with WebAssembly off makes
+      // the worker report a generic init-error too, and counting that as well
+      // would attribute every Lockdown Mode user to a bug that isn't theirs.
+      if (fatalShown) return
       if (type === 'fatal-opfs-locked') {
         analytics.event('boot_error', { kind: 'opfs-locked' })
         showFatalDialog(
           'sc-already-running-dialog',
           'Already running in another tab',
           `${APP_NAME} is already open in another tab or window and can ` +
-            'only run in one at a time. Close the other tab, then retry.'
+            'only run in one at a time. Close the other tab, then retry.',
+          'opfs-locked'
         )
       } else if (type === 'fatal-storage-blocked') {
         analytics.event('boot_error', { kind: 'storage-blocked' })
@@ -330,15 +339,17 @@ function getCore(): Core {
           `${APP_NAME} needs to store data in your browser, but your ` +
             'browser is blocking it. Please allow cookies/site data for ' +
             `${location.hostname} and reload — on iPhone/iPad, turn off ` +
-            'Settings → Safari → Advanced → Block All Cookies.'
+            'Settings → Safari → Advanced → Block All Cookies.',
+          'storage-blocked'
         )
       } else if (type === 'fatal-init-error') {
         analytics.event('boot_error', { kind: 'init-error' })
         showFatalDialog(
           'sc-init-error-dialog',
           `${APP_NAME} could not start`,
-          'The stored data could not be loaded. Details: ' +
-            ((event as MessageEvent).data?.message ?? 'unknown error')
+          'The stored data could not be loaded.',
+          'init-error',
+          (event as MessageEvent).data?.message ?? 'unknown error'
         )
       }
     })
@@ -1915,10 +1926,33 @@ const el = <K extends keyof HTMLElementTagNameMap>(
   return node
 }
 
+let fatalShown = false
+
 /** Blocking full-screen dialog for fatal core-worker states (nothing works,
- * only reload can help). Not dismissable. */
-function showFatalDialog(id: string, titleText: string, bodyText: string) {
-  if (document.getElementById(id)) return
+ * only reload can help). Not dismissable.
+ *
+ * `kind`/`details` build the copyable report: with no app left to report from
+ * and no way to put an arbitrary error string through the analytics catalogue,
+ * the user pasting this somewhere is the only route from "it broke" to a fix
+ * (#176). Selecting text by hand is not that route — on a phone it is barely
+ * possible, so there is a button. */
+function showFatalDialog(
+  id: string,
+  titleText: string,
+  bodyText: string,
+  kind = '',
+  details = ''
+) {
+  // One fatal dialog, ever. The kinds are not mutually exclusive — a browser
+  // with no WebAssembly also produces an init-error from the doomed worker a
+  // moment later — and <dialog>s stack in the top layer, so a second one would
+  // bury the first and its more specific explanation.
+  if (fatalShown) return
+  fatalShown = true
+  // a probe that already ran may have left the bridge warning on screen; from
+  // here on it is noise about the wrong problem (see checkBridge)
+  hideBridgeToast()
+  hideWelcomeHint()
   const overlay = el('dialog', {
     position: 'fixed',
     inset: '0',
@@ -1963,8 +1997,18 @@ function showFatalDialog(id: string, titleText: string, bodyText: string) {
     'Retry'
   )
   retryBtn.onclick = () => location.reload()
+  const report = fatalReportText({
+    kind,
+    details,
+    version: (window as any).__slothfulConfig?.version,
+    commitHash: (window as any).__slothfulConfig?.commitHash,
+    userAgent: navigator.userAgent,
+    displayMode: session.displayMode(),
+  })
+  panel.append(title, body)
+  if (report) panel.append(reportBlock(report), copyButton(report))
   row.append(retryBtn)
-  panel.append(title, body, row)
+  panel.append(row)
   // This screen is the only one a first-time visitor gets when the core dies
   // before onboarding, so it has to carry the usage-statistics notice the
   // welcome screen would have shown — otherwise the boot_error describing the
@@ -1978,6 +2022,94 @@ function showFatalDialog(id: string, titleText: string, bodyText: string) {
   // only once the notice is actually on screen — releaseHeldEvents() records
   // that it was shown, so calling it without showing it would be a lie
   if (notify) analytics.releaseHeldEvents()
+}
+
+/** The whole app is a wasm core, so a browser with WebAssembly switched off can
+ * only ever show a dead loading screen. Left to itself the worker fails and
+ * reports "the stored data could not be loaded", which sends the user looking
+ * for a storage problem they do not have — so name the real cause first.
+ *
+ * Safari's Lockdown Mode disables WebAssembly, and is by far the likeliest way
+ * a browser arrives here: it can be left on globally and switched off for one
+ * site, which is the thing worth telling someone. A capability check, not UA
+ * sniffing — anything else that removes WebAssembly gets the same honest
+ * answer, and the copyable report says which browser it was. */
+function warnIfNoWebAssembly(): void {
+  // via globalThis, never a bare `WebAssembly`: Lockdown Mode removes the
+  // binding rather than setting it undefined, and `typeof X?.y` still evaluates
+  // X — so the bare form throws ReferenceError on precisely the browsers this
+  // exists to help, taking the app down before it can explain anything.
+  if (typeof globalThis.WebAssembly?.instantiate === 'function') return
+  // its own kind, not the init-error the doomed worker reports a moment later:
+  // the dialog already tells these apart, and counting every Lockdown Mode user
+  // as an init-error puts a phantom population in front of a real bug
+  analytics.event('boot_error', { kind: 'no-wasm' })
+  showFatalDialog(
+    'sc-no-wasm-dialog',
+    `${APP_NAME} can't run in this browser`,
+    `${APP_NAME} runs its chat engine as WebAssembly, which this browser has ` +
+      'turned off. On iPhone, iPad or Mac this is usually Lockdown Mode — you ' +
+      'can leave it switched on everywhere else and allow just this site: in ' +
+      'Safari open the page settings button (AA) in the address bar, choose ' +
+      `Website Settings, and turn Lockdown Mode off for ${location.hostname}.`,
+    'no-wasm'
+  )
+}
+
+/** The report itself, shown so the user can see what they would be sharing, and
+ * left selectable so a manual copy still works where the clipboard API doesn't.
+ * `userSelect: 'text'` is belt-and-braces: the app's global stylesheet turns
+ * selection off for headings and buttons but not for a bare <pre>. It is here
+ * so a future global rule cannot quietly take the fallback away. */
+function reportBlock(report: string): HTMLElement {
+  return el(
+    'pre',
+    {
+      margin: '0 0 8px',
+      padding: '8px 10px',
+      borderRadius: '6px',
+      background: '#141414',
+      color: '#bbb',
+      font: '12px/1.45 ui-monospace, monospace',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+      maxHeight: '30vh',
+      overflowY: 'auto',
+      userSelect: 'text', // the app's global stylesheet turns selection off
+    },
+    report
+  )
+}
+
+/** Copy-to-clipboard, with the result said out loud rather than mimed: on a
+ * dead app a button that silently does nothing is indistinguishable from one
+ * that worked. writeText needs a secure context and can be refused outright,
+ * so failure falls back to selecting the block for a manual copy. */
+function copyButton(report: string): HTMLElement {
+  const btn = el(
+    'button',
+    {
+      padding: '6px 12px',
+      borderRadius: '6px',
+      border: '1px solid #444',
+      background: 'transparent',
+      color: '#ddd',
+      cursor: 'pointer',
+      fontSize: '13px',
+    },
+    'Copy details'
+  )
+  btn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(report)
+      btn.textContent = 'Copied'
+    } catch {
+      btn.textContent = 'Press and hold above to copy'
+      const block = btn.previousElementSibling
+      if (block) getSelection()?.selectAllChildren(block)
+    }
+  }
+  return btn
 }
 
 /** The one-line "we count this" notice + a link into the existing info dialog
@@ -2827,6 +2959,7 @@ function hideWelcomeHint() {
  * screen itself — inside the modal it stays interactive. Re-injected by the
  * poll if a React re-render wipes it. */
 function showWelcomeHint() {
+  if (fatalShown) return // see showBridgeToast
   if (document.getElementById('sc-bridge-hint')) return
   // Anchor on data-testid, NOT the CSS-module class name: production builds
   // minify local class names (welcomeScreenButtonGroup → "xo"), so a
@@ -2902,6 +3035,12 @@ function showWarningToast(id: string, text: string, onClick?: () => void) {
 }
 
 function showBridgeToast() {
+  // Checked here, not only at the top of checkBridge: the probe in between can
+  // take seconds (a black-holed bridge host runs to its timeout), and a fatal
+  // can arrive during it. The toast is a popover, so showing it after the modal
+  // opened would put it in the top layer ABOVE the dialog explaining the real
+  // failure — the exact stacking this is meant to prevent.
+  if (fatalShown) return
   showWarningToast('sc-bridge-toast', '⚠ Bridge not reachable — click to fix', () =>
     showBridgeDialog()
   )
@@ -3399,6 +3538,15 @@ async function bridgeNeed(): Promise<'none' | 'required' | 'fallback'> {
 }
 
 async function checkBridge(): Promise<boolean> {
+  // A fatal dialog means the core never started, so the bridge is not the
+  // user's problem and its toast is one more thing piled on the error screen —
+  // clicking it even opens the bridge dialog over the explanation of what
+  // actually broke. Say nothing.
+  if (fatalShown) {
+    hideBridgeToast()
+    hideWelcomeHint()
+    return true
+  }
   // The frontend sets this while onboarding a bridge-free account (madmail
   // webimap) — suppress the notice so it doesn't wrongly nag on that flow.
   if ((window as any).__slothfulchatSuppressBridgeWarning) {
