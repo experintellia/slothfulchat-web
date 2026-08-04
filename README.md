@@ -64,7 +64,7 @@ origin is added to the CSP.
   provided / custom); backup/key import-export (not the contents); coarse
   chat-count milestones (first, >10); coarse buckets for startup and other
   timings; and fatal startup errors by category. The exact, closed list lives in
-  `packages/web-app/src/analytics.ts` (`EVENTS`) and is what the in-app notice
+  `packages/web-app/src/events.mjs` (`EVENTS`) and is what the in-app notice
   and the imprint render.
 - **Never collected:** message content, contact or email addresses, account
   data, or any free text.
@@ -145,7 +145,12 @@ pnpm apply-patches                   # (re)create build/ from pins + patches
 pnpm update-patches                  # regenerate patches/ from build/ commits
 ```
 
-Requires: Node ≥ 22 + pnpm, Rust stable + `wasm32-unknown-unknown` target.
+Requires: Node ≥ 22 + pnpm, Rust **nightly** + `wasm32-unknown-unknown` target —
+both are selected automatically by
+[`packages/core-wasm/rust/rust-toolchain.toml`](packages/core-wasm/rust/rust-toolchain.toml),
+just have the toolchain installed (`rustup toolchain install nightly`). Nightly
+is not optional: a pinned `rusqlite` in core's tree uses the nightly-only
+`cfg_select!` macro, so stable rustc fails with E0658.
 
 ## Licensing
 
