@@ -8,6 +8,7 @@
  * startCore delivers proxy/persist settings before init.
  */
 import initWasm, { init, set_crypto_offload } from '../wasm-dist/deltachat_wasm.js'
+import { OPFS_PROBE_DEADLINE_MS, probeUntilDeadline } from './opfs-probe.mjs'
 
 interface FsRequest {
   type: 'fs'
@@ -242,8 +243,14 @@ const pool = new CryptoPool()
  * memfs/accounts/accounts.toml{,.bak} (synchronous config write-through), so
  * probe those too. Fresh origins have neither dir — no wait. */
 async function waitForOpfsSyncHandles(): Promise<void> {
+  // Set once the deadline has passed with a probe still outstanding: a hung
+  // createSyncAccessHandle cannot be cancelled, but the walk around it can, so
+  // the abandoned probe stops opening further handles the moment it un-hangs
+  // (the one it was waiting on is closed immediately, as always).
+  let abandoned = false
   const probeDir = async (dir: any): Promise<void> => {
     for await (const entry of dir.values()) {
+      if (abandoned) return
       if (entry.kind === 'directory') {
         await probeDir(entry)
       } else {
@@ -263,6 +270,7 @@ async function waitForOpfsSyncHandles(): Promise<void> {
       .getDirectoryHandle('.opfs-sahpool')
       .then(probeDir)
       .catch(notFoundOk)
+    if (abandoned) return
     // exactly the two files the wasm side holds permanent handles on; NOT
     // the whole memfs mirror (nothing else is ever locked, and account dirs
     // hold arbitrarily many blobs)
@@ -279,23 +287,21 @@ async function waitForOpfsSyncHandles(): Promise<void> {
         .catch(notFoundOk)
     }
   }
-  for (let attempt = 1; attempt <= 30; attempt++) {
+  // One pass. True = free to proceed, false = locked and worth retrying; a
+  // throw ends the wait for good. createSyncAccessHandle can HANG rather than
+  // reject while the previous worker is mid-teardown, so the timing policy —
+  // one wall-clock deadline covering every pass, and never a second probe
+  // while one is still outstanding — lives in opfs-probe.mjs, where the
+  // reasoning behind the number and its unit test are.
+  let attempts = 0
+  const probeOnce = async (): Promise<boolean> => {
+    attempts++
     try {
       const root = await (self as any).navigator.storage.getDirectory()
-      // race a timeout: createSyncAccessHandle can HANG (not reject) while
-      // the previous worker is mid-teardown. The budget grows with each
-      // attempt: the pool has max(32, 2N+8) files and never shrinks, and on
-      // slow storage (low-end eMMC) probing them all can exceed a fixed 2s
-      // every time — which would misreport "already running in another tab"
-      // and brick boot with no other tab open. Later attempts allow more time.
-      const budgetMs = Math.min(2000 + (attempt - 1) * 1000, 12000)
-      await Promise.race([
-        probeAll(root),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('probe timeout')), budgetMs)),
-      ])
-      return
+      await probeAll(root)
+      return true
     } catch (err) {
-      if ((err as DOMException)?.name === 'NotFoundError') return
+      if ((err as DOMException)?.name === 'NotFoundError') return true
       if ((err as DOMException)?.name === 'SecurityError') {
         // storage blocked by browser settings (e.g. Safari "Block All
         // Cookies"), not a lock — retrying can't help and the "another tab"
@@ -304,13 +310,19 @@ async function waitForOpfsSyncHandles(): Promise<void> {
         scope.postMessage({ type: 'fatal-storage-blocked' } as unknown as string)
         throw err
       }
-      console.warn(`[core-wasm] OPFS locked (old worker still alive?), waiting ${attempt}/30`)
-      await new Promise(r => setTimeout(r, 500))
+      console.warn(`[core-wasm] OPFS locked (old worker still alive?), retry ${attempts}`)
+      return false
     }
   }
-  // still locked after all 30 attempts: almost certainly another live tab. Tell the page
-  // (it shows the "already running in another tab" dialog) and fail loudly —
-  // proceeding into init would hang forever in the sahpool install.
+  const outcome = await probeUntilDeadline(probeOnce)
+  if (outcome === 'ready') return
+  abandoned = true
+  // Out of time: almost certainly another live tab, or ('hung') a handle
+  // acquisition the browser never settled. Tell the page — it shows the
+  // "already running in another tab" dialog, so the user gets an explanation
+  // within the deadline instead of an endless loading screen — and fail
+  // loudly: proceeding into init would hang forever in the sahpool install.
+  console.warn(`[core-wasm] OPFS probe ${outcome} after ${OPFS_PROBE_DEADLINE_MS}ms, giving up`)
   fatalReported = true
   scope.postMessage({ type: 'fatal-opfs-locked' } as unknown as string)
   throw new Error('OPFS is locked — SlothfulChat seems to be running in another tab')
