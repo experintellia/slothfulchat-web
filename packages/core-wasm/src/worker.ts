@@ -64,6 +64,11 @@ interface CryptoReply {
   fatal?: boolean
 }
 
+/** Asks the pool how many ops it has run — see {@link CryptoPool.stats}. */
+interface CryptoStatsRequest {
+  type: 'crypto-stats'
+}
+
 /** One queued or running op. */
 interface CryptoJob {
   id: number
@@ -110,7 +115,10 @@ class CryptoPool {
     this.resolveReady = resolve
   })
   private spawnFailures = 0
-  private offloaded = 0
+  /** Ops completed on the pool, by op name. Pulled by tests via the
+   * `crypto-stats` message rather than pushed per op — offloading is on the
+   * hot path of every message, so it must stay silent when nobody asks. */
+  private readonly offloaded = new Map<string, number>()
 
   constructor() {
     this.spawn()
@@ -144,9 +152,7 @@ class CryptoPool {
           // reset on useful work, not on the ready handshake: a payload that
           // reliably traps the instance would otherwise respawn forever
           this.spawnFailures = 0
-          this.offloaded++
-          // observable marker for tests; every other listener ignores it
-          scope.postMessage({ type: 'crypto-offload', op: job.op, count: this.offloaded } as unknown as string)
+          this.offloaded.set(job.op, (this.offloaded.get(job.op) ?? 0) + 1)
           job.resolve(msg.reply)
         } else {
           job.reject(new Error(msg.error ?? `crypto op ${job.op} failed`))
@@ -191,6 +197,12 @@ class CryptoPool {
       opTimeoutMs(job.payload),
     )
     worker.postMessage({ id: job.id, op: job.op, payload: job.payload }, [job.payload.buffer])
+  }
+
+  /** How many ops of each kind the pool has completed, e.g. `{ keygen: 2 }`.
+   * Empty means core computed everything inline. */
+  stats(): Record<string, number> {
+    return Object.fromEntries(this.offloaded)
   }
 
   /** Queues one op for the pool worker. The payload's buffer is transferred —
@@ -316,10 +328,18 @@ ready.catch(err => {
   scope.postMessage({ type: 'fatal-init-error', message: String(err) } as unknown as string)
 })
 
-scope.onmessage = async (event: MessageEvent<string | FsRequest | ConfigMessage>) => {
+scope.onmessage = async (
+  event: MessageEvent<string | FsRequest | ConfigMessage | CryptoStatsRequest>,
+) => {
   const msg = event.data
   if (typeof msg !== 'string' && msg?.type === 'config') {
     resolveConfig(msg)
+    return
+  }
+  // answered before `await ready` so it works even while core is still
+  // booting, and so it never perturbs the crypto path it reports on
+  if (typeof msg !== 'string' && msg?.type === 'crypto-stats') {
+    scope.postMessage({ type: 'crypto-stats', offloaded: pool.stats() } as unknown as string)
     return
   }
   const dc = await ready

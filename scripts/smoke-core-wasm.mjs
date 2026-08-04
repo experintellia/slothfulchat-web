@@ -31,9 +31,11 @@ const server = createServer(async (req, res) => {
 await new Promise((resolve) => server.listen(0, resolve));
 const port = server.address().port;
 
-// CHROMIUM=/path/to/chrome overrides the browser binary, for sandboxes that
-// ship a Chromium that doesn't match the installed Playwright version
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined });
+// CHROMIUM_BIN=/path/to/chrome overrides the browser binary, for sandboxes
+// that ship a Chromium not matching the installed Playwright version
+const browser = await chromium.launch(
+  process.env.CHROMIUM_BIN ? { executablePath: process.env.CHROMIUM_BIN } : {},
+);
 const page = await browser.newPage();
 page.on('console', (m) => console.log('[page]', m.text().slice(0, 300)));
 page.on('pageerror', (e) => console.error('[pageerror]', e.message));
