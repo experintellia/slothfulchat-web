@@ -4,16 +4,46 @@
 // the handler maps to loopback per RFC 6761). Guard tests run a bridge with
 // the private-IP guard ON (loopback targets refused); functional tests run one
 // with UNFURL_ALLOW_PRIVATE=1; enablement tests cover the default (on for an
-// allow-all bridge, off once CHATMAIL_ALLOWLIST is set) and UNFURL=0.
+// allow-all bridge, off once CHATMAIL_ALLOWLIST is set) and UNFURL=0. The
+// address guard's range table is asserted in-process, and a short
+// UNFURL_DEADLINE_MS bridge proves the absolute deadline against a slow drip.
 // Run:  node scripts/test-unfurl.mjs
 import { createServer } from 'node:http'
 import { fork } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
+import { isPrivateIp } from '../packages/ws-tcp-proxy/unfurl.mjs'
 
 const servicePath = fileURLToPath(
   new URL('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs', import.meta.url)
 )
+
+// --- SSRF address guard, checked against the real table (imported, not a
+//     hand-kept copy). Only globally routable unicast may be fetched. ---
+for (const ip of [
+  '127.0.0.1', '10.0.0.5', '192.168.1.1', '172.16.0.1', '169.254.169.254',
+  '100.64.0.1', '0.0.0.0', '::1', 'fc00::1', 'fe80::1',
+  '::ffff:127.0.0.1',        // dotted IPv4-mapped
+  '::ffff:7f00:1',           // hex IPv4-mapped 127.0.0.1 (a past bypass)
+  '::ffff:a9fe:a9fe',        // hex IPv4-mapped 169.254.169.254 metadata (a past bypass)
+  '::',                      // unspecified
+  '192.0.0.1', '192.0.2.5', '198.18.0.1', '198.51.100.7', '203.0.113.9',
+  '224.0.0.1', '239.255.255.250', '240.0.0.1', '255.255.255.255',
+  '2001:db8::1',             // documentation
+  '::ffff:c000:2ff',         // hex IPv4-mapped 192.0.2.255
+]) {
+  assert.equal(isPrivateIp(ip), true, `expected ${ip} to be blocked`)
+}
+for (const ip of [
+  '8.8.8.8', '1.1.1.1', '2606:4700:4700::1111', '93.184.216.34',
+  '99.255.255.255', '100.128.0.1', '192.0.1.1', '192.0.3.1',
+  '198.17.255.255', '198.20.0.1', '198.51.99.1', '203.0.114.1',
+  '223.255.255.255', '2001:db9::1',
+]) {
+  assert.equal(isPrivateIp(ip), false, `expected ${ip} to be allowed`)
+}
+assert.equal(isPrivateIp('example.com'), false) // hostnames go through the lookup guard
+console.log('OK: address guard blocks the non-global ranges, permits public unicast')
 
 // --- OG page server ---
 const PNG = Buffer.from(
@@ -67,6 +97,25 @@ const og = createServer((req, res) => {
         `<meta property="og:image" content="${ogBase}/huge.png"></head>`
     )
   }
+  if (path === '/drip.html' || path === '/drip.png') {
+    // never finishes, never idles: a byte every 100 ms keeps the socket's
+    // inactivity timeout from ever firing. Only an absolute deadline stops it.
+    res.setHeader('content-type', path.endsWith('.png') ? 'image/png' : 'text/html')
+    res.write('<html><head>')
+    const t = setInterval(() => res.write('x'), 100)
+    return res.on('close', () => clearInterval(t))
+  }
+  if (path === '/slowpage.html') {
+    // 800 ms to answer, then points at a dripping image: the image fetch must
+    // inherit what's left of the deadline, not start a fresh one.
+    return setTimeout(() => {
+      res.setHeader('content-type', 'text/html; charset=utf-8')
+      res.end(
+        '<html><head><title>slow</title>' +
+          `<meta property="og:image" content="${ogBase}/drip.png"></head>`
+      )
+    }, 800)
+  }
   if (path === '/huge.png') {
     res.setHeader('content-type', 'image/png')
     return res.end(Buffer.alloc(5 * 1024 * 1024)) // over the 4 MB image cap
@@ -95,6 +144,8 @@ const open = startService(8656, { UNFURL: '1', UNFURL_ALLOW_PRIVATE: '1' }) // f
 const explicitOff = startService(8658, { UNFURL: '0' })
 const defaultLocal = startService(8659, {}) // no allowlist → default on
 const defaultHosted = startService(8660, { CHATMAIL_ALLOWLIST: 'example.com' }) // allowlist → default off
+// short absolute deadline so the drip tests below finish in ~1 s, not ~20
+const impatient = startService(8661, { UNFURL: '1', UNFURL_ALLOW_PRIVATE: '1', UNFURL_DEADLINE_MS: '1200' })
 await new Promise((r) => setTimeout(r, 500))
 
 const unfurl = (base, url, init) =>
@@ -158,6 +209,23 @@ try {
   assert.equal(bigimgData.image, null)
   console.log('OK: big pages parsed (head-only), over-cap image dropped')
 
+  // absolute deadline: a slow drip never trips the per-socket inactivity
+  // timeout, so only the wall-clock ceiling can end it
+  const dripStart = Date.now()
+  const dripped = await unfurl('http://127.0.0.1:8661', `${ogBase}/drip.html`)
+  assert.equal(dripped.status, 502)
+  assert.match((await dripped.json()).error, /deadline/)
+  assert.ok(Date.now() - dripStart < 5000, 'drip must be cut off by the deadline, not hang')
+  // …and the deadline is shared: 800 ms of page + a dripping image must still
+  // end at ~1.2 s total, not 800 ms + a fresh 1.2 s for the image
+  const sharedStart = Date.now()
+  const shared = await unfurl('http://127.0.0.1:8661', `${ogBase}/slowpage.html`)
+  const sharedMs = Date.now() - sharedStart
+  assert.equal(shared.status, 200)
+  assert.equal((await shared.json()).image, null) // image fetch hit the deadline
+  assert.ok(sharedMs < 1800, `page+image must share one deadline (took ${sharedMs}ms)`)
+  console.log('OK: one absolute deadline spans redirects, page and image')
+
   // rate limit (fresh service so earlier calls don't count)
   const limited = startService(8657, { UNFURL_ALLOW_PRIVATE: '1' })
   await new Promise((r) => setTimeout(r, 500))
@@ -178,5 +246,7 @@ try {
   explicitOff.kill()
   defaultLocal.kill()
   defaultHosted.kill()
+  impatient.kill()
+  og.closeAllConnections()
   og.close()
 }
