@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 1 Aug 2026 17:28:12 +0000
-Subject: [PATCH 72/77] =?UTF-8?q?web-app:=20custom=20voice-message=20playe?=
+Subject: [PATCH 72/78] =?UTF-8?q?web-app:=20custom=20voice-message=20playe?=
  =?UTF-8?q?r=20=E2=80=94=20controls,=20waveform,=20remembered=20position?=
  =?UTF-8?q?=20(on=20by=20default)?=
 MIME-Version: 1.0

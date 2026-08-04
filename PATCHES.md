@@ -489,6 +489,13 @@ contribution intended.
   `desktop/0006`, `desktop/0017`, `desktop/0023`
 - **Imprint links** on the About dialog and welcome screen — a hosted web app
   needs a legal-notice page. `desktop/0004`, `desktop/0005`
+- **Device chat** — core's welcome image is Delta Chat branding, so it is
+  dropped until we have our own (the `core-welcome-image` label is untouched,
+  so adding one later is the same code with a different file). After core's
+  welcome message the app adds one of its own: what the fork does differently,
+  that everything lives in this browser and should be backed up (unencrypted),
+  that it's a prototyping ground, and where to report bugs / self-host.
+  `core/0029`, `desktop/0078`
 - **Hidden upstream UI that can't work in this build** — proxy settings
   (unimplemented on wasm), the second-device / multi-device backup
   transfer flow (iroh doesn't run in browsers yet), and the experimental
