@@ -48,14 +48,8 @@ release also ships the script standalone as `slothfulchat-customize.mjs`
 **GitHub Pages:** the repo ships
 [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml).
 Set the variables below under **Settings → Secrets and variables → Actions →
-Variables**, then enable **Settings → Pages → Source = "GitHub Actions"**. It
-deploys on **`v*` release tags**, not on pushes to main: the workflow's first
-job ([`verify-release-tag.yml`](.github/workflows/verify-release-tag.yml))
-requires the ref to be an unmoved tag whose commit is on `main` and whose
-package versions match it (see [RELEASING.md](RELEASING.md)). The
-`github-pages` environment also needs a `v*` tag deployment rule (Settings →
-Environments → github-pages), or the deploy is rejected by environment
-protection rules. The app auto-detects its URL base, so a project site
+Variables**, then enable **Settings → Pages → Source = "GitHub Actions"** and
+push. The app auto-detects its URL base, so a project site
 (`https://<you>.github.io/<repo>/`) or a custom domain both work.
 
 **Building it yourself:** build locally and upload `packages/web-app/dist`:
@@ -142,9 +136,20 @@ tight, and don't expose it more widely than you need.
 The bridge speaks plain **`ws://`** on `PORT` (default 8641). An `https://`
 site **cannot** connect to `ws://` (mixed content), so put a TLS-terminating
 reverse proxy (nginx, Caddy, …) in front to expose it as **`wss://`**, and
-point `SLOTHFUL_DEFAULT_PROXY` at that `wss://` URL. Full options (endpoints,
-how the `CHATMAIL_ALLOWLIST` allow-list works) are in the
-[proxy README](packages/ws-tcp-proxy/README.md).
+point `SLOTHFUL_DEFAULT_PROXY` at that `wss://` URL.
+`dist/caddy/Caddyfile.example` ships a ready-made `/bridge` route for exactly
+the `wss://your.domain/bridge` form used in the examples above.
+
+> **Whichever proxy you use, it must STRIP the path prefix** (Caddy:
+> `handle_path`; nginx: a trailing slash on `proxy_pass`). The bridge reads the
+> first path segment as the endpoint kind — the app asks it for `/dns/<host>`
+> and `/tcp/<ip>/<port>` — so a proxy that passes `/bridge` through completes
+> the WebSocket handshake and then fails every single operation. Serving the
+> bridge on its own hostname (`wss://bridge.example.chat`) sidesteps the
+> question entirely.
+
+Full options (endpoints, how the `CHATMAIL_ALLOWLIST` allow-list works) are in
+the [proxy README](packages/ws-tcp-proxy/README.md).
 
 ## The variables
 
@@ -154,7 +159,7 @@ how the `CHATMAIL_ALLOWLIST` allow-list works) are in the
 |---|---|---|
 | `SLOTHFUL_INSTANCE_NAME` | Display name of your instance: tab title, PWA install name, imprint page. | `SlothfulChat` |
 | `SLOTHFUL_INSTANCE_URL` | Canonical origin of your instance. | `https://web.slothful.chat` |
-| `SLOTHFUL_DEFAULT_PROXY` | The `wss://` bridge the app uses when the user hasn't set one. **Without this, the app defaults to `ws://localhost:8641`** and can't connect on a hosted site. | `wss://web.slothful.chat/bridge` |
+| `SLOTHFUL_DEFAULT_PROXY` | The `wss://` bridge the app uses when the user hasn't set one. **Without this, the app defaults to `ws://localhost:8641`** and can't connect on a hosted site. If it points at a path (`…/bridge`), the reverse proxy in front of the bridge must strip that prefix — see [Run the bridge](#2-run-the-bridge). | `wss://web.slothful.chat/bridge` |
 | `SLOTHFUL_PUBLIC_BRIDGES` | Public bridges offered as options in the app's bridge picker dialog, each with a super-short description. Format: `;`-separated `URL description` entries — the URL runs to the first space, the rest of the entry is the description (so descriptions can't contain `;`). Entries without a `ws://`/`wss://` URL are ignored. A local bridge and a custom-URL field are always offered too, and the `SLOTHFUL_DEFAULT_PROXY` bridge shows up automatically (deduped, your description wins if you list it here). | `wss://a.example/bridge Community bridge, for testing; wss://b.example/bridge Backup bridge` |
 | `SLOTHFUL_DEFAULT_CHATMAIL` | The chatmail relay the "create new account" onboarding flow signs up on when a user just taps the button. Point it at your own chatmail server so new sign-ups land there. Accepts a bare host, a URL, or a `dcaccount:` QR. Unset = the upstream default relay. Users scanning a `dcaccount:`/`dclogin:` QR still override it. | `chat.example.chat` |
 | `SLOTHFUL_RELAY_DIRECTORY` | Where the onboarding relay picker fetches the public relay list — JSON of the shape `{"relays":[{"host":"…"}]}`, served with CORS. Unset = an automated daily mirror of [chatmail.at/relays](https://chatmail.at/relays) ([chatmail-relays-mirror](https://github.com/experintellia/chatmail-relays-mirror)). `off` = no relay picker; users then always sign up on the default relay. The page CSP (`connect-src`) is pinned to exactly this URL at build/customize time. | `https://relays.example.chat/relays.json` |
