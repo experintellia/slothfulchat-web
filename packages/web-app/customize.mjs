@@ -37,6 +37,7 @@ const VARS = [
   ['SLOTHFUL_DEFAULT_PROXY', 'Default WS-TCP bridge, wss:// (unset = ws://localhost:8641)'],
   ['SLOTHFUL_PUBLIC_BRIDGES', 'Public bridge options in the bridge picker: "URL description; URL description" (unset = only localhost + custom)'],
   ['SLOTHFUL_DEFAULT_CHATMAIL', 'Default chatmail relay for new accounts, host/URL (unset = upstream default)'],
+  ['SLOTHFUL_RELAY_DIRECTORY', 'Relay list for the onboarding relay picker: https URL, or "off" to hide the picker (unset = the chatmail-relays-mirror default)'],
   ['SLOTHFUL_IMPRINT_NAME', 'Imprint: responsible person/entity'],
   ['SLOTHFUL_IMPRINT_ADDRESS', 'Imprint: postal address (type \\n for line breaks)'],
   ['SLOTHFUL_IMPRINT_EMAIL', 'Imprint: contact email'],

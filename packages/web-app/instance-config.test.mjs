@@ -312,3 +312,33 @@ test('frontend RELAY_DIRECTORY_URL default matches DEFAULT_RELAY_DIRECTORY_URL',
     'frontend RELAY_DIRECTORY_URL (in patches/desktop) drifted from DEFAULT_RELAY_DIRECTORY_URL'
   )
 })
+
+// Drift guard (audit L-04): every SLOTHFUL_* var this file actually reads has
+// to reach the builds, or an operator sets a repo Variable and silently gets
+// the default anyway. This file IS the authoritative list — grep it instead of
+// keeping a second copy that can rot.
+test('every supported SLOTHFUL_* var is forwarded by the build/deploy/customize paths', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const root = new URL('../../', import.meta.url)
+  const self = await readFile(new URL('./instance-config.mjs', import.meta.url), 'utf-8')
+  const supported = [...new Set([...self.matchAll(/\benv\.(SLOTHFUL_[A-Z_]+)/g)].map(m => m[1]))]
+  ok(supported.length > 8, `the env scan found only ${supported.length} vars — regex broken?`)
+  // Deliberate omissions: analytics is prod-only (next/preview must not
+  // pollute prod stats, issue #134) and self-hosted builds ship without
+  // analytics entirely (privacy.html promises exactly that), so the customize
+  // script and SELFHOSTING.md don't offer it either.
+  const analytics = ['SLOTHFUL_PLAUSIBLE_DOMAIN', 'SLOTHFUL_PLAUSIBLE_API']
+  const consumers = {
+    '.github/workflows/deploy-pages.yml': [],
+    '.github/workflows/deploy-next.yml': analytics,
+    '.github/workflows/preview-deploy.yml': analytics,
+    'packages/web-app/customize.mjs': analytics,
+    'SELFHOSTING.md': analytics,
+  }
+  for (const [file, skip] of Object.entries(consumers)) {
+    const text = await readFile(new URL(file, root), 'utf-8')
+    for (const v of supported) {
+      if (!skip.includes(v)) ok(text.includes(v), `${file} does not pass through ${v}`)
+    }
+  }
+})
