@@ -67,6 +67,7 @@ jobs:
           packages/web-app/src/translation-editor.test.mjs
           packages/web-app/src/blob-response.test.mjs
           packages/web-app/src/blob-route.test.mjs
+          packages/web-app/src/sw-cache.test.mjs
           packages/web-app/src/fatal-report.test.mjs
 
       # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —

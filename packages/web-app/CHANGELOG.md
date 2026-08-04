@@ -1,5 +1,10 @@
 # Changelog
 
+- **Hardening**: the offline cache now keeps to itself. It only deletes caches
+  it created (anything else hosted on the same domain used to be wiped along
+  with them) and only stores the app's own files, so a service sitting next to
+  the app on that domain can't end up cached — or answered from the cache.
+
 - **Hardening**: the internal address the app uses to fetch attachments now
   refuses to point anywhere outside the attachment folder. No known way to
   trigger it from a message — the other layers around attachments already
