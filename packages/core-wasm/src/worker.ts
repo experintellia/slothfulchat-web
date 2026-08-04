@@ -200,7 +200,17 @@ class CryptoPool {
       () => this.die(new Error(`crypto op ${job.op} timed out`)),
       opTimeoutMs(job.payload),
     )
-    worker.postMessage({ id: job.id, op: job.op, payload: job.payload }, [job.payload.buffer])
+    try {
+      worker.postMessage({ id: job.id, op: job.op, payload: job.payload }, [job.payload.buffer])
+    } catch (err) {
+      // the job never reached the worker, so no reply is coming: settle it
+      // here (core recomputes it inline) instead of holding the slot until
+      // the deadline fires and takes a healthy worker down with it
+      clearTimeout(job.timer)
+      this.active = null
+      job.reject(new Error(`crypto op ${job.op} could not be posted: ${String(err)}`))
+      this.pump()
+    }
   }
 
   /** How many ops of each kind the pool has completed, e.g. `{ keygen: 2 }`.
