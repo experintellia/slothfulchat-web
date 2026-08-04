@@ -35,9 +35,14 @@ scope.onmessage = async (event: MessageEvent<CryptoRequest>) => {
       id,
       ok: false,
       error: String(err),
-      // a wasm trap (OOM, unreachable) poisons this instance for good —
-      // tell the pool so it respawns instead of feeding it more ops
-      fatal: err instanceof WebAssembly.RuntimeError,
+      // Anything that poisons this instance for good gets reported so the
+      // pool respawns instead of feeding it more ops. A trap (unreachable, a
+      // Rust panic — wasm32 has no unwinding) is a RuntimeError; a failed
+      // memory growth surfaces as a RangeError instead, which is exactly the
+      // case a phone runs into, so treat both as fatal. Respawning after a
+      // merely unlucky RangeError costs one worker start; keeping a wedged
+      // instance costs every op after it.
+      fatal: err instanceof WebAssembly.RuntimeError || err instanceof RangeError,
     })
   }
 }
