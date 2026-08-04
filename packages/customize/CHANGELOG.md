@@ -1,5 +1,9 @@
 # Changelog
 
+- `SLOTHFUL_RELAY_DIRECTORY` is now offered like every other variable: it was
+  supported but never prompted for, so anyone using the interactive flow ended
+  up with the default relay directory whether they wanted it or not.
+
 ## 0.6.0 — 2026-07-15
 
 - New `SLOTHFUL_RELAY_DIRECTORY` variable: relay-directory JSON for the
