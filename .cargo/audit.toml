@@ -1,0 +1,73 @@
+# cargo-audit config for the CI dependency gate (audit finding L-05).
+#
+# Read from the repo root, so `cargo audit --file <lockfile>` must be run from
+# there. Covers the two checked-in lockfiles:
+#   packages/core-wasm/rust/Cargo.lock  — the wasm build's full graph (its path
+#                                         deps pull in all of patched core)
+#   crates/tokio-wasm-shim/Cargo.lock   — the standalone shim crate
+# build/core/Cargo.lock is not covered: it does not exist until
+# `pnpm apply-patches` runs, and core-wasm's lock is a superset of it anyway.
+#
+# EVERY id below is a reviewed, versioned exception. The gate's job is to fail
+# on anything NOT listed. When you add one, say what it is and why it is not
+# actionable here; when the pinned core graph moves, delete the ones that go
+# away rather than letting the list rot.
+#
+# Reachability was checked with, from packages/core-wasm/rust:
+#   cargo tree --target wasm32-unknown-unknown --edges normal -i <crate>
+# (requires build/core, i.e. `pnpm apply-patches` first). Last done 2026-08-04.
+#
+# NOT FIXABLE HERE: every crate below is pulled in transitively by the pinned
+# chatmail core / iroh / rpgp graph. Moving those pins is a separate, much
+# larger piece of work — deliberately out of scope for this gate.
+
+[advisories]
+ignore = [
+  # --- absent from the wasm32-unknown-unknown graph -------------------------
+  # `cargo tree --target wasm32-unknown-unknown` prints "nothing to print" for
+  # both crates: they are native-only deps, never compiled into the wasm core.
+  "RUSTSEC-2026-0204", # crossbeam-epoch 0.9.18 — invalid ptr deref in fmt::Pointer
+  "RUSTSEC-2026-0119", # hickory-proto 0.25.2 — O(n^2) name compression, CPU exhaustion
+  "RUSTSEC-2026-0118", # hickory-proto 0.25.2 — NSEC3 proof unbounded loop
+
+  # --- present in the wasm32 graph, no upgrade available on the pinned graph -
+  # These DO compile into the wasm core. No exploit path has been demonstrated
+  # against this build (see audit finding L-05), but do not read the entries
+  # below as "unreachable" — they are accepted risk, not absent code.
+
+  # ml-dsa 0.0.4 <- pgp 0.20 <- deltachat. Timing side-channel in ML-DSA
+  # decomposition. Fix is ml-dsa >=0.1.0-rc.3, which rpgp 0.20 does not take.
+  "RUSTSEC-2025-0144",
+
+  # rsa 0.9.10 <- pgp 0.20 <- deltachat. Marvin attack (timing key recovery).
+  # Upstream says "no fixed upgrade is available" — the whole 0.9 line is
+  # affected and rpgp has not moved off it.
+  "RUSTSEC-2023-0071",
+
+  # rustls-webpki 0.102.8 <- iroh 0.35 / iroh-relay 0.35 <- deltachat. Four
+  # cert/CRL-validation defects. Fixed in 0.103.13+, which needs an iroh bump.
+  "RUSTSEC-2026-0099", # name constraints accepted for wildcard-name certs
+  "RUSTSEC-2026-0104", # reachable panic parsing a CRL
+  "RUSTSEC-2026-0098", # name constraints for URI names incorrectly accepted
+  "RUSTSEC-2026-0049", # CRLs not authoritative by distribution point
+
+  # --- unsoundness (gated by CI's `-D unsound`) -----------------------------
+  # event-listener 5.4.1 <- async-broadcast / async-lock / event-listener-strategy.
+  # `!Send` tags crossing threads via StackSlot. The wasm core is single
+  # threaded (no wasm atomics/threads in this build), so there is no second
+  # thread for a tag to cross to.
+  "RUSTSEC-2026-0221",
+
+  # lru 0.12.5 <- iroh-relay, lru 0.13.0 <- pkarr. `IterMut` violates Stacked
+  # Borrows. Miri-level UB in a code path neither caller reaches from wasm; no
+  # fixed release the pinned iroh/pkarr versions accept.
+  "RUSTSEC-2026-0002",
+]
+
+# CI passes `-D unsound` so unsoundness advisories (warnings by default) gate
+# too. `unmaintained` is deliberately NOT denied — it is a maintenance signal,
+# not a defect, and fires constantly on transitive crates (instant, paste).
+# Yanked crates are skipped entirely (`--no-yanked`): they carry no advisory
+# id, so there would be no way to write a reviewed exception for one (spin
+# 0.9.8 / 0.10.0 are currently yanked and unavoidable), and the check costs a
+# crates.io round trip per crate.
