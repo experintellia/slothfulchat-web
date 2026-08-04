@@ -1,5 +1,12 @@
 # Changelog
 
+- **PGP crypto no longer blocks the core**: key generation, message
+  encryption and decryption now run on a dedicated, prewarmed crypto worker,
+  so the app stays responsive while they work — most noticeable on phones,
+  where account creation or a large encrypted message used to stall
+  everything for a second or more. If the crypto worker can't start, the old
+  inline behavior remains as fallback.
+
 - **Resumable, chunked big-message downloads**: "download on demand" messages
   now arrive in chunks (IMAP partial fetch) — an interrupted download resumes
   where it stopped instead of restarting from zero, new messages keep coming

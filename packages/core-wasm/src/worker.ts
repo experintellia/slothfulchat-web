@@ -7,7 +7,7 @@
  * backup import/export), and a one-shot `{ type: 'config', ... }` from
  * startCore delivers proxy/persist settings before init.
  */
-import initWasm, { init } from '../wasm-dist/deltachat_wasm.js'
+import initWasm, { init, set_crypto_offload } from '../wasm-dist/deltachat_wasm.js'
 
 interface FsRequest {
   type: 'fs'
@@ -52,6 +52,112 @@ let resolveConfig: (config: ConfigMessage) => void
 const config = new Promise<ConfigMessage>(resolve => {
   resolveConfig = resolve
 })
+
+/** One reply from crypto-worker.ts: the ready handshake or an op result. */
+interface CryptoReply {
+  type?: 'ready'
+  id?: number
+  ok?: boolean
+  reply?: Uint8Array
+  error?: string
+  /** wasm trap — the worker's instance is poisoned, respawn it. */
+  fatal?: boolean
+}
+
+/**
+ * Prewarmed worker that runs offloaded PGP ops (issue #3) so core's thread
+ * stays responsive. Registered with the wasm side via `set_crypto_offload`
+ * only once its worker is ready; until then (and whenever it's dead) core
+ * computes inline — the always-correct fallback.
+ * ponytail: pool of one; bump to N workers if parallel crypto ever matters.
+ */
+class CryptoPool {
+  private worker: Worker | null = null
+  private nextId = 1
+  private inflight = new Map<
+    number,
+    { resolve: (reply: Uint8Array) => void; reject: (err: Error) => void; op: string }
+  >()
+  private resolveReady!: () => void
+  /** Resolves once a worker has loaded the wasm artifact. Never resolves if
+   * spawning fails for good — then registration never happens (inline). */
+  readonly ready = new Promise<void>(resolve => {
+    this.resolveReady = resolve
+  })
+  private spawnFailures = 0
+  private offloaded = 0
+
+  constructor() {
+    this.spawn()
+  }
+
+  private spawn(): void {
+    let worker: Worker
+    try {
+      // nested workers are unsupported in some engines → die permanently
+      // (spawnFailures exhausts) and stay inline forever
+      worker = new Worker(new URL('./crypto-worker.js', import.meta.url), { type: 'module' })
+    } catch (err) {
+      this.die(new Error(`crypto worker spawn failed: ${String(err)}`))
+      return
+    }
+    this.worker = worker
+    worker.onmessage = (event: MessageEvent<CryptoReply>) => {
+      const msg = event.data
+      if (msg.type === 'ready') {
+        if (msg.error !== undefined) {
+          this.die(new Error(msg.error))
+        } else {
+          this.spawnFailures = 0
+          this.resolveReady()
+        }
+        return
+      }
+      const entry = msg.id === undefined ? undefined : this.inflight.get(msg.id)
+      if (entry) {
+        this.inflight.delete(msg.id!)
+        if (msg.ok && msg.reply) {
+          this.offloaded++
+          // observable marker for tests; every other listener ignores it
+          scope.postMessage({ type: 'crypto-offload', op: entry.op, count: this.offloaded } as unknown as string)
+          entry.resolve(msg.reply)
+        } else {
+          entry.reject(new Error(msg.error ?? `crypto op ${entry.op} failed`))
+        }
+      }
+      if (msg.fatal) this.die(new Error(msg.error ?? 'crypto worker trapped'))
+    }
+    worker.onerror = event => {
+      this.die(new Error(`crypto worker error: ${event.message ?? 'unknown'}`))
+    }
+  }
+
+  private die(cause: Error): void {
+    for (const { reject } of this.inflight.values()) reject(cause)
+    this.inflight.clear()
+    this.worker?.terminate()
+    this.worker = null
+    // ponytail: >3 failures = permanently dead, run() rejects every op from
+    // then on; the upgrade path is a shim unset-handler API so core falls
+    // back to inline per-op instead
+    if (++this.spawnFailures > 3) return
+    this.spawn()
+  }
+
+  /** Runs one op on the pool worker. The payload's buffer is transferred. */
+  run(op: string, payload: Uint8Array): Promise<Uint8Array> {
+    const worker = this.worker
+    if (!worker) return Promise.reject(new Error('crypto pool is dead'))
+    return new Promise((resolve, reject) => {
+      const id = this.nextId++
+      this.inflight.set(id, { resolve, reject, op })
+      worker.postMessage({ id, op, payload }, [payload.buffer])
+    })
+  }
+}
+
+// module-level: prewarms the pool worker in parallel with core's own initWasm
+const pool = new CryptoPool()
 
 /** Reload race: the previous worker's OPFS sync access handles release only
  * once that worker is fully destroyed, and a fast reload (service-worker
@@ -143,6 +249,11 @@ let fatalReported = false
 const ready = (async () => {
   const { proxyUrl, persist } = await config
   await initWasm()
+  // non-blocking: boot never waits on the pool — until it registers, core
+  // computes crypto inline (the correct fallback)
+  void pool.ready.then(() =>
+    set_crypto_offload((op: string, payload: Uint8Array) => pool.run(op, payload))
+  )
   if (persist) await waitForOpfsSyncHandles()
   return await init((message: string) => scope.postMessage(message), proxyUrl, persist)
 })()
