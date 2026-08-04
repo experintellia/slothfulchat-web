@@ -92,7 +92,7 @@ export const EVENTS = [
   {
     name: 'boot_error',
     what: 'That the app hit a fatal startup error, by category (helps us fix white-screens).',
-    props: 'kind = opfs-locked · storage-blocked · init-error',
+    props: 'kind = opfs-locked · storage-blocked · init-error · no-wasm',
   },
   {
     name: 'chat_export',

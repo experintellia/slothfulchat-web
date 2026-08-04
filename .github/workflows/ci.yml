@@ -66,6 +66,7 @@ jobs:
           packages/web-app/analytics-gate.test.mjs
           packages/web-app/src/translation-editor.test.mjs
           packages/web-app/src/blob-response.test.mjs
+          packages/web-app/src/fatal-report.test.mjs
 
       # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —
       # Node's built-in type-stripping test runner needs no pnpm install, only
@@ -259,6 +260,12 @@ jobs:
       # injected instance config, preselection, localStorage save semantics
       - name: E2E test — bridge picker dialog
         run: node scripts/test-bridge-dialog.mjs
+
+      # fatal-start dialog e2e (no proxy, no core boot): a browser with
+      # WebAssembly removed — Lockdown Mode's effect — is told so rather than
+      # blamed on storage, and the error text can actually leave a dead app.
+      - name: E2E test — fatal-start dialog
+        run: node scripts/test-fatal-dialog.mjs
 
       # HTML email viewer security check (fully offline, no core boot; builds
       # its own bundle): sanitizer strips scripts/meta/base/javascript: URLs,
