@@ -54,20 +54,20 @@ content equality and that signatures verify after re-encoding.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
- src/decrypt.rs     |  64 +++++++--
+ src/decrypt.rs     |  94 +++++++++----
  src/e2ee.rs        |  20 +++
  src/key.rs         |  24 ++++
  src/lib.rs         |   1 +
- src/offload_ops.rs | 328 +++++++++++++++++++++++++++++++++++++++++++++
- src/pgp.rs         | 186 +++++++++++++++----------
- 6 files changed, 541 insertions(+), 82 deletions(-)
+ src/offload_ops.rs | 324 +++++++++++++++++++++++++++++++++++++++++++++
+ src/pgp.rs         | 186 +++++++++++++++-----------
+ 6 files changed, 552 insertions(+), 97 deletions(-)
  create mode 100644 src/offload_ops.rs
 
 diff --git a/src/decrypt.rs b/src/decrypt.rs
-index 0eba9e7..00169cc 100644
+index 0eba9e7..86dca62 100644
 --- a/src/decrypt.rs
 +++ b/src/decrypt.rs
-@@ -24,8 +24,22 @@
+@@ -24,8 +24,34 @@
  use crate::context::Context;
  use crate::key::self_fingerprint;
  use crate::key::{Fingerprint, SignedPublicKey, load_self_secret_keyring};
@@ -87,10 +87,22 @@ index 0eba9e7..00169cc 100644
 +    DecryptionOptions::new().set_seipdv1_read_mode(Seipdv1ReadMode::Streaming)
 +}
 +
++/// Decrypts `msg` with `ring`, then decompresses it.
++///
++/// The single place decryption actually happens: the inline path below and
++/// the offloaded worker (`crate::offload_ops`) both call this, so the two
++/// can never run different rPGP calls.
++pub(crate) fn decrypt_ring(msg: Message<'static>, ring: TheRing<'_>) -> Result<Message<'static>> {
++    let (plain, _ring_result) = msg
++        .decrypt_the_ring(ring, ABORT_EARLY)
++        .context("decrypt_the_ring")?;
++    Ok(plain.decompress()?)
++}
++
  /// Tries to decrypt the message,
  /// returning a tuple of `(decrypted message, fingerprint)`.
  ///
-@@ -51,14 +65,8 @@ pub(crate) async fn decrypt(
+@@ -51,14 +77,7 @@ pub(crate) async fn decrypt(
      };
      let expected_sender_fingerprint: Option<String>;
  
@@ -102,15 +114,15 @@ index 0eba9e7..00169cc 100644
 -    // SEPIDv2 is decrypted in streaming mode in any case.
 -    let decrypt_options =
 -        DecryptionOptions::new().set_seipdv1_read_mode(Seipdv1ReadMode::Streaming);
-+    let abort_early = ABORT_EARLY;
 +    let decrypt_options = decrypt_options();
  
      let plain = if let Message::Encrypted { esk, .. } = &*msg
          // We only allow one ESK for symmetrically encrypted messages
-@@ -72,6 +80,27 @@ pub(crate) async fn decrypt(
+@@ -72,19 +91,34 @@ pub(crate) async fn decrypt(
              .context("decrypt_session_key_symmetrically")?;
          expected_sender_fingerprint = fingerprint;
  
+-        tokio::task::spawn_blocking(move || -> Result<Message<'_>> {
 +        #[cfg(target_arch = "wasm32")]
 +        if tokio::offload::available() {
 +            // The `Message` reader cannot be serialized;
@@ -132,13 +144,28 @@ index 0eba9e7..00169cc 100644
 +            }
 +        }
 +
-         tokio::task::spawn_blocking(move || -> Result<Message<'_>> {
++        tokio::task::spawn_blocking(move || {
              let ring = TheRing {
                  session_keys: vec![psk],
-@@ -92,6 +121,25 @@ pub(crate) async fn decrypt(
+                 decrypt_options,
+                 ..Default::default()
+             };
+-
+-            let (plain, _ring_result) = msg
+-                .decrypt_the_ring(ring, abort_early)
+-                .context("decrypt_the_ring")?;
+-
+-            let plain: Message<'static> = plain.decompress()?;
+-            Ok(plain)
++            decrypt_ring(*msg, ring)
+         })
+         .await??
+     } else {
+@@ -92,19 +126,33 @@ pub(crate) async fn decrypt(
          let secret_keys: Vec<SignedSecretKey> = load_self_secret_keyring(context).await?;
          expected_sender_fingerprint = None;
  
+-        tokio::task::spawn_blocking(move || -> Result<Message<'_>> {
 +        #[cfg(target_arch = "wasm32")]
 +        if tokio::offload::available() {
 +            // The `Message` reader cannot be serialized;
@@ -158,9 +185,23 @@ index 0eba9e7..00169cc 100644
 +            }
 +        }
 +
-         tokio::task::spawn_blocking(move || -> Result<Message<'_>> {
++        tokio::task::spawn_blocking(move || {
              let secret_keys: Vec<&SignedSecretKey> = secret_keys.iter().collect();
              let ring = TheRing {
+                 secret_keys,
+                 decrypt_options,
+                 ..Default::default()
+             };
+-            let (plain, _ring_result) = msg
+-                .decrypt_the_ring(ring, abort_early)
+-                .context("decrypt_the_ring")?;
+-
+-            let plain: Message<'static> = plain.decompress()?;
+-            Ok(plain)
++            decrypt_ring(*msg, ring)
+         })
+         .await??
+     };
 diff --git a/src/e2ee.rs b/src/e2ee.rs
 index 7760641..381a653 100644
 --- a/src/e2ee.rs
@@ -255,10 +296,10 @@ index f30aa4f..6b1e2a0 100644
  mod pgp;
 diff --git a/src/offload_ops.rs b/src/offload_ops.rs
 new file mode 100644
-index 0000000..1e954a4
+index 0000000..2a6cdf8
 --- /dev/null
 +++ b/src/offload_ops.rs
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,324 @@
 +//! Payload codecs and the worker-side dispatcher for offloaded PGP operations.
 +//!
 +//! On wasm, heavy PGP work is handed to a JS-side worker pool via
@@ -458,11 +499,7 @@ index 0000000..1e954a4
 +/// re-encodes the plain message so it can cross the JS boundary as bytes.
 +fn decrypt_reencode(ctext: &[u8], ring: TheRing<'_>) -> Result<Vec<u8>> {
 +    let (msg, _headers) = Message::from_armor(Cursor::new(ctext.to_vec()))?;
-+    let (plain, _ring_result) = msg
-+        .decrypt_the_ring(ring, crate::decrypt::ABORT_EARLY)
-+        .context("decrypt_the_ring")?;
-+    let plain = plain.decompress()?;
-+    reencode_plain(plain)
++    reencode_plain(crate::decrypt::decrypt_ring(msg, ring)?)
 +}
 +
 +/// Re-encodes a decrypted [`Message`] at the packet level; rPGP has no
