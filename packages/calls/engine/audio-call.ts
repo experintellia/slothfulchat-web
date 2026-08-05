@@ -1036,8 +1036,8 @@ export class AudioCallEngine {
     // local stream (a=msid:<stream> …, not a=msid:- …), or the peer's ontrack
     // fires with empty `event.streams` and stream-based consumers (calls-webapp,
     // our own trackListener) never see the later replaceTrack'd camera/screen —
-    // RTP flows but the peer renders black/avatar (confirmed via
-    // scripts/repro-calls-video.mjs).
+    // RTP flows but the peer renders black/avatar (confirmed live against
+    // calls-webapp).
     const existingTrackless = pc.getSenders().find((s) => s.track == null) ?? null;
     if (existingTrackless != null) {
       this.videoSender = existingTrackless;

@@ -1,27 +1,26 @@
 /**
  * Pure serialization/merge helpers for the in-app translation editor
  * (translation-editor.ts holds the UI; docs/design/translation-editor-design.md the
- * design). Plain .mjs with JSDoc types — no browser globals — so CI's lint job
- * unit-tests it with node:test and translation-editor.ts imports it back, the
- * same split events.mjs / analytics.ts already use.
+ * design). No browser globals, so CI's lint job unit-tests it with node:test
+ * and translation-editor.ts imports it back — the same split events.ts /
+ * analytics.ts already use.
  *
  * A locale "entry" is Android-shaped: { message } for a simple string, or CLDR
  * plural forms ({ one, other, ... }). The editor's overlay stores the full
  * edited entry per key, so exports are complete and plural forms are never
  * dropped.
- *
- * @typedef {Record<string, string>} Entry
  */
+export type Entry = Record<string, string>
 
 /**
  * Merge one locale's overlay onto its messages (per-key replace). Lossless: an
  * overlay entry carries all of a key's forms, so plural keys keep every form.
  * Does not mutate its inputs.
- * @param {Record<string, Entry>|undefined} overlayForLocale
- * @param {Record<string, Entry>} messages
- * @returns {Record<string, Entry>}
  */
-export function mergeOverlay(overlayForLocale, messages) {
+export function mergeOverlay(
+  overlayForLocale: Record<string, Entry> | undefined,
+  messages: Record<string, Entry>
+): Record<string, Entry> {
   if (!overlayForLocale) return messages
   const out = { ...messages }
   for (const key of Object.keys(overlayForLocale)) {
@@ -43,10 +42,8 @@ export function mergeOverlay(overlayForLocale, messages) {
  * round-trip through Weblate/Transifex and the build converter faithful.
  * ponytail: covers the escapes the converter round-trips; an exotic sequence it
  * doesn't handle would need manual review before upload.
- * @param {string} s
- * @returns {string}
  */
-export function escapeAndroid(s) {
+export function escapeAndroid(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -66,13 +63,13 @@ export function escapeAndroid(s) {
  * — the inspector shows them all rather than guessing; the fiber's component
  * name is the tiebreaker a human uses. Upgrade path: the zero-width exact mode
  * in the design doc, if this ambiguity ever bites.
- * @param {Map<string, Set<string>>} registry
- * @param {string[]} strings
- * @returns {{ text: string, keys: string[] }[]}
  */
-export function matchKeys(registry, strings) {
-  const out = []
-  const seen = new Set()
+export function matchKeys(
+  registry: Map<string, Set<string>>,
+  strings: readonly string[]
+): { text: string; keys: string[] }[] {
+  const out: { text: string; keys: string[] }[] = []
+  const seen = new Set<string>()
   for (const s of strings) {
     const text = (s || '').trim()
     if (!text || seen.has(text)) continue
@@ -88,10 +85,10 @@ export function matchKeys(registry, strings) {
  * the given keys, for a merge-by-key upload to Weblate/Transifex. Never use
  * Weblate's "Replace existing translation file" mode with a partial file: that
  * deletes the keys not present. Keys are sorted for a stable, reviewable diff.
- * @param {Record<string, Entry>} entries  key -> entry
- * @returns {string}
+ *
+ * @param entries key -> entry
  */
-export function toAndroidXml(entries) {
+export function toAndroidXml(entries: Record<string, Entry>): string {
   const lines = ['<?xml version="1.0" encoding="utf-8"?>', '<resources>']
   for (const key of Object.keys(entries).sort()) {
     const entry = entries[key]

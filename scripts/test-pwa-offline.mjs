@@ -3,20 +3,12 @@
 // to service workers in Chromium), reload, and assert the full app — frontend
 // AND wasm core — boots from the service worker cache. Also asks Chrome for
 // PWA installability errors via CDP. Modeled on scripts/smoke-web-app.mjs.
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 
-const script = p => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8652)
 
-let server = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
-})
-const cleanup = () => server?.kill()
-process.on('exit', cleanup)
-await new Promise(r => setTimeout(r, 500))
+const { appServer: server, cleanup } = await startServers({ app: APP_PORT })
 
 const browser = await chromium.launch()
 const page = await browser.newPage()
@@ -66,9 +58,9 @@ try {
   // worker alive, its OPFS handles never release, and the new core can't start
   await cdp.detach()
 
-  // go offline for real: no server at all
+  // go offline for real: no server at all. cleanup() at the end re-kills it,
+  // which is a no-op on an already-dead child.
   server.kill()
-  server = null
 
   // Cold offline start (the real PWA scenario: open the installed app later).
   // NOT page.reload(): an instant reload races the old core worker's OPFS

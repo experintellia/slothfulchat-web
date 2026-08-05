@@ -1,12 +1,25 @@
-// Static server for dist/ — same pattern as scripts/serve-example.mjs.
+// The repo's dev static server. Serves the web-app's dist/ by default; the
+// core-wasm example (packages/core-wasm: `pnpm example`) points it elsewhere
+// with the three env knobs below rather than keeping a second copy of this.
+//
+//   SERVE_ROOT      absolute dir to serve (default: this package's dist/;
+//                   tests point it at a minimal temp dir)
+//   SERVE_BOUNDARY  absolute dir a resolved path must stay inside (default:
+//                   SERVE_ROOT). The example serves a directory whose deps are
+//                   pnpm symlinks out into the workspace, so it widens the
+//                   boundary to the repo root instead of dropping the check.
+//   SERVE_INDEX     what "/" maps to (default: main.html)
 import { createServer } from 'node:http'
-import { readFile, stat } from 'node:fs/promises'
-import { extname, join, normalize } from 'node:path'
+import { readFile, realpath, stat } from 'node:fs/promises'
+import { extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// SERVE_ROOT: alternate absolute dir to serve (tests serve a minimal temp dir)
 const root = process.env.SERVE_ROOT ?? fileURLToPath(new URL('./dist', import.meta.url))
 const PORT = Number(process.env.PORT ?? 8642)
+const INDEX = process.env.SERVE_INDEX ?? 'main.html'
+// Resolved once at startup: realpath is what makes the boundary check hold
+// even when the path we resolve runs through a symlink.
+const boundary = await realpath(process.env.SERVE_BOUNDARY ?? root)
 
 const types = {
   '.html': 'text/html',
@@ -34,9 +47,12 @@ const types = {
 const server = createServer(async (req, res) => {
   try {
     let urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname)
-    if (urlPath === '/') urlPath = '/main.html'
-    const path = normalize(join(root, urlPath))
-    if (!path.startsWith(root)) throw new Error('traversal')
+    if (urlPath === '/') urlPath = `/${INDEX}`
+    // realpath before the check, so a symlink can't point out of the boundary;
+    // it also 404s a missing file here rather than at readFile.
+    const path = await realpath(normalize(join(root, urlPath)))
+    // `boundary + sep`, not a bare prefix: /repo must not match /repo-evil.
+    if (path !== boundary && !path.startsWith(boundary + sep)) throw new Error('traversal')
     // without a validator nothing is cacheable and firefox re-downloads the
     // 10MB emoji font (and the wasm) on every single use/page load
     const lastModified = (await stat(path)).mtime.toUTCString()
@@ -55,5 +71,5 @@ const server = createServer(async (req, res) => {
   }
 })
 server.listen(PORT, () => {
-  console.log(`web-app: http://localhost:${PORT}/main.html`)
+  console.log(`serving ${root} — http://localhost:${PORT}/${INDEX}`)
 })

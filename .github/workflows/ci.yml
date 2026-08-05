@@ -5,15 +5,15 @@
 #            type/compile-checks the standalone Rust shim crate, and audits the
 #            checked-in dependency lockfiles. Gives quick feedback on obvious
 #            breakage in seconds.
-#   test   — the real test suite. Builds the whole app exactly like
-#            deploy-pages.yml (patched core + upstream desktop bundle + release
-#            wasm), then runs the headless Playwright smoke suites plus the
-#            bridge-picker and chat-export E2E suites on top of it.
+#   test   — the real test suite. Builds the whole app through the same
+#            .github/actions/build-web-app the deploy workflows use (patched
+#            core + upstream desktop bundle + wasm + assembled dist/), then
+#            runs the headless Playwright smoke and E2E suites on top of it.
 #
-# The build half of `test` is a faithful copy of deploy-pages.yml — the same
-# three ordering traps apply (jsonrpc-client generated before the root install;
-# assemble before build; rust-cache after apply-patches). Keep the two in sync
-# when either changes.
+# The build half of `test` used to be a hand-copied duplicate of
+# deploy-pages.yml carrying a "keep the two in sync" note. It is now the same
+# composite action, with wasm-opt and production turned off — so the ordering
+# traps and toolchain setup are described in exactly one place.
 
 name: CI
 
@@ -75,10 +75,14 @@ jobs:
           packages/web-app/instance-config.test.mjs
           packages/web-app/release-asset.test.mjs
           packages/web-app/analytics-gate.test.mjs
-          packages/web-app/src/translation-editor.test.mjs
-          packages/web-app/src/blob-response.test.mjs
-          packages/web-app/src/blob-route.test.mjs
-          packages/web-app/src/fatal-report.test.mjs
+          packages/web-app/src/translation-serialize.test.ts
+          packages/web-app/src/blob-response.test.ts
+          packages/web-app/src/blob-route.test.ts
+          packages/web-app/src/fatal-report.test.ts
+          packages/web-app/src/emoji-sets.test.ts
+          packages/web-app/serve.test.mjs
+          scripts/mock-madmail.test.mjs
+          scripts/harness.test.mjs
 
       # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —
       # Node's built-in type-stripping test runner needs no pnpm install, only
@@ -128,89 +132,28 @@ jobs:
           cargo audit -D unsound --no-yanked --file crates/tokio-wasm-shim/Cargo.lock
 
   # ---- real test suite: full build + headless smoke/E2E tests ----
-  # Mirrors deploy-pages.yml's build; see that file for the detailed rationale
-  # behind each step (apt/microsoft-repo removal, order traps, env quirks).
+  # The build half is the same composite action the deploy workflows run, so
+  # what CI tests and what ships are built by one sequence, not two that have
+  # to be kept in step by hand.
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
     steps:
       - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Configure git identity (required by `git am` in apply-patches)
-        run: |
-          git config --global user.email "ci@github-actions"
-          git config --global user.name "GitHub Actions"
-
-      - name: Install clang (sqlite-wasm-rs builds C)
-        run: |
-          # Drop preinstalled third-party apt repos (microsoft/azure/google-chrome):
-          # unused here, and a mid-sync one makes `apt-get update` exit 100 (any
-          # failing repo fails the whole update) and kills the job. We only need
-          # clang from the base ubuntu archive. Retry to ride out transient hiccups.
-          sudo rm -f /etc/apt/sources.list.d/*microsoft* \
-                     /etc/apt/sources.list.d/*azure* \
-                     /etc/apt/sources.list.d/*google* \
-                     /etc/apt/sources.list.d/*chrome*
-          for i in 1 2 3; do sudo apt-get update && break || sleep $((i*5)); done
-          sudo apt-get install -y clang
-
-      - name: Install Rust stable + wasm32 target
-        uses: dtolnay/rust-toolchain@stable
+      # The whole build — toolchains, patch stacks, caches, jsonrpc-client,
+      # wasm, assembled dist/ — lives in the composite action the three deploy
+      # workflows already use, including all three ordering traps. Both inputs
+      # are off here: CI wants a functional build, not a shippable one, and
+      # they are the two slowest passes.
+      - name: Build web-app (patched core + wasm + dist/)
+        uses: ./.github/actions/build-web-app
         with:
-          targets: wasm32-unknown-unknown
-
-      - name: Setup Node 22 + pnpm (corepack)
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Enable corepack (provides the pinned pnpm)
-        run: corepack enable
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-store-${{ runner.os }}-
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Apply patch stacks (creates build/core, build/desktop)
-        run: pnpm apply-patches
-
-      # ORDER TRAP #3: this MUST run after apply-patches. rust-cache hashes the
-      # workspaces' Cargo.lock files at restore time — build/core only exists
-      # once apply-patches has created it, so running earlier computes a key
-      # blind to the core dependency graph. Worse, apply-patches recreates
-      # build/core with `rm -rf`, which would wipe a restored build/core/target.
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-        env:
-          CACHE_ON_FAILURE: true
-        with:
-          workspaces: |
-            build/core
-            packages/core-wasm/rust
-
-      # ORDER TRAP #1 (see deploy-pages.yml): the workspace override points
-      # @deltachat/jsonrpc-client at this file: path, so it must be generated +
-      # built before the root `pnpm install` can resolve it.
-      - name: Generate + build @deltachat/jsonrpc-client (before root install)
-        working-directory: build/core/deltachat-jsonrpc/typescript
-        run: |
-          printf 'allowBuilds:\n  esbuild: false\n' > pnpm-workspace.yaml
-          pnpm install
-          cargo test -p deltachat-jsonrpc
-          node scripts/generate-constants.js
-          ./node_modules/.bin/tsc
-          ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js
-
-      - name: Install workspace deps
-        run: pnpm install
+          wasm-opt: 'false'
+          production: 'false'
 
       # packages/calls (docs/calls.md M0): per-subfolder typecheck now that
       # real @types/node / @types/react / react are installed — engine/'s
@@ -231,27 +174,6 @@ jobs:
           restore-keys: playwright-${{ runner.os }}-
       - name: Install Playwright chromium
         run: pnpm exec playwright install --with-deps chromium
-
-      # Upstream desktop browser bundle — assemble.mjs copies its dist/ into the
-      # web-app. See deploy-pages.yml for the VERSION_INFO_GIT_REF / NODE_ENV
-      # notes. Dev build here (no NODE_ENV=production) is fine for smoke.
-      - name: Build upstream desktop browser frontend
-        working-directory: build/desktop
-        run: |
-          export VERSION_INFO_GIT_REF=$(git rev-parse --short HEAD)
-          pnpm install --frozen-lockfile
-          pnpm build:browser
-
-      # --no-opt skips wasm-pack's wasm-opt post-pass (~5.5 min of the step;
-      # longer than the Rust compile itself). Safe here: the suites are purely
-      # functional, and the cargo release profile (opt-level=s + LTO) is kept —
-      # only binaryen's extra size/speed pass is dropped. deploy-pages.yml
-      # still runs the fully optimized build:wasm for production.
-      - name: Build wasm core (release, no wasm-opt)
-        run: pnpm --filter @slothfulchat/core-wasm build:wasm:ci
-
-      - name: Build core-wasm TS (worker + index)
-        run: pnpm --filter @slothfulchat/core-wasm build
 
       # core-wasm smoke: serves the example page, asserts get_system_info +
       # typed client + fs side channel answer from inside the browser.
@@ -283,13 +205,6 @@ jobs:
       # or trip the self-heal on a valid accounts.toml.
       - name: E2E test — account churn does not leak sahpool slots
         run: node scripts/test-account-churn-e2e.mjs
-
-      # ORDER TRAP #2 (see deploy-pages.yml): assemble wipes+repopulates dist/,
-      # build emits runtime.js + blobs-sw.js into it — build must come after.
-      - name: Assemble web-app dist/ (upstream bundle + wasm + overlays)
-        run: pnpm --filter @slothfulchat/web-app assemble
-      - name: Build web-app runtime + service worker (into dist/)
-        run: pnpm --filter @slothfulchat/web-app build
 
       # web-app smoke: boots the proxy + static server, asserts the frontend
       # renders on the wasm core and keeps its proxy config across an
@@ -393,6 +308,39 @@ jobs:
       # the CORS-blocked→unfurl fallback path.
       - name: E2E test — link-preview ghost UI
         run: node scripts/test-link-preview-e2e.mjs
+
+      # boot-error screen smoke (fully offline): breaks the built bundles and
+      # asserts static/boot-error.js renders the failure detail instead of a
+      # blank page. The only coverage boot-error.js has.
+      - name: Smoke test — pre-bundle boot-error screen
+        run: node scripts/smoke-boot-error.mjs
+
+      # two-tab handling (fully offline): the core holds an exclusive OPFS lock,
+      # so a second tab must show the "already running in another tab" dialog —
+      # and a plain single-tab reload must NOT false-positive it.
+      - name: E2E test — second tab is told, single-tab reload is not
+        run: node scripts/test-two-tabs.mjs
+
+      # hard reload (fully offline, SW-only): a SW-bypassing reload must
+      # auto-reload once so blobs are served again, rather than leaving the
+      # page with a dead /blobs/ route.
+      - name: E2E test — hard reload recovers the blobs service worker
+        run: node scripts/test-pwa-hard-reload.mjs
+
+      # WS→TCP proxy allowlist guard: DNS for an allowlisted domain populates
+      # the IP allow-list, a tunnel to a never-resolved IP is refused, the
+      # default bind stays loopback-only, and a malformed frame kills only its
+      # own connection. Needs network for the two allowlisted-domain cases
+      # (nine.testrun.org) — the bind/frame cases are offline.
+      - name: Security check — WS→TCP proxy chatmail allowlist
+        run: node scripts/test-ws-tcp-proxy-allowlist.mjs
+
+      # NOTE: scripts/test-read-time-e2e.mjs (estimated time-to-read badge) and
+      # scripts/test-webxdc-isolation.mjs (per-subdomain webxdc storage) are
+      # kept but NOT wired in: the first provisions a real chatmail account
+      # (nine.testrun.org/new) rather than a mock madmail server, and the second
+      # needs the `caddy` binary for the wildcard-subdomain harness. Both run
+      # locally; porting the first to mock madmail would make it CI-able.
 
       # NOTE: scripts/test-calls-e2e.mjs (loopback audio call) is intentionally
       # NOT wired in yet. It is designed to run offline in CI, but currently

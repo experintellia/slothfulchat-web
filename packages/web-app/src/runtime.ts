@@ -28,11 +28,12 @@ import { CallsUiStore, mountCallsUi } from '@slothfulchat/calls/ui'
 import { createPlaceholderVideoTrack } from './call-media'
 import * as perf from './perf'
 import * as analytics from './analytics'
-import { EMOJI_SETS, DEFAULT_EMOJI_SET, emojiFonts } from './emoji-sets.mjs'
+import { EMOJI_SETS, DEFAULT_EMOJI_SET, emojiFonts } from './emoji-sets.ts'
 import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
-import { fatalReportText } from './fatal-report.mjs'
+import { el } from './ui-shared'
+import { fatalReportText } from './fatal-report.ts'
 import { initDiagnostics } from './diagnostics'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
 
@@ -1925,17 +1926,6 @@ function probeBridge(url: string, timeoutMs = 3000): Promise<boolean> {
     ws.onerror = () => finish(false)
     ws.onclose = () => finish(false)
   })
-}
-
-const el = <K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  style: Partial<CSSStyleDeclaration>,
-  text?: string
-): HTMLElementTagNameMap[K] => {
-  const node = document.createElement(tag)
-  Object.assign(node.style, style)
-  if (text != null) node.textContent = text
-  return node
 }
 
 let fatalShown = false

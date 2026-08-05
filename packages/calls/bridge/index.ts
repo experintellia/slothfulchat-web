@@ -119,7 +119,7 @@ export const DEFAULT_GATHER_TIMEOUT_MS = 10_000
  * relay + a STUN default). Defensive: any malformed/empty payload yields `[]`
  * so a call can still attempt host/LAN candidates rather than throwing.
  */
-export function parseIceServers(iceServersJson: string): RTCIceServer[] {
+function parseIceServers(iceServersJson: string): RTCIceServer[] {
   let parsed: unknown
   try {
     parsed = JSON.parse(iceServersJson)
@@ -191,7 +191,7 @@ export function defaultMediaFactories(): AudioCallMediaFactories {
 }
 
 /** The real platform seam for device enumeration; tests inject a fake. */
-export function defaultDeviceEnumerator(): DeviceEnumerator {
+function defaultDeviceEnumerator(): DeviceEnumerator {
   return {
     enumerateDevices: () => navigator.mediaDevices.enumerateDevices(),
   }
@@ -265,7 +265,7 @@ function getSharedMeterAudioContext(): AudioContext {
   return sharedMeterAudioContext
 }
 
-export interface TrackAnalyserHandle {
+interface TrackAnalyserHandle {
   readonly analyser: AnalyserLike
   /** Disconnect this tap from the shared `AudioContext`. Does NOT stop the
    * underlying `MediaStreamTrack` — that stays owned by the engine/call. */
@@ -280,7 +280,7 @@ export interface TrackAnalyserHandle {
  * `destination` is not guaranteed to keep being processed in every browser,
  * which would silently freeze the meter.
  */
-export function createTrackAnalyser(track: MediaStreamTrack): TrackAnalyserHandle {
+function createTrackAnalyser(track: MediaStreamTrack): TrackAnalyserHandle {
   const context = getSharedMeterAudioContext()
   const source = context.createMediaStreamSource(new MediaStream([track]))
   const analyser = context.createAnalyser()

@@ -1,11 +1,11 @@
-import { TRACKED_EMOJI_SETS } from './emoji-sets.mjs'
+import { TRACKED_EMOJI_SETS } from './emoji-sets.ts'
 
 /**
  * The closed catalogue of analytics events — the single source of truth for
- * what may ever be sent (see analytics.ts for the design constraints). Plain
- * .mjs (not .ts) so instance-config.mjs can render it into the standalone
- * privacy.html at build time with no TypeScript toolchain; the app imports it
- * back via analytics.ts, so the disclosure can never drift from the code.
+ * what may ever be sent (see analytics.ts for the design constraints).
+ * instance-config.mjs renders it into the standalone privacy.html at build
+ * time and the app imports it back via analytics.ts, so the disclosure can
+ * never drift from the code.
  *
  * Each entry documents an event we might send and, in plain language, what it
  * means. The `props` list enumerates the *only* property values ever attached —
@@ -17,10 +17,15 @@ import { TRACKED_EMOJI_SETS } from './emoji-sets.mjs'
  * analytics.ts event() enforces it at runtime via isCatalogEvent() below —
  * anything not enumerated here is silently dropped. Editing an event here
  * therefore updates both the disclosure and what can actually be sent.
- *
- * @type {ReadonlyArray<{ name: string, what: string, props?: string }>}
  */
-export const EVENTS = [
+export type CatalogEvent = {
+  name: string
+  what: string
+  /** 'key = v1 · v2; key2 = …' — the only property values ever attached */
+  props?: string
+}
+
+export const EVENTS: readonly CatalogEvent[] = [
   {
     name: 'pageview',
     what: 'That the app was opened.',
@@ -115,11 +120,9 @@ export const EVENTS = [
  * Parse a `props` spec — 'key = v1 · v2; key2 = …' — into key → allowed
  * values. A trailing parenthetical on a value ('chatmail (default relay)')
  * is a display-only gloss for the policy page and stripped for matching.
- * @param {string} spec
- * @returns {Map<string, Set<string>>}
  */
-function parseSpec(spec) {
-  const map = new Map()
+function parseSpec(spec: string): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>()
   for (const part of spec.split(';')) {
     const i = part.indexOf('=')
     if (i < 0) continue
@@ -138,15 +141,15 @@ function parseSpec(spec) {
  * must be one of the listed alternatives (compared as strings). Events with
  * no props spec accept no props. analytics.ts event() drops anything that
  * fails this, so no caller can ever send more than the published policy.
- * @param {string} name
- * @param {Record<string, string | number | boolean>} [props]
- * @returns {boolean}
  */
-export function isCatalogEvent(name, props) {
+export function isCatalogEvent(
+  name: string,
+  props?: Record<string, string | number | boolean>
+): boolean {
   const entry = EVENTS.find(e => e.name === name)
   if (!entry) return false
-  const keys = props ? Object.keys(props) : []
-  if (!entry.props) return keys.length === 0
+  const entries = props ? Object.entries(props) : []
+  if (!entry.props) return entries.length === 0
   const allowed = parseSpec(entry.props)
-  return keys.every(k => allowed.get(k)?.has(String(props[k])))
+  return entries.every(([k, v]) => allowed.get(k)?.has(String(v)))
 }

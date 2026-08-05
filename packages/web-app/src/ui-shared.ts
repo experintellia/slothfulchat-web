@@ -11,14 +11,20 @@ import { trackLink } from './analytics'
 export const SELFHOSTING_URL =
   'https://github.com/experintellia/slothfulchat-web/blob/main/SELFHOSTING.md'
 
-/** Minimal createElement: tag, inline style string, text/children. */
+/**
+ * Minimal createElement: tag, inline style, text/children.
+ *
+ * The style is an object rather than a CSS string so tsc checks the property
+ * names — a typo in a string ("colour", "margin-botom") is silently dropped by
+ * the CSSOM and shows up as a layout bug instead of a compile error.
+ */
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
-  style = '',
+  style: Partial<CSSStyleDeclaration> = {},
   content?: string | Node | (string | Node)[]
 ): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag)
-  if (style) node.setAttribute('style', style)
+  Object.assign(node.style, style)
   if (content != null) {
     for (const c of Array.isArray(content) ? content : [content]) {
       node.append(typeof c === 'string' ? document.createTextNode(c) : c)
@@ -28,7 +34,7 @@ export function el<K extends keyof HTMLElementTagNameMap>(
 }
 
 export function linkTo(href: string, text: string): HTMLAnchorElement {
-  const a = el('a', 'color:#2c8a68;', text)
+  const a = el('a', { color: '#2c8a68' }, text)
   a.href = href
   a.target = '_blank'
   a.rel = 'noopener'

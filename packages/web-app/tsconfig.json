@@ -7,9 +7,12 @@
     "noEmit": true,
     "strict": true,
     "skipLibCheck": true,
-    // src/events.mjs is plain JS (shared with instance-config.mjs at build
-    // time) — let tsc type-check it via its JSDoc annotation
-    "allowJs": true,
+    // Reject TS syntax that only "erases" on paper (parameter properties,
+    // enums, namespaces) — src/*.test.ts run under Node's strip-only type
+    // stripping with no transform step, and instance-config.mjs imports
+    // src/events.ts the same way at build time. Same rationale as
+    // packages/calls/tsconfig.base.json.
+    "erasableSyntaxOnly": true,
     // packages/calls is source-consumed (see the "paths" note below) and its
     // engine/ui/bridge modules import each other with explicit ".ts"/".tsx"
     // specifiers (required by Node's type-stripping test runner). When
@@ -32,5 +35,12 @@
       "@slothfulchat/calls/bridge": ["../calls/bridge/index.ts"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  // The *.test.ts files import node:test / node:assert, and this package
+  // deliberately has no @types/node — that absence is what keeps `process`,
+  // `Buffer` and friends from being reachable in browser code. Typechecking
+  // them here would mean adding those globals to every src file to gain them.
+  // They still run under `node --test`, which type-strips them, so a syntax
+  // error surfaces there exactly as it did while they were .test.mjs.
+  "exclude": ["src/**/*.test.ts"]
 }

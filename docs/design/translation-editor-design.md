@@ -201,11 +201,11 @@ upstream patch (routine here — the project already carries 40+ desktop patches
 As built (Phase 1) — two source files, not the seven first sketched. The
 seven-file split was speculative abstraction; everything fits in one browser
 module plus a pure, unit-tested `.mjs`, matching the repo's existing
-`analytics.ts` + `events.mjs` pattern:
+`analytics.ts` + `events.ts` pattern:
 
 ```
 packages/web-app/src/
-  translation-editor.mjs       # pure: mergeOverlay, escapeAndroid, toAndroidXml
+  translation-serialize.ts     # pure: mergeOverlay, escapeAndroid, toAndroidXml
   translation-editor.ts        # UI + localStorage overlay + live refresh + export/revert
   translation-editor.test.mjs  # node:test for the pure helpers (wired into CI)
 ```

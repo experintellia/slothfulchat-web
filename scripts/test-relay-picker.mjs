@@ -16,11 +16,9 @@
 //      a junk entry (host is a URL) — skipped by the parser
 //  - the bridge probes (/dns/{host}, /tcp/{ip}/143) are intercepted with
 //    page.routeWebSocket so the outcomes are deterministic.
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 
-const script = p => fileURLToPath(new URL(p, import.meta.url))
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
 const APP_PORT = Number(process.env.APP_PORT ?? 8642)
 
@@ -45,24 +43,11 @@ const IP_BY_HOST = {
 }
 const BLOCKED_IP = '10.0.0.9'
 
-const procs = [
-  spawn('node', [script('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs')], {
-    env: { ...process.env, PORT: String(PROXY_PORT) },
-    stdio: 'inherit',
-  }),
-  spawn('node', [script('../packages/web-app/serve.mjs')], {
-    env: { ...process.env, PORT: String(APP_PORT) },
-    stdio: 'inherit',
-  }),
-]
-const cleanup = () => procs.forEach(p => p.kill())
-process.on('exit', cleanup)
-const watchdog = setTimeout(() => {
-  console.error('FAIL: global watchdog (4 min) — test hung')
-  cleanup()
-  process.exit(1)
-}, 240_000)
-await new Promise(r => setTimeout(r, 500)) // let servers bind
+const { cleanup, watchdog } = await startServers({
+  app: APP_PORT,
+  proxy: PROXY_PORT,
+  watchdogMs: 240_000,
+})
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_EXECUTABLE || undefined,

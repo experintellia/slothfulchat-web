@@ -16,7 +16,7 @@
  *    means every line that could send data lives in this reviewable file. Only
  *    connect-src gains the Plausible origin, and only on the demo build.
  *
- * 3. Closed event catalogue (src/events.mjs). We only ever send the event
+ * 3. Closed event catalogue (src/events.ts). We only ever send the event
  *    names and property *values* enumerated there — never message content,
  *    contact addresses, account data, or free text. The generated privacy.html
  *    renders that same catalogue and event() enforces it at runtime, so
@@ -31,7 +31,7 @@
  */
 
 import * as session from './session'
-import { isCatalogEvent } from './events.mjs'
+import { isCatalogEvent } from './events.ts'
 // Type-only: no runtime dependency on @slothfulchat/calls from this generic
 // analytics module — just the single source of truth for the outcome
 // vocabulary, so it can't drift from what packages/calls actually classifies.
@@ -113,7 +113,7 @@ export function event(name: string, props?: Props): void {
   }
   if (!isEnabled()) return
   const c = cfg()
-  // Runtime enforcement of the closed catalogue: anything outside events.mjs
+  // Runtime enforcement of the closed catalogue: anything outside events.ts
   // (unknown event, unknown prop key, value outside the fixed vocabulary) is
   // dropped, so no caller — including window.__slothfulTrack — can ever send
   // more than the published policy. Never throw (analytics must never break
