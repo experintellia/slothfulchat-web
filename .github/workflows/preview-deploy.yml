@@ -61,10 +61,13 @@ jobs:
       SLOTHFUL_IMPRINT_EMAIL: ${{ vars.SLOTHFUL_IMPRINT_EMAIL }}
       SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS: ${{ vars.SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS }}
     steps:
+      # persist-credentials: false — nothing here pushes, so the token should
+      # not sit in .git/config while the build runs the PR's own code.
       - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Build web-app dist/
         uses: ./.github/actions/build-web-app
@@ -72,7 +75,7 @@ jobs:
       # include-hidden-files is load-bearing: assemble writes dist/.nojekyll,
       # and upload-artifact drops dotfiles by default.
       - name: Upload dist/ for the deploy job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: web-app-dist
           path: packages/web-app/dist
@@ -94,7 +97,7 @@ jobs:
       # runner must never execute PR-authored code while the deploy key is on
       # it. Everything below is either a first-party action or `gh api`.
       - name: Download the built dist/
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: web-app-dist
           path: dist

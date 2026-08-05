@@ -84,19 +84,22 @@ jobs:
       # Pinned to the SHA verify-tag checked, not to the tag name: the tag could
       # be moved during the ~10-min build, and this job would otherwise pick up
       # whatever it points at then.
+      # persist-credentials: false — nothing here pushes, so the token should
+      # not sit in .git/config while the build runs third-party code.
       - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
           submodules: recursive
+          persist-credentials: false
 
       - name: Build web-app dist/
         uses: ./.github/actions/build-web-app
 
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
       - name: Upload dist/ as Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: packages/web-app/dist
 
@@ -116,4 +119,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

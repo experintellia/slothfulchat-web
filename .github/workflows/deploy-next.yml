@@ -42,10 +42,13 @@ jobs:
       SLOTHFUL_IMPRINT_EMAIL: ${{ vars.SLOTHFUL_IMPRINT_EMAIL }}
       SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS: ${{ vars.SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS }}
     steps:
+      # persist-credentials: false — nothing here pushes, so the token should
+      # not sit in .git/config while the build runs third-party code.
       - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Build web-app dist/
         uses: ./.github/actions/build-web-app
