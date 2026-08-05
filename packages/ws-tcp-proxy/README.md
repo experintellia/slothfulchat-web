@@ -74,6 +74,7 @@ empty allowlist **refuses to start**.
 | `HOST` | Bind address. `0.0.0.0` (or one interface address) to expose it; then `CHATMAIL_ALLOWLIST` is mandatory. | `127.0.0.1` |
 | `CHATMAIL_ALLOWLIST` | Comma-separated chatmail domains the bridge may reach. | empty (allow all) |
 | `UNFURL` | `1`/`0` to force the link-preview endpoint on/off. | on iff no allowlist |
+| `UNFURL_DEADLINE_MS` | Wall-clock ceiling for one unfurl (redirects + page + image together). | `20000` |
 
 ## Unfurl endpoint (link previews)
 
@@ -95,11 +96,15 @@ bridge with it off answers `/unfurl` with `404` and the preview quietly falls
 back to "not available".
 
 This is a *preview fetcher*, not a tunnel: **HTTP GET only**; DNS is resolved
-by the handler and private / loopback / link-local / CGNAT addresses are
-refused (checked inside the socket's own `lookup`, so a rebinding resolver
-can't swap the address — literal-IP hosts are checked separately); redirects
-(max 5) re-run the checks per hop; 1 MB page / 4 MB image caps; 15 s timeout;
-30 requests/min per client.
+by the handler and only globally routable unicast addresses are allowed out —
+loopback, private, CGNAT, link-local (incl. cloud metadata), documentation /
+benchmark, multicast and reserved ranges are all refused (checked inside the
+socket's own `lookup`, so a rebinding resolver can't swap the address —
+literal-IP hosts are checked separately); redirects (max 5) re-run the checks
+per hop; 1 MB page / 4 MB image caps; 15 s per-socket inactivity timeout plus a
+20 s absolute deadline shared by every hop of one unfurl; 30 requests/min per
+client. Log lines name a target's scheme and host only, never its path or
+query — those routinely carry share tokens.
 
 (`UNFURL_ALLOW_PRIVATE=1` disables the private-IP guard for the test suite —
 never set it on a real deployment.) Note that recent Chromium blocks pages

@@ -6,11 +6,9 @@
 // that resolveBridgeUrl() honors the instance default (it used to skip it).
 // No ws-tcp-proxy and no core boot needed — the dialog lives in runtime.js.
 // Modeled on scripts/smoke-web-app.mjs.
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 
-const script = p => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8642)
 
 const DEFAULT_BRIDGE = 'wss://default.example/bridge'
@@ -21,13 +19,7 @@ const PUBLIC_BRIDGES = [
 const LOCALHOST = 'ws://localhost:8641'
 const PROXY_KEY = 'slothfulchat.proxyUrl'
 
-const server = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
-})
-const cleanup = () => server.kill()
-process.on('exit', cleanup)
-await new Promise(r => setTimeout(r, 500)) // let the server bind
+const { cleanup } = await startServers({ app: APP_PORT })
 
 // CHROMIUM_BIN overrides the browser binary (e.g. a preinstalled system
 // chromium when the playwright-managed download is unavailable)
@@ -47,6 +39,11 @@ page.on('pageerror', e => console.error('[pageerror]', e.message))
 await page.addInitScript(() => {
   Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
 })
+// This test's acknowledgement of the throwaway-session gate (?persist=0 below):
+// the same per-tab marker the gate dialog's "Start throwaway session" sets.
+await page.addInitScript(() =>
+  sessionStorage.setItem('slothfulchat.throwawayConfirmed', '1')
+)
 
 // Serve a synthetic instance config instead of the build's config.js — an
 // init script would not work, the real config.js would overwrite it.

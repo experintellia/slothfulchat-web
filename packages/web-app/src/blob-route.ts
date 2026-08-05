@@ -1,7 +1,7 @@
 /**
  * Which memfs path, if any, a same-origin request under the blobs service
- * worker is allowed to read. Plain .mjs beside the TS so it can be unit-tested
- * without a build, same as blob-response.mjs.
+ * worker is allowed to read. Kept beside blobs-sw.ts, free of SW globals, so
+ * it can be unit-tested without a browser — same as blob-response.ts.
  *
  * This is the trust boundary for the whole /blobs/ family: anything that can
  * make a same-origin GET (a message-supplied <img src>, an iframe, a link)
@@ -18,8 +18,8 @@
 
 /** Decode one path segment and reject anything that could climb out of the
  * directory we are about to join it onto. Returns null when unsafe. */
-function safeSegment(raw, { allowSlashes = false } = {}) {
-  let decoded
+function safeSegment(raw: string, { allowSlashes = false } = {}): string | null {
+  let decoded: string
   try {
     decoded = decodeURIComponent(raw)
   } catch {
@@ -33,26 +33,29 @@ function safeSegment(raw, { allowSlashes = false } = {}) {
 
 /** A `..` component, however the separators are spelled. Substring-matching
  * '..' alone would reject the legitimate filename 'holiday..jpg'. */
-const traversal = value => value.split(/[/\\]/).some(part => part === '..')
+const traversal = (value: string) => value.split(/[/\\]/).some(part => part === '..')
 
 /** Does this pathname address the blob family at all? Lets the caller tell
  * "not ours, serve the app shell" apart from "ours, but refused" — answering a
  * probe for a forbidden path with the shell would be a confusing 200. */
-export function isBlobRoute(pathname) {
+export function isBlobRoute(pathname: string): boolean {
   return /\/(blobs|download-backup|blob-path|webxdc-icon)\//.test(pathname)
 }
 
-/**
- * Resolve a request pathname to a read.
- *
- * Returns one of:
- *   { kind: 'blob',     accountId, filename }  — blobdir file, path built by the page
- *   { kind: 'backup',   filename, path }       — an export, always a download
- *   { kind: 'bypath',   filename, path }       — absolute memfs path (temp files)
- *   { kind: 'xdc-icon', accountId, msgId }     — icon from inside a .xdc
- *   null                                        — not ours, or refused
- */
-export function resolveBlobRoute(pathname) {
+/** What a pathname resolves to. `null` from {@link resolveBlobRoute} means
+ * not ours, or ours but refused. */
+export type BlobRoute =
+  /** blobdir file, path built by the page */
+  | { kind: 'blob'; accountId: string; filename: string }
+  /** an export, always a download */
+  | { kind: 'backup'; filename: string; path: string }
+  /** absolute memfs path (temp files) */
+  | { kind: 'bypath'; filename: string; path: string }
+  /** icon from inside a .xdc */
+  | { kind: 'xdc-icon'; accountId: number; msgId: number }
+
+/** Resolve a request pathname to a read. */
+export function resolveBlobRoute(pathname: string): BlobRoute | null {
   // match the tail so the app works under any base path (e.g. /repo/ on Pages)
   const blob = pathname.match(/\/blobs\/([^/]+)\/(.+)$/)
   if (blob) {
@@ -81,8 +84,9 @@ export function resolveBlobRoute(pathname) {
   if (bypath) {
     const decoded = safeSegment(bypath[1], { allowSlashes: true })
     if (!decoded || !decoded.startsWith('/')) return null
-    // the page derives the MIME from this
-    return { kind: 'bypath', filename: decoded.split('/').pop(), path: decoded }
+    // the page derives the MIME from this. `?? ''` is unreachable — split
+    // always yields at least one element — but keeps the type honest.
+    return { kind: 'bypath', filename: decoded.split('/').pop() ?? '', path: decoded }
   }
 
   // /webxdc-icon/:accountId/:msgId — icon from inside a .xdc archive; the

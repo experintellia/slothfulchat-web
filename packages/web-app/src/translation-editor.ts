@@ -32,7 +32,7 @@
  * the app's modal (top-layer) dialogs never cover it; the inspector's
  * highlight/tooltip stay in the app window.
  */
-import { matchKeys, mergeOverlay, toAndroidXml } from './translation-editor.mjs'
+import { matchKeys, mergeOverlay, toAndroidXml } from './translation-serialize.ts'
 
 type Entry = Record<string, string>
 type Overlay = Record<string, Record<string, Entry>>

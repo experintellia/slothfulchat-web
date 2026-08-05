@@ -11,8 +11,14 @@ import { BaseDeltaChat, yerpc } from '@deltachat/jsonrpc-client'
 const { BaseTransport } = yerpc
 
 export class WasmTransport extends BaseTransport {
-  constructor(private worker: Worker) {
+  // plain field + assignment, not a `private worker` parameter property: this
+  // file is in web-app's tsconfig program (via its "paths"), which enables
+  // erasableSyntaxOnly.
+  private worker: Worker
+
+  constructor(worker: Worker) {
     super()
+    this.worker = worker
     this.worker.onmessage = (event: MessageEvent<unknown>) => {
       // non-string messages are fs side-channel replies, handled elsewhere
       if (typeof event.data !== 'string') return

@@ -1,0 +1,146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 4 Aug 2026 09:59:17 +0000
+Subject: [PATCH 78/78] web-app: SlothfulChat welcome message in the device
+ chat
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The device chat opened with Delta Chat's welcome message and nothing
+about what this fork actually is, so nothing told a first-time user that
+their account lives in the browser — or that they should back it up.
+
+Add a second device message after core's own: fork of Delta Chat (not
+directly affiliated), runs fully in the browser via WebAssembly,
+installable to the home screen, back your data up because clearing site
+data wipes it and the backup is unencrypted, expect prototype churn, and
+it can be self-hosted or forked.
+
+It is added from selectAccount() rather than updateDeviceChat(): that one
+is deliberately skipped for freshly created accounts and runs before
+configure(), which is when core adds its welcome message — ours has to
+land after it. selectAccount() is also reached on the unconfigured ->
+configured transition, so a brand-new account gets it as soon as
+onboarding finishes; the device-message label makes every later call a
+no-op, so re-running it on each account switch costs nothing.
+
+The paragraph pointing at the "Sloth (Slothful.chat Developer)" entry in
+New Chat is dropped when SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS hid that entry
+for the instance, so a self-hosted build never sends its users looking
+for something it doesn't ship.
+---
+ _locales/_untranslated_en.json             |  9 ++++++
+ packages/frontend/src/ScreenController.tsx | 18 ++++++++++-
+ packages/frontend/src/deviceMessages.ts    | 37 ++++++++++++++++++++++
+ 3 files changed, 63 insertions(+), 1 deletion(-)
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 1b737f4..169a8e9 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -169,5 +169,14 @@
+   },
+   "message_text_show_less": {
+     "message": "Show less"
++  },
++  "slothful_welcome_message": {
++    "message": "🦥 A few things work differently here.\n\nSlothfulChat is an independent fork of Delta Chat — not directly affiliated with it, and not a repackaged copy. The most unusual part: it runs entirely in your web browser. The whole chat core is compiled to WebAssembly, so there is nothing to install and no server that holds your account — your messages, keys and files live in this browser, on this device. On a phone you can still add it to your home screen and use it like any other app.\n\nBecause your data lives in the browser, it can also vanish with it: clearing site data, a browser cleanup or private-browsing mode wipes everything. Please export a backup (Settings → Chats → Export Backup) and keep it somewhere safe — backups here are not encrypted, so guard the file like your private key.\n\nThis is also a prototyping ground for the developers: features land early, and some of them change or break. If something looks different from Delta Chat, that is usually on purpose."
++  },
++  "slothful_welcome_contact_developer": {
++    "message": "Found a bug or something that feels wrong? Tell us directly — New Chat → \"Sloth (Slothful.chat Developer)\"."
++  },
++  "slothful_welcome_selfhost": {
++    "message": "And it's yours to run: host your own instance, or fork it and change whatever you like 👉 https://github.com/experintellia/slothfulchat-web"
+   }
+ }
+diff --git a/packages/frontend/src/ScreenController.tsx b/packages/frontend/src/ScreenController.tsx
+index 9157df1..393034c 100644
+--- a/packages/frontend/src/ScreenController.tsx
++++ b/packages/frontend/src/ScreenController.tsx
+@@ -8,7 +8,11 @@ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import AccountSetupScreen from './components/screens/AccountSetupScreen'
+ import WelcomeScreen from './components/screens/WelcomeScreen'
+ import { BackendRemote, EffectfulBackendActions } from './backend-com'
+-import { updateDeviceChat, updateDeviceChats } from './deviceMessages'
++import {
++  addSlothfulWelcomeMessage,
++  updateDeviceChat,
++  updateDeviceChats,
++} from './deviceMessages'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import { updateTimestamps } from './components/conversations/Timestamp'
+ import { ScreenContext } from './contexts/ScreenContext'
+@@ -272,6 +276,18 @@ export default class ScreenController extends Component {
+ 
+   changeScreen(screen: Screens) {
+     log.debug('Changing screen to:', screen)
++    // Every route into the main screen means the account is configured, and
++    // this is the only choke point they share: instant onboarding jumps here
++    // itself once configure() succeeded, without going through selectAccount()
++    // — hooking that one instead would hold the message back until the next
++    // app start. The device-message label makes the repeats free.
++    if (screen === Screens.Main && this.selectedAccountId !== undefined) {
++      // not awaited (changeScreen is sync), so swallow-and-log rather than
++      // leaving an unhandled rejection if the rpc fails
++      addSlothfulWelcomeMessage(this.selectedAccountId).catch(err =>
++        log.error('failed to add the SlothfulChat welcome message', err)
++      )
++    }
+     this.setState({ screen })
+     window.__screen = screen
+     if (Screens.Welcome) {
+diff --git a/packages/frontend/src/deviceMessages.ts b/packages/frontend/src/deviceMessages.ts
+index 6e9bd09..3b180fa 100644
+--- a/packages/frontend/src/deviceMessages.ts
++++ b/packages/frontend/src/deviceMessages.ts
+@@ -1,5 +1,6 @@
+ import { BackendRemote } from './backend-com'
+ import { getDeviceChatId, marknoticedChat } from './backend/chat'
++import { instanceHidesPublicSuggestions } from './utils/slothfulInstanceConfig'
+ 
+ export async function updateDeviceChat(
+   accountId: number,
+@@ -32,6 +33,42 @@ export async function updateDeviceChat(
+   })
+ }
+ 
++/**
++ * SlothfulChat's own welcome message: what this fork does differently (runs in
++ * the browser, back up your data, prototyping ground, self-host/fork it).
++ *
++ * Not part of updateDeviceChat(): that one is skipped for freshly created
++ * accounts, and it runs before configure(), which is when core adds its own
++ * welcome message — ours has to land after it. Called from changeScreen()
++ * instead, on every route into the main screen (all of which mean the account
++ * is configured); the label makes core drop every repeat, so the re-runs on
++ * each account switch are free.
++ */
++export async function addSlothfulWelcomeMessage(accountId: number) {
++  const tx = window.static_translate
++  // The contact-the-developer paragraph points at the New Chat entry from the
++  // community suggestions, which an operator can switch off instance-wide —
++  // don't send users looking for something that isn't in their build.
++  const text = [
++    tx('slothful_welcome_message'),
++    ...(instanceHidesPublicSuggestions()
++      ? []
++      : [tx('slothful_welcome_contact_developer')]),
++    tx('slothful_welcome_selfhost'),
++  ].join('\n\n')
++  await BackendRemote.rpc.addDeviceMessage(accountId, 'slothful-welcome', {
++    text,
++    html: null,
++    viewtype: null,
++    file: null,
++    filename: null,
++    location: null,
++    overrideSenderName: null,
++    quotedMessageId: null,
++    quotedText: null,
++  })
++}
++
+ export async function updateDeviceChats() {
+   const selectedAccount = await BackendRemote.rpc.getSelectedAccountId()
+   for (const accountId of await BackendRemote.rpc.getAllAccountIds()) {

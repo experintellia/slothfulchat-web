@@ -9,7 +9,7 @@ import {
   matchKeys,
   mergeOverlay,
   toAndroidXml,
-} from './translation-editor.mjs'
+} from './translation-serialize.ts'
 
 test('mergeOverlay replaces edited keys, is lossless for plural forms, no mutation', () => {
   const messages = {

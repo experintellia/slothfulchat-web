@@ -1,11 +1,11 @@
 // Unit tests for the blobs SW's cache ownership + shell routing —
 // dependency-free (node:test), so they run in CI's lint job without pnpm
 // install / submodules.
-//   node --test packages/web-app/src/sw-cache.test.mjs
+//   node --test packages/web-app/src/sw-cache.test.ts
 import { strictEqual } from 'node:assert'
 import { test } from 'node:test'
 
-import { cacheName, isOwnCache, shellRole } from './sw-cache.mjs'
+import { cacheName, isOwnCache, shellRole } from './sw-cache.ts'
 
 const SCOPE = '/slothfulchat-web/' // GitHub Pages serves the app from /repo/
 const MANIFEST = { 'main.html': 'abc', 'locales/en.json': 'def' }
@@ -36,6 +36,14 @@ test('the first activate after the rename still drops pre-rename caches', () => 
 test('a root-scoped deploy does not claim another app on the origin', () => {
   strictEqual(isOwnCache('some-other-cache', '/'), false)
   strictEqual(isOwnCache(cacheName('/', 'v1'), '/'), true)
+})
+
+// The scope in the name is only ours if nothing else follows it: without the
+// slash-free-remainder check, scope '/' would swallow every scoped cache on
+// the origin — including a second copy of this app nested at /beta/.
+test('a deploy does not claim a deploy nested under its scope', () => {
+  strictEqual(isOwnCache(cacheName('/beta/', 'v1'), '/'), false)
+  strictEqual(isOwnCache(cacheName('/app/nested/', 'v1'), '/app/'), false)
 })
 
 // The other half of the finding: catch-all caching with ignoreSearch. Only

@@ -2,7 +2,7 @@
 // and customize.mjs (re-applies it to a prebuilt release zip, no rebuild).
 // Pure functions over strings/bytes — no filesystem access here.
 import { createHash } from 'node:crypto'
-import { EVENTS } from './src/events.mjs'
+import { EVENTS } from './src/events.ts'
 
 // Per-instance config from env vars (set in CI, never committed to source):
 //   SLOTHFUL_INSTANCE_NAME   human name, e.g. "SlothfulChat"
@@ -321,7 +321,7 @@ longer complies, please report it to the email address above.</p>
 }
 
 // privacy.html — standalone privacy policy. The "what is collected" list is
-// rendered from src/events.mjs — the same closed catalogue the app actually
+// rendered from src/events.ts — the same closed catalogue the app actually
 // sends from — so the published policy can never drift from the code.
 export function privacyHtml(config, env) {
   const instanceLabel = config.instanceName || config.instanceUrl || 'this site'

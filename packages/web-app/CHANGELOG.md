@@ -5,6 +5,22 @@
   with them) and only stores the app's own files, so a service sitting next to
   the app on that domain can't end up cached — or answered from the cache.
 
+- **A link can no longer start a session that quietly saves nothing.** The
+  `?persist=0` test switch made the app run memory-only — your accounts appear
+  missing and anything you set up or receive is lost when the tab closes. It
+  now has to be confirmed before anything starts, and such a session runs with
+  a yellow navbar so you can tell at a glance.
+
+- **HTML emails open again on phones and installed PWAs of self-hosted
+  instances.** The webserver config forbade framing the app's own pages, which
+  also blocked the HTML-mail viewer the mobile layout embeds; only that one
+  page is now allowed to be framed, and only by the app itself.
+
+- **Links into the changelog keep working across releases** — a link to a
+  specific version used to slide down to the wrong one as soon as the next
+  release shipped, because it pointed at a position in the page rather than at
+  the version. Anchors now carry the version itself (`#v-0.8.0`).
+
 - **Hardening**: the internal address the app uses to fetch attachments now
   refuses to point anywhere outside the attachment folder. No known way to
   trigger it from a message — the other layers around attachments already
@@ -18,6 +34,12 @@
 - **Lockdown Mode is named as the cause it usually is**: if your browser has
   WebAssembly switched off, the app now says so and explains how to allow just
   this site, instead of reporting a storage problem you don't have.
+
+- **A welcome message that's actually about this app** — the device chat now
+  explains what SlothfulChat does differently: it runs entirely in your
+  browser, which is also why you should export a backup and keep it safe
+  (backups are unencrypted). Delta Chat's welcome image is gone until we have
+  one of our own.
 
 - **Voice messages and videos you send now carry their length** — the person
   receiving one sees how long it is (and how tall a video is) straight away,

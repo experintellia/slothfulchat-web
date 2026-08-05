@@ -38,6 +38,15 @@ exists:
   VFS (sqlite-wasm-rs has no `sqlcipher_export`, so the database bytes are
   swapped at the VFS level; encrypted backups stay unsupported on wasm).
   `core/0008`, `core/0009`
+- **Crypto offload** — PGP key generation, encryption and decryption ran
+  inline on the core worker (wasm has no real `spawn_blocking`), so every
+  jsonrpc call queued behind them — up to ~1s on phones for account creation,
+  and seconds for a large message. The tokio facade gains a JS offload bridge
+  and the four crypto call sites hand the work to a web-worker pool running
+  the same wasm build, falling back to the inline path whenever the pool is
+  unregistered, dead, erroring or too slow; decrypted messages are re-encoded
+  at the OpenPGP packet level so core still verifies signatures itself.
+  Native builds unchanged. `core/0029`
 
 ## New features
 
@@ -289,7 +298,22 @@ exists:
   inside `http://` or `12:30`. Built as a generic `CompletionProvider` primitive
   so a future `@mention` menu reuses the same machinery. On by default,
   switchable off in Settings → Experimental features. `desktop/0050`,
-  `desktop/0061`
+  `desktop/0051`, `desktop/0061`
+
+- **Emoji style picker** — an "Emoji style" picker under Settings →
+  Appearance (browser edition only) chooses which emoji font the app renders
+  with, previewing each set in its own face; the emoji-mart composer picker
+  follows the choice too, which needs overriding the font-family emoji-mart
+  hardcodes inline inside its shadow DOM. The catalogue itself lives in our
+  own `packages/web-app/src/emoji-sets.ts` and reaches the frontend through
+  the `window.__slothfulchatEmoji` runtime hook, so Electron — which never
+  sets that global — renders no picker at all. Alongside it, the bundled
+  `@emoji-mart/data` (~Unicode 15) is extended with a generated supplement
+  (from emojibase-data, see `scripts/build-emoji-supplement.mjs`) so both the
+  picker and the `:emoji:` completion can find newer emoji such as 🪎; the
+  base dataset is untouched and the supplement's versions are capped at 15 so
+  emoji-mart's own version filter doesn't hide them. `desktop/0065`,
+  `desktop/0066`
 
 - **Translation editor in the keyboard-shortcuts cheat sheet** — lists the
   in-app translation editor (`Ctrl/Cmd+Shift+L`, implemented in `web-app`'s
@@ -360,6 +384,15 @@ exists:
   draft because the composer does not send its draft — it rebuilds a fresh
   `MessageData` from the draft state, so anything stored on the draft would be
   dropped. `core/0028`, `desktop/0077`
+
+- **The all-media gallery says which chat an app came from** — the Apps tab of
+  "All Media" mixes webxdc apps from every chat, and nothing in a row said
+  where an app came from; the only way to find out was the context menu's
+  "Show in chat". Each row now carries its chat twice: the chat avatar badged
+  onto the corner of the app icon (the same construction the chat list uses
+  for message search results), and the chat name ahead of the app's own
+  summary. Only in the global gallery — per-chat galleries would just repeat
+  the chat you are already in. `desktop/0075`
 
 ## Bugfixes
 
@@ -482,13 +515,20 @@ contribution intended.
   `desktop/0006`, `desktop/0017`, `desktop/0023`
 - **Imprint links** on the About dialog and welcome screen — a hosted web app
   needs a legal-notice page. `desktop/0004`, `desktop/0005`
+- **Device chat** — core's welcome image is Delta Chat branding, so it is
+  dropped until we have our own (the `core-welcome-image` label is untouched,
+  so adding one later is the same code with a different file). After core's
+  welcome message the app adds one of its own: what the fork does differently,
+  that everything lives in this browser and should be backed up (unencrypted),
+  that it's a prototyping ground, and where to report bugs / self-host.
+  `core/0030`, `desktop/0078`
 - **Hidden upstream UI that can't work in this build** — proxy settings
   (unimplemented on wasm), the second-device / multi-device backup
   transfer flow (iroh doesn't run in browsers yet), and the experimental
   "Enable Webxdc Devtools" switch (it only toggles Electron's DevTools on a
   webxdc iframe — a browser's built-in dev tools can't be gated by the app,
   and webxdc apps don't run in this build anyway). `desktop/0001`,
-  `desktop/0014`, `desktop/0041`
+  `desktop/0014`, `desktop/0040`
 - **Long message text is stored in full** — core truncates message text to
   38 lines × 100 chars when writing `msgs.txt`, stashing the full body in
   `mime_headers` so a UI can re-offer it as an HTML message; that stores

@@ -6,11 +6,9 @@
 // page.reload(); the context is intentionally NOT closed between the steps.
 //
 // Modeled on scripts/test-web-app-e2e.mjs (servers, eval fix, login flow).
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 
-const script = p => fileURLToPath(new URL(p, import.meta.url))
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
 const APP_PORT = Number(process.env.APP_PORT ?? 8642)
 const CHATMAIL_NEW = process.env.CHATMAIL_NEW ?? 'https://nine.testrun.org/new'
@@ -22,23 +20,11 @@ const alice = await resp.json() // { email, password }
 console.log(`created account ${alice.email}`)
 
 // -- servers --
-const proxy = spawn('node', [script('../packages/ws-tcp-proxy/ws-tcp-proxy.mjs')], {
-  env: { ...process.env, PORT: String(PROXY_PORT) },
-  stdio: 'inherit',
+const { cleanup, watchdog } = await startServers({
+  app: APP_PORT,
+  proxy: PROXY_PORT,
+  watchdogMs: 480_000,
 })
-const appServer = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
-})
-const procs = [proxy, appServer]
-const cleanup = () => procs.forEach(p => p.kill())
-process.on('exit', cleanup)
-const watchdog = setTimeout(() => {
-  console.error('FAIL: global watchdog (8 min) — test hung')
-  cleanup()
-  process.exit(1)
-}, 480_000)
-await new Promise(r => setTimeout(r, 500)) // let servers bind
 
 // -- browser --
 const browser = await chromium.launch()

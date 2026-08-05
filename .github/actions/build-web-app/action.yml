@@ -23,7 +23,26 @@
 # see deploy-pages.yml. This action declares no inputs for them.
 
 name: Build web-app
-description: Toolchains + patched core + release wasm + assembled dist for the standalone web-app.
+description: Toolchains + patched core + wasm + assembled dist for the standalone web-app.
+
+# Both inputs default to the deploy behaviour, so deploy-pages.yml,
+# deploy-next.yml and preview-deploy.yml pass neither. ci.yml turns both off:
+# it needs a functional build, not a shippable one, and the two passes it skips
+# are the slowest in the job.
+inputs:
+  wasm-opt:
+    description: >-
+      Run wasm-pack's wasm-opt post-pass. Skipping it saves ~5.5 min — longer
+      than the Rust compile itself — and only drops binaryen's extra
+      size/speed pass; the cargo release profile (opt-level=s + LTO) is kept
+      either way.
+    default: 'true'
+  production:
+    description: >-
+      Build the release frontend (minified React, debug features hidden) and
+      bake devmode:false into config.js. When false, NODE_ENV is left unset
+      for both steps, which is what a local build does.
+    default: 'true'
 
 runs:
   using: composite
@@ -133,19 +152,30 @@ runs:
     # NODE_ENV=production: release frontend (minified React, debug features
     # hidden) — only on the build, NOT on `pnpm install` (production install
     # would skip the devDependencies the build needs). Local builds stay dev.
-    - name: Build upstream desktop browser frontend (release)
+    - name: Build upstream desktop browser frontend
       working-directory: build/desktop
       shell: bash
       run: |
         export VERSION_INFO_GIT_REF=$(git rev-parse --short HEAD)
         pnpm install --frozen-lockfile
-        NODE_ENV=production pnpm build:browser
+        # branch rather than NODE_ENV=development: unset is what the non-release
+        # build has always run with, and the two are not the same to every tool.
+        if [ "${{ inputs.production }}" = "true" ]; then
+          NODE_ENV=production pnpm build:browser
+        else
+          pnpm build:browser
+        fi
 
     # Release wasm (opt-level=s + LTO); dev builds crash the browser tab.
     # ~10 min uncached.
-    - name: Build wasm core (release)
+    - name: Build wasm core
       shell: bash
-      run: pnpm --filter @slothfulchat/core-wasm build:wasm
+      run: |
+        if [ "${{ inputs.wasm-opt }}" = "true" ]; then
+          pnpm --filter @slothfulchat/core-wasm build:wasm
+        else
+          pnpm --filter @slothfulchat/core-wasm build:wasm:ci
+        fi
 
     - name: Build core-wasm TS (worker + index)
       shell: bash
@@ -159,8 +189,9 @@ runs:
       shell: bash
       run: pnpm --filter @slothfulchat/web-app assemble
       env:
-        # release: bakes devmode:false into config.js (runtime rc_config)
-        NODE_ENV: production
+        # release: bakes devmode:false into config.js (runtime rc_config).
+        # instance-config.mjs tests `!== 'production'`, so '' reads as dev.
+        NODE_ENV: ${{ inputs.production == 'true' && 'production' || '' }}
     - name: Build web-app runtime + service worker (into dist/)
       shell: bash
       run: pnpm --filter @slothfulchat/web-app build

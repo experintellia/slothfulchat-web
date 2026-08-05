@@ -87,7 +87,12 @@ trusted — a bridge on this device (any loopback host/port), one the instance
 offers (`SLOTHFUL_DEFAULT_PROXY` / `SLOTHFUL_PUBLIC_BRIDGES`), or the one
 already saved; anything else is ignored and confirmed with the user first, so a
 link can't quietly route a session through someone else's relay. Persistence
-(OPFS) is on by default; `?persist=0` gives a throwaway session.
+(OPFS) is on by default; `?persist=0` gives a throwaway session. Like `?proxy=`
+it is not honoured unasked: nothing starts until the tab confirms the gate
+dialog, and a confirmed throwaway session runs with a yellow navbar (a `:root`
+override of the theme's own `--navBarBackground`, so no patch is involved).
+Tests acknowledge it by pre-setting the `slothfulchat.throwawayConfirmed`
+sessionStorage key (see `scripts/test-throwaway-gate.mjs`).
 
 **Install as PWA:** browsers only offer install from a secure context —
 `http://localhost` (dev) or any `https://` host (e.g. the GitHub Pages deploy);
@@ -107,15 +112,24 @@ node scripts/test-export-chat-html.mjs  # chat → zip export: html viewer/txt/j
 node scripts/test-calls-e2e.mjs     # outgoing audio call vs. a second local core; asserts connected (offline)
 ```
 
-## Deployment (GitHub Pages)
+## Deployment
 
-Pushes to the default branch auto-build and deploy `dist/` to GitHub Pages
-via [`.github/workflows/deploy-pages.yml`](../../.github/workflows/deploy-pages.yml).
+**Production** (`web.slothful.chat`) is the GitHub Pages deploy, and it builds
+only from a **`v*` release tag** —
+[`.github/workflows/deploy-pages.yml`](../../.github/workflows/deploy-pages.yml)
+runs [`verify-release-tag.yml`](../../.github/workflows/verify-release-tag.yml)
+first and does nothing until the ref is proven to be an unmoved tag, on main,
+whose package versions match it (see [RELEASING.md](../../RELEASING.md)).
 Enable it once under repo **Settings → Pages → Source = "GitHub Actions"**.
 The app derives its base path at runtime, so a project site
 (`https://<user>.github.io/<repo>/`) works with no build-time config.
 
-**The deployed site is a static PWA shell** — it boots, is installable, and
+**Pushes to the default branch** deploy to `next.slothful.chat` instead, via
+[`.github/workflows/deploy-next.yml`](../../.github/workflows/deploy-next.yml)
+(same build, uploaded to the flagship Caddy server; see
+[`infra/flagship`](../../infra/flagship/README.md)).
+
+**The Pages site is a static PWA shell** — it boots, is installable, and
 renders the full UI, but it can only send/receive with a reachable WS→TCP
 proxy, and Pages provides none:
 
@@ -176,7 +190,7 @@ for the user-facing summary):
   On a cold start `event()` holds *every* event until that welcome screen mounts
   (`releaseHeldForNotice`, with `emitUIFullyReady` as a fallback), so nothing is
   transmitted before the notice is on screen — see `analytics-gate.test.mjs`.
-  The **closed** event list lives in `src/events.mjs` — the single source that
+  The **closed** event list lives in `src/events.ts` — the single source that
   the generated `privacy.html` renders and `event()` enforces at runtime.
   Most events are derived from JSON-RPC method names / a
   message `viewtype` / a chat-list length in `src/telemetry.ts` — never from

@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 4 Aug 2026 22:04:50 +0000
+Subject: [PATCH 30/30] device-chat: drop the upstream welcome image
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The image core adds to the device chat before the welcome text is Delta
+Chat branding, and this is a fork that already renames every
+self-referential mention — so a fresh account opened with someone else's
+logo. Drop the image message until we have our own.
+
+The "core-welcome-image" label is untouched, so dropping our own file in
+here later still works exactly as before. Also drops the include_bytes!
+of the jpg from the wasm bundle.
+---
+ src/stock_str.rs | 12 +++---------
+ 1 file changed, 3 insertions(+), 9 deletions(-)
+
+diff --git a/src/stock_str.rs b/src/stock_str.rs
+index 75f87db..b71bcfb 100644
+--- a/src/stock_str.rs
++++ b/src/stock_str.rs
+@@ -9,13 +9,11 @@
+ use strum_macros::EnumProperty;
+ 
+ use crate::accounts::Accounts;
+-use crate::blob::BlobObject;
+ use crate::chat::{self, Chat, ChatId};
+ use crate::config::Config;
+ use crate::contact::{Contact, ContactId};
+ use crate::context::Context;
+ use crate::message::{Message, Viewtype};
+-use crate::param::Param;
+ 
+ /// Storage for string translations.
+ #[derive(Debug, Clone)]
+@@ -1240,13 +1238,9 @@ pub(crate) async fn update_device_chats(&self) -> Result<()> {
+ 
+         // add welcome-messages. by the label, this is done only once,
+         // if the user has deleted the message or the chat, it is not added again.
+-        let image = include_bytes!("../assets/welcome-image.jpg");
+-        let blob = BlobObject::create_and_deduplicate_from_bytes(self, image, "welcome.jpg")?;
+-        let mut msg = Message::new(Viewtype::Image);
+-        msg.param.set(Param::File, blob.as_name());
+-        msg.param.set(Param::Filename, "welcome-image.jpg");
+-        chat::add_device_msg(self, Some("core-welcome-image"), Some(&mut msg)).await?;
+-
++        // The upstream welcome image is Delta Chat branding and this is a fork,
++        // so it stays out until we have our own; the "core-welcome-image" label
++        // is untouched, so dropping our own file in here later still works.
+         let mut msg = Message::new_text(welcome_message(self));
+         chat::add_device_msg(self, Some("core-welcome"), Some(&mut msg)).await?;
+         Ok(())

@@ -13,9 +13,9 @@
  * GitHub Pages regenerates every ETag per deploy, so HTTP caching alone would
  * re-download the world (including the 10MB emoji font) after each deploy.
  */
-import { blobResponseInit } from './blob-response.mjs'
-import { isBlobRoute, resolveBlobRoute } from './blob-route.mjs'
-import { cacheName, isOwnCache, shellRole } from './sw-cache.mjs'
+import { blobResponseInit } from './blob-response.ts'
+import { isBlobRoute, resolveBlobRoute } from './blob-route.ts'
+import { cacheName, isOwnCache, shellRole } from './sw-cache.ts'
 
 const sw = self as any
 
@@ -163,7 +163,7 @@ sw.addEventListener('fetch', (event: any) => {
     return // fall through to network
   }
   // one resolver for every /blobs/ route, so no route can be added without a
-  // traversal check (blob-route.mjs; it is where the guards live and is tested
+  // traversal check (blob-route.ts; it is where the guards live and is tested
   // there). A refused route returns null and is dropped, not passed to the page.
   const route = resolveBlobRoute(url.pathname)
   if (!route) {
@@ -172,7 +172,7 @@ sw.addEventListener('fetch', (event: any) => {
     // the shell instead of nothing — so tell the two apart first.
     if (isBlobRoute(url.pathname)) return
     // and only take over what is ours to serve — a same-origin URL outside the
-    // app's own files goes to the network untouched (sw-cache.mjs)
+    // app's own files goes to the network untouched (sw-cache.ts)
     const role = shellRole(url.pathname, scopePath, MANIFEST, event.request.mode === 'navigate')
     // Range requests (media seeking) need 206 semantics the cache can't give
     if (role && !event.request.headers.has('range')) {
@@ -212,7 +212,7 @@ sw.addEventListener('fetch', (event: any) => {
         return new Response('blob not found', { status: 404 })
       }
       // status, headers (incl. the sandbox CSP every blob response needs) and
-      // the byte slice to send — see blob-response.mjs
+      // the byte slice to send — see blob-response.ts
       const { status, headers, start, end } = blobResponseInit(
         result.data.byteLength,
         result.mime,

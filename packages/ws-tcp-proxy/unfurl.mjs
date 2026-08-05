@@ -10,8 +10,12 @@
 // loopback/link-local/CGNAT IPs refused (checked inside the socket's own
 // lookup, so a rebinding resolver can't swap the address; literal-IP hosts are
 // checked separately since they bypass lookup), redirects re-checked per hop,
-// size caps, timeout, rate limit. UNFURL_ALLOW_PRIVATE=1 disables the IP guard
-// for the test suite only.
+// size caps, one absolute deadline for the whole unfurl, rate limit.
+// UNFURL_ALLOW_PRIVATE=1 disables the IP guard for the test suite only.
+//
+// Logs name the target's scheme+host only: paths and query strings routinely
+// carry share/session tokens, and on a bridge hosted for other people those
+// are their private URLs, not the operator's.
 //
 // ponytail: regex OG parsing — a preview card needs og:*/twitter:*/<title>,
 // not an HTML parser.
@@ -23,11 +27,19 @@ import { isIP, BlockList } from 'node:net';
 const ALLOW_PRIVATE = process.env.UNFURL_ALLOW_PRIVATE === '1';
 const MAX_PAGE_BYTES = 1 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
-const FETCH_TIMEOUT_MS = 15_000;
+const FETCH_TIMEOUT_MS = 15_000; // per-socket inactivity
+// Absolute ceiling for one /unfurl: redirects + page + image share it, so a
+// slow drip (which never trips the inactivity timeout) can't hold a request
+// open forever. Env-tunable because a heavily loaded bridge may need slack.
+const DEADLINE_MS = Number(process.env.UNFURL_DEADLINE_MS) || 20_000;
 const MAX_REDIRECTS = 5;
 const RATE_LIMIT = 30; // requests per client per minute
 
-// SSRF guard: reject loopback / private / link-local / CGNAT targets. Built on
+// SSRF guard: only globally routable unicast is allowed out — everything the
+// IANA special-purpose registries mark non-global (loopback, private, CGNAT,
+// link-local, documentation/benchmark ranges, multicast, reserved) is refused,
+// since none of it is a public web page but plenty of it is somebody's LAN or
+// a cloud metadata service. Built on
 // node:net BlockList rather than a hand-rolled regex because BlockList matches
 // IPv4-mapped IPv6 (both ::ffff:127.0.0.1 AND the hex-compressed ::ffff:7f00:1)
 // against the IPv4 rules — the previous regex only caught the dotted form, so
@@ -39,12 +51,20 @@ PRIVATE_IPS.addSubnet('100.64.0.0', 10, 'ipv4'); // CGNAT
 PRIVATE_IPS.addSubnet('127.0.0.0', 8, 'ipv4');
 PRIVATE_IPS.addSubnet('169.254.0.0', 16, 'ipv4'); // link-local incl. cloud metadata
 PRIVATE_IPS.addSubnet('172.16.0.0', 12, 'ipv4');
+PRIVATE_IPS.addSubnet('192.0.0.0', 24, 'ipv4'); // IETF protocol assignments
+PRIVATE_IPS.addSubnet('192.0.2.0', 24, 'ipv4'); // TEST-NET-1
 PRIVATE_IPS.addSubnet('192.168.0.0', 16, 'ipv4');
-PRIVATE_IPS.addAddress('::', 'ipv6');
+PRIVATE_IPS.addSubnet('198.18.0.0', 15, 'ipv4'); // benchmarking
+PRIVATE_IPS.addSubnet('198.51.100.0', 24, 'ipv4'); // TEST-NET-2
+PRIVATE_IPS.addSubnet('203.0.113.0', 24, 'ipv4'); // TEST-NET-3
+PRIVATE_IPS.addSubnet('224.0.0.0', 4, 'ipv4'); // multicast
+PRIVATE_IPS.addSubnet('240.0.0.0', 4, 'ipv4'); // reserved, incl. 255.255.255.255
+PRIVATE_IPS.addAddress('::', 'ipv6'); // ::/128 unspecified
 PRIVATE_IPS.addAddress('::1', 'ipv6');
 PRIVATE_IPS.addSubnet('fc00::', 7, 'ipv6'); // unique-local
 PRIVATE_IPS.addSubnet('fe80::', 10, 'ipv6'); // link-local
-const isPrivateIp = (ip) => {
+PRIVATE_IPS.addSubnet('2001:db8::', 32, 'ipv6'); // documentation
+export const isPrivateIp = (ip) => {
   const fam = isIP(ip);
   return fam !== 0 && PRIVATE_IPS.check(ip, fam === 4 ? 'ipv4' : 'ipv6');
 };
@@ -64,14 +84,17 @@ const guardedLookup = (hostname, options, callback) => {
 };
 
 /**
- * GET `url` with the guarded lookup, redirect + size + timeout limits.
+ * GET `url` with the guarded lookup, redirect + size limits, and `signal` —
+ * one AbortSignal shared by every hop of an unfurl, so redirects, the page and
+ * the image all draw down the same wall-clock budget instead of each getting a
+ * fresh one.
  * `headOnly` (for the HTML page): stop reading at `</head>` — the OG/twitter/
  * title tags all live there, so there's no need to pull a multi-MB page body
  * (YouTube etc.) — and if the cap is reached first, truncate and parse what we
  * have rather than failing. For images `headOnly` is false: a truncated image
  * is useless, so hitting the cap is an error.
  */
-const guardedGet = (url, maxBytes, headOnly = false, redirectsLeft = MAX_REDIRECTS) =>
+const guardedGet = (url, maxBytes, signal, headOnly = false, redirectsLeft = MAX_REDIRECTS) =>
   new Promise((resolve, reject) => {
     const parsed = new URL(url);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
@@ -79,9 +102,11 @@ const guardedGet = (url, maxBytes, headOnly = false, redirectsLeft = MAX_REDIREC
     const literal = parsed.hostname.replace(/^\[|\]$/g, ''); // IPs skip lookup
     if (isIP(literal) && !ALLOW_PRIVATE && isPrivateIp(literal))
       return reject(new Error('resolves to a private address'));
+    // an aborted request surfaces as a bare AbortError / reset — name the budget
+    const bail = (err) => reject(signal?.aborted ? new Error('unfurl deadline exceeded') : err);
     const req = (parsed.protocol === 'https:' ? httpsGet : httpGet)(
       parsed,
-      { lookup: guardedLookup, timeout: FETCH_TIMEOUT_MS, headers: { accept: '*/*' } },
+      { lookup: guardedLookup, timeout: FETCH_TIMEOUT_MS, signal, headers: { accept: '*/*' } },
       (res) => {
         const { statusCode = 0, headers } = res;
         let settled = false;
@@ -98,14 +123,14 @@ const guardedGet = (url, maxBytes, headOnly = false, redirectsLeft = MAX_REDIREC
         const fail = (err) => {
           if (settled) return;
           settled = true;
-          reject(err);
+          bail(err);
         };
         if (statusCode >= 300 && statusCode < 400 && headers.location) {
           res.resume();
           if (redirectsLeft <= 0) return fail(new Error('too many redirects'));
           // the redirect target goes through the same guards (new lookup)
           return resolve(
-            guardedGet(new URL(headers.location, parsed).toString(), maxBytes, headOnly, redirectsLeft - 1)
+            guardedGet(new URL(headers.location, parsed).toString(), maxBytes, signal, headOnly, redirectsLeft - 1)
           );
         }
         if (statusCode < 200 || statusCode >= 300) {
@@ -139,7 +164,7 @@ const guardedGet = (url, maxBytes, headOnly = false, redirectsLeft = MAX_REDIREC
       }
     );
     req.on('timeout', () => req.destroy(new Error('fetch timed out')));
-    req.on('error', reject);
+    req.on('error', bail);
   });
 
 const decodeEntities = (s) =>
@@ -160,6 +185,18 @@ const parseMeta = (html) => {
   return (keys) => keys.map((k) => meta.get(k)).find(Boolean) ?? null;
 };
 const toInt = (v) => (Number.isFinite(parseInt(v ?? '', 10)) ? parseInt(v, 10) : null);
+
+// What a log line may say about a target: scheme + host, never the path, query
+// or userinfo. `URL.host` excludes credentials by construction, so there is
+// nothing to strip — just don't print the rest.
+const logSafe = (url) => {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return '<unparseable url>';
+  }
+};
 
 const hits = new Map(); // "ip|minute" -> count
 const rateLimited = (ip) => {
@@ -183,8 +220,10 @@ export async function unfurlHandler(req, res) {
   const target = new URL(req.url, 'http://unfurl').searchParams.get('url');
   if (!target) return send(400, { error: 'missing ?url=' });
 
+  // one budget for the whole unfurl: redirects, page and image share it
+  const deadline = AbortSignal.timeout(DEADLINE_MS);
   try {
-    const page = await guardedGet(target, MAX_PAGE_BYTES, true);
+    const page = await guardedGet(target, MAX_PAGE_BYTES, deadline, true);
     const first = parseMeta(page.body.toString('utf8'));
     const title = first(['og:title', 'twitter:title', 'title']);
     if (!title) return send(404, { error: 'page has no previewable metadata' });
@@ -194,13 +233,13 @@ export async function unfurlHandler(req, res) {
     let imageMime = null;
     if (imageUrl) {
       try {
-        const img = await guardedGet(new URL(imageUrl, page.finalUrl).toString(), MAX_IMAGE_BYTES);
+        const img = await guardedGet(new URL(imageUrl, page.finalUrl).toString(), MAX_IMAGE_BYTES, deadline);
         if (img.contentType?.startsWith('image/')) {
           image = img.body.toString('base64');
           imageMime = img.contentType.split(';')[0];
         }
       } catch (err) {
-        console.warn(`unfurl: image fetch failed for ${target}: ${err.message}`);
+        console.warn(`unfurl: image fetch failed for ${logSafe(target)}: ${err.message}`);
       }
     }
     send(200, {
@@ -215,9 +254,9 @@ export async function unfurlHandler(req, res) {
       image,
       imageMime,
     });
-    console.log(`unfurled ${target}`);
+    console.log(`unfurled ${logSafe(target)}`);
   } catch (err) {
-    console.warn(`unfurl failed for ${target}: ${err.message}`);
+    console.warn(`unfurl failed for ${logSafe(target)}: ${err.message}`);
     send(502, { error: err.message });
   }
 }

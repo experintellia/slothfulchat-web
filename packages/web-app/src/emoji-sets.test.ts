@@ -1,11 +1,11 @@
-// Self-check for the emoji-set catalogue. Run: node src/emoji-sets.test.mjs
+// Self-check for the emoji-set catalogue. Run: node src/emoji-sets.test.ts
 import { strict as assert } from 'node:assert'
 import {
   EMOJI_SETS,
   DEFAULT_EMOJI_SET,
   TRACKED_EMOJI_SETS,
   emojiFonts,
-} from './emoji-sets.mjs'
+} from './emoji-sets.ts'
 
 // default exists and never reports usage (privacy: only non-standard is sent)
 const def = EMOJI_SETS.find(s => s.id === DEFAULT_EMOJI_SET)

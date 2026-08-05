@@ -4,7 +4,7 @@
 import { doesNotMatch, match, strictEqual } from 'node:assert'
 import { test } from 'node:test'
 
-import { fatalReportText } from './fatal-report.mjs'
+import { fatalReportText } from './fatal-report.ts'
 
 test('carries the error text the analytics catalogue cannot (#176)', () => {
   const report = fatalReportText({

@@ -224,6 +224,9 @@ for (const f of ['icon-256.png', 'icon-512.png', 'icon-maskable-512.png']) {
 // -> /wasm-dist/ (same relative layout as in the core-wasm package)
 await mkdir(join(dist, 'core'))
 await cp(join(coreWasm, 'dist/worker.js'), join(dist, 'core/worker.js'))
+// crypto pool worker, spawned by worker.js as ./crypto-worker.js — same
+// /core/ + /wasm-dist/ relative layout, precached like worker.js
+await cp(join(coreWasm, 'dist/crypto-worker.js'), join(dist, 'core/crypto-worker.js'))
 await mkdir(join(dist, 'wasm-dist'))
 for (const file of ['deltachat_wasm.js', 'deltachat_wasm_bg.wasm']) {
   await cp(join(coreWasm, 'wasm-dist', file), join(dist, 'wasm-dist', file))
