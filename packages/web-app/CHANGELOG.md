@@ -25,6 +25,12 @@
   pick or drop, or one a corrupt/crafted backup claims to contain — is now
   refused with an error instead of taking the app down with it.
 
+- **Backup files no longer linger in browser storage.** An exported backup is
+  deleted once the download has it, and a backup file you imported is removed
+  when the import ends; anything older is cleaned up at startup. Until now an
+  ordinary export left a second, unencrypted copy of your whole account in the
+  browser's storage indefinitely.
+
 - **Hardening**: the internal address the app uses to fetch attachments now
   refuses to point anywhere outside the attachment folder. No known way to
   trigger it from a message — the other layers around attachments already
