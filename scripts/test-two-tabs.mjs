@@ -1,6 +1,8 @@
 // Two-tab test: the core runs once per origin (exclusive OPFS lock). A second
 // tab must show the "already running in another tab" dialog (raised when the
-// core worker's 15s OPFS probe gives up) instead of a silently dead app, and
+// core worker's OPFS probe hits its wall-clock deadline —
+// OPFS_PROBE_DEADLINE_MS in packages/core-wasm/src/opfs-probe.mjs) instead of
+// a silently dead app, and
 // a plain single-tab reload must NOT show it. Modeled on smoke-web-app.mjs.
 import { chromium } from 'playwright'
 import { startServers } from './harness.mjs'
@@ -29,7 +31,8 @@ try {
 
   const tab2 = await context.newPage()
   await tab2.goto(url)
-  await tab2.waitForSelector(DIALOG, { state: 'visible', timeout: 30_000 })
+  // must exceed the worker's probe deadline (30s) plus boot overhead
+  await tab2.waitForSelector(DIALOG, { state: 'visible', timeout: 60_000 })
   console.log('OK: tab 2 shows the "already running in another tab" dialog')
   if (!(await tab1.evaluate(() => !!window.__coreSystemInfo))) {
     throw new Error('tab 1 broke when tab 2 opened')
