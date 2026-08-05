@@ -1,5 +1,10 @@
 # Changelog
 
+- **Hardening**: the offline cache now keeps to itself. It only deletes caches
+  it created (anything else hosted on the same domain used to be wiped along
+  with them) and only stores the app's own files, so a service sitting next to
+  the app on that domain can't end up cached — or answered from the cache.
+
 - **A link can no longer start a session that quietly saves nothing.** The
   `?persist=0` test switch made the app run memory-only — your accounts appear
   missing and anything you set up or receive is lost when the tab closes. It
