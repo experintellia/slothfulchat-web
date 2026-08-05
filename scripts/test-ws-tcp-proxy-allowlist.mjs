@@ -10,8 +10,10 @@
 //             and a non-loopback HOST with an empty allowlist refuses to start.
 //   frames:   a malformed (unmasked) client frame kills only that connection,
 //             not the whole bridge.
-// Only the two allowlisted-domain cases need network (nine.testrun.org); the
-// bind and malformed-frame cases are offline-safe.
+// Only the two allowlisted-domain cases need network (nine.testrun.org); every
+// other case here is offline-safe. Set ALLOWLIST_NET=0 to skip those two (what
+// CI does — a gate that goes red when a third-party relay is down is worse than
+// no gate).
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { connect } from 'node:net';
@@ -146,17 +148,23 @@ try {
   assert.notEqual(localAllowed, 'blocked', 'tunnel to localhost must be allowed when localhost is allowlisted');
   console.log(`tunnel to localhost with localhost allowlisted -> ${localAllowed} (not blocked)`);
 
-  const ips = await dns(base, ALLOWLISTED);
-  assert.ok(ips.length > 0, `expected resolved IPs for ${ALLOWLISTED}`);
-  console.log(`resolved ${ALLOWLISTED} ->`, ips);
+  // The only cases that reach the internet: resolving the allowlisted domain
+  // and dialing one of the IPs that came back.
+  if (process.env.ALLOWLIST_NET === '0') {
+    console.log(`(ALLOWLIST_NET=0: skipped the ${ALLOWLISTED} resolve + tunnel cases)`);
+  } else {
+    const ips = await dns(base, ALLOWLISTED);
+    assert.ok(ips.length > 0, `expected resolved IPs for ${ALLOWLISTED}`);
+    console.log(`resolved ${ALLOWLISTED} ->`, ips);
 
-  const allowed = await tryTcp(base, ips[0]);
-  assert.equal(allowed, 'allowed', `tunnel to resolved IP ${ips[0]} should be allowed`);
+    const allowed = await tryTcp(base, ips[0]);
+    assert.equal(allowed, 'allowed', `tunnel to resolved IP ${ips[0]} should be allowed`);
+    console.log('OK: allowlist allows resolved chatmail IPs');
+  }
 
   const blocked = await tryTcp(base, '203.0.113.1'); // TEST-NET-3, never resolved
   assert.equal(blocked, 'blocked', 'tunnel to un-resolved IP should be blocked (4003)');
-
-  console.log('OK: allowlist allows resolved chatmail IPs, blocks the rest');
+  console.log('OK: allowlist blocks IPs that were never resolved');
 
   // A malformed frame must kill only its own connection. Without a per-
   // connection 'error' listener, ws throws WS_ERR_EXPECTED_MASK out of the
