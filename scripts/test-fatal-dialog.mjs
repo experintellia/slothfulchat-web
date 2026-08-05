@@ -111,18 +111,15 @@ console.log('OK: Copy details copies the report and says so')
 
 // --- 5) it renders as a dialog, not just as the right words ----------------
 // Checks 1-4 are text and structure, and all four pass just as happily against
-// an unstyled pile of nodes in the corner — which is what a refactor moving
-// this construction into a <template> would render if it lost its stylesheet.
+// an unstyled pile of nodes in the corner — which is what these dialogs render
+// if ui-shared's stylesheet does not reach them.
 await assertDialogRendered(dialog, 400, 'fatal dialog')
 console.log('OK: the fatal dialog is a centred, styled modal')
 
-// ...and that assertion has teeth: strip the inline styles the dialog is built
-// from — what a <template> refactor that failed to load its stylesheet would
-// leave behind — and it must fail. Destructive, so it runs last of the checks
-// that touch this dialog.
-await dialog.evaluate(root => {
-  for (const n of [root, ...root.querySelectorAll('*')]) n.removeAttribute('style')
-})
+// ...and that assertion has teeth: take the overlay stylesheet away — every
+// declaration these dialogs render with is in it — and it must fail.
+// Destructive, so it runs last of the checks that touch this dialog.
+await page.evaluate(() => document.getElementById('sc-overlay-css')?.remove())
 let noticed = false
 try {
   await assertDialogRendered(dialog, 400, 'fatal dialog')
