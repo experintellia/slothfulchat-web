@@ -404,6 +404,10 @@ pub struct Metadata {
 }
 
 impl Metadata {
+    // Mirrors `std::fs::Metadata`, which has `len` and no `is_empty` for the
+    // same reason: this is a byte count, not a collection. Adding `is_empty`
+    // to satisfy the lint would add an API core never calls.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> u64 {
         self.len
     }
