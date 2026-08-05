@@ -1,5 +1,11 @@
 # Changelog
 
+- **A chat engine that crashes now says so instead of spinning forever.** If
+  the engine died after startup, everything the app had asked it to do simply
+  waited for an answer that was never coming — an endless spinner with no error
+  and no way out. The failure is now reported straight away, with a dialog that
+  offers a reload.
+
 - **Hardening**: the offline cache now keeps to itself. It only deletes caches
   it created (anything else hosted on the same domain used to be wiped along
   with them) and only stores the app's own files, so a service sitting next to
