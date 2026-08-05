@@ -1,5 +1,11 @@
 # Changelog
 
+- **The core's JSON-RPC API is now documented at `/api-docs`**, generated at
+  build time from the exact core the bundle ships (pinned version plus our
+  patches), so it describes the API that is actually running rather than the
+  closest published release. Self-hosters get the page with the bundle; it is
+  not part of the offline app shell.
+
 - **A link can no longer start a session that quietly saves nothing.** The
   `?persist=0` test switch made the app run memory-only — your accounts appear
   missing and anything you set up or receive is lost when the tab closes. It

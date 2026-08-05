@@ -74,13 +74,15 @@ jobs:
 
       # dependency-free node:test suites for pure logic (config templating,
       # release-asset pinning/digest/size caps, the analytics pre-notice gate,
-      # translation-editor serialization, blob response headers)
+      # the api.rs/events.rs parsing behind /api-docs, translation-editor
+      # serialization, blob response headers)
       - name: Unit-test pure helpers
         run: >-
           node --test
           packages/web-app/instance-config.test.mjs
           packages/web-app/release-asset.test.mjs
           packages/web-app/analytics-gate.test.mjs
+          packages/web-app/api-docs.test.mjs
           packages/web-app/src/translation-serialize.test.ts
           packages/web-app/src/blob-response.test.ts
           packages/web-app/src/blob-route.test.ts
