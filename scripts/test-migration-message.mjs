@@ -11,8 +11,10 @@
 // Covers:
 //   - a recorded migration error posts a device message into THAT account
 //   - the sweep covers every account, not just the first one
-//   - the text carries core's error, asks for a backup, and points at this
-//     project's tracker rather than upstream's support
+//   - the text carries core's error detail, asks for a backup, and points at
+//     this project's tracker only — core's own error string opens with a
+//     "write to delta@merlinux.eu or support.delta.chat" preamble that has to
+//     be stripped, or the message ends up with two answers to "report where?"
 //   - the label is stable across boots — that is what makes core drop the
 //     repeat (devmsglabels, vendor/core/src/chat.rs) instead of posting the
 //     same warning again on every startup
@@ -35,8 +37,16 @@ const browser = await chromium.launch(
 )
 const url = `http://localhost:${APP_PORT}/main.html`
 
-// core's own wording for a failed migration, shortened
-const CORE_ERROR = 'Updating Delta Chat failed. sql: no such column: key_contacts'
+// Exactly the shape core hands back: its own boilerplate — which names two
+// upstream addresses — then a blank line, then the real error
+// (set_migration_error, vendor/core/src/sql.rs). The fixture has to carry that
+// prefix: with a bare error string the "no upstream support address" assertion
+// below only ever sees our own text and passes for free.
+const CORE_DETAIL = 'sql: no such column: key_contacts'
+const CORE_ERROR =
+  'Updating Delta Chat failed. Please send this message to the Delta Chat ' +
+  'developers, either at delta@merlinux.eu or at https://support.delta.chat.' +
+  `\n\n${CORE_DETAIL}`
 
 /** A worker that speaks just enough jsonrpc to answer the startup sweep, and
  * remembers the device messages it was asked to add.
@@ -73,7 +83,7 @@ async function run(brokenAccount) {
 /** The migration-error `add_device_message` calls the stub worker has been sent
  * so far — read out of the worker itself, the only place that sees the rpc.
  *
- * Matched by core's error text, not by the label: the frontend adds its own
+ * Matched by the error detail, not by the label: the frontend adds its own
  * device messages (upstream's changelog one) through the same rpc, and the
  * label is one of the things under test, so it cannot also be the filter. */
 async function migrationMessages(page, timeoutMs = 20000) {
@@ -83,7 +93,7 @@ async function migrationMessages(page, timeoutMs = 20000) {
     const calls = worker
       ? await worker.evaluate(() => self.__deviceMessages ?? []).catch(() => [])
       : []
-    const ours = calls.filter(([, , msg]) => (msg?.text ?? '').includes(CORE_ERROR))
+    const ours = calls.filter(([, , msg]) => (msg?.text ?? '').includes(CORE_DETAIL))
     if (ours.length || Date.now() > deadline) return ours
     await page.waitForTimeout(200)
   }
@@ -112,10 +122,14 @@ let label
       throw new Error(`the device message does not mention ${phrase}: ${text}`)
     }
   }
-  // this fork's migration runs through our patch stack and our OPFS SQLite —
-  // sending users to upstream support wastes their time and ours
-  if (/support\.delta\.chat/.test(text)) {
-    throw new Error(`the device message points at upstream support: ${text}`)
+  // This fork's migration runs through our patch stack and our OPFS SQLite, so
+  // sending users to upstream support wastes their time and ours. Both
+  // addresses come in free with core's error string, so pasting it whole would
+  // put a second, more specific-looking instruction under ours.
+  for (const upstream of ['support.delta.chat', 'delta@merlinux.eu']) {
+    if (text.includes(upstream)) {
+      throw new Error(`the device message points at upstream support (${upstream}): ${text}`)
+    }
   }
   // device messages are plain text (RELEASING.md); markdown would show up as
   // literal punctuation
@@ -124,11 +138,12 @@ let label
   }
   console.log('OK: it asks for a backup and points at this project, in plain text')
 
-  // --- 3) core's error text travels with it -------------------------------
-  if (!text.includes('no such column: key_contacts')) {
+  // --- 3) core's error detail travels with it, its boilerplate does not ----
+  // Stripping the prefix must not take the diagnosis with it.
+  if (!text.includes(CORE_DETAIL)) {
     throw new Error(`the device message does not carry core's error text: ${text}`)
   }
-  console.log("OK: the message carries core's own error text")
+  console.log("OK: the message carries core's error detail, without its preamble")
 
   // --- 4) nothing blocks the app ------------------------------------------
   // The way out of a failed migration is exporting a backup — from the app a

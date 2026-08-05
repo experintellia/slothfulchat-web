@@ -2106,6 +2106,15 @@ async function checkMigrationErrors(transport: any, ids: number[]): Promise<void
     const error = await transport.request('get_migration_error', [id]).catch(() => null)
     if (!error) continue
     analytics.event('boot_error', { kind: 'migration-error' })
+    // Core prefixes its own "send this to the Delta Chat developers, either at
+    // delta@merlinux.eu or at https://support.delta.chat" boilerplate and
+    // separates it from the real error with a blank line (set_migration_error,
+    // vendor/core/src/sql.rs). Pasted whole, the message would carry two
+    // contradictory places to report to — and theirs looks the more specific.
+    // Keep the error only; fall back to the whole string if core ever changes
+    // the shape, so a core bump degrades to showing too much rather than
+    // nothing. Cosmetic and on our display path, so not worth a core patch.
+    const detail = String(error).split('\n\n').slice(1).join('\n\n') || String(error)
     // plain text, no markdown — device messages render as-is and autolink URLs
     await transport
       .request('add_device_message', [
@@ -2118,7 +2127,7 @@ async function checkMigrationErrors(transport: any, ids: number[]): Promise<void
             'wrong from now on. Nothing was deleted — please export a backup ' +
             '(Settings → Chats → Export Backup) and keep it safe.\n\n' +
             'Please report this, with the error text below, at ' +
-            `${MIGRATION_ERROR_ISSUE_URL}\n\n${error}`,
+            `${MIGRATION_ERROR_ISSUE_URL}\n\n${detail}`,
         },
       ])
       .catch((err: unknown) =>
