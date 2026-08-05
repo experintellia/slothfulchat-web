@@ -8,10 +8,12 @@
 //   - the copyable report carries the failure kind and the browser
 //   - the report block is selectable despite the app's global user-select:none
 //   - only one fatal dialog is ever shown, however many fatals arrive
+//   - the dialog actually renders as a dialog, not just as the right text
+//     in the right elements (#211)
 // No ws-tcp-proxy and no core boot needed — the dialog lives in runtime.js.
 // Modeled on scripts/test-bridge-dialog.mjs.
 import { chromium } from 'playwright'
-import { startServers } from './harness.mjs'
+import { assertDialogRendered, startServers } from './harness.mjs'
 
 const APP_PORT = Number(process.env.APP_PORT ?? 8646)
 
@@ -36,7 +38,7 @@ await page.addInitScript(() => {
   delete globalThis.WebAssembly
 })
 // ...and in the worker, which addInitScript does not reach. Without this the
-// worker boots normally, never reports its own fatal, and check 5 below would
+// worker boots normally, never reports its own fatal, and check 6 below would
 // pass without a second dialog ever having been possible.
 await page.route('**/core/worker.js', async route => {
   const res = await route.fetch()
@@ -107,7 +109,32 @@ if ((await copyBtn.innerText()) !== 'Copied') {
 }
 console.log('OK: Copy details copies the report and says so')
 
-// --- 5) nothing else piles onto the error screen ---------------------------
+// --- 5) it renders as a dialog, not just as the right words ----------------
+// Checks 1-4 are text and structure, and all four pass just as happily against
+// an unstyled pile of nodes in the corner — which is what a refactor moving
+// this construction into a <template> would render if it lost its stylesheet.
+await assertDialogRendered(dialog, 400, 'fatal dialog')
+console.log('OK: the fatal dialog is a centred, styled modal')
+
+// ...and that assertion has teeth: strip the inline styles the dialog is built
+// from — what a <template> refactor that failed to load its stylesheet would
+// leave behind — and it must fail. Destructive, so it runs last of the checks
+// that touch this dialog.
+await dialog.evaluate(root => {
+  for (const n of [root, ...root.querySelectorAll('*')]) n.removeAttribute('style')
+})
+let noticed = false
+try {
+  await assertDialogRendered(dialog, 400, 'fatal dialog')
+} catch {
+  noticed = true
+}
+if (!noticed) {
+  throw new Error('render checks pass on an unstyled dialog — they earn nothing')
+}
+console.log('OK: the render checks fail when the styling is gone')
+
+// --- 6) nothing else piles onto the error screen ---------------------------
 // The bridge probe runs at startup and its toast opens the bridge dialog on
 // click — over the explanation of what actually broke, and about a problem the
 // user does not have: the core never started, so the bridge is irrelevant.
@@ -119,11 +146,11 @@ console.log('OK: the bridge warning stays out of the way of a fatal dialog')
 
 await context.close()
 
-// --- 6) a second fatal must not bury the first, more specific one ----------
+// --- 7) a second fatal must not bury the first, more specific one ----------
 // Driven by a stub worker rather than the real one, so the second fatal is
 // definitely sent: asserting "only one dialog" against a worker that might
 // never have reported twice would pass whether or not anything was suppressed.
-// Check 6a proves the stub's messages do reach the page's handler; 6b then
+// Check 7a proves the stub's messages do reach the page's handler; 7b then
 // shows the second one being swallowed.
 async function withStubWorker(body) {
   const ctx = await browser.newContext({ serviceWorkers: 'block' })
@@ -143,7 +170,7 @@ async function withStubWorker(body) {
   return ids
 }
 
-// 6a) one fatal from the stub — proves delivery, so 6b cannot pass vacuously
+// 7a) one fatal from the stub — proves delivery, so 7b cannot pass vacuously
 const single = await withStubWorker(
   `self.postMessage({ type: 'fatal-opfs-locked' })`
 )
@@ -152,7 +179,7 @@ if (!single.includes('sc-already-running-dialog')) {
 }
 console.log('OK: a fatal posted by the worker opens its dialog')
 
-// 6b) the specific one first, then a generic one 800ms later
+// 7b) the specific one first, then a generic one 800ms later
 const both = await withStubWorker(`
   self.postMessage({ type: 'fatal-init-error', message: 'Error: sahpool install failed' })
   setTimeout(() => self.postMessage({ type: 'fatal-opfs-locked' }), 800)

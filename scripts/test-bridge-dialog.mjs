@@ -3,11 +3,13 @@
 // SLOTHFUL_PUBLIC_BRIDGES would bake into config.js), and drive the bridge
 // dialog: option list + preselection, picking localhost/default/custom, and
 // the localStorage persistence semantics across reloads. Also regression-tests
-// that resolveBridgeUrl() honors the instance default (it used to skip it).
+// that resolveBridgeUrl() honors the instance default (it used to skip it),
+// and that the dialog renders as a dialog rather than merely carrying the
+// right text (#211).
 // No ws-tcp-proxy and no core boot needed — the dialog lives in runtime.js.
 // Modeled on scripts/smoke-web-app.mjs.
 import { chromium } from 'playwright'
-import { startServers } from './harness.mjs'
+import { assertDialogRendered, startServers } from './harness.mjs'
 
 const APP_PORT = Number(process.env.APP_PORT ?? 8642)
 
@@ -136,6 +138,13 @@ try {
     }
   }
   console.log('OK: dialog lists localhost + default + public bridges + custom')
+
+  // ...and it is on screen as a dialog, not just as the right text in the DOM:
+  // every other check here reads innerText or radio state, which an unstyled
+  // pile of nodes in the corner satisfies just as well (#211). The teeth of
+  // this assertion are proven in test-fatal-dialog.mjs, on the same helper.
+  await assertDialogRendered(page.locator('#sc-bridge-dialog'), 460, 'bridge dialog')
+  console.log('OK: the bridge dialog is a centred, styled modal')
 
   // picking localhost on an instance WITH a default must WRITE the key
   // (removal would snap back to the instance default)
