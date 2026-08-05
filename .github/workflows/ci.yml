@@ -300,6 +300,14 @@ jobs:
       - name: Security check — HTML email viewer sandbox
         run: node scripts/test-html-email.mjs
 
+      # Clickjacking guard (static/frame-guard.js), the page-level backstop for
+      # hosts that cannot send frame-ancestors/X-Frame-Options — GitHub Pages
+      # serves the flagship. Fully offline, builds its own bundle: a foreign
+      # origin framing main/call-popup/html-email gets an emptied document,
+      # while the app framing its OWN html-email.html still renders and boots.
+      - name: Security check — clickjacking frame guard
+        run: node scripts/test-frame-guard.mjs
+
       # HTML email viewer e2e (offline, mock madmail, real wasm core): one
       # account sends a message with crafted hostile HTML to a second; the
       # receiver's "Show Full Message…" button opens the viewer; asserts the

@@ -1,5 +1,12 @@
 # Changelog
 
+- **The app now refuses to run inside another site's frame.** Static hosts like
+  GitHub Pages can't send the header that normally forbids this, so a hostile
+  page could embed the app invisibly and trick you into clicking things in it.
+  The app now detects that and blanks itself instead; the HTML-mail viewer it
+  embeds in its own window keeps working. A real webserver's headers are still
+  the stronger protection — self-hosters have had those all along.
+
 - **Hardening**: the offline cache now keeps to itself. It only deletes caches
   it created (anything else hosted on the same domain used to be wiped along
   with them) and only stores the app's own files, so a service sitting next to
