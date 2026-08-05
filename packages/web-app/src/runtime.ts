@@ -150,6 +150,14 @@ const mimeFromName = (name: string) =>
  * GET /download-backup/:filename from here. */
 const EXPORTS_DIR = '/exports'
 
+/** Largest file the user can hand us (backup import, attachment picker, drop).
+ * Staging copies it whole into wasm linear memory — the browser buffer, the
+ * memfs `Vec<u8>`, and the OPFS write-through's clone all coexist — so a file
+ * near the 4 GiB wasm ceiling kills the worker with no error to show. Mirrors
+ * `MAX_FILE_LEN` in crates/tokio-wasm-shim/src/limits.rs; well above the 300
+ * MiB the chat export budgets for its media. */
+const MAX_STAGED_FILE_BYTES = 1024 * 1024 * 1024
+
 /** Path the app is served under, e.g. "/" locally or "/slothfulchat-web/" on
  * GitHub Pages project sites. Derived from the page URL so the same build works
  * at any base without a build-time flag. Always ends in "/". */
@@ -1139,6 +1147,22 @@ class BrowserRuntime {
     const base = name.split(/[/\\]/).pop() || 'file'
     return `/tmp/${crypto.randomUUID()}/${base}`
   }
+  /** Copies a user-picked File into the core memfs and returns its path.
+   * Trust boundary: the size is checked before the bytes are read, so an
+   * absurd pick (a crafted "backup", a huge video) is refused with an error
+   * the caller can show instead of OOM-ing the worker mid-read. */
+  private async stageFile(file: File): Promise<string> {
+    if (file.size > MAX_STAGED_FILE_BYTES) {
+      const mib = (n: number) => Math.round(n / 1048576)
+      throw new Error(
+        `${file.name} is too large: ${mib(file.size)} MiB, ` +
+          `limit ${mib(MAX_STAGED_FILE_BYTES)} MiB`
+      )
+    }
+    const path = this.tmpPath(file.name)
+    await getCore().fsWrite(path, new Uint8Array(await file.arrayBuffer()))
+    return path
+  }
   async writeTempFileFromBase64(name: string, content: string): Promise<string> {
     const path = this.tmpPath(name)
     await getCore().fsWrite(path, base64ToBytes(content))
@@ -1467,12 +1491,7 @@ class BrowserRuntime {
         input.remove()
         if (input.files != null) {
           // upstream uploads to the backend; we write into the core memfs
-          const uploads = [...input.files].map(async file => {
-            const data = new Uint8Array(await file.arrayBuffer())
-            const path = this.tmpPath(file.name)
-            await getCore().fsWrite(path, data)
-            return path
-          })
+          const uploads = [...input.files].map(file => this.stageFile(file))
           const results = await Promise.allSettled(uploads)
           const uploadedFiles = results
             .filter(r => r.status == 'fulfilled')
@@ -1658,10 +1677,15 @@ class BrowserRuntime {
       e.stopPropagation()
       const paths: string[] = []
       for (const file of e.dataTransfer.files) {
-        const data = new Uint8Array(await file.arrayBuffer())
-        const path = this.tmpPath(file.name)
-        await getCore().fsWrite(path, data)
-        paths.push(path)
+        try {
+          paths.push(await this.stageFile(file))
+        } catch (err) {
+          // A drop has no error channel of its own (the picker rejects its
+          // promise; the handler only takes paths), so a skipped file would be
+          // invisible. Reuse the existing toast.
+          this.log.warn('dropped file not staged:', err)
+          showWarningToast('sc-drop-warning-toast', `⚠ ${err}`)
+        }
       }
       this.onDrop.handler(paths)
     })
