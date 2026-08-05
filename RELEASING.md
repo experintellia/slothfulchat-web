@@ -28,6 +28,11 @@ would reject. Re-running either by hand works, but only with the tag itself as
 the ref (`gh workflow run publish-npm.yml --ref v0.3.0`) — a branch run
 publishes and deploys nothing.
 
+The gate also refuses a commit whose required CI checks aren't green, so tag
+only what CI has already finished — see
+[Repository settings the release model depends on](#repository-settings-the-release-model-depends-on)
+for the half of this that lives in GitHub settings rather than in git.
+
 ## The flow
 
 Everything is automated by `.github/workflows/publish-npm.yml`, triggered by
@@ -157,6 +162,54 @@ Things that have silently broken before — check the dry-run output for them:
 - **`dist/index.d.ts` missing**: the build must run `tsc
   --emitDeclarationOnly` (not `--noEmit`) or the published `exports.types`
   points at nothing.
+
+## Repository settings the release model depends on
+
+The workflows can only check what a run gives them. Who may create a `v*` tag,
+who may approve a deploy, and what must be green on `main` are **repo settings**
+— they are not in version control, so this is the record of what they have to
+be. They matter because a tag-push run executes the workflow files *at the
+tagged commit*: someone who can push a `v*` tag to a commit of their choosing
+can also push one where `verify-release-tag.yml`, or the caller's `needs:` on
+it, has been deleted. The gate cannot defend itself; the tag ruleset is what
+defends it.
+
+Admin checklist — each item is one setting, with what it prevents:
+
+- [ ] **Tag ruleset for `v*`** (Settings → Rules → Rulesets → New tag ruleset).
+      Target `v*`; enable *Restrict creations*, *Restrict updates* and
+      *Restrict deletions*; bypass list = the release maintainers only, nobody
+      else (no "Repository admin" blanket entry, no apps). Without it, any
+      write-access account can tag anything and ship it with the gate removed.
+- [ ] **Branch ruleset for `main`**. Require a pull request before merging,
+      ≥1 approval, *Dismiss stale approvals when new commits are pushed*, and
+      *Require approval of the most recent reviewable push* (so the person who
+      pushed last cannot be the only approver). Require status checks: `lint`
+      and `test` — the same names the release gate demands on the tagged
+      commit; keeping the two lists equal is what makes "on main" imply
+      "tested". Block force pushes and deletions. Keep the bypass list empty.
+- [ ] **`github-pages` environment** (Settings → Environments → github-pages).
+      *Deployment branches and tags* = `v*` only — already configured, and
+      tag deploys are rejected without it. Add **required reviewers** (release
+      maintainers) and *Prevent self-review*: today prod deploys with no human
+      in the loop once a tag exists.
+- [ ] **A protected environment for the npm publish.** `publish-npm.yml` uses
+      none, so the trusted-publisher OIDC token is minted with no approval step
+      at all. Create one (e.g. `npm`) with the same `v*` tag rule and required
+      reviewers, then reference it from the publish job — the job that holds
+      `id-token: write`, and only that one.
+- [ ] **Actions settings** (Settings → Actions → General): workflow permissions
+      default to *read repository contents*, and *Allow GitHub Actions to
+      create and approve pull requests* stays off.
+
+Read back what is actually configured (settings drift, and nothing here fails
+a build when it goes missing):
+
+```sh
+gh api repos/:owner/:repo/rulesets --jq '.[] | "\(.target) \(.name) \(.enforcement)"'
+gh api repos/:owner/:repo/environments --jq '.environments[].name'
+gh api repos/:owner/:repo/environments/github-pages --jq '.protection_rules'
+```
 
 ## The jsonrpc-client dependency (core-wasm)
 
