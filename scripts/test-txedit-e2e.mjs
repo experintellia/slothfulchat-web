@@ -10,26 +10,17 @@
 //
 // Modeled on scripts/test-web-app-e2e.mjs (serve.mjs, avoid-eval freeze,
 // __coreSystemInfo boot gate).
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 
-const script = p => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8655)
 const SENTINEL = 'SLOTHTX_SENTINEL_42'
 
-const appServer = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
+const { cleanup, watchdog } = await startServers({
+  app: APP_PORT,
+  settleMs: 600,
+  watchdogMs: 360_000,
 })
-const cleanup = () => appServer.kill()
-process.on('exit', cleanup)
-const watchdog = setTimeout(() => {
-  console.error('FAIL: watchdog (6 min) — test hung')
-  cleanup()
-  process.exit(1)
-}, 360_000)
-await new Promise(r => setTimeout(r, 600)) // let the server bind
 
 const browser = await chromium.launch()
 const context = await browser.newContext()

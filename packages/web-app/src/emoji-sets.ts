@@ -1,9 +1,8 @@
 /**
  * The emoji-set catalogue — single source of truth for the emoji-set picker
- * (Settings → Appearance). Plain .mjs (like events.mjs) so it can be imported
- * by both the app (runtime.ts applies the stack + exposes the picker hook) and
- * the analytics catalogue (events.mjs derives its `set` vocabulary from here,
- * so the two can never drift).
+ * (Settings → Appearance). Imported by both the app (runtime.ts applies the
+ * stack + exposes the picker hook) and the analytics catalogue (events.ts
+ * derives its `set` vocabulary from here, so the two can never drift).
  *
  * Each set maps to a value for the CSS custom property `--emojifonts` (emoji
  * families only — the theme's `--fonts-default` wraps it with Roboto and the
@@ -12,10 +11,18 @@
  * precache); bare names are SYSTEM fonts, so the 'native' option downloads
  * nothing. Naming ours `Sloth*` is what lets 'native' still reach the system's
  * own 'Noto Color Emoji' without colliding with our web font of the same face.
- *
- * @type {ReadonlyArray<{ id: string, label: string, note?: string, track: boolean, fonts: string }>}
  */
-export const EMOJI_SETS = [
+export type EmojiSet = {
+  id: string
+  label: string
+  note?: string
+  /** fires the once-per-startup `emoji_set` event; see TRACKED_EMOJI_SETS */
+  track: boolean
+  /** value for the CSS custom property `--emojifonts` */
+  fonts: string
+}
+
+export const EMOJI_SETS: readonly EmojiSet[] = [
   {
     id: 'standard',
     label: 'Standard',
@@ -52,10 +59,10 @@ export const EMOJI_SETS = [
 
 export const DEFAULT_EMOJI_SET = 'standard'
 
-const byId = Object.fromEntries(EMOJI_SETS.map(s => [s.id, s]))
+const byId: Record<string, EmojiSet> = Object.fromEntries(EMOJI_SETS.map(s => [s.id, s]))
 
 /** The `--emojifonts` value for a set id; falls back to the default set. */
-export function emojiFonts(id) {
+export function emojiFonts(id: string): string {
   return (byId[id] || byId[DEFAULT_EMOJI_SET]).fonts
 }
 

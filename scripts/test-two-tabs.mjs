@@ -2,20 +2,13 @@
 // tab must show the "already running in another tab" dialog (raised when the
 // core worker's 15s OPFS probe gives up) instead of a silently dead app, and
 // a plain single-tab reload must NOT show it. Modeled on smoke-web-app.mjs.
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
 
-const script = p => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8653)
 const DIALOG = '#sc-already-running-dialog'
 
-let server = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
-})
-process.on('exit', () => server?.kill())
-await new Promise(r => setTimeout(r, 500))
+const { appServer: server, cleanup } = await startServers({ app: APP_PORT })
 
 const browser = await chromium.launch()
 const context = await browser.newContext()
@@ -54,8 +47,7 @@ try {
   failed = true
 } finally {
   await browser.close()
-  server.kill()
-  server = null
+  cleanup()
 }
 console.log(failed ? 'VERDICT: two-tab handling: NO' : 'VERDICT: two-tab handling: YES')
 process.exit(failed ? 1 : 0)

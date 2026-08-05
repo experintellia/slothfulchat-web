@@ -50,171 +50,29 @@
 // run locally for now.
 //
 // Run:  node scripts/test-calls-e2e.mjs        (VERBOSE=1 for full page logs)
-import { createServer } from 'node:http'
-import { spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
-import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { startServers } from './harness.mjs'
+import { startMockMadmail } from './mock-madmail.mjs'
 
-const script = p => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8644)
 const verbose = !!process.env.VERBOSE
 
 // ---------------------------------------------------------------------------
 // mock "madmail" webimap server — fully offline, no TLS, no real network.
-// Trimmed down from scripts/test-webimap.mjs (no 404-tolerance probes; this
-// test isn't about the webimap transport, just needs two accounts that can
-// message each other so `place_outgoing_call`/`accept_incoming_call`'s
-// DeltaChat-message signaling actually round-trips).
+// Shared with the other offline e2e scripts (scripts/mock-madmail.mjs); this
+// test isn't about the webimap transport, it just needs two accounts that can
+// message each other so place_outgoing_call/accept_incoming_call's DeltaChat
+// message signaling actually round-trips.
 // ---------------------------------------------------------------------------
-const users = new Map() // email -> { password, nextUid, msgs: Map<uid, raw>, waiters: [] }
-let userSeq = 0
-const readBody = req =>
-  new Promise(resolve => {
-    let b = ''
-    req.on('data', c => (b += c))
-    req.on('end', () => resolve(b))
-  })
-const json = (res, code, obj) => {
-  res.statusCode = code
-  res.setHeader('content-type', 'application/json')
-  res.end(JSON.stringify(obj))
-}
-const meta = (uid, raw) => ({
-  uid,
-  seq_num: uid,
-  flags: [],
-  size: Buffer.byteLength(raw),
-  date: new Date().toISOString(),
-  envelope: {},
-})
-const respondMessages = (res, user, sinceUid) => {
-  const out = []
-  for (const [uid, raw] of user.msgs) if (uid > sinceUid) out.push(meta(uid, raw))
-  json(res, 200, out)
-}
-
-const mock = createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Headers', 'X-Email, X-Password, Content-Type')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
-  if (req.method === 'OPTIONS') {
-    res.statusCode = 204
-    res.end()
-    return
-  }
-  const url = new URL(req.url, 'http://mock')
-  const path = url.pathname
-
-  if (req.method === 'POST' && path === '/new') {
-    const email = `u${++userSeq}@webimap.example`
-    const password = randomBytes(9).toString('hex')
-    users.set(email, { password, nextUid: 2, msgs: new Map(), waiters: [] })
-    json(res, 200, { email, password, dclogin_url: '' })
-    return
-  }
-
-  if (path.startsWith('/webimap/')) {
-    const email = req.headers['x-email']
-    const password = req.headers['x-password']
-    const user = email && users.get(email)
-    if (!user || user.password !== password) {
-      json(res, 401, { error: 'bad credentials' })
-      return
-    }
-    if (req.method === 'GET' && path === '/webimap/mailboxes') {
-      const n = user.msgs.size
-      json(res, 200, [{ name: 'INBOX', messages: n, unseen: n }])
-      return
-    }
-    if (req.method === 'GET' && path === '/webimap/messages') {
-      const sinceUid = Number(url.searchParams.get('since_uid') ?? '0') || 0
-      const wait = Math.min(Number(url.searchParams.get('wait') ?? '0') || 0, 120)
-      const hasNew = [...user.msgs.keys()].some(uid => uid > sinceUid)
-      if (hasNew || wait <= 0) {
-        respondMessages(res, user, sinceUid)
-        return
-      }
-      const waiter = {
-        timer: setTimeout(() => {
-          user.waiters = user.waiters.filter(w => w !== waiter)
-          respondMessages(res, user, sinceUid)
-        }, wait * 1000),
-        respond: () => respondMessages(res, user, sinceUid),
-      }
-      user.waiters.push(waiter)
-      return
-    }
-    const m = path.match(/^\/webimap\/message\/(\d+)$/)
-    if (m) {
-      const uid = Number(m[1])
-      if (req.method === 'GET') {
-        const raw = user.msgs.get(uid)
-        if (raw === undefined) {
-          json(res, 404, { error: 'no such message' })
-          return
-        }
-        json(res, 200, { ...meta(uid, raw), body: raw })
-        return
-      }
-      if (req.method === 'DELETE') {
-        user.msgs.delete(uid)
-        json(res, 200, { status: 'ok' })
-        return
-      }
-    }
-    if (req.method === 'POST' && path === '/webimap/send') {
-      let payload = {}
-      try {
-        payload = JSON.parse(await readBody(req))
-      } catch {
-        /* tolerate */
-      }
-      const recipients = []
-        .concat(payload.to ?? [])
-        .flatMap(r => (typeof r === 'string' ? r.split(/[,\s]+/) : []))
-        .map(r => r.trim())
-        .filter(Boolean)
-      const body = payload.body ?? ''
-      for (const rcpt of recipients) {
-        const dest = users.get(rcpt)
-        if (!dest) continue
-        const uid = dest.nextUid++
-        dest.msgs.set(uid, body)
-        const waiters = dest.waiters
-        dest.waiters = []
-        for (const w of waiters) {
-          clearTimeout(w.timer)
-          w.respond()
-        }
-      }
-      json(res, 200, { status: 'sent' })
-      return
-    }
-  }
-  json(res, 404, { error: 'not found' })
-})
-await new Promise(r => mock.listen(0, '127.0.0.1', r))
-const mockPort = mock.address().port
+const mock = await startMockMadmail()
+const mockPort = mock.port
 console.log(`mock madmail server on 127.0.0.1:${mockPort} (fully offline)`)
 const qr = `webimapaccount:localhost:${mockPort}`
 
 // ---------------------------------------------------------------------------
 // serve the built web-app (pnpm assemble && pnpm build must have run already)
 // ---------------------------------------------------------------------------
-const appServer = spawn('node', [script('../packages/web-app/serve.mjs')], {
-  env: { ...process.env, PORT: String(APP_PORT) },
-  stdio: 'inherit',
-})
-const procs = [appServer]
-const cleanup = () => procs.forEach(p => p.kill())
-process.on('exit', cleanup)
-const watchdog = setTimeout(() => {
-  console.error('FAIL: global watchdog (6 min) — test hung')
-  cleanup()
-  process.exit(1)
-}, 360_000)
-await new Promise(r => setTimeout(r, 500)) // let the static server bind
+const { cleanup, watchdog } = await startServers({ app: APP_PORT, watchdogMs: 360_000 })
 
 let failed = false
 let browser

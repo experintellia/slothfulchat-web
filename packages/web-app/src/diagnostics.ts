@@ -61,42 +61,48 @@ function buildOverlay(): HTMLDialogElement {
   // (::backdrop can't be styled from inline styles)
   const dlg = el(
     'dialog',
-    'position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;border:none;padding:0;margin:0;background:transparent;'
+    { position: 'fixed', inset: '0', width: '100vw', height: '100vh', maxWidth: 'none', maxHeight: 'none', border: 'none', padding: '0', margin: '0', background: 'transparent' }
   )
   // fires on close() and on Esc — single cleanup path
   dlg.addEventListener('close', () => {
     dlg.remove()
     root = null
   })
-  const backdrop = el(
-    'div',
-    [
-      'position:fixed;inset:0;z-index:2147483001;',
-      'background:rgba(0,0,0,0.5);',
-      'display:flex;align-items:center;justify-content:center;',
-      'font:14px/1.5 system-ui,sans-serif;',
-    ].join('')
-  )
+  const backdrop = el('div', {
+    position: 'fixed',
+    inset: '0',
+    zIndex: '2147483001',
+    background: 'rgba(0,0,0,0.5)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    font: '14px/1.5 system-ui,sans-serif',
+  })
   backdrop.addEventListener('click', e => {
     if (e.target === backdrop) close()
   })
 
-  const panel = el(
-    'div',
-    [
-      'background:#141a18;color:#eef2f0;',
-      'width:min(680px,94vw);max-height:88vh;overflow:auto;-webkit-overflow-scrolling:touch;',
-      'border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,0.5);',
-      'padding:20px 22px;box-sizing:border-box;',
-    ].join('')
-  )
+  const panel = el('div', {
+    background: '#141a18',
+    color: '#eef2f0',
+    width: 'min(680px,94vw)',
+    maxHeight: '88vh',
+    overflow: 'auto',
+    borderRadius: '10px',
+    boxShadow: '0 10px 40px rgba(0,0,0,0.5)',
+    padding: '20px 22px',
+    boxSizing: 'border-box',
+  })
+  // setProperty, not the style object: the vendor-prefixed name is not on
+  // CSSStyleDeclaration, so it can only be set by its literal CSS name.
+  panel.style.setProperty('-webkit-overflow-scrolling', 'touch')
   panel.className = 'sc-diag-panel' // hook for the mobile full-screen media query
 
   // sticky so the title + close stay reachable while the body scrolls (esp.
   // full-screen on mobile); background matches the panel to hide scrolled rows
-  const head = el('div', 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;position:sticky;top:0;background:#141a18;padding:2px 0 6px;')
-  head.append(el('h2', 'margin:0;font-size:18px;', 'Diagnostics'))
-  const x = el('button', 'background:none;border:none;color:#eef2f0;font-size:22px;cursor:pointer;line-height:1;', '×')
+  const head = el('div', { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', position: 'sticky', top: '0', background: '#141a18', padding: '2px 0 6px' })
+  head.append(el('h2', { margin: '0', fontSize: '18px' }, 'Diagnostics'))
+  const x = el('button', { background: 'none', border: 'none', color: '#eef2f0', fontSize: '22px', cursor: 'pointer', lineHeight: '1' }, '×')
   x.setAttribute('aria-label', 'Close')
   x.addEventListener('click', close)
   head.append(x)
@@ -211,8 +217,8 @@ function perfSection(): HTMLElement {
 }
 
 function startupsList(startups: StartupRecord[]): HTMLElement {
-  const box = el('div', 'margin:10px 0;')
-  box.append(el('div', 'font-weight:600;margin-bottom:4px;', `Recent startups (last ${startups.length})`))
+  const box = el('div', { margin: '10px 0' })
+  box.append(el('div', { fontWeight: '600', marginBottom: '4px' }, `Recent startups (last ${startups.length})`))
   const line = startups
     .slice()
     .reverse()
@@ -221,7 +227,7 @@ function startupsList(startups: StartupRecord[]): HTMLElement {
   box.append(
     el(
       'div',
-      'font-family:monospace;font-size:12px;opacity:0.85;word-break:break-word;',
+      { fontFamily: 'monospace', fontSize: '12px', opacity: '0.85', wordBreak: 'break-word' },
       line + ' ms  (c=cold/onboarding, w=warm)'
     )
   )
@@ -287,15 +293,15 @@ function waveformSection(): HTMLElement | null {
 function usageSection(): HTMLElement {
   const s = section('Usage statistics', 'Anonymous, aggregated — helps improve the app.')
 
-  const row = el('label', 'display:flex;gap:10px;align-items:center;margin:8px 0;cursor:pointer;')
+  const row = el('label', { display: 'flex', gap: '10px', alignItems: 'center', margin: '8px 0', cursor: 'pointer' })
   const cb = el('input') as HTMLInputElement
   cb.type = 'checkbox'
   cb.checked = getConsent() !== 'denied'
   cb.addEventListener('change', () => setConsent(cb.checked ? 'granted' : 'denied'))
-  row.append(cb, el('span', '', 'Send anonymous usage statistics'))
+  row.append(cb, el('span', {}, 'Send anonymous usage statistics'))
   s.append(row)
 
-  const foot = el('p', 'margin:8px 0 0;font-size:13px;')
+  const foot = el('p', { margin: '8px 0 0', fontSize: '13px' })
   foot.append(
     document.createTextNode(
       'Anonymous, aggregated counts only — never message content, addresses, or free text. Full details, including the exact list of events: '
@@ -309,20 +315,20 @@ function usageSection(): HTMLElement {
 // --- little building blocks --------------------------------------------
 
 function section(title: string, subtitle: string): HTMLElement {
-  const wrap = el('section', 'margin-top:18px;padding-top:14px;border-top:1px solid #2a332f;')
-  wrap.append(el('h3', 'margin:0 0 2px;font-size:15px;', title))
-  wrap.append(el('div', 'opacity:0.7;font-size:12px;margin-bottom:6px;', subtitle))
+  const wrap = el('section', { marginTop: '18px', paddingTop: '14px', borderTop: '1px solid #2a332f' })
+  wrap.append(el('h3', { margin: '0 0 2px', fontSize: '15px' }, title))
+  wrap.append(el('div', { opacity: '0.7', fontSize: '12px', marginBottom: '6px' }, subtitle))
   return wrap
 }
 
 function kvTable(caption: string, rows: [string, string][]): HTMLElement {
-  const box = el('div', 'margin:10px 0;')
-  box.append(el('div', 'font-weight:600;margin-bottom:4px;', caption))
-  const table = el('table', 'width:100%;border-collapse:collapse;font-size:13px;')
+  const box = el('div', { margin: '10px 0' })
+  box.append(el('div', { fontWeight: '600', marginBottom: '4px' }, caption))
+  const table = el('table', { width: '100%', borderCollapse: 'collapse', fontSize: '13px' })
   for (const [k, v] of rows) {
     const tr = el('tr')
-    tr.append(el('td', 'padding:2px 8px 2px 0;opacity:0.85;', k))
-    tr.append(el('td', 'padding:2px 0;text-align:right;font-family:monospace;', v))
+    tr.append(el('td', { padding: '2px 8px 2px 0', opacity: '0.85' }, k))
+    tr.append(el('td', { padding: '2px 0', textAlign: 'right', fontFamily: 'monospace' }, v))
     table.append(tr)
   }
   box.append(table)
@@ -332,7 +338,7 @@ function kvTable(caption: string, rows: [string, string][]): HTMLElement {
 function actionButton(label: string): HTMLButtonElement {
   return el(
     'button',
-    'margin-top:12px;font:inherit;cursor:pointer;border-radius:6px;padding:8px 14px;background:#2c8a68;color:#fff;border:none;',
+    { marginTop: '12px', font: 'inherit', cursor: 'pointer', borderRadius: '6px', padding: '8px 14px', background: '#2c8a68', color: '#fff', border: 'none' },
     label
   )
 }
