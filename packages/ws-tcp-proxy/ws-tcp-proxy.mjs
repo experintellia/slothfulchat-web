@@ -56,7 +56,13 @@ const ALLOWED_TCP_PORTS = new Set([143, 465, 587, 993]);
 
 // Resource limits. Sized for what this protocol actually does, so one client
 // (or one stuck server) can't consume the bridge for everybody.
-const MAX_PAYLOAD = 256 * 1024; // one WS frame; the core's tunnel writes ≤64 KB
+// One inbound WS frame. NOT the size of a mail or an attachment: a big
+// attachment arrives as thousands of frames, not one. maxPayload is receive-side
+// only, so downloads (bridge→browser) don't pass through it at all; what it
+// bounds is browser→bridge, where the core pumps the tunnel through
+// tokio's copy_bidirectional (8 KB buffer, patches/core/0005) — so real frames
+// are ≤8 KB and TLS caps a record at 16 KB regardless. 256 KB is headroom.
+const MAX_PAYLOAD = 256 * 1024;
 const MAX_BUFFERED = 1024 * 1024; // per direction, before we stop reading (see below)
 const MAX_CONNS = Number(process.env.MAX_CONNECTIONS) || 512; // whole bridge
 const MAX_CONNS_PER_IP = Number(process.env.MAX_CONNECTIONS_PER_IP) || 16;
@@ -147,7 +153,7 @@ const server = createServer((req, res) => {
   res.end();
 });
 // maxPayload: ws defaults to 100 MiB per frame, which one client can make us
-// allocate at will. IMAP/SMTP records are kilobytes.
+// allocate at will. See MAX_PAYLOAD for why 256 KB is not a limit on mail size.
 const wss = new WebSocketServer({ server, maxPayload: MAX_PAYLOAD });
 // 'error' on a ws/http server or a socket is an unhandled throw with no
 // listener, i.e. one bad client kills the bridge for every connected user.
