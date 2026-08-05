@@ -74,7 +74,8 @@ jobs:
 
       # dependency-free node:test suites for pure logic (config templating,
       # release-asset pinning/digest/size caps, the analytics pre-notice gate,
-      # translation-editor serialization, blob response headers)
+      # translation-editor serialization, blob response headers, the OPFS
+      # lock-wait deadline)
       - name: Unit-test pure helpers
         run: >-
           node --test
@@ -88,6 +89,7 @@ jobs:
           packages/web-app/src/fatal-report.test.ts
           packages/web-app/src/emoji-sets.test.ts
           packages/web-app/serve.test.mjs
+          packages/core-wasm/src/opfs-probe.test.mjs
           scripts/mock-madmail.test.mjs
           scripts/harness.test.mjs
 

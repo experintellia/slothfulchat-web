@@ -28,6 +28,10 @@
   release shipped, because it pointed at a position in the page rather than at
   the version. Anchors now carry the version itself (`#v-0.8.0`).
 
+- **Hardening**: a file that is far too big to fit in the browser — one you
+  pick or drop, or one a corrupt/crafted backup claims to contain — is now
+  refused with an error instead of taking the app down with it.
+
 - **Hardening**: the internal address the app uses to fetch attachments now
   refuses to point anywhere outside the attachment folder. No known way to
   trigger it from a message — the other layers around attachments already
