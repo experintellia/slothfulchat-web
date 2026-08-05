@@ -228,6 +228,12 @@ jobs:
       - name: E2E test — fatal-start dialog
         run: node scripts/test-fatal-dialog.mjs
 
+      # post-boot worker death (no proxy, no core boot — a stub worker that
+      # boots and then throws): every in-flight JSON-RPC and fs call must
+      # reject instead of hanging, and the app must show the reload dialog.
+      - name: E2E test — a dying core worker fails loudly, not silently
+        run: node scripts/test-worker-death.mjs
+
       # throwaway-session gate e2e (no proxy, no core boot): a link carrying
       # ?persist=0 must be confirmed before a memory-only session starts, the
       # consent must be per tab, and such a session must show its yellow navbar.
