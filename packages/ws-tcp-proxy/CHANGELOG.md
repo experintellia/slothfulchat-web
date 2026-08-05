@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Security, for hosted bridges:** an IP resolved for an allowlisted chatmail
+  domain is now authorized only for the client that resolved it. Before, any
+  client's lookup opened that address's mail ports for *everyone* on the
+  bridge — which matters whenever an allowlisted domain shares an address with
+  unrelated services.
+- The bridge now bounds what a single client can consume: a 256 KB frame cap,
+  512 tunnels overall and 16 per client (`MAX_CONNECTIONS`,
+  `MAX_CONNECTIONS_PER_IP`), 120 new connections/min per client, connect, idle
+  and lifetime deadlines on tunnels (`TUNNEL_CONNECT_MS`, `TUNNEL_IDLE_MS`), a
+  ping that reaps clients which vanished without closing, and backpressure in
+  both directions so a slow peer can no longer make the bridge buffer the
+  difference in memory. The unfurl endpoint additionally serves at most four
+  previews at once.
+- New `TRUST_PROXY=1`: behind a TLS reverse proxy every client otherwise looks
+  like the proxy and shares one limit budget. Set it only where your proxy
+  overwrites `X-Forwarded-For` — a client that can set the header itself would
+  bypass the limits.
 - **Breaking, for hosted bridges:** the bridge now binds `127.0.0.1` instead of
   every interface. If you host one for others, set `HOST=0.0.0.0` (or your
   interface address) — and it will only start with a `CHATMAIL_ALLOWLIST`, since

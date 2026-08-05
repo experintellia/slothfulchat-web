@@ -10,13 +10,21 @@
 //             and a non-loopback HOST with an empty allowlist refuses to start.
 //   frames:   a malformed (unmasked) client frame kills only that connection,
 //             not the whole bridge.
+//   scoping:  one client resolving an allowlisted domain does NOT authorize
+//             that IP for a different client.
+//   limits:   per-client and global connection caps, the per-client
+//             new-connections-per-minute limit, the frame-size cap and the
+//             connect deadline.
+//   pressure: neither direction of a tunnel buffers without bound when its peer
+//             stops reading (the tcp→ws half needs a backend on a privileged
+//             port and is skipped where that can't be bound).
 // Only the two allowlisted-domain cases need network (nine.testrun.org); every
-// other case here is offline-safe. Set ALLOWLIST_NET=0 to skip those two (what
-// CI does — a gate that goes red when a third-party relay is down is worse than
-// no gate).
+// other case here is offline-safe (the limit cases dial 203.0.113.1, TEST-NET-3,
+// which nothing answers). Set ALLOWLIST_NET=0 to skip those two (what CI does —
+// a gate that goes red when a third-party relay is down is worse than no gate).
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { connect } from 'node:net';
+import { connect, createServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import assert from 'node:assert/strict';
 import WebSocket from 'ws';
@@ -35,13 +43,27 @@ const startProxy = (port, allowlist, env = {}) =>
   });
 
 // Resolve a name via /dns/{host}; returns the JSON array of IPs, then closes.
-const dns = (base, host) =>
+// `as` sets X-Forwarded-For, which only counts on a TRUST_PROXY=1 bridge — it
+// is how this test plays two different clients from one machine.
+const dns = (base, host, as) =>
   new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${base}/dns/${host}`);
+    const ws = new WebSocket(`${base}/dns/${host}`, as ? { headers: { 'x-forwarded-for': as } } : {});
     ws.on('message', data => resolve(JSON.parse(data.toString())));
     ws.on('error', reject);
-    ws.on('close', () => reject(new Error('dns closed with no reply')));
+    ws.on('close', code => reject(new Error(`dns closed with no reply (${code})`)));
   });
+
+// Open a /tcp tunnel and *keep* it open (unlike tryTcp, which closes it).
+// Resolves 'open' if nothing happens for 400 ms, else the close code.
+const openTunnel = (base, { as, ip = '203.0.113.1', port = 993 } = {}) => {
+  const ws = new WebSocket(`${base}/tcp/${ip}/${port}`, as ? { headers: { 'x-forwarded-for': as } } : {});
+  ws.on('error', () => {}); // the close code carries the verdict
+  const verdict = new Promise(resolve => {
+    const t = setTimeout(() => resolve('open'), 400);
+    ws.on('close', code => (clearTimeout(t), resolve(code)));
+  });
+  return { ws, verdict };
+};
 
 // Try a /tcp/{ip}/{port} tunnel. Resolves 'allowed' if the socket opens and
 // stays open, 'blocked' if the allowlist guard refuses it (4003), or
@@ -122,12 +144,26 @@ const waitReady = async (...ports) => {
 const proxy = startProxy(8651, ALLOWLISTED);
 const localProxy = startProxy(8652, `${ALLOWLISTED},localhost`);
 const bindProxy = startProxy(8653, ''); // no allowlist: the local-dev default
+// TRUST_PROXY=1 makes the bridge take X-Forwarded-For as the client identity,
+// which is how one test machine plays several clients. Tight caps so the limits
+// trip in a handful of connections instead of hundreds.
+const scopedProxy = startProxy(8671, 'localhost', { TRUST_PROXY: '1' });
+const capProxy = startProxy(8672, '', {
+  TRUST_PROXY: '1', MAX_CONNECTIONS: '3', MAX_CONNECTIONS_PER_IP: '2',
+});
+const dlProxy = startProxy(8673, '', { TRUST_PROXY: '1', TUNNEL_CONNECT_MS: '200' });
 const base = 'ws://localhost:8651';
 const localBase = 'ws://localhost:8652';
+const scopedBase = 'ws://localhost:8671';
+const capBase = 'ws://localhost:8672';
+const dlBase = 'ws://localhost:8673';
+const settle = () => new Promise(r => setTimeout(r, 200)); // let a close reach the server
 let refusing = null;
+let backend = null; // the tcp→ws backpressure check's fake mail server
+let backendSock = null;
 
 try {
-  await waitReady(8651, 8652, 8653);
+  await waitReady(8651, 8652, 8653, 8671, 8672, 8673);
 
   // localhost is answered from a hardcoded loopback reply so the web app's
   // bridge-reachability health check works even under an allowlist.
@@ -180,6 +216,146 @@ try {
   );
   console.log('OK: malformed frame closed one connection, bridge still serving');
 
+  // Authorization is per client, not global. One client resolving an
+  // allowlisted domain must not open that IP for everybody else — allowlisted
+  // domains share addresses with unrelated services often enough.
+  const [A, B] = ['203.0.113.10', '203.0.113.11'];
+  await dns(scopedBase, 'localhost', A);
+  const forA = await openTunnel(scopedBase, { as: A, ip: '127.0.0.1' }).verdict;
+  assert.notEqual(forA, 4003, 'the client that resolved localhost must get past the guard');
+  const forB = await openTunnel(scopedBase, { as: B, ip: '127.0.0.1' }).verdict;
+  assert.equal(forB, 4003, "one client's DNS lookup must not authorize that IP for another client");
+  console.log('OK: resolved-IP authorization is scoped to the client that resolved it');
+
+  // Frame-size cap: ws defaults to 100 MiB per frame; IMAP/SMTP needs nothing
+  // like it, and an oversized frame must be refused (1009), not allocated.
+  const big = new WebSocket(`${capBase}/tcp/203.0.113.1/993`, {
+    headers: { 'x-forwarded-for': '203.0.113.30' },
+  });
+  big.on('error', () => {});
+  const oversize = await new Promise(resolve => {
+    big.on('open', () => big.send(Buffer.alloc(512 * 1024)));
+    big.on('close', resolve);
+  });
+  assert.equal(oversize, 1009, 'an oversized frame must be refused (1009 too big)');
+  await settle();
+  console.log('OK: oversized frame refused');
+
+  // Connection caps: two per client, three for the whole bridge (both set on
+  // this bridge). The tunnels dial TEST-NET-3, which nothing answers, so they
+  // stay in 'connecting' — open as far as the caps are concerned.
+  const [C, D] = ['203.0.113.20', '203.0.113.21'];
+  const t1 = openTunnel(capBase, { as: C });
+  const t2 = openTunnel(capBase, { as: C });
+  assert.equal(await t1.verdict, 'open');
+  assert.equal(await t2.verdict, 'open');
+  assert.equal(await openTunnel(capBase, { as: C }).verdict, 1013,
+    'a third tunnel from the same client must be refused');
+  await settle();
+  const t4 = openTunnel(capBase, { as: D });
+  assert.equal(await t4.verdict, 'open', 'the per-client cap must not apply to a different client');
+  assert.equal(await openTunnel(capBase, { as: D }).verdict, 1013,
+    'the global cap must refuse a fourth tunnel even from a client under its own cap');
+  await settle();
+  t1.ws.close();
+  await settle();
+  const t6 = openTunnel(capBase, { as: C });
+  assert.equal(await t6.verdict, 'open', 'closing a tunnel must free its slot again');
+  for (const t of [t2, t4, t6]) t.ws.close();
+  console.log('OK: per-client and global connection caps hold, and release');
+
+  // Dial deadline: a tunnel to an address that never answers must be closed,
+  // not left hanging (4004 = the backend connection failed).
+  const dialStart = Date.now();
+  assert.equal(await openTunnel(dlBase, { as: '203.0.113.40' }).verdict, 4004,
+    'a tunnel that never connects must be closed by the dial deadline');
+  assert.ok(Date.now() - dialStart < 2000, 'the dial deadline must fire promptly');
+  console.log('OK: dial deadline closes a tunnel that never connects');
+
+  // Per-client connection rate limit (120/min): a reconnect storm from one
+  // client must be refused rather than served.
+  let limitedAt = null;
+  for (let i = 1; i <= 130 && limitedAt === null; i++) {
+    const code = await new Promise(resolve => {
+      const ws = new WebSocket(`${dlBase}/dns/localhost`, {
+        headers: { 'x-forwarded-for': '203.0.113.41' },
+      });
+      ws.on('error', () => {});
+      ws.on('close', resolve);
+    });
+    if (code === 1013) limitedAt = i;
+  }
+  assert.ok(limitedAt !== null, 'the per-client connection rate limit must kick in');
+  console.log(`OK: per-client rate limit refused connection #${limitedAt}`);
+
+  // Backpressure ws→tcp. The tunnel's TCP side never connects, so nothing we
+  // send can leave the bridge. With backpressure the bridge stops reading from
+  // the WebSocket once its socket buffer is full, which shows up here as our
+  // own send queue staying full; without it, the bridge swallows every byte
+  // into its own memory and our queue drains to nothing.
+  const flood = new WebSocket(`${capBase}/tcp/203.0.113.1/993`, {
+    headers: { 'x-forwarded-for': '203.0.113.50' },
+  });
+  flood.on('error', () => {});
+  await new Promise(r => flood.on('open', r));
+  const chunk = Buffer.alloc(64 * 1024);
+  for (let i = 0; i < 256; i++) flood.send(chunk); // 16 MB
+  await new Promise(r => setTimeout(r, 1500));
+  assert.ok(
+    flood.bufferedAmount > 4 * 1024 * 1024,
+    `the bridge must stop reading a flood it cannot forward (queue drained to ${flood.bufferedAmount})`
+  );
+  flood.terminate();
+  await settle();
+  console.log('OK: ws→tcp backpressure holds the sender back');
+
+  // Backpressure tcp→ws (and the resume that follows). Needs a backend on one
+  // of the allowed ports — all privileged, so this half only runs where 993 can
+  // be bound.
+  let backendSent = 0;
+  backend = createServer(sock => {
+    backendSock = sock;
+    const buf = Buffer.alloc(64 * 1024);
+    const pump = () => {
+      // stop far above the backpressure mark, so a bridge that ignores it hits
+      // the ceiling quickly instead of buffering itself to death
+      while (backendSent < 64 * 1024 * 1024 && sock.write(buf)) backendSent += buf.length;
+    };
+    sock.on('drain', pump);
+    sock.on('error', () => {});
+    pump();
+  });
+  const bound = await new Promise(r => {
+    backend.once('error', () => r(false));
+    backend.listen(993, '127.0.0.1', () => r(true));
+  });
+  if (bound) {
+    const slow = new WebSocket(`${capBase}/tcp/127.0.0.1/993`, {
+      headers: { 'x-forwarded-for': '203.0.113.51' },
+    });
+    slow.on('error', () => {});
+    slow.on('message', () => {});
+    await new Promise(r => slow.on('open', r));
+    slow.pause(); // a client that stopped reading
+    await new Promise(r => setTimeout(r, 1000));
+    // The ceiling is what the kernel's own socket buffers hold plus the
+    // bridge's 1 MB mark — single-digit MB. A bridge without backpressure runs
+    // straight to the backend's 64 MB ceiling instead.
+    const whilePaused = backendSent;
+    assert.ok(
+      whilePaused < 32 * 1024 * 1024,
+      `the bridge must stop reading the backend for a paused client (relayed ${whilePaused} bytes)`
+    );
+    slow.resume();
+    await new Promise(r => setTimeout(r, 500));
+    assert.ok(backendSent > whilePaused, 'the bridge must resume reading once the client drains');
+    slow.terminate();
+    console.log('OK: tcp→ws backpressure pauses the backend, and resumes it');
+  } else {
+    console.log('(cannot bind port 993 here, skipped the tcp→ws backpressure check)');
+  }
+  await settle();
+
   // Default bind is loopback-only: an allow-all bridge must not be an open
   // relay for the whole network just by being started.
   assert.deepEqual(await dns('ws://127.0.0.1:8653', 'localhost'), ['127.0.0.1', '::1']);
@@ -212,5 +388,10 @@ try {
   proxy.kill();
   localProxy.kill();
   bindProxy.kill();
+  backendSock?.destroy();
+  backend?.close();
+  scopedProxy.kill();
+  capProxy.kill();
+  dlProxy.kill();
   refusing?.kill();
 }
