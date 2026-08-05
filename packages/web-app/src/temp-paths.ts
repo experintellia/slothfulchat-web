@@ -1,6 +1,5 @@
 /**
- * Which memfs path to delete for a staged temp file. Plain .mjs beside the TS
- * so it can be unit-tested without a build, same as blob-route.mjs.
+ * Which memfs path to delete for a staged temp file.
  *
  * Write-side trust boundary: the path comes from the frontend, so keep the
  * upstream backendApi guard (must look like a temp path, no `..`) — the memfs
@@ -12,7 +11,7 @@
  * across reloads. Collapse to that parent when the path has exactly that
  * shape; `fs_remove` deletes a subtree, so one call takes file and dir.
  */
-export function tempRemovalPath(name) {
+export function tempRemovalPath(name: string | undefined): string | null {
   if (typeof name !== 'string' || !name.includes('tmp') || name.includes('..')) {
     return null
   }

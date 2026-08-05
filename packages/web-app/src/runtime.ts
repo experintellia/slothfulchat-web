@@ -34,7 +34,7 @@ import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
 import { el } from './ui-shared'
 import { fatalReportText } from './fatal-report.ts'
-import { tempRemovalPath } from './temp-paths.mjs'
+import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
 

@@ -88,7 +88,7 @@ jobs:
           packages/web-app/src/sw-cache.test.ts
           packages/web-app/src/fatal-report.test.ts
           packages/web-app/src/emoji-sets.test.ts
-          packages/web-app/src/temp-paths.test.mjs
+          packages/web-app/src/temp-paths.test.ts
           packages/web-app/serve.test.mjs
           packages/core-wasm/src/opfs-probe.test.mjs
           scripts/mock-madmail.test.mjs

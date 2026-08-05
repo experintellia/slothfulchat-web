@@ -1,10 +1,10 @@
 // Unit tests for the temp-file removal path — dependency-free (node:test), so
 // they run in CI's lint job without pnpm install / submodules.
-//   node --test packages/web-app/src/temp-paths.test.mjs
+//   node --test packages/web-app/src/temp-paths.test.ts
 import { strictEqual } from 'node:assert'
 import { test } from 'node:test'
 
-import { tempRemovalPath } from './temp-paths.mjs'
+import { tempRemovalPath } from './temp-paths.ts'
 
 test('a staged temp file collapses to its random parent dir (M-03)', () => {
   strictEqual(
