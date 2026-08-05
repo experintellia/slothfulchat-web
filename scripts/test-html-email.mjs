@@ -34,6 +34,8 @@ execFileSync(
   { stdio: 'inherit' }
 )
 copyFileSync(join(webApp, 'static/html-email.html'), join(dir, 'html-email.html'))
+// the page loads it; serve the real one rather than 404ing (it no-ops unframed)
+copyFileSync(join(webApp, 'static/frame-guard.js'), join(dir, 'frame-guard.js'))
 
 const { cleanup } = await startServers({ app: APP_PORT, appRoot: dir })
 
