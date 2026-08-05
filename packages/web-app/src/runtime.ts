@@ -2069,8 +2069,17 @@ function showFatalDialog(
   if (notify) analytics.releaseHeldEvents()
 }
 
-/** Ask core whether these accounts survived their database migration, and stop
- * the app on the first one that did not.
+// Core dedupes device messages by this label, forever and per account — never
+// vary it, or a broken account gets the same warning again on every boot.
+const MIGRATION_ERROR_LABEL = 'slothful-migration-error'
+// This fork's own tracker, not upstream's: the migration runs through our patch
+// stack and our OPFS SQLite, so a failure here is ours to look at.
+// ponytail: edit this to your repo if you fork this (as BRIDGE_HELP_URL above).
+const MIGRATION_ERROR_ISSUE_URL =
+  'https://github.com/experintellia/slothfulchat-web/issues'
+
+/** Ask core whether these accounts survived their database migration, and tell
+ * the user in the affected account's own device chat if one did not.
  *
  * Opening an account with a failed migration does NOT fail: core logs the
  * error, records it, and returns success on purpose, so that a half-migrated
@@ -2080,10 +2089,16 @@ function showFatalDialog(
  * one is the known offender) then misbehaves later, in code that has no idea
  * why. So ask, at every point where an account is opened.
  *
- * ponytail: one RPC per account, sequential, and the dialog blocks the app —
- * which means the backup it points at cannot be taken from here. If this ever
- * fires for real users, the upgrade is an "Export backup" button in the dialog
- * (exportBackup + saveFile are both already in this file). */
+ * A device message rather than a blocking dialog: it names the problem in the
+ * account it is about, next to the backup export it asks for, and leaves the
+ * app usable — which is the whole point, since the recovery is to get the data
+ * out. `add_device_message`'s label is what keeps it to one message ever: core
+ * records the label in `devmsglabels` and drops every later add with the same
+ * one, even if the message was deleted in between (vendor/core/src/chat.rs), so
+ * the repeat on each boot costs nothing.
+ *
+ * ponytail: one RPC per account, sequential — fine for the handful of accounts
+ * a browser profile holds; batch it if that ever stops being true. */
 async function checkMigrationErrors(transport: any, ids: number[]): Promise<void> {
   for (const id of ids) {
     // a core too old to know the method, or one that died meanwhile, must not
@@ -2091,19 +2106,24 @@ async function checkMigrationErrors(transport: any, ids: number[]): Promise<void
     const error = await transport.request('get_migration_error', [id]).catch(() => null)
     if (!error) continue
     analytics.event('boot_error', { kind: 'migration-error' })
-    showFatalDialog(
-      'sc-migration-error-dialog',
-      'This account could not be updated',
-      `${APP_NAME} could not finish updating this account's database to the ` +
-        'current version, so it is not safe to keep chatting with it — ' +
-        'contacts and messages can be wrong. Nothing was deleted: your data is ' +
-        'still here and can be exported as a backup. Please send the error ' +
-        'text below to the Delta Chat developers (support.delta.chat) and they ' +
-        'can tell you how to get this account back.',
-      'migration-error',
-      String(error)
-    )
-    return
+    // plain text, no markdown — device messages render as-is and autolink URLs
+    await transport
+      .request('add_device_message', [
+        id,
+        MIGRATION_ERROR_LABEL,
+        {
+          text:
+            `⚠ ${APP_NAME} could not finish updating this account's database to ` +
+            'the current version. Contacts and messages in this account can be ' +
+            'wrong from now on. Nothing was deleted — please export a backup ' +
+            '(Settings → Chats → Export Backup) and keep it safe.\n\n' +
+            'Please report this, with the error text below, at ' +
+            `${MIGRATION_ERROR_ISSUE_URL}\n\n${error}`,
+        },
+      ])
+      .catch((err: unknown) =>
+        console.error('could not add the migration-error device message', err)
+      )
   }
 }
 
