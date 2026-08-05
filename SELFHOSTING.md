@@ -12,6 +12,8 @@ You host **two things**:
    > serves fixed headers only (GitHub Pages among them) the app can be framed
    > by a hostile site and attacked by clickjacking. Everything else works
    > there; this one protection needs a real server or a CDN edge in front.
+   > `dist/frame-guard.js` is a page-level backstop (see below), not a
+   > replacement.
 2. **A WS→TCP bridge** — the one server piece, because browsers can't open raw
    TCP. See [`packages/ws-tcp-proxy`](packages/ws-tcp-proxy/README.md). TLS
    terminates inside the browser, so the bridge only ever relays ciphertext.
@@ -75,6 +77,35 @@ SLOTHFUL_IMPRINT_EMAIL="hello@example.chat" \
 pnpm --filter @slothfulchat/web-app build
 # upload packages/web-app/dist/ to your host
 ```
+
+## Response headers on a host that can't send them (GitHub Pages)
+
+A static host that serves fixed headers only cannot be made to send security
+headers, and **the repository cannot fix this from inside** — GitHub Pages has
+no header configuration, so a Pages deployment (including the flagship one this
+repo's `deploy-pages.yml` produces) ships with none of the headers below. Put a
+header-capable edge in front of it — Cloudflare (Transform Rules), Fastly,
+CloudFront + Lambda@Edge, or any reverse proxy — and have it add:
+
+| Header | Value | Why |
+|---|---|---|
+| `Content-Security-Policy` | `frame-ancestors 'none'` | The one directive `main.html`'s `<meta>` CSP cannot express. A second CSP header never relaxes the meta policy — policies are enforced independently. |
+| `X-Frame-Options` | `DENY` | Same job for browsers that predate `frame-ancestors`. |
+| `X-Content-Type-Options` | `nosniff` | Stops MIME sniffing turning an upload or a blob into script. |
+| `Referrer-Policy` | `no-referrer` | Chat URLs can carry invite/QR fragments; don't leak them onward. |
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` | Pins HTTPS. Add `preload` only if you mean it — it is hard to undo, and `includeSubDomains` covers webxdc origins too. |
+
+Two exceptions, both already encoded in `dist/caddy/routes.caddy` — copy them:
+`/html-email.html` needs `frame-ancestors 'self'` / `X-Frame-Options: SAMEORIGIN`
+(the app frames its own HTML-mail viewer on phones and installed PWAs), and any
+`*.webxdc.` origin needs `frame-ancestors https://<app-host>` (webxdc apps are
+meant to be framed by the app — see [WEBXDC.md](WEBXDC.md)).
+
+Without such an edge, the only thing standing between the app and a clickjacking
+page is `dist/frame-guard.js`: it runs first in `main.html`, `call-popup.html`
+and `html-email.html`, and blanks the document when a foreign origin frames it.
+That is defence in depth — it needs scripting to be enabled and it protects only
+our own documents. **It is not equivalent to the headers.**
 
 ## Optional: webxdc apps
 

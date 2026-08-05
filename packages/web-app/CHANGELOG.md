@@ -1,5 +1,12 @@
 # Changelog
 
+- **The app now refuses to run inside another site's frame.** Static hosts like
+  GitHub Pages can't send the header that normally forbids this, so a hostile
+  page could embed the app invisibly and trick you into clicking things in it.
+  The app now detects that and blanks itself instead; the HTML-mail viewer it
+  embeds in its own window keeps working. A real webserver's headers are still
+  the stronger protection — self-hosters have had those all along.
+
 - **A link can no longer start a session that quietly saves nothing.** The
   `?persist=0` test switch made the app run memory-only — your accounts appear
   missing and anything you set up or receive is lost when the tab closes. It

@@ -69,6 +69,11 @@
                    media-src 'self' file: blob: ;
                    connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl https://raw.githubusercontent.com/experintellia/chatmail-relays-mirror/refs/heads/data/relays.json"
     />
+    <!-- Clickjacking guard, before the first stylesheet so a refusal aborts
+         them too. Only a header can express frame-ancestors (see the CSP note
+         above and routes.caddy); this is the page-level backstop for hosts
+         that cannot send one, e.g. GitHub Pages. -->
+    <script src="./frame-guard.js"></script>
     <link rel="stylesheet" href="./fonts/fonts.css" />
     <link rel="stylesheet" href="./fonts/emoji-fonts.css" />
     <link rel="stylesheet" href="./main.css" />

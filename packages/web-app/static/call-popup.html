@@ -32,6 +32,9 @@
                    media-src 'self' blob: ;
                    connect-src 'self' blob: data: ws: wss:"
     />
+    <!-- Clickjacking guard: this window is opened top-level, never framed, so
+         any parent at all is foreign (answer/hang-up buttons live here). -->
+    <script src="./frame-guard.js"></script>
     <style>
       html,
       body {
