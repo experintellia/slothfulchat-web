@@ -1,5 +1,12 @@
 # Changelog
 
+- **An account that failed to update is no longer used as if it were fine.**
+  When a new version can't finish updating an account's database, the account
+  still opens — but chatting with it can produce wrong contacts or messages.
+  The app now checks after opening and stops with an explanation and the
+  copyable error text, instead of letting the damage show up later as unrelated
+  breakage.
+
 - **Hardening**: the offline cache now keeps to itself. It only deletes caches
   it created (anything else hosted on the same domain used to be wiped along
   with them) and only stores the app's own files, so a service sitting next to

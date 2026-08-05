@@ -369,6 +369,9 @@ function getCore(): Core {
     // captured when the import was SENT, so we can hold their success response
     // until the imported blobs are durable (see below)
     const pendingImports = new Map<number | string, Promise<number>>()
+    // request ids of in-flight calls that OPEN an account → their answer is the
+    // moment to ask core whether the migration went through (see below)
+    const pendingOpens = new Set<number | string>()
     const originalSend = core.transport._send.bind(core.transport)
     core.transport._send = (message: any) => {
       if (
@@ -401,6 +404,15 @@ function getCore(): Core {
         // snapshot is read before the import starts executing.
         pendingImports.set(message.id, activeCore.fsFailed().catch(() => 0))
       }
+      // The only two jsonrpc calls that open an account after the worker has
+      // started; both answer with its id. Everything else that exists at boot
+      // was opened by the account manager and is swept below.
+      if (
+        (message?.method === 'add_account' || message?.method === 'migrate_account') &&
+        message.id != null
+      ) {
+        pendingOpens.add(message.id)
+      }
       originalSend(message)
     }
     // Hold a successful import/transfer response until fsFlush() confirms every
@@ -430,6 +442,10 @@ function getCore(): Core {
           .finally(() => originalOnMessage(message))
         return
       }
+      // an account that was just opened: ask before the frontend starts using it
+      if (pendingOpens.delete(message?.id) && typeof message.result === 'number') {
+        void checkMigrationErrors(transport, [message.result])
+      }
       originalOnMessage(message)
     }
     // debug/smoke marker: proves the wasm core booted and answers rpc
@@ -454,6 +470,9 @@ function getCore(): Core {
         // whole origin (accounts, messages, blobs) at once. Only asked once we
         // actually hold data worth protecting (a fresh visitor isn't prompted).
         if (has) void requestPersistentStorage()
+        // The account manager opens every existing account while the worker
+        // starts, so this single sweep covers all of them.
+        if (has) void checkMigrationErrors(transport, ids as number[])
       })
       .catch(() => {})
       .finally(() => {
@@ -2024,6 +2043,44 @@ function showFatalDialog(
   // only once the notice is actually on screen — releaseHeldEvents() records
   // that it was shown, so calling it without showing it would be a lie
   if (notify) analytics.releaseHeldEvents()
+}
+
+/** Ask core whether these accounts survived their database migration, and stop
+ * the app on the first one that did not.
+ *
+ * Opening an account with a failed migration does NOT fail: core logs the
+ * error, records it, and returns success on purpose, so that a half-migrated
+ * account can still be exported as a backup instead of being unreachable
+ * (vendor/core/src/sql.rs). The price is that the failure is invisible unless
+ * the UI asks — and an account that silently lost a migration (the key-contacts
+ * one is the known offender) then misbehaves later, in code that has no idea
+ * why. So ask, at every point where an account is opened.
+ *
+ * ponytail: one RPC per account, sequential, and the dialog blocks the app —
+ * which means the backup it points at cannot be taken from here. If this ever
+ * fires for real users, the upgrade is an "Export backup" button in the dialog
+ * (exportBackup + saveFile are both already in this file). */
+async function checkMigrationErrors(transport: any, ids: number[]): Promise<void> {
+  for (const id of ids) {
+    // a core too old to know the method, or one that died meanwhile, must not
+    // take the app down with an unhandled rejection
+    const error = await transport.request('get_migration_error', [id]).catch(() => null)
+    if (!error) continue
+    analytics.event('boot_error', { kind: 'migration-error' })
+    showFatalDialog(
+      'sc-migration-error-dialog',
+      'This account could not be updated',
+      `${APP_NAME} could not finish updating this account's database to the ` +
+        'current version, so it is not safe to keep chatting with it — ' +
+        'contacts and messages can be wrong. Nothing was deleted: your data is ' +
+        'still here and can be exported as a backup. Please send the error ' +
+        'text below to the Delta Chat developers (support.delta.chat) and they ' +
+        'can tell you how to get this account back.',
+      'migration-error',
+      String(error)
+    )
+    return
+  }
 }
 
 /** The whole app is a wasm core, so a browser with WebAssembly switched off can
