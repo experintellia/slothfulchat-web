@@ -30,7 +30,10 @@
  *    in localStorage.
  */
 
-import * as session from './session'
+// Explicit ".ts" specifier (allowImportingTsExtensions, like packages/calls):
+// analytics-gate.test.mjs imports this module for real under Node's
+// type-stripping test runner, which does no extensionless TS resolution.
+import * as session from './session.ts'
 import { isCatalogEvent } from './events.ts'
 // Type-only: no runtime dependency on @slothfulchat/calls from this generic
 // analytics module — just the single source of truth for the outcome
