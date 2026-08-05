@@ -1,5 +1,11 @@
 # Changelog
 
+- **A chat engine that crashes now says so instead of spinning forever.** If
+  the engine died after startup, everything the app had asked it to do simply
+  waited for an answer that was never coming — an endless spinner with no error
+  and no way out. The failure is now reported straight away, with a dialog that
+  offers a reload.
+
 - **A link can no longer start a session that quietly saves nothing.** The
   `?persist=0` test switch made the app run memory-only — your accounts appear
   missing and anything you set up or receive is lost when the tab closes. It

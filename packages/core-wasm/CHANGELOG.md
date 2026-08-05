@@ -1,5 +1,11 @@
 # Changelog
 
+- **A worker that dies after boot no longer strands its callers**: the
+  transport now watches the worker for errors and undeliverable replies, and
+  rejects every pending JSON-RPC and filesystem call instead of leaving them
+  waiting for a response that can never arrive. The failure is reported to the
+  page as a `fatal-worker-died` message.
+
 - **PGP crypto no longer blocks the core**: key generation, message
   encryption and decryption now run on a dedicated, prewarmed crypto worker,
   so the app stays responsive while they work — most noticeable on phones,
