@@ -4,7 +4,7 @@
 import { writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
-import { startServers } from './harness.mjs'
+import { assertDialogRendered, startServers } from './harness.mjs'
 
 const script = p => fileURLToPath(new URL(p, import.meta.url))
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
@@ -293,6 +293,31 @@ try {
   // onWebxdcSendToChat mechanism the passing text-share case above covers, and
   // its writeTempFileFromBase64 staging is exercised by the upstream
   // WebxdcSaveToChatDialog itself.)
+
+  // The two overlays runtime.ts does NOT build — consent.ts's info dialog and
+  // the diagnostics panel — render as dialogs, not as an unstyled pile (#211).
+  // They live here rather than in a gate of their own because both need a
+  // booted app to expose their hooks, which this suite already has.
+  // `open` must return nothing: showInfo() resolves only once the dialog
+  // closes, and page.evaluate() awaits a returned promise — returning it would
+  // hang the run forever. Dismissed with close() rather than by clicking a
+  // button, which for the consent dialog would also record a consent choice.
+  const checkOverlay = async (open, cardWidth, name) => {
+    await page.evaluate(open)
+    const dialog = page.locator('dialog[open]').last() // ours opened last, so topmost
+    await dialog.waitFor({ state: 'visible', timeout: 10000 })
+    await assertDialogRendered(dialog, cardWidth, name)
+    await dialog.evaluate(d => d.close())
+    console.log(`OK: the ${name} is a centred, styled modal`)
+  }
+  const showInfo = () => {
+    window.__slothfulAnalyticsUi.showInfo()
+  }
+  const openDiag = () => {
+    window.__slothfulDiagnostics.open()
+  }
+  await checkOverlay(showInfo, 544, 'usage-statistics dialog') // max-width: 34rem
+  await checkOverlay(openDiag, 680, 'diagnostics panel') // width: min(680px, 94vw)
 
   if (cspViolations.length > 0) {
     console.error(`FAIL: ${cspViolations.length} CSP violation(s): ${cspViolations[0]}`)

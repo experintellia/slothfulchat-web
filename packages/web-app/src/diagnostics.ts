@@ -57,29 +57,31 @@ export function close(): void {
 }
 
 function buildOverlay(): HTMLDialogElement {
-  // transparent full-viewport dialog; our own backdrop div inside it
-  // (::backdrop can't be styled from inline styles)
-  const dlg = el(
-    'dialog',
-    { position: 'fixed', inset: '0', width: '100vw', height: '100vh', maxWidth: 'none', maxHeight: 'none', border: 'none', padding: '0', margin: '0', background: 'transparent' }
-  )
-  // fires on close() and on Esc — single cleanup path
-  dlg.addEventListener('close', () => {
-    dlg.remove()
-    root = null
-  })
-  const backdrop = el('div', {
+  // Full-viewport dialog that carries the dimming itself — ::backdrop never
+  // comes into it, and there is no second full-viewport layer to keep in step.
+  const dlg = el('dialog', {
     position: 'fixed',
     inset: '0',
-    zIndex: '2147483001',
+    width: '100vw',
+    height: '100vh',
+    maxWidth: 'none',
+    maxHeight: 'none',
+    border: 'none',
+    padding: '0',
+    margin: '0',
     background: 'rgba(0,0,0,0.5)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     font: '14px/1.5 system-ui,sans-serif',
   })
-  backdrop.addEventListener('click', e => {
-    if (e.target === backdrop) close()
+  // fires on close() and on Esc — single cleanup path
+  dlg.addEventListener('close', () => {
+    dlg.remove()
+    root = null
+  })
+  dlg.addEventListener('click', e => {
+    if (e.target === dlg) close()
   })
 
   const panel = el('div', {
@@ -114,8 +116,7 @@ function buildOverlay(): HTMLDialogElement {
   if (wf) panel.append(wf)
   if (isConfigured()) panel.append(usageSection())
 
-  backdrop.append(panel)
-  dlg.append(backdrop)
+  dlg.append(panel)
   return dlg
 }
 
