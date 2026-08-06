@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <claude.ai.2026@simonlaux.de>
 Date: Tue, 28 Jul 2026 12:40:19 +0000
-Subject: [PATCH 65/78] web-app: emoji-set picker in Settings -> Appearance
+Subject: [PATCH 65/79] web-app: emoji-set picker in Settings -> Appearance
 
 Adds an "Emoji style" picker below the wallpaper options in Settings ->
 Appearance (browser edition only), reading window.__slothfulchatEmoji (the hook
