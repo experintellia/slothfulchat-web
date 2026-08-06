@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 2 Aug 2026 10:06:28 +0000
-Subject: [PATCH 28/30] jsonrpc: optional width/height/duration on MessageData
+Subject: [PATCH 28/31] jsonrpc: optional width/height/duration on MessageData
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

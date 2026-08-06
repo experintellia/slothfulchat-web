@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Thu, 23 Jul 2026 02:27:26 +0000
-Subject: [PATCH 20/30] event: add DownloadProgress for chunked message
+Subject: [PATCH 20/31] event: add DownloadProgress for chunked message
  downloads
 
 Reports permille progress (1..=999, 1000 = done) while a large message

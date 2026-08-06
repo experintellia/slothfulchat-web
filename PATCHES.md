@@ -50,6 +50,18 @@ exists:
 
 ## New features
 
+- **OpenRPC document for the JSON-RPC API** — one attribute. The
+  `deltachat-jsonrpc` crate already enables yerpc's `openrpc` feature and
+  every API type already derives `schemars::JsonSchema`, so the generator was
+  compiled in and fully fed; `#[rpc]` just never set `openrpc_outdir`, and
+  without it yerpc emits no generator at all. With it, the existing
+  `cargo test -p deltachat-jsonrpc` writes `typescript/generated/openrpc.json`
+  (177 methods, 40 schemas, doc comments carried through as descriptions) next
+  to the TypeScript bindings it already writes there, from the same impl block.
+  Nothing new lands in the tree — `generated/` is gitignored. We publish it at
+  `/api-docs/openrpc.json`. Good upstream candidate: it is a one-line change
+  to an unused switch, no new dependency, and native builds are unaffected.
+  `core/0031`
 - **Custom voice-message player controls** — play/pause
   button, seek bar, elapsed/total time and a 1×/1.5×/2× speed pill (the rate
   is global, so every voice message plays at the chosen speed) replace the

@@ -142,6 +142,9 @@ jobs:
 
       # ORDER TRAP #1: the workspace override points @deltachat/jsonrpc-client at
       # this file: path, so it must be generated + built before `pnpm install`.
+      # Its dist/*.d.ts is also what core-wasm's build:types vendors into the
+      # published package, and `pnpm run docs` (typedoc) + generated/openrpc.json
+      # are what assemble.mjs ships as /api-docs/.
       - name: Generate + build @deltachat/jsonrpc-client (before root install)
         working-directory: build/core/deltachat-jsonrpc/typescript
         run: |
@@ -151,6 +154,9 @@ jobs:
           node scripts/generate-constants.js
           ./node_modules/.bin/tsc
           ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js
+          # `pnpm run docs`, not `pnpm docs`: the latter is pnpm's builtin
+          # "open the package homepage" command and silently shadows the script.
+          pnpm run docs
 
       - name: Install workspace deps
         run: pnpm install

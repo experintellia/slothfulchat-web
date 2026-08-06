@@ -19,6 +19,32 @@ Hosted demo: **<https://web.slothful.chat/demo/>** — the same page the
 `example` script below serves locally. Pass `?proxy=ws://localhost:8641` to
 enable networking (instructions on the page).
 
+## Types and API reference
+
+**Import everything from `@slothfulchat/core-wasm`** — it re-exports the whole
+client (`export * from '@deltachat/jsonrpc-client'`), so `T`, `C`, `RawClient`,
+`BaseDeltaChat` and `yerpc` all come from here. Installing
+`@deltachat/jsonrpc-client` alongside it and importing from both gives you two
+nominally distinct declarations of the same types; structural typing hides most
+of that, but classes (`BaseDeltaChat`, `yerpc.BaseTransport`) will clash. One
+import source avoids it entirely.
+
+The type definitions are bundled, not pulled from npm. They are generated from
+the exact core this package's wasm binary is built from — the pinned
+`vendor/core` commit **with `patches/core` applied** — which is not any
+published `@deltachat/jsonrpc-client` release, so no dependency range could
+describe it. `package.json`'s `coreVersion` records which core that was; the
+running core reports the same string as `deltachat_core_version`:
+
+```ts
+;(await core.dc.rpc.getSystemInfo()).deltachat_core_version
+```
+
+API reference for those types: **<https://web.slothful.chat/api-docs/>**
+(typedoc over the same generated client), plus
+**<https://web.slothful.chat/api-docs/openrpc.json>** — an OpenRPC document of
+the same API for non-TypeScript consumers.
+
 `startCore()` also returns an fs side channel into core's in-memory
 filesystem (blob display, temp files, backup import/export):
 
@@ -36,8 +62,9 @@ pnpm apply-patches                                # patched core in build/core
 cd build/core/deltachat-jsonrpc/typescript
 pnpm install --ignore-workspace && cargo test -p deltachat-jsonrpc \
   && node scripts/generate-constants.js && ./node_modules/.bin/tsc \
-  && ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js
-cd -                                              # generated TS client at the pinned commit
+  && ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js \
+  && pnpm run docs                                # `run` matters: `pnpm docs` is a builtin
+cd -                                              # generated TS client + its typedoc at the pinned commit
 pnpm install
 pnpm --filter @slothfulchat/core-wasm build:wasm  # needs clang + wasm32 target, ~10 min release
 pnpm --filter @slothfulchat/core-wasm build
