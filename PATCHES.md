@@ -14,6 +14,23 @@ Each entry references its patch file by directory and number, e.g. `core/0005`
 > removed patch into the fitting section — each patch file starts with its
 > commit message, which is usually all you need to read.
 
+The same distinction is carried into the generated JSON-RPC documentation, so a
+reader does not have to come here to find out whether an API is upstream's or
+ours. `pnpm mark-fork-api` (after `pnpm apply-patches`, before generating docs)
+adds a line like
+
+```
+/// 🦥 slothfulchat-web fork: added by core/0028.
+```
+
+to the doc comment of every RPC method, type, variant and field the patch stack
+touches — in the throwaway `build/core` worktree only, never in `patches/` or
+`vendor/`. It derives the marks from `git blame` against the submodule pin, so
+they name the responsible patch, say whether it was *added* or *changed*, and
+cannot drift out of date. Both generators read those same `///` comments, so the
+marks reach the TypeScript client (hence typedoc's HTML and the `.d.ts` an IDE
+hovers) and the OpenRPC spec alike.
+
 ## Running in the browser at all (the port itself)
 
 The bulk of `patches/core` makes a native Rust mail core compile and run on

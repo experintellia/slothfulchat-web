@@ -101,6 +101,7 @@ jobs:
           packages/core-wasm/src/opfs-probe.test.mjs
           scripts/mock-madmail.test.mjs
           scripts/harness.test.mjs
+          scripts/mark-fork-api.test.mjs
 
       # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —
       # Node's built-in type-stripping test runner needs no pnpm install, only
