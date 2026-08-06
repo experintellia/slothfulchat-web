@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 4 Aug 2026 00:16:28 +0000
-Subject: [PATCH 29/30] wasm: offload PGP crypto ops to a web worker via the JS
+Subject: [PATCH 29/31] wasm: offload PGP crypto ops to a web worker via the JS
  bridge
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

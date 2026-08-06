@@ -21,14 +21,23 @@ proxy UI); everything browser-specific lives in our own files:
   core-wasm worker/wasm artifacts into `dist/`. Also drops in the two
   auxiliary static pages: the core-wasm `/demo/`, the `/changelog/` viewer
   (see [`changelog/`](changelog/README.md)), copying each published package's
-  `CHANGELOG.md` in beside the latter, and the generated `/api-docs/`.
+  `CHANGELOG.md` in beside the latter, and `/api-docs/` (see below).
 - `changelog/` — vendored static changelog viewer served at `/changelog/`.
-- `api-docs.mjs` — generates the `/api-docs/` page (core JSON-RPC methods +
-  events) by reading `build/core`'s `deltachat-jsonrpc` sources, i.e. the
-  pinned core **with `patches/core` applied**, so the reference matches the
-  runtime this bundle ships rather than the nearest published
-  `@deltachat/jsonrpc-client`. Like `/changelog/` and `/demo/` it is not in
-  the service-worker precache — reference material, not app shell.
+- `/api-docs/` — the core JSON-RPC API reference. Nothing here generates it:
+  both halves come out of the `deltachat-jsonrpc` build in `build/core`, i.e.
+  the pinned core **with `patches/core` applied**, so it describes the runtime
+  this bundle ships rather than the nearest published
+  `@deltachat/jsonrpc-client`. `assemble.mjs` only copies them in:
+  - `typescript/docs/` — upstream's own `pnpm run docs` (typedoc over the
+    generated client). This is the reference for the types
+    `@slothfulchat/core-wasm` re-exports, so it is the page consumers want.
+  - `typescript/generated/openrpc.json` → `/api-docs/openrpc.json` — the
+    OpenRPC 1.0 document yerpc generates once `patches/core` sets
+    `openrpc_outdir`. No viewer is shipped for it: it is a machine-readable
+    spec, and any OpenRPC tool renders it from that URL.
+
+  Like `/changelog/` and `/demo/` it is not in the service-worker precache —
+  reference material, not app shell.
 - `serve.mjs` — static dev server (port 8642, `PORT` env to override).
 - `static/manifest.webmanifest` — PWA manifest (installable, standalone). Also
   registers the app as an OS handler for three kinds of launch, all wired in
