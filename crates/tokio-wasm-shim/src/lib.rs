@@ -23,6 +23,10 @@ pub mod registry;
 // write silently loses whatever the database already references.
 pub mod durability;
 
+// Same deal for the memfs allocation bound: an untrusted length that reaches
+// `Vec::resize` aborts the worker instead of failing the operation.
+pub mod limits;
+
 #[cfg(target_arch = "wasm32")]
 pub mod fs;
 #[cfg(target_arch = "wasm32")]

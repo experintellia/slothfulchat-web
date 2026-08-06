@@ -111,3 +111,64 @@ export const logPanics = page =>
   page.on('console', m => {
     if (/panicked at/.test(m.text())) console.error('[page PANIC]', m.text())
   })
+
+/** Alpha of a computed color — always rgb(...) or rgba(...), never a keyword. */
+const alphaOf = c => (c.startsWith('rgba') ? Number(c.split(',')[3]) : 1)
+
+/**
+ * Assert one of our own modal <dialog> overlays is really on screen — not just
+ * present in the DOM with the right words in it.
+ *
+ * The dialog gates assert text and structure, and both survive the styling
+ * being lost entirely (#211): an unstyled pile of nodes in the corner has the
+ * same text in the same elements and passes them green. So check the cheap
+ * observable consequences of the styling instead — a fixed, viewport-covering
+ * flex scrim with a centred, correctly sized, opaque card in it. All four
+ * dialogs in runtime.ts are built to that one shape.
+ *
+ * Deliberately not a pixel baseline: no committed PNGs, and nothing to go
+ * flaky when CI's font rendering differs from a dev machine.
+ *
+ * @param {import('playwright').Locator} dialog  the <dialog> element
+ * @param {number} panelWidth  the card's `width: min(Npx, 92vw)` in px
+ * @param {string} label       what failure messages call it
+ */
+export async function assertDialogRendered(dialog, panelWidth, label) {
+  const fail = m => {
+    throw new Error(`${label}: ${m}`)
+  }
+  const view = dialog.page().viewportSize()
+
+  // The scrim. An unstyled <dialog> is a block box sized to its content and
+  // placed by the UA — every one of these three is wrong for it.
+  const scrim = await dialog.boundingBox()
+  if (!scrim) fail('no box at all — the dialog is not rendered')
+  // tolerance covers a classic scrollbar eating a few px of the layout viewport
+  if (scrim.width < view.width - 20 || scrim.height < view.height - 20) {
+    fail(
+      `overlay is ${scrim.width}x${scrim.height}, does not cover the ` +
+        `${view.width}x${view.height} viewport`
+    )
+  }
+  const css = await dialog.evaluate(d => {
+    const c = getComputedStyle(d)
+    return { display: c.display, position: c.position, bg: c.backgroundColor }
+  })
+  if (css.display !== 'flex') fail(`overlay is display:${css.display} — nothing centres the card`)
+  if (css.position !== 'fixed') fail(`overlay is position:${css.position}, not fixed`)
+  if (alphaOf(css.bg) === 0) fail('overlay has no scrim — what is behind it is not dimmed')
+
+  // The card: the outermost <div> in the overlay, in every one of these dialogs.
+  const panel = dialog.locator('div').first()
+  const box = await panel.boundingBox()
+  if (!box) fail('the card inside the overlay is not rendered')
+  const want = Math.min(panelWidth, view.width * 0.92)
+  if (Math.abs(box.width - want) > 2) fail(`card is ${box.width}px wide, expected ${want}px`)
+  if (box.height < 80) fail(`card is ${box.height}px tall — collapsed`)
+  if (Math.abs(box.x + box.width / 2 - view.width / 2) > 2) fail('card is not centred horizontally')
+  if (Math.abs(box.y + box.height / 2 - view.height / 2) > 2) fail('card is not centred vertically')
+  // centred vertically, so overflowing the viewport is exactly being too tall
+  if (box.height > view.height) fail(`card is ${box.height}px tall — taller than the screen`)
+  const panelBg = await panel.evaluate(e => getComputedStyle(e).backgroundColor)
+  if (alphaOf(panelBg) < 1) fail(`card background is ${panelBg} — the page shows through it`)
+}

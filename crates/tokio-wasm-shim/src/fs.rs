@@ -23,7 +23,22 @@ enum Node {
 
 static FS: Mutex<BTreeMap<PathBuf, Node>> = Mutex::new(BTreeMap::new());
 
+use crate::limits::checked_len;
 use crate::opfs::{mark_dirty, purge_pool_files_under};
+
+/// [`checked_len`] plus a console warning. The bound tripping means an import
+/// or a write just failed for a reason nothing else reports with the path and
+/// the size, and it should be rare enough to be worth seeing. Lives here
+/// rather than in `limits` so that module stays `web_sys`-free and keeps
+/// unit-testing on the native target.
+fn checked_len_logged(path: &Path, size: u64) -> io::Result<usize> {
+    checked_len(size).inspect_err(|e| {
+        web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(&format!(
+            "memfs: refusing {size} bytes for {}: {e}",
+            path.display()
+        )))
+    })
+}
 // re-exported here so the core can reach persistence entry points via `tokio::fs::*`
 pub use crate::opfs::{
     enable_persistence, failed_count, flush_pending, sqlite_vfs_account_uuids, sqlite_vfs_import,
@@ -389,6 +404,10 @@ pub struct Metadata {
 }
 
 impl Metadata {
+    // Mirrors `std::fs::Metadata`, which has `len` and no `is_empty` for the
+    // same reason: this is a byte count, not a collection. Adding `is_empty`
+    // to satisfy the lint would add an API core never calls.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> u64 {
         self.len
     }
@@ -623,11 +642,14 @@ impl File {
     }
 
     pub async fn set_len(&self, size: u64) -> io::Result<()> {
+        // Untrusted: core calls this with the logical size from a backup's tar
+        // header, so refuse (before touching the tree) what we cannot allocate.
+        let size = checked_len_logged(&self.path, size)?;
         {
             let mut fs = FS.lock().unwrap();
             match fs.get_mut(&self.path) {
                 Some(Node::File { data, modified }) => {
-                    data.resize(size as usize, 0);
+                    data.resize(size, 0);
                     *modified = now();
                 }
                 _ => return Err(not_found()),
@@ -676,7 +698,11 @@ impl AsyncRead for File {
             Some(Node::File { data, .. }) => data,
             _ => return Poll::Ready(Err(not_found())),
         };
-        let start = (self.pos as usize).min(data.len());
+        // `as usize` would wrap a >4 GiB seek position on wasm32 into a small
+        // in-range offset and read the wrong bytes; saturate instead.
+        let start = usize::try_from(self.pos)
+            .unwrap_or(usize::MAX)
+            .min(data.len());
         let n = (data.len() - start).min(buf.remaining());
         buf.put_slice(&data[start..start + n]);
         drop(fs);
@@ -696,14 +722,18 @@ impl AsyncWrite for File {
             Some(Node::File { data, modified }) => (data, modified),
             _ => return Poll::Ready(Err(not_found())),
         };
-        let pos = self.pos as usize;
-        if data.len() < pos {
-            data.resize(pos, 0);
+        // Same bound as `set_len`, for the other way to grow a file: seek far
+        // out, write one byte. `as usize` also wrapped a >4 GiB position into a
+        // small one on wasm32 and wrote at the wrong offset.
+        let end = match checked_len_logged(&self.path, self.pos.saturating_add(buf.len() as u64)) {
+            Ok(end) => end,
+            Err(e) => return Poll::Ready(Err(e)),
+        };
+        let pos = end - buf.len();
+        if data.len() < end {
+            data.resize(end, 0); // zero-fills any gap left by the seek
         }
-        if pos + buf.len() > data.len() {
-            data.resize(pos + buf.len(), 0);
-        }
-        data[pos..pos + buf.len()].copy_from_slice(buf);
+        data[pos..end].copy_from_slice(buf);
         *modified = now();
         drop(fs);
         mark_dirty(&self.path);

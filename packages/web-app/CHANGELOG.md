@@ -1,5 +1,17 @@
 # Changelog
 
+- **The app now refuses to run inside another site's frame.** Static hosts like
+  GitHub Pages can't send the header that normally forbids this, so a hostile
+  page could embed the app invisibly and trick you into clicking things in it.
+  The app now detects that and blanks itself instead; the HTML-mail viewer it
+  embeds in its own window keeps working. A real webserver's headers are still
+  the stronger protection — self-hosters have had those all along.
+
+- **Hardening**: the offline cache now keeps to itself. It only deletes caches
+  it created (anything else hosted on the same domain used to be wiped along
+  with them) and only stores the app's own files, so a service sitting next to
+  the app on that domain can't end up cached — or answered from the cache.
+
 - **The core's JSON-RPC API is now documented at `/api-docs`**, generated at
   build time from the exact core the bundle ships (pinned version plus our
   patches), so it describes the API that is actually running rather than the
@@ -21,6 +33,16 @@
   specific version used to slide down to the wrong one as soon as the next
   release shipped, because it pointed at a position in the page rather than at
   the version. Anchors now carry the version itself (`#v-0.8.0`).
+
+- **Hardening**: a file that is far too big to fit in the browser — one you
+  pick or drop, or one a corrupt/crafted backup claims to contain — is now
+  refused with an error instead of taking the app down with it.
+
+- **Backup files no longer linger in browser storage.** An exported backup is
+  deleted once the download has it, and a backup file you imported is removed
+  when the import ends; anything older is cleaned up at startup. Until now an
+  ordinary export left a second, unencrypted copy of your whole account in the
+  browser's storage indefinitely.
 
 - **Hardening**: the internal address the app uses to fetch attachments now
   refuses to point anywhere outside the attachment folder. No known way to

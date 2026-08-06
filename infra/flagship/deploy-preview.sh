@@ -119,6 +119,17 @@ ALLOWED_HANDLERS = {
 # header NAMES are allowlisted too — same rule as the handlers: a header added
 # to routes.caddy is added here, in the same commit.
 #
+# ponytail: this closes the SERVER half only. Preview JavaScript can still write
+# `document.cookie = "...; Domain=slothful.chat"` — a preview is a subdomain of
+# the production REGISTRABLE domain, so it shares prod's cookie namespace and no
+# server-side allowlist can take that away. Ceiling accepted because nothing in
+# this project uses cookies (analytics is cookieless, state lives in
+# localStorage/OPFS) and none is planned, so there is nothing to steal or forge.
+# The day that changes, both halves are needed: give every cookie the `__Host-`
+# prefix (it forbids `Domain=`, so a subdomain cannot write one prod would
+# accept), and move untrusted previews to a separate registrable domain — a
+# different eTLD+1 shares no cookie namespace at all.
+#
 # Set and delete are separate lists on purpose. Being allowed to SET a header is
 # not permission to REMOVE it: `header -Content-Security-Policy` would strip the
 # slot's own frame-ancestors back off, which is the one thing this file exists

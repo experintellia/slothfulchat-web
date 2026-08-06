@@ -6,18 +6,28 @@
 # as their first job and hang everything else off `needs:`, so no job holding
 # publish or deploy privileges even exists until this has passed.
 #
-# It proves three things about the ref, and nothing about the build:
-#   1. it is a tag (a branch — including a workflow_dispatch on one — cannot
-#      release);
+# It proves four things about the commit being released:
+#   1. the ref is a tag (a branch — including a workflow_dispatch on one —
+#      cannot release);
 #   2. the tag still points where it did when the run started (nobody moved it
 #      underneath us);
-#   3. its commit is an ancestor of main (no releasing unmerged work).
+#   3. its commit is an ancestor of main (no releasing unmerged work);
+#   4. the required CI checks SUCCEEDED for that exact commit — not queued, not
+#      still running, not green on some neighbouring commit. Without it a tag
+#      pushed onto a merged-but-still-building commit ships unverified code.
 # Plus the synced-release-train check: a tag vX.Y.Z means EVERY package is at
 # X.Y.Z, so a half-bumped set never ships.
 #
 # Callers must ALSO pin their build checkout to `${{ github.sha }}` rather than
 # the tag name — otherwise a tag moved during the build would be built and
 # shipped despite having been verified here.
+#
+# What this gate CANNOT prove: that it is itself intact. A tag-push run uses
+# the workflow files AT the tagged commit, so whoever can push a `v*` tag to an
+# unmerged commit can push one where this file — or the caller's `needs:` on it
+# — has been weakened. Closing that needs GitHub-side tag rulesets and
+# environment reviewers, which live in repo settings, not in git: see the
+# "Repository settings the release model depends on" checklist in RELEASING.md.
 
 name: Verify release tag
 
@@ -31,6 +41,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # for the check-runs read below. A caller that doesn't grant it fails the
+      # whole run at validation ("requesting 'checks: read'...") — deliberately
+      # loud: a caller that can't ask about CI must not release.
+      checks: read
     steps:
       # fetch-depth: 0 makes checkout fetch every branch and tag, so
       # origin/main and the tag AS IT IS ON THE REMOTE are both present.
@@ -56,6 +70,40 @@ jobs:
             exit 1
           fi
           echo "$GITHUB_REF_NAME = $GITHUB_SHA, on main"
+
+      # Being on main is not the same as being green: CI on a merge commit is
+      # still running for minutes after the merge, and a tag pushed in that
+      # window used to sail through. Ask about $GITHUB_SHA — the tag's commit,
+      # proven unmoved above — so this is the code that will actually ship.
+      # REQUIRED_CHECKS are ci.yml's job ids (its check-run names): rename a job
+      # there and this list must follow, or every release fails until it does.
+      # filter=latest keeps only the newest attempt of each check, so a re-run
+      # replaces its predecessor's verdict instead of adding to it.
+      - name: Verify required CI succeeded for this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRED_CHECKS: lint test
+        run: |
+          fail=0
+          for check in $REQUIRED_CHECKS; do
+            # No answer means no release: a 403 (caller without `checks: read`),
+            # a 404, a network blip or malformed JSON all exit non-zero here
+            # rather than being read as "nothing failed".
+            state=$(gh api \
+              "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=$check&filter=latest" \
+              --jq '"\(.check_runs[0].status // "missing") \(.check_runs[0].conclusion // "none")"') || {
+              echo "::error::could not read check runs for '$check' on $GITHUB_SHA — refusing to release without proof CI passed. If this was a 403, the calling workflow's verify-tag job is missing 'checks: read'."
+              exit 1
+            }
+            # "missing none" (CI never ran on this commit), "in_progress none"
+            # (still building) and any non-success conclusion all land here.
+            if [ "$state" != "completed success" ]; then
+              echo "::error::required check '$check' is '$state' for $GITHUB_SHA, want 'completed success' — a release tag must point at a commit whose CI has passed. Wait for CI to finish, or fix it, then re-create the tag."
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] || exit 1
+          echo "required CI green on $GITHUB_SHA: $REQUIRED_CHECKS"
 
       # Synced release train: a tag vX.Y.Z means EVERY package is at X.Y.Z
       # (see RELEASING.md). Fail fast — before the ~10-min wasm build — if any

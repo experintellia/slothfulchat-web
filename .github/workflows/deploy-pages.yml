@@ -39,10 +39,12 @@ concurrency:
 jobs:
   verify-tag:
     # A called workflow can only ever DOWNGRADE the caller's token, so the gate
-    # needs its read grant handed to it here — top-level `permissions: {}` would
-    # otherwise cap it at nothing and its checkout would fail.
+    # needs its read grants handed to it here — top-level `permissions: {}` would
+    # otherwise cap it at nothing and its checkout would fail. `checks: read` is
+    # the gate's CI-is-green check; without it the run fails at validation.
     permissions:
       contents: read
+      checks: read
     uses: ./.github/workflows/verify-release-tag.yml
 
   build:

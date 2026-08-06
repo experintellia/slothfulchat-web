@@ -38,6 +38,9 @@
                    font-src data: http: https:;
                    frame-src blob:"
     />
+    <!-- Clickjacking guard. This page IS framed in normal use — same-origin,
+         by the app itself — so the guard only refuses foreign parents. -->
+    <script src="./frame-guard.js"></script>
     <style>
       /* fixed dark chrome like desktop's email window (#282828, darkTheme),
          independent of the app theme; the content frame is forced to

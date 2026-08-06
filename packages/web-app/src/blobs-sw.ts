@@ -15,6 +15,7 @@
  */
 import { blobResponseInit } from './blob-response.ts'
 import { isBlobRoute, resolveBlobRoute } from './blob-route.ts'
+import { cacheName, isOwnCache, shellRole } from './sw-cache.ts'
 
 const sw = self as any
 
@@ -24,12 +25,13 @@ try {
   // dev build without assemble: no precache, runtime caching still works
 }
 const MANIFEST: Record<string, string> = sw.__PRECACHE ?? {} // path -> content hash
-const CACHE_PREFIX = 'slothful-shell-'
-const CACHE = CACHE_PREFIX + (sw.__PRECACHE_VERSION ?? 'dev')
+const scopePath = new URL(sw.registration.scope).pathname
+// scope-qualified name: caches are per origin, so a sibling deploy of this app
+// under another base path must not be mistaken for a stale copy of ours
+const CACHE = cacheName(scopePath, sw.__PRECACHE_VERSION ?? 'dev')
 // the cache remembers which manifest filled it, so the next install can tell
 // unchanged entries apart; synthetic URL, never collides with a real file
 const MANIFEST_KEY = './__sw-manifest__'
-const scopePath = new URL(sw.registration.scope).pathname
 
 type BlobResponse = { type: 'blob-response'; id: string; data?: Uint8Array; mime?: string }
 const pending = new Map<string, (r: BlobResponse) => void>()
@@ -42,7 +44,9 @@ sw.addEventListener('install', (event: any) =>
       let oldCache: Cache | undefined
       let oldManifest: Record<string, string> = {}
       for (const name of await caches.keys()) {
-        if (!name.startsWith(CACHE_PREFIX) || name === CACHE) continue
+        // pre-rename caches count too: their entries are keyed by absolute URL,
+        // so a sibling scope's cache simply never matches and only ours is reused
+        if (!isOwnCache(name, scopePath) || name === CACHE) continue
         const stored = await (await caches.open(name)).match(MANIFEST_KEY)
         if (stored) {
           oldCache = await caches.open(name)
@@ -83,37 +87,49 @@ sw.addEventListener('activate', (event: any) =>
   event.waitUntil(
     Promise.all([
       sw.clients.claim(),
+      // only caches this app owns: everything else on the origin is somebody
+      // else's (another app, or this app deployed under another base path)
       caches
         .keys()
-        .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))),
+        .then(keys =>
+          Promise.all(
+            keys.filter(k => k !== CACHE && isOwnCache(k, scopePath)).map(k => caches.delete(k))
+          )
+        ),
     ])
   )
 )
 
-async function serveShell(event: any): Promise<Response> {
+async function serveShell(event: any, role: string): Promise<Response> {
   const request = event.request
-  // manifest keys are scope-relative paths (base-path agnostic, like the blob routes)
-  const path = new URL(request.url).pathname
-  const precached = Object.prototype.hasOwnProperty.call(
-    MANIFEST,
-    path.startsWith(scopePath) ? path.slice(scopePath.length) : ''
-  )
   const cache = await caches.open(CACHE)
-  // ignoreSearch: this is a pure static site, query params never change file
-  // content — but requests carry them (e.g. main.html?proxy=...). NB: a cached
-  // response's URL has no query string, and for scripts/workers it REPLACES
-  // the request URL (import.meta.url) — never pass config via script-URL
-  // params here; the core worker gets its config via postMessage (startCore).
-  const cached = await cache.match(request, { ignoreSearch: true })
-  if (cached && precached) {
+  // ignoreSearch, but only for manifest files. The old blanket version defended
+  // itself with "this is a pure static site, query params never change file
+  // content" — true of OUR files (content-hashed assets, requested with a query
+  // like main.html?proxy=...), false of the origin at large: a self-hoster can
+  // put a dynamic endpoint next to dist/ (SELFHOSTING.md's bridge behind the
+  // same TLS front, a webimap endpoint, /help/), and there a query is the whole
+  // request. Those are role null now — never matched, never cached — and what
+  // we do runtime-cache keys on the full URL.
+  // NB: a cached response's URL has no query string, and for scripts/workers it
+  // REPLACES the request URL (import.meta.url) — never pass config via
+  // script-URL params here; the core worker gets its config via postMessage.
+  const cached =
+    role === 'precache'
+      ? await cache.match(request, { ignoreSearch: true })
+      : role === 'runtime'
+        ? await cache.match(request)
+        : undefined
+  if (cached && role === 'precache') {
     // content-versioned: never refetched at runtime, updates only arrive via a
     // new manifest (whole-deploy consistency, no per-file version skew)
     return cached
   }
   const network = fetch(request).then((res: Response) => {
-    // runtime-cache only non-manifest URLs (e.g. bare "/"): manifest entries
-    // must stay exactly the bytes their install hashed
-    if (res.status === 200 && !precached) cache.put(request, res.clone())
+    // only the enumerated runtime routes are cached on the fly: manifest
+    // entries must stay exactly the bytes their install hashed, and everything
+    // else on the origin is not ours to store
+    if (res.status === 200 && role === 'runtime') cache.put(request, res.clone())
     return res
   })
   if (cached) {
@@ -155,9 +171,12 @@ sw.addEventListener('fetch', (event: any) => {
     // must NOT land here — it would answer a probe for a forbidden path with
     // the shell instead of nothing — so tell the two apart first.
     if (isBlobRoute(url.pathname)) return
+    // and only take over what is ours to serve — a same-origin URL outside the
+    // app's own files goes to the network untouched (sw-cache.ts)
+    const role = shellRole(url.pathname, scopePath, MANIFEST, event.request.mode === 'navigate')
     // Range requests (media seeking) need 206 semantics the cache can't give
-    if (!event.request.headers.has('range')) {
-      event.respondWith(serveShell(event))
+    if (role && !event.request.headers.has('range')) {
+      event.respondWith(serveShell(event, role))
     }
     return
   }
