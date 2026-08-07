@@ -362,6 +362,13 @@ jobs:
       - name: Self-check — media metadata (duration / pixel size)
         run: node scripts/test-media-metadata.mjs
 
+      # download-on-demand placeholder e2e (fully offline, mock madmail): a
+      # voice note over the receiver's download_limit arrives as a pre-message;
+      # assert the placeholder mimics the native pill with the custom player
+      # off and its two-row layout with it on. Also writes the shots.
+      - name: E2E test — audio download placeholder
+        run: node scripts/shot-download-placeholder.mjs
+
       # unfurl service self-check (fully offline): metadata + inline image,
       # SSRF guards (the non-global address table, private-IP / literal-IP
       # refusal), size cap, absolute deadline vs. a slow drip, rate limit.

@@ -4,6 +4,11 @@
   to 3.4.13, which fixes a DOM-clobbering issue in the sanitizer's own setup
   logic.
 
+- **A voice message you haven't downloaded yet now looks like the player it's
+  about to become.** With the experimental audio player switched on, the
+  waiting card kept the old bar's shape and visibly changed layout the moment
+  the download finished; it now shows the same two-row waveform layout.
+
 - **The app now refuses to run inside another site's frame.** Static hosts like
   GitHub Pages can't send the header that normally forbids this, so a hostile
   page could embed the app invisibly and trick you into clicking things in it.
