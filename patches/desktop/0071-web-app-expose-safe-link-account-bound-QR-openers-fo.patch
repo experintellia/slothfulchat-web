@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: slothfulchat <dev@slothfulchat.local>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 1 Aug 2026 19:09:44 +0000
 Subject: [PATCH 71/78] web-app: expose safe-link + account-bound QR openers
  for the HTML-email viewer

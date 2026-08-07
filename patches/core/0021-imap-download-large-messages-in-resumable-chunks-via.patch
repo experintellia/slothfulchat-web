@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Claude <noreply@anthropic.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 23 Jul 2026 03:23:39 +0000
 Subject: [PATCH 21/30] imap: download large messages in resumable chunks via
  partial FETCH

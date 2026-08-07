@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: slothfulchat <dev@slothful.chat>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 11 Jul 2026 14:39:33 +0000
 Subject: [PATCH 44/78] web-app: anonymous analytics hooks (onboarding, link
  preview, community)

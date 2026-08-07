@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Claude <claude.ai.2026@simonlaux.de>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 20 Jul 2026 16:57:21 +0000
 Subject: [PATCH 58/78] web-app: mark fork-added settings with a small sloth
  badge

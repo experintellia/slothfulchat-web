@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: experintellia <280144245+experintellia@users.noreply.github.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 7 Jul 2026 10:03:36 +0000
 Subject: [PATCH 09/30] wasm: VFS-agnostic sqlite backup import/export
 
