@@ -1,5 +1,9 @@
 # Changelog
 
+- **Hardening**: bumped DOMPurify (used to sanitize HTML email before display)
+  to 3.4.13, which fixes a DOM-clobbering issue in the sanitizer's own setup
+  logic.
+
 - **The app now refuses to run inside another site's frame.** Static hosts like
   GitHub Pages can't send the header that normally forbids this, so a hostile
   page could embed the app invisibly and trick you into clicking things in it.
