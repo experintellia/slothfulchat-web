@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Claude <noreply@anthropic.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 1 Aug 2026 16:58:32 +0000
 Subject: [PATCH 69/78] web-app: grab a poster when a video is attached
 MIME-Version: 1.0

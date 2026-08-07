@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: experintellia <280144245+experintellia@users.noreply.github.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 6 Jul 2026 22:34:43 +0000
 Subject: [PATCH 06/30] wasm: read the JS clock everywhere std::time panics
 

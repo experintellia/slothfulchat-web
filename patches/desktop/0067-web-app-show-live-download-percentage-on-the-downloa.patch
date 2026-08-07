@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Claude <noreply@anthropic.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 23 Jul 2026 02:43:20 +0000
 Subject: [PATCH 67/78] web-app: show live download percentage on the
  'downloading' message bubble

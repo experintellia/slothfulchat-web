@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Claude <noreply@anthropic.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 28 Jul 2026 14:55:36 +0000
 Subject: [PATCH 66/78] web-app: update emoji data to Unicode 17 (picker +
  completion)

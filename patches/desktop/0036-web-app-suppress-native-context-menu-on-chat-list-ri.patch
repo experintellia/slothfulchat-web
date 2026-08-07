@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: claude <claude@anthropic.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 10 Jul 2026 16:38:13 +0000
 Subject: [PATCH 36/78] web-app: suppress native context menu on chat-list
  right-click

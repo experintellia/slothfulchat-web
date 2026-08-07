@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: experintellia <experintellia@users.noreply.github.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 8 Jul 2026 21:55:46 +0000
 Subject: [PATCH 18/78] web-app: debounce Add-account button, spinner while
  creating
