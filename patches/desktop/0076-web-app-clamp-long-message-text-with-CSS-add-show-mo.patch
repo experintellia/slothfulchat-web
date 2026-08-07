@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Claude <noreply@anthropic.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sun, 2 Aug 2026 10:39:42 +0000
 Subject: [PATCH 76/78] web-app: clamp long message text with CSS, add show
  more/less toggle

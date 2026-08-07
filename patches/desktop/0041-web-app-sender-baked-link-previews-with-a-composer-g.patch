@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Claude <noreply@anthropic.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 10 Jul 2026 23:14:32 +0000
 Subject: [PATCH 41/78] web-app: sender-baked link previews with a composer
  ghost UI

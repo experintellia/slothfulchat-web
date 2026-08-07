@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: experintellia <claude@example.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 9 Jul 2026 22:22:17 +0000
 Subject: [PATCH 25/78] web-app: hide unknown git ref, add hover hint for
  commit message

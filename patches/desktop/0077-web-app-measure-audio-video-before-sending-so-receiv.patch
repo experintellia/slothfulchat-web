@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Claude <noreply@anthropic.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sun, 2 Aug 2026 10:11:59 +0000
 Subject: [PATCH 77/78] web-app: measure audio/video before sending so
  receivers see the length
