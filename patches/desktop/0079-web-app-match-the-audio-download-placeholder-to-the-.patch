@@ -23,15 +23,24 @@ download circle in the play slot.
 The layout classes come from AudioPlayer/styles.module.scss itself
 (.customControls / .stack / .seekWrap / .metaRow / .time) rather than
 being re-derived here, so the placeholder inherits the real geometry —
-the 300px min-width floor, the min(70vw, 340px) phone override, and the
-32px waveform row — and cannot drift from it.
+the 300px min-width floor and the min(70vw, 340px) phone override — and
+cannot drift from it.
+
+The one measurement that has to be restated is the waveform row's 32px.
+.seekWrap is a column flex item with flex: 1, so flex-basis replaces its
+`height` and the row is really sized by its content — the 32px range
+input in the real player. The stand-in has to carry that height itself or
+the row collapses and the time/size line rides up against the bar.
 
 Two deliberate departures from the real player:
 
-- The waveform is flat (evenly spaced low bars via a CSS gradient, at
-  the unplayed bars' 0.35 opacity). There is no audio to analyse until
-  the message is downloaded, and a canvas + worker round trip for a
-  stand-in would be all cost and no information.
+- The waveform is flat, and dotted rather than solid: a dashed hairline
+  centred in the row reads as an inert stand-in, where a flat bar reads
+  as a waveform that failed to load. It sits at 0.25 against the
+  unplayed bars' 0.35, so "not downloaded yet" is legible without a
+  label. There is no audio to analyse until the message is downloaded,
+  and a canvas + worker round trip for a stand-in would be all cost and
+  no information.
 - The size takes the speed pill's slot. A speed control on a
   placeholder would be a button that cannot do anything — the same
   reasoning that keeps a play glyph off the video placeholder.
@@ -45,15 +54,15 @@ Closes #160.
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
- .../_message-download-placeholder.scss        | 26 +++++++
+ .../_message-download-placeholder.scss        | 34 ++++++++
  .../message/DownloadOnDemandPlaceholder.tsx   | 78 +++++++++++++------
- 2 files changed, 82 insertions(+), 22 deletions(-)
+ 2 files changed, 90 insertions(+), 22 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
-index fb2417d..fb60f62 100644
+index fb2417d..5773c9e 100644
 --- a/packages/frontend/scss/message/_message-download-placeholder.scss
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
-@@ -99,6 +99,31 @@
+@@ -99,6 +99,39 @@
      }
    }
  
@@ -65,15 +74,23 @@ index fb2417d..fb60f62 100644
 +    .fake-waveform {
 +      flex: 1;
 +      min-width: 40px;
-+      // Flat: every "peak" the same low bar, because there is no audio to
-+      // analyse until the message is downloaded.
-+      height: 8px;
-+      opacity: 0.35;
-+      background: repeating-linear-gradient(
++      // The real .seekWrap is a column flex item, so its height comes from its
++      // content (the 32px range input) — not from its own `height`. Match that
++      // height here or the row collapses and the time/size line rides up.
++      height: 32px;
++      // Flat and dotted: there is no audio to analyse until the message is
++      // downloaded, and a dashed hairline reads as an inert stand-in rather
++      // than a waveform with nothing in it. Fainter than the unplayed bars'
++      // 0.35 for the same reason.
++      opacity: 0.25;
++      background-image: repeating-linear-gradient(
 +        to right,
-+        currentColor 0 2px,
-+        transparent 2px 5px
++        currentColor 0 1.5px,
++        transparent 1.5px 4px
 +      );
++      background-repeat: no-repeat;
++      background-size: 100% 6px;
++      background-position: center;
 +    }
 +
 +    .size {
@@ -85,7 +102,7 @@ index fb2417d..fb60f62 100644
    // Grey fallback box shown when there is no thumbnail (any placement).
    .download-on-demand-empty {
      background-color: var(--messageAttachmentIconBg);
-@@ -155,6 +180,7 @@
+@@ -155,6 +188,7 @@
  
    // In-row ring/button sizing for the audio pill and file card.
    .fake-audio-player,
