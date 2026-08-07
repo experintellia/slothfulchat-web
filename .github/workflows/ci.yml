@@ -133,12 +133,57 @@ jobs:
           cargo clippy --all-targets --target wasm32-unknown-unknown
           cargo test
 
-      # Audit finding L-05: the Rust half. Costs a few minutes cold (builds
-      # from source — the prebuilt binaries live on GitHub releases, which this
-      # repo's other install steps have had trouble with); rust-cache above
-      # caches ~/.cargo/bin, so warm runs are a no-op "already installed".
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+      # Audit finding L-05: the Rust half. This used to be
+      # `cargo install cargo-audit --locked`, which builds from source and costs
+      # ~2m50s — three quarters of this whole job — on the note that the
+      # prebuilt binaries live on GitHub releases, which this repo's other
+      # install steps have had trouble with. That trouble is a sandboxed-dev
+      # problem (see CLAUDE.md on wasm-pack and wasm-opt); a runner downloads
+      # from GitHub releases perfectly well, which is where its own actions come
+      # from. rustsec publishes a static musl build per release, so just take it.
+      #
+      # rust-cache above does carry the built binary — cache-bin defaults to
+      # true and ~/.cargo/bin is in its Cache Paths — so the source build was
+      # only ever paid on runs where that cache was cold. Which is not rare:
+      # 31038961381 and 31132164004 both were, and PRs no longer write that
+      # cache at all (save-if above). Downloading takes ~2s and does not care
+      # either way, so the failure mode is gone rather than hedged.
+      #
+      # Pinned by version AND sha256, like every other release asset we fetch
+      # (see packages/web-app/release-asset.mjs), and sha256sum -c fails closed.
+      # Note this is MORE pinned than what it replaced, not less: --locked
+      # pinned cargo-audit's own dependency lockfile, never cargo-audit itself,
+      # so every cold run installed whatever was latest that day.
+      #
+      # What the digest buys: GitHub lets a release asset be replaced under an
+      # existing tag, and this catches that. What it does not buy: authenticity
+      # at bump time — re-deriving it from the .tgz you just downloaded blesses
+      # whatever you got. rustsec publishes no signed manifest, so if you want
+      # more than trust-on-first-use, cross-check the bump against a second
+      # source (the crates.io release of the same version) before pasting it.
+      #
+      # ponytail: the version pin has no auto-bump path — Dependabot and Renovate
+      # do not read an env-var-pinned release tarball, so this stays at 0.22.2
+      # until a human moves it. Tolerable because the pin does not stale the
+      # gate's data (the advisory database is fetched from RustSec at run time,
+      # so detection quality does not rot) and because the eventual break is
+      # loud: an advisory-db format the pinned tool cannot read fails the audit
+      # step rather than passing it. Upgrade path if that ever bites: bump both
+      # env vars together, or move to taiki-e/install-action@cargo-audit and
+      # accept the extra action dependency.
+      - name: Install cargo-audit (prebuilt, pinned + digest-checked)
+        env:
+          CARGO_AUDIT_VERSION: 0.22.2
+          CARGO_AUDIT_SHA256: 7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428
+        run: |
+          set -euo pipefail
+          dir="cargo-audit-x86_64-unknown-linux-musl-v$CARGO_AUDIT_VERSION"
+          curl -sSfL --retry 3 --retry-connrefused -o cargo-audit.tgz \
+            "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v$CARGO_AUDIT_VERSION/$dir.tgz"
+          echo "$CARGO_AUDIT_SHA256  cargo-audit.tgz" | sha256sum -c -
+          tar -xzf cargo-audit.tgz -C "$HOME/.cargo/bin" --strip-components=1 "$dir/cargo-audit"
+          rm -f cargo-audit.tgz
+          cargo audit --version
 
       # Only lockfiles that are actually checked in — build/core/Cargo.lock
       # does not exist until `pnpm apply-patches` runs, and core-wasm's lock is
