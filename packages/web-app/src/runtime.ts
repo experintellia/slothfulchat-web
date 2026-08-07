@@ -1442,8 +1442,14 @@ class BrowserRuntime {
     }
     return null
   }
-  writeClipboardText(text: string): Promise<void> {
-    return navigator.clipboard.writeText(text)
+  writeClipboardText(text: string | Promise<string>): Promise<void> {
+    if (typeof text === 'string') {
+      return navigator.clipboard.writeText(text)
+    }
+    // The caller still has to fetch the text (multiselect "Copy Text").
+    // Awaiting first would lose transient activation and Safari/WebKit would
+    // reject the write, so hand `ClipboardItem` the pending promise instead.
+    return navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })])
   }
   async writeClipboardImage(path: string): Promise<void> {
     try {
