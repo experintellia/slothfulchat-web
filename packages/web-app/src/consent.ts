@@ -30,28 +30,27 @@ function buildDialog(): HTMLDialogElement {
   // also use showModal(), which puts them in the browser *top layer* — no
   // z-index on a plain div can stack above that, so we must join it too. We
   // open from a user action, so ours is the last showModal() and lands on top.
-  // The dialog element itself is just a transparent full-viewport container;
-  // the dimmed backdrop stays our own div below, because the native ::backdrop
-  // pseudo-element can't be styled from inline styles (CSP: no stylesheets).
-  const dlg = el(
-    'dialog',
-    { position: 'fixed', inset: '0', width: '100vw', height: '100vh', maxWidth: 'none', maxHeight: 'none', border: 'none', padding: '0', margin: '0', background: 'transparent' }
-  )
-  // Esc may dismiss it (same as closing without a new choice) — clean up
-  dlg.addEventListener('close', () => dlg.remove())
-
-  // full-screen overlay: dimmed backdrop with a centered, scrollable card
-  const overlay = el('div', {
+  // The dimming lives on the dialog element itself, so ::backdrop never comes
+  // into it and there is no second full-viewport layer to keep in step.
+  const dlg = el('dialog', {
     position: 'fixed',
     inset: '0',
-    zIndex: '2147483000',
+    width: '100vw',
+    height: '100vh',
+    maxWidth: 'none',
+    maxHeight: 'none',
+    border: 'none',
+    margin: '0',
+    padding: '16px', // so the card never touches the screen edge
+    boxSizing: 'border-box',
     background: 'rgba(0,0,0,0.55)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '16px',
-    boxSizing: 'border-box',
   })
+  // Esc may dismiss it (same as closing without a new choice) — clean up
+  dlg.addEventListener('close', () => dlg.remove())
+
   const card = el('div', {
     maxWidth: '34rem',
     maxHeight: '90vh',
@@ -115,8 +114,7 @@ function buildDialog(): HTMLDialogElement {
   })
   card.append(el('div', { display: 'flex', gap: '8px', justifyContent: 'flex-end', flexWrap: 'wrap' }, [optOut, accept]))
 
-  overlay.append(card)
-  dlg.append(overlay)
+  dlg.append(card)
   return dlg
 }
 
