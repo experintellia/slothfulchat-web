@@ -48,6 +48,13 @@ any `v*` tag. The workflow rebuilds from a clean checkout and does two things:
   release is likewise skipped — releases are immutable, so assets attach at
   creation only; an asset-less one must be deleted before re-running).
 
+The run shows four jobs, not one: after the tag gate, `build` compiles
+everything and packs the assets holding a read-only token, then `release` and
+`publish` — which hold the release write token and the npm OIDC token
+respectively — check out nothing and only upload what `build` handed them. A
+watched run therefore sits in `build` for the ~10 min, and the last two jobs
+are quick.
+
 1. Pick the next tag version (strictly greater than the last — the whole train
    moves up together) and set it everywhere at once:
 

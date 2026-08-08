@@ -148,9 +148,10 @@ pnpm update-patches                  # regenerate patches/ from build/ commits
 Requires: Node ≥ 22 + pnpm, Rust **nightly** + `wasm32-unknown-unknown` target —
 both are selected automatically by
 [`packages/core-wasm/rust/rust-toolchain.toml`](packages/core-wasm/rust/rust-toolchain.toml),
-just have the toolchain installed (`rustup toolchain install nightly`). Nightly
-is not optional: a pinned `rusqlite` in core's tree uses the nightly-only
-`cfg_select!` macro, so stable rustc fails with E0658.
+which names a **dated** nightly (rustup installs it on demand). Nightly is not
+optional: a pinned `rusqlite` in core's tree uses the nightly-only
+`cfg_select!` macro, so stable rustc fails with E0658. The date is there so
+every build gets the same compiler; bump it deliberately.
 
 ## Licensing
 
