@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Claude <noreply@anthropic.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 15 Jul 2026 00:48:05 +0000
 Subject: [PATCH 17/30] chatlist: refresh a contact's 1:1 item when they become
  recently seen

@@ -394,6 +394,23 @@ exists:
   summary. Only in the global gallery — per-chat galleries would just repeat
   the chat you are already in. `desktop/0075`
 
+- **"Copy Text" for a multi-message selection** — selecting a second message
+  collapsed the context menu to Forward and Delete. It now also copies the
+  selected bodies, one per line, in display order, from the menu or with
+  Ctrl/Cmd + C (which stands aside when there is a DOM text selection, so the
+  browser's own copy still wins). `selectedItems` is a `Set` in click order,
+  so the message list's chronological ids moved onto
+  `MessageMultiselectContext` and both paths filter those — which also stops a
+  bottom-up Ctrl + click selection from being forwarded and deleted in reverse.
+  Text-less messages (stickers, bare attachments) drop out instead of becoming
+  `[photo.jpg]` lines; that is transcript formatting, and Export Chat already
+  writes transcripts. The web-specific part: a Shift + click range spans
+  messages the list never loaded, so the text needs a `getMessages` round-trip,
+  and awaiting it first would lose transient activation and make WebKit reject
+  the clipboard write — `writeClipboardText()` therefore also takes a
+  `Promise<string>`, which the browser targets hand straight to `ClipboardItem`.
+  `desktop/0079`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not
