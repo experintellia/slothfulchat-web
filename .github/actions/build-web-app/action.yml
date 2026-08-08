@@ -13,9 +13,9 @@
 #      BEFORE the root `pnpm install` tries to resolve it.
 #   2. `pnpm assemble` wipes and repopulates dist/, so `pnpm build` (which
 #      emits runtime.js + blobs-sw.js INTO dist/) must run AFTER assemble.
-#   3. rust-cache must run AFTER apply-patches — build/core doesn't exist
-#      before it (wrong cache key), and apply-patches rm -rf's build/core
-#      (would delete a restored target/).
+#   3. both cache steps must run AFTER apply-patches — build/core doesn't exist
+#      before it (wrong cache key for rust-cache), and apply-patches rm -rf's
+#      build/core, which would delete a restored target/ or jsonrpc dist/.
 #
 # The assemble step bakes in per-instance branding from SLOTHFUL_* environment
 # variables. Composite run steps inherit the caller's job-level env as real
@@ -72,6 +72,7 @@ runs:
         sudo apt-get install -y clang
 
     - name: Install Rust stable + wasm32 target
+      id: toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
         targets: wasm32-unknown-unknown
@@ -117,9 +118,84 @@ runs:
         # rebuilds the ~10-min wasm step from scratch on every retry.
         CACHE_ON_FAILURE: true
       with:
-        workspaces: |
-          build/core
-          packages/core-wasm/rust
+        workspaces: build/core
+
+        # core-wasm's target/ used to be a second `workspaces` entry, which ran
+        # it through rust-cache's post-run pruning — and it came back unusable.
+        # Measured on run 31038961381 (main, `full match: true`, 1448 MB
+        # restored): the wasm step still compiled all 502 crates from
+        # unicode-ident up, in 3m45s — the same as the cold run beside it.
+        # cache-directories is stored verbatim, with no pruning pass.
+        cache-directories: packages/core-wasm/rust/target
+
+        # core-wasm's lockfile is a superset of core's, so with core-wasm out of
+        # `workspaces` the default pruning would drop every crate that only the
+        # wasm build needs. Keeping the whole registry costs some cache size;
+        # re-fetching those crates costs the wasm build.
+        cache-all-crates: true
+
+        # Leaving `workspaces` also took core-wasm's lockfile out of the cache
+        # KEY, and that is not survivable on its own: rust-cache skips the save
+        # entirely when the restored key is an exact match, so a wasm-only
+        # dependency bump — routine here, since the lint job audits exactly this
+        # lockfile — would restore a full match, save nothing, and leave the new
+        # crates out of the cache until build/core's lockfile or the ambient
+        # stable rustc happened to change, up to six weeks later. Folding both
+        # wasm-side inputs back in by hand restores the property `workspaces`
+        # was providing. rust-toolchain.toml is in here so that pinning the
+        # channel (or bumping a pinned one) also mints a new key.
+        key: ${{ hashFiles('packages/core-wasm/rust/Cargo.lock', 'packages/core-wasm/rust/rust-toolchain.toml') }}
+
+        # One cache entry for every workflow that builds the web-app instead of
+        # one per job name. Without this the key carries the job name, so CI's
+        # `test`, deploy-pages'/preview-deploy's `build` and deploy-next's
+        # `deploy` each kept a private ~1.1 GB copy — and preview-deploy, which
+        # only ever runs on PRs, could never populate its own at all.
+        shared-key: web-app-build
+
+        # Only main (and a hand-triggered run) writes the cache. GitHub scopes
+        # caches per branch and evicts at 10 GB per repo, so while every PR run
+        # saved its own ~1.1 GB copy the budget churned through more than once a
+        # day and main's entry — the only one a PR can read — kept getting
+        # evicted. PRs then rebuilt core from scratch: 20.4 min against 13.2.
+        # workflow_dispatch is the escape hatch for testing a cache change on a
+        # branch without merging it first.
+        save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+
+    # The generated client is a pure function of the patched core tree, so it
+    # only changes when the vendor/core pin or the core patch stack does —
+    # roughly never, next to the per-commit churn this job sees. Caching it
+    # skips the `cargo test` below, which compiles all 545 crates of core
+    # natively (7m27s cold, 79s warm) purely to emit TypeScript bindings.
+    #
+    # Keyed on the submodule pin + the patch files rather than on build/core's
+    # HEAD: `git am` stamps a fresh committer date, so the patched sha differs
+    # on every run and would never hit.
+    - name: Resolve the core revision behind build/core
+      id: core-rev
+      shell: bash
+      run: echo "sha=$(git rev-parse HEAD:vendor/core)" >> "$GITHUB_OUTPUT"
+
+    # Only dist/ — that is all a consumer of the `file:` dep needs (package.json
+    # is checked in, and pnpm resolves the client's own deps through the root
+    # lockfile). The sub-package's node_modules and the generated/ bindings are
+    # build inputs, wanted only on the miss path where the step below runs.
+    #
+    # The rustc version is in the key even though the TypeScript output does not
+    # depend on it, and that is deliberate. This cache is what decides whether
+    # `cargo test` runs, and `cargo test` is the only thing that populates
+    # build/core/target. Let the two keys drift apart and a stable-rustc bump
+    # misses the rust-cache but hits this one: the first main run after it would
+    # skip the compile and then save a build/core/target holding nothing but
+    # stale artifacts, which the exact-match skip-save then freezes in place.
+    # Sharing the rustc component makes both caches miss together, so the one
+    # regeneration lands on main instead of on the next core-bump PR.
+    - name: Cache the generated @deltachat/jsonrpc-client
+      id: jsonrpc-client
+      uses: actions/cache@v4
+      with:
+        path: build/core/deltachat-jsonrpc/typescript/dist
+        key: jsonrpc-client-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ steps.core-rev.outputs.sha }}-${{ hashFiles('patches/core/*.patch') }}
 
     # ORDER TRAP #1: generate + build the @deltachat/jsonrpc-client TS client
     # from the patched core at its pinned commit. `cargo test` generates the
@@ -131,6 +207,7 @@ runs:
     # the very file that holds the allowBuilds setting. esbuild's postinstall
     # is unwanted anyway, its JS launcher is what we bundle with.)
     - name: Generate + build @deltachat/jsonrpc-client (before root install)
+      if: steps.jsonrpc-client.outputs.cache-hit != 'true'
       working-directory: build/core/deltachat-jsonrpc/typescript
       shell: bash
       run: |
