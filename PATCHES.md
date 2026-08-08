@@ -16,8 +16,12 @@ Each entry references its patch file by directory and number, e.g. `core/0005`
 
 The same distinction is carried into the generated JSON-RPC documentation, so a
 reader does not have to come here to find out whether an API is upstream's or
-ours. `pnpm mark-fork-api` (after `pnpm apply-patches`, before generating docs)
-adds a line like
+ours. CI does this for you — the build runs `pnpm mark-fork-api` between
+`pnpm apply-patches` and the `cargo test` that generates the bindings. Run it by
+hand only when generating docs locally, and in that same slot: it needs
+`build/core`'s per-patch commits to attribute lines, and `cargo test` is what
+turns `///` into both the TypeScript JSDoc and the OpenRPC descriptions, so
+marking any later marks nothing. It adds a line like
 
 ```
 /// 🦥 slothfulchat-web fork: added by core/0028.
