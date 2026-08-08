@@ -1,5 +1,18 @@
 # Changelog
 
+- **Long-press menus now work on phones.** Holding a chat, a message, a photo
+  or a profile is how every menu opens on mobile, and it was broken across the
+  board: on Android, some elements started an invisible drag instead of
+  opening their menu; on iPhones no menu could open at all — iOS doesn't tell
+  web pages about long presses, and the press selected the text under your
+  finger on top. The app now watches the press itself, everywhere. Selecting
+  message text still works: press the text to select it, and the bubble
+  around it for the menu.
+
+- **Profiles can be reordered on a phone.** Press a profile in the account
+  sidebar, wait for it to lift, then drag it where you want it — flicking still
+  scrolls the list and a plain long press still opens the profile menu.
+
 - **A half-downloaded update can no longer cost you the offline app.** If a
   file of a new version fails to download, the app now stays on the version
   you have — which still works offline — and retries later, instead of

@@ -421,6 +421,13 @@ jobs:
       - name: Self-check — video poster frame grab
         run: node scripts/test-video-poster.mjs
 
+      # touch reorder self-check (fully offline, no core-wasm needed): drive real
+      # touch sequences at the account sidebar's hook and assert that only
+      # "hold, then move" reorders — an early move is a scroll, and a press that
+      # opens the context menu must leave the order alone.
+      - name: Self-check — reordering profiles with a finger
+        run: node scripts/test-account-reorder-touch.mjs
+
       # media metadata self-check (fully offline): record real audio and video
       # whose containers carry no duration — like our own recorder's mp3 — and
       # assert the reader still measures them instead of reporting Infinity.
