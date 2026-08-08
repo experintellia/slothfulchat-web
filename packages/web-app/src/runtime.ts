@@ -338,6 +338,12 @@ function getCore(): Core {
     for (const stale of [EXPORTS_DIR, '/tmp']) {
       core.fsRemove(stale).catch(() => {})
     }
+    // a stuck PWA update is invisible (no update UI, and the SW's console.warn
+    // dies with its worker): if blobs-sw.ts recorded repeated failed installs
+    // of the same version, tell the user in the device chat
+    surfaceFailedUpdate(core).catch(err =>
+      console.error('could not surface the failed update', err)
+    )
     // the worker reports when it gave up waiting for the OPFS lock — the core
     // is (almost certainly) running in another tab. ponytail: no faster
     // web-lock detection — its release lags on reloads and false-positives
@@ -605,6 +611,36 @@ window.open = ((url?: string | URL, ...rest: any[]) => {
   }
   return nativeOpen(url as any, ...rest)
 }) as typeof window.open
+
+/** blobs-sw.ts counts consecutive failed installs of the SAME new version in
+ * the surviving cache. Two or more means stuck, not a network blip — so say so
+ * in the device chat. Core drops repeated device messages by label, so this is
+ * one message per stuck version with no bookkeeping here; and the record dies
+ * with the old cache once an update finally lands, so a stale re-send after
+ * recovery is impossible. English only, like every runtime.ts surface. */
+async function surfaceFailedUpdate(core: Core): Promise<void> {
+  const stored = await caches.match('./__sw-update-failed__')
+  const rec = stored && (await stored.json())
+  if (!rec || !(rec.attempts >= 2)) return
+  const text =
+    `Updating ${APP_NAME} failed ${rec.attempts} times: a file of the new ` +
+    'version could not be downloaded. You are still on the previous version, ' +
+    'which keeps working (offline too), and the update is retried on every ' +
+    'start.\n\n' +
+    'If this happens for future versions as well, something on this device is ' +
+    'likely blocking the download — a browser extension, a network filter, or ' +
+    `full storage.\n\nDetails: ${rec.errors?.[0] ?? 'unknown'}`
+  for (const id of (await core.transport.request('get_all_account_ids', [])) as number[]) {
+    // plain text + versioned label, as checkMigrationErrors does below — the
+    // version in the label is what re-arms the warning for the NEXT stuck
+    // version while core still drops repeats of this one
+    await core.transport.request('add_device_message', [
+      id,
+      `sw-update-failed-${rec.version}`,
+      { text },
+    ])
+  }
+}
 
 /** blob service worker: page side. The SW forwards GET /blobs/:acc/:file to
  * us, we read from the core memfs and post the bytes back. */
