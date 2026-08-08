@@ -162,6 +162,32 @@ CHATMAIL_ALLOWLIST=nine.testrun.org,chatmail.example \
   npx @slothfulchat/ws-tcp-proxy
 ```
 
+For a bridge that stays up, run it from a supervisor rather than a shell —
+pinned to the version you read, restarted if it dies, and boxed in so it can't
+take the host with it (`/etc/systemd/system/slothful-bridge.service`):
+
+```ini
+[Unit]
+Description=slothfulchat WS→TCP bridge
+After=network-online.target
+
+[Service]
+# pin the version you audited; bump it deliberately
+ExecStart=/usr/bin/npx --yes @slothfulchat/ws-tcp-proxy@0.8.0
+Environment=HOST=0.0.0.0 CHATMAIL_ALLOWLIST=chatmail.example
+DynamicUser=yes
+Restart=on-failure
+RestartSec=5s
+MemoryMax=512M
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
+```
+
+(`LimitNOFILE` needs headroom over `MAX_CONNECTIONS`, since each tunnel costs
+two file descriptors.)
+
 > **Upgrading from ≤ 0.8?** Older versions bound every interface by default. If
 > your bridge stopped being reachable, add `HOST=0.0.0.0` (or your interface
 > address) — and note it now needs `CHATMAIL_ALLOWLIST` to start at all.
@@ -226,3 +252,11 @@ with `?proxy=wss://…` in the URL.
 | `PORT` | Port the bridge listens on (`ws://`). | `8641` |
 | `HOST` | Address the bridge binds. The default is loopback-only, so a bridge you didn't configure for hosting can't be reached from the network. Set `0.0.0.0` (or one interface address) to host it — that requires `CHATMAIL_ALLOWLIST`. | `127.0.0.1` |
 | `CHATMAIL_ALLOWLIST` | Comma-separated chatmail domains the bridge may reach. Empty = allow any server (fine on the loopback default; a non-loopback `HOST` with an empty allowlist **refuses to start**). | empty (allow all) |
+| `MAX_CONNECTIONS` | Open tunnels the bridge serves in total. | `512` |
+| `MAX_CONNECTIONS_PER_IP` | Open tunnels one client may hold (plus 120 new connections/min). | `16` |
+| `TUNNEL_CONNECT_MS` | How long a tunnel may spend dialling the mail server. | `10000` |
+| `TUNNEL_IDLE_MS` | Silence before a tunnel is dropped. Must stay well above your IMAP `IDLE` interval. | `1800000` |
+| `TRUST_PROXY` | `1`: take the client's address from `X-Forwarded-For` instead of the socket, so the per-client limits count real clients behind your reverse proxy. **Only set this where the proxy overwrites that header** — otherwise clients can forge it and bypass the limits. | off |
+
+The full set of bridge variables (including the unfurl endpoint's) is in the
+[proxy README](packages/ws-tcp-proxy/README.md).
