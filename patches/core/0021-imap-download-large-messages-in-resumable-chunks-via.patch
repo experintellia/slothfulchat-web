@@ -625,13 +625,13 @@ index b5f9ec0..310a8a2 100644
 +        match res {
 +            Err(err) => {
 +                warn!(context, "receive_imf error: {err:#}.");
-+                // Same device message as the full fetch path; delete the
-+                // staging file, otherwise the same broken bytes would be
-+                // retried forever.
++                // Like the full fetch path's device message, but reported
++                // here: this chunked path is this fork's own code. Delete the
++                // staging file too, or the same bytes are retried forever.
 +                let text = format!(
-+                    // No trailing '.' to avoid from the Android UI treating it as a part of
-+                    // URL.
-+                    "❌ Failed to receive a message: {err:#}. Core version v{DC_VERSION_STR}. Please report this bug to delta@merlinux.eu or https://support.delta.chat/",
++                    // No trailing '.' — the URL is autolinked and a trailing
++                    // dot gets swallowed into the link.
++                    "❌ Failed to receive a message: {err:#}. Core version v{DC_VERSION_STR}. Please report this bug at https://github.com/experintellia/slothfulchat-web/issues",
 +                );
 +                let mut msg = Message::new_text(text);
 +                add_device_msg(context, None, Some(&mut msg)).await?;
