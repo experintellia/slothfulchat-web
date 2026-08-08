@@ -1,5 +1,12 @@
 # Changelog
 
+- **A half-downloaded update can no longer cost you the offline app.** If a
+  file of a new version fails to download, the app now stays on the version
+  you have — which still works offline — and retries later, instead of
+  switching to the incomplete one and dropping the complete copy. And if the
+  same update keeps failing, a message in the device chat tells you, including
+  which file is stuck.
+
 - **An account that failed to update now says so.** When a new version can't
   finish updating an account's database, the account still opens — but chatting
   with it can produce wrong contacts or messages. The app now checks after

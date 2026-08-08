@@ -294,6 +294,21 @@ e2e message roundtrip, whitelist self-check).
   the HTTP cache for up to 10 min. Install failures don't brick the install
   (allSettled, self-heal on next update) and are recorded in a
   `__sw-install-errors__` cache entry instead of vanishing.
+  **Superseded (2026-08-04, audit M-02)**: tolerating failures is right only
+  for the FIRST install. On an *update* it activated a partial cache and
+  activate then deleted the last complete one — and a content-versioned cache
+  cannot self-heal, so those files stayed offline-unavailable until the next
+  deploy. An update whose precache is incomplete now fails the install (and
+  deletes its own partial cache): the old worker keeps its complete cache and
+  the browser retries. First install still tolerates, since there is nothing
+  to fall back to and no worker at all means no blob serving either.
+  Refinements: only files the previous cache actually *has* fail the install
+  (one absent there too loses nothing by activating, and failing on it would
+  pin an adblocked client to its first version forever); the guard never
+  deletes a cache that already carries its manifest key (an SW-code-only
+  deploy reuses the live cache's name — deleting it would destroy the offline
+  copy); and consecutive failures of one version are counted so runtime.ts
+  can surface a stuck client as a device message after two attempts.
 - **Measured**: a fake deploy re-fetches exactly blobs-sw.js + sw-precache.js
   + the one changed file; the 10 MB emoji font makes zero requests.
 - **New suite `scripts/test-pwa-update.mjs`** (SW-only, no wasm boot — fast
