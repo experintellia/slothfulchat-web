@@ -1,5 +1,12 @@
 # Changelog
 
+- **An account that failed to update now says so.** When a new version can't
+  finish updating an account's database, the account still opens — but chatting
+  with it can produce wrong contacts or messages. The app now checks after
+  opening and posts a one-off message in that account's device chat: what
+  happened, the error text, and a reminder to export a backup while you still
+  can.
+
 - **You can copy the text of several messages at once.** Select more than one
   message and the context menu now offers "Copy Text" next to Forward and
   Delete, or just press Ctrl/Cmd + C — the bodies land on the clipboard one
