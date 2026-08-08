@@ -12,6 +12,19 @@
 # still allowed — but only against a tag ref, where they pass the same gate, so
 # `workflow_dispatch` buys an attacker nothing a tag push wouldn't.
 #
+# FOUR JOBS, AND THE SPLIT IS THE POINT. `build` is where repository-controlled
+# code runs: checkout with submodules, apply-patches, cargo, the pnpm/npm
+# dependency trees and their install scripts, the upstream desktop build. It
+# holds `contents: read` and nothing else — no OIDC, no write token, no deploy
+# secret — and hands over two artifacts. `release` and `publish` then run on
+# fresh runners that check out NOTHING and execute no repository code: one
+# uploads the files build prepared, the other hands build's npm tarballs to
+# `npm publish --ignore-scripts`. So a compromised action, build script or
+# transitive postinstall now runs on a machine with no publishing power at all,
+# instead of alongside the OIDC request variables and the checkout credential.
+# Adding a checkout or a build step to `release` or `publish` undoes this —
+# don't. (deploy-pages.yml keeps its Pages deploy apart the same way.)
+#
 # Versioning: synced release train — a `v*` tag means EVERY package is at that
 # version. Bump them all in lockstep first (node scripts/set-release-version.mjs
 # X.Y.Z), commit, tag, push; a guard step rejects a tag whose packages drifted.
@@ -23,8 +36,10 @@
 # Self-hosters bake their values in with the customize script — see
 # SELFHOSTING.md — so the zip works for everyone without rebuilding.
 #
-# The core-wasm build steps mirror deploy-pages.yml — same order traps apply
-# (jsonrpc-client must be generated before the root pnpm install).
+# The build itself is .github/actions/build-web-app, the same composite the
+# deploy workflows and CI run — so the release zip is built by the sequence
+# that is tested on every PR, and its three ordering traps are documented in
+# exactly one place.
 
 name: Publish packages to npm
 
@@ -50,162 +65,97 @@ jobs:
       checks: read
     uses: ./.github/workflows/verify-release-tag.yml
 
-  publish:
+  # Unprivileged: this is the job that runs the repo's own code (see header).
+  build:
     needs: verify-tag
     # Belt and braces: verify-tag failing already blocks this job, and this `if`
-    # keeps id-token: write out of reach of a branch run even if that gate is
-    # ever weakened. Both are needed — see the header.
+    # keeps a branch run out of the release path even if that gate is ever
+    # weakened. Repeated on the two privileged jobs below rather than inherited
+    # through `needs:` — they must not depend on how skip propagation works.
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
-      id-token: write # npm trusted publishing + provenance
-      contents: write # gh release create/upload
+      contents: read
     steps:
       # Pinned to the SHA verify-tag checked, not to the tag name: the tag could
       # be moved during the ~10-min build, and this job would otherwise pick up
       # whatever it points at then.
+      # persist-credentials: false — nothing here pushes, so the token should
+      # not sit in .git/config while the build runs third-party code.
       - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.sha }}
           submodules: recursive
+          persist-credentials: false
 
-      - name: Configure git identity (required by `git am` in apply-patches)
-        run: |
-          git config --global user.email "ci@github-actions"
-          git config --global user.name "GitHub Actions"
+      # Deliberately NO SLOTHFUL_* vars on this job — unset is what makes the
+      # zip generic (see header). Defaults give the shippable build: wasm-opt
+      # on, NODE_ENV=production.
+      - name: Build web-app dist/ (generic release build)
+        uses: ./.github/actions/build-web-app
 
-      # drop the runner's flaky preinstalled third-party repos + retry
-      # (see deploy-pages.yml): any bad repo makes `apt-get update` exit 100.
-      - name: Install clang (sqlite-wasm-rs builds C)
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/*microsoft* \
-                     /etc/apt/sources.list.d/*azure* \
-                     /etc/apt/sources.list.d/*google* \
-                     /etc/apt/sources.list.d/*chrome*
-          for i in 1 2 3; do sudo apt-get update && break || sleep $((i*5)); done
-          sudo apt-get install -y clang
-
-      - name: Install Rust stable + wasm32 target
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      # NO registry-url here: it makes setup-node write an .npmrc with a
-      # placeholder NODE_AUTH_TOKEN, which npm then uses INSTEAD of the OIDC
-      # trusted-publishing exchange (unauthenticated PUT -> 404).
-      - name: Setup Node 22 + pnpm (corepack)
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Enable corepack (provides the pinned pnpm)
-        run: corepack enable
-
-      # Trusted publishing needs npm >= 11.5.1; Node 22 ships 10.x. No sudo:
-      # sudo's PATH hits the system npm, leaving the toolcache npm (the one
-      # this job actually runs) old — publish then dies with ENEEDAUTH.
-      # Pinned to an EXACT version, not @11 or @latest: npm 12.0.0 (2026-07-08)
-      # crashes on provenance publish ("Cannot find module 'sigstore'" from
-      # libnpmpublish/provenance.js — broke the v0.3.0 run), and even a `@11`
-      # floating pin can drift onto a bad patch. 11.18.0 is the version that
-      # published v0.2.0 cleanly. Bump this deliberately after testing a newer
-      # npm; re-evaluate once a fixed npm 12.x is out.
-      - name: Update npm (trusted publishing support)
-        run: npm install -g npm@11.18.0 && npm --version
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-store-${{ runner.os }}-
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Apply patch stacks (creates build/core, build/desktop)
-        run: pnpm apply-patches
-
-      # ORDER TRAP #3: this MUST run after apply-patches. rust-cache hashes the
-      # workspaces' Cargo.lock files at restore time — build/core only exists
-      # once apply-patches has created it, so running earlier computes a key
-      # blind to the core dependency graph. Worse, apply-patches recreates
-      # build/core with `rm -rf`, which would wipe a restored build/core/target.
-      # Restore-only, and keyed identically to .github/actions/build-web-app so
-      # it actually hits that entry. This workflow only ever runs on a `v*` tag,
-      # and GitHub shares caches downward from the default branch: a tag-scoped
-      # entry is private to that tag, so anything saved here could never be read
-      # by anything, ever — it was purely ~1.1 GB of eviction pressure on the
-      # repo's 10 GB budget every release. Reading main's entry is the useful
-      # half; save-if: false drops the useless one.
-      #
-      # Keep these four inputs in step with the composite action — they all feed
-      # the cache key, so a difference here silently means a permanent miss
-      # rather than a visible error. (This workflow duplicates the build inline
-      # rather than calling the composite; that is pre-existing.)
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: build/core
-          cache-directories: packages/core-wasm/rust/target
-          cache-all-crates: true
-          key: ${{ hashFiles('packages/core-wasm/rust/Cargo.lock', 'packages/core-wasm/rust/rust-toolchain.toml') }}
-          shared-key: web-app-build
-          save-if: false
-
-      # ORDER TRAP #1: the workspace override points @deltachat/jsonrpc-client at
-      # this file: path, so it must be generated + built before `pnpm install`.
-      - name: Generate + build @deltachat/jsonrpc-client (before root install)
-        working-directory: build/core/deltachat-jsonrpc/typescript
-        run: |
-          printf 'allowBuilds:\n  esbuild: false\n' > pnpm-workspace.yaml
-          pnpm install
-          cargo test -p deltachat-jsonrpc
-          node scripts/generate-constants.js
-          ./node_modules/.bin/tsc
-          ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js
-
-      - name: Install workspace deps
-        run: pnpm install
-
-      - name: Build wasm core (release)
-        run: pnpm --filter @slothfulchat/core-wasm build:wasm
-
-      - name: Build core-wasm TS (worker + index)
-        run: pnpm --filter @slothfulchat/core-wasm build
-
-      # bundled single-file CLI: published to npm below AND attached to the
-      # GitHub release so self-hosters can run it without npm
+      # bundled single-file CLI: goes into the npm tarball below AND is
+      # attached to the GitHub release so self-hosters can run it without npm.
       - name: Build customize CLI bundle
         run: pnpm --filter @slothfulchat/customize build
 
-      # ---- GitHub release: prebuilt web-app zip + customize script ----
-
-      # mirrors deploy-pages.yml — see the comments there for the env quirks
-      - name: Build upstream desktop browser frontend (release)
-        working-directory: build/desktop
+      # --ignore-scripts: customize has a `prepack` that rebuilds the bundle,
+      # and the step above already did. Packing here rather than in the publish
+      # job is the whole point — what gets signed is a tarball produced on an
+      # unprivileged runner and reviewed as an artifact.
+      - name: Pack the release assets and the npm tarballs
         run: |
-          export VERSION_INFO_GIT_REF=$(git rev-parse --short HEAD)
-          pnpm install --frozen-lockfile
-          NODE_ENV=production pnpm build:browser
+          set -euo pipefail
+          mkdir -p out/npm
+          (cd packages/web-app/dist && zip -qr "$GITHUB_WORKSPACE/out/slothfulchat-web-$GITHUB_REF_NAME.zip" .)
+          cp packages/customize/dist/cli.mjs out/slothfulchat-customize.mjs
+          for dir in packages/ws-tcp-proxy packages/core-wasm packages/customize; do
+            (cd "$dir" && npm pack --ignore-scripts --pack-destination "$GITHUB_WORKSPACE/out/npm")
+          done
+          ls -l out out/npm
 
-      # ORDER TRAP #2 (see deploy-pages.yml): build must come after assemble.
-      # Deliberately NO SLOTHFUL_* vars — the zip stays generic (see header).
-      - name: Assemble + build web-app dist/ (generic release build)
-        env:
-          NODE_ENV: production
-        run: |
-          pnpm --filter @slothfulchat/web-app assemble
-          pnpm --filter @slothfulchat/web-app build
+      - name: Upload the GitHub release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-assets
+          path: |
+            out/slothfulchat-web-*.zip
+            out/slothfulchat-customize.mjs
+          if-no-files-found: error
+          retention-days: 1
 
-      # release first, npm publish after: a publish hiccup (e.g. a package's
-      # trusted publisher not configured yet) must not block the release
+      - name: Upload the npm tarballs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-tarballs
+          path: out/npm
+          if-no-files-found: error
+          retention-days: 1
+
+  # Privileged, and holds the ONLY write token in this workflow. No checkout,
+  # no build — see the header.
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create/upload
+    steps:
+      - name: Download the release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets
+          path: assets
+
+      # No checkout, so gh needs the repo named explicitly (GH_REPO); the tag
+      # is verified server-side by --verify-tag.
       - name: Create GitHub release (web-app zip + customize script)
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          (cd packages/web-app/dist && zip -qr "$GITHUB_WORKSPACE/slothfulchat-web-$GITHUB_REF_NAME.zip" .)
-          cp packages/customize/dist/cli.mjs slothfulchat-customize.mjs
+          set -euo pipefail
           # Releases are immutable: assets can only be attached at creation
           # (a later `gh release upload` gets HTTP 422), so create the release
           # and its assets in one shot. On re-runs a complete release is
@@ -220,18 +170,62 @@ jobs:
             fi
           else
             gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
-              "slothfulchat-web-$GITHUB_REF_NAME.zip" slothfulchat-customize.mjs
+              "assets/slothfulchat-web-$GITHUB_REF_NAME.zip" assets/slothfulchat-customize.mjs
           fi
 
-      - name: Publish packages whose version is new
+  # Privileged, and holds the ONLY id-token: write in this workflow. No
+  # checkout, no build — see the header.
+  #
+  # `needs: release` keeps the original ordering: release first, npm publish
+  # after, so a publish hiccup (e.g. a package's trusted publisher not
+  # configured yet) can never block the release.
+  publish:
+    needs: release
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # npm trusted publishing + provenance
+    steps:
+      # NO registry-url here: it makes setup-node write an .npmrc with a
+      # placeholder NODE_AUTH_TOKEN, which npm then uses INSTEAD of the OIDC
+      # trusted-publishing exchange (unauthenticated PUT -> 404).
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      # Trusted publishing needs npm >= 11.5.1; Node 22 ships 10.x. No sudo:
+      # sudo's PATH hits the system npm, leaving the toolcache npm (the one
+      # this job actually runs) old — publish then dies with ENEEDAUTH.
+      # Pinned to an EXACT version, not @11 or @latest: npm 12.0.0 (2026-07-08)
+      # crashes on provenance publish ("Cannot find module 'sigstore'" from
+      # libnpmpublish/provenance.js — broke the v0.3.0 run), and even a `@11`
+      # floating pin can drift onto a bad patch. 11.18.0 is the version that
+      # published v0.2.0 cleanly. Bump this deliberately after testing a newer
+      # npm; re-evaluate once a fixed npm 12.x is out.
+      - name: Update npm (trusted publishing support)
+        run: npm install -g npm@11.18.0 && npm --version
+
+      - name: Download the npm tarballs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-tarballs
+          path: npm-tarballs
+
+      # name@version is read back OUT of each tarball rather than from a
+      # checked-out package.json: the tarball is what gets published, so the
+      # skip check and the upload can't disagree about what is being shipped.
+      # --ignore-scripts: publishing a prebuilt tarball must run no code.
+      - name: Publish the tarballs whose version is new
         run: |
-          for dir in packages/ws-tcp-proxy packages/core-wasm packages/customize; do
-            name=$(node -p "require('./$dir/package.json').name")
-            version=$(node -p "require('./$dir/package.json').version")
-            if npm view "$name@$version" version >/dev/null 2>&1; then
-              echo "$name@$version already on the registry — skipping"
+          set -euo pipefail
+          for tgz in npm-tarballs/*.tgz; do
+            spec=$(tar -xzOf "$tgz" package/package.json |
+              node -e "const p=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(p.name+'@'+p.version)")
+            if npm view "$spec" version >/dev/null 2>&1; then
+              echo "$spec already on the registry — skipping"
             else
-              echo "publishing $name@$version"
-              (cd "$dir" && npm publish --access public)
+              echo "publishing $spec from $tgz"
+              npm publish "$tgz" --access public --ignore-scripts
             fi
           done
