@@ -27,8 +27,9 @@
 # it pulls in may be mutable: third-party actions are pinned to reviewed commit
 # SHAs (the trailing comment names the version each SHA is — check one with
 # `git ls-remote https://github.com/<owner>/<repo> refs/tags/<version>`, and
-# peel annotated tags with the `^{}` entry), wasm-pack is a versioned
-# `cargo install` rather than a remote installer piped to a shell, and the two
+# peel annotated tags with the `^{}` entry), wasm-pack is a release asset
+# pinned by version and sha256 rather than an installer piped to a shell, and
+# the two
 # out-of-tree npm installs (the generated jsonrpc client, upstream desktop) run
 # `--frozen-lockfile`.
 
@@ -209,25 +210,38 @@ runs:
         path: build/core/deltachat-jsonrpc/typescript/dist
         key: jsonrpc-client-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ steps.core-rev.outputs.sha }}-${{ hashFiles('patches/core/*.patch') }}
 
-    # An exact version from crates.io instead of the upstream
-    # `curl … installer/init.sh | sh`, which is unversioned (whatever is newest
-    # that day) and unverified (whatever that URL serves that day). cargo checks
-    # the crate against the registry index's sha256 and `--locked` builds it
-    # with wasm-pack's own published Cargo.lock, so the compiler that produces
-    # our wasm is reproducible from a name and a number.
-    # Deliberately AFTER rust-cache: it caches ~/.cargo/bin, so a run that
-    # restores that cache gets the binary for free. Still well before the wasm
-    # build below, which is all the ordering this step needs.
+    # rustwasm's prebuilt musl binary, pinned by version AND sha256, replacing
+    # the upstream `curl … installer/init.sh | sh` — which was unversioned
+    # (whatever was newest that day) and unverified (whatever that URL served
+    # that day). Same shape as ci.yml's cargo-audit step; the long-form
+    # reasoning for choosing a digest-checked release asset over both a piped
+    # installer and a `cargo install` source build lives there, and the two
+    # steps should stay in step.
     #
-    # ponytail: this pays a source build (minutes) on every run that does NOT
-    # restore ~/.cargo/bin — which, since save-if above stopped PRs writing the
-    # cache, is every PR run. ci.yml solved the same problem for cargo-audit by
-    # fetching the prebuilt release tarball pinned by version AND sha256; the
-    # upgrade path here is to do the same with rustwasm's musl build of
-    # wasm-pack, which keeps the integrity property and drops the compile.
-    - name: Install wasm-pack (pinned, from crates.io)
+    # `cargo install wasm-pack --version … --locked` would pin just as tightly
+    # (cargo checks the crate against the index's sha256), but it compiles
+    # wasm-pack from source on every run that does not restore ~/.cargo/bin —
+    # i.e. every PR run, since save-if above stopped PRs writing that cache.
+    # Downloading takes ~2s and does not care whether the cache was warm.
+    #
+    # Bumping: change both env vars together. Re-deriving the digest from the
+    # tarball you just downloaded only blesses whatever you got, so cross-check
+    # a bump against a second source — `cargo install wasm-pack --version <new>`
+    # locally and compare `wasm-pack --version` — before pasting it.
+    - name: Install wasm-pack (prebuilt, pinned + digest-checked)
       shell: bash
-      run: cargo install wasm-pack --version 0.15.0 --locked
+      env:
+        WASM_PACK_VERSION: 0.15.0
+        WASM_PACK_SHA256: c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+      run: |
+        set -euo pipefail
+        dir="wasm-pack-v$WASM_PACK_VERSION-x86_64-unknown-linux-musl"
+        curl -sSfL --retry 3 --retry-connrefused -o wasm-pack.tgz \
+          "https://github.com/rustwasm/wasm-pack/releases/download/v$WASM_PACK_VERSION/$dir.tar.gz"
+        echo "$WASM_PACK_SHA256  wasm-pack.tgz" | sha256sum -c -
+        tar -xzf wasm-pack.tgz -C "$HOME/.cargo/bin" --strip-components=1 "$dir/wasm-pack"
+        rm -f wasm-pack.tgz
+        wasm-pack --version
 
     # ORDER TRAP #1: generate + build the @deltachat/jsonrpc-client TS client
     # from the patched core at its pinned commit. `cargo test` generates the
