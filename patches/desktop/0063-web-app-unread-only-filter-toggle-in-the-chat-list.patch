@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 20 Jul 2026 22:46:58 +0000
-Subject: [PATCH 63/79] web-app: unread-only filter toggle in the chat list
+Subject: [PATCH 63/81] web-app: unread-only filter toggle in the chat list
 
 Add a borderless filter button to the chat list header (next to search) that
 filters the list to chats with fresh messages, using core's `is:unread`
