@@ -102,6 +102,16 @@ runs:
       shell: bash
       run: pnpm apply-patches
 
+    # Mark fork-touched JSON-RPC items with 🦥 in their Rust doc comments, so
+    # the generated docs say what is ours. ORDER: after apply-patches (it needs
+    # build/core's per-patch commits to git blame) and BEFORE the `cargo test`
+    # below — that is what turns `///` into both the TS JSDoc and the OpenRPC
+    # descriptions, so marking any later marks nothing. Node builtins only, so
+    # it runs fine before the root `pnpm install`.
+    - name: Mark fork-touched API in the generated docs
+      shell: bash
+      run: node scripts/mark-fork-api.mjs
+
     # Cache the cargo registry + the build/core and wasm target/ dirs. The
     # native `cargo test` and the ~10-min release wasm build dominate wall
     # time, so this is the cache that matters most.
