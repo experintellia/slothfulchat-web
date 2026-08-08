@@ -108,10 +108,14 @@ jobs:
           components: clippy
           targets: wasm32-unknown-unknown
 
+      # save-if: same reason as in .github/actions/build-web-app — a cache every
+      # PR writes and no PR can read is just eviction pressure on the repo's
+      # 10 GB budget. main populates it, PRs read it.
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: crates/tokio-wasm-shim
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
 
       # The shim crate has no submodule deps, so lint it on both targets —
       # neither is a superset of the other:
