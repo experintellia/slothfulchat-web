@@ -45,7 +45,7 @@
       "action": "./main.html",
       "name": "Webxdc app",
       "accept": {
-        "application/webxdc+zip": [".xdc"]
+        "application/x-webxdc": [".xdc"]
       }
     }
   ],
