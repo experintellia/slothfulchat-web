@@ -43,7 +43,13 @@ proxy UI); everything browser-specific lives in our own files:
     and forwarded into a chat with `onWebxdcSendToChat({file_name, file_content})`
     (base64 → `writeTempFileFromBase64`, the same contract electron/tauri use).
     Running webxdc isn't supported in this edition, but sending one to a
-    recipient whose client can run it is.
+    recipient whose client can run it is. The accept key is core's own
+    `application/webxdc+zip`, not a generic type: Linux associates by MIME, so
+    Chromium copies that key into the installed app's `.desktop`
+    `MimeType=` *and* installs a shared-mime-info glob (`*.xdc` → that type) via
+    `xdg-mime`, which is what teaches the desktop about `.xdc` in the first
+    place. A generic key like `application/octet-stream` would make the app the
+    offered handler for every unrecognized binary on the system.
   - `launch_handler: focus-existing` keeps the single-instance app from opening
     a second window (which would lose the OPFS lock); a warm launch arrives via
     the launchQueue consumer's `targetURL` instead of a navigation.

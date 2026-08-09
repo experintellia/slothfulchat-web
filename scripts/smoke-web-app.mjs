@@ -174,6 +174,15 @@ try {
   if (!xdcHandler) {
     throw new Error('manifest missing .xdc file_handler')
   }
+  // The accept *key* is what Chromium writes into the Linux .desktop MimeType=
+  // (and into the shared-mime-info XML it installs via xdg-mime). A generic key
+  // makes the PWA the offered handler for every file of that type — with
+  // application/octet-stream, for every unrecognized binary on the system.
+  if (!Object.keys(xdcHandler.accept).every(m => /^application\/webxdc\+zip$/.test(m))) {
+    throw new Error(
+      `.xdc file_handler must accept only application/webxdc+zip, got ${Object.keys(xdcHandler.accept)}`
+    )
+  }
   if (manifest.launch_handler?.client_mode !== 'focus-existing') {
     throw new Error('manifest missing launch_handler focus-existing')
   }

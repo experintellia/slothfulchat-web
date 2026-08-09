@@ -43,8 +43,9 @@
   "file_handlers": [
     {
       "action": "./main.html",
+      "name": "Webxdc app",
       "accept": {
-        "application/octet-stream": [".xdc"]
+        "application/webxdc+zip": [".xdc"]
       }
     }
   ],
