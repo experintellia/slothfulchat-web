@@ -1,5 +1,11 @@
 # Changelog
 
+- **The installed app no longer offers to open every binary file on Linux.** It
+  registered for webxdc apps under a catch-all file type, so the desktop listed
+  it as a way to open any unknown file. It now registers `.xdc` files under
+  their own type, which also makes "Open with" work for webxdc archives your
+  desktop didn't recognize before.
+
 - **Long-press menus now work on phones.** Holding a chat, a message, a photo
   or a profile is how every menu opens on mobile, and it was broken across the
   board: on Android, some elements started an invisible drag instead of
