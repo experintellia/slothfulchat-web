@@ -124,8 +124,9 @@ runs:
     # ORDER TRAP #1: generate + build the @deltachat/jsonrpc-client TS client
     # from the patched core at its pinned commit. `cargo test` generates the
     # TS bindings AND (via patches/core, openrpc_outdir) generated/openrpc.json;
-    # then constants, tsc, esbuild bundle, and upstream's own typedoc `docs`
-    # script — assemble.mjs copies docs/ + openrpc.json to dist/api-docs/, and
+    # then constants, tsc, esbuild bundle, and typedoc (upstream's devDependency,
+    # our options file) — assemble.mjs copies docs/ + openrpc.json under
+    # dist/api-docs/ next to the two pages web-app/api-docs/ holds, and
     # core-wasm's build:types vendors dist/*.d.ts into its published package.
     # This is a `file:` dep of core-wasm, so it MUST exist before the root
     # `pnpm install` below.
@@ -144,9 +145,12 @@ runs:
         node scripts/generate-constants.js
         ./node_modules/.bin/tsc
         ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js
-        # `pnpm run docs`, not `pnpm docs`: the latter is pnpm's builtin
-        # "open the package homepage" command and silently shadows the script.
-        pnpm run docs
+        # Not upstream's `docs` script: same typedoc, our options file, which
+        # names the project as this fork, gives it the /api-docs readme as its
+        # index page and puts RawClient first in the nav. Paths inside the
+        # options file resolve against the file, so entry point and out dir
+        # point back here.
+        ./node_modules/.bin/typedoc --options ../../../../packages/web-app/api-docs/typedoc.json
 
     - name: Install workspace deps
       shell: bash

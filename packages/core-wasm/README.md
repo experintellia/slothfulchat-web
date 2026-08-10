@@ -40,10 +40,10 @@ running core reports the same string as `deltachat_core_version`:
 ;(await core.dc.rpc.getSystemInfo()).deltachat_core_version
 ```
 
-API reference for those types: **<https://web.slothful.chat/api-docs/>**
-(typedoc over the same generated client), plus
-**<https://web.slothful.chat/api-docs/openrpc.json>** — an OpenRPC document of
-the same API for non-TypeScript consumers.
+API reference for those types: **<https://web.slothful.chat/api-docs/>** — the
+TypeScript reference (typedoc over the same generated client, start at
+`RawClient`) and the same API as a browsable OpenRPC spec for non-TypeScript
+consumers, with the raw `openrpc.json` next to it.
 
 `startCore()` also returns an fs side channel into core's in-memory
 filesystem (blob display, temp files, backup import/export):
@@ -62,9 +62,9 @@ pnpm apply-patches                                # patched core in build/core
 cd build/core/deltachat-jsonrpc/typescript
 pnpm install --ignore-workspace && cargo test -p deltachat-jsonrpc \
   && node scripts/generate-constants.js && ./node_modules/.bin/tsc \
-  && ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js \
-  && pnpm run docs                                # `run` matters: `pnpm docs` is a builtin
-cd -                                              # generated TS client + its typedoc at the pinned commit
+  && ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js
+cd -                                              # generated TS client at the pinned commit
+pnpm api-docs                                     # typedoc, with our options file
 pnpm install
 pnpm --filter @slothfulchat/core-wasm build:wasm  # needs clang + wasm32 target, ~10 min release
 pnpm --filter @slothfulchat/core-wasm build

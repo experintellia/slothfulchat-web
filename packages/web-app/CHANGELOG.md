@@ -12,12 +12,12 @@
   with them) and only stores the app's own files, so a service sitting next to
   the app on that domain can't end up cached — or answered from the cache.
 
-- **The core's JSON-RPC API is now documented at `/api-docs`** — a full API
-  reference plus an `openrpc.json` spec for non-TypeScript tools, both built
-  from the exact core the bundle ships (pinned version plus our patches), so
-  they describe the API that is actually running rather than the closest
-  published release. Self-hosters get it with the bundle; it is not part of
-  the offline app shell.
+- **The core's JSON-RPC API is now documented at `/api-docs`** — a TypeScript
+  reference and a browsable OpenRPC spec (raw `openrpc.json` included), both
+  built from the exact core the bundle ships (pinned version plus our patches),
+  so they describe the API that is actually running rather than the closest
+  published release. Self-hosters get it with the bundle; it is not part of the
+  offline app shell.
 
 - **A link can no longer start a session that quietly saves nothing.** The
   `?persist=0` test switch made the app run memory-only — your accounts appear

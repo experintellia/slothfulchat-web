@@ -5,6 +5,7 @@
   "description": "Feasibility prototype: DeltaChat fully in the browser (WASM core + PWA). Not affiliated with Delta Chat.",
   "license": "GPL-3.0-or-later",
   "scripts": {
+    "api-docs": "cd build/core/deltachat-jsonrpc/typescript && ./node_modules/.bin/typedoc --options ../../../../packages/web-app/api-docs/typedoc.json",
     "apply-patches": "scripts/apply-patches.sh",
     "update-patches": "scripts/update-patches.sh",
     "set-version": "node scripts/set-release-version.mjs",

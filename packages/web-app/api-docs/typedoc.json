@@ -1,0 +1,37 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+
+  // TypeDoc options for the core JSON-RPC client reference shipped at
+  // /api-docs/typescript/. Passed with `--options` from build/core's typescript
+  // dir, so the relative paths below resolve against THIS file's directory —
+  // typedoc resolves path-typed options relative to the config that declares
+  // them, not the cwd.
+  //
+  // Everything the site says about itself is set here rather than by
+  // post-processing the emitted HTML.
+
+  "entryPoints": ["../../../build/core/deltachat-jsonrpc/typescript/deltachat.ts"],
+  "tsconfig": "../../../build/core/deltachat-jsonrpc/typescript/tsconfig.json",
+  "out": "../../../build/core/deltachat-jsonrpc/typescript/docs",
+
+  // The site is a fork's API reference, not upstream's package docs.
+  "name": "SlothfulChat core API — a fork of chatmail core",
+  "titleLink": "../",
+  "readme": "./typedoc-readme.md",
+
+  // RawClient first: it is the class every JSON-RPC method hangs off, and
+  // without this it is one entry among hundreds of generated types. The header
+  // links are on every page, so they are also the way back to the other
+  // reference and to the /api-docs/ index.
+  "navigationLinks": {
+    "RawClient — all API methods": "classes/RawClient.html",
+    "OpenRPC spec": "../openrpc/",
+    "/api-docs/": "../"
+  },
+
+  // Classes (RawClient, BaseDeltaChat) ahead of the type-alias wall.
+  "sort": ["kind", "alphabetical"],
+
+  "githubPages": false,
+  "excludeInternal": true
+}

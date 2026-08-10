@@ -259,29 +259,35 @@ for (const pkg of ['web-app', 'core-wasm', 'ws-tcp-proxy', 'customize']) {
   await cp(join(repo, 'packages', pkg, 'CHANGELOG.md'), join(dist, 'changelog', pkg + '.md'))
 }
 
-// core JSON-RPC API reference at /api-docs/ — NOT generated here. Both halves
-// are produced by the core build in build/core (pinned submodule + patches/core),
-// so they describe the API this bundle actually runs rather than the nearest
-// published @deltachat/jsonrpc-client release:
-//   typescript/docs/          upstream's own `pnpm docs` (typedoc over the
-//                             generated client) — the reference for the types
-//                             @slothfulchat/core-wasm re-exports.
-//   typescript/generated/openrpc.json
-//                             yerpc's OpenRPC generator, switched on by
-//                             patches/core (openrpc_outdir); machine-readable,
-//                             viewable in any OpenRPC tool.
+// core JSON-RPC API reference at /api-docs/. The two references are NOT
+// generated here — they come out of the core build in build/core (pinned
+// submodule + patches/core), so they describe the API this bundle actually runs
+// rather than the nearest published @deltachat/jsonrpc-client release:
+//   api-docs/index.html         signpost page (ours), links to both.
+//   api-docs/typescript/        typedoc over the generated client, run with
+//                               api-docs/typedoc.json (project name, readme,
+//                               RawClient-first nav) — the reference for the
+//                               types @slothfulchat/core-wasm re-exports.
+//   api-docs/openrpc/           viewer page (ours) for…
+//   api-docs/openrpc.json       …yerpc's OpenRPC document, switched on by
+//                               patches/core (openrpc_outdir). Kept raw next to
+//                               the viewer so tools can be pointed at it.
 // Skipped with a warning when the core TS build hasn't run — `pnpm assemble`
 // alone must not require a native cargo build.
-// Kept out of the SW precache (instance-config precacheSkip). No routes.caddy
+// Kept out of the SW precache (instance-config precacheSkip matches the whole
+// api-docs/ prefix, so the subdirectories are covered too). No routes.caddy
 // entry: file_server already serves the directory index, and unlike dist/caddy/
 // (which gets `error /caddy/* 404` because it must NOT leave the box) this is
 // meant to be public.
 const coreTs = join(repo, 'build/core/deltachat-jsonrpc/typescript')
 if (existsSync(join(coreTs, 'docs/index.html'))) {
-  await cp(join(coreTs, 'docs'), join(dist, 'api-docs'), { recursive: true })
+  await mkdir(join(dist, 'api-docs/openrpc'), { recursive: true })
+  await cp(join(here, 'api-docs/index.html'), join(dist, 'api-docs/index.html'))
+  await cp(join(here, 'api-docs/openrpc/index.html'), join(dist, 'api-docs/openrpc/index.html'))
+  await cp(join(coreTs, 'docs'), join(dist, 'api-docs/typescript'), { recursive: true })
   await cp(join(coreTs, 'generated/openrpc.json'), join(dist, 'api-docs/openrpc.json'))
 } else {
-  console.warn('assemble: no /api-docs (build/core client docs missing — run its `pnpm docs`)')
+  console.warn('assemble: no /api-docs (build/core client docs missing — run `pnpm api-docs`)')
 }
 
 // The offline app-shell precache manifest (dist/sw-precache.js) is emitted by
