@@ -100,7 +100,11 @@ export function buildConfig(env, build = {}) {
     devmode: env.NODE_ENV !== 'production',
     // anonymous usage stats: only present when this instance opted in at build
     // time. runtime.ts treats analytics===false as "no analytics" everywhere.
-    analytics: Boolean(plausibleDomain && plausibleApi),
+    // An endpoint that doesn't parse can't be POSTed to and can't be pinned in
+    // the CSP, so events would go nowhere — while privacy.html would still
+    // name a recipient. Treat a typo'd SLOTHFUL_PLAUSIBLE_API as unconfigured
+    // instead: no analytics, and a policy that says so.
+    analytics: Boolean(plausibleDomain && URL.canParse(plausibleApi)),
     plausibleDomain,
     plausibleApi,
     version: build.version || '',
@@ -334,6 +338,13 @@ export function privacyHtml(config, env) {
     }</li>`
   ).join('\n')
 
+  // Who actually receives the events: Plausible's hosted service, or our own
+  // server when SLOTHFUL_PLAUSIBLE_API points somewhere else. Same software
+  // and same data policy either way — only the recipient differs, and that is
+  // exactly the part a privacy policy may not get wrong.
+  const origin = analyticsOrigin(config)
+  const selfHostedAnalytics = Boolean(origin) && !/^https:\/\/([^./]+\.)*plausible\.io$/i.test(origin)
+
   const analyticsSection = config.analytics
     ? `<h2>Anonymous usage statistics</h2>
 <p>This is a public demo instance. To understand which features are used and
@@ -341,10 +352,20 @@ where the app is slow, it collects <strong>anonymized, aggregated usage
 statistics</strong> — using
 <a href="https://plausible.io/data-policy" target="_blank" rel="noopener">Plausible</a>,
 a privacy-focused analytics tool: no cookies, no persistent identifiers, and
-visitor hashes that are unlinkable after 24 hours. Like any web request, each
-event Plausible's API receives carries your IP address and browser
-user-agent; Plausible uses them only to derive daily visitor aggregates and
-never stores them (see their data policy, linked above).
+visitor hashes that are unlinkable after 24 hours.
+${
+  selfHostedAnalytics
+    ? `We run that software <strong>on our own server</strong>
+(<code>${esc(origin)}</code>), so the events go to us and none of them reach
+Plausible the company — their data policy, linked above, still describes what
+the software collects, only the recipient is different. Like any web request,
+each event carries your IP address and browser user-agent; they are used only
+to derive the daily visitor aggregates and are never stored.`
+    : `Like any web request, each event Plausible's API receives carries your IP
+address and browser user-agent; Plausible uses them only to derive daily
+visitor aggregates and never stores them (see their data policy, linked
+above).`
+}
 Statistics are on by default on this instance; you can turn them off
 at any time with the &ldquo;Share anonymous usage statistics&rdquo; checkbox on
 the welcome screen or in the app's settings (Settings → Advanced, and
