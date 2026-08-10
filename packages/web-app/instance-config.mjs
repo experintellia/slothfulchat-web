@@ -100,7 +100,11 @@ export function buildConfig(env, build = {}) {
     devmode: env.NODE_ENV !== 'production',
     // anonymous usage stats: only present when this instance opted in at build
     // time. runtime.ts treats analytics===false as "no analytics" everywhere.
-    analytics: Boolean(plausibleDomain && plausibleApi),
+    // An endpoint that doesn't parse can't be POSTed to and can't be pinned in
+    // the CSP, so events would go nowhere — while privacy.html would still
+    // name a recipient. Treat a typo'd SLOTHFUL_PLAUSIBLE_API as unconfigured
+    // instead: no analytics, and a policy that says so.
+    analytics: Boolean(plausibleDomain && URL.canParse(plausibleApi)),
     plausibleDomain,
     plausibleApi,
     version: build.version || '',

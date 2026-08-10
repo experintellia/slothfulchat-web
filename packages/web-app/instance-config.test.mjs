@@ -124,6 +124,20 @@ test('privacyHtml: names the actual recipient of the events (cloud vs self-hoste
   ok(!own.includes("each event Plausible's API receives"))
 })
 
+test('a SLOTHFUL_PLAUSIBLE_API that does not parse turns analytics off, not on', () => {
+  // it could never receive an event (no CSP origin, fetch throws), so the
+  // policy must not name a recipient at all
+  const config = buildConfig({
+    SLOTHFUL_PLAUSIBLE_DOMAIN: 'demo.example',
+    SLOTHFUL_PLAUSIBLE_API: 'analytics.example/api/event', // no scheme — typo
+  })
+  strictEqual(config.analytics, false)
+  strictEqual(analyticsOrigin(config), '')
+  const html = privacyHtml(config, {})
+  ok(html.includes('no usage data at all'))
+  ok(!html.includes("each event Plausible's API receives"))
+})
+
 test('privacyHtml: relay-providers note and accurate link-preview description', () => {
   const html = privacyHtml(buildConfig({}), {})
   // messages travel through separate relay/provider services

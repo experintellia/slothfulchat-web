@@ -34,8 +34,12 @@ jobs:
       SLOTHFUL_INSTANCE_NAME: ${{ vars.SLOTHFUL_INSTANCE_NAME }}
       # next reports its own origin, not prod's — analytics.ts builds the
       # reported url from SLOTHFUL_INSTANCE_URL (originUrl()), so inheriting
-      # prod's would file every next event under web.slothful.chat.
-      SLOTHFUL_INSTANCE_URL: ${{ vars.SLOTHFUL_NEXT_INSTANCE_URL || vars.SLOTHFUL_INSTANCE_URL }}
+      # prod's would file every next event under web.slothful.chat. Defaulted
+      # rather than falling back to prod's value, so turning analytics on here
+      # can't quietly re-create that: the site id is the only var to set.
+      # Same shape as PREVIEW_DOMAIN in preview-deploy.yml — override the
+      # Variable when the server runs on a different domain.
+      SLOTHFUL_INSTANCE_URL: ${{ vars.SLOTHFUL_NEXT_INSTANCE_URL || 'https://next.slothful.chat' }}
       SLOTHFUL_DEFAULT_PROXY: ${{ vars.SLOTHFUL_DEFAULT_PROXY }}
       SLOTHFUL_PUBLIC_BRIDGES: ${{ vars.SLOTHFUL_PUBLIC_BRIDGES }}
       SLOTHFUL_DEFAULT_CHATMAIL: ${{ vars.SLOTHFUL_DEFAULT_CHATMAIL }}

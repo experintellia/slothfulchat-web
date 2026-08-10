@@ -152,10 +152,10 @@ CSP origin. All three share the `SLOTHFUL_PLAUSIBLE_API` endpoint.
   per PR is impractical. No per-PR setup is needed — each preview reports its
   own `https://pr-<n>.<PREVIEW_DOMAIN>` as the event url, so Plausible's Top
   Pages splits the shared site per PR by itself.
-- Variable `SLOTHFUL_NEXT_INSTANCE_URL` — next's canonical origin
-  (`https://next.slothful.chat`). Falls back to `SLOTHFUL_INSTANCE_URL`, i.e.
-  prod's, which would make next's events report prod's hostname. (Previews
-  need no equivalent — the workflow builds theirs from the PR number.)
+- Variable `SLOTHFUL_NEXT_INSTANCE_URL` — only if next is *not* at
+  `https://next.slothful.chat`. That default is baked into the workflow, so
+  the site id above is normally the only thing to set. (Previews need no
+  equivalent — the workflow builds theirs from the PR number.)
 
 Preview builds run unreviewed PR code, and these Variables are visible to it
 like every other one: a hostile PR could bake its own analytics config into its
