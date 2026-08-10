@@ -140,16 +140,27 @@ is set. In repo Settings → Secrets and variables → Actions:
   (the full `known_hosts` line).
 - Secret `PREVIEW_SSH_KEY` — the deploy key's **private** half from step (e).
 
-Optional, for usage stats on next (both unset = next builds with no analytics
-at all, which is the default):
+Optional, for usage stats on next and the PR previews. Each deployment gets its
+own Plausible **site id**, so its traffic never lands in prod's numbers;
+register the site in the Plausible UI first. Unset (the default) = that
+deployment builds with no analytics at all — no events, no consent UI, no extra
+CSP origin. All three share the `SLOTHFUL_PLAUSIBLE_API` endpoint.
 
-- Variable `SLOTHFUL_NEXT_PLAUSIBLE_DOMAIN` — the Plausible **site id** for
-  next. A separate site from prod's `SLOTHFUL_PLAUSIBLE_DOMAIN`, so next
-  traffic never lands in prod's numbers; register it in the Plausible UI first.
-  The endpoint is the shared `SLOTHFUL_PLAUSIBLE_API`.
+- Variable `SLOTHFUL_NEXT_PLAUSIBLE_DOMAIN` — site id for next.
+- Variable `SLOTHFUL_PREVIEW_PLAUSIBLE_DOMAIN` — site id shared by *every* PR
+  preview. One site for all of them: a site has to be created by hand, so one
+  per PR is impractical. No per-PR setup is needed — each preview reports its
+  own `https://pr-<n>.<PREVIEW_DOMAIN>` as the event url, so Plausible's Top
+  Pages splits the shared site per PR by itself.
 - Variable `SLOTHFUL_NEXT_INSTANCE_URL` — next's canonical origin
   (`https://next.slothful.chat`). Falls back to `SLOTHFUL_INSTANCE_URL`, i.e.
-  prod's, which would make next's events report prod's hostname.
+  prod's, which would make next's events report prod's hostname. (Previews
+  need no equivalent — the workflow builds theirs from the PR number.)
+
+Preview builds run unreviewed PR code, and these Variables are visible to it
+like every other one: a hostile PR could bake its own analytics config into its
+preview. That is why the preview site is separate — the worst case is junk rows
+in a throwaway site, and prod's numbers can't be touched.
 
 Once `PREVIEW_SSH_HOST` is set, the first push to `main` deploys next; uncomment
 the `next` import in `/etc/caddy/Caddyfile` and reload after that first deploy.

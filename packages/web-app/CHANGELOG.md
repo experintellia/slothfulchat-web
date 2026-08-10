@@ -1,5 +1,10 @@
 # Changelog
 
+- **The privacy policy now says who actually receives the usage statistics.**
+  When an instance runs its own Plausible server instead of the hosted service,
+  the policy says so and names that server, rather than implying the data goes
+  to Plausible the company.
+
 - **The installed app no longer offers to open every binary file on Linux.** It
   registered for webxdc apps under a catch-all file type, so the desktop listed
   it as a way to open any unknown file. It now registers `.xdc` files under
