@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Claude <claude.ai.2026@simonlaux.de>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 23 Jul 2026 19:28:34 +0000
 Subject: [PATCH 19/31] wasm: report account storage size (db via PRAGMA +
  blobs via tokio::fs)

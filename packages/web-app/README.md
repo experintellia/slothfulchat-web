@@ -51,7 +51,18 @@ proxy UI); everything browser-specific lives in our own files:
     and forwarded into a chat with `onWebxdcSendToChat({file_name, file_content})`
     (base64 → `writeTempFileFromBase64`, the same contract electron/tauri use).
     Running webxdc isn't supported in this edition, but sending one to a
-    recipient whose client can run it is.
+    recipient whose client can run it is. The accept key is
+    `application/x-webxdc`, not a generic type: Linux associates by MIME, so
+    Chromium copies that key into the installed app's `.desktop` `MimeType=`
+    *and* installs a shared-mime-info glob (`*.xdc` → that type) via `xdg-mime`,
+    which is what teaches the desktop about `.xdc` in the first place. A generic
+    key like `application/octet-stream` would make the app the offered handler
+    for every unrecognized binary on the system. The type has to be exactly the
+    one Delta Chat desktop registers (see its Flatpak's
+    `mime/deltachat-desktop.xml`) — not core's transport type
+    `application/webxdc+zip` — so that on a machine with both installed the two
+    `*.xdc` globs agree and both apps show up under "Open with" instead of one
+    type winning the ambiguity.
   - `launch_handler: focus-existing` keeps the single-instance app from opening
     a second window (which would lose the OPFS lock); a warm launch arrives via
     the launchQueue consumer's `targetURL` instead of a navigation.
@@ -171,7 +182,7 @@ in source. All optional:
 | `SLOTHFUL_RELAY_DIRECTORY` | Relay-directory JSON for the onboarding relay picker (`{"relays":[{"host":"…"}]}`, CORS-readable; the page CSP is pinned to this URL). Unset = the [chatmail-relays-mirror](https://github.com/experintellia/chatmail-relays-mirror) default; `off` = no picker. |
 | `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the "Public Bots" / "Public Channels" community suggestions in the New Chat dialog instance-wide (also hides the per-user settings toggle). |
 | `SLOTHFUL_PLAUSIBLE_DOMAIN` | Plausible "site" id enabling **anonymous usage statistics**. Unset (the default) → no analytics at all: no events, no consent banner, no extra CSP origin. |
-| `SLOTHFUL_PLAUSIBLE_API` | Plausible events endpoint. Defaults to `https://plausible.io/api/event` when a domain is set; point it at your own instance to self-host analytics. |
+| `SLOTHFUL_PLAUSIBLE_API` | Plausible events endpoint. Defaults to `https://plausible.io/api/event` when a domain is set; point it at your own instance to self-host analytics — the generated `privacy.html` then names your server as the recipient instead of Plausible's service. |
 
 ### Telemetry & privacy
 

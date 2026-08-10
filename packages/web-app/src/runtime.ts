@@ -338,6 +338,12 @@ function getCore(): Core {
     for (const stale of [EXPORTS_DIR, '/tmp']) {
       core.fsRemove(stale).catch(() => {})
     }
+    // a stuck PWA update is invisible (no update UI, and the SW's console.warn
+    // dies with its worker): if blobs-sw.ts recorded repeated failed installs
+    // of the same version, tell the user in the device chat
+    surfaceFailedUpdate(core).catch(err =>
+      console.error('could not surface the failed update', err)
+    )
     // the worker reports when it gave up waiting for the OPFS lock — the core
     // is (almost certainly) running in another tab. ponytail: no faster
     // web-lock detection — its release lags on reloads and false-positives
@@ -389,6 +395,9 @@ function getCore(): Core {
     // captured when the import was SENT, so we can hold their success response
     // until the imported blobs are durable (see below)
     const pendingImports = new Map<number | string, Promise<number>>()
+    // request ids of in-flight calls that OPEN an account → their answer is the
+    // moment to ask core whether the migration went through (see below)
+    const pendingOpens = new Set<number | string>()
     // request ids of in-flight import_backup calls → the staged archive they
     // read from, removed once the call is done (see the _onmessage wrap)
     const stagedImports = new Map<number | string, string>()
@@ -431,6 +440,15 @@ function getCore(): Core {
         if (message.method === 'import_backup' && typeof message.params?.[1] === 'string') {
           stagedImports.set(message.id, message.params[1])
         }
+      }
+      // The only two jsonrpc calls that open an account after the worker has
+      // started; both answer with its id. Everything else that exists at boot
+      // was opened by the account manager and is swept below.
+      if (
+        (message?.method === 'add_account' || message?.method === 'migrate_account') &&
+        message.id != null
+      ) {
+        pendingOpens.add(message.id)
       }
       originalSend(message)
     }
@@ -475,6 +493,10 @@ function getCore(): Core {
           .finally(() => originalOnMessage(message))
         return
       }
+      // an account that was just opened: ask before the frontend starts using it
+      if (pendingOpens.delete(message?.id) && typeof message.result === 'number') {
+        void checkMigrationErrors(transport, [message.result])
+      }
       originalOnMessage(message)
     }
     // debug/smoke marker: proves the wasm core booted and answers rpc
@@ -499,6 +521,9 @@ function getCore(): Core {
         // whole origin (accounts, messages, blobs) at once. Only asked once we
         // actually hold data worth protecting (a fresh visitor isn't prompted).
         if (has) void requestPersistentStorage()
+        // The account manager opens every existing account while the worker
+        // starts, so this single sweep covers all of them.
+        if (has) void checkMigrationErrors(transport, ids as number[])
       })
       .catch(() => {})
       .finally(() => {
@@ -586,6 +611,36 @@ window.open = ((url?: string | URL, ...rest: any[]) => {
   }
   return nativeOpen(url as any, ...rest)
 }) as typeof window.open
+
+/** blobs-sw.ts counts consecutive failed installs of the SAME new version in
+ * the surviving cache. Two or more means stuck, not a network blip — so say so
+ * in the device chat. Core drops repeated device messages by label, so this is
+ * one message per stuck version with no bookkeeping here; and the record dies
+ * with the old cache once an update finally lands, so a stale re-send after
+ * recovery is impossible. English only, like every runtime.ts surface. */
+async function surfaceFailedUpdate(core: Core): Promise<void> {
+  const stored = await caches.match('./__sw-update-failed__')
+  const rec = stored && (await stored.json())
+  if (!rec || !(rec.attempts >= 2)) return
+  const text =
+    `Updating ${APP_NAME} failed ${rec.attempts} times: a file of the new ` +
+    'version could not be downloaded. You are still on the previous version, ' +
+    'which keeps working (offline too), and the update is retried on every ' +
+    'start.\n\n' +
+    'If this happens for future versions as well, something on this device is ' +
+    'likely blocking the download — a browser extension, a network filter, or ' +
+    `full storage.\n\nDetails: ${rec.errors?.[0] ?? 'unknown'}`
+  for (const id of (await core.transport.request('get_all_account_ids', [])) as number[]) {
+    // plain text + versioned label, as checkMigrationErrors does below — the
+    // version in the label is what re-arms the warning for the NEXT stuck
+    // version while core still drops repeats of this one
+    await core.transport.request('add_device_message', [
+      id,
+      `sw-update-failed-${rec.version}`,
+      { text },
+    ])
+  }
+}
 
 /** blob service worker: page side. The SW forwards GET /blobs/:acc/:file to
  * us, we read from the core memfs and post the bytes back. */
@@ -1442,8 +1497,14 @@ class BrowserRuntime {
     }
     return null
   }
-  writeClipboardText(text: string): Promise<void> {
-    return navigator.clipboard.writeText(text)
+  writeClipboardText(text: string | Promise<string>): Promise<void> {
+    if (typeof text === 'string') {
+      return navigator.clipboard.writeText(text)
+    }
+    // The caller still has to fetch the text (multiselect "Copy Text").
+    // Awaiting first would lose transient activation and Safari/WebKit would
+    // reject the write, so hand `ClipboardItem` the pending promise instead.
+    return navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })])
   }
   async writeClipboardImage(path: string): Promise<void> {
     try {
@@ -2065,6 +2126,73 @@ function showFatalDialog(
   // only once the notice is actually on screen — releaseHeldEvents() records
   // that it was shown, so calling it without showing it would be a lie
   if (notify) analytics.releaseHeldEvents()
+}
+
+// Core dedupes device messages by this label, forever and per account — never
+// vary it, or a broken account gets the same warning again on every boot.
+const MIGRATION_ERROR_LABEL = 'slothful-migration-error'
+// This fork's own tracker, not upstream's: the migration runs through our patch
+// stack and our OPFS SQLite, so a failure here is ours to look at.
+// ponytail: edit this to your repo if you fork this (as BRIDGE_HELP_URL above).
+const MIGRATION_ERROR_ISSUE_URL =
+  'https://github.com/experintellia/slothfulchat-web/issues'
+
+/** Ask core whether these accounts survived their database migration, and tell
+ * the user in the affected account's own device chat if one did not.
+ *
+ * Opening an account with a failed migration does NOT fail: core logs the
+ * error, records it, and returns success on purpose, so that a half-migrated
+ * account can still be exported as a backup instead of being unreachable
+ * (vendor/core/src/sql.rs). The price is that the failure is invisible unless
+ * the UI asks — and an account that silently lost a migration (the key-contacts
+ * one is the known offender) then misbehaves later, in code that has no idea
+ * why. So ask, at every point where an account is opened.
+ *
+ * A device message rather than a blocking dialog: it names the problem in the
+ * account it is about, next to the backup export it asks for, and leaves the
+ * app usable — which is the whole point, since the recovery is to get the data
+ * out. `add_device_message`'s label is what keeps it to one message ever: core
+ * records the label in `devmsglabels` and drops every later add with the same
+ * one, even if the message was deleted in between (vendor/core/src/chat.rs), so
+ * the repeat on each boot costs nothing.
+ *
+ * ponytail: one RPC per account, sequential — fine for the handful of accounts
+ * a browser profile holds; batch it if that ever stops being true. */
+async function checkMigrationErrors(transport: any, ids: number[]): Promise<void> {
+  for (const id of ids) {
+    // a core too old to know the method, or one that died meanwhile, must not
+    // take the app down with an unhandled rejection
+    const error = await transport.request('get_migration_error', [id]).catch(() => null)
+    if (!error) continue
+    analytics.event('boot_error', { kind: 'migration-error' })
+    // Core prefixes its own "send this to the Delta Chat developers, either at
+    // delta@merlinux.eu or at https://support.delta.chat" boilerplate and
+    // separates it from the real error with a blank line (set_migration_error,
+    // vendor/core/src/sql.rs). Pasted whole, the message would carry two
+    // contradictory places to report to — and theirs looks the more specific.
+    // Keep the error only; fall back to the whole string if core ever changes
+    // the shape, so a core bump degrades to showing too much rather than
+    // nothing. Cosmetic and on our display path, so not worth a core patch.
+    const detail = String(error).split('\n\n').slice(1).join('\n\n') || String(error)
+    // plain text, no markdown — device messages render as-is and autolink URLs
+    await transport
+      .request('add_device_message', [
+        id,
+        MIGRATION_ERROR_LABEL,
+        {
+          text:
+            `⚠ ${APP_NAME} could not finish updating this account's database to ` +
+            'the current version. Contacts and messages in this account can be ' +
+            'wrong from now on. Nothing was deleted — please export a backup ' +
+            '(Settings → Chats → Export Backup) and keep it safe.\n\n' +
+            'Please report this, with the error text below, at ' +
+            `${MIGRATION_ERROR_ISSUE_URL}\n\n${detail}`,
+        },
+      ])
+      .catch((err: unknown) =>
+        console.error('could not add the migration-error device message', err)
+      )
+  }
 }
 
 /** The whole app is a wasm core, so a browser with WebAssembly switched off can

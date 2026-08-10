@@ -406,6 +406,23 @@ exists:
   summary. Only in the global gallery — per-chat galleries would just repeat
   the chat you are already in. `desktop/0075`
 
+- **"Copy Text" for a multi-message selection** — selecting a second message
+  collapsed the context menu to Forward and Delete. It now also copies the
+  selected bodies, one per line, in display order, from the menu or with
+  Ctrl/Cmd + C (which stands aside when there is a DOM text selection, so the
+  browser's own copy still wins). `selectedItems` is a `Set` in click order,
+  so the message list's chronological ids moved onto
+  `MessageMultiselectContext` and both paths filter those — which also stops a
+  bottom-up Ctrl + click selection from being forwarded and deleted in reverse.
+  Text-less messages (stickers, bare attachments) drop out instead of becoming
+  `[photo.jpg]` lines; that is transcript formatting, and Export Chat already
+  writes transcripts. The web-specific part: a Shift + click range spans
+  messages the list never loaded, so the text needs a `getMessages` round-trip,
+  and awaiting it first would lose transient activation and make WebKit reject
+  the clipboard write — `writeClipboardText()` therefore also takes a
+  `Promise<string>`, which the browser targets hand straight to `ClipboardItem`.
+  `desktop/0079`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not
@@ -440,6 +457,23 @@ contribution intended.
   before calling `preventDefault`, so it fired too late for the web build
   (Electron has no native menu, so upstream never saw it). `preventDefault`
   now runs synchronously before the await. `desktop/0036`
+- Long-press context menus were unreachable on phones, for stacked reasons.
+  On Android, the account sidebar's `draggable` (the desktop reorder gesture)
+  made Blink spend the long press starting a drag no finger can complete
+  instead of firing `contextmenu` — the same combination broke gallery items
+  and message attachments; `draggable` is now off on coarse pointers. On iOS,
+  the press also selected the text under the finger (Safari only honors
+  `user-select` prefixed, so `-webkit-user-select` and
+  `-webkit-touch-callout` now sit beside the app-wide unprefixed rule), and
+  Safari fires no `contextmenu` event for touch presses at all
+  (mdn/browser-compat-data#6376), so every long-press menu — chat list,
+  messages, gallery, sidebar — was dead there; a document-level fallback
+  synthesizes the event after a 700 ms resting press. Per-press feature
+  detection, no user-agent sniffing: Blink's own ~500 ms event cancels the
+  fallback; editable text is left alone, and so is explicitly selectable text
+  — a long press on a message body still selects, the message's menu opens
+  from the bubble's non-text parts; the synthesized menu's release click
+  is swallowed so it cannot close the menu it just opened. `desktop/0081`
 - Receiving a message from a contact left that contact's 1:1 chatlist item
   stale: becoming "recently seen" updates the item's indicator, but the event
   that tells the UI to re-render it was only emitted for the reverse
@@ -484,6 +518,13 @@ contribution intended.
 - The settings sub-pages (chats & media, notifications, appearance, advanced,
   connectivity, profile editor) go edge-to-edge on phones too, matching the
   settings root; small pickers and alerts stay popups. `desktop/0031`
+- Profiles can be reordered with a finger: no browser starts its drag-and-drop
+  from a touch, so the sidebar drives the gesture itself. A press arms a
+  reorder after 250 ms — before the browser's ~500 ms long press — and only
+  movement after that takes it over from the list scroller; moving earlier
+  stays a scroll, resting still opens the context menu. Mouse reordering keeps
+  using the browser's drag and drop; both end in one pure `reorderedAccounts()`
+  covered by `scripts/test-account-reorder-touch.mjs`. `desktop/0081`
 - The QR reader defaults to the rear camera — you scan someone else's code,
   not your own face. `desktop/0015`
 - The connectivity view shows a loading state instead of a blank iframe while

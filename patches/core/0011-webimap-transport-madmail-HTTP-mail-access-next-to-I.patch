@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: experintellia <280144245+experintellia@users.noreply.github.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 8 Jul 2026 12:17:27 +0000
 Subject: [PATCH 11/31] webimap transport: madmail HTTP mail access next to
  IMAP/SMTP

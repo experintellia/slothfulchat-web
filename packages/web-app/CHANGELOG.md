@@ -1,5 +1,58 @@
 # Changelog
 
+- **The privacy policy now says who actually receives the usage statistics.**
+  When an instance runs its own Plausible server instead of the hosted service,
+  the policy says so and names that server, rather than implying the data goes
+  to Plausible the company.
+
+- **The installed app no longer offers to open every binary file on Linux.** It
+  registered for webxdc apps under a catch-all file type, so the desktop listed
+  it as a way to open any unknown file. It now registers `.xdc` files under
+  their own type, which also makes "Open with" work for webxdc archives your
+  desktop didn't recognize before.
+
+- **Long-press menus now work on phones.** Holding a chat, a message, a photo
+  or a profile is how every menu opens on mobile, and it was broken across the
+  board: on Android, some elements started an invisible drag instead of
+  opening their menu; on iPhones no menu could open at all — iOS doesn't tell
+  web pages about long presses, and the press selected the text under your
+  finger on top. The app now watches the press itself, everywhere. Selecting
+  message text still works: press the text to select it, and the bubble
+  around it for the menu.
+
+- **Profiles can be reordered on a phone.** Press a profile in the account
+  sidebar, wait for it to lift, then drag it where you want it — flicking still
+  scrolls the list and a plain long press still opens the profile menu.
+
+- **A half-downloaded update can no longer cost you the offline app.** If a
+  file of a new version fails to download, the app now stays on the version
+  you have — which still works offline — and retries later, instead of
+  switching to the incomplete one and dropping the complete copy. And if the
+  same update keeps failing, a message in the device chat tells you, including
+  which file is stuck.
+
+- **An account that failed to update now says so.** When a new version can't
+  finish updating an account's database, the account still opens — but chatting
+  with it can produce wrong contacts or messages. The app now checks after
+  opening and posts a one-off message in that account's device chat: what
+  happened, the error text, and a reminder to export a backup while you still
+  can.
+
+- **You can copy the text of several messages at once.** Select more than one
+  message and the context menu now offers "Copy Text" next to Forward and
+  Delete, or just press Ctrl/Cmd + C — the bodies land on the clipboard one
+  per line, oldest first, no matter which order you clicked them in. Messages
+  that are only a sticker or an attachment are left out.
+
+- **Hardening**: bumped DOMPurify (used to sanitize HTML email before display)
+  to 3.4.13, which fixes a DOM-clobbering issue in the sanitizer's own setup
+  logic.
+
+- **A voice message you haven't downloaded yet now looks like the player it's
+  about to become.** With the experimental audio player switched on, the
+  waiting card kept the old bar's shape and visibly changed layout the moment
+  the download finished; it now shows the same two-row waveform layout.
+
 - **The app now refuses to run inside another site's frame.** Static hosts like
   GitHub Pages can't send the header that normally forbids this, so a hostile
   page could embed the app invisibly and trick you into clicking things in it.

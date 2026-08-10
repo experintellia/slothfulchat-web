@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Simon Laux <git@simonlaux.de>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 17 Jan 2026 16:26:58 +0100
 Subject: [PATCH 27/31] don't emit changed on joining broadcast
 

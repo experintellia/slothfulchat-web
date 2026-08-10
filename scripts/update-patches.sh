@@ -14,6 +14,10 @@ update() {
   # submodule clone would rewrite the `index <sha>..<sha>` line of every patch and
   # bury a one-patch change in hundreds of lines of churn. `git am` ignores it.
   git -c core.abbrev=7 -C "$root/build/$name" format-patch --zero-commit --no-signature -o "$root/patches/$name" "$base" >/dev/null
+  # Authorship in the stack is throwaway; format-patch bakes in whatever git
+  # identity the worktree commit happened to use, which has leaked real email
+  # addresses. Pin the From: header (first one = the mail header) to a dummy.
+  sed -i '0,/^From: /s/^From: .*/From: slothfulchat <patches@slothfulchat.invalid>/' "$root/patches/$name"/*.patch
   echo "$name: $(ls "$root/patches/$name" | wc -l) patch(es)"
 }
 

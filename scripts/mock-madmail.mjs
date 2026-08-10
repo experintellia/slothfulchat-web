@@ -61,16 +61,24 @@ const meta = (uid, raw) => ({
  *   really is deleted. Only test-webimap.mjs — which exists to test the
  *   transport itself — turns these on; for every other caller they would be
  *   noise in a test about something else.
+ * @param {boolean} [options.holdPostMessages] Accept but never deliver the
+ *   post-message half of a large attachment (`Chat-Is-Post-Message`), leaving
+ *   the recipient with the pre-message placeholder. Only
+ *   shot-download-placeholder.mjs needs this.
  * @returns {Promise<{
  *   server: import('node:http').Server,
  *   port: number,
  *   users: Map<string, object>,
  *   counters: { newCalls: number, sendCalls: number, deleteCalls: number,
- *               phantom404Gets: number, delete404s: number },
+ *               phantom404Gets: number, delete404s: number,
+ *               heldPostMsgs: number },
  *   close: () => void,
  * }>}
  */
-export async function startMockMadmail({ probes = false } = {}) {
+export async function startMockMadmail({
+  probes = false,
+  holdPostMessages = false,
+} = {}) {
   const users = new Map()
   // phantom404Gets / delete404s only ever move when `probes` is on; they are
   // what test-webimap.mjs asserts the core actually walked into both shapes.
@@ -80,6 +88,7 @@ export async function startMockMadmail({ probes = false } = {}) {
     deleteCalls: 0,
     phantom404Gets: 0,
     delete404s: 0,
+    heldPostMsgs: 0,
   }
   let userSeq = 0
 
@@ -191,10 +200,21 @@ export async function startMockMadmail({ probes = false } = {}) {
           .flatMap(r => (typeof r === 'string' ? r.split(/[,\s]+/) : []))
           .map(r => r.trim())
           .filter(Boolean)
+        const body = payload.body ?? ''
+        // A large attachment is sent as two mails: a small pre-message with
+        // the metadata and a post-message carrying the file. Holding the
+        // post-message back leaves the recipient in the download-on-demand
+        // state — which on a real IMAP transport is what `download_limit`
+        // produces, but webimap always fetches whole bodies, so the only way
+        // to reach it here is to not deliver the post-message at all.
+        if (holdPostMessages && /^Chat-Is-Post-Message:/im.test(body)) {
+          counters.heldPostMsgs++
+          return void json(res, 200, { status: 'sent' })
+        }
         for (const rcpt of recipients) {
           const dest = users.get(rcpt)
           if (!dest) continue
-          dest.msgs.set(dest.nextUid++, payload.body ?? '')
+          dest.msgs.set(dest.nextUid++, body)
           const waiters = dest.waiters
           dest.waiters = []
           for (const w of waiters) {

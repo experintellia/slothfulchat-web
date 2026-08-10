@@ -1,0 +1,222 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 6 Aug 2026 22:51:19 +0000
+Subject: [PATCH 80/81] web-app: match the audio download placeholder to the
+ custom player
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The download-on-demand placeholder for audio/voice (desktop/0068) mimics
+the native <audio controls> bar: a pill with a circular download button
+where play sits, the duration, a fake track and the size. Since
+desktop/0072 that is only half the story — with
+experimentalAudioPlayerControls on, the downloaded message renders as the
+custom player instead (full-width waveform on top, elapsed/total time and
+a speed pill beneath), so the card visibly changed shape the moment the
+download finished.
+
+The placeholder now follows the setting: off, the pill stays exactly as
+before; on, it renders the custom player's two-row layout with the
+download circle in the play slot.
+
+The layout classes come from AudioPlayer/styles.module.scss itself
+(.customControls / .stack / .seekWrap / .metaRow / .time) rather than
+being re-derived here, so the placeholder inherits the real geometry —
+the 300px min-width floor and the min(70vw, 340px) phone override — and
+cannot drift from it.
+
+The one measurement that has to be restated is the waveform row's 32px.
+.seekWrap is a column flex item with flex: 1, so flex-basis replaces its
+`height` and the row is really sized by its content — the 32px range
+input in the real player. The stand-in has to carry that height itself or
+the row collapses and the time/size line rides up against the bar.
+
+Two deliberate departures from the real player:
+
+- The waveform is flat, and dotted rather than solid: a dashed hairline
+  centred in the row reads as an inert stand-in, where a flat bar reads
+  as a waveform that failed to load. It sits at 0.25 against the
+  unplayed bars' 0.35, so "not downloaded yet" is legible without a
+  label. There is no audio to analyse until the message is downloaded,
+  and a canvas + worker round trip for a stand-in would be all cost and
+  no information.
+- The size takes the speed pill's slot. A speed control on a
+  placeholder would be a button that cannot do anything — the same
+  reasoning that keeps a play glyph off the video placeholder.
+
+The elapsed/total pair is formatted with the player's own
+formatAudioTime so both agree; duration is milliseconds on T.Message and
+seconds in the player, hence the /1000. Senders that predate
+Chat-Duration leave it at 0 and the total stays "-:--", as before.
+
+Closes #160.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .../_message-download-placeholder.scss        | 34 ++++++++
+ .../message/DownloadOnDemandPlaceholder.tsx   | 78 +++++++++++++------
+ 2 files changed, 90 insertions(+), 22 deletions(-)
+
+diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
+index fb2417d..5773c9e 100644
+--- a/packages/frontend/scss/message/_message-download-placeholder.scss
++++ b/packages/frontend/scss/message/_message-download-placeholder.scss
+@@ -99,6 +99,39 @@
+     }
+   }
+ 
++  // Custom-player variant (experimentalAudioPlayerControls): all the geometry
++  // comes from AudioPlayer's own module classes, so only the stand-in waveform
++  // and the size text need rules here. No panel background — the real custom
++  // controls sit bare on the bubble.
++  .fake-custom-player {
++    .fake-waveform {
++      flex: 1;
++      min-width: 40px;
++      // The real .seekWrap is a column flex item, so its height comes from its
++      // content (the 32px range input) — not from its own `height`. Match that
++      // height here or the row collapses and the time/size line rides up.
++      height: 32px;
++      // Flat and dotted: there is no audio to analyse until the message is
++      // downloaded, and a dashed hairline reads as an inert stand-in rather
++      // than a waveform with nothing in it. Fainter than the unplayed bars'
++      // 0.35 for the same reason.
++      opacity: 0.25;
++      background-image: repeating-linear-gradient(
++        to right,
++        currentColor 0 1.5px,
++        transparent 1.5px 4px
++      );
++      background-repeat: no-repeat;
++      background-size: 100% 6px;
++      background-position: center;
++    }
++
++    .size {
++      font-size: 11px;
++      color: var(--messageAttachmentFileInfo);
++    }
++  }
++
+   // Grey fallback box shown when there is no thumbnail (any placement).
+   .download-on-demand-empty {
+     background-color: var(--messageAttachmentIconBg);
+@@ -155,6 +188,7 @@
+ 
+   // In-row ring/button sizing for the audio pill and file card.
+   .fake-audio-player,
++  .fake-custom-player,
+   &.message-attachment-generic {
+     .download-progress-circle {
+       flex-shrink: 0;
+diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
+index 6402583..a8c369b 100644
+--- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
++++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
+@@ -9,8 +9,11 @@ import { formatDuration } from '../dialogs/MessageDetail/BasicMessageInfo'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import Icon from '../Icon'
+ import Button from '../Button'
++import { formatAudioTime } from '../AudioPlayer/utils'
++import { useSettingsStore } from '../../stores/settings'
+ 
+ import styles from './styles.module.scss'
++import audioStyles from '../AudioPlayer/styles.module.scss'
+ import {
+   getPostMessageViewType,
+   placeholderCaption,
+@@ -160,6 +163,9 @@ export default function DownloadOnDemandPlaceholder({
+   tabindexForInteractiveContents,
+ }: PlaceholderProps) {
+   const tx = useTranslationFunction()
++  const customAudioControls =
++    useSettingsStore()[0]?.desktopSettings.experimentalAudioPlayerControls ===
++    true
+   // Upstream's content-below class neutralises the full-bleed negative bottom
+   // margin and squares the bottom corners whenever a caption follows - reuse it
+   // instead of reinventing the spacing.
+@@ -208,33 +214,61 @@ export default function DownloadOnDemandPlaceholder({
+     )
+   }
+ 
+-  // Audio / Voice: mimic the real player (a native <audio controls> bar):
+-  // a pill with a circular download button where play sits, the duration,
+-  // a fake track, and the size. No filename — the real player shows none.
++  // Audio / Voice: mimic whichever player the message will turn into, so the
++  // card doesn't reshape itself on download. Both variants put the download
++  // circle in the play slot and show the duration and the size; no filename,
++  // neither player shows one.
+   if (viewType === 'Audio' || viewType === 'Voice') {
++    const downloadControl =
++      message.downloadState === 'InProgress' ? (
++        <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
++      ) : (
++        <CircleDownloadButton
++          messageId={message.id}
++          accountId={accountId}
++          tabIndex={tabindexForInteractiveContents}
++        />
++      )
+     return (
+       <div
+         className={'message-attachment-audio download-on-demand' + contentBelow}
+       >
+-        <div className='fake-audio-player'>
+-          {message.downloadState === 'InProgress' ? (
+-            <ProgressCircle
+-              percent={downloadPercent}
+-              label={tx('downloading')}
+-            />
+-          ) : (
+-            <CircleDownloadButton
+-              messageId={message.id}
+-              accountId={accountId}
+-              tabIndex={tabindexForInteractiveContents}
+-            />
+-          )}
+-          <span className='time'>
+-            {message.duration > 0 ? formatDuration(message.duration) : '–:––'}
+-          </span>
+-          <div className='fake-track' aria-hidden='true' />
+-          <span className='size'>{filesize(message.fileBytes ?? 0)}</span>
+-        </div>
++        {customAudioControls ? (
++          // Custom player (experimentalAudioPlayerControls): borrow its own
++          // layout classes so the placeholder inherits the real geometry
++          // (300px floor, 70vw on phones, 32px waveform row) instead of
++          // re-deriving it. The waveform is flat — there is no audio to
++          // analyse yet — and the size takes the speed pill's slot, since a
++          // speed control would be a button that cannot do anything.
++          <div className={audioStyles.customControls + ' fake-custom-player'}>
++            {downloadControl}
++            <div className={audioStyles.stack}>
++              <div className={audioStyles.seekWrap}>
++                <div className='fake-waveform' aria-hidden='true' />
++              </div>
++              <div className={audioStyles.metaRow}>
++                <span className={audioStyles.time}>
++                  {formatAudioTime(0)} /{' '}
++                  {message.duration > 0
++                    ? formatAudioTime(message.duration / 1000)
++                    : '–:––'}
++                </span>
++                <span className='size'>{filesize(message.fileBytes ?? 0)}</span>
++              </div>
++            </div>
++          </div>
++        ) : (
++          // Native <audio controls> bar: a pill with the duration, a fake
++          // track and the size.
++          <div className='fake-audio-player'>
++            {downloadControl}
++            <span className='time'>
++              {message.duration > 0 ? formatDuration(message.duration) : '–:––'}
++            </span>
++            <div className='fake-track' aria-hidden='true' />
++            <span className='size'>{filesize(message.fileBytes ?? 0)}</span>
++          </div>
++        )}
+         {message.downloadState === 'Failure' && (
+           <span className='failed'>{tx('download_failed')}</span>
+         )}

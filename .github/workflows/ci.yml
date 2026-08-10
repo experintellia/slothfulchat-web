@@ -42,11 +42,16 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
+      # Third-party actions are pinned to reviewed commit SHAs (the trailing
+      # comment names the version); persist-credentials: false keeps the
+      # checkout token out of .git/config while PR code runs.
       - name: Checkout (no submodules — nothing here needs them)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Setup Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: Enable corepack (provides the pinned pnpm)
@@ -102,16 +107,23 @@ jobs:
       - name: Unit-test packages/calls engine + bridge (interop, ICE, popup IPC)
         run: node --test packages/calls/engine/*.test.ts packages/calls/bridge/*.test.ts
 
+      # No release tags upstream — this is the head of the action's `stable`
+      # branch, which is also what sets the toolchain default (see the note in
+      # .github/actions/build-web-app/action.yml).
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable branch
         with:
           components: clippy
           targets: wasm32-unknown-unknown
 
+      # save-if: same reason as in .github/actions/build-web-app — a cache every
+      # PR writes and no PR can read is just eviction pressure on the repo's
+      # 10 GB budget. main populates it, PRs read it.
       - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: crates/tokio-wasm-shim
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
 
       # The shim crate has no submodule deps, so lint it on both targets —
       # neither is a superset of the other:
@@ -133,12 +145,57 @@ jobs:
           cargo clippy --all-targets --target wasm32-unknown-unknown
           cargo test
 
-      # Audit finding L-05: the Rust half. Costs a few minutes cold (builds
-      # from source — the prebuilt binaries live on GitHub releases, which this
-      # repo's other install steps have had trouble with); rust-cache above
-      # caches ~/.cargo/bin, so warm runs are a no-op "already installed".
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+      # Audit finding L-05: the Rust half. This used to be
+      # `cargo install cargo-audit --locked`, which builds from source and costs
+      # ~2m50s — three quarters of this whole job — on the note that the
+      # prebuilt binaries live on GitHub releases, which this repo's other
+      # install steps have had trouble with. That trouble is a sandboxed-dev
+      # problem (see CLAUDE.md on wasm-pack and wasm-opt); a runner downloads
+      # from GitHub releases perfectly well, which is where its own actions come
+      # from. rustsec publishes a static musl build per release, so just take it.
+      #
+      # rust-cache above does carry the built binary — cache-bin defaults to
+      # true and ~/.cargo/bin is in its Cache Paths — so the source build was
+      # only ever paid on runs where that cache was cold. Which is not rare:
+      # 31038961381 and 31132164004 both were, and PRs no longer write that
+      # cache at all (save-if above). Downloading takes ~2s and does not care
+      # either way, so the failure mode is gone rather than hedged.
+      #
+      # Pinned by version AND sha256, like every other release asset we fetch
+      # (see packages/web-app/release-asset.mjs), and sha256sum -c fails closed.
+      # Note this is MORE pinned than what it replaced, not less: --locked
+      # pinned cargo-audit's own dependency lockfile, never cargo-audit itself,
+      # so every cold run installed whatever was latest that day.
+      #
+      # What the digest buys: GitHub lets a release asset be replaced under an
+      # existing tag, and this catches that. What it does not buy: authenticity
+      # at bump time — re-deriving it from the .tgz you just downloaded blesses
+      # whatever you got. rustsec publishes no signed manifest, so if you want
+      # more than trust-on-first-use, cross-check the bump against a second
+      # source (the crates.io release of the same version) before pasting it.
+      #
+      # ponytail: the version pin has no auto-bump path — Dependabot and Renovate
+      # do not read an env-var-pinned release tarball, so this stays at 0.22.2
+      # until a human moves it. Tolerable because the pin does not stale the
+      # gate's data (the advisory database is fetched from RustSec at run time,
+      # so detection quality does not rot) and because the eventual break is
+      # loud: an advisory-db format the pinned tool cannot read fails the audit
+      # step rather than passing it. Upgrade path if that ever bites: bump both
+      # env vars together, or move to taiki-e/install-action@cargo-audit and
+      # accept the extra action dependency.
+      - name: Install cargo-audit (prebuilt, pinned + digest-checked)
+        env:
+          CARGO_AUDIT_VERSION: 0.22.2
+          CARGO_AUDIT_SHA256: 7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428
+        run: |
+          set -euo pipefail
+          dir="cargo-audit-x86_64-unknown-linux-musl-v$CARGO_AUDIT_VERSION"
+          curl -sSfL --retry 3 --retry-connrefused -o cargo-audit.tgz \
+            "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v$CARGO_AUDIT_VERSION/$dir.tgz"
+          echo "$CARGO_AUDIT_SHA256  cargo-audit.tgz" | sha256sum -c -
+          tar -xzf cargo-audit.tgz -C "$HOME/.cargo/bin" --strip-components=1 "$dir/cargo-audit"
+          rm -f cargo-audit.tgz
+          cargo audit --version
 
       # Only lockfiles that are actually checked in — build/core/Cargo.lock
       # does not exist until `pnpm apply-patches` runs, and core-wasm's lock is
@@ -161,9 +218,10 @@ jobs:
     timeout-minutes: 55
     steps:
       - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
+          persist-credentials: false
 
       # The whole build — toolchains, patch stacks, caches, jsonrpc-client,
       # wasm, assembled dist/ — lives in the composite action the three deploy
@@ -198,7 +256,7 @@ jobs:
       # Browser downloads are cached; `playwright install` skips the download
       # when the pinned browser build is already in ~/.cache/ms-playwright.
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -286,6 +344,13 @@ jobs:
       - name: E2E test — fatal-start dialog
         run: node scripts/test-fatal-dialog.mjs
 
+      # migration-error device message e2e (no proxy, no core boot — a stub
+      # worker answers the sweep): core keeps an account whose database
+      # migration failed open and only records the error, so the app must ask
+      # after opening and warn in that account's device chat, once.
+      - name: E2E test — migration-error device message
+        run: node scripts/test-migration-message.mjs
+
       # throwaway-session gate e2e (no proxy, no core boot): a link carrying
       # ?persist=0 must be confirmed before a memory-only session starts, the
       # consent must be per tab, and such a session must show its yellow navbar.
@@ -356,11 +421,25 @@ jobs:
       - name: Self-check — video poster frame grab
         run: node scripts/test-video-poster.mjs
 
+      # touch reorder self-check (fully offline, no core-wasm needed): drive real
+      # touch sequences at the account sidebar's hook and assert that only
+      # "hold, then move" reorders — an early move is a scroll, and a press that
+      # opens the context menu must leave the order alone.
+      - name: Self-check — reordering profiles with a finger
+        run: node scripts/test-account-reorder-touch.mjs
+
       # media metadata self-check (fully offline): record real audio and video
       # whose containers carry no duration — like our own recorder's mp3 — and
       # assert the reader still measures them instead of reporting Infinity.
       - name: Self-check — media metadata (duration / pixel size)
         run: node scripts/test-media-metadata.mjs
+
+      # download-on-demand placeholder e2e (fully offline, mock madmail): a
+      # voice note over the receiver's download_limit arrives as a pre-message;
+      # assert the placeholder mimics the native pill with the custom player
+      # off and its two-row layout with it on. Also writes the shots.
+      - name: E2E test — audio download placeholder
+        run: node scripts/shot-download-placeholder.mjs
 
       # unfurl service self-check (fully offline): metadata + inline image,
       # SSRF guards (the non-global address table, private-IP / literal-IP
