@@ -45,7 +45,9 @@ jobs:
     runs-on: ubuntu-latest
     # NO secrets in this job — it runs the PR's own build scripts. Only the
     # same SLOTHFUL_* branding as prod (deploy-pages.yml) so previews match the
-    # flagship build, minus SLOTHFUL_PLAUSIBLE_*: analytics track prod only
+    # flagship build, minus SLOTHFUL_PLAUSIBLE_*: prod and next each track
+    # their own Plausible site, per-PR previews track nothing — a site has to
+    # be registered by hand in the Plausible UI, so one per PR is a non-starter
     # (issue #134). These are repo Variables, not secrets, and they have to be
     # here rather than on `deploy` because the composite build action's
     # assemble step reads them as inherited process env at build time.

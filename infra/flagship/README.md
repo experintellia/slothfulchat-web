@@ -140,6 +140,17 @@ is set. In repo Settings → Secrets and variables → Actions:
   (the full `known_hosts` line).
 - Secret `PREVIEW_SSH_KEY` — the deploy key's **private** half from step (e).
 
+Optional, for usage stats on next (both unset = next builds with no analytics
+at all, which is the default):
+
+- Variable `SLOTHFUL_NEXT_PLAUSIBLE_DOMAIN` — the Plausible **site id** for
+  next. A separate site from prod's `SLOTHFUL_PLAUSIBLE_DOMAIN`, so next
+  traffic never lands in prod's numbers; register it in the Plausible UI first.
+  The endpoint is the shared `SLOTHFUL_PLAUSIBLE_API`.
+- Variable `SLOTHFUL_NEXT_INSTANCE_URL` — next's canonical origin
+  (`https://next.slothful.chat`). Falls back to `SLOTHFUL_INSTANCE_URL`, i.e.
+  prod's, which would make next's events report prod's hostname.
+
 Once `PREVIEW_SSH_HOST` is set, the first push to `main` deploys next; uncomment
 the `next` import in `/etc/caddy/Caddyfile` and reload after that first deploy.
 
