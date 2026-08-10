@@ -227,7 +227,11 @@ runs:
           build/core/deltachat-jsonrpc/typescript/dist
           build/core/deltachat-jsonrpc/typescript/docs
           build/core/deltachat-jsonrpc/typescript/generated
-        key: jsonrpc-client-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ steps.core-rev.outputs.sha }}-${{ hashFiles('patches/core/*.patch') }}
+        # mark-fork-api.mjs is in the key because the cached docs/ and
+        # generated/ carry its 🦥 marks: without it, editing the marker alone
+        # restores stale, differently-marked output and the change appears to
+        # have done nothing.
+        key: jsonrpc-client-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ steps.core-rev.outputs.sha }}-${{ hashFiles('patches/core/*.patch', 'scripts/mark-fork-api.mjs') }}
 
     # rustwasm's prebuilt musl binary, pinned by version AND sha256, replacing
     # the upstream `curl … installer/init.sh | sh` — which was unversioned
