@@ -25,14 +25,21 @@ jobs:
   deploy:
     if: vars.PREVIEW_SSH_HOST != ''
     runs-on: ubuntu-latest
-    # Same SLOTHFUL_* branding as prod (deploy-pages.yml), minus the
-    # SLOTHFUL_PLAUSIBLE_* pair: analytics track prod only — next builds
-    # without them so its traffic never pollutes prod stats (issue #134
-    # tracks dedicated Plausible sites for next/staging, if ever wanted).
+    # Same SLOTHFUL_* branding as prod (deploy-pages.yml). Analytics point at
+    # their OWN Plausible site (SLOTHFUL_NEXT_PLAUSIBLE_DOMAIN) so next traffic
+    # never pollutes prod stats; unset = no analytics at all, so this stays
+    # dark until that site is registered in the Plausible UI (issue #134).
     # Inherited as process env by the composite assemble step.
     env:
       SLOTHFUL_INSTANCE_NAME: ${{ vars.SLOTHFUL_INSTANCE_NAME }}
-      SLOTHFUL_INSTANCE_URL: ${{ vars.SLOTHFUL_INSTANCE_URL }}
+      # next reports its own origin, not prod's — analytics.ts builds the
+      # reported url from SLOTHFUL_INSTANCE_URL (originUrl()), so inheriting
+      # prod's would file every next event under web.slothful.chat. Defaulted
+      # rather than falling back to prod's value, so turning analytics on here
+      # can't quietly re-create that: the site id is the only var to set.
+      # Same shape as PREVIEW_DOMAIN in preview-deploy.yml — override the
+      # Variable when the server runs on a different domain.
+      SLOTHFUL_INSTANCE_URL: ${{ vars.SLOTHFUL_NEXT_INSTANCE_URL || 'https://next.slothful.chat' }}
       SLOTHFUL_DEFAULT_PROXY: ${{ vars.SLOTHFUL_DEFAULT_PROXY }}
       SLOTHFUL_PUBLIC_BRIDGES: ${{ vars.SLOTHFUL_PUBLIC_BRIDGES }}
       SLOTHFUL_DEFAULT_CHATMAIL: ${{ vars.SLOTHFUL_DEFAULT_CHATMAIL }}
@@ -41,6 +48,8 @@ jobs:
       SLOTHFUL_IMPRINT_ADDRESS: ${{ vars.SLOTHFUL_IMPRINT_ADDRESS }}
       SLOTHFUL_IMPRINT_EMAIL: ${{ vars.SLOTHFUL_IMPRINT_EMAIL }}
       SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS: ${{ vars.SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS }}
+      SLOTHFUL_PLAUSIBLE_DOMAIN: ${{ vars.SLOTHFUL_NEXT_PLAUSIBLE_DOMAIN }}
+      SLOTHFUL_PLAUSIBLE_API: ${{ vars.SLOTHFUL_PLAUSIBLE_API }}
     steps:
       # persist-credentials: false — nothing here pushes, so the token should
       # not sit in .git/config while the build runs third-party code.

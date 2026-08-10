@@ -105,6 +105,39 @@ test('privacyHtml: analytics on renders the full events catalogue', () => {
   ok(!html.includes('asked once'))
 })
 
+test('privacyHtml: names the actual recipient of the events (cloud vs self-hosted)', () => {
+  const env = { SLOTHFUL_PLAUSIBLE_DOMAIN: 'demo.example' }
+  const cloud = privacyHtml(buildConfig(env), {})
+  ok(cloud.includes("each event Plausible's API receives"))
+  ok(!cloud.includes('on our own server'))
+  // pointing the endpoint at our own instance moves who receives the data —
+  // the policy has to say so, and must not claim Plausible gets it
+  const own = privacyHtml(
+    buildConfig({ ...env, SLOTHFUL_PLAUSIBLE_API: 'https://analytics.example/api/event' }),
+    {}
+  )
+  ok(own.includes('on our own server'))
+  ok(own.includes('<code>https://analytics.example</code>'))
+  ok(own.includes('none of them reach\nPlausible the company'))
+  // still links Plausible's data policy for what the software collects
+  ok(own.includes('https://plausible.io/data-policy'))
+  ok(!own.includes("each event Plausible's API receives"))
+})
+
+test('a SLOTHFUL_PLAUSIBLE_API that does not parse turns analytics off, not on', () => {
+  // it could never receive an event (no CSP origin, fetch throws), so the
+  // policy must not name a recipient at all
+  const config = buildConfig({
+    SLOTHFUL_PLAUSIBLE_DOMAIN: 'demo.example',
+    SLOTHFUL_PLAUSIBLE_API: 'analytics.example/api/event', // no scheme — typo
+  })
+  strictEqual(config.analytics, false)
+  strictEqual(analyticsOrigin(config), '')
+  const html = privacyHtml(config, {})
+  ok(html.includes('no usage data at all'))
+  ok(!html.includes("each event Plausible's API receives"))
+})
+
 test('privacyHtml: relay-providers note and accurate link-preview description', () => {
   const html = privacyHtml(buildConfig({}), {})
   // messages travel through separate relay/provider services
@@ -323,15 +356,15 @@ test('every supported SLOTHFUL_* var is forwarded by the build/deploy/customize 
   const self = await readFile(new URL('./instance-config.mjs', import.meta.url), 'utf-8')
   const supported = [...new Set([...self.matchAll(/\benv\.(SLOTHFUL_[A-Z_]+)/g)].map(m => m[1]))]
   ok(supported.length > 8, `the env scan found only ${supported.length} vars — regex broken?`)
-  // Deliberate omissions: analytics is prod-only (next/preview must not
-  // pollute prod stats, issue #134) and self-hosted builds ship without
-  // analytics entirely (privacy.html promises exactly that), so the customize
-  // script and SELFHOSTING.md don't offer it either.
+  // Deliberate omission: self-hosted builds ship without analytics entirely
+  // (privacy.html promises exactly that), so the customize script and
+  // SELFHOSTING.md don't offer the vars at all. The three deploy workflows do
+  // pass them — each to its OWN Plausible site (issue #134).
   const analytics = ['SLOTHFUL_PLAUSIBLE_DOMAIN', 'SLOTHFUL_PLAUSIBLE_API']
   const consumers = {
     '.github/workflows/deploy-pages.yml': [],
-    '.github/workflows/deploy-next.yml': analytics,
-    '.github/workflows/preview-deploy.yml': analytics,
+    '.github/workflows/deploy-next.yml': [],
+    '.github/workflows/preview-deploy.yml': [],
     'packages/web-app/customize.mjs': analytics,
     'SELFHOSTING.md': analytics,
   }
