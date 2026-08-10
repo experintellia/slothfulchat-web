@@ -9,6 +9,7 @@
     "apply-patches": "scripts/apply-patches.sh",
     "update-patches": "scripts/update-patches.sh",
     "mark-fork-api": "node scripts/mark-fork-api.mjs",
+    "verify-fork-marks": "node scripts/verify-fork-marks.mjs",
     "set-version": "node scripts/set-release-version.mjs",
     "smoke": "node scripts/smoke-core-wasm.mjs"
   },

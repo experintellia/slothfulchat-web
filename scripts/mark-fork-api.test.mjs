@@ -39,7 +39,11 @@ impl From<CoreEvent> for EventType {
     }
 }
 
-#[rpc(all_positional, ts_outdir = "typescript/generated")]
+#[rpc(
+    all_positional,
+    ts_outdir = "typescript/generated",
+    openrpc_outdir = "typescript/generated"
+)]
 impl CommandApi {
     /// Upstream method.
     async fn untouched(&self) -> Result<()> {
@@ -94,13 +98,29 @@ test('a new field on an upstream type is added, the type itself changed', () => 
   assert.equal(markOn(source, 'pub text: Option<String>'), undefined)
 })
 
+// The `#[rpc(...)]` attribute above `impl CommandApi` is MULTI-LINE in the real
+// tree (patches/core sets openrpc_outdir next to ts_outdir, and rustfmt wraps
+// it), and the fixture matches. It is spelled out because a single-line
+// fixture is what let every method go unmarked without a test failing: the
+// attribute scan walked back only over lines that themselves start with `#[`,
+// so it never reached `#[rpc(`, the impl block was skipped whole, and only the
+// type marks (which take a different path) kept working.
 test('a patched rpc method body marks that method and nothing else', () => {
-  const { source, marked } = markSource(SRC, fork([40], 'core/0019'))
+  const { source, marked, methods, types } = markSource(SRC, fork([44], 'core/0019'))
   assert.equal(marked, 1)
+  assert.deepEqual(methods, ['get_account_file_size'])
+  assert.deepEqual(types, [])
   assert.equal(
     markOn(source, 'async fn get_account_file_size')?.trim(),
     '/// 🦥 slothfulchat-web fork: changed by core/0019.',
   )
+  assert.equal(markOn(source, 'async fn untouched'), undefined)
+})
+
+test('the manifest names what was marked, split by kind', () => {
+  const { methods, types } = markSource(SRC, new Map([...fork(FIELD, 'core/0028'), [44, 'core/0019']]))
+  assert.deepEqual(methods, ['get_account_file_size'])
+  assert.deepEqual(types, ['MessageData', 'duration'])
 })
 
 test('several patches on one item are all named', () => {
@@ -119,10 +139,14 @@ test('changes outside the documented API surface are left alone', () => {
   assert.equal(source, SRC)
 })
 
-test('marking is idempotent', () => {
-  const once = markSource(SRC, fork(FIELD, 'core/0028')).source
+test('marking is idempotent, and the second run still reports the same items', () => {
+  const first = markSource(SRC, fork(FIELD, 'core/0028'))
   // Re-running shifts every line number, but the marker guard has to stop a
   // second copy landing on an item that already carries one.
-  const twice = markSource(once, fork(FIELD.map((n) => n + 2), 'core/0028')).source
-  assert.equal(twice, once)
+  const second = markSource(first.source, fork(FIELD.map((n) => n + 2), 'core/0028'))
+  assert.equal(second.source, first.source)
+  assert.equal(second.marked, 0)
+  // …and it must still name them, or a re-run would tell verify-fork-marks
+  // there is nothing to check.
+  assert.deepEqual(second.types, first.types)
 })

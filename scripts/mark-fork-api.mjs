@@ -29,9 +29,11 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const MARKER = '🦥'
+export const MARKER = '🦥'
 /** Only this crate's sources reach the generated client and the OpenRPC spec. */
 const API_SRC = 'deltachat-jsonrpc/src'
+/** Record of what was marked, consumed by verify-fork-marks.mjs. */
+export const MANIFEST = (root) => path.join(root, 'build/core/fork-marks.json')
 
 const git = (cwd, ...args) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 1 << 28 })
@@ -56,11 +58,30 @@ function blockEnd(lines, start) {
   return lines.length
 }
 
-/** First line of the run of attributes/doc comments attached to `decl`. */
+/**
+ * First line of the run of attributes/doc comments attached to `decl`.
+ *
+ * Attributes may span several lines — `#[rpc(\n  all_positional,\n  …\n)]` is
+ * the one that matters, since missing it means every RPC method goes unmarked.
+ * So an attribute is walked back over by brackets, not by matching `#[` on the
+ * line above: from its closing `]`, sum `delta` upwards until the brackets
+ * balance, and that line is its `#[`.
+ */
 function attrStart(lines, decl) {
   let i = decl
-  while (i > 0 && /^\s*(\/\/\/|#\[)/.test(lines[i - 1])) i--
-  return i
+  for (;;) {
+    if (i > 0 && /^\s*\/\/\//.test(lines[i - 1])) {
+      i--
+      continue
+    }
+    if (i === 0 || !/]\s*$/.test(code(lines[i - 1]))) return i
+    let j = i - 1
+    let depth = 0
+    do depth += delta(lines[j--])
+    while (j >= 0 && depth !== 0)
+    if (depth !== 0 || !/^\s*#!?\[/.test(lines[j + 1])) return i
+    i = j + 1
+  }
 }
 
 // ponytail: a line scanner, not a Rust parser — it only has to find the item a
@@ -82,7 +103,7 @@ const RE_FIELD = /^(?: {4}| {8})(pub(\([\w:]+\))? )?[a-z_]\w*\s*:\s/
  * derive TypeDef, and those types' variants and fields. Each item is the line
  * range that belongs to it, including its doc comment and attributes.
  *
- * @returns {{docEnd: number, from: number, to: number}[]}
+ * @returns {{decl: number, docEnd: number, from: number, to: number}[]}
  */
 export function apiItems(source) {
   const lines = source.split('\n')
@@ -91,7 +112,7 @@ export function apiItems(source) {
     const from = attrStart(lines, decl)
     let docEnd = from
     while (docEnd < decl && /^\s*\/\/\//.test(lines[docEnd])) docEnd++
-    items.push({ docEnd, from, to })
+    items.push({ decl, docEnd, from, to })
   }
 
   for (let i = 0; i < lines.length; i++) {
@@ -118,18 +139,29 @@ export function apiItems(source) {
   return items
 }
 
+/** `{kind, name}` of a Rust declaration line: an rpc method, or anything else. */
+function declared(line) {
+  const fn = /^\s*(pub(\([\w:]+\))? )?(async )?fn (\w+)/.exec(line)
+  if (fn) return { kind: 'method', name: fn[4] }
+  const rest = line.replace(/^\s*(pub(\([\w:]+\))?\s+)?((struct|enum)\s+)?/, '')
+  return { kind: 'type', name: /^\w+/.exec(rest)?.[0] ?? '?' }
+}
+
 /**
  * Insert the marker into every API item that a fork line falls inside.
  *
  * @param source     Rust source text.
  * @param forkLines  Map of 1-based line number -> patch label that wrote it.
+ * @returns `marked` items, and what they were — see verify-fork-marks.mjs.
  */
 export function markSource(source, forkLines) {
   const lines = source.split('\n')
   const inserts = new Map()
+  const methods = []
+  const types = []
   let marked = 0
 
-  for (const { docEnd, from, to } of apiItems(source)) {
+  for (const { decl, docEnd, from, to } of apiItems(source)) {
     const patches = new Set()
     let upstream = false
     for (let i = from; i < to; i++) {
@@ -138,6 +170,11 @@ export function markSource(source, forkLines) {
       else if (lines[i].trim()) upstream = true
     }
     if (!patches.size) continue
+    // Recorded whether or not a marker is inserted below: re-running on an
+    // already-marked tree must still report the same set of items, or the
+    // second run would hand verify-fork-marks.mjs an empty manifest.
+    const { kind, name } = declared(lines[decl])
+    ;(kind === 'method' ? methods : types).push(name)
     if (lines.slice(from, to).some((l) => l.includes(MARKER))) continue
 
     const indent = lines[from].match(/^ */)[0]
@@ -148,13 +185,13 @@ export function markSource(source, forkLines) {
     marked++
   }
 
-  if (!marked) return { source, marked }
+  if (!marked) return { source, marked, methods, types }
   const out = []
   for (let i = 0; i < lines.length; i++) {
     if (inserts.has(i)) out.push(...inserts.get(i))
     out.push(lines[i])
   }
-  return { source: out.join('\n'), marked }
+  return { source: out.join('\n'), marked, methods, types }
 }
 
 /** 1-based line -> patch label, for every line one of our patches wrote. */
@@ -202,18 +239,28 @@ function main() {
   )
 
   let total = 0
+  const manifest = { methods: [], types: [] }
   for (const rel of rustFiles(path.join(buildCore, API_SRC))) {
     const file = path.join(API_SRC, rel)
     const forkLines = blameFork(buildCore, file, labels)
     if (!forkLines.size) continue
     const abs = path.join(buildCore, file)
-    const { source, marked } = markSource(readFileSync(abs, 'utf8'), forkLines)
+    const { source, marked, methods, types } = markSource(readFileSync(abs, 'utf8'), forkLines)
+    manifest.methods.push(...methods)
+    manifest.types.push(...types)
     if (!marked) continue
     writeFileSync(abs, source)
     console.log(`${file}: ${marked} item(s) marked`)
     total += marked
   }
-  console.log(`marked ${total} API item(s) in build/core/${API_SRC}`)
+  // What was marked, for verify-fork-marks.mjs to check the generators against.
+  // Written even when nothing matched, so "the marker never ran" and "the
+  // marker found nothing" stay distinguishable downstream.
+  writeFileSync(MANIFEST(root), JSON.stringify(manifest, null, 2) + '\n')
+  console.log(
+    `marked ${total} API item(s) in build/core/${API_SRC} ` +
+      `(${manifest.methods.length} method(s), ${manifest.types.length} type(s)/field(s))`,
+  )
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()

@@ -35,6 +35,12 @@ cannot drift out of date. Both generators read those same `///` comments, so the
 marks reach the TypeScript client (hence typedoc's HTML and the `.d.ts` an IDE
 hovers) and the OpenRPC spec alike.
 
+`pnpm verify-fork-marks` then checks that they actually arrived — per symbol, in
+every one of those surfaces — and fails the build otherwise. It is not
+belt-and-braces: the marks pass through four generators, and losing them is
+silent at every step. It has happened once already, to the RPC methods alone,
+while the type marks kept working and made the output look fine.
+
 ## Running in the browser at all (the port itself)
 
 The bulk of `patches/core` makes a native Rust mail core compile and run on
