@@ -12,9 +12,8 @@
 // node-linker — and neither produces an error, only a different bundle.
 //
 //   node --test packages/web-app/react-isolation.test.mjs
-import { deepEqual, equal } from 'node:assert/strict'
+import { deepEqual, equal, ok } from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import path from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -54,18 +53,38 @@ test('nothing under packages/web-app/src imports react', () => {
   )
 })
 
-test("packages/calls resolves the react major it declares, not web-app's", () => {
-  const declared = JSON.parse(read(path.join(repo, 'packages/calls/package.json'))).dependencies.react
+/** The version pnpm-lock.yaml records for `dep` in workspace `importer`. */
+function lockedVersion(lock, importer, dep) {
+  const lines = lock.split('\n')
+  let inImporter = false
+  for (let i = 0; i < lines.length; i++) {
+    // importer keys sit at two spaces under `importers:`
+    if (/^ {2}\S/.test(lines[i])) inImporter = lines[i].trimEnd() === `  ${importer}:`
+    if (!inImporter || lines[i].trimEnd() !== `      ${dep}:`) continue
+    for (let j = i + 1; j < lines.length && /^ {8}/.test(lines[j]); j++) {
+      const m = lines[j].match(/^ {8}version:\s*(\S+)/)
+      if (m) return m[1]
+    }
+  }
+  return null
+}
+
+// Reads the lockfile rather than resolving `react` for real. It has to: this
+// runs in CI's lint job, which cannot `pnpm install` at all (the jsonrpc-client
+// file: dep does not exist until apply-patches), so there is no node_modules to
+// resolve through. Reading the committed lockfile is also the better check —
+// it fails in review, on the diff that would collapse the two, rather than
+// after an install on someone's machine.
+test("packages/calls locks the react major it declares, not web-app's", () => {
+  const declared = JSON.parse(read(path.join(repo, 'packages/calls/package.json'))).dependencies
+    .react
   const wanted = declared.match(/\d+/)[0]
-  // Resolve exactly as esbuild does when it follows runtime.ts → calls/ui.
-  const resolved = createRequire(path.join(repo, 'packages/calls/ui/index.tsx')).resolve(
-    'react/package.json',
-  )
-  const got = JSON.parse(read(resolved)).version
+  const got = lockedVersion(read(path.join(repo, 'pnpm-lock.yaml')), 'packages/calls', 'react')
+  ok(got, 'no react entry for packages/calls in pnpm-lock.yaml — did the importer key move?')
   equal(
     got.split('.')[0],
     wanted,
-    `packages/calls declares react ${declared} but resolves ${got} (${resolved}) — ` +
+    `packages/calls declares react ${declared} but the lockfile pins ${got} — ` +
       'the two Reacts have collapsed into one, so dist/runtime.js is not shipping what calls asked for.',
   )
 })
