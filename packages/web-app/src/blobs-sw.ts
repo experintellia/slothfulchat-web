@@ -32,6 +32,10 @@ const CACHE = cacheName(scopePath, sw.__PRECACHE_VERSION ?? 'dev')
 // the cache remembers which manifest filled it, so the next install can tell
 // unchanged entries apart; synthetic URL, never collides with a real file
 const MANIFEST_KEY = './__sw-manifest__'
+// repeated-failed-update record ({version, attempts, errors}), written into
+// the SURVIVING cache so the page can tell the user (runtime.ts
+// surfaceFailedUpdate) — the failing install's own cache gets deleted
+const UPDATE_FAILED_KEY = './__sw-update-failed__'
 
 type BlobResponse = { type: 'blob-response'; id: string; data?: Uint8Array; mime?: string }
 const pending = new Map<string, (r: BlobResponse) => void>()
@@ -54,10 +58,12 @@ sw.addEventListener('install', (event: any) =>
           break // any manifest-bearing cache works: equal hash => equal bytes
         }
       }
-      // allSettled: a single missing file must not brick install/blob serving;
-      // the entry stays absent and self-heals on the next update
+      // allSettled: collect every failure first, then decide ONCE whether this
+      // install may activate (see below) — aborting on the first rejection
+      // would also leave the outcome dependent on fetch ordering
+      const entries = Object.entries(MANIFEST)
       const results = await Promise.allSettled(
-        Object.entries(MANIFEST).map(async ([file, hash]) => {
+        entries.map(async ([file, hash]) => {
           if (oldCache && oldManifest[file] === hash) {
             const reuse = await oldCache.match(file)
             if (reuse) return cache.put(file, reuse)
@@ -70,13 +76,61 @@ sw.addEventListener('install', (event: any) =>
           await cache.put(file, res)
         })
       )
-      // failures are tolerated but must not be invisible (a silently absent
-      // file = undiagnosable "broken offline" later): keep them inspectable
-      // via caches.match('./__sw-install-errors__')
-      const errors = results
-        .filter(r => r.status === 'rejected')
-        .map(r => String((r as PromiseRejectedResult).reason))
+      const errors: string[] = []
+      // only a failed file the old cache HAS is "losing": activating would drop
+      // it (or version-skew it — old bytes under a new manifest). One absent
+      // there too loses nothing by activating — that file was already
+      // unavailable, exactly the pre-M-02 outcome — and failing the install on
+      // it would pin e.g. a client whose adblocker rejects one asset to its
+      // first-ever version forever (a tolerated partial FIRST install records
+      // the full manifest, so every later update would retry that same file).
+      const losing: string[] = []
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i]
+        if (r.status !== 'rejected') continue
+        errors.push(String((r as PromiseRejectedResult).reason))
+        if (oldCache && (await oldCache.match(entries[i][0]))) losing.push(entries[i][0])
+      }
       if (errors.length) console.warn('sw precache failures:', errors)
+      // MANIFEST_KEY already in CACHE => CACHE is a COMPLETE cache of this very
+      // version, not a half-filled new one: blobs-sw.js/sw-precache.js are not
+      // in the manifest (precacheSkip), so an SW-code-only deploy ships a new
+      // worker under an unchanged __PRECACHE_VERSION, i.e. the same CACHE name
+      // the active worker serves from. Deleting that would destroy the offline
+      // copy this whole branch exists to protect. Nothing is lost by activating
+      // instead: same version = same hashes, and a failed put leaves the old
+      // (correct) bytes in place.
+      if (oldCache && losing.length && !(await cache.match(MANIFEST_KEY))) {
+        // UPDATE that would LOSE files: activating would delete the last
+        // complete cache (see activate) and those files would be unavailable
+        // offline until some LATER deploy — a content-versioned cache cannot
+        // self-heal them. Fail the install instead: the old worker keeps
+        // serving its complete cache, and the browser retries the update on the
+        // next navigation. A retry is cheap (unchanged entries copy forward),
+        // and a deploy whose asset stays missing SHOULD leave clients on the
+        // last version that works offline.
+        // The throw is only visible in the SW console and the partial cache is
+        // about to go, so count consecutive failures of THIS version in the
+        // cache that survives — there is no update UI, and a stuck client is
+        // otherwise undiagnosable. Self-clearing: once an update lands, its
+        // activate deletes the old cache and the record with it.
+        let attempts = 1
+        try {
+          const prev = await (await oldCache.match(UPDATE_FAILED_KEY))!.json()
+          if (prev.version === CACHE) attempts += prev.attempts
+        } catch {} // no record yet
+        await oldCache.put(
+          UPDATE_FAILED_KEY,
+          new Response(JSON.stringify({ version: CACHE, attempts, errors }))
+        )
+        await caches.delete(CACHE) // no half-filled cache left to leak or reuse
+        throw new Error(`precache incomplete, keeping previous version: ${errors.join('; ')}`)
+      }
+      // FIRST install: no complete cache to protect, and no worker means no
+      // blob/attachment serving at all, so a partial cache beats failing —
+      // missing entries still resolve over the network (serveShell), only
+      // offline is degraded. That failure is silent, so keep it inspectable
+      // via caches.match('./__sw-install-errors__').
       await cache.put('./__sw-install-errors__', new Response(JSON.stringify(errors)))
       await cache.put(MANIFEST_KEY, new Response(JSON.stringify(MANIFEST)))
       sw.skipWaiting()

@@ -184,6 +184,9 @@ await writeFile(
   patchBootError(await readFile(join(here, 'static/boot-error.js'), 'utf-8'), config.instanceName)
 )
 await cp(join(here, 'static/viewport-keyboard.js'), join(dist, 'viewport-keyboard.js'))
+// Clickjacking backstop for the three documents that load it (main/index,
+// call-popup, html-email) — see the file's header and SELFHOSTING.md.
+await cp(join(here, 'static/frame-guard.js'), join(dist, 'frame-guard.js'))
 // Voice-message waveform bucketing worker (progressive enhancement; the player
 // falls back to the plain seek bar if this file isn't served).
 await cp(join(here, 'static/waveform-worker.js'), join(dist, 'waveform-worker.js'))

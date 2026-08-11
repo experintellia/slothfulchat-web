@@ -16,6 +16,7 @@
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { assertDialogRendered } from './harness.mjs'
 
 const script = p => fileURLToPath(new URL(p, import.meta.url))
 const APP_PORT = Number(process.env.APP_PORT ?? 8647)
@@ -89,6 +90,12 @@ if (started.core) {
   throw new Error('the core started before the throwaway session was confirmed')
 }
 console.log('OK: an unconfirmed ?persist=0 asks first and starts nothing')
+
+// A blocking gate the user cannot see is a dead app, and the text checks above
+// pass either way — so check it renders as a dialog too (#211). It is built
+// from the same card as the fatal and bridge dialogs.
+await assertDialogRendered(gate(page), 460, 'throwaway gate')
+console.log('OK: the gate is a centred, styled modal')
 
 // --- 2) "Keep my data" reloads into a normal, saved session ----------------
 await page.getByRole('button', { name: 'Keep my data' }).click()
