@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
+import * as esbuild from 'esbuild'
 import * as sass from 'sass'
 import { analyticsOrigin, buildConfig, configJs, imprintHtml, patchBootError, patchCsp, patchManifest, patchTitle, privacyHtml } from './instance-config.mjs'
 
@@ -268,7 +269,8 @@ for (const pkg of ['web-app', 'core-wasm', 'ws-tcp-proxy', 'customize']) {
 //                               api-docs/typedoc.json (project name, readme,
 //                               RawClient-first nav) — the reference for the
 //                               types @slothfulchat/core-wasm re-exports.
-//   api-docs/openrpc/           viewer page (ours) for…
+//   api-docs/openrpc/           page + bundled @open-rpc/docs-react viewer
+//                               (ours is only the shell) for…
 //   api-docs/openrpc.json       …yerpc's OpenRPC document, switched on by
 //                               patches/core (openrpc_outdir). Kept raw next to
 //                               the viewer so tools can be pointed at it.
@@ -286,6 +288,19 @@ if (existsSync(join(coreTs, 'docs/index.html'))) {
   await cp(join(here, 'api-docs/openrpc/index.html'), join(dist, 'api-docs/openrpc/index.html'))
   await cp(join(coreTs, 'docs'), join(dist, 'api-docs/typescript'), { recursive: true })
   await cp(join(coreTs, 'generated/openrpc.json'), join(dist, 'api-docs/openrpc.json'))
+  // The viewer is React + MUI (@open-rpc/docs-react), so unlike everything else
+  // in this block it is bundled rather than copied — self-contained, because
+  // `script-src 'self'` rules out the CDN builds. Built here rather than in
+  // `pnpm build` so it stays behind the same "did the core docs get generated"
+  // gate as the page that loads it; devDependencies only, nothing ships to npm.
+  await esbuild.build({
+    entryPoints: [join(here, 'api-docs/openrpc/viewer.js')],
+    outfile: join(dist, 'api-docs/openrpc/viewer.js'),
+    bundle: true,
+    minify: true,
+    format: 'esm',
+    define: { 'process.env.NODE_ENV': '"production"' },
+  })
 } else {
   console.warn('assemble: no /api-docs (build/core client docs missing — run `pnpm api-docs`)')
 }
