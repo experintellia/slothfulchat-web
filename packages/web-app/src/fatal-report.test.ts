@@ -12,14 +12,28 @@ test('carries the error text the analytics catalogue cannot (#176)', () => {
     details: 'Error: sahpool install failed: NotFoundError',
     version: '0.8.1',
     commitHash: 'deadbeefcafe1234',
+    origin: 'https://web.slothful.chat',
     userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X)',
     displayMode: 'standalone',
   })
   match(report, /^failure: init-error$/m)
   match(report, /^details: Error: sahpool install failed: NotFoundError$/m)
   match(report, /^build: 0\.8\.1 deadbeef$/m, 'commit is abbreviated')
+  match(report, /^origin: https:\/\/web\.slothful\.chat$/m)
   match(report, /^display: standalone$/m)
   match(report, /iPhone OS 18_2/)
+})
+
+test('names the deployment it came from, so a PR preview is not read as prod', () => {
+  const preview = fatalReportText({
+    kind: 'init-error',
+    version: '0.8.1',
+    origin: 'https://pr-42.preview.slothful.chat',
+  })
+  match(preview, /^origin: https:\/\/pr-42\.preview\.slothful\.chat$/m)
+  // same version, different slot — the origin is the only line telling them apart
+  const prod = fatalReportText({ kind: 'init-error', version: '0.8.1', origin: 'https://web.slothful.chat' })
+  match(prod, /^origin: https:\/\/web\.slothful\.chat$/m)
 })
 
 test('a multi-line error stays on one line', () => {

@@ -19,6 +19,7 @@ export type FatalReportFields = {
   details?: string
   version?: string
   commitHash?: string
+  origin?: string
   userAgent?: string
   displayMode?: string
 }
@@ -28,6 +29,7 @@ export function fatalReportText({
   details = '',
   version = '',
   commitHash = '',
+  origin = '',
   userAgent = '',
   displayMode = '',
 }: FatalReportFields = {}): string {
@@ -39,6 +41,14 @@ export function fatalReportText({
     ['failure', kind],
     ['details', collapse(details)],
     ['build', build],
+    // WHICH deployment, which the version alone does not answer: prod, next
+    // and every PR preview can carry the same version, and a preview's origin
+    // (pr-<n>.…) is the only thing that names the branch a report came from.
+    // It has to be in the report body — a report may arrive from an origin
+    // that isn't the one collecting it, and neither a Referer nor a CORS
+    // Origin header survives the trip (the link is rel="noreferrer", and the
+    // sink in SELFHOSTING.md drops request headers from its log on purpose).
+    ['origin', origin],
     ['display', displayMode],
     ['browser', collapse(userAgent)],
   ]

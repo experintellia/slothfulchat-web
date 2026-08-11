@@ -2123,6 +2123,10 @@ function showFatalDialog(
     details,
     version: (window as any).__slothfulConfig?.version,
     commitHash: (window as any).__slothfulConfig?.commitHash,
+    // location, not config.instanceUrl: where the app is actually running is
+    // the fact worth having — a preview slot, someone's fork, a copy served
+    // from a domain its baked-in config never mentioned
+    origin: location.origin,
     userAgent: navigator.userAgent,
     displayMode: session.displayMode(),
   })

@@ -187,6 +187,16 @@ message" can contain terminal escape sequences, so `jq` (not `jq -r`) or
 `cat -v` when you page through it. Rate limiting needs a plugin build and isn't
 worth it up front; log rotation already caps what a flood can cost you.
 
+One sink can serve every instance you run — prod, a staging slot, PR previews —
+because the report names its own origin in the body. Don't try to read that
+from the request instead: the link is `rel="noreferrer"` and the log filter
+above drops request headers, so there is no `Referer` and no `Origin` to go on.
+
+Nothing here needs CORS. The button is a **link**, so clicking it is an
+ordinary top-level navigation to your sink — not a `fetch()` — which means no
+preflight, no `Access-Control-Allow-Origin`, and no extra `connect-src` in the
+app's CSP. That holds whatever domain the app itself is served from.
+
 The button is a plain link the user clicks, showing the exact text first — the
 app never sends a report on its own.
 
