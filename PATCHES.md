@@ -14,6 +14,37 @@ Each entry references its patch file by directory and number, e.g. `core/0005`
 > removed patch into the fitting section — each patch file starts with its
 > commit message, which is usually all you need to read.
 
+The same distinction is carried into the generated JSON-RPC documentation, so a
+reader does not have to come here to find out whether an API is upstream's or
+ours. CI does this for you — the build runs `pnpm mark-fork-api` between
+`pnpm apply-patches` and the `cargo test` that generates the bindings. Run it by
+hand only when generating docs locally, and in that same slot: it needs
+`build/core`'s per-patch commits to attribute lines, and `cargo test` is what
+turns `///` into both the TypeScript JSDoc and the OpenRPC descriptions, so
+marking any later marks nothing. It adds a line like
+
+```
+/// 🦥 slothfulchat-web fork: added by core/0028.
+```
+
+to the doc comment of every RPC method, type, variant and field the patch stack
+*substantively* touches — in the throwaway `build/core` worktree only, never in
+`patches/` or `vendor/`. It derives the marks from `git blame` against the
+submodule pin, so they name the responsible patch, say whether it was *added*
+(the item does not exist upstream) or *changed* (it does, and its signature,
+body or attributes are partly ours), and cannot drift out of date. An item that
+differs from upstream only in its doc comments, its blank lines or its
+formatting gets no mark at all — a 🦥 that fires on a reworded `///` or a
+rustfmt reflow is one readers learn to skip. Both generators read those same
+`///` comments, so the marks reach the TypeScript client (hence typedoc's HTML
+and the `.d.ts` an IDE hovers) and the OpenRPC spec alike.
+
+`pnpm verify-fork-marks` then checks that they actually arrived — per symbol, in
+every one of those surfaces — and fails the build otherwise. It is not
+belt-and-braces: the marks pass through four generators, and losing them is
+silent at every step. It has happened once already, to the RPC methods alone,
+while the type marks kept working and made the output look fine.
+
 ## Running in the browser at all (the port itself)
 
 The bulk of `patches/core` makes a native Rust mail core compile and run on
@@ -50,6 +81,18 @@ exists:
 
 ## New features
 
+- **OpenRPC document for the JSON-RPC API** — one attribute. The
+  `deltachat-jsonrpc` crate already enables yerpc's `openrpc` feature and
+  every API type already derives `schemars::JsonSchema`, so the generator was
+  compiled in and fully fed; `#[rpc]` just never set `openrpc_outdir`, and
+  without it yerpc emits no generator at all. With it, the existing
+  `cargo test -p deltachat-jsonrpc` writes `typescript/generated/openrpc.json`
+  (177 methods, 40 schemas, doc comments carried through as descriptions) next
+  to the TypeScript bindings it already writes there, from the same impl block.
+  Nothing new lands in the tree — `generated/` is gitignored. We publish it at
+  `/api-docs/openrpc.json`. Good upstream candidate: it is a one-line change
+  to an unused switch, no new dependency, and native builds are unaffected.
+  `core/0031`
 - **Custom voice-message player controls** — play/pause
   button, seek bar, elapsed/total time and a 1×/1.5×/2× speed pill (the rate
   is global, so every voice message plays at the chosen speed) replace the

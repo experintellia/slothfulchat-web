@@ -1,5 +1,15 @@
 # Changelog
 
+- **The published type definitions now match the core that ships with them.**
+  They used to come from `@deltachat/jsonrpc-client` 2.53.0 on npm, two
+  releases behind the pinned core and missing the API our patches add — the
+  drift was invisible because our own builds override that dependency. The
+  types are now generated from the exact core the wasm binary is built from
+  and bundled into the package, so `npm install @slothfulchat/core-wasm` is
+  enough to get correct, complete types. Import everything from this package,
+  not from `@deltachat/jsonrpc-client` as well. An API reference is at
+  <https://web.slothful.chat/api-docs/>.
+
 - **PGP crypto no longer blocks the core**: key generation, message
   encryption and decryption now run on a dedicated, prewarmed crypto worker,
   so the app stays responsive while they work — most noticeable on phones,

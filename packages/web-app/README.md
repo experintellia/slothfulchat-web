@@ -19,10 +19,18 @@ proxy UI); everything browser-specific lives in our own files:
   `build/desktop/packages/target-browser/dist/` + locales, overlays our
   `static/main.html` (CSP loosened for wasm/workers, PWA manifest) and the
   core-wasm worker/wasm artifacts into `dist/`. Also drops in the two
-  auxiliary static pages: the core-wasm `/demo/` and the `/changelog/` viewer
+  auxiliary static pages: the core-wasm `/demo/`, the `/changelog/` viewer
   (see [`changelog/`](changelog/README.md)), copying each published package's
-  `CHANGELOG.md` in beside the latter.
+  `CHANGELOG.md` in beside the latter, and `/api-docs/` (see below).
 - `changelog/` — vendored static changelog viewer served at `/changelog/`.
+- `api-docs/` — the `/api-docs/` index page, the OpenRPC viewer and the typedoc
+  options that frame the site as this fork's API. The references themselves are
+  generated, not written: they come out of the `deltachat-jsonrpc` build in
+  `build/core`, i.e. the pinned core **with `patches/core` applied**, so they
+  describe the runtime this bundle ships rather than the nearest published
+  `@deltachat/jsonrpc-client`. See [`api-docs/`](api-docs/README.md); like
+  `/changelog/` and `/demo/` the whole tree is out of the service-worker
+  precache — reference material, not app shell.
 - `serve.mjs` — static dev server (port 8642, `PORT` env to override).
 - `static/manifest.webmanifest` — PWA manifest (installable, standalone). Also
   registers the app as an OS handler for three kinds of launch, all wired in

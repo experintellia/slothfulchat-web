@@ -116,6 +116,16 @@ runs:
       shell: bash
       run: pnpm apply-patches
 
+    # Mark fork-touched JSON-RPC items with 🦥 in their Rust doc comments, so
+    # the generated docs say what is ours. ORDER: after apply-patches (it needs
+    # build/core's per-patch commits to git blame) and BEFORE the `cargo test`
+    # below — that is what turns `///` into both the TS JSDoc and the OpenRPC
+    # descriptions, so marking any later marks nothing. Node builtins only, so
+    # it runs fine before the root `pnpm install`.
+    - name: Mark fork-touched API in the generated docs
+      shell: bash
+      run: node scripts/mark-fork-api.mjs
+
     # Cache the cargo registry + the build/core and wasm target/ dirs. The
     # native `cargo test` and the ~10-min release wasm build dominate wall
     # time, so this is the cache that matters most.
@@ -207,8 +217,23 @@ runs:
       id: jsonrpc-client
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
-        path: build/core/deltachat-jsonrpc/typescript/dist
-        key: jsonrpc-client-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ steps.core-rev.outputs.sha }}-${{ hashFiles('patches/core/*.patch') }}
+        # All three, not just dist/: the generate step below is skipped
+        # wholesale on a cache hit, so whatever is left out is simply absent on
+        # the next run. docs/ is typedoc's output and generated/ holds yerpc's
+        # openrpc.json — both are what /api-docs ships, and assemble.mjs only
+        # warns when they are missing. Caching dist/ alone therefore ships no
+        # API docs at all, silently, from the second run with a warm key on.
+        path: |
+          build/core/deltachat-jsonrpc/typescript/dist
+          build/core/deltachat-jsonrpc/typescript/docs
+          build/core/deltachat-jsonrpc/typescript/generated
+        # Every input to the cached output is in the key, because the step that
+        # produces it is skipped wholesale on a hit — anything left out restores
+        # stale content and the change appears to have done nothing:
+        # mark-fork-api.mjs (docs/ and generated/ carry its 🦥 marks), and
+        # typedoc.json + typedoc-readme.md (the only inputs to the typedoc run
+        # that writes docs/).
+        key: jsonrpc-client-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ steps.core-rev.outputs.sha }}-${{ hashFiles('patches/core/*.patch', 'scripts/mark-fork-api.mjs', 'packages/web-app/api-docs/typedoc.json', 'packages/web-app/api-docs/typedoc-readme.md') }}
 
     # rustwasm's prebuilt musl binary, pinned by version AND sha256, replacing
     # the upstream `curl … installer/init.sh | sh` — which was unversioned
@@ -245,8 +270,13 @@ runs:
 
     # ORDER TRAP #1: generate + build the @deltachat/jsonrpc-client TS client
     # from the patched core at its pinned commit. `cargo test` generates the
-    # TS bindings; then constants, tsc, esbuild bundle. This is a `file:` dep
-    # of core-wasm, so it MUST exist before the root `pnpm install` below.
+    # TS bindings AND (via patches/core, openrpc_outdir) generated/openrpc.json;
+    # then constants, tsc, esbuild bundle, and typedoc (upstream's devDependency,
+    # our options file) — assemble.mjs copies docs/ + openrpc.json under
+    # dist/api-docs/ next to the two pages web-app/api-docs/ holds, and
+    # core-wasm's build:types vendors dist/*.d.ts into its published package.
+    # This is a `file:` dep of core-wasm, so it MUST exist before the root
+    # `pnpm install` below.
     # (local pnpm-workspace.yaml: builds in isolation from the root workspace
     # AND carries allowBuilds — pnpm 11 hard-errors on esbuild's postinstall
     # otherwise; --ignore-workspace can't work here since it makes pnpm skip
@@ -271,6 +301,12 @@ runs:
         node scripts/generate-constants.js
         ./node_modules/.bin/tsc
         ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js
+        # Not upstream's `docs` script: same typedoc, our options file, which
+        # names the project as this fork, gives it the /api-docs readme as its
+        # index page and puts RawClient first in the nav. Paths inside the
+        # options file resolve against the file, so entry point and out dir
+        # point back here.
+        ./node_modules/.bin/typedoc --options ../../../../packages/web-app/api-docs/typedoc.json
 
     - name: Install workspace deps
       shell: bash
@@ -311,6 +347,15 @@ runs:
     - name: Build core-wasm TS (worker + index)
       shell: bash
       run: pnpm --filter @slothfulchat/core-wasm build
+
+    # The 🦥 fork marks are injected in Rust and have to survive three
+    # generators to reach a reader. They already stopped doing so once, quietly
+    # and only for methods. Needs the generated client, the OpenRPC document
+    # and the typedoc HTML — all three come out of the jsonrpc-client step
+    # above, so this could run earlier; it sits here for readability.
+    - name: Verify the fork marks reached every docs surface
+      shell: bash
+      run: node scripts/verify-fork-marks.mjs
 
     # ORDER TRAP #2: assemble wipes+repopulates dist/ (upstream bundle,
     # locales, wasm worker, index.html, .nojekyll); build emits runtime.js +
