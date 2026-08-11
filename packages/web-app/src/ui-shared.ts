@@ -60,8 +60,10 @@ const OVERLAY_CSS = `
 .sc-card>p{margin:0 0 10px;color:#bbb}
 .sc-card>.sc-note{margin:0;font-size:12px;color:#a8a8a8}
 .sc-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:16px}
+/* font-family:inherit — a <button> otherwise takes the UA's own button font,
+   which sits next to the card's system-ui <a class="sc-btn"> and doesn't match */
 .sc-btn{padding:8px 14px;border:none;border-radius:6px;background:#333;color:#fff;
- font-size:13px;cursor:pointer}
+ font-family:inherit;font-size:13px;cursor:pointer}
 .sc-btn.sc-primary{background:#2d7dff}
 /* a link wearing the button look (the fatal dialog's "Report this"); scoped to
    a[] so the real <button>s keep their UA text layout */

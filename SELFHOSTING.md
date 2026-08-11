@@ -160,19 +160,24 @@ report.example.chat {
 		Referrer-Policy no-referrer
 		-Server
 	}
-	@get method GET
+	@get method GET HEAD
 	handle @get {
 		respond "Thanks — your report was received." 200
 	}
 	respond 405
 	log {
 		output file /var/log/caddy/crash.log {
-			roll_size 10MiB   # bounds the disk cost of a flood: 10MiB x 3, then it wraps
+			roll_size 10MiB   # bounds the disk cost of a flood: one live file + 3 rolled
 			roll_keep 3
 		}
 		format filter {
 			fields {
-				request>remote_ip delete   # you asked for the error, not for who hit it
+				# you asked for the error, not for who hit it. BOTH ip fields:
+				# caddy logs remote_ip AND client_ip, so deleting one leaves the
+				# address in the log while looking like it doesn't
+				request>remote_ip delete
+				request>client_ip delete
+				request>remote_port delete
 				request>headers delete
 			}
 		}

@@ -93,6 +93,22 @@ test("a destination's own query survives (e.g. GitHub issue labels)", () => {
 
 test('a panic backtrace is clipped, not sent as a URL the server refuses', () => {
   const url = fatalReportUrl('https://example.test/r', 'failure: x\ndetails: ' + 'a'.repeat(9000))
-  ok(url.length < 2000, `URL stayed short (${url.length})`)
+  ok(url.length <= 6000, `URL stayed under the limit (${url.length})`)
   match(url, /failure/, 'the useful head of the report is still there')
+})
+
+test('a non-ASCII error is clipped by ENCODED length, not by character count', () => {
+  // one CJK character percent-encodes to nine, so a character-count clip
+  // bounds nothing: this is the case that still 414'd
+  const url = fatalReportUrl('https://example.test/r', 'failure: x\ndetails: ' + '错'.repeat(9000))
+  ok(url.length <= 6000, `URL stayed under the limit (${url.length})`)
+  match(url, /failure/, 'the useful head of the report is still there')
+})
+
+test('a report that already fits is sent whole, not clipped', () => {
+  const report = fatalReportText({ kind: 'init-error', details: 'Error: NotFoundError' })
+  strictEqual(
+    new URL(fatalReportUrl('https://example.test/r', report)).searchParams.get('body'),
+    report
+  )
 })

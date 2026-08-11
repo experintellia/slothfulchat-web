@@ -74,16 +74,32 @@ export function fatalReportUrl(supportUrl = '', report = '', kind = ''): string 
   try {
     const url = new URL(supportUrl)
     url.searchParams.set('title', kind ? `Could not start: ${kind}` : 'Could not start')
+    url.searchParams.set('body', report)
     // Clipped, not whole: an init-error can carry a Rust panic with a
-    // backtrace, and a URL that long is refused outright (GitHub answers 414).
-    // A clipped report that arrives beats a complete one that doesn't — the
-    // full text stays on screen above the button, copyable.
-    url.searchParams.set('body', report.slice(0, 1500))
+    // backtrace, and a URL that long is refused outright (GitHub answers 414
+    // somewhere past 8000 characters). A clipped report that arrives beats a
+    // complete one that doesn't — the full text stays on screen above the
+    // button, copyable.
+    //
+    // Measured on the ENCODED url, never on the string's length: percent-
+    // encoding inflates by up to 9x (one CJK character is "%E9%94%99"), so
+    // clipping the report to n characters bounds nothing — a non-ASCII error
+    // message still built a URL well past the limit. Shrink in proportion to
+    // the overshoot, always by at least one character so this terminates.
+    for (let body = report; body && url.href.length > MAX_URL; ) {
+      const room = Math.floor(body.length * (MAX_URL / url.href.length))
+      body = body.slice(0, Math.min(room, body.length - 1))
+      url.searchParams.set('body', body)
+    }
     return url.href
   } catch {
     return ''
   }
 }
+
+// Well under the ~8000 where GitHub starts answering 414, with room for an
+// operator's own sink being stricter than that.
+const MAX_URL = 6000
 
 // Error strings can carry newlines (a Rust panic with a backtrace, a stack).
 // One line per field keeps the block scannable in a paste, and stops a
