@@ -336,13 +336,27 @@ async function waitForOpfsSyncHandles(): Promise<void> {
  * catch below doesn't stack a second dialog on top of it. */
 let fatalReported = false
 
+/** How long boot will wait for the account template before giving up on it.
+ * Only ever reached on a first visit — after that it is served from the
+ * service worker's precache. */
+const TEMPLATE_FETCH_DEADLINE_MS = 10_000
+
 /** The pre-migrated account database new accounts are stamped out of, fetched
  * in parallel with the wasm module (it is a few KB, gzipped by the generator
  * because no static host reliably compresses `.db`). Purely an optimization:
  * if it is missing, stale or corrupt, account creation replays migrations as
- * it always did, so every failure here is a warning and never fatal. */
-const accountTemplate: Promise<Uint8Array | undefined> = (async () => {
-  const res = await fetch(new URL('../wasm-dist/fresh_account.db.gz', import.meta.url))
+ * it always did, so every failure here is a warning and never fatal.
+ *
+ * Cleared once handed to the wasm side, which keeps its own copy — holding the
+ * promise would pin a second ~900KB for the worker's lifetime. */
+let accountTemplate: Promise<Uint8Array | undefined> | undefined = (async () => {
+  const res = await fetch(new URL('../wasm-dist/fresh_account.db.gz', import.meta.url), {
+    // boot awaits this, so a request that STALLS rather than fails would hang
+    // the loading screen on the one path that has no precached copy yet (first
+    // visit). Time it out into the fallback instead — being slow to create an
+    // account beats never starting.
+    signal: AbortSignal.timeout(TEMPLATE_FETCH_DEADLINE_MS),
+  })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const raw = new Uint8Array(await res.arrayBuffer())
   // a host that serves .gz with `content-encoding: gzip` already unwrapped it
@@ -359,6 +373,7 @@ const ready = (async () => {
   await initWasm()
   const template = await accountTemplate
   if (template) set_account_template(template)
+  accountTemplate = undefined
   // non-blocking: boot never waits on the pool — until it registers, core
   // computes crypto inline (the correct fallback)
   void pool.ready.then(() =>
