@@ -39,12 +39,15 @@ durable account could be lost or corrupted:
   report an honest failure count even when storage fills mid-restore (new
   `Core.fsFailed()` baseline for `Core.fsFlush(since?)`; no-arg calls keep
   the old behavior).
-- Boot no longer misreports "already running in another tab" on slow storage
-  with many accounts (the reload lock-probe budget now scales).
 - A file whose write to persistent storage fails — a transient quota blip, a
   storage handle the browser invalidated — is now retried a few times instead
   of being dropped on the first error, and a write that is finally lost is
   reported as an error rather than only counted.
+- A boot that cannot get hold of persistent storage now says so within 30
+  seconds instead of leaving the loading screen up for over five minutes, and
+  no longer misreports "already running in another tab" on slow storage with
+  many accounts — a single attempt may now use the whole 30 s, where the old
+  per-attempt budget capped it at 12 s.
 
 ## 0.8.0 — 2026-07-24
 

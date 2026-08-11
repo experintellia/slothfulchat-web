@@ -1,6 +1,12 @@
 # Pinned to nightly: a pinned dependency in core's tree (rusqlite) uses the
 # nightly-only `cfg_select!` macro, so stable rustc fails to compile it (E0658).
 # rustup reads this file automatically, so `wasm-pack build` here just works.
+#
+# The DATE is the pin. Plain `nightly` is a moving target — every build could
+# get a different compiler, which is neither reproducible nor reviewable for a
+# release artifact. nightly-2026-08-01 is rustc 1.99.0-nightly (ad3d0bc14
+# 2026-07-31); dated nightlies stay on static.rust-lang.org forever, so this
+# keeps resolving. Bump it deliberately, and only after a full wasm build.
 [toolchain]
-channel = "nightly"
+channel = "nightly-2026-08-01"
 targets = ["wasm32-unknown-unknown"]

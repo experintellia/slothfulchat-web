@@ -93,10 +93,45 @@ ignore = [
   # thread for a tag to cross to.
   "RUSTSEC-2026-0221",
 
-  # lru 0.12.5 <- iroh-relay, lru 0.13.0 <- pkarr. `IterMut` violates Stacked
-  # Borrows. Miri-level UB in a code path neither caller reaches from wasm; no
-  # fixed release the pinned iroh/pkarr versions accept.
+  # lru 0.12.5 <- iroh-relay, lru 0.13.0 <- pkarr. Both lru advisories below
+  # concern those same two copies, and neither has a fixed release the pinned
+  # versions accept: iroh-relay 0.35 requires ^0.12, pkarr 3.10 requires
+  # ^0.13.0.
+  #
+  # NOT a fix for either: target-gating iroh out of the wasm build. Cargo.lock
+  # is target-independent, so a `cfg(not(target_arch = "wasm32"))` dep stays in
+  # it and `cargo audit --file` still reports it — shadowsocks is gated exactly
+  # that way by patch core/0001 and is still in the lock. Gating iroh is worth
+  # doing for what we ship (issue #236), but it would only move these two ids
+  # from this section up into the "absent from the wasm32 graph" one.
+  #
+  # `IterMut` violates Stacked Borrows. Miri-level UB in a code path neither
+  # caller reaches from wasm.
   "RUSTSEC-2026-0002",
+
+  # `LruCache::pop()` is not panic-safe: if a key's `Drop` unwinds, `detach()`
+  # is skipped and a later eviction writes through the dangling list pointer.
+  # Three independent reasons it cannot fire here, any one of them sufficient:
+  #
+  #  1. Unwinding does not exist in what we ship. wasm32-unknown-unknown's
+  #     target spec is panic-strategy = "abort" (`rustc -Zunstable-options
+  #     --print target-spec-json --target wasm32-unknown-unknown`) and nothing
+  #     overrides it — no `panic =` in any profile, no -Cpanic in
+  #     .cargo/config.toml, no build-std. A panicking Drop aborts; it never
+  #     unwinds past `pop()`, and the `catch_unwind` the advisory's own
+  #     preconditions require cannot catch anything.
+  #  2. Neither caller calls the affected method. iroh-relay holds
+  #     `LruCache<PublicKey, ()>` (src/key_cache.rs) and pkarr holds
+  #     `LruCache<CacheKey, SignedPacket>` (src/client/cache.rs); neither
+  #     calls pop()/pop_lru()/pop_entry() anywhere.
+  #  3. Neither key type can panic on drop: iroh's PublicKey is a
+  #     `CompressedEdwardsY` (`[u8; 32]`) newtype and pkarr's CacheKey is
+  #     `[u8; 20]` — plain arrays, no Drop impl to run at all.
+  #
+  # REVISIT when the pinned iroh/pkarr accept lru >= 0.18.2 (delete this), or
+  # if this build ever enables wasm exception handling, which would retire
+  # reason 1 and leave the argument resting on 2 and 3.
+  "RUSTSEC-2026-0253",
 ]
 
 # CI passes `-D unsound` so unsoundness advisories (warnings by default) gate

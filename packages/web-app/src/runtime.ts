@@ -32,8 +32,9 @@ import { EMOJI_SETS, DEFAULT_EMOJI_SET, emojiFonts } from './emoji-sets.ts'
 import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
-import { el } from './ui-shared'
+import { el, overlayCard, scButton } from './ui-shared'
 import { fatalReportText } from './fatal-report.ts'
+import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
 
@@ -149,6 +150,14 @@ const mimeFromName = (name: string) =>
 /** Where backup exports land in the core memfs; the blobs SW serves
  * GET /download-backup/:filename from here. */
 const EXPORTS_DIR = '/exports'
+
+/** Largest file the user can hand us (backup import, attachment picker, drop).
+ * Staging copies it whole into wasm linear memory — the browser buffer, the
+ * memfs `Vec<u8>`, and the OPFS write-through's clone all coexist — so a file
+ * near the 4 GiB wasm ceiling kills the worker with no error to show. Mirrors
+ * `MAX_FILE_LEN` in crates/tokio-wasm-shim/src/limits.rs; well above the 300
+ * MiB the chat export budgets for its media. */
+const MAX_STAGED_FILE_BYTES = 1024 * 1024 * 1024
 
 /** Path the app is served under, e.g. "/" locally or "/slothfulchat-web/" on
  * GitHub Pages project sites. Derived from the page URL so the same build works
@@ -318,6 +327,23 @@ function getCore(): Core {
     core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))
     // time selected RPC round-trips (local) + derive anonymous usage events
     observeTransport(core.transport as any)
+    // Scrub archives left over from an earlier session. Backup exports land in
+    // EXPORTS_DIR and picked files (backup imports, attachments) are staged
+    // under /tmp — both are plaintext, and the memfs is mirrored into OPFS, so
+    // whatever a crash, a closed tab or a killed import left there would sit in
+    // browser storage forever (M-03). Nothing in either tree is meant to
+    // outlive a page load, and this runs before anything can write into them
+    // (the worker handles fs messages in order, after core init). fs_remove
+    // rejects when the tree is absent — the normal case, hence the empty catch.
+    for (const stale of [EXPORTS_DIR, '/tmp']) {
+      core.fsRemove(stale).catch(() => {})
+    }
+    // a stuck PWA update is invisible (no update UI, and the SW's console.warn
+    // dies with its worker): if blobs-sw.ts recorded repeated failed installs
+    // of the same version, tell the user in the device chat
+    surfaceFailedUpdate(core).catch(err =>
+      console.error('could not surface the failed update', err)
+    )
     // the worker reports when it gave up waiting for the OPFS lock — the core
     // is (almost certainly) running in another tab. ponytail: no faster
     // web-lock detection — its release lags on reloads and false-positives
@@ -384,6 +410,12 @@ function getCore(): Core {
     // captured when the import was SENT, so we can hold their success response
     // until the imported blobs are durable (see below)
     const pendingImports = new Map<number | string, Promise<number>>()
+    // request ids of in-flight calls that OPEN an account → their answer is the
+    // moment to ask core whether the migration went through (see below)
+    const pendingOpens = new Set<number | string>()
+    // request ids of in-flight import_backup calls → the staged archive they
+    // read from, removed once the call is done (see the _onmessage wrap)
+    const stagedImports = new Map<number | string, string>()
     const originalSend = core.transport._send.bind(core.transport)
     core.transport._send = (message: any) => {
       if (
@@ -415,6 +447,23 @@ function getCore(): Core {
         // originalSend below, and the worker handles messages in order — the
         // snapshot is read before the import starts executing.
         pendingImports.set(message.id, activeCore.fsFailed().catch(() => 0))
+        // import_backup reads the .tar the file picker staged under /tmp
+        // (showOpenFileDialog). The frontend's import dialog never removes it —
+        // upstream doesn't have to, its staging dir belongs to the node backend
+        // and the OS — so remember it here and drop it when the call finishes,
+        // however it finishes (M-03). get_backup has no such file.
+        if (message.method === 'import_backup' && typeof message.params?.[1] === 'string') {
+          stagedImports.set(message.id, message.params[1])
+        }
+      }
+      // The only two jsonrpc calls that open an account after the worker has
+      // started; both answer with its id. Everything else that exists at boot
+      // was opened by the account manager and is swept below.
+      if (
+        (message?.method === 'add_account' || message?.method === 'migrate_account') &&
+        message.id != null
+      ) {
+        pendingOpens.add(message.id)
       }
       originalSend(message)
     }
@@ -425,6 +474,20 @@ function getCore(): Core {
     const transport = core.transport as any
     const originalOnMessage = transport._onmessage.bind(transport)
     transport._onmessage = (message: any) => {
+      // The core is done with the staged archive by the time it answers —
+      // success, failure, or a cancel via stopOngoingProcess (which makes the
+      // call reject). Remove it either way; it is a plaintext copy of an
+      // entire account and OPFS would keep it forever.
+      const staged = message?.id != null && stagedImports.get(message.id)
+      if (staged) {
+        stagedImports.delete(message.id)
+        const path = tempRemovalPath(staged)
+        if (path) {
+          activeCore
+            .fsRemove(path)
+            .catch(err => console.warn('removing the imported backup failed', err))
+        }
+      }
       const baseline = message?.id != null ? pendingImports.get(message.id) : undefined
       if (baseline !== undefined && pendingImports.delete(message.id) && !message.error) {
         baseline
@@ -444,6 +507,10 @@ function getCore(): Core {
           .catch(err => console.warn('post-import OPFS flush failed', err))
           .finally(() => originalOnMessage(message))
         return
+      }
+      // an account that was just opened: ask before the frontend starts using it
+      if (pendingOpens.delete(message?.id) && typeof message.result === 'number') {
+        void checkMigrationErrors(transport, [message.result])
       }
       originalOnMessage(message)
     }
@@ -469,6 +536,9 @@ function getCore(): Core {
         // whole origin (accounts, messages, blobs) at once. Only asked once we
         // actually hold data worth protecting (a fresh visitor isn't prompted).
         if (has) void requestPersistentStorage()
+        // The account manager opens every existing account while the worker
+        // starts, so this single sweep covers all of them.
+        if (has) void checkMigrationErrors(transport, ids as number[])
       })
       .catch(() => {})
       .finally(() => {
@@ -500,15 +570,17 @@ const isIOS =
  * the share sheet ("Save to Files"); everywhere else a plain download anchor is
  * simplest. Callers must invoke this within a user gesture — fsRead is a fast
  * worker round-trip so navigator.share still runs inside the tap's transient
- * activation window (~5s). */
-async function saveFile(data: Uint8Array, name: string): Promise<void> {
+ * activation window (~5s). Returns false when the user dismissed the share
+ * sheet without saving — nothing left the app, so callers that delete the
+ * source afterwards must not. */
+async function saveFile(data: Uint8Array, name: string): Promise<boolean> {
   const file = new File([data as BlobPart], name, { type: mimeFromName(name) })
   if (isIOS && navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file] })
-      return
+      return true
     } catch (err) {
-      if ((err as Error)?.name === 'AbortError') return // user closed the sheet
+      if ((err as Error)?.name === 'AbortError') return false // user closed the sheet
       // otherwise fall through to the anchor download as a last resort
     }
   }
@@ -518,6 +590,7 @@ async function saveFile(data: Uint8Array, name: string): Promise<void> {
   a.download = name
   a.click()
   setTimeout(() => URL.revokeObjectURL(objUrl), 10_000)
+  return true
 }
 
 // The frontend downloads a finished backup by window.open('/download-backup/
@@ -533,14 +606,56 @@ window.open = ((url?: string | URL, ...rest: any[]) => {
     const name = decodeURIComponent(
       new URL(url, location.href).pathname.split('/').pop() || 'backup.tar'
     )
+    const path = `${EXPORTS_DIR}/${name}`
     getCore()
-      .fsRead(`${EXPORTS_DIR}/${name}`)
-      .then(data => saveFile(data, name))
+      .fsRead(path)
+      // Delete the export as soon as the bytes are in the user's hands: it is
+      // a full plaintext copy of the account and the memfs is mirrored into
+      // OPFS, so keeping it means a second copy of everything sits in browser
+      // storage indefinitely (M-03). The File/objectURL holds the bytes
+      // independently of the memfs, so the download is unaffected. Upstream's
+      // node server does the same 10s after the download finishes
+      // (target-browser/src/index.ts). Not deleted when saveFile reports the
+      // iOS share sheet was cancelled — nothing was saved, so leave the export
+      // for a second attempt (boot scrubs it otherwise).
+      .then(async data => {
+        if (await saveFile(data, name)) await getCore().fsRemove(path)
+      })
       .catch(err => console.error('backup download failed', err))
     return null
   }
   return nativeOpen(url as any, ...rest)
 }) as typeof window.open
+
+/** blobs-sw.ts counts consecutive failed installs of the SAME new version in
+ * the surviving cache. Two or more means stuck, not a network blip — so say so
+ * in the device chat. Core drops repeated device messages by label, so this is
+ * one message per stuck version with no bookkeeping here; and the record dies
+ * with the old cache once an update finally lands, so a stale re-send after
+ * recovery is impossible. English only, like every runtime.ts surface. */
+async function surfaceFailedUpdate(core: Core): Promise<void> {
+  const stored = await caches.match('./__sw-update-failed__')
+  const rec = stored && (await stored.json())
+  if (!rec || !(rec.attempts >= 2)) return
+  const text =
+    `Updating ${APP_NAME} failed ${rec.attempts} times: a file of the new ` +
+    'version could not be downloaded. You are still on the previous version, ' +
+    'which keeps working (offline too), and the update is retried on every ' +
+    'start.\n\n' +
+    'If this happens for future versions as well, something on this device is ' +
+    'likely blocking the download — a browser extension, a network filter, or ' +
+    `full storage.\n\nDetails: ${rec.errors?.[0] ?? 'unknown'}`
+  for (const id of (await core.transport.request('get_all_account_ids', [])) as number[]) {
+    // plain text + versioned label, as checkMigrationErrors does below — the
+    // version in the label is what re-arms the warning for the NEXT stuck
+    // version while core still drops repeats of this one
+    await core.transport.request('add_device_message', [
+      id,
+      `sw-update-failed-${rec.version}`,
+      { text },
+    ])
+  }
+}
 
 /** blob service worker: page side. The SW forwards GET /blobs/:acc/:file to
  * us, we read from the core memfs and post the bytes back. */
@@ -1154,6 +1269,22 @@ class BrowserRuntime {
     const base = name.split(/[/\\]/).pop() || 'file'
     return `/tmp/${crypto.randomUUID()}/${base}`
   }
+  /** Copies a user-picked File into the core memfs and returns its path.
+   * Trust boundary: the size is checked before the bytes are read, so an
+   * absurd pick (a crafted "backup", a huge video) is refused with an error
+   * the caller can show instead of OOM-ing the worker mid-read. */
+  private async stageFile(file: File): Promise<string> {
+    if (file.size > MAX_STAGED_FILE_BYTES) {
+      const mib = (n: number) => Math.round(n / 1048576)
+      throw new Error(
+        `${file.name} is too large: ${mib(file.size)} MiB, ` +
+          `limit ${mib(MAX_STAGED_FILE_BYTES)} MiB`
+      )
+    }
+    const path = this.tmpPath(file.name)
+    await getCore().fsWrite(path, new Uint8Array(await file.arrayBuffer()))
+    return path
+  }
   async writeTempFileFromBase64(name: string, content: string): Promise<string> {
     const path = this.tmpPath(name)
     await getCore().fsWrite(path, base64ToBytes(content))
@@ -1184,9 +1315,11 @@ class BrowserRuntime {
     return path
   }
   async removeTempFile(name: string): Promise<void> {
-    // same guard as upstream backendApi
-    if (name.includes('tmp') && !name.includes('..')) {
-      await getCore().fsRemove(name)
+    // guard (same as upstream backendApi) + collapse to the random parent dir
+    // tmpPath() made, so no empty directory is left in OPFS — see temp-paths
+    const path = tempRemovalPath(name)
+    if (path) {
+      await getCore().fsRemove(path)
     }
   }
   // #endregion
@@ -1379,8 +1512,14 @@ class BrowserRuntime {
     }
     return null
   }
-  writeClipboardText(text: string): Promise<void> {
-    return navigator.clipboard.writeText(text)
+  writeClipboardText(text: string | Promise<string>): Promise<void> {
+    if (typeof text === 'string') {
+      return navigator.clipboard.writeText(text)
+    }
+    // The caller still has to fetch the text (multiselect "Copy Text").
+    // Awaiting first would lose transient activation and Safari/WebKit would
+    // reject the write, so hand `ClipboardItem` the pending promise instead.
+    return navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })])
   }
   async writeClipboardImage(path: string): Promise<void> {
     try {
@@ -1482,12 +1621,7 @@ class BrowserRuntime {
         input.remove()
         if (input.files != null) {
           // upstream uploads to the backend; we write into the core memfs
-          const uploads = [...input.files].map(async file => {
-            const data = new Uint8Array(await file.arrayBuffer())
-            const path = this.tmpPath(file.name)
-            await getCore().fsWrite(path, data)
-            return path
-          })
+          const uploads = [...input.files].map(file => this.stageFile(file))
           const results = await Promise.allSettled(uploads)
           const uploadedFiles = results
             .filter(r => r.status == 'fulfilled')
@@ -1673,10 +1807,15 @@ class BrowserRuntime {
       e.stopPropagation()
       const paths: string[] = []
       for (const file of e.dataTransfer.files) {
-        const data = new Uint8Array(await file.arrayBuffer())
-        const path = this.tmpPath(file.name)
-        await getCore().fsWrite(path, data)
-        paths.push(path)
+        try {
+          paths.push(await this.stageFile(file))
+        } catch (err) {
+          // A drop has no error channel of its own (the picker rejects its
+          // promise; the handler only takes paths), so a skipped file would be
+          // invisible. Reuse the existing toast.
+          this.log.warn('dropped file not staged:', err)
+          showWarningToast('sc-drop-warning-toast', `⚠ ${err}`)
+        }
       }
       this.onDrop.handler(paths)
     })
@@ -1970,49 +2109,13 @@ function showFatalDialog(
   // here on it is noise about the wrong problem (see checkBridge)
   hideBridgeToast()
   hideWelcomeHint()
-  const overlay = el('dialog', {
-    position: 'fixed',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    maxWidth: 'none',
-    maxHeight: 'none',
-    margin: '0',
-    padding: '0',
-    border: 'none',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'rgba(0,0,0,.5)',
-  })
-  overlay.id = id
+  const [overlay, panel] = overlayCard(id)
   overlay.oncancel = e => e.preventDefault() // Esc must not reveal a dead app
 
-  const panel = el('div', {
-    width: 'min(400px, 92vw)',
-    padding: '20px',
-    borderRadius: '10px',
-    background: '#1e1e1e',
-    color: '#eee',
-    font: '14px/1.5 system-ui, sans-serif',
-    boxShadow: '0 8px 40px rgba(0,0,0,.5)',
-  })
-  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, titleText)
-  const body = el('p', { margin: '0 0 12px', color: '#bbb' }, bodyText)
-  const row = el('div', { display: 'flex', justifyContent: 'flex-end', marginTop: '16px' })
-  const retryBtn = el(
-    'button',
-    {
-      padding: '8px 14px',
-      borderRadius: '6px',
-      border: 'none',
-      cursor: 'pointer',
-      fontSize: '13px',
-      background: '#2d7dff',
-      color: '#fff',
-    },
-    'Retry'
-  )
+  const title = el('h2', {}, titleText)
+  const body = el('p', {}, bodyText)
+  const row = el('div', 'sc-row')
+  const retryBtn = scButton('Retry', true)
   retryBtn.onclick = () => location.reload()
   const report = fatalReportText({
     kind,
@@ -2033,12 +2136,78 @@ function showFatalDialog(
   // (see the gate in analytics.ts). Showing it here is what lets it send.
   const notify = analytics.isEnabled()
   if (notify) panel.append(analyticsNoticeLine())
-  overlay.append(panel)
   document.body.appendChild(overlay)
   overlay.showModal()
   // only once the notice is actually on screen — releaseHeldEvents() records
   // that it was shown, so calling it without showing it would be a lie
   if (notify) analytics.releaseHeldEvents()
+}
+
+// Core dedupes device messages by this label, forever and per account — never
+// vary it, or a broken account gets the same warning again on every boot.
+const MIGRATION_ERROR_LABEL = 'slothful-migration-error'
+// This fork's own tracker, not upstream's: the migration runs through our patch
+// stack and our OPFS SQLite, so a failure here is ours to look at.
+// ponytail: edit this to your repo if you fork this (as BRIDGE_HELP_URL above).
+const MIGRATION_ERROR_ISSUE_URL =
+  'https://github.com/experintellia/slothfulchat-web/issues'
+
+/** Ask core whether these accounts survived their database migration, and tell
+ * the user in the affected account's own device chat if one did not.
+ *
+ * Opening an account with a failed migration does NOT fail: core logs the
+ * error, records it, and returns success on purpose, so that a half-migrated
+ * account can still be exported as a backup instead of being unreachable
+ * (vendor/core/src/sql.rs). The price is that the failure is invisible unless
+ * the UI asks — and an account that silently lost a migration (the key-contacts
+ * one is the known offender) then misbehaves later, in code that has no idea
+ * why. So ask, at every point where an account is opened.
+ *
+ * A device message rather than a blocking dialog: it names the problem in the
+ * account it is about, next to the backup export it asks for, and leaves the
+ * app usable — which is the whole point, since the recovery is to get the data
+ * out. `add_device_message`'s label is what keeps it to one message ever: core
+ * records the label in `devmsglabels` and drops every later add with the same
+ * one, even if the message was deleted in between (vendor/core/src/chat.rs), so
+ * the repeat on each boot costs nothing.
+ *
+ * ponytail: one RPC per account, sequential — fine for the handful of accounts
+ * a browser profile holds; batch it if that ever stops being true. */
+async function checkMigrationErrors(transport: any, ids: number[]): Promise<void> {
+  for (const id of ids) {
+    // a core too old to know the method, or one that died meanwhile, must not
+    // take the app down with an unhandled rejection
+    const error = await transport.request('get_migration_error', [id]).catch(() => null)
+    if (!error) continue
+    analytics.event('boot_error', { kind: 'migration-error' })
+    // Core prefixes its own "send this to the Delta Chat developers, either at
+    // delta@merlinux.eu or at https://support.delta.chat" boilerplate and
+    // separates it from the real error with a blank line (set_migration_error,
+    // vendor/core/src/sql.rs). Pasted whole, the message would carry two
+    // contradictory places to report to — and theirs looks the more specific.
+    // Keep the error only; fall back to the whole string if core ever changes
+    // the shape, so a core bump degrades to showing too much rather than
+    // nothing. Cosmetic and on our display path, so not worth a core patch.
+    const detail = String(error).split('\n\n').slice(1).join('\n\n') || String(error)
+    // plain text, no markdown — device messages render as-is and autolink URLs
+    await transport
+      .request('add_device_message', [
+        id,
+        MIGRATION_ERROR_LABEL,
+        {
+          text:
+            `⚠ ${APP_NAME} could not finish updating this account's database to ` +
+            'the current version. Contacts and messages in this account can be ' +
+            'wrong from now on. Nothing was deleted — please export a backup ' +
+            '(Settings → Chats → Export Backup) and keep it safe.\n\n' +
+            'Please report this, with the error text below, at ' +
+            `${MIGRATION_ERROR_ISSUE_URL}\n\n${detail}`,
+        },
+      ])
+      .catch((err: unknown) =>
+        console.error('could not add the migration-error device message', err)
+      )
+  }
 }
 
 /** The whole app is a wasm core, so a browser with WebAssembly switched off can
@@ -2075,27 +2244,12 @@ function warnIfNoWebAssembly(): void {
 
 /** The report itself, shown so the user can see what they would be sharing, and
  * left selectable so a manual copy still works where the clipboard API doesn't.
- * `userSelect: 'text'` is belt-and-braces: the app's global stylesheet turns
- * selection off for headings and buttons but not for a bare <pre>. It is here
- * so a future global rule cannot quietly take the fallback away. */
+ * `.sc-report`'s `user-select:text` is belt-and-braces: the app's global
+ * stylesheet turns selection off for headings and buttons but not for a bare
+ * <pre>. It is there so a future global rule cannot quietly take the fallback
+ * away. */
 function reportBlock(report: string): HTMLElement {
-  return el(
-    'pre',
-    {
-      margin: '0 0 8px',
-      padding: '8px 10px',
-      borderRadius: '6px',
-      background: '#141414',
-      color: '#bbb',
-      font: '12px/1.45 ui-monospace, monospace',
-      whiteSpace: 'pre-wrap',
-      wordBreak: 'break-word',
-      maxHeight: '30vh',
-      overflowY: 'auto',
-      userSelect: 'text', // the app's global stylesheet turns selection off
-    },
-    report
-  )
+  return el('pre', 'sc-report', report)
 }
 
 /** Copy-to-clipboard, with the result said out loud rather than mimed: on a
@@ -2103,19 +2257,7 @@ function reportBlock(report: string): HTMLElement {
  * that worked. writeText needs a secure context and can be refused outright,
  * so failure falls back to selecting the block for a manual copy. */
 function copyButton(report: string): HTMLElement {
-  const btn = el(
-    'button',
-    {
-      padding: '6px 12px',
-      borderRadius: '6px',
-      border: '1px solid #444',
-      background: 'transparent',
-      color: '#ddd',
-      cursor: 'pointer',
-      fontSize: '13px',
-    },
-    'Copy details'
-  )
+  const btn = el('button', 'sc-btn-ghost', 'Copy details')
   btn.onclick = async () => {
     try {
       await navigator.clipboard.writeText(report)
@@ -2133,32 +2275,14 @@ function copyButton(report: string): HTMLElement {
  * (whose buttons record a choice). Same wording contract as the welcome
  * screen's checkbox: opt-out, and this counts as the ask. */
 function analyticsNoticeLine(): HTMLElement {
-  const note = el('p', {
-    margin: '16px 0 0',
-    paddingTop: '12px',
-    borderTop: '1px solid #333',
-    color: '#888',
-    fontSize: '12px',
-  })
+  const note = el('p', 'sc-analytics-note')
   // covers the whole held queue, not just this failure: releasing here also
   // flushes the startup events (which bridge, cold/warm, pageview) queued
   // before the core died
   note.append('This failure and how the app started are counted in anonymous usage statistics. ')
   // a button, not an <a>: it opens a dialog rather than navigating, and screen
   // readers should say so
-  const link = el(
-    'button',
-    {
-      background: 'none',
-      border: 'none',
-      padding: '0',
-      font: 'inherit',
-      color: '#6aa9ff',
-      textDecoration: 'underline',
-      cursor: 'pointer',
-    },
-    'Details or opt out'
-  )
+  const link = el('button', 'sc-linkbtn', 'Details or opt out')
   link.onclick = () => void showAnalyticsInfoDialog()
   note.append(link)
   return note
@@ -2173,62 +2297,25 @@ const WEBXDC_ISSUE_URL =
  * dialog). */
 function showWebxdcNotImplementedDialog() {
   if (document.getElementById('sc-webxdc-dialog')) return
-  const overlay = el('dialog', {
-    position: 'fixed',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    maxWidth: 'none',
-    maxHeight: 'none',
-    margin: '0',
-    padding: '0',
-    border: 'none',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'rgba(0,0,0,.5)',
-  })
-  overlay.id = 'sc-webxdc-dialog'
+  const [overlay, panel] = overlayCard('sc-webxdc-dialog')
   overlay.onclose = () => overlay.remove()
 
-  const panel = el('div', {
-    width: 'min(400px, 92vw)',
-    padding: '20px',
-    borderRadius: '10px',
-    background: '#1e1e1e',
-    color: '#eee',
-    font: '14px/1.5 system-ui, sans-serif',
-    boxShadow: '0 8px 40px rgba(0,0,0,.5)',
-  })
-  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'Webxdc apps')
+  const title = el('h2', {}, 'Webxdc apps')
   const body = el(
     'p',
-    { margin: '0 0 12px', color: '#bbb' },
+    {},
     'Running webxdc apps is not implemented (yet) in this browser edition.'
   )
-  const link = el('a', { color: '#4ea1ff', fontSize: '13px' }, 'Follow the GitHub issue →')
-  ;(link as HTMLAnchorElement).href = WEBXDC_ISSUE_URL
-  ;(link as HTMLAnchorElement).target = '_blank'
-  ;(link as HTMLAnchorElement).rel = 'noopener noreferrer'
+  const link = el('a', 'sc-link', 'Follow the GitHub issue →')
+  link.href = WEBXDC_ISSUE_URL
+  link.target = '_blank'
+  link.rel = 'noopener noreferrer'
 
-  const row = el('div', { display: 'flex', justifyContent: 'flex-end', marginTop: '16px' })
-  const closeBtn = el(
-    'button',
-    {
-      padding: '8px 14px',
-      borderRadius: '6px',
-      border: 'none',
-      cursor: 'pointer',
-      fontSize: '13px',
-      background: '#2d7dff',
-      color: '#fff',
-    },
-    'Close'
-  )
+  const row = el('div', 'sc-row')
+  const closeBtn = scButton('Close', true)
   closeBtn.onclick = () => overlay.remove()
   row.append(closeBtn)
   panel.append(title, body, link, row)
-  overlay.append(panel)
   overlay.onclick = e => {
     if (e.target === overlay) overlay.remove()
   }
@@ -2990,19 +3077,7 @@ function showWelcomeHint() {
   if (!group) return
   const hint = el(
     'button',
-    {
-      display: 'block',
-      width: '100%',
-      marginBottom: '8px',
-      padding: '10px 14px',
-      borderRadius: '8px',
-      border: 'none',
-      background: '#8a5a00',
-      color: '#fff',
-      font: '13px/1.4 system-ui, sans-serif',
-      textAlign: 'center',
-      cursor: 'pointer',
-    },
+    'sc-hint',
     '⚠ Bridge not reachable — needed for standard accounts, but not for madmail webimap servers. Click to fix.'
   )
   hint.id = 'sc-bridge-hint'
@@ -3017,27 +3092,7 @@ function showWelcomeHint() {
 /** Bottom-right warning toast; click runs `onClick` (default: dismiss). */
 function showWarningToast(id: string, text: string, onClick?: () => void) {
   if (document.getElementById(id)) return
-  const toast = el(
-    'div',
-    {
-      position: 'fixed',
-      inset: 'auto',
-      bottom: '16px',
-      right: '16px',
-      margin: '0',
-      border: 'none',
-      zIndex: '2147483647',
-      maxWidth: '320px',
-      padding: '10px 14px',
-      borderRadius: '8px',
-      background: '#8a5a00',
-      color: '#fff',
-      font: '13px/1.4 system-ui, sans-serif',
-      boxShadow: '0 2px 12px rgba(0,0,0,.35)',
-      cursor: 'pointer',
-    },
-    text
-  )
+  const toast = el('div', 'sc-toast', text)
   toast.id = id
   toast.onclick = onClick ?? (() => toast.remove())
   document.body.appendChild(toast)
@@ -3065,49 +3120,17 @@ function showBridgeToast() {
 
 function showBridgeDialog() {
   if (document.getElementById('sc-bridge-dialog')) return
-  // A native <dialog> + showModal(), not a div: upstream's dialogs (welcome
-  // screen etc.) are modal and live in the browser top layer, which paints
-  // over any z-index. Opening ours last puts it above them and keeps it
-  // interactive (topmost modal).
-  const overlay = el('dialog', {
-    position: 'fixed',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    maxWidth: 'none',
-    maxHeight: 'none',
-    margin: '0',
-    padding: '0',
-    border: 'none',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'rgba(0,0,0,.5)',
-  })
-  overlay.id = 'sc-bridge-dialog'
+  const [overlay, panel] = overlayCard('sc-bridge-dialog', true)
   // Escape closes the dialog without removing it; display:flex would keep it
   // visible, so drop it from the DOM entirely.
   overlay.onclose = () => overlay.remove()
 
-  const panel = el('div', {
-    width: 'min(460px, 92vw)',
-    maxHeight: '90vh',
-    overflowY: 'auto',
-    boxSizing: 'border-box',
-    padding: '20px',
-    borderRadius: '10px',
-    background: '#1e1e1e',
-    color: '#eee',
-    font: '14px/1.5 system-ui, sans-serif',
-    boxShadow: '0 8px 40px rgba(0,0,0,.5)',
-  })
-
   // neutral title: this dialog is opened both from the bridge-down toast and
   // from the connectivity view's Change… button (bridge may be up)
-  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'Bridge')
+  const title = el('h2', {}, 'Bridge')
   const body = el(
     'p',
-    { margin: '0 0 8px', color: '#bbb' },
+    {},
     'Browsers can’t open direct connections to mail servers, so this app ' +
       'sends its traffic through a small bridge. That traffic is encrypted ' +
       'by default before it reaches the bridge — the bridge only passes it ' +
@@ -3117,15 +3140,11 @@ function showBridgeDialog() {
 
   // the one honest exception to "can't read it", kept out of the main copy
   // so the paragraph stays short — expandable for those who care
-  const previewNote = el('details', { margin: '0 0 12px', fontSize: '12px', color: '#bbb' })
-  const previewSummary = el(
-    'summary',
-    { cursor: 'pointer' },
-    'One exception: link previews (opt-in)'
-  )
+  const previewNote = el('details', 'sc-details')
+  const previewSummary = el('summary', {}, 'One exception: link previews (opt-in)')
   const previewBody = el(
     'p',
-    { margin: '6px 0 0' },
+    {},
     'If you turn on link previews, the bridge fetches the linked web page ' +
       'for you (most sites don’t let the browser fetch them directly), so ' +
       'it can see which pages you preview. This is only about link ' +
@@ -3133,48 +3152,20 @@ function showBridgeDialog() {
   )
   previewNote.append(previewSummary, previewBody)
 
-  const list = el('div', { display: 'flex', flexDirection: 'column', gap: '8px' })
+  const list = el('div', 'sc-opts')
   const radios: HTMLInputElement[] = []
-  const rows: HTMLElement[] = []
-  // selected card gets the accent border/tint; inline styles (no stylesheet),
-  // so hover/selection are restyled from JS
-  const restyleRows = () => {
-    rows.forEach((r, i) => {
-      r.style.borderColor = radios[i].checked ? '#2d7dff' : '#3a3a3a'
-      r.style.background = radios[i].checked ? 'rgba(45,125,255,.12)' : '#262626'
-    })
-  }
+  // hover and "this one is selected" are `.sc-opt:hover` / `.sc-opt:has(:checked)`
   const mkRadio = (): HTMLInputElement => {
-    const radio = el('input', {
-      margin: '2px 10px 0 0',
-      flexShrink: '0',
-      width: '16px',
-      height: '16px',
-      accentColor: '#2d7dff',
-    }) as HTMLInputElement
+    const radio = el('input')
     radio.type = 'radio'
     radio.name = 'sc-bridge'
     radios.push(radio)
     return radio
   }
   const mkRow = (radio: HTMLInputElement, column: HTMLElement) => {
-    const label = el('label', {
-      display: 'flex',
-      alignItems: 'flex-start',
-      padding: '10px 12px',
-      borderRadius: '8px',
-      border: '1px solid #3a3a3a',
-      background: '#262626',
-      cursor: 'pointer',
-      transition: 'border-color .15s, background-color .15s',
-    })
-    label.onmouseenter = () => {
-      if (!radio.checked) label.style.borderColor = '#5a5a5a'
-    }
-    label.onmouseleave = restyleRows
+    const label = el('label', 'sc-opt')
     label.append(radio, column)
     list.append(label)
-    rows.push(label)
     return label
   }
 
@@ -3184,58 +3175,16 @@ function showBridgeDialog() {
     const radio = mkRadio()
     radio.value = opt.url
     if (normBridgeUrl(opt.url) === current) radio.checked = true
-    const column = el('div', { flex: '1', minWidth: '0' })
-    column.append(
-      el(
-        'div',
-        {
-          fontFamily: 'ui-monospace, monospace',
-          fontSize: '13px',
-          wordBreak: 'break-all',
-          color: '#e8e8e8',
-        },
-        opt.url
-      )
-    )
+    const column = el('div', 'sc-opt-col')
+    column.append(el('div', 'sc-opt-url', opt.url))
     if (opt.description) {
-      column.append(
-        el('div', { fontSize: '12px', color: '#a8a8a8', marginTop: '2px' }, opt.description)
-      )
+      column.append(el('div', 'sc-opt-desc', opt.description))
     }
     if (opt.url === DEFAULT_LOCAL_BRIDGE) {
       // "run it on your own device" made actionable, on the localhost option
       const NPX_CMD = 'npx @slothfulchat/ws-tcp-proxy'
-      const startCmd = el(
-        'pre',
-        {
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '8px',
-          margin: '8px 0 6px',
-          padding: '6px 6px 6px 10px',
-          borderRadius: '6px',
-          background: '#161616',
-          color: '#9cdcfe',
-          whiteSpace: 'pre-wrap',
-          fontSize: '12px',
-        },
-        NPX_CMD
-      )
-      const copyBtn = el(
-        'button',
-        {
-          flexShrink: '0',
-          padding: '3px 8px',
-          borderRadius: '4px',
-          border: '1px solid #444',
-          background: '#2a2a2a',
-          color: '#ccc',
-          cursor: 'pointer',
-          font: '11px system-ui, sans-serif',
-        },
-        'Copy'
-      )
+      const startCmd = el('pre', 'sc-cmd', NPX_CMD)
+      const copyBtn = el('button', {}, 'Copy')
       // inside the option's <label>: type=button so it doesn't submit, and
       // clicks on it (an interactive element) don't toggle the radio
       copyBtn.type = 'button'
@@ -3251,29 +3200,19 @@ function showBridgeDialog() {
           })
       }
       startCmd.append(copyBtn)
-      const help = el('a', { color: '#4ea1ff', fontSize: '12px' }, 'Bridge setup & source →')
-      ;(help as HTMLAnchorElement).href = BRIDGE_HELP_URL
-      ;(help as HTMLAnchorElement).target = '_blank'
-      ;(help as HTMLAnchorElement).rel = 'noopener noreferrer'
+      const help = el('a', 'sc-link', 'Bridge setup & source →')
+      help.href = BRIDGE_HELP_URL
+      help.target = '_blank'
+      help.rel = 'noopener noreferrer'
       column.append(startCmd, help)
     }
     mkRow(radio, column)
   }
 
   const customRadio = mkRadio()
-  const customColumn = el('div', { flex: '1', minWidth: '0' })
+  const customColumn = el('div', 'sc-opt-col')
   customColumn.append(el('div', { fontSize: '13px', color: '#e8e8e8' }, 'Custom…'))
-  const input = el('input', {
-    width: '100%',
-    boxSizing: 'border-box',
-    marginTop: '6px',
-    padding: '8px 10px',
-    borderRadius: '6px',
-    border: '1px solid #444',
-    background: '#161616',
-    color: '#eee',
-    fontSize: '13px',
-  }) as HTMLInputElement
+  const input = el('input', 'sc-input')
   input.type = 'text'
   input.placeholder = 'wss://your-host'
   customColumn.append(input)
@@ -3284,38 +3223,17 @@ function showBridgeDialog() {
     customRadio.checked = true
     input.value = resolveBridgeUrl()
   }
-  restyleRows()
 
-  const row = el('div', {
-    display: 'flex',
-    gap: '8px',
-    justifyContent: 'flex-end',
-    marginTop: '16px',
-  })
-  const mkBtn = (text: string, primary: boolean) =>
-    el(
-      'button',
-      {
-        padding: '8px 14px',
-        borderRadius: '6px',
-        border: 'none',
-        cursor: 'pointer',
-        fontSize: '13px',
-        background: primary ? '#2d7dff' : '#333',
-        color: '#fff',
-      },
-      text
-    )
+  const row = el('div', 'sc-row')
 
   const close = () => overlay.remove()
-  const closeBtn = mkBtn('Close', false)
+  const closeBtn = scButton('Close')
   closeBtn.onclick = close
 
-  const testBtn = mkBtn('Test selected', false)
+  const testBtn = scButton('Test selected')
   const onSelectionChange = () => {
-    restyleRows()
     testBtn.textContent = 'Test selected'
-    input.style.borderColor = '#444'
+    input.classList.remove('sc-invalid')
     if (customRadio.checked) input.focus()
   }
   for (const radio of radios) radio.onchange = onSelectionChange
@@ -3337,7 +3255,7 @@ function showBridgeDialog() {
   testBtn.onclick = async () => {
     const url = selectedUrl()
     if (!url) {
-      input.style.borderColor = '#e33'
+      input.classList.add('sc-invalid')
       input.focus()
       return
     }
@@ -3350,11 +3268,11 @@ function showBridgeDialog() {
     }
   }
 
-  const useBtn = mkBtn('Use this bridge', true)
+  const useBtn = scButton('Use this bridge', true)
   useBtn.onclick = () => {
     const value = selectedUrl()
     if (!value) {
-      input.style.borderColor = '#e33'
+      input.classList.add('sc-invalid')
       input.focus()
       return
     }
@@ -3380,7 +3298,6 @@ function showBridgeDialog() {
 
   row.append(closeBtn, testBtn, useBtn)
   panel.append(title, body, previewNote, list, row)
-  overlay.append(panel)
   overlay.onclick = e => {
     if (e.target === overlay) close()
   }
@@ -3399,90 +3316,31 @@ function showBridgeDialog() {
  * has been sent to it by the time this is answered. */
 function showBridgeConfirmDialog(url: string) {
   if (document.getElementById('sc-bridge-confirm-dialog')) return
-  const overlay = el('dialog', {
-    position: 'fixed',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    maxWidth: 'none',
-    maxHeight: 'none',
-    margin: '0',
-    padding: '0',
-    border: 'none',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'rgba(0,0,0,.5)',
-  })
-  overlay.id = 'sc-bridge-confirm-dialog'
+  const [overlay, panel] = overlayCard('sc-bridge-confirm-dialog', true)
   overlay.onclose = () => overlay.remove()
 
-  const panel = el('div', {
-    width: 'min(460px, 92vw)',
-    maxHeight: '90vh',
-    overflowY: 'auto',
-    boxSizing: 'border-box',
-    padding: '20px',
-    borderRadius: '10px',
-    background: '#1e1e1e',
-    color: '#eee',
-    font: '14px/1.5 system-ui, sans-serif',
-    boxShadow: '0 8px 40px rgba(0,0,0,.5)',
-  })
-  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'Use a different bridge?')
+  const title = el('h2', {}, 'Use a different bridge?')
   const body = el(
     'p',
-    { margin: '0 0 10px', color: '#bbb' },
+    {},
     'The link you opened asks this app to send all of its traffic through ' +
       'the bridge below, instead of its usual one. Your messages stay ' +
       'encrypted, but whoever runs that bridge can see your IP address, ' +
       'which mail servers you connect to, and when. Only accept if you ' +
       'trust whoever gave you the link.'
   )
-  const urlBox = el(
-    'pre',
-    {
-      margin: '0 0 10px',
-      padding: '8px 10px',
-      borderRadius: '6px',
-      background: '#161616',
-      color: '#9cdcfe',
-      whiteSpace: 'pre-wrap',
-      wordBreak: 'break-all',
-      fontSize: '12px',
-    },
-    url
-  )
+  const urlBox = el('pre', 'sc-url', url)
   const note = el(
     'p',
-    { margin: '0', fontSize: '12px', color: '#a8a8a8' },
+    'sc-note',
     `Until you accept, ${APP_NAME} keeps using its usual bridge. You can ` +
       'change this any time under Settings → Connectivity.'
   )
 
-  const row = el('div', {
-    display: 'flex',
-    gap: '8px',
-    justifyContent: 'flex-end',
-    marginTop: '16px',
-  })
-  const mkBtn = (text: string, primary: boolean) =>
-    el(
-      'button',
-      {
-        padding: '8px 14px',
-        borderRadius: '6px',
-        border: 'none',
-        cursor: 'pointer',
-        fontSize: '13px',
-        background: primary ? '#2d7dff' : '#333',
-        color: '#fff',
-      },
-      text
-    )
-  const keepBtn = mkBtn('Keep current bridge', false)
+  const row = el('div', 'sc-row')
+  const keepBtn = scButton('Keep current bridge')
   keepBtn.onclick = () => overlay.remove()
-  const useBtn = mkBtn('Use this bridge', true)
+  const useBtn = scButton('Use this bridge', true)
   useBtn.onclick = () => {
     localStorage.setItem(PROXY_KEY, url)
     location.reload()
@@ -3490,7 +3348,6 @@ function showBridgeConfirmDialog(url: string) {
   row.append(keepBtn, useBtn)
 
   panel.append(title, body, urlBox, note, row)
-  overlay.append(panel)
   overlay.onclick = e => {
     if (e.target === overlay) overlay.remove()
   }
@@ -3567,40 +3424,13 @@ function showThrowawayGate(): void {
   fatalShown = true
   hideBridgeToast()
   hideWelcomeHint()
-  const overlay = el('dialog', {
-    position: 'fixed',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    maxWidth: 'none',
-    maxHeight: 'none',
-    margin: '0',
-    padding: '0',
-    border: 'none',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'rgba(0,0,0,.5)',
-  })
-  overlay.id = 'sc-throwaway-dialog'
+  const [overlay, panel] = overlayCard('sc-throwaway-dialog', true)
   overlay.oncancel = e => e.preventDefault() // Esc must not reveal a dead app
 
-  const panel = el('div', {
-    width: 'min(460px, 92vw)',
-    maxHeight: '90vh',
-    overflowY: 'auto',
-    boxSizing: 'border-box',
-    padding: '20px',
-    borderRadius: '10px',
-    background: '#1e1e1e',
-    color: '#eee',
-    font: '14px/1.5 system-ui, sans-serif',
-    boxShadow: '0 8px 40px rgba(0,0,0,.5)',
-  })
-  const title = el('h2', { margin: '0 0 8px', fontSize: '17px' }, 'Start a throwaway session?')
+  const title = el('h2', {}, 'Start a throwaway session?')
   const body = el(
     'p',
-    { margin: '0 0 10px', color: '#bbb' },
+    {},
     `The link you opened asks ${APP_NAME} to run without saving anything. ` +
       'Your existing accounts and chats will not be shown, and whatever you ' +
       'do in such a session — setting up an account, messages you receive — ' +
@@ -3609,32 +3439,12 @@ function showThrowawayGate(): void {
   )
   const note = el(
     'p',
-    { margin: '0', fontSize: '12px', color: '#a8a8a8' },
+    'sc-note',
     'Only useful for testing. If you did not mean to do this, keep your data.'
   )
 
-  const row = el('div', {
-    display: 'flex',
-    gap: '8px',
-    justifyContent: 'flex-end',
-    marginTop: '16px',
-    flexWrap: 'wrap',
-  })
-  const mkBtn = (text: string, primary: boolean) =>
-    el(
-      'button',
-      {
-        padding: '8px 14px',
-        borderRadius: '6px',
-        border: 'none',
-        cursor: 'pointer',
-        fontSize: '13px',
-        background: primary ? '#2d7dff' : '#333',
-        color: '#fff',
-      },
-      text
-    )
-  const keepBtn = mkBtn('Keep my data', true)
+  const row = el('div', 'sc-row')
+  const keepBtn = scButton('Keep my data', true)
   keepBtn.onclick = () => {
     const clean = new URL(location.href)
     clean.searchParams.delete('persist')
@@ -3642,7 +3452,7 @@ function showThrowawayGate(): void {
     // walks straight back into the gate (same reason ?proxy= uses replaceState)
     location.replace(clean.toString()) // reload into a normal, saved session
   }
-  const throwawayBtn = mkBtn('Start throwaway session', false)
+  const throwawayBtn = scButton('Start throwaway session')
   throwawayBtn.onclick = () => {
     try {
       sessionStorage.setItem(THROWAWAY_KEY, '1')
@@ -3654,7 +3464,6 @@ function showThrowawayGate(): void {
   row.append(throwawayBtn, keepBtn)
 
   panel.append(title, body, note, row)
-  overlay.append(panel)
   document.body.appendChild(overlay)
   overlay.showModal()
   keepBtn.focus() // the safe option, not the one that throws the data away

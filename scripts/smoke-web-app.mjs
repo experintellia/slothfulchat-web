@@ -4,7 +4,7 @@
 import { writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
-import { startServers } from './harness.mjs'
+import { assertDialogRendered, startServers } from './harness.mjs'
 
 const script = p => fileURLToPath(new URL(p, import.meta.url))
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
@@ -174,6 +174,17 @@ try {
   if (!xdcHandler) {
     throw new Error('manifest missing .xdc file_handler')
   }
+  // The accept *key* is what Chromium writes into the Linux .desktop MimeType=
+  // (and into the shared-mime-info XML it installs via xdg-mime). A generic key
+  // makes the PWA the offered handler for every file of that type — with
+  // application/octet-stream, for every unrecognized binary on the system. It
+  // must also be the exact type Delta Chat desktop registers for *.xdc, or the
+  // two globs disagree on a machine that has both installed.
+  if (!Object.keys(xdcHandler.accept).every(m => /^application\/x-webxdc$/.test(m))) {
+    throw new Error(
+      `.xdc file_handler must accept only application/x-webxdc, got ${Object.keys(xdcHandler.accept)}`
+    )
+  }
   if (manifest.launch_handler?.client_mode !== 'focus-existing') {
     throw new Error('manifest missing launch_handler focus-existing')
   }
@@ -293,6 +304,31 @@ try {
   // onWebxdcSendToChat mechanism the passing text-share case above covers, and
   // its writeTempFileFromBase64 staging is exercised by the upstream
   // WebxdcSaveToChatDialog itself.)
+
+  // The two overlays runtime.ts does NOT build — consent.ts's info dialog and
+  // the diagnostics panel — render as dialogs, not as an unstyled pile (#211).
+  // They live here rather than in a gate of their own because both need a
+  // booted app to expose their hooks, which this suite already has.
+  // `open` must return nothing: showInfo() resolves only once the dialog
+  // closes, and page.evaluate() awaits a returned promise — returning it would
+  // hang the run forever. Dismissed with close() rather than by clicking a
+  // button, which for the consent dialog would also record a consent choice.
+  const checkOverlay = async (open, cardWidth, name) => {
+    await page.evaluate(open)
+    const dialog = page.locator('dialog[open]').last() // ours opened last, so topmost
+    await dialog.waitFor({ state: 'visible', timeout: 10000 })
+    await assertDialogRendered(dialog, cardWidth, name)
+    await dialog.evaluate(d => d.close())
+    console.log(`OK: the ${name} is a centred, styled modal`)
+  }
+  const showInfo = () => {
+    window.__slothfulAnalyticsUi.showInfo()
+  }
+  const openDiag = () => {
+    window.__slothfulDiagnostics.open()
+  }
+  await checkOverlay(showInfo, 544, 'usage-statistics dialog') // max-width: 34rem
+  await checkOverlay(openDiag, 680, 'diagnostics panel') // width: min(680px, 94vw)
 
   if (cspViolations.length > 0) {
     console.error(`FAIL: ${cspViolations.length} CSP violation(s): ${cspViolations[0]}`)

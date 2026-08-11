@@ -96,8 +96,8 @@ export const EVENTS: readonly CatalogEvent[] = [
   },
   {
     name: 'boot_error',
-    what: 'That the app hit a fatal startup error, by category (helps us fix white-screens).',
-    props: 'kind = opfs-locked · storage-blocked · init-error · no-wasm',
+    what: 'That the app hit a serious error at startup, by category (helps us fix white-screens and broken accounts).',
+    props: 'kind = opfs-locked · storage-blocked · init-error · no-wasm · migration-error',
   },
   {
     name: 'chat_export',

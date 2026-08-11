@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Claude <noreply@anthropic.com>
+From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 23 Jul 2026 01:48:04 +0000
 Subject: [PATCH 22/30] pre-message: real mimetype and thumbnail preview in
  metadata
