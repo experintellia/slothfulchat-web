@@ -28,12 +28,16 @@ marking any later marks nothing. It adds a line like
 ```
 
 to the doc comment of every RPC method, type, variant and field the patch stack
-touches — in the throwaway `build/core` worktree only, never in `patches/` or
-`vendor/`. It derives the marks from `git blame` against the submodule pin, so
-they name the responsible patch, say whether it was *added* or *changed*, and
-cannot drift out of date. Both generators read those same `///` comments, so the
-marks reach the TypeScript client (hence typedoc's HTML and the `.d.ts` an IDE
-hovers) and the OpenRPC spec alike.
+*substantively* touches — in the throwaway `build/core` worktree only, never in
+`patches/` or `vendor/`. It derives the marks from `git blame` against the
+submodule pin, so they name the responsible patch, say whether it was *added*
+(the item does not exist upstream) or *changed* (it does, and its signature,
+body or attributes are partly ours), and cannot drift out of date. An item that
+differs from upstream only in its doc comments, its blank lines or its
+formatting gets no mark at all — a 🦥 that fires on a reworded `///` or a
+rustfmt reflow is one readers learn to skip. Both generators read those same
+`///` comments, so the marks reach the TypeScript client (hence typedoc's HTML
+and the `.d.ts` an IDE hovers) and the OpenRPC spec alike.
 
 `pnpm verify-fork-marks` then checks that they actually arrived — per symbol, in
 every one of those surfaces — and fails the build otherwise. It is not

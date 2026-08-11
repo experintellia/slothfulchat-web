@@ -14,6 +14,12 @@
 // `git blame` says per line whether upstream or one of our patches wrote it,
 // and which one. Nothing can drift out of date.
 //
+// An item is marked `added` when it does not exist upstream at all, `changed`
+// when it does and a *substantive* line in it is ours — the signature, the
+// body, the attributes. Doc comments, blank lines and reformatting are not
+// substantive, so an item that only reads differently from upstream gets no
+// mark: the 🦥 is worth reading only while it means the behaviour differs.
+//
 // Writes to `build/core` only — never to `patches/` or `vendor/`. Run it as a
 // step of documentation generation, *not* from apply-patches.sh: build/core
 // doubles as the edit-and-`update-patches.sh` worktree, and marks committed
@@ -148,7 +154,23 @@ function declared(line) {
 }
 
 /**
- * Insert the marker into every API item that a fork line falls inside.
+ * Is this line one a reader would care that we changed?
+ *
+ * The signature, the body and the attributes are; a `///` or `//!` doc line and
+ * a blank line are not — reword a doc comment and the item a consumer calls is
+ * upstream's, byte for byte. Reindentation never gets this far: blameFork
+ * blames with `-w`, so a line our patches only moved sideways stays upstream's.
+ * Plain `//` comments count as substantive on purpose — they sit in the body
+ * and in this stack they come with the behaviour change they explain.
+ */
+const substantive = (line) => Boolean(line.trim()) && !/^\s*\/\/[/!]/.test(line)
+
+/**
+ * Insert the marker into every API item our patches substantively touched.
+ *
+ * `added` = the item is ours whole. `changed` = it exists upstream and at least
+ * one substantive line in it is ours. Docs-and-whitespace-only differences get
+ * no mark at all: a 🦥 that fires on a reflow teaches readers to ignore it.
  *
  * @param source     Rust source text.
  * @param forkLines  Map of 1-based line number -> patch label that wrote it.
@@ -164,12 +186,17 @@ export function markSource(source, forkLines) {
   for (const { decl, docEnd, from, to } of apiItems(source)) {
     const patches = new Set()
     let upstream = false
+    let touched = false
     for (let i = from; i < to; i++) {
       const patch = forkLines.get(i + 1)
-      if (patch) patches.add(patch)
-      else if (lines[i].trim()) upstream = true
+      if (patch) {
+        patches.add(patch)
+        touched ||= substantive(lines[i])
+      } else if (lines[i].trim()) upstream = true
     }
-    if (!patches.size) continue
+    // Every patch that wrote any line is still credited — the gate is only
+    // whether there is anything to credit them for.
+    if (!patches.size || (upstream && !touched)) continue
     // Recorded whether or not a marker is inserted below: re-running on an
     // already-marked tree must still report the same set of items, or the
     // second run would hand verify-fork-marks.mjs an empty manifest.
@@ -194,10 +221,15 @@ export function markSource(source, forkLines) {
   return { source: out.join('\n'), marked, methods, types }
 }
 
-/** 1-based line -> patch label, for every line one of our patches wrote. */
-function blameFork(repo, file, labels) {
+/**
+ * 1-based line -> patch label, for every line one of our patches wrote.
+ *
+ * `-w` so that rustfmt reindenting an upstream line — what `core/0019` does to
+ * `get_dbfile().metadata()` by wrapping it in a `#[cfg]` — leaves it upstream's.
+ */
+export function blameFork(repo, file, labels) {
   const forkLines = new Map()
-  for (const line of git(repo, 'blame', '--line-porcelain', '--', file).split('\n')) {
+  for (const line of git(repo, 'blame', '-w', '--line-porcelain', '--', file).split('\n')) {
     const m = /^([0-9a-f]{40}) \d+ (\d+)/.exec(line)
     if (m && labels.has(m[1])) forkLines.set(Number(m[2]), labels.get(m[1]))
   }
