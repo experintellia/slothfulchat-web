@@ -1,0 +1,382 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Tue, 11 Aug 2026 23:24:01 +0000
+Subject: [PATCH 82/82] web-app: unify the composer link-preview states into
+ one card
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The link-preview affordance's states looked like three unrelated widgets:
+an idle skeleton card, a spinner-in-a-bar while generating, and a plain
+text bar for the "needs a bridge with unfurl enabled" error. Now one
+card-shaped skeleton carries all three (#64):
+
+- idle: the dashed skeleton card, as before
+- loading: the same card with the border gone solid and a shimmer sweeping
+  the placeholder bars/thumbnail (disabled under prefers-reduced-motion) —
+  the placeholder reads as "filling in" rather than being replaced
+- unavailable: the same card greyed out ("couldn't fill in"), with the
+  explanation in the hint line below, where the idle hint sits
+
+The loading/unavailable phases now carry the host so the card keeps
+showing it across the idle → loading → error transitions; since all three
+states render the same DOM, they morph in place (a 0.2s ease on the
+border/opacity cues) instead of swapping components. The ready state is
+unchanged. The spinner bar styles (.bar/.barLabel/.linkIcon) are gone.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ .../composer/linkPreview/LinkPreviewGhost.tsx | 148 +++++++++---------
+ .../composer/linkPreview/styles.module.scss   |  74 +++++----
+ .../composer/linkPreview/useLinkPreview.ts    |  20 ++-
+ 3 files changed, 130 insertions(+), 112 deletions(-)
+
+diff --git a/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx b/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
+index bc531e5..c6c5094 100644
+--- a/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
++++ b/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
+@@ -1,7 +1,6 @@
+ import React from 'react'
+ 
+ import { CloseButton } from '../../Dialog'
+-import Spinner from '../../Spinner'
+ import type { UseLinkPreview } from './useLinkPreview'
+ 
+ import styles from './styles.module.scss'
+@@ -11,9 +10,10 @@ type Props = {
+ }
+ 
+ /**
+- * The composer's link-preview affordance. Auto-appears as a quiet dashed "ghost"
+- * when the draft contains a URL and no image is attached; becomes a chip once a
+- * preview has been generated and attached.
++ * The composer's link-preview affordance. One card-shaped container carries
++ * every state — idle skeleton, loading shimmer, error notice — so idle →
++ * loading → ready reads as the same element filling in, not a widget swap;
++ * `ready` then shows the baked card itself in the same slot.
+  */
+ export default function LinkPreviewGhost({ preview }: Props) {
+   const { phase } = preview
+@@ -21,56 +21,78 @@ export default function LinkPreviewGhost({ preview }: Props) {
+     return null
+   }
+ 
+-  if (phase.kind === 'loading') {
++  if (phase.kind === 'ready') {
++    // The baked card IS the preview (title/host/image are baked into it), so
++    // show it big and skip the redundant text; keep only the size toggle (with
++    // a word, not just a glyph) and remove.
++    const isHero = phase.layout === 'hero'
+     return (
+-      <div className={styles.bar} aria-live='polite' data-testid='link-preview-loading'>
+-        <Spinner size={18} />
+-        <span className={styles.barLabel}>Generating preview…</span>
+-      </div>
+-    )
+-  }
+-
+-  if (phase.kind === 'unavailable') {
+-    return (
+-      <div
+-        className={styles.bar}
+-        aria-live='polite'
+-        data-testid='link-preview-unavailable'
+-      >
+-        <span className={styles.linkIcon} aria-hidden='true' />
+-        <span className={styles.barLabel}>
+-          Link previews need a bridge with unfurl enabled.
+-        </span>
+-        <CloseButton
+-          onClick={preview.onDismiss}
+-          aria-label='Dismiss'
+-          data-testid='link-preview-dismiss'
++      <div className={styles.ready} data-testid='link-preview-ready'>
++        <img
++          className={styles.preview}
++          src={phase.image}
++          alt='Link preview to be sent'
+         />
++        <div className={styles.readyControls}>
++          <button
++            type='button'
++            className={styles.labelButton}
++            onClick={preview.onToggleLayout}
++            data-testid='link-preview-toggle'
++            aria-label={isHero ? 'Collapse to compact' : 'Expand to hero'}
++          >
++            {isHero ? '⤡ Smaller' : '⤢ Bigger'}
++          </button>
++          <CloseButton
++            onClick={preview.onRemove}
++            aria-label='Remove preview'
++            data-testid='link-preview-remove'
++          />
++        </div>
+       </div>
+     )
+   }
+ 
+-  if (phase.kind === 'idle') {
+-    // Skeleton of the compact card "Add" will bake — light surface, placeholder
+-    // title lines + the real host, and a thumbnail box on the right. We don't
+-    // know yet whether the page has a (large) image, so preview the smaller
+-    // variant to hint at the shape of the result.
+-    return (
+-      <div className={styles.ghost} data-testid='link-preview-ghost'>
+-        <div className={styles.ghostLeft}>
+-          <div className={styles.ghostCard} aria-hidden='true'>
+-            <div className={styles.ghostBody}>
+-              <span className={styles.skelLine} />
+-              <span className={`${styles.skelLine} ${styles.skelLineShort}`} />
+-              <span className={styles.ghostHost}>{phase.host}</span>
+-            </div>
+-            <span className={styles.ghostThumb} />
++  // idle / loading / unavailable: the same skeleton of the compact card "Add"
++  // will bake — light surface, placeholder title lines + the real host, and a
++  // thumbnail box on the right. Loading only starts the shimmer; unavailable
++  // only dims the card — the silhouette never changes, so the states morph
++  // into each other instead of replacing one another.
++  const { kind } = phase
++  const testId =
++    kind === 'idle'
++      ? 'link-preview-ghost'
++      : kind === 'loading'
++        ? 'link-preview-loading'
++        : 'link-preview-unavailable'
++  const hint =
++    kind === 'idle'
++      ? 'Click “Add” to fetch and attach a preview'
++      : kind === 'loading'
++        ? 'Generating preview…'
++        : 'Link previews need a bridge with unfurl enabled.'
++  const cardClass = [
++    styles.ghostCard,
++    kind === 'loading' && styles.ghostCardLoading,
++    kind === 'unavailable' && styles.ghostCardMuted,
++  ]
++    .filter(Boolean)
++    .join(' ')
++  return (
++    <div className={styles.ghost} aria-live='polite' data-testid={testId}>
++      <div className={styles.ghostLeft}>
++        <div className={cardClass} aria-hidden='true'>
++          <div className={styles.ghostBody}>
++            <span className={styles.skelLine} />
++            <span className={`${styles.skelLine} ${styles.skelLineShort}`} />
++            <span className={styles.ghostHost}>{phase.host}</span>
+           </div>
+-          <span className={styles.ghostHint}>
+-            Click “Add” to fetch and attach a preview
+-          </span>
++          <span className={styles.ghostThumb} />
+         </div>
+-        <div className={styles.ghostActions}>
++        <span className={styles.ghostHint}>{hint}</span>
++      </div>
++      <div className={styles.ghostActions}>
++        {kind === 'idle' && (
+           <button
+             type='button'
+             className={styles.addButton}
+@@ -80,42 +102,14 @@ export default function LinkPreviewGhost({ preview }: Props) {
+           >
+             Add
+           </button>
++        )}
++        {kind !== 'loading' && (
+           <CloseButton
+             onClick={preview.onDismiss}
+             aria-label='Dismiss preview'
+             data-testid='link-preview-dismiss'
+           />
+-        </div>
+-      </div>
+-    )
+-  }
+-
+-  // phase.kind === 'ready' — the baked card IS the preview (title/host/image are
+-  // baked into it), so show it big and skip the redundant text; keep only the
+-  // size toggle (with a word, not just a glyph) and remove.
+-  const isHero = phase.layout === 'hero'
+-  return (
+-    <div className={styles.ready} data-testid='link-preview-ready'>
+-      <img
+-        className={styles.preview}
+-        src={phase.image}
+-        alt='Link preview to be sent'
+-      />
+-      <div className={styles.readyControls}>
+-        <button
+-          type='button'
+-          className={styles.labelButton}
+-          onClick={preview.onToggleLayout}
+-          data-testid='link-preview-toggle'
+-          aria-label={isHero ? 'Collapse to compact' : 'Expand to hero'}
+-        >
+-          {isHero ? '⤡ Smaller' : '⤢ Bigger'}
+-        </button>
+-        <CloseButton
+-          onClick={preview.onRemove}
+-          aria-label='Remove preview'
+-          data-testid='link-preview-remove'
+-        />
++        )}
+       </div>
+     </div>
+   )
+diff --git a/packages/frontend/src/components/composer/linkPreview/styles.module.scss b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
+index 0d752a1..593a03c 100644
+--- a/packages/frontend/src/components/composer/linkPreview/styles.module.scss
++++ b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
+@@ -55,6 +55,52 @@
+   background: #f4f6f9;
+   border: 1px dashed rgba(16, 26, 38, 0.2);
+   box-shadow: 0 2px 10px rgba(8, 14, 22, 0.1);
++  // idle ↔ loading ↔ unavailable morph in place (same DOM), so ease the cues
++  transition:
++    opacity 0.2s,
++    border-color 0.2s;
++}
++
++// Loading: the same skeleton card, now shimmering — the placeholder is
++// "filling in" rather than being replaced by a spinner bar.
++.ghostCardLoading {
++  border-style: solid;
++
++  .skelLine,
++  .ghostThumb {
++    background-image: linear-gradient(
++      100deg,
++      transparent 30%,
++      rgba(255, 255, 255, 0.75) 50%,
++      transparent 70%
++    );
++    background-size: 200% 100%;
++    animation: shimmer 1.3s linear infinite;
++  }
++}
++
++@keyframes shimmer {
++  from {
++    background-position: 150% 0;
++  }
++  to {
++    background-position: -50% 0;
++  }
++}
++
++@media (prefers-reduced-motion: reduce) {
++  .ghostCardLoading .skelLine,
++  .ghostCardLoading .ghostThumb {
++    animation: none;
++  }
++}
++
++// Unavailable: the same card, greyed out — it visibly "couldn't fill in".
++// The explanation lives in the hint line below, same slot as the idle hint.
++.ghostCardMuted {
++  border-style: solid;
++  opacity: 0.55;
++  filter: grayscale(1);
+ }
+ 
+ .ghostBody {
+@@ -156,34 +202,6 @@
+   }
+ }
+ 
+-.bar {
+-  composes: base;
+-  gap: 8px;
+-}
+-
+-.barLabel {
+-  font-size: 13px;
+-  color: color-mix(in srgb, var(--messageText) 70%, transparent);
+-}
+-
+-.linkIcon {
+-  flex: 0 0 auto;
+-  width: 18px;
+-  height: 18px;
+-  border-radius: 4px;
+-  background: color-mix(in srgb, var(--colorPrimary, #415e6b) 22%, transparent);
+-  position: relative;
+-
+-  &::after {
+-    content: '';
+-    position: absolute;
+-    inset: 4px;
+-    border: 2px solid var(--colorPrimary, #415e6b);
+-    border-radius: 3px;
+-    opacity: 0.85;
+-  }
+-}
+-
+ .addButton {
+   flex: 0 0 auto;
+   border: none;
+diff --git a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
+index 84f1fc5..5054c2d 100644
+--- a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
++++ b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
+@@ -30,7 +30,9 @@ const GENERATION_TIMEOUT_MS = 25_000
+ 
+ export type LinkPreviewPhase =
+   | { kind: 'idle'; host: string } // ghost offering to add a preview
+-  | { kind: 'loading' }
++  // Carries the host so the loading card keeps showing it — idle → loading is
++  // the same skeleton card, just shimmering.
++  | { kind: 'loading'; host: string }
+   | {
+       kind: 'ready'
+       host: string
+@@ -41,7 +43,7 @@ export type LinkPreviewPhase =
+     }
+   // The unfurl endpoint couldn't be reached: show a quiet "needs a bridge with
+   // unfurl enabled" hint instead of silently doing nothing.
+-  | { kind: 'unavailable' }
++  | { kind: 'unavailable'; host: string }
+ 
+ export type UseLinkPreview = {
+   /** Non-null when the ghost/card should be shown in the composer. */
+@@ -207,8 +209,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
+     // slothfulchat: anonymous analytics — the user accepted a link preview
+     ;(window as any).__slothfulTrack?.('link_preview', { action: 'accept' })
+     const token = ++tokenRef.current
+-    setPhase({ kind: 'loading' })
+-    // Bail out of a hung fetch so the spinner doesn't linger forever.
++    setPhase({ kind: 'loading', host })
++    // Bail out of a hung fetch so the shimmer doesn't linger forever.
+     const timeout = setTimeout(() => {
+       if (token === tokenRef.current) {
+         tokenRef.current++ // cancel the in-flight continuation
+@@ -251,12 +253,16 @@ export function useLinkPreview(params: Params): UseLinkPreview {
+         if (token === tokenRef.current) {
+           // Endpoint unreachable → hint the user; any other failure (no preview
+           // for this page) just quietly clears.
+-          setPhase(err instanceof UnfurlUnavailableError ? { kind: 'unavailable' } : null)
++          setPhase(
++            err instanceof UnfurlUnavailableError
++              ? { kind: 'unavailable', host }
++              : null
++          )
+           dismissedRef.current = url
+         }
+       })
+       .finally(() => clearTimeout(timeout))
+-  }, [accountId, url, draftFile, isPreviewActive, attach])
++  }, [accountId, url, host, draftFile, isPreviewActive, attach])
+ 
+   const onRemove = useCallback(() => {
+     // slothfulchat: the user dismissed (removed) an attached preview
+@@ -290,7 +296,7 @@ export function useLinkPreview(params: Params): UseLinkPreview {
+     const next: PreviewLayout = phase.layout === 'hero' ? 'compact' : 'hero'
+     const prevImage = phase.image
+     const token = ++tokenRef.current
+-    setPhase({ kind: 'loading' })
++    setPhase({ kind: 'loading', host: prepared.meta.host })
+     ;(async () => {
+       const staged = await attach(prepared, next, token)
+       if (token !== tokenRef.current) {

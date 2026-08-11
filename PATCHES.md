@@ -331,7 +331,9 @@ exists:
   IP/metadata leak) and every client renders an ordinary text+image message.
   Layout (compact vs large hero) follows the site's metadata and is toggleable
   on the draft; off by default (experimental), enableable in Settings → Advanced.
-  `desktop/0041`
+  `desktop/0041` — the composer affordance's states (idle skeleton, loading
+  shimmer, error notice) all share one card silhouette instead of swapping
+  between unrelated widgets (#64). `desktop/0082`
 
 - **Composer completion menu (`:emoji:`)** — typing a colon shortcode plus two
   characters opens a scrollable, keyboard-navigable menu above the composer
