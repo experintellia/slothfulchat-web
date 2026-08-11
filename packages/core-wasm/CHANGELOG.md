@@ -61,7 +61,10 @@ durable account could be lost or corrupted:
   path, instead of being bolted on by holding the RPC response: `import_backup`
   and `get_backup` are now durable on their own, and the `ImexProgress(1000)`
   that follows them means "written to persistent storage" rather than
-  "unpacked, with an unknown amount of writing still to go".
+  "unpacked, with an unknown amount of writing still to go". Those imports also
+  reserve the last twentieth of the progress range for that write-out and
+  report progress across it, so a UI drawing the raw events shows the wait
+  instead of a bar that sits full while it happens.
 - A file whose write to persistent storage fails — a transient quota blip, a
   storage handle the browser invalidated — is now retried a few times instead
   of being dropped on the first error, and a write that is finally lost is

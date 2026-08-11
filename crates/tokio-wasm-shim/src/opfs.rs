@@ -268,14 +268,26 @@ pub(crate) fn mark_dirty(path: &Path) {
 /// with that work, so a baseline taken here — at flush time — would bucket
 /// mid-work failures (storage filling during an import is the likeliest
 /// timing) into "before" and falsely report full durability.
-pub async fn flush_pending(failed_since: u32) -> u32 {
+///
+/// `on_progress(remaining, initial)` is called once per poll with the current
+/// and the first-seen queue depth, so a caller that drains in front of a user
+/// (backup import) can turn the wait into a moving progress bar instead of a
+/// bar that looks finished. `initial` is only the depth at entry — the queue
+/// can still grow — so a caller that needs a monotonic bar clamps its own
+/// output rather than trusting the ratio to only rise.
+pub async fn flush_pending(failed_since: u32, mut on_progress: impl FnMut(usize, usize)) -> u32 {
     if !ENABLED.load(Ordering::Relaxed) {
         return 0;
     }
     // ~30s worst case (1500 * 20ms); real drains are far shorter.
     let mut still_queued = 0;
-    for _ in 0..1500 {
+    let mut initial = 0;
+    for poll in 0..1500 {
         still_queued = INFLIGHT.load(Ordering::SeqCst);
+        if poll == 0 {
+            initial = still_queued;
+        }
+        on_progress(still_queued, initial);
         if still_queued == 0 {
             break;
         }

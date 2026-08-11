@@ -565,7 +565,9 @@ impl DeltaChat {
     /// means fully durable. The caller surfaces a non-zero result instead of
     /// reporting a false import success.
     pub async fn fs_flush(&self, failed_since: u32) -> u32 {
-        tokio::fs::flush_pending(failed_since).await
+        // no progress reporting: by the time the web app asks, core has already
+        // drained the queue for the import it cares about (see imex.rs)
+        tokio::fs::flush_pending(failed_since, |_, _| {}).await
     }
 }
 
