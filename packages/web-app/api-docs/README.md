@@ -22,10 +22,13 @@ folder only holds the framing (project name, index pages, cross-links).
   it inside `script-src 'self'` on GitHub Pages and self-hosted Caddy.
   React + MUI are **devDependencies of this package only**; nothing here is
   published, and `@slothfulchat/core-wasm`'s runtime dependencies are untouched.
-  docs-react pins `react@18.3.1` as a peer, so that is the version in this
-  package's devDependencies — the app's own React is `packages/calls`' 19.x and
-  resolves from there, which is why `runtime.js` still bundles 19 and this page
-  is the only thing that sees 18.
+  docs-react pins `react@18.3.1` as a peer — the exact version, not a range —
+  so that is the version in this package's devDependencies, and aligning on the
+  app's React 19 is not on offer. The app keeps 19 because `react` resolves
+  relative to the importing file and the only React UI in the bundle is
+  `packages/calls/ui`, which has its own. That split is load-bearing and silent
+  if it breaks (the app would just ship React 18), so it is enforced rather than
+  documented: `../react-isolation.test.mjs`, in CI's pure-helper suite.
 - `openrpc/deref.mjs` — the one thing docs-react does not do: inline the
   document's `$ref`s. Without it every method renders with empty parameters.
   Self-check: `node --test packages/web-app/api-docs/openrpc/deref.test.mjs`.

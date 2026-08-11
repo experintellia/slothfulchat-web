@@ -80,7 +80,8 @@ jobs:
       # dependency-free node:test suites for pure logic (config templating,
       # release-asset pinning/digest/size caps, the analytics pre-notice gate,
       # translation-editor serialization, blob response headers, the OPFS
-      # lock-wait deadline, the OpenRPC viewer's $ref inlining)
+      # lock-wait deadline, the OpenRPC viewer's $ref inlining, keeping the
+      # api-docs React out of the app bundle)
       - name: Unit-test pure helpers
         run: >-
           node --test
@@ -96,6 +97,7 @@ jobs:
           packages/web-app/src/temp-paths.test.ts
           packages/web-app/serve.test.mjs
           packages/web-app/api-docs/openrpc/deref.test.mjs
+          packages/web-app/react-isolation.test.mjs
           packages/core-wasm/src/opfs-probe.test.mjs
           scripts/mock-madmail.test.mjs
           scripts/harness.test.mjs
