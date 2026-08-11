@@ -493,6 +493,11 @@ export const precacheSkip = f =>
   f.endsWith('.map') ||
   f.startsWith('demo/') ||
   f.startsWith('changelog/') ||
+  // developer reference (assemble.mjs), same call as /changelog/: ~100KB that
+  // nothing in the app shell loads, and precaching it would make every core
+  // bump re-download it for every installed user. It is still in dist/, so a
+  // self-hoster serves it — it just isn't part of the offline app.
+  f.startsWith('api-docs/') ||
   // webserver config ships in dist/ but isn't an app-shell asset; the webxdc
   // test page must never be served from the app's SW cache (it belongs to the
   // webxdc origins, not the app origin).

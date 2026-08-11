@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SlothfulChat core API — OpenRPC</title>
+<!-- viewer.css/viewer.js are emitted next to this page by assemble.mjs
+     (esbuild over viewer.js) — same origin, no CDN. -->
+<link rel="stylesheet" href="./viewer.css">
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#15171b; color:#e6e8eb; font:15px/1.55 system-ui,sans-serif; }
+  header { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 16px;
+           padding:10px 16px; border-bottom:1px solid #2c313a; }
+  header h1 { margin:0; font-size:16px; font-weight:600; }
+  header nav { margin-left:auto; display:flex; gap:8px; }
+  header nav a { font-size:12px; text-decoration:none; color:#9aa3af;
+                 border:1px solid #2c313a; border-radius:7px; padding:4px 9px; white-space:nowrap; }
+  header nav a:hover { color:#e6e8eb; border-color:#3793ff; }
+  #root { padding:0 16px 60vh; }
+  #root > p { color:#9aa3af; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>SlothfulChat core API</h1>
+  <nav>
+    <a href="../typescript/">TypeScript reference</a>
+    <a href="../openrpc.json">raw openrpc.json</a>
+    <a href="../">/api-docs/</a>
+  </nav>
+</header>
+
+<div id="root"><p>Loading ../openrpc.json…</p></div>
+
+<script type="module" src="./viewer.js"></script>
+
+</body>
+</html>
