@@ -1,5 +1,13 @@
 # Changelog
 
+- **Creating an account is much faster.** New accounts are now stamped out of
+  a pre-migrated database shipped alongside the wasm binary
+  (`wasm-dist/fresh_account.db.gz`) instead of replaying every migration, which
+  on OPFS is where nearly all the time went. It is loaded automatically by the
+  bundled worker; embedders driving the wasm module themselves can call
+  `set_account_template()` before `init()`, and everything still works —
+  just more slowly — if they don't.
+
 - **The published type definitions now match the core that ships with them.**
   They used to come from `@deltachat/jsonrpc-client` 2.53.0 on npm, two
   releases behind the pinned core and missing the API our patches add — the

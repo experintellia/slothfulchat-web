@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Tue, 11 Aug 2026 23:17:21 +0000
+Subject: [PATCH 32/32] wasm: seed new account databases from a pre-migrated
+ template
+
+Creating an account replays every migration past the baseline schema,
+each in its own transaction, so each one commits WAL frames through
+separate slow OPFS sync-access-handle writes: ~1.7s per account, and
+the cost is the write count, not the CPU (the same migrations run in
+~52ms against the in-memory VFS).
+
+Pre-fill a NEW account's database file from an already-migrated
+template instead, so opening it is one bulk write and the migration
+run finds dbversion current. Existing databases are never touched, so
+this is safe on every open, and the template is optional: none
+installed, or one built before a migration landed, and the account
+just migrates the (remaining) way as before.
+---
+ src/sql.rs | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/src/sql.rs b/src/sql.rs
+index 406d7c5..e384175 100644
+--- a/src/sql.rs
++++ b/src/sql.rs
+@@ -90,6 +90,25 @@ pub async fn check_passphrase(&self, passphrase: String) -> Result<bool> {
+         // Hold the lock to prevent other thread from opening the database.
+         let _lock = self.pool.write().await;
+ 
++        // wasm: a brand-new account otherwise replays every migration past the
++        // baseline schema, each in its own transaction and so its own batch of
++        // OPFS writes — ~1.7s per account, dominated by write count, not CPU.
++        // Pre-filling the file from an already-migrated database collapses that
++        // to one bulk write; the migration run then finds `dbversion` current
++        // and does nothing. A template built before a migration landed just
++        // replays the ones added since, so it stays correct, only slower.
++        //
++        // Here rather than in `try_open`: this is the first thing that ever
++        // touches the file — `Connection::open` below CREATES it — and it is
++        // also where the passphrase is known. Existing databases are never
++        // touched, so every later open is unaffected.
++        #[cfg(target_arch = "wasm32")]
++        if passphrase.is_empty()
++            && let Some(name) = self.dbfile.to_str()
++        {
++            tokio::fs::seed_db_from_template(name);
++        }
++
+         // Test that the key is correct using a single connection.
+         let connection = Connection::open(&self.dbfile)?;
+         if !passphrase.is_empty() {

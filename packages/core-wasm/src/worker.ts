@@ -7,7 +7,11 @@
  * backup import/export), and a one-shot `{ type: 'config', ... }` from
  * startCore delivers proxy/persist settings before init.
  */
-import initWasm, { init, set_crypto_offload } from '../wasm-dist/deltachat_wasm.js'
+import initWasm, {
+  init,
+  set_account_template,
+  set_crypto_offload,
+} from '../wasm-dist/deltachat_wasm.js'
 import { OPFS_PROBE_DEADLINE_MS, probeUntilDeadline } from './opfs-probe.mjs'
 
 interface FsRequest {
@@ -332,9 +336,29 @@ async function waitForOpfsSyncHandles(): Promise<void> {
  * catch below doesn't stack a second dialog on top of it. */
 let fatalReported = false
 
+/** The pre-migrated account database new accounts are stamped out of, fetched
+ * in parallel with the wasm module (it is a few KB, gzipped by the generator
+ * because no static host reliably compresses `.db`). Purely an optimization:
+ * if it is missing, stale or corrupt, account creation replays migrations as
+ * it always did, so every failure here is a warning and never fatal. */
+const accountTemplate: Promise<Uint8Array | undefined> = (async () => {
+  const res = await fetch(new URL('../wasm-dist/fresh_account.db.gz', import.meta.url))
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const raw = new Uint8Array(await res.arrayBuffer())
+  // a host that serves .gz with `content-encoding: gzip` already unwrapped it
+  if (new TextDecoder().decode(raw.subarray(0, 6)) === 'SQLite') return raw
+  const plain = new Response(raw).body!.pipeThrough(new DecompressionStream('gzip'))
+  return new Uint8Array(await new Response(plain).arrayBuffer())
+})().catch(err => {
+  console.warn(`[core-wasm] no account template (${err}); new accounts will migrate`)
+  return undefined
+})
+
 const ready = (async () => {
   const { proxyUrl, persist } = await config
   await initWasm()
+  const template = await accountTemplate
+  if (template) set_account_template(template)
   // non-blocking: boot never waits on the pool — until it registers, core
   // computes crypto inline (the correct fallback)
   void pool.ready.then(() =>

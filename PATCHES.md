@@ -69,6 +69,16 @@ exists:
   VFS (sqlite-wasm-rs has no `sqlcipher_export`, so the database bytes are
   swapped at the VFS level; encrypted backups stay unsupported on wasm).
   `core/0008`, `core/0009`
+- **Account creation** — a new account replayed every migration past the
+  baseline schema, each one committing separately, and on OPFS a commit is a
+  batch of slow sync-access-handle writes (~1.7s per account; the same
+  migrations take ~52ms against the in-memory VFS, so it is write count, not
+  CPU). A new account's database file is now pre-filled from an already
+  migrated one, generated from the built wasm at build time
+  (`scripts/gen-account-template.mjs`) rather than checked in. Existing
+  databases are untouched, and the template is optional and self-correcting:
+  absent or built before a migration landed, the account just migrates the
+  remaining way. `core/0032`
 - **Crypto offload** — PGP key generation, encryption and decryption ran
   inline on the core worker (wasm has no real `spawn_blocking`), so every
   jsonrpc call queued behind them — up to ~1s on phones for account creation,

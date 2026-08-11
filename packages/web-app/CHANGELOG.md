@@ -1,5 +1,10 @@
 # Changelog
 
+- **Adding a profile is no longer a second-and-a-half wait.** Every new profile
+  built its database from scratch, step by step; it is now stamped out of a
+  ready-made one, which is most of that time gone — including for the very
+  first profile you create.
+
 - **The privacy policy now says who actually receives the usage statistics.**
   When an instance runs its own Plausible server instead of the hosted service,
   the policy says so and names that server, rather than implying the data goes
