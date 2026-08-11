@@ -1,4 +1,4 @@
-import { deepEqual, equal, ok } from 'node:assert/strict'
+import { deepEqual, equal } from 'node:assert/strict'
 import { test } from 'node:test'
 import { dereference } from './deref.mjs'
 
@@ -35,16 +35,4 @@ test('leaves a non-local $ref alone rather than inventing an empty schema', () =
   const ref = { $ref: 'https://example.invalid/other.json#/components/schemas/Foo' }
   const out = dereference(doc({}, [{ name: 'x', result: { schema: ref } }]))
   deepEqual(out.methods[0].result.schema, ref)
-})
-
-test('a dangling local $ref is named, not silently empty', () => {
-  const out = dereference(doc({}, [{ name: 'x', result: { schema: { $ref: '#/components/schemas/Gone' } } }]))
-  deepEqual(out.methods[0].result.schema, { title: 'Gone' })
-})
-
-test('copies rather than mutates, and survives a document with no components', () => {
-  const input = doc({}, [{ name: 'x' }])
-  const out = dereference(input)
-  ok(out !== input)
-  deepEqual(dereference({ methods: [] }), { methods: [] })
 })

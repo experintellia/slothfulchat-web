@@ -11,8 +11,7 @@
 //
 //   node scripts/verify-fork-marks.mjs        # after the docs are generated
 //
-// Run it late: it wants the typedoc HTML and the .d.ts core-wasm vendors, i.e.
-// after `pnpm api-docs` and `pnpm --filter @slothfulchat/core-wasm build:types`.
+// Run it after `pnpm api-docs`: it wants the typedoc HTML.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
@@ -108,12 +107,8 @@ if (!existsSync(docs)) {
   check(false, `typedoc: ${docs} is missing — run \`pnpm api-docs\``)
 } else {
   atLeast('typedoc RawClient.html', path.join(docs, 'classes/RawClient.html'), methods.length)
-  const walk = (d) =>
-    readdirSync(d, { withFileTypes: true }).flatMap((e) =>
-      e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)],
-    )
-  const html = walk(docs).filter((f) => f.endsWith('.html'))
-  const total = html.reduce((n, f) => n + count(read(f)), 0)
+  const html = readdirSync(docs, { recursive: true }).filter((f) => f.endsWith('.html'))
+  const total = html.reduce((n, f) => n + count(read(path.join(docs, f))), 0)
   check(
     total >= methods.length + types.length,
     `typedoc: ${total} mark(s) across ${html.length} pages, ` +
@@ -121,11 +116,8 @@ if (!existsSync(docs)) {
   )
 }
 
-// 4. the declarations vendored into the published @slothfulchat/core-wasm —
-//    the copy consumers' editors actually hover over
-const vendored = path.join(root, 'packages/core-wasm/dist/jsonrpc-client/generated')
-eachMethod('core-wasm vendored client.d.ts', path.join(vendored, 'client.d.ts'), camel)
-atLeast('core-wasm vendored types.d.ts', path.join(vendored, 'types.d.ts'), types.length)
+// What core-wasm publishes is not a fourth surface: `build:types` is a plain
+// `cp -r` of the dist/ checked above, and a copy cannot drop a 🦥.
 
 if (problems.length) {
   console.error(`\n${problems.length} problem(s):`)

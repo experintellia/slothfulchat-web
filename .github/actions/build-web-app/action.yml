@@ -348,11 +348,11 @@ runs:
       shell: bash
       run: pnpm --filter @slothfulchat/core-wasm build
 
-    # The 🦥 fork marks are injected in Rust and have to survive four
+    # The 🦥 fork marks are injected in Rust and have to survive three
     # generators to reach a reader. They already stopped doing so once, quietly
-    # and only for methods. Runs here because it is the first point where all
-    # four surfaces exist: the generated client, the OpenRPC document, the
-    # typedoc HTML, and the .d.ts core-wasm just vendored.
+    # and only for methods. Needs the generated client, the OpenRPC document
+    # and the typedoc HTML — all three come out of the jsonrpc-client step
+    # above, so this could run earlier; it sits here for readability.
     - name: Verify the fork marks reached every docs surface
       shell: bash
       run: node scripts/verify-fork-marks.mjs

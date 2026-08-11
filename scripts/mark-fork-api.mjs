@@ -246,39 +246,23 @@ export function blameFork(repo, file, labels) {
   return forkLines
 }
 
-function rustFiles(dir, base = dir) {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const p = path.join(dir, e.name)
-    if (e.isDirectory()) return rustFiles(p, base)
-    return e.name.endsWith('.rs') ? [path.relative(base, p)] : []
-  })
-}
+const rustFiles = (dir) => readdirSync(dir, { recursive: true }).filter((f) => f.endsWith('.rs'))
 
 function main() {
   const root = path.resolve(fileURLToPath(import.meta.url), '../..')
   const buildCore = path.join(root, 'build/core')
   const base = git(path.join(root, 'vendor/core'), 'rev-parse', 'HEAD').trim()
 
-  // format-patch numbers the patch files in commit order, so the Nth commit on
-  // top of the pin is the Nth patch file. Cross-checked against the subject.
-  const commits = git(buildCore, 'log', '--reverse', '--format=%H %s', `${base}..HEAD`)
-    .trim()
-    .split('\n')
+  // apply-patches.sh globs `patches/core/*.patch` (bash-sorted) and `git am`s
+  // them in that order, so the Nth commit on top of the pin IS the Nth sorted
+  // patch file, by construction. The count check is the one thing that can
+  // still go wrong: a stale build/core.
+  const commits = git(buildCore, 'log', '--reverse', '--format=%H', `${base}..HEAD`).trim().split('\n')
   const files = readdirSync(path.join(root, 'patches/core')).sort()
   if (commits.length !== files.length) {
     throw new Error(`build/core has ${commits.length} commits but patches/core has ${files.length}`)
   }
-  const labels = new Map(
-    commits.map((c, i) => {
-      const [sha, ...subject] = c.split(' ')
-      const slug = subject.join(' ').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '')
-      const name = files[i]
-      if (!name.slice(5).startsWith(slug.slice(0, 16))) {
-        throw new Error(`patch order mismatch: ${name} vs "${subject.join(' ')}"`)
-      }
-      return [sha, `core/${name.slice(0, 4)}`]
-    }),
-  )
+  const labels = new Map(commits.map((sha, i) => [sha, `core/${files[i].slice(0, 4)}`]))
 
   let total = 0
   const manifest = { methods: [], types: [] }

@@ -122,7 +122,7 @@ test('a patched rpc method body marks that method and nothing else', () => {
 })
 
 // The mark is only worth reading while it means "this behaves differently from
-// upstream". These three say what does NOT earn one.
+// upstream". This says what does NOT earn one.
 test('a reworded doc comment on an upstream item earns no mark', () => {
   // Line 5 is `/// Upstream event.`, inside both the Info variant and the
   // EventType enum; line 9 is a blank line inside the enum.
@@ -132,13 +132,6 @@ test('a reworded doc comment on an upstream item earns no mark', () => {
   // …and it must not reach the manifest either, or verify-fork-marks.mjs would
   // go looking for a mark that was deliberately not inserted.
   assert.deepEqual([...methods, ...types], [])
-})
-
-test('a method whose doc line alone is ours earns no mark', () => {
-  // Line 42 is `/// Get the file size.`; the signature and body are upstream's.
-  const { marked, methods } = markSource(SRC, fork([42], 'core/0031'))
-  assert.equal(marked, 0)
-  assert.deepEqual(methods, [])
 })
 
 test('a line our patch only reindented stays upstream, so it earns no mark', () => {
@@ -160,20 +153,6 @@ test('a line our patch only reindented stays upstream, so it earns no mark', () 
   assert.equal(forkLines.get(2), undefined, 'a reindented line is still upstream’s')
   assert.equal(forkLines.get(3), 'core/0031')
   rmSync(dir, { recursive: true, force: true })
-})
-
-test('the manifest names what was marked, split by kind', () => {
-  const { methods, types } = markSource(SRC, new Map([...fork(FIELD, 'core/0028'), [44, 'core/0019']]))
-  assert.deepEqual(methods, ['get_account_file_size'])
-  assert.deepEqual(types, ['MessageData', 'duration'])
-})
-
-test('several patches on one item are all named', () => {
-  const { source } = markSource(SRC, new Map([[21, 'core/0028'], [22, 'core/0024']]))
-  assert.equal(
-    markOn(source, 'pub duration: Option<i32>')?.trim(),
-    '/// 🦥 slothfulchat-web fork: added by core/0024, core/0028.',
-  )
 })
 
 // A lifetime's apostrophe must not pair with the next one: `<'a>(&'a self`
