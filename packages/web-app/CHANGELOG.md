@@ -23,6 +23,12 @@
   skeleton shimmers while the preview is generated and greys out when previews
   are unavailable.
 
+- **Restoring a backup no longer hangs at 100%.** The progress bar reached the
+  end while the pictures were still being written to storage, so a big backup
+  sat at "done" for a while before the app moved on. The writing now happens
+  before the bar completes: 100% means the restore is really finished, and safe
+  to reload.
+
 - **The privacy policy now says who actually receives the usage statistics.**
   When an instance runs its own Plausible server instead of the hosted service,
   the policy says so and names that server, rather than implying the data goes

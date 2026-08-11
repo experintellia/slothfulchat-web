@@ -428,11 +428,14 @@ function getCore(): Core {
       // ASYNC OPFS flusher. If the page reloads before that queue drains, the
       // memfs is rebuilt from OPFS without the un-flushed blobs → broken images
       // that only return once re-fetched from the server ("reload N times to
-      // see the images", #77). Track the call so we can drain before reporting
-      // success — see the _onmessage wrap. `get_backup` is the second-device
+      // see the images", #77). The drain itself lives in core now (imex.rs
+      // awaits `flush_pending()` before the import returns, so the progress
+      // bar's 100% means durable, #90); what is still ours is *reporting* a
+      // write that never made it. Track the call to snapshot the failed-write
+      // baseline — see the _onmessage wrap. `get_backup` is the second-device
       // transfer receive: it unpacks blobs the same way and, unlike a file
       // import, has NO local backup to retry from if the tail is lost — so it
-      // needs the same durability hold.
+      // gets the same check.
       if (
         (message?.method === 'import_backup' || message?.method === 'get_backup') &&
         message.id != null
@@ -467,10 +470,12 @@ function getCore(): Core {
       }
       originalSend(message)
     }
-    // Hold a successful import/transfer response until fsFlush() confirms every
-    // imported blob has reached OPFS, so the frontend's promise resolves only
-    // once a reload would find everything. Errors pass straight through (a
-    // failed import wrote nothing to persist).
+    // Ask fsFlush() whether every imported blob actually reached OPFS before
+    // letting a successful import/transfer response through. Core already
+    // drained the queue before answering (#90), so this resolves as soon as the
+    // worker gets to it — the point is the count it returns, which is the only
+    // way the user hears about a restore that silently lost files. Errors pass
+    // straight through (a failed import wrote nothing to persist).
     const transport = core.transport as any
     const originalOnMessage = transport._onmessage.bind(transport)
     transport._onmessage = (message: any) => {

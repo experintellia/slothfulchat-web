@@ -57,6 +57,11 @@ durable account could be lost or corrupted:
   report an honest failure count even when storage fills mid-restore (new
   `Core.fsFailed()` baseline for `Core.fsFlush(since?)`; no-arg calls keep
   the old behavior).
+- The wait that makes an imported backup durable moved into the core's import
+  path, instead of being bolted on by holding the RPC response: `import_backup`
+  and `get_backup` are now durable on their own, and the `ImexProgress(1000)`
+  that follows them means "written to persistent storage" rather than
+  "unpacked, with an unknown amount of writing still to go".
 - A file whose write to persistent storage fails — a transient quota blip, a
   storage handle the browser invalidated — is now retried a few times instead
   of being dropped on the first error, and a write that is finally lost is
