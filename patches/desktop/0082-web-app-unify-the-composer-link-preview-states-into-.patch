@@ -28,9 +28,9 @@ unchanged. The spinner bar styles (.bar/.barLabel/.linkIcon) are gone.
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
  .../composer/linkPreview/LinkPreviewGhost.tsx | 148 +++++++++---------
- .../composer/linkPreview/styles.module.scss   |  85 ++++++----
+ .../composer/linkPreview/styles.module.scss   |  89 +++++++----
  .../composer/linkPreview/useLinkPreview.ts    |  20 ++-
- 3 files changed, 140 insertions(+), 113 deletions(-)
+ 3 files changed, 143 insertions(+), 114 deletions(-)
 
 diff --git a/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx b/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
 index bc531e5..c6c5094 100644
@@ -226,21 +226,20 @@ index bc531e5..c6c5094 100644
      </div>
    )
 diff --git a/packages/frontend/src/components/composer/linkPreview/styles.module.scss b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
-index 0d752a1..13454fd 100644
+index 0d752a1..e2f9fa1 100644
 --- a/packages/frontend/src/components/composer/linkPreview/styles.module.scss
 +++ b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
-@@ -25,7 +25,9 @@
+@@ -25,7 +25,8 @@
  // dashed border keeps the "this is a suggestion, not content yet" ghost read.
  // Card + its "click to fetch" hint, stacked; the action buttons sit beside it.
  .ghostLeft {
 -  flex: 1 1 auto;
-+  // Hug the card so the Add/dismiss buttons sit right beside it instead of
-+  // drifting to the far edge of the composer.
++  // Width = the card's, so the hint below wraps at the card's edge.
 +  flex: 0 1 auto;
    min-width: 0;
    display: flex;
    flex-direction: column;
-@@ -55,6 +57,59 @@
+@@ -55,6 +56,59 @@
    background: #f4f6f9;
    border: 1px dashed rgba(16, 26, 38, 0.2);
    box-shadow: 0 2px 10px rgba(8, 14, 22, 0.1);
@@ -300,7 +299,26 @@ index 0d752a1..13454fd 100644
  }
  
  .ghostBody {
-@@ -156,34 +211,6 @@
+@@ -102,6 +156,9 @@
+ 
+ .ghostActions {
+   flex: 0 0 auto;
++  // End of the row, like the remove buttons of the quote/attachment sections
++  // (_composer.scss uses the same auto inline margin).
++  margin-inline-start: auto;
+   display: flex;
+   align-items: center;
+   gap: 4px;
+@@ -128,7 +185,7 @@
+ 
+ .readyControls {
+   flex: 0 0 auto;
+-  margin-left: auto;
++  margin-inline-start: auto;
+   display: flex;
+   align-items: center;
+   gap: 4px;
+@@ -156,34 +213,6 @@
    }
  }
  
