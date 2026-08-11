@@ -252,6 +252,21 @@ test('normalizeRelayDirectory: unset/garbage → default, off/URL pass through',
   strictEqual(normalizeRelayDirectory('"  off  "'), 'off')
 })
 
+test('supportUrl: unset means no "Report this" destination, never this repo (#176)', () => {
+  strictEqual(buildConfig({}).supportUrl, '')
+  strictEqual(buildConfig({ SLOTHFUL_SUPPORT_URL: 'mailto:me@example.test' }).supportUrl, '')
+  strictEqual(
+    buildConfig({ SLOTHFUL_SUPPORT_URL: '"https://example.test/crash" ' }).supportUrl,
+    'https://example.test/crash'
+  )
+  strictEqual(
+    buildConfig({
+      SLOTHFUL_SUPPORT_URL: 'https://github.com/experintellia/slothfulchat-web/issues/new',
+    }).supportUrl,
+    'https://github.com/experintellia/slothfulchat-web/issues/new'
+  )
+})
+
 test('normalizeRelayDirectory: rejects multi-token / injecting values', () => {
   // the value is appended verbatim to connect-src, so a space would add a
   // SECOND source — must be rejected, not passed through

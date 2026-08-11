@@ -35,6 +35,10 @@ import { EVENTS } from './src/events.ts'
 //                            ("Public Bots", "Public Channels") in the New
 //                            Chat dialog for the whole instance, including
 //                            the per-user settings toggle
+//   SLOTHFUL_SUPPORT_URL     where the fatal-start dialog's "Report this"
+//                            button sends the report (as ?title=&body=).
+//                            UNSET (self-host default) = no button at all,
+//                            only the copy-to-clipboard fallback
 // `build` carries the slothfulchat-web version + source commit shown in the
 // About dialog/log (see gitBuildMeta() in assemble.mjs). customize.mjs
 // re-applying config to a prebuilt zip has no working tree to read this from,
@@ -95,6 +99,12 @@ export function buildConfig(env, build = {}) {
     hidePublicSuggestions: ['1', 'true', 'yes'].includes(
       (env.SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS || '').toLowerCase()
     ),
+    // destination for the "Report this" button on the fatal-start dialog
+    // (fatalReportUrl in src/fatal-report.ts appends ?title=&body=). No
+    // default on purpose: an unconfigured self-hosted instance must not point
+    // its users at THIS repo's tracker, and the dialog's copy button already
+    // gives them something to do without one (#176).
+    supportUrl: normalizeUrl(env.SLOTHFUL_SUPPORT_URL),
     // release builds (CI sets NODE_ENV=production) hide devmode features:
     // window.exp access, debug log level, dev_ prototype themes
     devmode: env.NODE_ENV !== 'production',
@@ -135,31 +145,34 @@ export function analyticsOrigin(config) {
 export const DEFAULT_RELAY_DIRECTORY_URL =
   'https://raw.githubusercontent.com/experintellia/chatmail-relays-mirror/refs/heads/data/relays.json'
 
-// SLOTHFUL_RELAY_DIRECTORY: '' (use default mirror) | 'off' | http(s) URL.
-// Garbage (not a URL, not "off") counts as unset — a broken value must not
-// end up as a CSP source or a fetch target. The URL must be a SINGLE clean
-// token: it is appended verbatim into main.html's connect-src, so a value
-// with a space would inject an extra CSP source and a ';' would truncate the
-// directive (and break patchCsp idempotency). Reject anything with
-// whitespace/quotes/';' and require URL() to accept it.
-export function normalizeRelayDirectory(raw) {
-  // trim, strip wrapping shell quotes, trim again (padding may sit inside the
-  // quotes, e.g. `" off "`)
-  const value = (raw || '')
+// trim, strip wrapping shell quotes, trim again (padding may sit inside the
+// quotes, e.g. `" off "`)
+const unquote = raw =>
+  (raw || '')
     .trim()
     .replace(/^(['"])([\s\S]*)\1$/, '$2')
     .trim()
-  if (/^off$/i.test(value)) return 'off'
-  if (/^https?:\/\/\S+$/i.test(value) && !/["';]/.test(value)) {
-    try {
-      // eslint-disable-next-line no-new
-      new URL(value)
-      return value
-    } catch {
-      /* not a parseable URL — fall through to unset */
-    }
-  }
-  return ''
+
+/** A single clean http(s) URL from an env var, or '' for unset/garbage.
+ *
+ * Every URL var goes through this. A broken value must not end up half-used:
+ * one of these is appended verbatim into main.html's connect-src (the relay
+ * directory), where a value with a space would inject an extra CSP source and
+ * a ';' would truncate the directive (and break patchCsp idempotency), and
+ * another lands in an href. So: one token, no whitespace/quotes/';', and
+ * URL() has to accept it. */
+export function normalizeUrl(raw) {
+  const value = unquote(raw)
+  return /^https?:\/\/\S+$/i.test(value) && !/["';]/.test(value) && URL.canParse(value)
+    ? value
+    : ''
+}
+
+// SLOTHFUL_RELAY_DIRECTORY: '' (use default mirror) | 'off' | http(s) URL.
+// Garbage (not a URL, not "off") counts as unset — a broken value must not
+// end up as a CSP source or a fetch target.
+export function normalizeRelayDirectory(raw) {
+  return /^off$/i.test(unquote(raw)) ? 'off' : normalizeUrl(raw)
 }
 
 /** The relay-directory URL to pin in the CSP connect-src (and the frontend

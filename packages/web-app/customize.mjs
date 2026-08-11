@@ -50,6 +50,7 @@ const VARS = [
   ['SLOTHFUL_IMPRINT_ADDRESS', 'Imprint: postal address (type \\n for line breaks)'],
   ['SLOTHFUL_IMPRINT_EMAIL', 'Imprint: contact email'],
   ['SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS', 'Hide the "Public Bots"/"Public Channels" suggestions instance-wide, incl. their settings toggle ("1" = hide, empty = show)'],
+  ['SLOTHFUL_SUPPORT_URL', 'Where the crash dialog\'s "Report this" button sends the report, https URL (unset = no button, users copy the details instead)'],
 ]
 
 let opts

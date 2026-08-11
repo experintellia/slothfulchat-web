@@ -33,7 +33,7 @@ import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
 import { el, overlayCard, scButton, showOnTop } from './ui-shared'
-import { fatalReportText } from './fatal-report.ts'
+import { fatalReportText, fatalReportUrl } from './fatal-report.ts'
 import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
@@ -2089,9 +2089,10 @@ let fatalShown = false
  *
  * `kind`/`details` build the copyable report: with no app left to report from
  * and no way to put an arbitrary error string through the analytics catalogue,
- * the user pasting this somewhere is the only route from "it broke" to a fix
+ * the user sending this somewhere is the only route from "it broke" to a fix
  * (#176). Selecting text by hand is not that route — on a phone it is barely
- * possible, so there is a button. */
+ * possible — so there is a copy button, plus a "Report this" link straight to
+ * the destination when the instance configured one (SLOTHFUL_SUPPORT_URL). */
 function showFatalDialog(
   id: string,
   titleText: string,
@@ -2127,6 +2128,15 @@ function showFatalDialog(
   })
   panel.append(title, body)
   if (report) panel.append(reportBlock(report), copyButton(report))
+  // Absent, not inert, when the instance configured no destination: the copy
+  // button above is then the whole route, and a button that goes nowhere is
+  // worse than no button on a screen where nothing else works either.
+  const reportUrl = fatalReportUrl(
+    (window as any).__slothfulConfig?.supportUrl,
+    report,
+    kind
+  )
+  if (reportUrl) row.append(reportLink(reportUrl))
   row.append(retryBtn)
   panel.append(row)
   // This screen is the only one a first-time visitor gets when the core dies
@@ -2250,6 +2260,17 @@ function warnIfNoWebAssembly(): void {
  * away. */
 function reportBlock(report: string): HTMLElement {
   return el('pre', 'sc-report', report)
+}
+
+/** "Report this" — an <a>, not a button that opens the URL itself: a popup
+ * blocker can refuse window.open() without telling anyone, while a link also
+ * survives a long press ("open in new tab") and can be copied. */
+function reportLink(href: string): HTMLAnchorElement {
+  const a = el('a', 'sc-btn', 'Report this')
+  a.href = href
+  a.target = '_blank'
+  a.rel = 'noopener noreferrer'
+  return a
 }
 
 /** Copy-to-clipboard, with the result said out loud rather than mimed: on a

@@ -63,6 +63,9 @@ const OVERLAY_CSS = `
 .sc-btn{padding:8px 14px;border:none;border-radius:6px;background:#333;color:#fff;
  font-size:13px;cursor:pointer}
 .sc-btn.sc-primary{background:#2d7dff}
+/* a link wearing the button look (the fatal dialog's "Report this"); scoped to
+   a[] so the real <button>s keep their UA text layout */
+a.sc-btn{display:inline-flex;align-items:center;text-decoration:none}
 .sc-btn-ghost{padding:6px 12px;border:1px solid #444;border-radius:6px;background:transparent;
  color:#ddd;font-size:13px;cursor:pointer}
 .sc-report{margin:0 0 8px;padding:8px 10px;border-radius:6px;background:#141414;color:#bbb;

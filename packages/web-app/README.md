@@ -181,6 +181,7 @@ in source. All optional:
 | `SLOTHFUL_DEFAULT_CHATMAIL` | Chatmail relay the "create new account" flow signs up on (host, URL or `dcaccount:` QR). Unset = upstream's default relay. Scanned QR codes still override it. |
 | `SLOTHFUL_RELAY_DIRECTORY` | Relay-directory JSON for the onboarding relay picker (`{"relays":[{"host":"…"}]}`, CORS-readable; the page CSP is pinned to this URL). Unset = the [chatmail-relays-mirror](https://github.com/experintellia/chatmail-relays-mirror) default; `off` = no picker. |
 | `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the "Public Bots" / "Public Channels" community suggestions in the New Chat dialog instance-wide (also hides the per-user settings toggle). |
+| `SLOTHFUL_SUPPORT_URL` | Destination of the "Report this" button on the fatal-start dialog; the report is appended as `?title=&body=` (GitHub's new-issue params). Unset = no button, only the copy-to-clipboard fallback — a self-hosted build never points its users at this repo. |
 | `SLOTHFUL_PLAUSIBLE_DOMAIN` | Plausible "site" id enabling **anonymous usage statistics**. Unset (the default) → no analytics at all: no events, no consent banner, no extra CSP origin. |
 | `SLOTHFUL_PLAUSIBLE_API` | Plausible events endpoint. Defaults to `https://plausible.io/api/event` when a domain is set; point it at your own instance to self-host analytics — the generated `privacy.html` then names your server as the recipient instead of Plausible's service. |
 

@@ -139,6 +139,57 @@ The full design — the naming rule, the DNS-vs-TLS wildcard distinction, storag
 and deletion, and the flagship/preview deployment model — is in
 [WEBXDC.md](WEBXDC.md).
 
+## Collecting crash reports
+
+If the core fails to start, the app shows a dialog with the error text and a
+"Copy details" button. Set `SLOTHFUL_SUPPORT_URL` and it also shows **"Report
+this"**, a link to that URL with the report appended as `?title=&body=`.
+
+A tracker URL (`https://github.com/you/fork/issues/new`) needs nothing else —
+those are GitHub's own prefill parameters. If you have no tracker, or you'd
+rather not make a GitHub account the price of reporting a crash, a webserver
+route is the whole backend you need: the report is in the query string, so the
+**access log is the store**. No database, no service, nothing to compromise
+beyond the webserver you already run:
+
+```caddyfile
+report.example.chat {
+	header {
+		Content-Type "text/plain; charset=utf-8"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+	@get method GET
+	handle @get {
+		respond "Thanks — your report was received." 200
+	}
+	respond 405
+	log {
+		output file /var/log/caddy/crash.log {
+			roll_size 10MiB   # bounds the disk cost of a flood: 10MiB x 3, then it wraps
+			roll_keep 3
+		}
+		format filter {
+			fields {
+				request>remote_ip delete   # you asked for the error, not for who hit it
+				request>headers delete
+			}
+		}
+	}
+}
+```
+
+Two rules make that safe to leave open. **Never echo the query back** — a
+`respond` that includes the report would turn your own origin into an
+attacker-controlled page. And **read the log with care**: a hostile "error
+message" can contain terminal escape sequences, so `jq` (not `jq -r`) or
+`cat -v` when you page through it. Rate limiting needs a plugin build and isn't
+worth it up front; log rotation already caps what a flood can cost you.
+
+The button is a plain link the user clicks, showing the exact text first — the
+app never sends a report on its own.
+
 ## 2. Run the bridge
 
 **Just for yourself?** Run it locally with no config — it listens on
@@ -193,6 +244,7 @@ how the `CHATMAIL_ALLOWLIST` allow-list works) are in the
 | `SLOTHFUL_IMPRINT_ADDRESS` | Postal address on the imprint page (newlines allowed). | `Example Str. 1\n12345 Town` |
 | `SLOTHFUL_IMPRINT_EMAIL` | Contact email on the imprint page. | `hello@example.chat` |
 | `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the community suggestions ("Public Bots", "Public Channels") in the New Chat dialog for the whole instance — the per-user settings toggle is hidden too. Unset/empty: suggestions are shown and each user can hide them in Settings → Chats and Media. | `1` |
+| `SLOTHFUL_SUPPORT_URL` | Where the crash dialog's **"Report this"** button sends the report: the URL gets `?title=&body=` appended, which are GitHub's own new-issue parameters. Unset = **no button** — your users are never sent to this repo's tracker; the dialog's "Copy details" button is the fallback. See ["Collecting crash reports"](#collecting-crash-reports) for a destination that isn't a tracker. | `https://github.com/you/your-fork/issues/new` |
 
 All are optional. Unset instance/proxy vars fall back to sane defaults; unset
 imprint vars produce a placeholder imprint page telling operators to configure

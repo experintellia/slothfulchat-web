@@ -28,6 +28,11 @@
   like three unrelated widgets; they are now the same card that fills in — the
   skeleton shimmers while the preview is generated and greys out when previews
   are unavailable.
+- **Reporting a failed start is now one tap.** If the app can't start, the
+  error screen has always shown the technical details and let you copy them —
+  it now also offers a "Report this" button that opens a prefilled report,
+  where the instance you use has said reports should go. Instances that
+  configure no destination keep the copy button and nothing else.
 
 - **The privacy policy now says who actually receives the usage statistics.**
   When an instance runs its own Plausible server instead of the hosted service,

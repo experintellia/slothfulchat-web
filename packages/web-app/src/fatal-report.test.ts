@@ -1,10 +1,10 @@
 // Unit tests for the fatal-start dialog's copyable report — dependency-free
 // (node:test), so they run in CI's lint job without pnpm install / submodules.
 //   node --test packages/web-app/src/fatal-report.test.mjs
-import { doesNotMatch, match, strictEqual } from 'node:assert'
+import { doesNotMatch, match, ok, strictEqual } from 'node:assert'
 import { test } from 'node:test'
 
-import { fatalReportText } from './fatal-report.ts'
+import { fatalReportText, fatalReportUrl } from './fatal-report.ts'
 
 test('carries the error text the analytics catalogue cannot (#176)', () => {
   const report = fatalReportText({
@@ -48,4 +48,37 @@ test('a version with no commit hash still renders a build line', () => {
 test('a dirty-build hash is abbreviated without its suffix', () => {
   const report = fatalReportText({ kind: 'x', version: '0.9.0', commitHash: 'c381266-dirty' })
   match(report, /^build: 0\.9\.0 c381266$/m, 'no trailing dash from the suffix')
+})
+
+test('the report link prefills kind and error text at the configured destination', () => {
+  const report = fatalReportText({
+    kind: 'init-error',
+    details: 'Error: sahpool install failed: NotFoundError',
+  })
+  const url = new URL(
+    fatalReportUrl('https://github.com/experintellia/slothfulchat-web/issues/new', report, 'init-error')
+  )
+  strictEqual(url.origin + url.pathname, 'https://github.com/experintellia/slothfulchat-web/issues/new')
+  match(url.searchParams.get('title'), /init-error/)
+  match(url.searchParams.get('body'), /^failure: init-error$/m)
+  match(url.searchParams.get('body'), /sahpool install failed/)
+})
+
+test('no destination configured → no link at all, so the dialog shows no button', () => {
+  strictEqual(fatalReportUrl('', 'failure: init-error'), '')
+  strictEqual(fatalReportUrl(undefined, 'failure: init-error'), '')
+  strictEqual(fatalReportUrl('not a url', 'failure: init-error'), '', 'a hand-edited config.js cannot throw')
+  strictEqual(fatalReportUrl('https://example.test/report', ''), '', 'nothing to report')
+})
+
+test("a destination's own query survives (e.g. GitHub issue labels)", () => {
+  const url = new URL(fatalReportUrl('https://example.test/new?labels=bug', 'failure: x'))
+  strictEqual(url.searchParams.get('labels'), 'bug')
+  strictEqual(url.searchParams.get('body'), 'failure: x')
+})
+
+test('a panic backtrace is clipped, not sent as a URL the server refuses', () => {
+  const url = fatalReportUrl('https://example.test/r', 'failure: x\ndetails: ' + 'a'.repeat(9000))
+  ok(url.length < 2000, `URL stayed short (${url.length})`)
+  match(url, /failure/, 'the useful head of the report is still there')
 })
