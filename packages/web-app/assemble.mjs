@@ -2,9 +2,11 @@
 // + our static overlays (main.html, manifest) + the wasm core worker.
 // Our runtime.js/blobs-sw.js are added by `pnpm build` afterwards.
 import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
+import * as esbuild from 'esbuild'
 import * as sass from 'sass'
 import { analyticsOrigin, buildConfig, configJs, imprintHtml, patchBootError, patchCsp, patchManifest, patchTitle, privacyHtml } from './instance-config.mjs'
 
@@ -256,6 +258,54 @@ for (const file of ['index.html', 'markdown-it.min.js']) {
 }
 for (const pkg of ['web-app', 'core-wasm', 'ws-tcp-proxy', 'customize']) {
   await cp(join(repo, 'packages', pkg, 'CHANGELOG.md'), join(dist, 'changelog', pkg + '.md'))
+}
+
+// core JSON-RPC API reference at /api-docs/. The two references are NOT
+// generated here — they come out of the core build in build/core (pinned
+// submodule + patches/core), so they describe the API this bundle actually runs
+// rather than the nearest published @deltachat/jsonrpc-client release:
+//   api-docs/index.html         signpost page (ours), links to both.
+//   api-docs/typescript/        typedoc over the generated client, run with
+//                               api-docs/typedoc.json (project name, readme,
+//                               RawClient-first nav) — the reference for the
+//                               types @slothfulchat/core-wasm re-exports.
+//   api-docs/openrpc/           page + bundled @open-rpc/docs-react viewer
+//                               (ours is only the shell) for…
+//   api-docs/openrpc.json       …yerpc's OpenRPC document, switched on by
+//                               patches/core (openrpc_outdir). Kept raw next to
+//                               the viewer so tools can be pointed at it.
+// Skipped with a warning when the core TS build hasn't run — `pnpm assemble`
+// alone must not require a native cargo build. Both halves are gated, not just
+// docs/: typedoc needs no cargo, so a build/core generated before patches/core
+// 0031 has docs/ and no openrpc.json, and copying it unconditionally throws
+// ENOENT where the whole point is to warn and skip.
+// Kept out of the SW precache (instance-config precacheSkip matches the whole
+// api-docs/ prefix, so the subdirectories are covered too). No routes.caddy
+// entry: file_server already serves the directory index, and unlike dist/caddy/
+// (which gets `error /caddy/* 404` because it must NOT leave the box) this is
+// meant to be public.
+const coreTs = join(repo, 'build/core/deltachat-jsonrpc/typescript')
+if (existsSync(join(coreTs, 'docs/index.html')) && existsSync(join(coreTs, 'generated/openrpc.json'))) {
+  await mkdir(join(dist, 'api-docs/openrpc'), { recursive: true })
+  await cp(join(here, 'api-docs/index.html'), join(dist, 'api-docs/index.html'))
+  await cp(join(here, 'api-docs/openrpc/index.html'), join(dist, 'api-docs/openrpc/index.html'))
+  await cp(join(coreTs, 'docs'), join(dist, 'api-docs/typescript'), { recursive: true })
+  await cp(join(coreTs, 'generated/openrpc.json'), join(dist, 'api-docs/openrpc.json'))
+  // The viewer is React + MUI (@open-rpc/docs-react), so unlike everything else
+  // in this block it is bundled rather than copied — self-contained, because
+  // `script-src 'self'` rules out the CDN builds. Built here rather than in
+  // `pnpm build` so it stays behind the same "did the core docs get generated"
+  // gate as the page that loads it; devDependencies only, nothing ships to npm.
+  await esbuild.build({
+    entryPoints: [join(here, 'api-docs/openrpc/viewer.js')],
+    outfile: join(dist, 'api-docs/openrpc/viewer.js'),
+    bundle: true,
+    minify: true,
+    format: 'esm',
+    define: { 'process.env.NODE_ENV': '"production"' },
+  })
+} else {
+  console.warn('assemble: no /api-docs (build/core docs/ or generated/openrpc.json missing — run `cargo test -p deltachat-jsonrpc` then `pnpm api-docs`)')
 }
 
 // The offline app-shell precache manifest (dist/sw-precache.js) is emitted by

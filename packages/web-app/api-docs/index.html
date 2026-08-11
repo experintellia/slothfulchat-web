@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SlothfulChat core API docs</title>
+<style>
+  :root { --bg:#15171b; --panel:#1d2026; --line:#2c313a; --fg:#e6e8eb; --muted:#9aa3af; --accent:#3793ff; }
+  * { box-sizing:border-box; }
+  body { margin:0 auto; padding:32px 16px 64px; max-width:760px;
+         font:15px/1.6 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  h1 { font-size:20px; margin:0 0 6px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted);
+       margin:32px 0 10px; font-weight:600; }
+  p { margin:0 0 12px; }
+  .lede { color:var(--muted); }
+  a { color:var(--accent); }
+  code { background:var(--panel); border:1px solid var(--line); border-radius:4px; padding:1px 5px; font-size:13px; }
+  ul { padding-left:20px; margin:0 0 12px; }
+  .card { display:block; background:var(--panel); border:1px solid var(--line); border-radius:10px;
+          padding:14px 16px; margin:0 0 10px; text-decoration:none; color:var(--fg); }
+  .card:hover { border-color:var(--accent); }
+  .card b { display:block; font-size:15px; margin-bottom:3px; }
+  .card span { color:var(--muted); font-size:13.5px; }
+</style>
+</head>
+<body>
+
+<h1>SlothfulChat core API</h1>
+<p class="lede">
+  The JSON-RPC API of <a href="https://github.com/experintellia/slothfulchat-web">SlothfulChat</a>'s
+  fork of <a href="https://github.com/chatmail/core">chatmail core</a>: the pinned core commit with
+  this repository's <code>patches/core</code> stack applied. Both references below are generated
+  from that patched source on every build, so they describe the API <em>this bundle actually
+  runs</em> — not the nearest published upstream release. Fork-touched items carry a 🦥 note
+  naming the patch.
+</p>
+
+<h2>References</h2>
+
+<a class="card" href="./typescript/">
+  <b>TypeScript reference</b>
+  <span>TypeDoc over the generated client. Start at <code>RawClient</code> — every method hangs off
+  it. These are the types <code>@slothfulchat/core-wasm</code> ships.</span>
+</a>
+
+<a class="card" href="./openrpc/">
+  <b>OpenRPC spec</b>
+  <span>The same methods as a browsable OpenRPC document: parameters, results and schemas,
+  language-agnostic. Wire names, so methods are <code>snake_case</code> here and
+  <code>camelCase</code> in the TypeScript client.</span>
+</a>
+
+<a class="card" href="./openrpc.json">
+  <b>openrpc.json</b>
+  <span>The raw spec, for pointing tools at.</span>
+</a>
+
+<h2>Using these types</h2>
+<p>
+  There is no separate types package — the generated client and its declarations ship inside
+  <code>@slothfulchat/core-wasm</code>:
+</p>
+<p><code>import { BaseDeltaChat, C, type T } from '@slothfulchat/core-wasm'</code></p>
+<p>
+  Do not install <code>@deltachat/jsonrpc-client</code> alongside it: you would get two nominally
+  distinct declarations of the same types, and <code>BaseDeltaChat</code> /
+  <code>yerpc.BaseTransport</code> clash where structural typing does not save you.
+</p>
+
+</body>
+</html>

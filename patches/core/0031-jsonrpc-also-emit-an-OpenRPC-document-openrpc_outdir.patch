@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 6 Aug 2026 22:19:24 +0000
+Subject: [PATCH 31/31] jsonrpc: also emit an OpenRPC document (openrpc_outdir)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The crate already enables yerpc's `openrpc` feature and every API type
+already derives `schemars::JsonSchema`, so the OpenRPC generator is
+compiled in and fully fed — it was simply never switched on: `#[rpc]`
+sets `ts_outdir` but not `openrpc_outdir`, and without the latter
+yerpc_derive emits no OpenRPC generator at all.
+
+Setting it makes `cargo test -p deltachat-jsonrpc` write
+`typescript/generated/openrpc.json` next to the TypeScript bindings it
+already writes there, from the same `#[rpc]` impl block and the same doc
+comments. 177 methods, 40 component schemas. `generated/` is already
+gitignored, so nothing new lands in the tree.
+
+This gives non-TypeScript consumers a machine-readable description of
+the JSON-RPC API that is generated from the source of truth rather than
+transcribed from it.
+---
+ deltachat-jsonrpc/src/api.rs | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
+index 8281447..a409878 100644
+--- a/deltachat-jsonrpc/src/api.rs
++++ b/deltachat-jsonrpc/src/api.rs
+@@ -159,7 +159,11 @@ async fn inner_get_backup_qr(&self, account_id: u32) -> Result<Qr> {
+     }
+ }
+ 
+-#[rpc(all_positional, ts_outdir = "typescript/generated")]
++#[rpc(
++    all_positional,
++    ts_outdir = "typescript/generated",
++    openrpc_outdir = "typescript/generated"
++)]
+ impl CommandApi {
+     /// Test function.
+     async fn sleep(&self, delay: f64) {
