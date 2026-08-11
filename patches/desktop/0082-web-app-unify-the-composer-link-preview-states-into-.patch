@@ -28,9 +28,9 @@ unchanged. The spinner bar styles (.bar/.barLabel/.linkIcon) are gone.
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
  .../composer/linkPreview/LinkPreviewGhost.tsx | 148 +++++++++---------
- .../composer/linkPreview/styles.module.scss   |  74 +++++----
+ .../composer/linkPreview/styles.module.scss   |  85 ++++++----
  .../composer/linkPreview/useLinkPreview.ts    |  20 ++-
- 3 files changed, 130 insertions(+), 112 deletions(-)
+ 3 files changed, 140 insertions(+), 113 deletions(-)
 
 diff --git a/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx b/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
 index bc531e5..c6c5094 100644
@@ -226,13 +226,31 @@ index bc531e5..c6c5094 100644
      </div>
    )
 diff --git a/packages/frontend/src/components/composer/linkPreview/styles.module.scss b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
-index 0d752a1..593a03c 100644
+index 0d752a1..13454fd 100644
 --- a/packages/frontend/src/components/composer/linkPreview/styles.module.scss
 +++ b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
-@@ -55,6 +55,52 @@
+@@ -25,7 +25,9 @@
+ // dashed border keeps the "this is a suggestion, not content yet" ghost read.
+ // Card + its "click to fetch" hint, stacked; the action buttons sit beside it.
+ .ghostLeft {
+-  flex: 1 1 auto;
++  // Hug the card so the Add/dismiss buttons sit right beside it instead of
++  // drifting to the far edge of the composer.
++  flex: 0 1 auto;
+   min-width: 0;
+   display: flex;
+   flex-direction: column;
+@@ -55,6 +57,59 @@
    background: #f4f6f9;
    border: 1px dashed rgba(16, 26, 38, 0.2);
    box-shadow: 0 2px 10px rgba(8, 14, 22, 0.1);
++  // The same footprint as the compact card renderCard bakes (CARD_W=452), so
++  // the skeleton is exactly the card that's about to appear — and a FIXED
++  // width, so the card doesn't stretch or jump as buttons come and go
++  // between the idle / loading / unavailable states.
++  width: 452px;
++  max-width: 100%;
++  box-sizing: border-box;
 +  // idle ↔ loading ↔ unavailable morph in place (same DOM), so ease the cues
 +  transition:
 +    opacity 0.2s,
@@ -282,7 +300,7 @@ index 0d752a1..593a03c 100644
  }
  
  .ghostBody {
-@@ -156,34 +202,6 @@
+@@ -156,34 +211,6 @@
    }
  }
  
