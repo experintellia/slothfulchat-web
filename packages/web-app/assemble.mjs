@@ -275,14 +275,17 @@ for (const pkg of ['web-app', 'core-wasm', 'ws-tcp-proxy', 'customize']) {
 //                               patches/core (openrpc_outdir). Kept raw next to
 //                               the viewer so tools can be pointed at it.
 // Skipped with a warning when the core TS build hasn't run — `pnpm assemble`
-// alone must not require a native cargo build.
+// alone must not require a native cargo build. Both halves are gated, not just
+// docs/: typedoc needs no cargo, so a build/core generated before patches/core
+// 0031 has docs/ and no openrpc.json, and copying it unconditionally throws
+// ENOENT where the whole point is to warn and skip.
 // Kept out of the SW precache (instance-config precacheSkip matches the whole
 // api-docs/ prefix, so the subdirectories are covered too). No routes.caddy
 // entry: file_server already serves the directory index, and unlike dist/caddy/
 // (which gets `error /caddy/* 404` because it must NOT leave the box) this is
 // meant to be public.
 const coreTs = join(repo, 'build/core/deltachat-jsonrpc/typescript')
-if (existsSync(join(coreTs, 'docs/index.html'))) {
+if (existsSync(join(coreTs, 'docs/index.html')) && existsSync(join(coreTs, 'generated/openrpc.json'))) {
   await mkdir(join(dist, 'api-docs/openrpc'), { recursive: true })
   await cp(join(here, 'api-docs/index.html'), join(dist, 'api-docs/index.html'))
   await cp(join(here, 'api-docs/openrpc/index.html'), join(dist, 'api-docs/openrpc/index.html'))
@@ -302,7 +305,7 @@ if (existsSync(join(coreTs, 'docs/index.html'))) {
     define: { 'process.env.NODE_ENV': '"production"' },
   })
 } else {
-  console.warn('assemble: no /api-docs (build/core client docs missing — run `pnpm api-docs`)')
+  console.warn('assemble: no /api-docs (build/core docs/ or generated/openrpc.json missing — run `cargo test -p deltachat-jsonrpc` then `pnpm api-docs`)')
 }
 
 // The offline app-shell precache manifest (dist/sw-precache.js) is emitted by

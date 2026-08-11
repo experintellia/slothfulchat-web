@@ -16,18 +16,21 @@
 
   // The site is a fork's API reference, not upstream's package docs.
   "name": "SlothfulChat core API — a fork of chatmail core",
-  "titleLink": "../",
   "readme": "./typedoc-readme.md",
 
-  // RawClient first: it is the class every JSON-RPC method hangs off, and
-  // without this it is one entry among hundreds of generated types. The header
-  // links are on every page, so they are also the way back to the other
-  // reference and to the /api-docs/ index.
-  "navigationLinks": {
-    "RawClient — all API methods": "classes/RawClient.html",
-    "OpenRPC spec": "../openrpc/",
-    "/api-docs/": "../"
-  },
+  // No `titleLink`/`navigationLinks` here, deliberately: typedoc writes both
+  // hrefs VERBATIM into every page (dist/index.js, `href: url`), while the
+  // default `kind` router puts content pages one directory deep. So a link that
+  // works from typescript/index.html 404s from typescript/types/Foo.html, and
+  // there is no href that is right at both depths — the site has no fixed root
+  // to anchor to either: assemble.mjs supports serving dist/ from a subpath
+  // (https://user.github.io/repo/), and the app derives its own BASE from
+  // location. Left unset, `titleLink` falls back to typedoc's own
+  // relativeURL("index.html"), which IS rebased per page: the header title is
+  // the way back to this site's index, and typedoc-readme.md — rendered there,
+  // at depth 0, where relative links resolve — carries the cross-links to
+  // /api-docs/ and the OpenRPC spec. RawClient needs no header link: the
+  // sidebar navigation lists it, with a rebased URL, on every page.
 
   // Classes (RawClient, BaseDeltaChat) ahead of the type-alias wall.
   "sort": ["kind", "alphabetical"],

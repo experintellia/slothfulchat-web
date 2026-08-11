@@ -32,11 +32,15 @@ folder only holds the framing (project name, index pages, cross-links).
 - `openrpc/deref.mjs` — the one thing docs-react does not do: inline the
   document's `$ref`s. Without it every method renders with empty parameters.
   Self-check: `node --test packages/web-app/api-docs/openrpc/deref.test.mjs`.
-- `typedoc.json` — typedoc options (project name, readme, RawClient-first
-  navigation links, entry point and out dir in `build/core`). Paths inside
-  resolve relative to this file.
+- `typedoc.json` — typedoc options (project name, readme, sort order, entry
+  point and out dir in `build/core`). Paths inside resolve relative to this
+  file. Deliberately no `navigationLinks`/`titleLink`: typedoc writes those
+  hrefs verbatim into pages that sit at two different depths, so no value is
+  right on all of them — the file says so at length.
 - `typedoc-readme.md` — rendered as the typedoc site's index page; the "this is
-  a fork, get the types from `@slothfulchat/core-wasm`" framing.
+  a fork, get the types from `@slothfulchat/core-wasm`" framing, and the
+  cross-links to the OpenRPC spec and `/api-docs/`. It is the one page where a
+  relative link out of the typedoc site resolves, which is why they live here.
 
 ## How it is built and deployed
 
@@ -59,9 +63,11 @@ pnpm --filter @slothfulchat/web-app assemble
 | `openrpc.json`          | `build/core/…/typescript/generated/openrpc.json` |
 | `typescript/`           | `build/core/…/typescript/docs/` (typedoc)      |
 
-It warns and skips the whole block — the esbuild call included — when
-`build/core`'s docs are absent, so `pnpm assemble` on its own never requires a
-cargo build. The tree is excluded from the service worker precache
+It warns and skips the whole block — the esbuild call included — unless BOTH
+`build/core`'s typedoc output and its `generated/openrpc.json` are there, so
+`pnpm assemble` on its own never requires a cargo build. Both, because typedoc
+needs no cargo: a `build/core` documented before `patches/core/0031` has one and
+not the other. The tree is excluded from the service worker precache
 (`precacheSkip` matches the `api-docs/` prefix, so subdirectories are covered;
 that is what keeps the ~1.4 MB `viewer.js` out of the offline app shell).
 

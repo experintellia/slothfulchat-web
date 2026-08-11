@@ -176,6 +176,34 @@ test('several patches on one item are all named', () => {
   )
 })
 
+// A lifetime's apostrophe must not pair with the next one: `<'a>(&'a self`
+// reads as one char literal spanning the brackets, `delta()` returns 0 instead
+// of +1, the method's range collapses AND the impl block closes early — so
+// every method below it silently drops out of the item set. verify-fork-marks
+// cannot catch that: its manifest comes from this same scanner.
+const LIFETIMES = `#[rpc(all_positional)]
+impl CommandApi {
+    /// Borrows.
+    async fn borrowed<'a>(&'a self, name: &'a str) -> Result<()> {
+        Ok(())
+    }
+
+    /// Comes after it.
+    async fn later(&self) -> Result<u64> {
+        Ok(patched())
+    }
+}
+`
+test('a method with explicit lifetimes does not swallow the methods below it', () => {
+  // Line 10 is `Ok(patched())`, inside `later` — the method after the borrower.
+  const { source, methods } = markSource(LIFETIMES, fork([10], 'core/0019'))
+  assert.deepEqual(methods, ['later'])
+  assert.equal(
+    markOn(source, 'async fn later')?.trim(),
+    '/// 🦥 slothfulchat-web fork: changed by core/0019.',
+  )
+})
+
 test('changes outside the documented API surface are left alone', () => {
   // Line 27 is inside `impl From<CoreEvent> for EventType`: real fork code,
   // but it produces no client method, type, field or variant.

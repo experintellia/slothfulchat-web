@@ -44,9 +44,19 @@ export const MANIFEST = (root) => path.join(root, 'build/core/fork-marks.json')
 const git = (cwd, ...args) =>
   execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 1 << 28 })
 
-/** Strip string/char literals and line comments so brace counting isn't fooled. */
+/** Strip string/char literals, lifetimes and line comments so brace counting isn't fooled. */
 const code = (line) =>
-  line.replace(/r?"(\\.|[^"\\])*"/g, '""').replace(/'(\\.|[^'\\])*'/g, "''").replace(/\/\/.*$/, '')
+  line
+    .replace(/r?"(\\.|[^"\\])*"/g, '""')
+    // Lifetimes BEFORE char literals, or the two apostrophes of
+    // `borrowed<'a>(&'a self` pair up and the brackets between them are eaten
+    // — the method's range collapses and the enclosing impl closes early, so
+    // every method below it silently drops out of the item set. A lifetime is
+    // `'ident` not followed by `'`; a char literal `'a'` is, so it is left to
+    // the next step.
+    .replace(/'[A-Za-z_]\w*(?!')/g, '')
+    .replace(/'(\\.|[^'\\])*'/g, "''")
+    .replace(/\/\/.*$/, '')
 
 const delta = (line) => {
   const c = code(line)

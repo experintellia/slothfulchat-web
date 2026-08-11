@@ -38,3 +38,11 @@ nominally distinct declarations of the same types, and `BaseDeltaChat` /
   a machine-readable OpenRPC document, browsable, with the
   <a href="../openrpc.json">raw <code>openrpc.json</code></a> next to it for
   pointing tools at.
+- <a href="../index.html">/api-docs/</a> — the signpost page both hang off.
+  Spelled with the filename, not `../`: typedoc rewrites a relative link that
+  resolves to something next to THIS file into a `media/` copy, and `../` is
+  `packages/web-app/`. All three targets are outside the source tree, so they
+  survive verbatim.
+
+These links resolve from this page only — it is the one typedoc page at the root
+of the site. From a deeper page, the site title in the header comes back here.

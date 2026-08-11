@@ -46,7 +46,15 @@ const jsdocMarked = (src, name) => {
   const at = src.search(new RegExp(`^\\s*((public|private|protected|readonly|declare) )*${name}[(:<]`, 'm'))
   if (at < 0) return null // not in this surface at all
   const open = src.lastIndexOf('/**', at)
-  return open >= 0 && src.slice(open, at).includes(MARKER)
+  if (open < 0) return false
+  const block = src.slice(open, at)
+  const close = block.indexOf('*/')
+  // The back-scan has no floor, so an UNDOCUMENTED member would otherwise be
+  // validated against the previous member's block and report marked — turning
+  // a partial-loss regression green. Anything but whitespace between the
+  // block's `*/` and the member means we scanned past its owner.
+  if (close < 0 || /[;}]|\*\//.test(block.slice(close + 2))) return false
+  return block.includes(MARKER)
 }
 
 /** Per-symbol: every marked method must still be marked here. */

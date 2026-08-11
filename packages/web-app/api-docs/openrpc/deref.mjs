@@ -22,8 +22,11 @@ export function dereference(doc) {
   const walk = (node) => {
     if (Array.isArray(node)) return node.map(walk)
     if (!node || typeof node !== 'object') return node
-    const target = node.$ref?.replace?.('#/components/schemas/', '')
-    if (target !== undefined && target !== node.$ref) {
+    // Anchored: an unanchored strip would also fire mid-string, turning
+    // "other.json#/components/schemas/Foo" into "other.jsonFoo" and dropping
+    // the ref instead of leaving it alone.
+    const target = node.$ref?.match?.(/^#\/components\/schemas\/(.+)$/)?.[1]
+    if (target !== undefined) {
       if (!memo.has(target)) {
         const out = {}
         memo.set(target, out) // seed first: a cycle resolves back to this object
