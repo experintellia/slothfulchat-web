@@ -1,0 +1,40 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+
+  // TypeDoc options for the core JSON-RPC client reference shipped at
+  // /api-docs/typescript/. Passed with `--options` from build/core's typescript
+  // dir, so the relative paths below resolve against THIS file's directory —
+  // typedoc resolves path-typed options relative to the config that declares
+  // them, not the cwd.
+  //
+  // Everything the site says about itself is set here rather than by
+  // post-processing the emitted HTML.
+
+  "entryPoints": ["../../../build/core/deltachat-jsonrpc/typescript/deltachat.ts"],
+  "tsconfig": "../../../build/core/deltachat-jsonrpc/typescript/tsconfig.json",
+  "out": "../../../build/core/deltachat-jsonrpc/typescript/docs",
+
+  // The site is a fork's API reference, not upstream's package docs.
+  "name": "SlothfulChat core API — a fork of chatmail core",
+  "readme": "./typedoc-readme.md",
+
+  // No `titleLink`/`navigationLinks` here, deliberately: typedoc writes both
+  // hrefs VERBATIM into every page (dist/index.js, `href: url`), while the
+  // default `kind` router puts content pages one directory deep. So a link that
+  // works from typescript/index.html 404s from typescript/types/Foo.html, and
+  // there is no href that is right at both depths — the site has no fixed root
+  // to anchor to either: assemble.mjs supports serving dist/ from a subpath
+  // (https://user.github.io/repo/), and the app derives its own BASE from
+  // location. Left unset, `titleLink` falls back to typedoc's own
+  // relativeURL("index.html"), which IS rebased per page: the header title is
+  // the way back to this site's index, and typedoc-readme.md — rendered there,
+  // at depth 0, where relative links resolve — carries the cross-links to
+  // /api-docs/ and the OpenRPC spec. RawClient needs no header link: the
+  // sidebar navigation lists it, with a rebased URL, on every page.
+
+  // Classes (RawClient, BaseDeltaChat) ahead of the type-alias wall.
+  "sort": ["kind", "alphabetical"],
+
+  "githubPages": false,
+  "excludeInternal": true
+}
