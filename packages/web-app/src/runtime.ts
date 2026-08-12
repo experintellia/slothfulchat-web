@@ -32,7 +32,7 @@ import { EMOJI_SETS, DEFAULT_EMOJI_SET, emojiFonts } from './emoji-sets.ts'
 import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
-import { el, overlayCard, scButton } from './ui-shared'
+import { el, overlayCard, scButton, showOnTop } from './ui-shared'
 import { fatalReportText } from './fatal-report.ts'
 import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
@@ -2137,7 +2137,7 @@ function showFatalDialog(
   const notify = analytics.isEnabled()
   if (notify) panel.append(analyticsNoticeLine())
   document.body.appendChild(overlay)
-  overlay.showModal()
+  showOnTop(overlay)
   // only once the notice is actually on screen — releaseHeldEvents() records
   // that it was shown, so calling it without showing it would be a lie
   if (notify) analytics.releaseHeldEvents()
@@ -2320,7 +2320,7 @@ function showWebxdcNotImplementedDialog() {
     if (e.target === overlay) overlay.remove()
   }
   document.body.appendChild(overlay)
-  overlay.showModal()
+  showOnTop(overlay)
 }
 
 // --- Native 1:1 calls -------------------------------------------------------
@@ -3302,7 +3302,7 @@ function showBridgeDialog() {
     if (e.target === overlay) close()
   }
   document.body.appendChild(overlay)
-  overlay.showModal()
+  showOnTop(overlay)
   // showModal focuses the first focusable element — the details summary,
   // which paints a stray focus ring. The checked radio is the better start
   // (arrow keys then move the selection).
@@ -3352,7 +3352,7 @@ function showBridgeConfirmDialog(url: string) {
     if (e.target === overlay) overlay.remove()
   }
   document.body.appendChild(overlay)
-  overlay.showModal()
+  showOnTop(overlay)
   keepBtn.focus() // the safe option, not the one that adopts the bridge
 }
 
@@ -3465,7 +3465,7 @@ function showThrowawayGate(): void {
 
   panel.append(title, body, note, row)
   document.body.appendChild(overlay)
-  overlay.showModal()
+  showOnTop(overlay)
   keepBtn.focus() // the safe option, not the one that throws the data away
 }
 
