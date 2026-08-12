@@ -125,10 +125,13 @@ if ((await copyBtn.innerText()) !== 'Copied') {
 console.log('OK: Copy details copies the report and says so')
 
 // --- 5) it renders as a dialog, not just as the right words ----------------
+// 640 = the .sc-page card's 40rem, the same column static/boot-error.js uses:
+// this screen is the whole app while it is up, so it gets the page shape
+// rather than the 400px card the smaller dialogs use.
 // Checks 1-4 are text and structure, and all four pass just as happily against
 // an unstyled pile of nodes in the corner — which is what these dialogs render
 // if ui-shared's stylesheet does not reach them.
-await assertDialogRendered(dialog, 400, 'fatal dialog')
+await assertDialogRendered(dialog, 640, 'fatal dialog')
 console.log('OK: the fatal dialog is a centred, styled modal')
 
 // ...and that assertion has teeth: take the overlay stylesheet away — every
@@ -137,7 +140,7 @@ console.log('OK: the fatal dialog is a centred, styled modal')
 await page.evaluate(() => document.getElementById('sc-overlay-css')?.remove())
 let noticed = false
 try {
-  await assertDialogRendered(dialog, 400, 'fatal dialog')
+  await assertDialogRendered(dialog, 640, 'fatal dialog')
 } catch {
   noticed = true
 }

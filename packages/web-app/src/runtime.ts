@@ -2124,7 +2124,10 @@ function showFatalDialog(
   // here on it is noise about the wrong problem (see checkBridge)
   hideBridgeToast()
   hideWelcomeHint()
-  const [overlay, panel] = overlayCard(id)
+  // the roomy 'page' shape, matching static/boot-error.js: this screen is
+  // the whole app for as long as it is up, and a 400px card made the one
+  // failure a user cannot work around look like a passing notification
+  const [overlay, panel] = overlayCard(id, 'page')
   overlay.oncancel = e => e.preventDefault() // Esc must not reveal a dead app
 
   const title = el('h2', {}, titleText)
@@ -3177,7 +3180,7 @@ function showBridgeToast() {
 
 function showBridgeDialog() {
   if (document.getElementById('sc-bridge-dialog')) return
-  const [overlay, panel] = overlayCard('sc-bridge-dialog', true)
+  const [overlay, panel] = overlayCard('sc-bridge-dialog', 'wide')
   // Escape closes the dialog without removing it; display:flex would keep it
   // visible, so drop it from the DOM entirely.
   overlay.onclose = () => overlay.remove()
@@ -3373,7 +3376,7 @@ function showBridgeDialog() {
  * has been sent to it by the time this is answered. */
 function showBridgeConfirmDialog(url: string) {
   if (document.getElementById('sc-bridge-confirm-dialog')) return
-  const [overlay, panel] = overlayCard('sc-bridge-confirm-dialog', true)
+  const [overlay, panel] = overlayCard('sc-bridge-confirm-dialog', 'wide')
   overlay.onclose = () => overlay.remove()
 
   const title = el('h2', {}, 'Use a different bridge?')
@@ -3481,7 +3484,7 @@ function showThrowawayGate(): void {
   fatalShown = true
   hideBridgeToast()
   hideWelcomeHint()
-  const [overlay, panel] = overlayCard('sc-throwaway-dialog', true)
+  const [overlay, panel] = overlayCard('sc-throwaway-dialog', 'wide')
   overlay.oncancel = e => e.preventDefault() // Esc must not reveal a dead app
 
   const title = el('h2', {}, 'Start a throwaway session?')

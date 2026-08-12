@@ -56,6 +56,17 @@ const OVERLAY_CSS = `
  padding:20px;border-radius:10px;background:#1e1e1e;color:#eee;
  font:14px/1.5 system-ui,sans-serif;box-shadow:0 8px 40px rgba(0,0,0,.5)}
 .sc-card.sc-wide{width:min(460px,92vw)}
+/* The fatal-start screen. Same proportions as static/boot-error.js's page —
+   a 40rem column, 16px body, a big heading — because the two are halves of
+   the same moment (that file's screen shows when the bundles never run, this
+   one when they run and the core dies) and they used to look like different
+   products. Still a <dialog>, so showOnTop keeps it above the frontend's own
+   modals, which an in-page takeover would not. */
+.sc-card.sc-page{width:min(40rem,92vw);padding:2rem 1.75rem;font-size:16px;box-shadow:none}
+.sc-card.sc-page>h2{margin:0 0 14px;font-size:1.3rem}
+.sc-card.sc-page>p{margin:0 0 16px;font-size:16px}
+.sc-card.sc-page>.sc-note{margin:14px 0 0;font-size:14px}
+.sc-card.sc-page .sc-row{margin-top:24px}
 .sc-card>h2{margin:0 0 8px;font-size:17px}
 .sc-card>p{margin:0 0 10px;color:#bbb}
 .sc-card>.sc-note{margin:0;font-size:12px;color:#a8a8a8}
@@ -71,7 +82,7 @@ const OVERLAY_CSS = `
  color:#ddd;font-size:13px;cursor:pointer}
 .sc-report{margin:0 0 8px;padding:8px 10px;border-radius:6px;background:#141414;color:#bbb;
  font:12px/1.45 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word;
- max-height:5.5em;overflow-y:auto;user-select:text}
+ max-height:30vh;overflow-y:auto;user-select:text}
 .sc-url{margin:0 0 10px;padding:8px 10px;border-radius:6px;background:#161616;color:#9cdcfe;
  white-space:pre-wrap;word-break:break-all;font-size:12px}
 .sc-link{color:#4ea1ff;font-size:13px}
@@ -126,15 +137,18 @@ document.head.append(overlayStyle)
  * upstream's own dialogs are modal and live in the browser top layer, which
  * paints over any z-index; opening ours last puts it above them.
  *
+ * Three sizes: the default card, `wide` for the ones with a list in them, and
+ * `page` for the fatal-start screen — see .sc-page in OVERLAY_CSS.
+ *
  * Returns both — the caller fills the card and shows the dialog (showOnTop).
  */
 export function overlayCard(
   id: string,
-  wide = false
+  size: 'wide' | 'page' | '' = ''
 ): [HTMLDialogElement, HTMLDivElement] {
   const overlay = el('dialog', 'sc-ov')
   overlay.id = id
-  const card = el('div', wide ? 'sc-card sc-wide' : 'sc-card')
+  const card = el('div', size ? `sc-card sc-${size}` : 'sc-card')
   overlay.append(card)
   return [overlay, card]
 }
