@@ -24,32 +24,32 @@ Honest is not the same as visible, though. The UI draws the bar as a bare
 width percentage with no number beside it, so simply holding the last
 pre-1000 value across the drain looks exactly like a finished bar — the
 symptom #90 is about. So the range is split instead: the unpack phase scales
-to UNPACK_PROGRESS_MAX (950 on wasm, upstream's 999 elsewhere) and the drain
+to UNPACK_PROGRESS_MAX (850 on wasm, upstream's 999 elsewhere) and the drain
 animates the tail above it off the queue depth `flush_pending` now reports.
 The bar only ever moves forward — the queue can grow while it drains, so the
 raw ratio can fall.
 
 Scaled, not clamped: the reader's old `min(1000 * read / size, 999)` capped a
-value that overshoots the ceiling, which with a ceiling of 950 would park the
-bar for the whole last twentieth of the read — the longest stretch of a big
-restore. `min(MAX * read / size, MAX)` keeps it moving to the end. On native
-that shifts reported progress by at most 1/1000th of the range; the 999
-ceiling, the event sequence and the 0/1/1000 events upstream's tests assert
-are unchanged.
+value that overshoots the ceiling, which with a lower ceiling would park the
+bar for the whole reserved tail — the longest stretch of a big restore.
+`min(MAX * read / size, MAX)` keeps it moving to the end. On native that
+shifts reported progress by at most 1/1000th of the range; the 999 ceiling,
+the event sequence and the 0/1/1000 events upstream's tests assert are
+unchanged.
 
 `drain_progress` is a named function rather than an inline closure body so it
 can carry `#[expect(clippy::arithmetic_side_effects)]`, the way three other
 sites in this file already do — the lint is on for the crate and this patch
 should stay upstreamable.
 ---
- src/imex.rs | 69 +++++++++++++++++++++++++++++++++++++++++++++++++++--
- 1 file changed, 67 insertions(+), 2 deletions(-)
+ src/imex.rs | 73 +++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 71 insertions(+), 2 deletions(-)
 
 diff --git a/src/imex.rs b/src/imex.rs
-index 4f2927f..239c2c3 100644
+index 4f2927f..531539d 100644
 --- a/src/imex.rs
 +++ b/src/imex.rs
-@@ -247,6 +247,32 @@ pub(crate) async fn import_backup_stream<R: tokio::io::AsyncRead + Unpin>(
+@@ -247,6 +247,36 @@ pub(crate) async fn import_backup_stream<R: tokio::io::AsyncRead + Unpin>(
          .0
  }
  
@@ -59,8 +59,12 @@ index 4f2927f..239c2c3 100644
 +/// `import_backup_stream_inner`), which is real waiting the user should see
 +/// move; everywhere else nothing follows the unpack, so it keeps upstream's
 +/// 999.
++///
++/// The wasm value sizes the drain's share of the bar. It is a judgement call,
++/// not a measurement: too small and the drain crawls through its slice, too
++/// large and the bar snaps over it. This is the knob to turn.
 +#[cfg(target_arch = "wasm32")]
-+const UNPACK_PROGRESS_MAX: u16 = 950;
++const UNPACK_PROGRESS_MAX: u16 = 850;
 +#[cfg(not(target_arch = "wasm32"))]
 +const UNPACK_PROGRESS_MAX: u16 = 999;
 +
@@ -82,7 +86,7 @@ index 4f2927f..239c2c3 100644
  /// Reader that emits progress events as bytes are read from it.
  #[pin_project]
  struct ProgressReader<R> {
-@@ -298,7 +324,11 @@ fn poll_read(
+@@ -298,7 +328,11 @@ fn poll_read(
                  .read
                  .saturating_add(usize_to_u64(buf.filled().len() - before));
  
@@ -95,7 +99,7 @@ index 4f2927f..239c2c3 100644
              if progress > *this.last_progress {
                  this.context.emit_event(EventType::ImexProgress(progress));
                  *this.last_progress = progress;
-@@ -376,7 +406,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+@@ -376,7 +410,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
          .log_err(context)
          .ok();
      if res.is_ok() {
@@ -104,7 +108,7 @@ index 4f2927f..239c2c3 100644
          res = context.sql.run_migrations(context).await;
          context.emit_event(EventType::AccountsItemChanged);
      }
-@@ -402,6 +432,41 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+@@ -402,6 +436,41 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
              .log_err(context)
              .ok();
      }

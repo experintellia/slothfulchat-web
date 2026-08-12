@@ -56,7 +56,7 @@ durable account could be lost or corrupted:
   restored blobs to be durable before they return, so their final
   `ImexProgress(1000)` means "written to persistent storage" rather than
   "unpacked, with an unknown amount of writing still to go". They reserve the
-  last twentieth of the progress range for that write-out and report progress
+  last 15% of the progress range for that write-out and report progress
   across it, so a UI drawing the raw events shows the wait instead of a bar
   that sits full while it happens. Both also report an honest failure count
   when storage fills mid-restore (new `Core.fsFailed()` baseline for
