@@ -71,7 +71,7 @@ exists:
   import waits for the OPFS mirror to drain before it returns, so its
   100%-progress event means "durable" rather than "unpacked" — both the file
   import and the second-device transfer receive go through that one place —
-  and the last twentieth of the progress range is reserved for that drain, so
+  and the last 15% of the progress range is reserved for that drain, so
   the wait is something the bar shows rather than dead time behind a bar that
   already looks full. `core/0008`, `core/0009`, `core/0033`
 - **Account creation** — a new account replayed every migration past the
