@@ -206,14 +206,10 @@ export function showOnTop(overlay: HTMLDialogElement): void {
   onTop.add(overlay)
   overlay.addEventListener('close', () => onTop.delete(overlay))
   overlay.showModal()
-  // showModal() focuses the first focusable child, and the browser scrolls
-  // that into view. The card is the scroll container (max-height:90vh), so on
-  // a phone — where a tall one overflows — the dialog opens already scrolled
-  // PAST its own title and first paragraph: on the fatal screen that is the
-  // heading naming the failure and the line telling the user what to do.
-  // Nothing is missing, but the first thing they see is the middle.
-  // Both, because which one scrolls depends on the shape: a card scrolls
-  // inside itself (max-height:90vh), the page variant scrolls as a page.
+  // showModal() focuses the first focusable child and the browser scrolls it
+  // into view, which can open a dialog already scrolled past its own title.
+  // Both elements, because which one scrolls depends on the shape: a card
+  // scrolls inside itself (max-height:90vh), the page variant as a page.
   overlay.scrollTo(0, 0)
   ;(overlay.firstElementChild as HTMLElement | null)?.scrollTo(0, 0)
 }

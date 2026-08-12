@@ -2149,16 +2149,14 @@ function showFatalDialog(
   })
   panel.append(title, body)
   // Everything stays visible. Two earlier shapes of this screen were both
-  // wrong: a full-height report with three buttons under it buried the one
-  // line that actually helps ("close the other tab"), and folding the lot
-  // behind a disclosure buried the buttons instead — nobody opens a
-  // <details> to volunteer work. So the first aid keeps its place at the top
-  // in the card's own type, and the technical half is present but small: the
-  // report is a compact scrollable box (.sc-report), not a wall.
+  // wrong: a 400px card made the report and its buttons crowd out the one
+  // line that actually helps ("close the other tab"), and folding them behind
+  // a disclosure buried the buttons instead — nobody opens a <details> to
+  // volunteer work. The page shape leaves room for both (see .sc-page).
   //
-  // It also has to stay visible for the send buttons to be honest — nothing
-  // may be sent that the user was not shown (#176), and a collapsed box is
-  // not shown.
+  // The report also has to stay visible for the send buttons to be honest:
+  // nothing may be sent that the user was not shown (#176), and a collapsed
+  // box is not shown.
   if (report) panel.append(reportBlock(report), copyButton(report))
   // Absent, not inert, when the instance configured no destination: the copy
   // button above is then the whole route, and a button that goes nowhere is
@@ -2167,8 +2165,8 @@ function showFatalDialog(
   // they cost different things (an account, publicity) and only the person
   // pressing it knows which price they are willing to pay.
   const cfg = (window as any).__slothfulConfig
-  const trackerUrl = report ? fatalReportUrl(cfg?.supportUrl, report, kind) : ''
-  const directUrl = report ? fatalReportUrl(cfg?.crashReportUrl, report, kind) : ''
+  const trackerUrl = fatalReportUrl(cfg?.supportUrl, report, kind)
+  const directUrl = fatalReportUrl(cfg?.crashReportUrl, report, kind)
   const note = reportChoiceNote(trackerUrl, directUrl)
   if (note) panel.append(el('p', 'sc-note', note))
   // One row of actions, Retry first: it is the primary one and the only one
