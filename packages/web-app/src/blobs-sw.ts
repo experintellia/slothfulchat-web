@@ -52,10 +52,29 @@ sw.addEventListener('install', (event: any) =>
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE)
-      // find the previous deploy's cache to copy unchanged entries from
+      // find a manifest-bearing cache to copy unchanged entries from.
+      //
+      // CACHE ITSELF COUNTS, and is checked first. An SW-code-only deploy ships
+      // a new worker under an unchanged __PRECACHE_VERSION, so CACHE is the
+      // cache the ACTIVE worker is already serving from — complete, and by
+      // definition holding this very manifest's files. Skipping it (as the scan
+      // below must, or it would treat itself as a stale sibling) left that
+      // install matching no old cache at all, re-downloading the entire shell
+      // over the top of the live one. Harmless while a failed fetch simply left
+      // the old entry alone — but a downloaded-and-verified entry is put before
+      // it is checked, so a mismatch would delete a file out from under the
+      // running app, with neither the "fail the install" branch below nor a
+      // throwaway new cache to contain it. Reusing in place avoids both the
+      // hole and the re-download.
       let oldCache: Cache | undefined
       let oldManifest: Record<string, string> = {}
+      const ownManifest = await cache.match(MANIFEST_KEY)
+      if (ownManifest) {
+        oldCache = cache
+        oldManifest = await ownManifest.json()
+      }
       for (const name of await caches.keys()) {
+        if (oldCache) break
         // pre-rename caches count too: their entries are keyed by absolute URL,
         // so a sibling scope's cache simply never matches and only ours is reused
         if (!isOwnCache(name, scopePath) || name === CACHE) continue
@@ -75,9 +94,11 @@ sw.addEventListener('install', (event: any) =>
           if (oldCache && oldManifest[file] === hash) {
             const reuse = await oldCache.match(file)
             // equal hash => equal bytes, and those bytes were checked against
-            // the manifest when this file was first downloaded
+            // the manifest when they were first downloaded — by a worker that
+            // had this check. A cache filled before it existed is carried
+            // forward untested until that file's content changes.
             if (reuse) {
-              await cache.put(file, reuse)
+              if (oldCache !== cache) await cache.put(file, reuse) // already in place otherwise
               return null
             }
           }
@@ -101,9 +122,14 @@ sw.addEventListener('install', (event: any) =>
       // Sequential, and after the puts rather than inside the concurrent map
       // above: hashing needs a whole body in memory at once, and doing it
       // during the fetch would hold the entire shell — the ~27MB wasm included
-      // — at the same time instead of one file at a time. On an update only
-      // the files that actually changed are hashed; on an SW-only redeploy,
-      // none are.
+      // — at the same time instead of one file at a time. Only what came off
+      // the network is hashed, so an update pays for the files that actually
+      // changed and an SW-only redeploy pays nothing.
+      //
+      // Deleting the entry is safe here BECAUSE nothing reused in place can
+      // reach this loop (see the reuse branch): every file below was fetched,
+      // which means it was already absent or belongs to a new cache no one is
+      // serving from yet.
       const mismatched = new Map<string, string>()
       for (const r of results) {
         if (r.status !== 'fulfilled' || !r.value) continue

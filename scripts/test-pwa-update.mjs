@@ -234,6 +234,7 @@ try {
     caches.open('slothful-shell-stale').then(c => c.put('./__sw-manifest__', new Response('{}')))
   )
   await appendFile(join(root, 'blobs-sw.js'), '\n//sw-only-v3\n') // manifest NOT rebuilt
+  const beforeSwOnly = hits.length
   assert(
     (await update()) === 'activated',
     'sw-only redeploy with a failing entry activates instead of deleting its own cache'
@@ -241,6 +242,16 @@ try {
   assert(
     await cachedSomewhere(FONT),
     'live offline copy survived the sw-only redeploy (font still cached)'
+  )
+  // CACHE already holds this manifest, so install reuses it in place. It must
+  // not re-download the shell over the top of the cache the active worker is
+  // serving from: those entries are put before they are verified, so one
+  // mismatch would delete a live file with no failed-install branch to catch
+  // it (CACHE carries MANIFEST_KEY, so the guard below deliberately activates).
+  const swOnly = hits.slice(beforeSwOnly)
+  assert(
+    !swOnly.some(p => p.includes('NotoColorEmoji') || p.endsWith('/bundle.css')),
+    `sw-only redeploy reused the live cache instead of refetching it (${swOnly.join(', ')})`
   )
 
   // ---- phase 2e: a failed file the old cache ALSO lacks is tolerated ----
