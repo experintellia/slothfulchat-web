@@ -48,7 +48,8 @@ release also ships the script standalone as `slothfulchat-customize.mjs`
 (`node slothfulchat-customize.mjs --in <downloaded zip>`).
 
 **GitHub Pages:** the repo ships
-[`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml).
+[`.github/workflows/publish-npm.yml`](.github/workflows/publish-npm.yml),
+which deploys Pages off the same build it cuts the release from.
 Set the variables below under **Settings → Secrets and variables → Actions →
 Variables**, then enable **Settings → Pages → Source = "GitHub Actions"**. It
 deploys on **`v*` release tags**, not on pushes to main: the workflow's first
@@ -83,7 +84,7 @@ pnpm --filter @slothfulchat/web-app build
 A static host that serves fixed headers only cannot be made to send security
 headers, and **the repository cannot fix this from inside** — GitHub Pages has
 no header configuration, so a Pages deployment (including the flagship one this
-repo's `deploy-pages.yml` produces) ships with none of the headers below. Put a
+repo's `publish-npm.yml` produces) ships with none of the headers below. Put a
 header-capable edge in front of it — Cloudflare (Transform Rules), Fastly,
 CloudFront + Lambda@Edge, or any reverse proxy — and have it add:
 

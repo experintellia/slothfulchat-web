@@ -135,7 +135,7 @@ node scripts/test-calls-e2e.mjs     # outgoing audio call vs. a second local cor
 
 **Production** (`web.slothful.chat`) is the GitHub Pages deploy, and it builds
 only from a **`v*` release tag** —
-[`.github/workflows/deploy-pages.yml`](../../.github/workflows/deploy-pages.yml)
+[`.github/workflows/publish-npm.yml`](../../.github/workflows/publish-npm.yml)
 runs [`verify-release-tag.yml`](../../.github/workflows/verify-release-tag.yml)
 first and does nothing until the ref is proven to be an unmoved tag, on main,
 whose package versions match it (see [RELEASING.md](../../RELEASING.md)).

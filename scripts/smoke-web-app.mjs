@@ -10,8 +10,8 @@ const script = p => fileURLToPath(new URL(p, import.meta.url))
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
 const APP_PORT = Number(process.env.APP_PORT ?? 8642)
 
-// SMOKE_PRODUCTION=1: the release-build variant deploy-pages.yml runs against
-// the exact dist/ it is about to ship. A production build bakes devmode:false
+// SMOKE_PRODUCTION=1: the release-build variant publish-npm.yml runs against
+// the exact dist/ it is about to ship to prod. A production build bakes devmode:false
 // into config.js, which locks window.exp.rpc behind a throwing getter
 // (upstream experimental.ts) — so the two phases that drive the core over
 // exp.rpc (the SW proxy-config regression and the sticker backend) cannot run

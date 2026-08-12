@@ -17,7 +17,7 @@
 # stay out on purpose — see the NOTE at the bottom of this file.
 #
 # The build half of `test` used to be a hand-copied duplicate of
-# deploy-pages.yml carrying a "keep the two in sync" note. It is now the same
+# the prod deploy carrying a "keep the two in sync" note. It is now the same
 # composite action, with wasm-opt and production turned off — so the ordering
 # traps and toolchain setup are described in exactly one place.
 
@@ -81,7 +81,8 @@ jobs:
       # release-asset pinning/digest/size caps, the analytics pre-notice gate,
       # translation-editor serialization, blob response headers, the OPFS
       # lock-wait deadline, the OpenRPC viewer's $ref inlining, keeping the
-      # api-docs React out of the app bundle)
+      # api-docs React out of the app bundle, the release workflow's npm
+      # staging loop — which otherwise only ever runs on a tag)
       - name: Unit-test pure helpers
         run: >-
           node --test
@@ -102,6 +103,7 @@ jobs:
           scripts/mock-madmail.test.mjs
           scripts/harness.test.mjs
           scripts/mark-fork-api.test.mjs
+          scripts/release-stage-loop.test.mjs
 
       # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —
       # Node's built-in type-stripping test runner needs no pnpm install, only
