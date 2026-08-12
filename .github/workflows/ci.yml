@@ -29,10 +29,16 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Cancel superseded runs for the same ref (a new push to a PR obsoletes the old).
+# Cancel superseded runs for the same ref (a new push to a PR obsoletes the
+# old) — but only on PRs. A main run must complete: the release gate
+# (verify-release-tag.yml) requires green `lint`/`test` check runs on the
+# exact tagged commit, and a main run cancelled by the next merge leaves its
+# commit without them forever — CI cannot be re-run on a specific historical
+# commit. main is also the only branch that saves the shared Rust caches
+# (save-if below and in build-web-app), and a cancelled run saves nothing.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
