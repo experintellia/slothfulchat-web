@@ -1,5 +1,11 @@
 # Changelog
 
+- **The bridge picker can no longer get stuck behind the welcome screen.** Open
+  it while the app was still starting up and it could end up underneath the
+  screen that appeared a moment later: greyed out, none of its buttons
+  clickable and no way to close it. Our dialogs now move back to the front when
+  something else opens on top of them.
+
 - **An update caught mid-deploy no longer installs half of it.** The app checks
   each downloaded file against the checksum its release lists, so a deploy that
   is still being written out — or a CDN that answers one file from a stale copy
