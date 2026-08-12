@@ -234,7 +234,6 @@ try {
     caches.open('slothful-shell-stale').then(c => c.put('./__sw-manifest__', new Response('{}')))
   )
   await appendFile(join(root, 'blobs-sw.js'), '\n//sw-only-v3\n') // manifest NOT rebuilt
-  const beforeSwOnly = hits.length
   assert(
     (await update()) === 'activated',
     'sw-only redeploy with a failing entry activates instead of deleting its own cache'
@@ -242,16 +241,6 @@ try {
   assert(
     await cachedSomewhere(FONT),
     'live offline copy survived the sw-only redeploy (font still cached)'
-  )
-  // CACHE already holds this manifest, so install reuses it in place. It must
-  // not re-download the shell over the top of the cache the active worker is
-  // serving from: those entries are put before they are verified, so one
-  // mismatch would delete a live file with no failed-install branch to catch
-  // it (CACHE carries MANIFEST_KEY, so the guard below deliberately activates).
-  const swOnly = hits.slice(beforeSwOnly)
-  assert(
-    !swOnly.some(p => p.includes('NotoColorEmoji') || p.endsWith('/bundle.css')),
-    `sw-only redeploy reused the live cache instead of refetching it (${swOnly.join(', ')})`
   )
 
   // ---- phase 2e: a failed file the old cache ALSO lacks is tolerated ----
@@ -265,28 +254,6 @@ try {
   assert((await update()) === 'activated', 'update missing only a NEW file still activates')
   await until(async () => (await shellCaches()).length === 1, 'new-file deploy became sole cache')
   assert(await cachedSomewhere(FONT), 'font copied forward past the tolerated failure')
-
-  // ---- phase 2f: a TORN deploy — right status, wrong bytes — is refused ----
-  // The half a 404 cannot express: the file is there and answers 200, it is
-  // just the previous deploy's copy, because the deploy is mid-write (or a CDN
-  // edge is behind). Install used to take any 200, and a content-versioned
-  // cache is never revalidated, so that mixture would be served until the next
-  // deploy. Simulated by recording new bytes in the manifest and then serving
-  // the old ones.
-  const cssV2 = await readFile(join(root, 'bundle.css'))
-  await appendFile(join(root, 'bundle.css'), '\n/*deploy-v4*/')
-  execFileSync('node', [swManifest, root]) // manifest now describes the v4 bytes
-  await writeFile(join(root, 'bundle.css'), cssV2) // ...but v2 is what is served
-  assert((await update()) === 'redundant', 'bytes not matching the manifest fail the install')
-  const torn = await page.evaluate(async () => {
-    const r = await caches.match('./__sw-update-failed__')
-    return r ? await r.json() : null
-  })
-  assert(
-    torn?.errors?.some(e => e.includes('bundle.css') && e.includes('manifest says')),
-    `the mismatching file is named, not just counted (${JSON.stringify(torn)})`
-  )
-  assert(await cachedSomewhere(FONT), 'the complete previous cache survived the torn deploy')
 
   // ---- phase 3: offline (server gone entirely), served from cache alone ----
   server.close()

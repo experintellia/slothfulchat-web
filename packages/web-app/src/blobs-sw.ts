@@ -37,14 +37,6 @@ const MANIFEST_KEY = './__sw-manifest__'
 // surfaceFailedUpdate) — the failing install's own cache gets deleted
 const UPDATE_FAILED_KEY = './__sw-update-failed__'
 
-/** The manifest's per-file hash: sha1 of the bytes on disk, hex, truncated to
- * 16 — must stay in step with buildPrecache in instance-config.mjs. */
-const contentHash = async (bytes: ArrayBuffer) =>
-  [...new Uint8Array(await crypto.subtle.digest('SHA-1', bytes))]
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 16)
-
 type BlobResponse = { type: 'blob-response'; id: string; data?: Uint8Array; mime?: string }
 const pending = new Map<string, (r: BlobResponse) => void>()
 
@@ -52,29 +44,10 @@ sw.addEventListener('install', (event: any) =>
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE)
-      // find a manifest-bearing cache to copy unchanged entries from.
-      //
-      // CACHE ITSELF COUNTS, and is checked first. An SW-code-only deploy ships
-      // a new worker under an unchanged __PRECACHE_VERSION, so CACHE is the
-      // cache the ACTIVE worker is already serving from — complete, and by
-      // definition holding this very manifest's files. Skipping it (as the scan
-      // below must, or it would treat itself as a stale sibling) left that
-      // install matching no old cache at all, re-downloading the entire shell
-      // over the top of the live one. Harmless while a failed fetch simply left
-      // the old entry alone — but a downloaded-and-verified entry is put before
-      // it is checked, so a mismatch would delete a file out from under the
-      // running app, with neither the "fail the install" branch below nor a
-      // throwaway new cache to contain it. Reusing in place avoids both the
-      // hole and the re-download.
+      // find the previous deploy's cache to copy unchanged entries from
       let oldCache: Cache | undefined
       let oldManifest: Record<string, string> = {}
-      const ownManifest = await cache.match(MANIFEST_KEY)
-      if (ownManifest) {
-        oldCache = cache
-        oldManifest = await ownManifest.json()
-      }
       for (const name of await caches.keys()) {
-        if (oldCache) break
         // pre-rename caches count too: their entries are keyed by absolute URL,
         // so a sibling scope's cache simply never matches and only ours is reused
         if (!isOwnCache(name, scopePath) || name === CACHE) continue
@@ -93,14 +66,7 @@ sw.addEventListener('install', (event: any) =>
         entries.map(async ([file, hash]) => {
           if (oldCache && oldManifest[file] === hash) {
             const reuse = await oldCache.match(file)
-            // equal hash => equal bytes, and those bytes were checked against
-            // the manifest when they were first downloaded — by a worker that
-            // had this check. A cache filled before it existed is carried
-            // forward untested until that file's content changes.
-            if (reuse) {
-              if (oldCache !== cache) await cache.put(file, reuse) // already in place otherwise
-              return null
-            }
+            if (reuse) return cache.put(file, reuse)
           }
           // no-cache: revalidate instead of trusting HTTP-cache freshness — a
           // deploy inside Pages' max-age=600 window would otherwise poison the
@@ -108,45 +74,8 @@ sw.addEventListener('install', (event: any) =>
           const res = await fetch(file, { cache: 'no-cache' })
           if (res.status !== 200) throw new Error(`precache ${file}: ${res.status}`)
           await cache.put(file, res)
-          return file // came off the network: verify it below
         })
       )
-
-      // A 200 is not proof the bytes are the ones this manifest describes. A
-      // deploy caught mid-write, a CDN with per-file TTLs, or a proxy answering
-      // one request from a stale edge all serve the new manifest next to some
-      // previous deploy's file — and a content-versioned cache is never
-      // revalidated, so that mixture is then served until the NEXT deploy. The
-      // manifest already carries a hash per file; compare it.
-      //
-      // Sequential, and after the puts rather than inside the concurrent map
-      // above: hashing needs a whole body in memory at once, and doing it
-      // during the fetch would hold the entire shell — the ~27MB wasm included
-      // — at the same time instead of one file at a time. Only what came off
-      // the network is hashed, so an update pays for the files that actually
-      // changed and an SW-only redeploy pays nothing.
-      //
-      // Deleting the entry is safe here BECAUSE nothing reused in place can
-      // reach this loop (see the reuse branch): every file below was fetched,
-      // which means it was already absent or belongs to a new cache no one is
-      // serving from yet.
-      const mismatched = new Map<string, string>()
-      for (const r of results) {
-        if (r.status !== 'fulfilled' || !r.value) continue
-        const file = r.value
-        const stored = await cache.match(file)
-        if (!stored) {
-          // put succeeded but the entry is gone: storage pressure evicted it
-          // mid-install. Distinct from wrong bytes, and worth saying so — this
-          // one is about the device, not the deploy.
-          mismatched.set(file, `precache ${file}: evicted before it could be verified`)
-          continue
-        }
-        const got = await contentHash(await stored.arrayBuffer())
-        if (got === MANIFEST[file]) continue
-        await cache.delete(file)
-        mismatched.set(file, `precache ${file}: got ${got}, manifest says ${MANIFEST[file]}`)
-      }
       const errors: string[] = []
       // only a failed file the old cache HAS is "losing": activating would drop
       // it (or version-skew it — old bytes under a new manifest). One absent
@@ -158,16 +87,9 @@ sw.addEventListener('install', (event: any) =>
       const losing: string[] = []
       for (let i = 0; i < results.length; i++) {
         const r = results[i]
-        const file = entries[i][0]
-        // a file whose bytes did not match is as unavailable as one that 404d
-        // — it was deleted from the cache above — so it takes the same path
-        const reason =
-          r.status === 'rejected'
-            ? String((r as PromiseRejectedResult).reason)
-            : mismatched.get(file)
-        if (!reason) continue
-        errors.push(reason)
-        if (oldCache && (await oldCache.match(file))) losing.push(file)
+        if (r.status !== 'rejected') continue
+        errors.push(String((r as PromiseRejectedResult).reason))
+        if (oldCache && (await oldCache.match(entries[i][0]))) losing.push(entries[i][0])
       }
       if (errors.length) console.warn('sw precache failures:', errors)
       // MANIFEST_KEY already in CACHE => CACHE is a COMPLETE cache of this very
