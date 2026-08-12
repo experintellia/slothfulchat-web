@@ -122,7 +122,7 @@ document.head.append(overlayStyle)
  * upstream's own dialogs are modal and live in the browser top layer, which
  * paints over any z-index; opening ours last puts it above them.
  *
- * Returns both — the caller fills the card and shows the dialog.
+ * Returns both — the caller fills the card and shows the dialog (showOnTop).
  */
 export function overlayCard(
   id: string,
@@ -133,6 +133,69 @@ export function overlayCard(
   const card = el('div', wide ? 'sc-card sc-wide' : 'sc-card')
   overlay.append(card)
   return [overlay, card]
+}
+
+/** Our dialogs that are currently open, oldest first — see showOnTop(). */
+const onTop = new Set<HTMLDialogElement>()
+
+/**
+ * showModal(), and stay on top.
+ *
+ * "Opening ours last" only holds if nothing else opens a modal afterwards. The
+ * top layer is ordered by showModal() call order and never re-sorts, so one of
+ * ours opened while the app is still booting is buried the moment the frontend
+ * shows its own modal (the welcome screen; a Dialog.tsx anything) — visible,
+ * dimmed and completely inert, with no way to reach its buttons and no Esc
+ * either, because Esc goes to the topmost dialog (#247). Whether that happens
+ * is a start-up race: it decided the bridge picker's fate by fractions of a
+ * second.
+ *
+ * The platform fires no event for "someone opened a modal", so the hook goes on
+ * showModal itself, and ours re-assert their place after any foreign one. They
+ * re-raise in the order they were registered, so a later one (the fatal-error
+ * dialog) still ends up above an earlier one (the bridge picker).
+ *
+ * ponytail: re-inserting the element is what actually moves a dialog back to
+ * the top of the top layer without side effects — close()+showModal() works too
+ * but fires `close`, which our callers use to drop the dialog for good. Node
+ * moves keep listeners, radio state and typed input values; only focus needs
+ * restoring, since showModal() re-focuses the first focusable child.
+ */
+export function showOnTop(overlay: HTMLDialogElement): void {
+  hookShowModal()
+  onTop.add(overlay)
+  overlay.addEventListener('close', () => onTop.delete(overlay))
+  overlay.showModal()
+}
+
+let nativeShowModal: HTMLDialogElement['showModal'] | undefined
+function hookShowModal(): void {
+  if (nativeShowModal) return
+  nativeShowModal = HTMLDialogElement.prototype.showModal
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    // read before the new dialog takes the focus for itself
+    const focused = document.activeElement as HTMLElement | null
+    nativeShowModal!.call(this)
+    if (onTop.has(this)) return // one of ours: it opened last, it is on top
+    // Everything below runs inside someone else's showModal() call — the
+    // frontend's own dialogs must open even if re-raising ours goes wrong.
+    try {
+      for (const ov of onTop) {
+        const parent = ov.parentNode
+        if (!parent || !ov.open) {
+          onTop.delete(ov) // dropped from the DOM without close()
+          continue
+        }
+        ov.remove()
+        ov.removeAttribute('open') // remove() alone leaves it "open" but hidden
+        parent.appendChild(ov)
+        nativeShowModal!.call(ov)
+        if (focused && ov.contains(focused)) focused.focus() // e.g. mid-typing
+      }
+    } catch (err) {
+      console.error('failed to re-raise our dialog', err)
+    }
+  }
 }
 
 /** A footer button. `primary` is the accented one (at most one per row). */
