@@ -2187,6 +2187,13 @@ function showFatalDialog(
   if (notify) panel.append(analyticsNoticeLine())
   document.body.appendChild(overlay)
   showOnTop(overlay)
+  // ...and take the focus off whatever showModal() grabbed, so a screen reader
+  // starts at the heading too and the browser has no off-screen focused
+  // element to scroll back to. Here and not in showOnTop: this card has no
+  // inputs, while the bridge and throwaway dialogs do, and auto-focusing their
+  // first field is worth keeping.
+  panel.tabIndex = -1
+  panel.focus({ preventScroll: true })
   // only once the notice is actually on screen — releaseHeldEvents() records
   // that it was shown, so calling it without showing it would be a lie
   if (notify) analytics.releaseHeldEvents()

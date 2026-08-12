@@ -53,7 +53,7 @@ which is DOM-free and unit-tested next door.
 
 ## The two destinations
 
-Each variable adds one button to the error screen, in the row with Retry. Set
+Each variable adds one button to the crash page, in the row with Retry. Set
 either, both, or neither.
 
 | Variable | Button | Costs the user |
@@ -61,13 +61,13 @@ either, both, or neither.
 | `SLOTHFUL_SUPPORT_URL` | **Open an issue** | an account on the tracker, and the report is public there |
 | `SLOTHFUL_CRASH_REPORT_URL` | **Send to the developers** | nothing — no account, not public |
 
-Both sit in the dialog's footer row next to **Retry**, with the report they
-would send visible above them — nothing is folded away behind a disclosure. A
-report nobody can see is a report nobody sends, and the user has to be shown
-what a button would transmit before it transmits it. The report block itself
-stays small (a scrollable box), so on the failures a user can actually fix
-(`opfs-locked`, `storage-blocked`, `no-wasm`) the sentence telling them what to
-do is still the most prominent thing on the screen.
+Both sit in the footer row next to **Retry**, with the report they would send
+visible above them — nothing is folded away behind a disclosure. A report
+nobody can see is a report nobody sends, and the user has to be shown what a
+button would transmit before it transmits it. The screen is a full page rather
+than a dialog box (nothing works behind it, so there is nothing to dim), which
+leaves room for the report without crowding out the sentence that tells a user
+with a fixable failure what to do.
 
 The note states what the tracker costs before either button is pressed, because
 it is a screen the user cannot go back from. The no-account button renders first: it is

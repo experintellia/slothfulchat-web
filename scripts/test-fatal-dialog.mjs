@@ -11,8 +11,8 @@
 //     boot-error.js's generic "browser too old" guess stands down for it
 //   - the report and its send buttons are visible without a click, next to
 //     Retry, and show what they would transmit before transmitting it (#176)
-//   - the dialog actually renders as a dialog, not just as the right text
-//     in the right elements (#211)
+//   - it renders as a full-screen page, not just as the right text in the
+//     right elements (#211)
 //   - a report button carries the failure, the worker's error, its stack and
 //     the origin to the configured destination, says what the tracker costs
 //     before it is pressed, and does not exist at all on an instance that
@@ -20,7 +20,7 @@
 // No ws-tcp-proxy and no core boot needed — the dialog lives in runtime.js.
 // Modeled on scripts/test-bridge-dialog.mjs.
 import { chromium } from 'playwright'
-import { assertDialogRendered, startServers } from './harness.mjs'
+import { startServers } from './harness.mjs'
 
 const APP_PORT = Number(process.env.APP_PORT ?? 8646)
 
@@ -76,9 +76,8 @@ console.log('OK: a browser without WebAssembly is told about Lockdown Mode')
 // --- 2) the copyable report carries kind + browser -------------------------
 // Visible, not folded away: a report nobody can see is a report nobody sends,
 // and #176 requires the user to be shown what a send button would transmit.
-// It is kept SMALL instead (.sc-report is a scrollable box), so the first-aid
-// sentence above stays the most prominent thing for the failures a user can
-// actually fix.
+// The screen has room for it now (see check 5), so nothing has to be hidden
+// to keep the first-aid sentence above it prominent.
 const report = await dialog.locator('pre').innerText()
 if (!report.trim()) {
   throw new Error('the report block rendered empty or hidden — nothing to copy or send')
@@ -124,28 +123,52 @@ if ((await copyBtn.innerText()) !== 'Copied') {
 }
 console.log('OK: Copy details copies the report and says so')
 
-// --- 5) it renders as a dialog, not just as the right words ----------------
-// 640 = the .sc-page card's 40rem, the same column static/boot-error.js uses:
-// this screen is the whole app while it is up, so it gets the page shape
-// rather than the 400px card the smaller dialogs use.
-// Checks 1-4 are text and structure, and all four pass just as happily against
-// an unstyled pile of nodes in the corner — which is what these dialogs render
-// if ui-shared's stylesheet does not reach them.
-await assertDialogRendered(dialog, 640, 'fatal dialog')
-console.log('OK: the fatal dialog is a centred, styled modal')
+// --- 5) it renders as a full-screen page, not an unstyled pile -------------
+// Not assertDialogRendered: that helper checks a centred, opaque CARD, and
+// this screen is deliberately none of those. Nothing works behind a failed
+// start, so there is nothing for a scrim to dim and no reason to crowd the
+// only screen the user has into a 400px box — it fills the viewport and puts
+// a 40rem column in it, matching static/boot-error.js (see .sc-ov-page).
+// Checks 1-4 are text and structure, and all four pass just as happily
+// against an unstyled pile of nodes in the corner.
+const assertCrashPage = async () => {
+  const view = page.viewportSize()
+  const fail = m => {
+    throw new Error(`crash page: ${m}`)
+  }
+  const box = await dialog.boundingBox()
+  if (!box) fail('no box at all — not rendered')
+  if (box.width < view.width - 20 || box.height < view.height - 20) {
+    fail(`covers ${box.width}x${box.height}, not the ${view.width}x${view.height} viewport`)
+  }
+  const css = await dialog.evaluate(d => {
+    const c = getComputedStyle(d)
+    return { position: c.position, bg: c.backgroundColor }
+  })
+  if (css.position !== 'fixed') fail(`position:${css.position}, not fixed`)
+  // rgb() is opaque; rgba(…, 0) is the unstyled default. A see-through crash
+  // page shows the half-dead app through the explanation of why it is dead.
+  if (!css.bg.startsWith('rgb(')) fail(`background is ${css.bg} — the page shows through`)
+  const col = await dialog.locator('div').first().boundingBox()
+  const want = Math.min(640, view.width * 0.92) // .sc-page's 40rem column
+  if (Math.abs(col.width - want) > 2) fail(`column is ${col.width}px, expected ${want}px`)
+  if (Math.abs(col.x + col.width / 2 - view.width / 2) > 2) fail('column is not centred')
+}
+await assertCrashPage()
+console.log('OK: the fatal screen fills the viewport as a page')
 
 // ...and that assertion has teeth: take the overlay stylesheet away — every
-// declaration these dialogs render with is in it — and it must fail.
+// declaration this screen renders with is in it — and it must fail.
 // Destructive, so it runs last of the checks that touch this dialog.
 await page.evaluate(() => document.getElementById('sc-overlay-css')?.remove())
 let noticed = false
 try {
-  await assertDialogRendered(dialog, 640, 'fatal dialog')
+  await assertCrashPage()
 } catch {
   noticed = true
 }
 if (!noticed) {
-  throw new Error('render checks pass on an unstyled dialog — they earn nothing')
+  throw new Error('render checks pass on an unstyled screen — they earn nothing')
 }
 console.log('OK: the render checks fail when the styling is gone')
 

@@ -56,17 +56,30 @@ const OVERLAY_CSS = `
  padding:20px;border-radius:10px;background:#1e1e1e;color:#eee;
  font:14px/1.5 system-ui,sans-serif;box-shadow:0 8px 40px rgba(0,0,0,.5)}
 .sc-card.sc-wide{width:min(460px,92vw)}
-/* The fatal-start screen. Same proportions as static/boot-error.js's page —
-   a 40rem column, 16px body, a big heading — because the two are halves of
-   the same moment (that file's screen shows when the bundles never run, this
-   one when they run and the core dies) and they used to look like different
-   products. Still a <dialog>, so showOnTop keeps it above the frontend's own
-   modals, which an in-page takeover would not. */
-.sc-card.sc-page{width:min(40rem,92vw);padding:2rem 1.75rem;font-size:16px;box-shadow:none}
-.sc-card.sc-page>h2{margin:0 0 14px;font-size:1.3rem}
-.sc-card.sc-page>p{margin:0 0 16px;font-size:16px}
-.sc-card.sc-page>.sc-note{margin:14px 0 0;font-size:14px}
-.sc-card.sc-page .sc-row{margin-top:24px}
+/* The fatal-start screen is a PAGE, not a card. Nothing works behind it — the
+   core never started — so there is nothing for a scrim to dim and no reason to
+   crowd the one screen the user has into 400px. It is styled to match
+   static/boot-error.js, which shows in the neighbouring case (the bundles
+   never ran at all): same white page, same 40rem column, same type. The two
+   are halves of one moment and used to look like different products.
+   Still a <dialog>: showOnTop keeps it above the frontend's own modals, which
+   an in-page takeover would give up (#247/#249). That is mechanism only —
+   nothing here reads as a dialog.
+   The page scrolls as a page, so a report longer than the screen behaves the
+   way a document does instead of trapping itself in an inner scrollbox. */
+.sc-ov.sc-ov-page{background:#fff;color:#222;align-items:flex-start;overflow-y:auto}
+.sc-card.sc-page{width:min(40rem,92vw);max-height:none;overflow:visible;margin:3rem auto;
+ padding:0 1.25rem;background:none;box-shadow:none;border-radius:0;color:#222;
+ font:16px/1.5 system-ui,sans-serif}
+.sc-card.sc-page>h2{margin:0 0 1rem;font-size:1.3rem;color:#111}
+.sc-card.sc-page>p{margin:0 0 1rem;font-size:16px;color:#333}
+.sc-card.sc-page>.sc-note{margin:1rem 0 0;font-size:14px;color:#555}
+.sc-card.sc-page .sc-report{max-height:none;background:#f4f4f4;color:#222;padding:.75rem;
+ border-radius:4px;font-size:12px}
+.sc-card.sc-page .sc-btn-ghost{border-color:#bbb;color:#333}
+.sc-card.sc-page .sc-row{margin-top:1.5rem}
+.sc-card.sc-page .sc-analytics-note{border-top-color:#ddd;color:#555}
+.sc-card.sc-page .sc-linkbtn{color:#0b57d0}
 .sc-card>h2{margin:0 0 8px;font-size:17px}
 .sc-card>p{margin:0 0 10px;color:#bbb}
 .sc-card>.sc-note{margin:0;font-size:12px;color:#a8a8a8}
@@ -146,7 +159,7 @@ export function overlayCard(
   id: string,
   size: 'wide' | 'page' | '' = ''
 ): [HTMLDialogElement, HTMLDivElement] {
-  const overlay = el('dialog', 'sc-ov')
+  const overlay = el('dialog', size === 'page' ? 'sc-ov sc-ov-page' : 'sc-ov')
   overlay.id = id
   const card = el('div', size ? `sc-card sc-${size}` : 'sc-card')
   overlay.append(card)
@@ -184,6 +197,16 @@ export function showOnTop(overlay: HTMLDialogElement): void {
   onTop.add(overlay)
   overlay.addEventListener('close', () => onTop.delete(overlay))
   overlay.showModal()
+  // showModal() focuses the first focusable child, and the browser scrolls
+  // that into view. The card is the scroll container (max-height:90vh), so on
+  // a phone — where a tall one overflows — the dialog opens already scrolled
+  // PAST its own title and first paragraph: on the fatal screen that is the
+  // heading naming the failure and the line telling the user what to do.
+  // Nothing is missing, but the first thing they see is the middle.
+  // Both, because which one scrolls depends on the shape: a card scrolls
+  // inside itself (max-height:90vh), the page variant scrolls as a page.
+  overlay.scrollTo(0, 0)
+  ;(overlay.firstElementChild as HTMLElement | null)?.scrollTo(0, 0)
 }
 
 let nativeShowModal: HTMLDialogElement['showModal'] | undefined
