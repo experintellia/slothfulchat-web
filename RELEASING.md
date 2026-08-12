@@ -209,6 +209,16 @@ Settings → Trusted Publisher points at this repo + `publish-npm.yml` (never
 rename that file). If the publish step fails auth, that config is the first
 thing to check.
 
+> [!IMPORTANT]
+> **Each package's Trusted Publisher must allow `npm stage publish` before the
+> next tag.** Trusted Publisher configs created **before 2026-05-20** were
+> grandfathered to allow `npm publish` **only** — ours predate that, so the
+> publish job will be rejected until the action is added. Per package, on
+> npmjs.com → package → Settings → Trusted Publisher → *Allowed actions*, tick
+> `npm stage publish` (keep `npm publish` ticked as the manual fallback), or run
+> `npm trust <provider> --allow-publish --allow-stage-publish`. This is the one
+> step that has to happen outside this repo.
+
 **The workflow stages, it does not publish.** `npm stage publish` uses the same
 OIDC exchange, but what it uploads is invisible to `npm install` until a
 maintainer approves it with 2FA — and approving is deliberately the one thing
@@ -220,6 +230,12 @@ mid-train failure leaves nothing installable at all (issue #241). Needs npm
 
 Staging **cannot create a package**: a brand-new one needs its first version
 published the manual way below, after which it can join the staged train.
+
+Provenance is built and uploaded *with* the staged tarball, not at approval —
+the attestation is attached to the same request body, so an OIDC run stages a
+signed artifact. Whether the registry then publishes that attestation when the
+stage is approved is not something the CLI decides; check the package page
+after the first staged release and correct this paragraph if it didn't.
 
 **Brand-new packages can't be created via trusted publishing**: the first
 version must be published manually (see fallback below), then the Trusted
@@ -288,11 +304,14 @@ Admin checklist — each item is one setting, with what it prevents:
       still minted unreviewed. Create an environment (e.g. `npm`) with the same
       `v*` tag rule and required reviewers, then reference it from the publish
       job — the job that holds npm's `id-token: write`, and only that one.
-- [ ] **Trusted Publisher set to stage-only**, per package (npmjs.com →
-      package → Settings → Trusted Publisher). Optional but it is the belt to
-      the workflow's braces: it makes the registry itself refuse a plain
-      `npm publish` from CI, so the human approval gate can't be removed by
-      editing this repo.
+- [ ] **Trusted Publisher allows `npm stage publish`**, per package (npmjs.com
+      → package → Settings → Trusted Publisher → *Allowed actions*). **Required**
+      — configs created before 2026-05-20 allow `npm publish` only, and ours
+      predate that, so staging is rejected until this is ticked. Leaving
+      `npm publish` *un*ticked additionally makes the registry refuse a plain
+      publish from CI, so the human approval gate can't be removed by editing
+      this repo — worth doing, but it also removes the CI-side fallback, so
+      decide it deliberately.
 - [ ] **Actions settings** (Settings → Actions → General): workflow permissions
       default to *read repository contents*, and *Allow GitHub Actions to
       create and approve pull requests* stays off.

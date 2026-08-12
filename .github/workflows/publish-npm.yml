@@ -347,9 +347,21 @@ jobs:
             # versions are invisible until approved) and an OIDC token may not
             # call `npm stage list`, so the version conflict is the only signal
             # there is. Every other failure is real and stops the job.
+            #
+            # MATCH THE CODE, NOT THE PROSE. npm throws nothing of its own for a
+            # stage-queue collision — the uniqueness index is registry-side, so
+            # what comes back is npm-registry-fetch's HTTP wrapper: code `E409`
+            # and a message whose human half is copied verbatim out of the
+            # registry's response body (npm-registry-fetch/lib/errors.js). It is
+            # NOT EPUBLISHCONFLICT; npm only ever uses that code to render an
+            # error, never to raise one. The third alternative is the one string
+            # the CLI does own (lib/commands/publish.js), which fires client-side
+            # if the packument ever disagrees with the `npm view` above.
+            # If the registry answers a status other than 409 this stops the job
+            # instead of skipping — loud, and the safe direction.
             if ! out=$(npm stage publish "$tgz" --access public --ignore-scripts 2>&1); then
               echo "$out"
-              echo "$out" | grep -qiE 'EPUBLISHCONFLICT|already (exists|staged)|cannot publish over' || exit 1
+              echo "$out" | grep -qE 'E409|409 Conflict|cannot publish over the previously published versions' || exit 1
               echo "$spec is already staged — skipping"
             fi
           done

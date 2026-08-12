@@ -39,7 +39,26 @@ function stageScript() {
  * `registry` = specs npm view finds; `conflict`/`fail` = tarballs whose
  * `npm stage publish` dies, with a version conflict / with anything else.
  */
-function runStage(specs, { registry = [], conflict = [], fail = [] } = {}) {
+// What npm actually prints when a version is already in the stage queue. There
+// is no npm-owned string for it: the uniqueness index is registry-side, so this
+// is npm-registry-fetch wrapping the HTTP response (code E<status>, message
+// copied out of the body). Notably NOT EPUBLISHCONFLICT — npm only uses that
+// code to render an error, never to raise one.
+// The prose half is deliberately opaque here: the registry owns that text and
+// we have never seen it, so a stub that spelled out "already staged" would let
+// a prose-matching guard pass and prove nothing. Only the code is ours to rely
+// on.
+const CONFLICT_409 = [
+  'npm error code E409',
+  'npm error 409 Conflict - POST https://registry.npmjs.org/-/stage/package/@slothfulchat%2fa - {"error":"conflict"}',
+]
+// The one conflict string the CLI itself owns (lib/commands/publish.js), which
+// fires client-side when the packument disagrees with `npm view`.
+const CONFLICT_CLI = [
+  'npm error You cannot publish over the previously published versions: 1.0.0.',
+]
+
+function runStage(specs, { registry = [], conflict = [], fail = [], conflictLines = CONFLICT_409 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'stage-loop-'))
   mkdirSync(join(dir, 'npm-tarballs'))
   mkdirSync(join(dir, 'bin'))
@@ -69,8 +88,7 @@ case "$1 $2" in
   "stage publish")
     base=\`basename "$3"\`
     case " ${conflict.join(' ')} " in *" $base "*)
-      echo "npm error code EPUBLISHCONFLICT" >&2
-      echo "npm error You cannot publish over the previously published versions" >&2
+${conflictLines.map(l => `      echo ${JSON.stringify(l)} >&2`).join('\n')}
       exit 1;; esac
     case " ${fail.join(' ')} " in *" $base "*)
       echo "npm error code E500" >&2; echo "npm error 500 Internal Server Error" >&2; exit 1;; esac
@@ -136,6 +154,15 @@ test('a re-run over an already-staged version continues instead of failing', () 
   strictEqual(r.status, 0, r.stdout)
   strictEqual((r.stdout.match(/is already staged/g) ?? []).length, 2, r.stdout)
   ok(r.calls.includes('stage publish npm-tarballs/c.tgz --access public --ignore-scripts'), r.calls.join(' | '))
+})
+
+test('the CLI-owned "cannot publish over" conflict is tolerated too', () => {
+  const r = runStage(
+    { 'a.tgz': '@slothfulchat/a@1.0.0', 'b.tgz': '@slothfulchat/b@1.0.0' },
+    { conflict: ['a.tgz'], conflictLines: CONFLICT_CLI }
+  )
+  strictEqual(r.status, 0, r.stdout)
+  match(r.stdout, /is already staged/)
 })
 
 test('any other staging failure stops the run', () => {
