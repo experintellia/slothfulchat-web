@@ -1,0 +1,148 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Tue, 11 Aug 2026 23:31:02 +0000
+Subject: [PATCH 33/33] wasm: drain the OPFS mirror before backup import
+ returns
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The unpacked blobs of a backup import only reach the memfs; the OPFS
+write-through that survives a reload is done by an async flusher. A reload
+before that queue drains rebuilds the memfs from an incomplete OPFS, so a
+freshly restored account is missing its pictures until they are re-fetched
+(#77).
+
+Awaiting `tokio::fs::flush_pending()` at the end of
+`import_backup_stream_inner` closes that window in the one place both entry
+points pass through — the file import and the second-device transfer receive
+— and, because the caller emits ImexProgress(1000) only after this function
+returns, it also makes the progress bar honest: 100% now means durable
+instead of "unpacked, and some unknown amount of writing still to do" (#90).
+
+Honest is not the same as visible, though. The UI draws the bar as a bare
+width percentage with no number beside it, so simply holding the last
+pre-1000 value across the drain looks exactly like a finished bar — the
+symptom #90 is about. So the range is split instead: the unpack phase scales
+to UNPACK_PROGRESS_MAX (950 on wasm, upstream's 999 elsewhere) and the drain
+animates the tail above it off the queue depth `flush_pending` now reports.
+The bar only ever moves forward — the queue can grow while it drains, so the
+raw ratio can fall.
+
+Scaled, not clamped: the reader's old `min(1000 * read / size, 999)` capped a
+value that overshoots the ceiling, which with a ceiling of 950 would park the
+bar for the whole last twentieth of the read — the longest stretch of a big
+restore. `min(MAX * read / size, MAX)` keeps it moving to the end. On native
+that shifts reported progress by at most 1/1000th of the range; the 999
+ceiling, the event sequence and the 0/1/1000 events upstream's tests assert
+are unchanged.
+
+`drain_progress` is a named function rather than an inline closure body so it
+can carry `#[expect(clippy::arithmetic_side_effects)]`, the way three other
+sites in this file already do — the lint is on for the crate and this patch
+should stay upstreamable.
+---
+ src/imex.rs | 69 +++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 67 insertions(+), 2 deletions(-)
+
+diff --git a/src/imex.rs b/src/imex.rs
+index 4f2927f..239c2c3 100644
+--- a/src/imex.rs
++++ b/src/imex.rs
+@@ -247,6 +247,32 @@ pub(crate) async fn import_backup_stream<R: tokio::io::AsyncRead + Unpin>(
+         .0
+ }
+ 
++/// Highest progress the unpack phase of an import may report, leaving the rest
++/// of the 0..=1000 range for whatever still has to happen before the caller's
++/// final 1000. On wasm that tail is the OPFS drain (see
++/// `import_backup_stream_inner`), which is real waiting the user should see
++/// move; everywhere else nothing follows the unpack, so it keeps upstream's
++/// 999.
++#[cfg(target_arch = "wasm32")]
++const UNPACK_PROGRESS_MAX: u16 = 950;
++#[cfg(not(target_arch = "wasm32"))]
++const UNPACK_PROGRESS_MAX: u16 = 999;
++
++/// Maps the OPFS queue depth `flush_pending` reports onto the tail reserved
++/// above [`UNPACK_PROGRESS_MAX`]. Tops out at 999 — the caller's final 1000 is
++/// what completes the bar — and an empty queue at entry means the whole tail is
++/// already earned. `remaining` can exceed `initial` (the queue grows while it
++/// drains), which floors the result rather than going backwards.
++#[cfg(target_arch = "wasm32")]
++#[expect(clippy::arithmetic_side_effects)]
++fn drain_progress(remaining: usize, initial: usize) -> u16 {
++    let span = 999 - UNPACK_PROGRESS_MAX;
++    if remaining == 0 || initial == 0 {
++        return UNPACK_PROGRESS_MAX + span;
++    }
++    UNPACK_PROGRESS_MAX + (span as usize * initial.saturating_sub(remaining) / initial) as u16
++}
++
+ /// Reader that emits progress events as bytes are read from it.
+ #[pin_project]
+ struct ProgressReader<R> {
+@@ -298,7 +324,11 @@ fn poll_read(
+                 .read
+                 .saturating_add(usize_to_u64(buf.filled().len() - before));
+ 
+-            let progress = std::cmp::min(1000 * *this.read / *this.file_size, 999) as u16;
++            // scaled to the reserved ceiling rather than clamped at it: a
++            // clamp would park the bar there for the whole last 1/20th of the
++            // read, which is the longest stretch of a big restore
++            let max = u64::from(UNPACK_PROGRESS_MAX);
++            let progress = std::cmp::min(max * *this.read / *this.file_size, max) as u16;
+             if progress > *this.last_progress {
+                 this.context.emit_event(EventType::ImexProgress(progress));
+                 *this.last_progress = progress;
+@@ -376,7 +406,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+         .log_err(context)
+         .ok();
+     if res.is_ok() {
+-        context.emit_event(EventType::ImexProgress(999));
++        context.emit_event(EventType::ImexProgress(UNPACK_PROGRESS_MAX));
+         res = context.sql.run_migrations(context).await;
+         context.emit_event(EventType::AccountsItemChanged);
+     }
+@@ -402,6 +432,41 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+             .log_err(context)
+             .ok();
+     }
++    // On wasm the unpacked blobs only live in the memfs until the async OPFS
++    // flusher writes them through. A reload before that queue drains rebuilds
++    // the memfs from OPFS *without* them, so a just-restored backup loses its
++    // pictures until they are fetched from the server again (#77). Draining
++    // here — before the caller emits ImexProgress(1000) — is what makes "100%"
++    // mean "durable", for the file import and the second-device transfer
++    // receive alike, both of which land in this function.
++    //
++    // The drain gets the reserved UNPACK_PROGRESS_MAX..=999 tail of the range
++    // rather than sitting on one value: the UI draws the bar as a bare width
++    // percentage with no number next to it, so a bar parked at 99.9% is
++    // indistinguishable from a finished one, and the whole point is that this
++    // wait is visible rather than dead time behind a full bar.
++    //
++    // Cancelling (stopOngoingProcess) during the drain drops this future, and
++    // the drop skips the res.is_err() rollback below — as it does for any
++    // cancel past the import, this is just the widest window for it. The
++    // account stays imported and the flusher keeps draining in the background;
++    // only the reported outcome says "canceled".
++    #[cfg(target_arch = "wasm32")]
++    if res.is_ok() {
++        let mut last = UNPACK_PROGRESS_MAX;
++        // Baseline 0 = the count of lost write-throughs is deliberately
++        // ignored here: the web app diffs `fs_failed()` across the whole call
++        // and warns the user, and a partly-lost restore must not roll the
++        // imported account back, so it must not reach `res` either.
++        let _ = tokio::fs::flush_pending(0, |remaining, initial| {
++            let progress = drain_progress(remaining, initial);
++            if progress > last {
++                last = progress;
++                context.emit_event(EventType::ImexProgress(progress));
++            }
++        })
++        .await;
++    }
+     (res,)
+ }
+ 
