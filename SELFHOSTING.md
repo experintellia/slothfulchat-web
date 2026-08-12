@@ -193,6 +193,8 @@ how the `CHATMAIL_ALLOWLIST` allow-list works) are in the
 | `SLOTHFUL_IMPRINT_ADDRESS` | Postal address on the imprint page (newlines allowed). | `Example Str. 1\n12345 Town` |
 | `SLOTHFUL_IMPRINT_EMAIL` | Contact email on the imprint page. | `hello@example.chat` |
 | `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the community suggestions ("Public Bots", "Public Channels") in the New Chat dialog for the whole instance — the per-user settings toggle is hidden too. Unset/empty: suggestions are shown and each user can hide them in Settings → Chats and Media. | `1` |
+| `SLOTHFUL_SUPPORT_URL` | Your issue tracker — a button on the "could not start" screen that opens a prefilled issue. Needs an account there. See [docs/crash-reports.md](docs/crash-reports.md). | `https://github.com/you/your-fork/issues/new` |
+| `SLOTHFUL_CRASH_REPORT_URL` | A crash-report destination that needs no account — the same screen's other button. A webserver route is the entire backend; see [docs/crash-reports.md](docs/crash-reports.md). | `https://report.example.chat/` |
 
 All are optional. Unset instance/proxy vars fall back to sane defaults; unset
 imprint vars produce a placeholder imprint page telling operators to configure

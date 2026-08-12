@@ -151,7 +151,12 @@ export function startCore(
     // second notification mechanism: the page already listens for those, and
     // a terminated worker obviously can't post this one itself
     worker.dispatchEvent(
-      new MessageEvent('message', { data: { type: 'fatal-worker-died', message: cause.message } }),
+      new MessageEvent('message', {
+        // `stack` alongside the message, as the init-error path does: worker-died
+        // is the other kind that is a real bug, and the frames are what make one
+        // diagnosable from a user's report (web-app's fatal-report.ts).
+        data: { type: 'fatal-worker-died', message: cause.message, stack: cause.stack },
+      }),
     )
   }
   worker.onerror = (event) =>
@@ -164,9 +169,14 @@ export function startCore(
   // fail() re-dispatches the same type synthetically — its `dead` guard stops
   // the recursion, and the page-side dialog dedupes the double delivery.
   worker.addEventListener('message', (event: MessageEvent<unknown>) => {
-    const msg = event.data as { type?: string; message?: string }
+    const msg = event.data as { type?: string; message?: string; stack?: string }
     if (typeof event.data !== 'string' && msg?.type === 'fatal-worker-died') {
-      fail(new Error(msg.message ?? 'core worker died'))
+      const cause = new Error(msg.message ?? 'core worker died')
+      // carry the WORKER's stack across: fail() re-dispatches this Error, and
+      // an Error constructed here has our own frames — which would reach the
+      // user's report pointing at this dispatcher instead of at the panic
+      if (msg.stack) cause.stack = msg.stack
+      fail(cause)
     }
   })
 

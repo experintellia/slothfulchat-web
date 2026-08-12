@@ -19,6 +19,7 @@ export type FatalReportFields = {
   details?: string
   version?: string
   commitHash?: string
+  origin?: string
   userAgent?: string
   displayMode?: string
 }
@@ -28,6 +29,7 @@ export function fatalReportText({
   details = '',
   version = '',
   commitHash = '',
+  origin = '',
   userAgent = '',
   displayMode = '',
 }: FatalReportFields = {}): string {
@@ -35,16 +37,110 @@ export function fatalReportText({
   // and a blind slice(0, 8) would render it as 'abc1234-'
   const short = String(commitHash).match(/^[0-9a-f]+/)?.[0].slice(0, 8) ?? ''
   const build = [version, short].filter(Boolean).join(' ')
+  // `details` LAST, and that ordering is load-bearing rather than cosmetic:
+  // it is the only unbounded field (a panic backtrace runs to thousands of
+  // characters), and fatalReportUrl clips the tail of this text to keep the
+  // URL inside what a server accepts. Anywhere but last, one big backtrace
+  // pushes every line below it out of the report — so the crashes with the
+  // most to say would arrive with no build, no origin and no browser. Last,
+  // the clip eats the deepest stack frames instead, which are what you need
+  // least.
   return [
     ['failure', kind],
-    ['details', collapse(details)],
     ['build', build],
+    // WHICH deployment, which the version alone does not answer: prod, next
+    // and every PR preview can carry the same version, and a preview's origin
+    // (pr-<n>.…) is the only thing that names the branch a report came from.
+    // It has to be in the report body — a report may arrive from an origin
+    // that isn't the one collecting it, and neither a Referer nor a CORS
+    // Origin header survives the trip (the link is rel="noreferrer", and the
+    // sink in docs/crash-reports.md drops request headers from its log too).
+    ['origin', origin],
     ['display', displayMode],
     ['browser', collapse(userAgent)],
+    ['details', collapse(details)],
   ]
     .filter(([, value]) => value)
     .map(([label, value]) => `${label}: ${value}`)
     .join('\n')
+}
+
+/** The worker's error text and its stack, joined without doubling the message.
+ *
+ * The stack is the evidence: "NotFoundError" alone has several plausible
+ * origins (the sahpool install, the wasm fetch, a self-heal that failed) and
+ * the frames say which. Engines disagree on what `stack` contains, which is
+ * the whole reason this is a function and not a template string — V8 prefixes
+ * the message to it, Firefox and Safari give frames only, so `stack` alone
+ * loses the message on two of the three and `message + stack` repeats it on
+ * the third. Anything that isn't an Error (a thrown string, a DOMException
+ * without frames) still yields its message. */
+export function fatalDetails(message = '', stack = ''): string {
+  if (!stack) return message || 'unknown error'
+  return stack.includes(message) ? stack : `${message}\n${stack}`
+}
+
+/** The line under the two report buttons, naming what each one costs.
+ *
+ * The difference is the whole reason there are two, and the user has to know
+ * which button is which BEFORE pressing one, on a screen they cannot go back
+ * from.
+ *
+ * Deliberately not the word "anonymous" for the direct send: the request
+ * reaches that server with an IP address like any other, so "needs no account"
+ * is the claim that is exactly true. (What the operator's server then keeps is
+ * their business, and docs/crash-reports.md's recipe keeps neither.) '' when
+ * nothing to warn about — one no-account button, or none at all. */
+export function reportChoiceNote(tracker = '', direct = ''): string {
+  if (!tracker) return ''
+  const issue = 'Opening an issue needs an account on the tracker, and the report is public there.'
+  return direct ? `${issue} Sending it to the developers needs neither.` : issue
+}
+
+// Well under the ~8000 where GitHub starts answering 414, with room for an
+// operator's own sink being stricter than that.
+const MAX_URL = 6000
+
+/** Where a report button goes: one of the instance's configured destinations
+ * with the report prefilled as `?title=` / `?body=`. Those are
+ * GitHub's own new-issue parameters, so a tracker URL needs no extra config —
+ * and they are a plain query, so an operator with no tracker can point this at
+ * a webserver route that just logs the request (docs/crash-reports.md). Any
+ * query the destination already carries (`?labels=bug`) is kept.
+ *
+ * Returns '' when there is no destination or nothing to report — the caller
+ * then shows no button at all, rather than one that goes nowhere. `new URL`
+ * inside a try: `supportUrl` is validated at build time, but config.js is a
+ * plain file a self-hoster can edit, and a throw here would take down the one
+ * dialog that has to render when everything else is broken. */
+export function fatalReportUrl(supportUrl = '', report = '', kind = ''): string {
+  if (!supportUrl || !report) return ''
+  try {
+    const url = new URL(supportUrl)
+    // not "could not start": worker-died happens AFTER a successful boot, and
+    // a tracker full of "could not start: worker-died" mislabels every one
+    url.searchParams.set('title', kind ? `Crash: ${kind}` : 'Crash report')
+    url.searchParams.set('body', report)
+    // Clipped, not whole: an init-error can carry a Rust panic with a
+    // backtrace, and a URL that long is refused outright (GitHub answers 414
+    // somewhere past 8000 characters). A clipped report that arrives beats a
+    // complete one that doesn't — the full text stays on screen above the
+    // button, copyable.
+    //
+    // Measured on the ENCODED url, never on the string's length: percent-
+    // encoding inflates by up to 9x (one CJK character is "%E9%94%99"), so
+    // clipping the report to n characters bounds nothing — a non-ASCII error
+    // message still built a URL well past the limit. Shrink in proportion to
+    // the overshoot, always by at least one character so this terminates.
+    for (let body = report; body && url.href.length > MAX_URL; ) {
+      const room = Math.floor(body.length * (MAX_URL / url.href.length))
+      body = body.slice(0, Math.min(room, body.length - 1))
+      url.searchParams.set('body', body)
+    }
+    return url.href
+  } catch {
+    return ''
+  }
 }
 
 // Error strings can carry newlines (a Rust panic with a backtrace, a stack).
