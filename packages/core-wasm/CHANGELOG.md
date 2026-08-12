@@ -52,11 +52,15 @@ durable account could be lost or corrupted:
   a later self-heal). Crashed backup-export leftovers are reclaimed.
 - A failed backup import no longer leaves a half-written, undecryptable
   database registered.
-- Second-device transfer (receiving a backup) now waits for its blobs to be
-  durable before reporting success, like file import already did, and both
-  report an honest failure count even when storage fills mid-restore (new
-  `Core.fsFailed()` baseline for `Core.fsFlush(since?)`; no-arg calls keep
-  the old behavior).
+- `import_backup` and `get_backup` (second-device transfer) now wait for the
+  restored blobs to be durable before they return, so their final
+  `ImexProgress(1000)` means "written to persistent storage" rather than
+  "unpacked, with an unknown amount of writing still to go". They reserve the
+  last twentieth of the progress range for that write-out and report progress
+  across it, so a UI drawing the raw events shows the wait instead of a bar
+  that sits full while it happens. Both also report an honest failure count
+  when storage fills mid-restore (new `Core.fsFailed()` baseline for
+  `Core.fsFlush(since?)`; no-arg calls keep the old behavior).
 - A file whose write to persistent storage fails — a transient quota blip, a
   storage handle the browser invalidated — is now retried a few times instead
   of being dropped on the first error, and a write that is finally lost is
