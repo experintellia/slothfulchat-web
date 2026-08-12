@@ -30,12 +30,16 @@ on:
   workflow_dispatch:
 
 # Cancel superseded runs for the same ref (a new push to a PR obsoletes the
-# old) — but only on PRs. A main run must complete: the release gate
+# old) — but only on PRs. A main run should complete: the release gate
 # (verify-release-tag.yml) requires green `lint`/`test` check runs on the
 # exact tagged commit, and a main run cancelled by the next merge leaves its
 # commit without them forever — CI cannot be re-run on a specific historical
 # commit. main is also the only branch that saves the shared Rust caches
 # (save-if below and in build-web-app), and a cancelled run saves nothing.
+# Not airtight: GitHub keeps at most ONE queued run per group and cancels a
+# superseded QUEUED run regardless of this flag, so three merges inside one
+# CI duration still skip the middle commit. This closes the common
+# two-merge case; a skipped commit simply can't be tagged for release.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
