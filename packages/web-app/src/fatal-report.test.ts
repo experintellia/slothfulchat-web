@@ -8,6 +8,7 @@ import {
   fatalDetails,
   fatalReportText,
   fatalReportUrl,
+  isOurBug,
   reportChoiceNote,
 } from './fatal-report.ts'
 
@@ -90,6 +91,16 @@ test('a version with no commit hash still renders a build line', () => {
 test('a dirty-build hash is abbreviated without its suffix', () => {
   const report = fatalReportText({ kind: 'x', version: '0.9.0', commitHash: 'c381266-dirty' })
   match(report, /^build: 0\.9\.0 c381266$/m, 'no trailing dash from the suffix')
+})
+
+test('only a failure of ours starts expanded — first aid outranks the report', () => {
+  // nothing the user can do about these two, so the report is the useful thing
+  for (const kind of ['init-error', 'worker-died']) ok(isOurBug(kind), kind)
+  // each of these comes with a step that fixes it, which must stay in front
+  for (const kind of ['opfs-locked', 'storage-blocked', 'no-wasm', '']) {
+    ok(!isOurBug(kind), kind)
+  }
+  ok(!isOurBug(), 'no kind at all is not a claim that it is ours')
 })
 
 test('the note names what the tracker costs, and only when there is a tracker', () => {

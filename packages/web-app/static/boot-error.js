@@ -34,11 +34,18 @@
   function show(lead) {
     var root = document.getElementById('root')
     if (!root) return false
+    // The runtime raised its own fatal dialog, which knows WHICH failure this
+    // is; all we can do from a window-level error is guess "browser too old".
+    // One cause trips both (a blocked wasm fetch rejects in the worker AND
+    // surfaces here as an unhandledrejection), and two explanations with
+    // different first-aid steps, one of them wrong, is worse than either
+    // alone. showFatalDialog sets this and removes anything we already drew.
+    if (window.__slothfulFatal) return false
     if (pre) return true
     // app already mounted -> not a boot failure, leave the app alone
     if (root.firstElementChild) return false
     root.innerHTML =
-      '<div style="font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1.25rem">' +
+      '<div id="sc-boot-error" style="font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1.25rem">' +
       '<h1 style="font-size:1.3rem"></h1>' +
       '<p></p>' +
       '<p>Details for a bug report:</p>' +

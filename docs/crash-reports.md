@@ -54,8 +54,19 @@ either, both, or neither.
 | `SLOTHFUL_SUPPORT_URL` | **Open an issue** | an account on the tracker, and the report is public there |
 | `SLOTHFUL_CRASH_REPORT_URL` | **Send to the developers** | nothing — no account, not public |
 
-The screen states that difference before either is pressed, because it is a
-screen the user cannot go back from. The no-account button renders first: it is
+Both live behind a **"Technical details"** disclosure, together with the report
+they would send — expanding it is what shows the user the text, so nothing can
+be sent unseen. It starts collapsed when the failure is one the user can fix
+(`opfs-locked`, `storage-blocked`, `no-wasm` each come with a step that fixes
+them) so that step stays the biggest thing on the screen, and expanded when the
+failure is ours (`init-error`, `worker-died`), where there is no first aid and
+the report is the only useful thing. That default is emphasis only: every kind
+keeps its buttons, because these detections can be wrong, and a user told to
+close a tab they never opened is looking at our bug with no other way to reach
+us.
+
+The note states what the tracker costs before either button is pressed, because
+it is a screen the user cannot go back from. The no-account button renders first: it is
 the one most people can actually finish, and having to sign up is the single
 likeliest reason a crash report never arrives.
 

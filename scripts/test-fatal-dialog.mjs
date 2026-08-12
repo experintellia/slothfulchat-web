@@ -7,7 +7,10 @@
 //     instead of the worker's misleading "stored data could not be loaded"
 //   - the copyable report carries the failure kind and the browser
 //   - the report block is selectable despite the app's global user-select:none
-//   - only one fatal dialog is ever shown, however many fatals arrive
+//   - only one fatal dialog is ever shown, however many fatals arrive, and
+//     boot-error.js's generic "browser too old" guess stands down for it
+//   - a failure the USER can fix leads with the fix: the report and its send
+//     buttons start collapsed behind a disclosure (open only for our own bugs)
 //   - the dialog actually renders as a dialog, not just as the right text
 //     in the right elements (#211)
 //   - a report button carries the failure, the worker's error, its stack and
@@ -70,7 +73,18 @@ if (/stored data/i.test(bodyText)) {
 }
 console.log('OK: a browser without WebAssembly is told about Lockdown Mode')
 
-// --- 2) the copyable report carries kind + browser -------------------------
+// --- 2) first aid first, then the copyable report carries kind + browser ---
+// no-wasm is a failure the USER can fix (turn off Lockdown Mode for this
+// site), so the report and its send buttons start COLLAPSED: the sentence
+// saying what to do must be the biggest thing on the screen, not a wall of
+// monospace. Section 8 asserts the opposite default for a failure of ours.
+const details = dialog.locator('details.sc-details')
+if (await details.evaluate(d => d.open)) {
+  throw new Error('a user-fixable failure buries its first aid under an open report')
+}
+// expanding is what a reporting user does — and what makes the <pre> below
+// visible to innerText
+await details.locator('summary').click()
 const report = await dialog.locator('pre').innerText()
 if (!/^failure: no-wasm$/m.test(report)) {
   throw new Error(`report is missing the failure kind: ${report}`)
@@ -144,6 +158,20 @@ if (await page.locator('#sc-bridge-toast, #sc-bridge-hint').count()) {
   throw new Error('the bridge warning is still on screen next to a fatal dialog')
 }
 console.log('OK: the bridge warning stays out of the way of a fatal dialog')
+
+// ...and neither does boot-error.js's guess. It listens for window-level
+// errors and can only offer "your browser may be too old", which would sit
+// behind this dialog contradicting it — with its own copy button and a
+// first-aid step for a problem the user does not have. Dispatched by hand
+// because in this scenario nothing reaches window.onerror on its own: #root is
+// empty (the app never mounted), so without the stand-down it WOULD paint.
+await page.evaluate(() =>
+  window.dispatchEvent(new ErrorEvent('error', { message: 'simulated late boot error' }))
+)
+if (await page.locator('#sc-boot-error').count()) {
+  throw new Error('the "browser too old" screen painted itself behind a specific fatal dialog')
+}
+console.log('OK: the generic boot-error guess stands down for a specific fatal')
 
 await context.close()
 
@@ -230,6 +258,10 @@ await withStubWorker(INIT_FATAL, {
     supportUrl: 'https://tracker.example.test/issues/new',
   },
   inspect: async p => {
+    // ours, so no first aid to bury: the report is open on arrival
+    if (!(await p.locator('#sc-init-error-dialog details.sc-details').evaluate(d => d.open))) {
+      throw new Error('a failure of ours hides its report behind a click for no reason')
+    }
     const links = p.locator('#sc-init-error-dialog a.sc-btn')
     labels = await links.allInnerTexts()
     href = await links.first().getAttribute('href')

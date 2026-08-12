@@ -37,6 +37,7 @@ import {
   fatalDetails,
   fatalReportText,
   fatalReportUrl,
+  isOurBug,
   reportChoiceNote,
 } from './fatal-report.ts'
 import { tempRemovalPath } from './temp-paths.ts'
@@ -2113,6 +2114,13 @@ function showFatalDialog(
   // bury the first and its more specific explanation.
   if (fatalShown) return
   fatalShown = true
+  // Stand boot-error.js down: it guesses "your browser may be too old" from a
+  // window-level error, which the same root cause can raise alongside the
+  // specific fatal we are about to show. Its guess would then sit behind this
+  // dialog contradicting it, with a second copy button and a first-aid step
+  // for a problem the user does not have.
+  ;(window as any).__slothfulFatal = true
+  document.getElementById('sc-boot-error')?.remove()
   // a probe that already ran may have left the bridge warning on screen; from
   // here on it is noise about the wrong problem (see checkBridge)
   hideBridgeToast()
@@ -2138,21 +2146,40 @@ function showFatalDialog(
     displayMode: session.displayMode(),
   })
   panel.append(title, body)
-  if (report) panel.append(reportBlock(report), copyButton(report))
-  // Absent, not inert, when the instance configured no destination: the copy
-  // button above is then the whole route, and a button that goes nowhere is
-  // worse than no button on a screen where nothing else works either. Each
-  // destination is its own button rather than one that picks for the user:
-  // they cost different things (an account, publicity) and only the person
-  // pressing it knows which price they are willing to pay.
-  const cfg = (window as any).__slothfulConfig
-  const trackerUrl = fatalReportUrl(cfg?.supportUrl, report, kind)
-  const directUrl = fatalReportUrl(cfg?.crashReportUrl, report, kind)
-  // the cheaper one first — most people can finish it, which is the point
-  if (directUrl) row.append(reportLink(directUrl, 'Send to the developers'))
-  if (trackerUrl) row.append(reportLink(trackerUrl, 'Open an issue'))
-  const note = reportChoiceNote(Boolean(trackerUrl), Boolean(directUrl))
-  if (note) panel.append(el('p', 'sc-note', note))
+  // All of the reporting lives behind one disclosure, and `bodyText` above it
+  // is the first aid. On the kinds the user can fix — close the other tab,
+  // allow site data, turn off Lockdown Mode — that sentence is the most
+  // useful thing on the screen, and a wall of monospace with three buttons
+  // under it buries exactly the instruction they came for. It starts open
+  // only when the failure is ours (isOurBug), because then there is no first
+  // aid and the report IS the useful thing.
+  //
+  // The send buttons sit inside it too, not next to Retry: expanding is what
+  // shows the user the text, and nothing may be sent that they have not been
+  // shown (#176). Collapsed, the report is one click away for anyone whose
+  // first aid did not work — which is the only reason to press it.
+  if (report) {
+    const details = el('details', 'sc-details')
+    details.open = isOurBug(kind)
+    details.append(el('summary', {}, 'Technical details'), reportBlock(report), copyButton(report))
+    // Absent, not inert, when the instance configured no destination: the copy
+    // button above is then the whole route, and a button that goes nowhere is
+    // worse than no button on a screen where nothing else works either. Each
+    // destination is its own button rather than one that picks for the user:
+    // they cost different things (an account, publicity) and only the person
+    // pressing it knows which price they are willing to pay.
+    const cfg = (window as any).__slothfulConfig
+    const trackerUrl = fatalReportUrl(cfg?.supportUrl, report, kind)
+    const directUrl = fatalReportUrl(cfg?.crashReportUrl, report, kind)
+    const note = reportChoiceNote(Boolean(trackerUrl), Boolean(directUrl))
+    if (note) details.append(el('p', {}, note))
+    const sendRow = el('div', 'sc-row')
+    // the cheaper one first — most people can finish it, which is the point
+    if (directUrl) sendRow.append(reportLink(directUrl, 'Send to the developers'))
+    if (trackerUrl) sendRow.append(reportLink(trackerUrl, 'Open an issue'))
+    if (sendRow.childElementCount) details.append(sendRow)
+    panel.append(details)
+  }
   row.append(retryBtn)
   panel.append(row)
   // This screen is the only one a first-time visitor gets when the core dies
