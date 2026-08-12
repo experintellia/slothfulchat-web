@@ -7,13 +7,20 @@
 //     instead of the worker's misleading "stored data could not be loaded"
 //   - the copyable report carries the failure kind and the browser
 //   - the report block is selectable despite the app's global user-select:none
-//   - only one fatal dialog is ever shown, however many fatals arrive
-//   - the dialog actually renders as a dialog, not just as the right text
-//     in the right elements (#211)
+//   - only one fatal dialog is ever shown, however many fatals arrive, and
+//     boot-error.js's generic "browser too old" guess stands down for it
+//   - the report and its send buttons are visible without a click, next to
+//     Retry, and show what they would transmit before transmitting it (#176)
+//   - it renders as a full-screen page, not just as the right text in the
+//     right elements (#211)
+//   - a report button carries the failure, the worker's error, its stack and
+//     the origin to the configured destination, says what the tracker costs
+//     before it is pressed, and does not exist at all on an instance that
+//     configured no destination (#176)
 // No ws-tcp-proxy and no core boot needed — the dialog lives in runtime.js.
 // Modeled on scripts/test-bridge-dialog.mjs.
 import { chromium } from 'playwright'
-import { assertDialogRendered, startServers } from './harness.mjs'
+import { startServers } from './harness.mjs'
 
 const APP_PORT = Number(process.env.APP_PORT ?? 8646)
 
@@ -67,7 +74,14 @@ if (/stored data/i.test(bodyText)) {
 console.log('OK: a browser without WebAssembly is told about Lockdown Mode')
 
 // --- 2) the copyable report carries kind + browser -------------------------
+// Visible, not folded away: a report nobody can see is a report nobody sends,
+// and #176 requires the user to be shown what a send button would transmit.
+// The screen has room for it now (see check 5), so nothing has to be hidden
+// to keep the first-aid sentence above it prominent.
 const report = await dialog.locator('pre').innerText()
+if (!report.trim()) {
+  throw new Error('the report block rendered empty or hidden — nothing to copy or send')
+}
 if (!/^failure: no-wasm$/m.test(report)) {
   throw new Error(`report is missing the failure kind: ${report}`)
 }
@@ -109,25 +123,52 @@ if ((await copyBtn.innerText()) !== 'Copied') {
 }
 console.log('OK: Copy details copies the report and says so')
 
-// --- 5) it renders as a dialog, not just as the right words ----------------
-// Checks 1-4 are text and structure, and all four pass just as happily against
-// an unstyled pile of nodes in the corner — which is what these dialogs render
-// if ui-shared's stylesheet does not reach them.
-await assertDialogRendered(dialog, 400, 'fatal dialog')
-console.log('OK: the fatal dialog is a centred, styled modal')
+// --- 5) it renders as a full-screen page, not an unstyled pile -------------
+// Not assertDialogRendered: that helper checks a centred, opaque CARD, and
+// this screen is deliberately none of those. Nothing works behind a failed
+// start, so there is nothing for a scrim to dim and no reason to crowd the
+// only screen the user has into a 400px box — it fills the viewport and puts
+// a 40rem column in it, matching static/boot-error.js (see .sc-ov-page).
+// Checks 1-4 are text and structure, and all four pass just as happily
+// against an unstyled pile of nodes in the corner.
+const assertCrashPage = async () => {
+  const view = page.viewportSize()
+  const fail = m => {
+    throw new Error(`crash page: ${m}`)
+  }
+  const box = await dialog.boundingBox()
+  if (!box) fail('no box at all — not rendered')
+  if (box.width < view.width - 20 || box.height < view.height - 20) {
+    fail(`covers ${box.width}x${box.height}, not the ${view.width}x${view.height} viewport`)
+  }
+  const css = await dialog.evaluate(d => {
+    const c = getComputedStyle(d)
+    return { position: c.position, bg: c.backgroundColor }
+  })
+  if (css.position !== 'fixed') fail(`position:${css.position}, not fixed`)
+  // rgb() is opaque; rgba(…, 0) is the unstyled default. A see-through crash
+  // page shows the half-dead app through the explanation of why it is dead.
+  if (!css.bg.startsWith('rgb(')) fail(`background is ${css.bg} — the page shows through`)
+  const col = await dialog.locator('div').first().boundingBox()
+  const want = Math.min(640, view.width * 0.92) // .sc-page's 40rem column
+  if (Math.abs(col.width - want) > 2) fail(`column is ${col.width}px, expected ${want}px`)
+  if (Math.abs(col.x + col.width / 2 - view.width / 2) > 2) fail('column is not centred')
+}
+await assertCrashPage()
+console.log('OK: the fatal screen fills the viewport as a page')
 
 // ...and that assertion has teeth: take the overlay stylesheet away — every
-// declaration these dialogs render with is in it — and it must fail.
+// declaration this screen renders with is in it — and it must fail.
 // Destructive, so it runs last of the checks that touch this dialog.
 await page.evaluate(() => document.getElementById('sc-overlay-css')?.remove())
 let noticed = false
 try {
-  await assertDialogRendered(dialog, 400, 'fatal dialog')
+  await assertCrashPage()
 } catch {
   noticed = true
 }
 if (!noticed) {
-  throw new Error('render checks pass on an unstyled dialog — they earn nothing')
+  throw new Error('render checks pass on an unstyled screen — they earn nothing')
 }
 console.log('OK: the render checks fail when the styling is gone')
 
@@ -141,6 +182,20 @@ if (await page.locator('#sc-bridge-toast, #sc-bridge-hint').count()) {
 }
 console.log('OK: the bridge warning stays out of the way of a fatal dialog')
 
+// ...and neither does boot-error.js's guess. It listens for window-level
+// errors and can only offer "your browser may be too old", which would sit
+// behind this dialog contradicting it — with its own copy button and a
+// first-aid step for a problem the user does not have. Dispatched by hand
+// because in this scenario nothing reaches window.onerror on its own: #root is
+// empty (the app never mounted), so without the stand-down it WOULD paint.
+await page.evaluate(() =>
+  window.dispatchEvent(new ErrorEvent('error', { message: 'simulated late boot error' }))
+)
+if (await page.locator('#sc-boot-error').count()) {
+  throw new Error('the "browser too old" screen painted itself behind a specific fatal dialog')
+}
+console.log('OK: the generic boot-error guess stands down for a specific fatal')
+
 await context.close()
 
 // --- 7) a second fatal must not bury the first, more specific one ----------
@@ -149,12 +204,23 @@ await context.close()
 // never have reported twice would pass whether or not anything was suppressed.
 // Check 7a proves the stub's messages do reach the page's handler; 7b then
 // shows the second one being swallowed.
-async function withStubWorker(body) {
+async function withStubWorker(body, { config, inspect } = {}) {
   const ctx = await browser.newContext({ serviceWorkers: 'block' })
   const p = await ctx.newPage()
   await p.addInitScript(() => {
     Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
   })
+  // same instance-config injection as test-bridge-dialog.mjs: replace config.js
+  // wholesale rather than patching the object, because the real file assigns
+  // window.__slothfulConfig and would overwrite anything set before it
+  if (config) {
+    await p.route('**/config.js', route =>
+      route.fulfill({
+        contentType: 'text/javascript',
+        body: `window.__slothfulConfig=${JSON.stringify(config)}\n`,
+      })
+    )
+  }
   await p.route('**/core/worker.js', route =>
     route.fulfill({ contentType: 'text/javascript', body })
   )
@@ -163,6 +229,7 @@ async function withStubWorker(body) {
   const ids = await p.evaluate(() =>
     [...document.querySelectorAll('dialog')].filter(d => d.open).map(d => d.id)
   )
+  if (inspect) await inspect(p)
   await ctx.close()
   return ids
 }
@@ -185,6 +252,101 @@ if (both.length !== 1 || both[0] !== 'sc-init-error-dialog') {
   throw new Error(`the later generic fatal buried the specific one: ${JSON.stringify(both)}`)
 }
 console.log('OK: a later, less specific fatal does not bury the first')
+
+// --- 8) a report button exists only where a destination is configured ------
+// #176's own requirement: with neither destination set the button must be
+// ABSENT, not present and dead — on a screen where nothing works, a button
+// that goes nowhere is worse than no button. Both halves drive the identical
+// failure, so the config is the only difference between them.
+// The two destinations are separate buttons because they cost the user
+// different things, so this also checks that the difference is stated before
+// the click rather than after it.
+// The stub's stack is the frames-only shape Firefox and Safari produce (V8
+// repeats the message on the first line); it is the case where a naive join
+// would drop the message that names the failure.
+const INIT_FATAL = `self.postMessage({
+  type: 'fatal-init-error',
+  message: 'Error: sahpool install failed: NotFoundError',
+  stack: 'install@https://web.slothful.chat/core/worker.js:311:9',
+})`
+
+let href = ''
+let shown = ''
+let labels = []
+let note = ''
+let rowText = ''
+await withStubWorker(INIT_FATAL, {
+  config: {
+    instanceName: 'FatalTest',
+    crashReportUrl: 'https://report.example.test/crash',
+    supportUrl: 'https://tracker.example.test/issues/new',
+  },
+  inspect: async p => {
+    const links = p.locator('#sc-init-error-dialog a.sc-btn')
+    labels = await links.allInnerTexts()
+    href = await links.first().getAttribute('href')
+    shown = await p.locator('#sc-init-error-dialog pre').innerText()
+    note = await p.locator('#sc-init-error-dialog .sc-note').innerText()
+    rowText = await p.locator('#sc-init-error-dialog .sc-row').innerText()
+  },
+})
+// the same footer row as Retry, which is where a button gets looked for
+for (const label of ['Send to the developers', 'Open an issue', 'Retry']) {
+  if (!rowText.includes(label)) {
+    throw new Error(`"${label}" is not in the dialog's footer row: ${rowText}`)
+  }
+}
+// the no-account one first: it is the one most people can actually finish
+if (labels.length !== 2 || !/developers/i.test(labels[0]) || !/issue/i.test(labels[1])) {
+  throw new Error(`expected [Send to the developers, Open an issue], got ${JSON.stringify(labels)}`)
+}
+if (!href.startsWith('https://report.example.test/crash?')) {
+  throw new Error(`the no-account button points somewhere unexpected: ${href}`)
+}
+// the tracker's price has to be visible BEFORE the click, on a screen with no back
+for (const needle of ['account', 'public']) {
+  if (!note.includes(needle)) throw new Error(`the choice note never mentions ${needle}: ${note}`)
+}
+if (/anonym/i.test(note)) {
+  throw new Error(`the note claims anonymity we cannot keep — the request carries an IP: ${note}`)
+}
+// searchParams, not decodeURIComponent: URLSearchParams writes spaces as '+',
+// which decodeURIComponent leaves alone — every needle below would miss
+const sent = new URL(href).searchParams.get('body')
+for (const [what, needle] of [
+  ['the failure kind', 'failure: init-error'],
+  ["the worker's error text", 'sahpool install failed'],
+  ['the stack', 'install@'],
+  ['the origin, which names the deployment', `origin: http://localhost:${APP_PORT}`],
+  ['the browser', 'browser: Mozilla/5.0'],
+]) {
+  if (!sent.includes(needle)) throw new Error(`the report link is missing ${what}: ${sent}`)
+}
+// what the user is asked to send has to be what they were shown
+for (const needle of ['sahpool install failed', 'install@']) {
+  if (!shown.includes(needle)) {
+    throw new Error(`the dialog sends more than it shows — missing ${needle}: ${shown}`)
+  }
+}
+console.log('OK: both buttons offered, cheaper one first, each cost named up front')
+console.log('OK: the report carries kind, error, stack and origin to the configured URL')
+
+let anchors = -1
+let copyButtons = -1
+await withStubWorker(INIT_FATAL, {
+  config: { instanceName: 'FatalTest' },
+  inspect: async p => {
+    anchors = await p.locator('#sc-init-error-dialog a.sc-btn').count()
+    copyButtons = await p.locator('#sc-init-error-dialog pre + button').count()
+  },
+})
+if (anchors !== 0) {
+  throw new Error(`an unconfigured instance still renders ${anchors} report link(s)`)
+}
+if (copyButtons !== 1) {
+  throw new Error('no copy button either — an unconfigured instance has no way to report at all')
+}
+console.log('OK: no destination configured → no button, and Copy details still there')
 
 await browser.close()
 cleanup()

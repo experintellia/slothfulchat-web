@@ -56,12 +56,49 @@ const OVERLAY_CSS = `
  padding:20px;border-radius:10px;background:#1e1e1e;color:#eee;
  font:14px/1.5 system-ui,sans-serif;box-shadow:0 8px 40px rgba(0,0,0,.5)}
 .sc-card.sc-wide{width:min(460px,92vw)}
+/* The fatal-start screen is a PAGE, not a card. Nothing works behind it — the
+   core never started — so there is nothing for a scrim to dim and no reason to
+   crowd the one screen the user has into 400px. It is styled to match
+   static/boot-error.js, which shows in the neighbouring case (the bundles
+   never ran at all): same white page, same 40rem column, same type. The two
+   are halves of one moment and used to look like different products.
+   Still a <dialog>: showOnTop keeps it above the frontend's own modals, which
+   an in-page takeover would give up (#247/#249). That is mechanism only —
+   nothing here reads as a dialog.
+   The page scrolls as a page, so a report longer than the screen behaves the
+   way a document does instead of trapping itself in an inner scrollbox. */
+.sc-ov.sc-ov-page{background:#fff;color:#222;align-items:flex-start;overflow-y:auto}
+.sc-card.sc-page{width:min(40rem,92vw);max-height:none;overflow:visible;margin:3rem auto;
+ padding:0 1.25rem;background:none;box-shadow:none;border-radius:0;color:#222;
+ font:16px/1.5 system-ui,sans-serif}
+.sc-card.sc-page>h2{margin:0 0 1rem;font-size:1.3rem;color:#111}
+.sc-card.sc-page>p{margin:0 0 1rem;font-size:16px;color:#333}
+.sc-card.sc-page>.sc-note{margin:1rem 0 0;font-size:14px;color:#555}
+.sc-card.sc-page .sc-report{max-height:none;background:#f4f4f4;color:#222;padding:.75rem;
+ border-radius:4px;font-size:12px}
+.sc-card.sc-page .sc-btn,.sc-card.sc-page .sc-btn-ghost{font-size:14px;padding:9px 16px}
+.sc-card.sc-page .sc-btn-ghost{border-color:#bbb;color:#333}
+/* left, with the text column — the page reads top-down along one edge, and a
+   right-aligned row also orphans the last button on its own line when it
+   wraps on a phone */
+.sc-card.sc-page .sc-row{justify-content:flex-start;margin-top:1.5rem}
+/* margin AND padding restated: the .sc-card.sc-page>p rule above is more
+   specific than .sc-analytics-note, so without this the note keeps none of
+   its own spacing and its separator rule lands flush against the buttons.
+   NB: no backticks in here — this block is a JS template literal. */
+.sc-card.sc-page .sc-analytics-note{margin:1.75rem 0 0;padding-top:1rem;
+ border-top-color:#ddd;color:#555;font-size:14px}
+.sc-card.sc-page .sc-linkbtn{color:#0b57d0}
 .sc-card>h2{margin:0 0 8px;font-size:17px}
 .sc-card>p{margin:0 0 10px;color:#bbb}
 .sc-card>.sc-note{margin:0;font-size:12px;color:#a8a8a8}
 .sc-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:16px}
+/* Worn by both <button> and the fatal dialog's report <a>s, which sit in the
+   same row: font-family and inline-flex are what make the two match, since a
+   <button> otherwise takes the UA's own button font and text centring. */
 .sc-btn{padding:8px 14px;border:none;border-radius:6px;background:#333;color:#fff;
- font-size:13px;cursor:pointer}
+ font-family:inherit;font-size:13px;cursor:pointer;display:inline-flex;
+ align-items:center;justify-content:center;text-decoration:none}
 .sc-btn.sc-primary{background:#2d7dff}
 .sc-btn-ghost{padding:6px 12px;border:1px solid #444;border-radius:6px;background:transparent;
  color:#ddd;font-size:13px;cursor:pointer}
@@ -122,15 +159,18 @@ document.head.append(overlayStyle)
  * upstream's own dialogs are modal and live in the browser top layer, which
  * paints over any z-index; opening ours last puts it above them.
  *
+ * Three sizes: the default card, `wide` for the ones with a list in them, and
+ * `page` for the fatal-start screen — see .sc-page in OVERLAY_CSS.
+ *
  * Returns both — the caller fills the card and shows the dialog (showOnTop).
  */
 export function overlayCard(
   id: string,
-  wide = false
+  size: 'wide' | 'page' | '' = ''
 ): [HTMLDialogElement, HTMLDivElement] {
-  const overlay = el('dialog', 'sc-ov')
+  const overlay = el('dialog', size === 'page' ? 'sc-ov sc-ov-page' : 'sc-ov')
   overlay.id = id
-  const card = el('div', wide ? 'sc-card sc-wide' : 'sc-card')
+  const card = el('div', size ? `sc-card sc-${size}` : 'sc-card')
   overlay.append(card)
   return [overlay, card]
 }
@@ -166,6 +206,12 @@ export function showOnTop(overlay: HTMLDialogElement): void {
   onTop.add(overlay)
   overlay.addEventListener('close', () => onTop.delete(overlay))
   overlay.showModal()
+  // showModal() focuses the first focusable child and the browser scrolls it
+  // into view, which can open a dialog already scrolled past its own title.
+  // Both elements, because which one scrolls depends on the shape: a card
+  // scrolls inside itself (max-height:90vh), the page variant as a page.
+  overlay.scrollTo(0, 0)
+  ;(overlay.firstElementChild as HTMLElement | null)?.scrollTo(0, 0)
 }
 
 let nativeShowModal: HTMLDialogElement['showModal'] | undefined

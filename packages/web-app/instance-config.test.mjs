@@ -252,6 +252,50 @@ test('normalizeRelayDirectory: unset/garbage → default, off/URL pass through',
   strictEqual(normalizeRelayDirectory('"  off  "'), 'off')
 })
 
+test('report destinations: unset means no button, never this repo (#176)', () => {
+  strictEqual(buildConfig({}).supportUrl, '')
+  strictEqual(buildConfig({}).crashReportUrl, '')
+  strictEqual(buildConfig({ SLOTHFUL_SUPPORT_URL: 'mailto:me@example.test' }).supportUrl, '')
+  strictEqual(
+    buildConfig({ SLOTHFUL_SUPPORT_URL: '"https://example.test/crash" ' }).supportUrl,
+    'https://example.test/crash'
+  )
+  // the two are independent: either one alone is a valid instance
+  const tracker = buildConfig({
+    SLOTHFUL_SUPPORT_URL: 'https://github.com/experintellia/slothfulchat-web/issues/new',
+  })
+  strictEqual(tracker.supportUrl, 'https://github.com/experintellia/slothfulchat-web/issues/new')
+  strictEqual(tracker.crashReportUrl, '')
+  const direct = buildConfig({ SLOTHFUL_CRASH_REPORT_URL: 'https://report.example.test/' })
+  strictEqual(direct.crashReportUrl, 'https://report.example.test/')
+  strictEqual(direct.supportUrl, '')
+})
+
+test('privacy.html names where reports go, and only when they can go anywhere', () => {
+  const none = privacyHtml(buildConfig({}), {})
+  ok(!/Reporting a failed start/.test(none), 'no destination, no section')
+
+  const both = privacyHtml(
+    buildConfig({
+      SLOTHFUL_SUPPORT_URL: 'https://github.com/you/fork/issues/new',
+      SLOTHFUL_CRASH_REPORT_URL: 'https://report.example.test/crash',
+    }),
+    {}
+  )
+  ok(/Reporting a failed start/.test(both))
+  ok(/report\.example\.test/.test(both), 'names the recipient, as the analytics section does')
+  ok(/github\.com/.test(both))
+  ok(!/report\.example\.test\/crash/.test(both), 'origin only — the path is not the recipient')
+  ok(/IP address/.test(both), 'the claim "no account" must not read as untraceable')
+  // \s+ not a literal space: the template wraps, so the words straddle a newline
+  ok(/never\s+sent automatically/i.test(both))
+  ok(/public/.test(both), 'a tracker report is public and the policy says so')
+
+  const direct = privacyHtml(buildConfig({ SLOTHFUL_CRASH_REPORT_URL: 'https://report.example.test/' }), {})
+  ok(/Reporting a failed start/.test(direct))
+  ok(!/is public/.test(direct), 'no tracker configured, so nothing is public')
+})
+
 test('normalizeRelayDirectory: rejects multi-token / injecting values', () => {
   // the value is appended verbatim to connect-src, so a space would add a
   // SECOND source — must be rejected, not passed through
