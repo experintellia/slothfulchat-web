@@ -336,9 +336,9 @@ async function waitForOpfsSyncHandles(): Promise<void> {
  * catch below doesn't stack a second dialog on top of it. */
 let fatalReported = false
 
-/** How long boot will wait for the account template before giving up on it.
- * Only ever reached on a first visit — after that it is served from the
- * service worker's precache. */
+/** Give up on the template fetch after this long. Nothing waits on it, so
+ * this only stops a stalled request from holding its ~900KB result and the
+ * connection open forever. */
 const TEMPLATE_FETCH_DEADLINE_MS = 10_000
 
 /** The pre-migrated account database new accounts are stamped out of, fetched
@@ -351,10 +351,6 @@ const TEMPLATE_FETCH_DEADLINE_MS = 10_000
  * promise would pin a second ~900KB for the worker's lifetime. */
 let accountTemplate: Promise<Uint8Array | undefined> | undefined = (async () => {
   const res = await fetch(new URL('../wasm-dist/fresh_account.db.gz', import.meta.url), {
-    // boot awaits this, so a request that STALLS rather than fails would hang
-    // the loading screen on the one path that has no precached copy yet (first
-    // visit). Time it out into the fallback instead — being slow to create an
-    // account beats never starting.
     signal: AbortSignal.timeout(TEMPLATE_FETCH_DEADLINE_MS),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -371,9 +367,17 @@ let accountTemplate: Promise<Uint8Array | undefined> | undefined = (async () => 
 const ready = (async () => {
   const { proxyUrl, persist } = await config
   await initWasm()
-  const template = await accountTemplate
-  if (template) set_account_template(template)
-  accountTemplate = undefined
+  // non-blocking, like the crypto pool below: boot must never wait on an
+  // optimization. Awaiting it here delayed init by the length of a fetch, and
+  // that was enough to flip the order two <dialog>s open in — top-layer order
+  // is fixed at showModal() and never re-sorts, so the loser is unclickable
+  // for good. A profile created before this lands just migrates, which is the
+  // same fallback as having no template at all, and it needs a user action
+  // against an ~11KB fetch that is usually already in the SW cache.
+  void accountTemplate?.then(template => {
+    if (template) set_account_template(template)
+    accountTemplate = undefined // the wasm side holds its own copy now
+  })
   // non-blocking: boot never waits on the pool — until it registers, core
   // computes crypto inline (the correct fallback)
   void pool.ready.then(() =>
