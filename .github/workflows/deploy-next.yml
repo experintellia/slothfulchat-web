@@ -25,6 +25,10 @@ jobs:
   deploy:
     if: vars.PREVIEW_SSH_HOST != ''
     runs-on: ubuntu-latest
+    # Cold-cache build (~20 min) + smoke + upload with headroom — same idea as
+    # ci.yml's 55. Without a cap, a hung smoke browser would hold this job (and
+    # the deploy-next concurrency group) for GitHub's 6-hour default.
+    timeout-minutes: 45
     # Same SLOTHFUL_* branding as prod (publish-npm.yml). Analytics point at
     # their OWN Plausible site (SLOTHFUL_NEXT_PLAUSIBLE_DOMAIN) so next traffic
     # never pollutes prod stats; unset = no analytics at all, so this stays
