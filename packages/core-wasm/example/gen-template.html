@@ -1,0 +1,10 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>account template generator</title>
+<!--
+  Deliberately empty. scripts/gen-account-template.mjs drives the wasm module
+  itself from page.evaluate and only needs a document on the right origin to do
+  it from — not index.html next door, which boots a whole second core through
+  the packaged worker client, the very thing whose job is to install the
+  template being generated here.
+-->

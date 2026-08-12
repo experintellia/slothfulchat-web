@@ -90,6 +90,9 @@ thread_local! {
     /// waitForOpfsSyncHandles until this worker is destroyed.
     static CONFIG_SAHS: RefCell<Option<(FileSystemSyncAccessHandle, FileSystemSyncAccessHandle)>> =
         const { RefCell::new(None) };
+    /// Bytes of a freshly-migrated, unconfigured account database, installed
+    /// once per session by the JS side (see [`set_db_template`]).
+    static DB_TEMPLATE: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
     /// accounts.toml content last successfully committed through the main
     /// handle this session — the only safe source for refreshing `.bak`.
     /// After a failed `sah_write` (e.g. disk-full mid-write), main holds TORN
@@ -711,6 +714,76 @@ pub fn sqlite_vfs_account_uuids() -> Vec<String> {
         }
         set.into_iter().collect()
     })
+}
+
+/// Installs the bytes of a freshly-migrated, unconfigured account database.
+/// Optional — without it new accounts just migrate the slow way.
+pub fn set_db_template(bytes: Vec<u8>) {
+    DB_TEMPLATE.with(|t| *t.borrow_mut() = Some(bytes));
+}
+
+/// True when a database `name` exists in the default sqlite VFS.
+fn sqlite_vfs_exists(name: &str) -> bool {
+    SAHPOOL.with(|c| match c.borrow().as_ref() {
+        Some(util) => util.exists(name).unwrap_or(false),
+        None => sqlite_wasm_rs::MemVfsUtil::<sqlite_wasm_rs::WasmOsCallback>::new().exists(name),
+    })
+}
+
+/// Pre-fills a *new* account database from the installed template, so opening
+/// it finds the schema already migrated. Returns true when it wrote one.
+///
+/// An account whose database already exists is left alone, which is what keeps
+/// this safe to call on every open. A failed import is not fatal: the slot is
+/// left empty (`sqlite_vfs_import` cleans up after itself) and sqlite creates
+/// a fresh database as before, just slowly.
+pub fn seed_db_from_template(name: &str) -> bool {
+    DB_TEMPLATE.with(|t| {
+        let borrow = t.borrow();
+        let Some(bytes) = borrow.as_ref() else {
+            return false;
+        };
+        if sqlite_vfs_exists(name) {
+            return false;
+        }
+        match sqlite_vfs_import(name, bytes) {
+            Ok(()) => {
+                // one line per new account, and the only evidence the fast
+                // path is live — a template that silently stopped being
+                // applied looks exactly like a correct slow build
+                web_sys::console::log_1(&JsValue::from_str(&format!(
+                    "opfs: seeded {name:?} from the account template"
+                )));
+                true
+            }
+            Err(err) => {
+                web_sys::console::warn_1(&JsValue::from_str(&format!(
+                    "opfs: failed to seed {name:?} from the account template: {err}"
+                )));
+                false
+            }
+        }
+    })
+}
+
+/// Throws away a seed that turned out not to be a readable database: removes
+/// `name` so sqlite creates a real, empty one in its place, and drops the
+/// template so no further account is seeded from it this session.
+///
+/// The caller must have closed every connection to `name` — the point of
+/// calling this is that opening it did not work.
+pub fn discard_db_template(name: &str) {
+    DB_TEMPLATE.with(|t| *t.borrow_mut() = None);
+    SAHPOOL.with(|c| match c.borrow().as_ref() {
+        Some(util) => {
+            let _ = util.delete_db(name);
+        }
+        None => sqlite_wasm_rs::MemVfsUtil::<sqlite_wasm_rs::WasmOsCallback>::new().delete_db(name),
+    });
+    web_sys::console::warn_1(&JsValue::from_str(&format!(
+        "opfs: the account template did not open as a database — discarded it, \
+         {name:?} will be migrated from scratch"
+    )));
 }
 
 /// Exports database `name` from the default sqlite VFS and deletes it there.

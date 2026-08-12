@@ -233,8 +233,14 @@ await cp(join(coreWasm, 'dist/worker.js'), join(dist, 'core/worker.js'))
 // /core/ + /wasm-dist/ relative layout, precached like worker.js
 await cp(join(coreWasm, 'dist/crypto-worker.js'), join(dist, 'core/crypto-worker.js'))
 await mkdir(join(dist, 'wasm-dist'))
-for (const file of ['deltachat_wasm.js', 'deltachat_wasm_bg.wasm']) {
-  await cp(join(coreWasm, 'wasm-dist', file), join(dist, 'wasm-dist', file))
+// fresh_account.db.gz is the pre-migrated account template worker.js fetches
+// from here (scripts/gen-account-template.mjs); it is an optimization, so a
+// build that skipped the generator still assembles — accounts just migrate.
+for (const file of ['deltachat_wasm.js', 'deltachat_wasm_bg.wasm', 'fresh_account.db.gz']) {
+  await cp(join(coreWasm, 'wasm-dist', file), join(dist, 'wasm-dist', file)).catch(err => {
+    if (file !== 'fresh_account.db.gz') throw err
+    console.warn(`assemble: no ${file} — new accounts will replay migrations`)
+  })
 }
 
 // core-wasm demo page at /demo/, reusing /core/worker.js and /wasm-dist/
