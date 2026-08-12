@@ -76,7 +76,14 @@ try {
   // mode/dist cross-check (see PRODUCTION above): running the prod smoke
   // against a dev build — or CI's dev smoke against a prod build — would
   // silently skip or wrongly run the exp.rpc phases. Fail loudly instead.
-  const devmode = await page.evaluate(() => window.__slothfulConfig?.devmode ?? true)
+  // No `?? true` fallback: instance-config.mjs always emits devmode as a
+  // boolean, so a missing value means config.js never loaded. Defaulting it
+  // would let the dev path sail past that and surface it 240s later as a
+  // core-boot timeout instead of naming the cause.
+  const devmode = await page.evaluate(() => window.__slothfulConfig?.devmode)
+  if (typeof devmode !== 'boolean') {
+    throw new Error('served dist has no window.__slothfulConfig.devmode — config.js did not load')
+  }
   if (devmode !== !PRODUCTION) {
     throw new Error(
       `served dist has devmode:${devmode} but SMOKE_PRODUCTION=${PRODUCTION ? 1 : 0} — wrong build for this mode`
@@ -158,6 +165,13 @@ try {
     if (!rpcLocked) {
       throw new Error('window.exp.rpc is accessible on a production build — the devmode gate is lost')
     }
+    // ponytail: known gap, and it is the uncomfortable one. The SW
+    // proxy-config phase skipped here is a regression test — a worker really
+    // did lose its proxy config behind the service worker once — so the
+    // production artifact is the single build where that case goes unchecked.
+    // ci.yml's dev-mode run still covers it, but on a different artifact.
+    // Closing this needs a devmode-independent way to drive the core (an
+    // explicit test hook, not reopening exp.rpc on release builds).
     console.log(
       'SKIP (production): exp.rpc phases (SW proxy-config regression, sticker backend) — devmode lock verified instead'
     )
