@@ -389,6 +389,20 @@ ready.catch(err => {
   if (fatalReported) return
   scope.postMessage({ type: 'fatal-init-error', message: String(err) } as unknown as string)
 })
+// The post-boot sibling of the catch above, for the death the page cannot see
+// on its own: `onmessage` below is async, so a core panic mid-call (a wasm
+// trap out of dc.receive) rejects the handler's promise instead of throwing —
+// and browsers only propagate synchronous uncaught exceptions to the page's
+// `worker.onerror`, never rejections. Report it ourselves; startCore routes
+// this message into the same fail path as onerror. Any rejection landing here
+// is by definition one nothing was waiting on — today that is a poisoned
+// core, and loud beats a silent hang either way.
+self.addEventListener('unhandledrejection', event => {
+  scope.postMessage({
+    type: 'fatal-worker-died',
+    message: String(event.reason),
+  } as unknown as string)
+})
 
 scope.onmessage = async (
   event: MessageEvent<string | FsRequest | ConfigMessage | CryptoStatsRequest>,

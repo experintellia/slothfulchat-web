@@ -163,10 +163,12 @@ lands. New files under `packages/frontend/src/components/composer/`:
   endpoint, then `renderCard`, stages the temp file, returns the path + chosen
   layout. Holds fetched metadata + thumbnail bytes in memory so expand/collapse
   re-renders without re-fetching.
-- **`LinkPreviewGhost.tsx`** — the composer chip: states *idle ghost → loading
-  (slim bar) → generated card (remove + expand/collapse)*. Rendered in the
+- **`LinkPreviewGhost.tsx`** — the composer chip: one card-shaped skeleton
+  carries *idle → loading (shimmer) → unavailable (greyed + notice)*, then the
+  generated card (remove + expand/collapse) takes its slot. Rendered in the
   composer `upper-bar` alongside the existing quote/attachment previews.
-- **`linkPreview/styles.module.scss`** — dashed ghost, chip layout, buttons.
+- **`linkPreview/styles.module.scss`** — dashed ghost, shimmer, chip layout,
+  buttons.
 
 Wiring in **`Composer.tsx`**: derive the current URL from `draftState.text` in
 `onComposerMessageInputChange`; show the ghost when a URL exists and

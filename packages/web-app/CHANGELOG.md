@@ -11,6 +11,18 @@
   ready-made one, which is most of that time gone — including for the very
   first profile you create.
 
+- **A chat engine that crashes now says so instead of spinning forever.** If
+  the engine died after startup, everything the app had asked it to do simply
+  waited for an answer that was never coming — an endless spinner with no error
+  and no way out. The failure is now reported straight away, with a dialog that
+  offers a reload.
+
+- **The link-preview offer in the composer now looks like one thing.** The
+  placeholder, the loading state and the "needs a bridge" notice used to look
+  like three unrelated widgets; they are now the same card that fills in — the
+  skeleton shimmers while the preview is generated and greys out when previews
+  are unavailable.
+
 - **The privacy policy now says who actually receives the usage statistics.**
   When an instance runs its own Plausible server instead of the hosted service,
   the policy says so and names that server, rather than implying the data goes

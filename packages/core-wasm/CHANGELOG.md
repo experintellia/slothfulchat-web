@@ -8,6 +8,12 @@
   `set_account_template()` before `init()`, and everything still works —
   just more slowly — if they don't.
 
+- **A worker that dies after boot no longer strands its callers**: the
+  transport now watches the worker for errors and undeliverable replies, and
+  rejects every pending JSON-RPC and filesystem call instead of leaving them
+  waiting for a response that can never arrive. The failure is reported to the
+  page as a `fatal-worker-died` message.
+
 - **The published type definitions now match the core that ships with them.**
   They used to come from `@deltachat/jsonrpc-client` 2.53.0 on npm, two
   releases behind the pinned core and missing the API our patches add — the
