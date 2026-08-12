@@ -1,7 +1,8 @@
 # Build the standalone web app from a checked-out tree into
-# packages/web-app/dist. Shared by deploy-pages.yml (prod), deploy-next.yml
-# (next), preview-deploy.yml (PR previews), publish-npm.yml (the release zip)
-# and ci.yml, so what CI tests and what ships are built by one sequence.
+# packages/web-app/dist. Shared by publish-npm.yml (the release zip AND, after
+# a second branded assemble pass, prod on Pages), deploy-next.yml
+# (next), preview-deploy.yml (PR previews) and ci.yml, so what CI tests and
+# what ships are built by one sequence.
 #
 # Checkout is NOT part of this action — a composite action can't run before the
 # repo (and this file) is checked out, so callers must check out FIRST, with
@@ -21,7 +22,10 @@
 # The assemble step bakes in per-instance branding from SLOTHFUL_* environment
 # variables. Composite run steps inherit the caller's job-level env as real
 # process env vars, so callers set SLOTHFUL_* at the job level (as vars.*) —
-# see deploy-pages.yml. This action declares no inputs for them.
+# see deploy-next.yml. (publish-npm.yml is the exception: it needs one generic
+# build AND one branded one off the same compile, so it leaves the job env
+# unset here and re-runs the assemble tail with the vars on that step.) This
+# action declares no inputs for them.
 #
 # EVERY BUILD INPUT IS PINNED. This action runs on release runners, so nothing
 # it pulls in may be mutable: third-party actions are pinned to reviewed commit
@@ -36,7 +40,7 @@
 name: Build web-app
 description: Toolchains + patched core + wasm + assembled dist for the standalone web-app.
 
-# Both inputs default to the deploy behaviour, so deploy-pages.yml,
+# Both inputs default to the deploy behaviour, so publish-npm.yml,
 # deploy-next.yml and preview-deploy.yml pass neither. ci.yml turns both off:
 # it needs a functional build, not a shippable one, and the two passes it skips
 # are the slowest in the job.
@@ -171,7 +175,7 @@ runs:
 
         # One cache entry for every workflow that builds the web-app instead of
         # one per job name. Without this the key carries the job name, so CI's
-        # `test`, deploy-pages'/preview-deploy's `build` and deploy-next's
+        # `test`, publish-npm's/preview-deploy's `build` and deploy-next's
         # `deploy` each kept a private ~1.1 GB copy — and preview-deploy, which
         # only ever runs on PRs, could never populate its own at all.
         shared-key: web-app-build

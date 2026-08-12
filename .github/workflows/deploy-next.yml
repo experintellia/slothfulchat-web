@@ -1,6 +1,6 @@
 # next.slothful.chat = the current main branch, deployed to the flagship Caddy
 # server. This replaces the old Pages-on-main deployment (Pages is now prod, on
-# v* tags only — see deploy-pages.yml). Same build + gate-script upload path as
+# v* tags only — see publish-npm.yml). Same build + gate-script upload path as
 # the PR previews, into the server's permanent `next/` slot.
 #
 # Variable-gated on PREVIEW_SSH_HOST so it no-ops until the server exists.
@@ -25,7 +25,7 @@ jobs:
   deploy:
     if: vars.PREVIEW_SSH_HOST != ''
     runs-on: ubuntu-latest
-    # Same SLOTHFUL_* branding as prod (deploy-pages.yml). Analytics point at
+    # Same SLOTHFUL_* branding as prod (publish-npm.yml). Analytics point at
     # their OWN Plausible site (SLOTHFUL_NEXT_PLAUSIBLE_DOMAIN) so next traffic
     # never pollutes prod stats; unset = no analytics at all, so this stays
     # dark until that site is registered in the Plausible UI (issue #134).

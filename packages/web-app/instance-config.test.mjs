@@ -406,7 +406,9 @@ test('every supported SLOTHFUL_* var is forwarded by the build/deploy/customize 
   // pass them — each to its OWN Plausible site (issue #134).
   const analytics = ['SLOTHFUL_PLAUSIBLE_DOMAIN', 'SLOTHFUL_PLAUSIBLE_API']
   const consumers = {
-    '.github/workflows/deploy-pages.yml': [],
+    // prod Pages deploy lives in the release workflow (one build, three
+    // outputs — see its header)
+    '.github/workflows/publish-npm.yml': [],
     '.github/workflows/deploy-next.yml': [],
     '.github/workflows/preview-deploy.yml': [],
     'packages/web-app/customize.mjs': analytics,

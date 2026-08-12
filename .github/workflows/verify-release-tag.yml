@@ -1,5 +1,6 @@
 # The single release gate, called by every workflow that can publish or deploy
-# production (publish-npm.yml, deploy-pages.yml).
+# production — publish-npm.yml, which is all of them (GitHub release, npm,
+# prod on Pages).
 #
 # A TAG IS THE ONLY RELEASE AUTHORITY. It lives here, once, on purpose: two
 # copies of a security gate drift, and a drifted gate is a hole. Callers run it
