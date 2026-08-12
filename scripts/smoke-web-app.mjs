@@ -10,6 +10,18 @@ const script = p => fileURLToPath(new URL(p, import.meta.url))
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
 const APP_PORT = Number(process.env.APP_PORT ?? 8642)
 
+// SMOKE_PRODUCTION=1: the release-build variant deploy-pages.yml runs against
+// the exact dist/ it is about to ship. A production build bakes devmode:false
+// into config.js, which locks window.exp.rpc behind a throwing getter
+// (upstream experimental.ts) — so the two phases that drive the core over
+// exp.rpc (the SW proxy-config regression and the sticker backend) cannot run
+// and are skipped; in exchange this mode asserts that lock actually holds.
+// Everything else — core boot, frontend render, lottie, SW-controlled reload,
+// manifest, launch-handler gating, overlay dialogs, CSP/pageerror — is
+// identical, and the served build's devmode flag is cross-checked below so a
+// mode/dist mismatch fails loudly instead of testing the wrong build.
+const PRODUCTION = process.env.SMOKE_PRODUCTION === '1'
+
 const { cleanup } = await startServers({ app: APP_PORT, proxy: PROXY_PORT })
 
 const browser = await chromium.launch()
@@ -41,6 +53,12 @@ page.on('console', m => {
 await page.addInitScript(() => {
   Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
 })
+// A branded production dist can have live analytics baked in — deny consent up
+// front so a smoke run never POSTs a pageview to the real Plausible site.
+// (No-op on dev/generic builds, where analytics is unconfigured anyway.)
+await page.addInitScript(() => {
+  localStorage.setItem('slothfulchat.analyticsConsent', 'denied')
+})
 
 let failed = false
 try {
@@ -54,6 +72,23 @@ try {
   })
   const info = await page.evaluate(() => window.__coreSystemInfo)
   console.log(`OK: wasm core booted (core ${info.deltachat_core_version})`)
+
+  // mode/dist cross-check (see PRODUCTION above): running the prod smoke
+  // against a dev build — or CI's dev smoke against a prod build — would
+  // silently skip or wrongly run the exp.rpc phases. Fail loudly instead.
+  // No `?? true` fallback: instance-config.mjs always emits devmode as a
+  // boolean, so a missing value means config.js never loaded. Defaulting it
+  // would let the dev path sail past that and surface it 240s later as a
+  // core-boot timeout instead of naming the cause.
+  const devmode = await page.evaluate(() => window.__slothfulConfig?.devmode)
+  if (typeof devmode !== 'boolean') {
+    throw new Error('served dist has no window.__slothfulConfig.devmode — config.js did not load')
+  }
+  if (devmode !== !PRODUCTION) {
+    throw new Error(
+      `served dist has devmode:${devmode} but SMOKE_PRODUCTION=${PRODUCTION ? 1 : 0} — wrong build for this mode`
+    )
+  }
 
   // frontend rendered something real (zero accounts -> onboarding/welcome)
   await page.waitForFunction(
@@ -104,52 +139,83 @@ try {
   // so the lock handoff alone can burn ~75s on a loaded/headless CI runner
   // before wasm re-init + core re-boot even start. 120s was right at the edge
   // and flaked in CI; give the slow-but-correct handoff room to finish.
-  await page.waitForFunction(() => window.__coreSystemInfo && window.exp?.rpc, null, {
-    timeout: 240_000,
-    polling: 250,
-  })
+  // (production: exp.rpc is a throwing getter there, so wait on the core
+  // marker alone — the rpc-driven phases below are skipped in that mode too)
+  await page.waitForFunction(
+    prod => window.__coreSystemInfo && (prod || window.exp?.rpc),
+    PRODUCTION,
+    { timeout: 240_000, polling: 250 }
+  )
   if (!(await page.evaluate(() => navigator.serviceWorker.controller !== null))) {
     throw new Error('page not SW-controlled after reload — regression phase tests nothing')
   }
-  // force a core network attempt: configure against a dead host. Through a
-  // configured proxy this fails with DNS/connect errors; a worker that lost
-  // its config fails with "no WebSocket proxy configured" instead.
-  const configureError = await page.evaluate(async () => {
-    const id = await window.exp.rpc.addAccount()
-    await window.exp.rpc.batchSetConfig(id, {
-      addr: 'smoke@sw-regression.invalid',
-      mail_pw: 'x',
-      mail_server: 'sw-regression.invalid',
-      send_server: 'sw-regression.invalid',
+  if (PRODUCTION) {
+    // The two phases below drive the core over window.exp.rpc, which a release
+    // build must keep locked (a throwing getter unless devmode). Assert the
+    // lock holds — the release build leaking full rpc access to any page
+    // script would be its own regression.
+    const rpcLocked = await page.evaluate(() => {
+      try {
+        void window.exp.rpc
+        return false
+      } catch {
+        return true
+      }
     })
-    return await window.exp.rpc.configure(id).then(() => '', e => String(e?.message ?? e))
-  })
-  const spam = [configureError, ...consoleTail].filter(t =>
-    t.includes('no WebSocket proxy configured')
-  )
-  if (spam.length > 0) {
-    throw new Error(`worker lost its proxy config behind the SW: ${spam[0].slice(0, 200)}`)
-  }
-  console.log(
-    `OK: SW-served worker kept proxy config (dead-host configure failed with: ${configureError.slice(0, 120)})`
-  )
+    if (!rpcLocked) {
+      throw new Error('window.exp.rpc is accessible on a production build — the devmode gate is lost')
+    }
+    // ponytail: known gap, and it is the uncomfortable one. The SW
+    // proxy-config phase skipped here is a regression test — a worker really
+    // did lose its proxy config behind the service worker once — so the
+    // production artifact is the single build where that case goes unchecked.
+    // ci.yml's dev-mode run still covers it, but on a different artifact.
+    // Closing this needs a devmode-independent way to drive the core (an
+    // explicit test hook, not reopening exp.rpc on release builds).
+    console.log(
+      'SKIP (production): exp.rpc phases (SW proxy-config regression, sticker backend) — devmode lock verified instead'
+    )
+  } else {
+    // force a core network attempt: configure against a dead host. Through a
+    // configured proxy this fails with DNS/connect errors; a worker that lost
+    // its config fails with "no WebSocket proxy configured" instead.
+    const configureError = await page.evaluate(async () => {
+      const id = await window.exp.rpc.addAccount()
+      await window.exp.rpc.batchSetConfig(id, {
+        addr: 'smoke@sw-regression.invalid',
+        mail_pw: 'x',
+        mail_server: 'sw-regression.invalid',
+        send_server: 'sw-regression.invalid',
+      })
+      return await window.exp.rpc.configure(id).then(() => '', e => String(e?.message ?? e))
+    })
+    const spam = [configureError, ...consoleTail].filter(t =>
+      t.includes('no WebSocket proxy configured')
+    )
+    if (spam.length > 0) {
+      throw new Error(`worker lost its proxy config behind the SW: ${spam[0].slice(0, 200)}`)
+    }
+    console.log(
+      `OK: SW-served worker kept proxy config (dead-host configure failed with: ${configureError.slice(0, 120)})`
+    )
 
-  // Sticker picker backend: its core RPCs must round-trip on the wasm memfs
-  // (misc_get_sticker_folder does create_dir_all; misc_get_stickers does
-  // read_dir on the account's stickers/ dir, which lives outside the blobdir).
-  // A regression in the fs shim would throw here.
-  const stickerBackend = await page.evaluate(async () => {
-    const id = await window.exp.rpc.addAccount()
-    const folder = await window.exp.rpc.miscGetStickerFolder(id)
-    const packs = await window.exp.rpc.miscGetStickers(id)
-    return { folder, packCount: Object.keys(packs).length }
-  })
-  if (!stickerBackend.folder || !stickerBackend.folder.endsWith('stickers')) {
-    throw new Error(`sticker folder RPC returned unexpected path: ${stickerBackend.folder}`)
+    // Sticker picker backend: its core RPCs must round-trip on the wasm memfs
+    // (misc_get_sticker_folder does create_dir_all; misc_get_stickers does
+    // read_dir on the account's stickers/ dir, which lives outside the blobdir).
+    // A regression in the fs shim would throw here.
+    const stickerBackend = await page.evaluate(async () => {
+      const id = await window.exp.rpc.addAccount()
+      const folder = await window.exp.rpc.miscGetStickerFolder(id)
+      const packs = await window.exp.rpc.miscGetStickers(id)
+      return { folder, packCount: Object.keys(packs).length }
+    })
+    if (!stickerBackend.folder || !stickerBackend.folder.endsWith('stickers')) {
+      throw new Error(`sticker folder RPC returned unexpected path: ${stickerBackend.folder}`)
+    }
+    console.log(
+      `OK: sticker picker backend works on wasm (folder=${stickerBackend.folder}, packs=${stickerBackend.packCount})`
+    )
   }
-  console.log(
-    `OK: sticker picker backend works on wasm (folder=${stickerBackend.folder}, packs=${stickerBackend.packCount})`
-  )
 
   // -- Launch handlers: the manifest registers the `openpgp4fpr:` protocol
   // handler (safelisted scheme), a share target, a `.xdc` file handler, and
@@ -218,6 +284,8 @@ try {
       // freeze the real eval before avoid-eval.js stubs it, else playwright's
       // evaluate()/waitForFunction() break (see the boot page setup above)
       Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
+      // fresh context, so re-deny analytics consent here too (see boot page)
+      localStorage.setItem('slothfulchat.analyticsConsent', 'denied')
     })
     await ctx.addInitScript(() => {
       window.__captured = { qr: null, sendToChat: null }

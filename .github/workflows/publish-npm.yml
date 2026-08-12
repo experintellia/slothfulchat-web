@@ -50,6 +50,16 @@ on:
 
 permissions: {}
 
+# One release train at a time; never cancel an in-flight publish. Two tags
+# pushed close together must run to completion in order — interleaved runs can
+# finish out of order and race the create-release/publish steps. Same shape as
+# deploy-pages.yml's "pages" group. (GitHub keeps at most one run queued per
+# group; a superseded queued tag is skipped, and re-running it by hand is safe
+# — the whole workflow is idempotent per tag.)
+concurrency:
+  group: "publish-npm"
+  cancel-in-progress: false
+
 jobs:
   # The gate (see header). Cheap and first: no build runs, and no job holding
   # id-token: write even exists, until the ref is proven to be a released tag.
