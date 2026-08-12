@@ -384,6 +384,21 @@ function getCore(): Core {
           'init-error',
           (event as MessageEvent).data?.message ?? 'unknown error'
         )
+      } else if (type === 'fatal-worker-died') {
+        // Not posted by the worker — startCore synthesises it when the worker
+        // dies after boot (panic, OOM, terminate, undeserializable reply) and
+        // has already rejected everything in flight. Nothing works from here,
+        // so it gets the same blocking dialog as a failed start.
+        analytics.event('boot_error', { kind: 'worker-died' })
+        showFatalDialog(
+          'sc-worker-died-dialog',
+          `${APP_NAME} stopped working`,
+          'The chat engine stopped unexpectedly. Nothing can be sent or ' +
+            'received until you reload. Your messages are safe — they are ' +
+            'stored in this browser.',
+          'worker-died',
+          (event as MessageEvent).data?.message ?? 'unknown error'
+        )
       }
     })
     // The frontend passes the magic destination '<BROWSER>' to exportBackup on

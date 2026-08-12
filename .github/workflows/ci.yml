@@ -348,6 +348,11 @@ jobs:
       - name: E2E test — fatal-start dialog
         run: node scripts/test-fatal-dialog.mjs
 
+      # post-boot worker death (no proxy, no core boot — a stub worker that
+      # boots and then throws): every in-flight JSON-RPC and fs call must
+      # reject instead of hanging, and the app must show the reload dialog.
+      - name: E2E test — a dying core worker fails loudly, not silently
+        run: node scripts/test-worker-death.mjs
       # migration-error device message e2e (no proxy, no core boot — a stub
       # worker answers the sweep): core keeps an account whose database
       # migration failed open and only records the error, so the app must ask
