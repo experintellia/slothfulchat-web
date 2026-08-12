@@ -64,6 +64,15 @@ jobs:
       - name: Build web-app dist/
         uses: ./.github/actions/build-web-app
 
+      # Boot the artifact that is about to go live — same reasoning as the
+      # release build's smoke step (publish-npm.yml): CI only ever smokes the
+      # --no-opt dev build, so without this the optimized production dist
+      # (wasm-opt on, minified frontend, devmode:false) would deploy without
+      # ever having been executed. No playwright install step: the build
+      # action above already installed chromium.
+      - name: Smoke test — the production dist boots before it ships
+        run: SMOKE_PRODUCTION=1 node scripts/smoke-web-app.mjs
+
       # Stream dist/ to the server; the deploy key's forced command runs the
       # gate script (`upload next`), which stages, validates the full merged
       # config and reloads on success. A non-zero exit fails the job.
