@@ -76,3 +76,9 @@ Cold-start gotchas, in order. Each one cost real time to rediscover:
    makes wasm-pack try to download the matching one from GitHub → fails).
 4. **Use `build:wasm:ci`, not `build:wasm`.** The `:ci` variant passes
    `--no-opt`, skipping `wasm-opt`, which also downloads from GitHub.
+5. **Then `gen-template`** (`pnpm --filter @slothfulchat/core-wasm gen-template`,
+   needs playwright chromium): runs the wasm you just built and writes
+   `wasm-dist/fresh_account.db.gz`, the pre-migrated database new accounts are
+   stamped out of. Optional for a working build — without it, account creation
+   just replays migrations the slow way — but any account-creation timing you
+   measure without it is the old number.

@@ -516,6 +516,8 @@ export function buildPrecache(entries) {
   const manifest = {}
   const included = [...entries].filter(([file]) => !precacheSkip(file))
   for (const [file, bytes] of included.sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    // blobs-sw.ts recomputes this over what it downloads and refuses an entry
+    // that disagrees, so the two must stay the same function
     manifest[file] = createHash('sha1').update(bytes).digest('hex').slice(0, 16)
   }
   const version = createHash('sha1').update(JSON.stringify(manifest)).digest('hex').slice(0, 12)

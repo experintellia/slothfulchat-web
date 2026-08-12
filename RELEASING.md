@@ -169,6 +169,10 @@ Things that have silently broken before — check the dry-run output for them:
 - **`dist/index.d.ts` missing**: the build must run `tsc
   --emitDeclarationOnly` (not `--noEmit`) or the published `exports.types`
   points at nothing.
+- **`wasm-dist/fresh_account.db.gz` missing**: `build:wasm` deletes it (a
+  template from another tree must never pair with a fresh binary) and only
+  `gen-template` puts it back. Nothing breaks without it — accounts are just
+  created the slow way again — which is exactly why it goes unnoticed.
 
 ## Repository settings the release model depends on
 
