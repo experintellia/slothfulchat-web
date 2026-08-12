@@ -1,5 +1,11 @@
 # Changelog
 
+- **An update caught mid-deploy no longer installs half of it.** The app checks
+  each downloaded file against the checksum its release lists, so a deploy that
+  is still being written out — or a CDN that answers one file from a stale copy
+  — leaves the working version in place and retries, instead of pinning a
+  mixture of two releases into the offline cache until the next one.
+
 - **Adding a profile is no longer a second-and-a-half wait.** Every new profile
   built its database from scratch, step by step; it is now stamped out of a
   ready-made one, which is most of that time gone — including for the very
