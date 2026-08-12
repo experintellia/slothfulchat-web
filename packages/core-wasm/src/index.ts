@@ -38,8 +38,12 @@ export class WasmTransport extends BaseTransport {
   fail(cause: Error): void {
     if (this.dead) return
     this.dead = cause
-    const requests = (this as unknown as { _requests: Map<unknown, { reject(e: Error): void }> })
+    const requests = (this as unknown as { _requests?: Map<unknown, { reject(e: Error): void }> })
       ._requests
+    // optional: if a yerpc bump renames the private map, degrade to leaving
+    // already-pending calls hanging rather than throwing out of the fail path
+    // (which would skip the terminate and the dialog after it)
+    if (!requests) return
     const handlers = [...requests.values()]
     requests.clear()
     for (const handler of handlers) handler.reject(cause)
@@ -153,6 +157,18 @@ export function startCore(
   worker.onerror = (event) =>
     fail(new Error(`core worker error: ${(event as ErrorEvent).message || 'unknown'}`))
   worker.onmessageerror = () => fail(new Error('core worker reply was undeserializable'))
+  // …and the death `error` cannot see: a core panic inside the worker's async
+  // onmessage is an unhandled REJECTION there, which browsers never propagate
+  // to worker.onerror. The worker reports those itself (see the
+  // unhandledrejection reporter in worker.ts); settle everything on arrival.
+  // fail() re-dispatches the same type synthetically — its `dead` guard stops
+  // the recursion, and the page-side dialog dedupes the double delivery.
+  worker.addEventListener('message', (event: MessageEvent<unknown>) => {
+    const msg = event.data as { type?: string; message?: string }
+    if (typeof event.data !== 'string' && msg?.type === 'fatal-worker-died') {
+      fail(new Error(msg.message ?? 'core worker died'))
+    }
+  })
 
   const fsRequest = (
     op: 'read' | 'write' | 'remove' | 'exists' | 'flush' | 'failed',

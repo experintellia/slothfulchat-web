@@ -4,9 +4,12 @@
 // call and every fs side-channel call waits for a response that can never
 // arrive: a spinner forever, no error, no way forward. Two phases:
 //
-//   1) transport level — a stub worker that boots and then throws. Every
-//      pending call must reject, later calls must reject too, and the failure
-//      must reach the page as a fatal-* message.
+//   1) transport level — a stub worker that boots and then dies, in both
+//      shapes a death takes: a sync uncaught throw (fires worker.onerror) and
+//      a self-reported fatal-worker-died message (what worker.ts posts for a
+//      panic in its async onmessage, a rejection the browser never propagates
+//      to onerror). Every pending call must reject, later calls must reject
+//      too, and the failure must reach the page as a fatal-* message.
 //   2) app level — the same death behind the real frontend must put the
 //      blocking reload dialog on screen.
 //
@@ -26,6 +29,12 @@ const coreBundle = readFileSync(script('../packages/core-wasm/dist/index.js'), '
 // Boots, answers nothing, then dies of an uncaught error — the shape of a Rust
 // panic or an OOM kill: whatever was in flight simply never gets a reply.
 const DYING_WORKER = `setTimeout(() => { throw new Error('simulated core panic') }, 300)`
+// The shape onerror can't see: a panic inside the worker's async onmessage is
+// an unhandled rejection in the worker, so worker.ts reports it itself. This
+// stub posts that exact report, proving startCore turns it into rejections and
+// the fatal message. (The reporter in worker.ts is a direct postMessage; its
+// wiring can't run here without booting the real wasm core.)
+const REPORTING_WORKER = `setTimeout(() => postMessage({ type: 'fatal-worker-died', message: 'simulated async panic' }), 300)`
 
 const { cleanup } = await startServers({ app: APP_PORT })
 
@@ -35,7 +44,10 @@ const browser = await chromium.launch(
 const url = `http://localhost:${APP_PORT}/main.html`
 
 // --- phase 1: pending calls reject instead of hanging ----------------------
-{
+for (const [death, workerBody] of [
+  ['sync throw', DYING_WORKER],
+  ['self-reported async panic', REPORTING_WORKER],
+]) {
   const context = await browser.newContext({ serviceWorkers: 'block' })
   const page = await context.newPage()
   await freezeEval(page)
@@ -84,18 +96,18 @@ const url = `http://localhost:${APP_PORT}/main.html`
       settle(core.fsRead('/after'), 'later fs'),
     ])
     return { verdicts: [...before, ...after], fatals }
-  }, DYING_WORKER)
+  }, workerBody)
 
   for (const verdict of result.verdicts) {
     if (!verdict.includes('rejected')) {
-      throw new Error(`a call did not fail after the worker died — ${verdict}`)
+      throw new Error(`a call did not fail after the worker died (${death}) — ${verdict}`)
     }
-    console.log(`OK: ${verdict}`)
+    console.log(`OK (${death}): ${verdict}`)
   }
   if (!result.fatals.includes('fatal-worker-died')) {
     throw new Error(`no fatal-worker-died reached the page: ${JSON.stringify(result.fatals)}`)
   }
-  console.log('OK: the death is reported to the page as a fatal message')
+  console.log(`OK (${death}): the death is reported to the page as a fatal message`)
   await context.close()
 }
 
