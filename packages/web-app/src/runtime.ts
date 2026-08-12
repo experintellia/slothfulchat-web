@@ -37,7 +37,6 @@ import {
   fatalDetails,
   fatalReportText,
   fatalReportUrl,
-  isOurBug,
   reportChoiceNote,
 } from './fatal-report.ts'
 import { tempRemovalPath } from './temp-paths.ts'
@@ -2146,44 +2145,34 @@ function showFatalDialog(
     displayMode: session.displayMode(),
   })
   panel.append(title, body)
-  // All of the reporting lives behind one disclosure, and `bodyText` above it
-  // is the first aid. On the kinds the user can fix — close the other tab,
-  // allow site data, turn off Lockdown Mode — that sentence is the most
-  // useful thing on the screen, and a wall of monospace with three buttons
-  // under it buries exactly the instruction they came for. It starts open
-  // only when the failure is ours (isOurBug), because then there is no first
-  // aid and the report IS the useful thing.
+  // Everything stays visible. Two earlier shapes of this screen were both
+  // wrong: a full-height report with three buttons under it buried the one
+  // line that actually helps ("close the other tab"), and folding the lot
+  // behind a disclosure buried the buttons instead — nobody opens a
+  // <details> to volunteer work. So the first aid keeps its place at the top
+  // in the card's own type, and the technical half is present but small: the
+  // report is a compact scrollable box (.sc-report), not a wall.
   //
-  // The send buttons sit inside it too, not next to Retry: expanding is what
-  // shows the user the text, and nothing may be sent that they have not been
-  // shown (#176). Collapsed, the report is one click away for anyone whose
-  // first aid did not work — which is the only reason to press it.
-  if (report) {
-    const disclosure = el('details', 'sc-details')
-    disclosure.open = isOurBug(kind)
-    disclosure.append(
-      el('summary', {}, 'Technical details'),
-      reportBlock(report),
-      copyButton(report)
-    )
-    // Absent, not inert, when the instance configured no destination: the copy
-    // button above is then the whole route, and a button that goes nowhere is
-    // worse than no button on a screen where nothing else works either. Each
-    // destination is its own button rather than one that picks for the user:
-    // they cost different things (an account, publicity) and only the person
-    // pressing it knows which price they are willing to pay.
-    const cfg = (window as any).__slothfulConfig
-    const trackerUrl = fatalReportUrl(cfg?.supportUrl, report, kind)
-    const directUrl = fatalReportUrl(cfg?.crashReportUrl, report, kind)
-    const note = reportChoiceNote(trackerUrl, directUrl)
-    if (note) disclosure.append(el('p', 'sc-note', note))
-    const sendRow = el('div', 'sc-row')
-    // the cheaper one first — most people can finish it, which is the point
-    if (directUrl) sendRow.append(reportLink(directUrl, 'Send to the developers'))
-    if (trackerUrl) sendRow.append(reportLink(trackerUrl, 'Open an issue'))
-    if (sendRow.childElementCount) disclosure.append(sendRow)
-    panel.append(disclosure)
-  }
+  // It also has to stay visible for the send buttons to be honest — nothing
+  // may be sent that the user was not shown (#176), and a collapsed box is
+  // not shown.
+  if (report) panel.append(reportBlock(report), copyButton(report))
+  // Absent, not inert, when the instance configured no destination: the copy
+  // button above is then the whole route, and a button that goes nowhere is
+  // worse than no button on a screen where nothing else works either. Each
+  // destination is its own button rather than one that picks for the user:
+  // they cost different things (an account, publicity) and only the person
+  // pressing it knows which price they are willing to pay.
+  const cfg = (window as any).__slothfulConfig
+  const trackerUrl = report ? fatalReportUrl(cfg?.supportUrl, report, kind) : ''
+  const directUrl = report ? fatalReportUrl(cfg?.crashReportUrl, report, kind) : ''
+  const note = reportChoiceNote(trackerUrl, directUrl)
+  if (note) panel.append(el('p', 'sc-note', note))
+  // In the footer row with Retry, which is where a button is looked for
+  // (#176 asked for exactly that). The cheaper one first — most people can
+  // finish it, which is the point.
+  if (directUrl) row.append(reportLink(directUrl, 'Send to the developers'))
+  if (trackerUrl) row.append(reportLink(trackerUrl, 'Open an issue'))
   row.append(retryBtn)
   panel.append(row)
   // This screen is the only one a first-time visitor gets when the core dies

@@ -80,21 +80,6 @@ export function fatalDetails(message = '', stack = ''): string {
   return stack.includes(message) ? stack : `${message}\n${stack}`
 }
 
-/** Whether this failure is OURS rather than something the user can act on.
- *
- * `opfs-locked` (close the other tab), `storage-blocked` (allow site data) and
- * `no-wasm` (Lockdown Mode) each come with a first-aid step that fixes them;
- * `init-error` and `worker-died` come with nothing the user can do.
- *
- * This controls EMPHASIS only — whether the report starts expanded — never
- * whether reporting is possible. Every kind keeps its buttons: the detections
- * above can be wrong (the OPFS lock's own `ponytail:` note admits it
- * false-positives), and a user told to close a tab they never opened is
- * looking at our bug with no other way to tell us. Someone whose first aid
- * worked never opens this; someone who does is someone it failed. */
-export const isOurBug = (kind = ''): boolean =>
-  kind === 'init-error' || kind === 'worker-died'
-
 /** The line under the two report buttons, naming what each one costs.
  *
  * The difference is the whole reason there are two, and the user has to know

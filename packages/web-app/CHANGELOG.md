@@ -10,8 +10,8 @@
   error screen has always shown the technical details and let you copy them —
   it now also offers to send them, prefilled, wherever the instance you use has
   said reports should go, and says what each destination costs you before you
-  pick. Failures you can fix yourself lead with the fix instead, and the report
-  now carries the error's stack and which site it came from.
+  pick. The report now carries the error's stack and which site it came from,
+  which is what makes a crash diagnosable.
 
 - **An update caught mid-deploy no longer installs half of it.** The app checks
   each downloaded file against the checksum its release lists, so a deploy that

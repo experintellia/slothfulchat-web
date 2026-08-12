@@ -9,8 +9,8 @@
 //   - the report block is selectable despite the app's global user-select:none
 //   - only one fatal dialog is ever shown, however many fatals arrive, and
 //     boot-error.js's generic "browser too old" guess stands down for it
-//   - a failure the USER can fix leads with the fix: the report and its send
-//     buttons start collapsed behind a disclosure (open only for our own bugs)
+//   - the report and its send buttons are visible without a click, next to
+//     Retry, and show what they would transmit before transmitting it (#176)
 //   - the dialog actually renders as a dialog, not just as the right text
 //     in the right elements (#211)
 //   - a report button carries the failure, the worker's error, its stack and
@@ -73,19 +73,16 @@ if (/stored data/i.test(bodyText)) {
 }
 console.log('OK: a browser without WebAssembly is told about Lockdown Mode')
 
-// --- 2) first aid first, then the copyable report carries kind + browser ---
-// no-wasm is a failure the USER can fix (turn off Lockdown Mode for this
-// site), so the report and its send buttons start COLLAPSED: the sentence
-// saying what to do must be the biggest thing on the screen, not a wall of
-// monospace. Section 8 asserts the opposite default for a failure of ours.
-const details = dialog.locator('details.sc-details')
-if (await details.evaluate(d => d.open)) {
-  throw new Error('a user-fixable failure buries its first aid under an open report')
-}
-// expanding is what a reporting user does — and what makes the <pre> below
-// visible to innerText
-await details.locator('summary').click()
+// --- 2) the copyable report carries kind + browser -------------------------
+// Visible, not folded away: a report nobody can see is a report nobody sends,
+// and #176 requires the user to be shown what a send button would transmit.
+// It is kept SMALL instead (.sc-report is a scrollable box), so the first-aid
+// sentence above stays the most prominent thing for the failures a user can
+// actually fix.
 const report = await dialog.locator('pre').innerText()
+if (!report.trim()) {
+  throw new Error('the report block rendered empty or hidden — nothing to copy or send')
+}
 if (!/^failure: no-wasm$/m.test(report)) {
   throw new Error(`report is missing the failure kind: ${report}`)
 }
@@ -251,6 +248,7 @@ let href = ''
 let shown = ''
 let labels = []
 let note = ''
+let rowText = ''
 await withStubWorker(INIT_FATAL, {
   config: {
     instanceName: 'FatalTest',
@@ -258,17 +256,20 @@ await withStubWorker(INIT_FATAL, {
     supportUrl: 'https://tracker.example.test/issues/new',
   },
   inspect: async p => {
-    // ours, so no first aid to bury: the report is open on arrival
-    if (!(await p.locator('#sc-init-error-dialog details.sc-details').evaluate(d => d.open))) {
-      throw new Error('a failure of ours hides its report behind a click for no reason')
-    }
     const links = p.locator('#sc-init-error-dialog a.sc-btn')
     labels = await links.allInnerTexts()
     href = await links.first().getAttribute('href')
     shown = await p.locator('#sc-init-error-dialog pre').innerText()
     note = await p.locator('#sc-init-error-dialog .sc-note').innerText()
+    rowText = await p.locator('#sc-init-error-dialog .sc-row').innerText()
   },
 })
+// the same footer row as Retry, which is where a button gets looked for
+for (const label of ['Send to the developers', 'Open an issue', 'Retry']) {
+  if (!rowText.includes(label)) {
+    throw new Error(`"${label}" is not in the dialog's footer row: ${rowText}`)
+  }
+}
 // the no-account one first: it is the one most people can actually finish
 if (labels.length !== 2 || !/developers/i.test(labels[0]) || !/issue/i.test(labels[1])) {
   throw new Error(`expected [Send to the developers, Open an issue], got ${JSON.stringify(labels)}`)

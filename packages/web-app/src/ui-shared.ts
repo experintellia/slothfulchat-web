@@ -71,7 +71,7 @@ const OVERLAY_CSS = `
  color:#ddd;font-size:13px;cursor:pointer}
 .sc-report{margin:0 0 8px;padding:8px 10px;border-radius:6px;background:#141414;color:#bbb;
  font:12px/1.45 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word;
- max-height:30vh;overflow-y:auto;user-select:text}
+ max-height:5.5em;overflow-y:auto;user-select:text}
 .sc-url{margin:0 0 10px;padding:8px 10px;border-radius:6px;background:#161616;color:#9cdcfe;
  white-space:pre-wrap;word-break:break-all;font-size:12px}
 .sc-link{color:#4ea1ff;font-size:13px}

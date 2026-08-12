@@ -53,7 +53,7 @@ which is DOM-free and unit-tested next door.
 
 ## The two destinations
 
-Each variable adds one button to the error screen, below the report. Set
+Each variable adds one button to the error screen, in the row with Retry. Set
 either, both, or neither.
 
 | Variable | Button | Costs the user |
@@ -61,16 +61,13 @@ either, both, or neither.
 | `SLOTHFUL_SUPPORT_URL` | **Open an issue** | an account on the tracker, and the report is public there |
 | `SLOTHFUL_CRASH_REPORT_URL` | **Send to the developers** | nothing — no account, not public |
 
-Both live behind a **"Technical details"** disclosure, together with the report
-they would send — expanding it is what shows the user the text, so nothing can
-be sent unseen. It starts collapsed when the failure is one the user can fix
-(`opfs-locked`, `storage-blocked`, `no-wasm` each come with a step that fixes
-them) so that step stays the biggest thing on the screen, and expanded when the
-failure is ours (`init-error`, `worker-died`), where there is no first aid and
-the report is the only useful thing. That default is emphasis only: every kind
-keeps its buttons, because these detections can be wrong, and a user told to
-close a tab they never opened is looking at our bug with no other way to reach
-us.
+Both sit in the dialog's footer row next to **Retry**, with the report they
+would send visible above them — nothing is folded away behind a disclosure. A
+report nobody can see is a report nobody sends, and the user has to be shown
+what a button would transmit before it transmits it. The report block itself
+stays small (a scrollable box), so on the failures a user can actually fix
+(`opfs-locked`, `storage-blocked`, `no-wasm`) the sentence telling them what to
+do is still the most prominent thing on the screen.
 
 The note states what the tracker costs before either button is pressed, because
 it is a screen the user cannot go back from. The no-account button renders first: it is
