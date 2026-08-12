@@ -1,5 +1,11 @@
 # Changelog
 
+- **Throwing away a voice recording no longer locks it instead.** Sliding the
+  record button up and to the left to discard a recording could latch it into
+  hands-free mode. Two smaller recorder fixes ride along: repeatedly denying
+  the microphone prompt could leave recording broken until a reload, and the
+  recorder's buttons kept their desktop spacing on narrow phone screens.
+
 - **The privacy policy now says who actually receives the usage statistics.**
   When an instance runs its own Plausible server instead of the hosted service,
   the policy says so and names that server, rather than implying the data goes

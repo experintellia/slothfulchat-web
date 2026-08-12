@@ -140,8 +140,14 @@ exists:
   and demotes the waveform to a 2px progress hairline)), and per-message
   player identity via an inert `#msg=<id>` src fragment, so a forwarded
   copy of a voice message no longer plays and auto-advances in lockstep
-  with the original (peaks stay cached once per underlying file).
-  `desktop/0072` – `desktop/0074`
+  with the original (peaks stay cached once per underlying file). Follow-up
+  fixes: the live pointermove handler now routes through `classifyGesture` so
+  a diagonal up-and-left flick cancels instead of latching the hands-free
+  lock, `MicRecorder.start()` closes the `AudioContext` it opened when
+  `getUserMedia` rejects (repeated denials otherwise hit the browser's
+  concurrent-context cap), and the phone-width button margins are prefixed
+  with `.audioRecorder` so they out-rank the base block's nested rules.
+  `desktop/0072` – `desktop/0074`, `desktop/0082`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
