@@ -76,9 +76,17 @@ const OVERLAY_CSS = `
 .sc-card.sc-page>.sc-note{margin:1rem 0 0;font-size:14px;color:#555}
 .sc-card.sc-page .sc-report{max-height:none;background:#f4f4f4;color:#222;padding:.75rem;
  border-radius:4px;font-size:12px}
+.sc-card.sc-page .sc-btn,.sc-card.sc-page .sc-btn-ghost{font-size:14px;padding:9px 16px}
 .sc-card.sc-page .sc-btn-ghost{border-color:#bbb;color:#333}
-.sc-card.sc-page .sc-row{margin-top:1.5rem}
-.sc-card.sc-page .sc-analytics-note{border-top-color:#ddd;color:#555}
+/* left, with the text column — the page reads top-down along one edge, and a
+   right-aligned row also orphans the last button on its own line when it
+   wraps on a phone */
+.sc-card.sc-page .sc-row{justify-content:flex-start;margin-top:1.5rem}
+/* margin AND padding restated: `.sc-card.sc-page>p` above is more specific
+   than `.sc-analytics-note`, so without this the note keeps none of its own
+   spacing and its separator rule lands flush against the buttons */
+.sc-card.sc-page .sc-analytics-note{margin:1.75rem 0 0;padding-top:1rem;
+ border-top-color:#ddd;color:#555;font-size:14px}
 .sc-card.sc-page .sc-linkbtn{color:#0b57d0}
 .sc-card>h2{margin:0 0 8px;font-size:17px}
 .sc-card>p{margin:0 0 10px;color:#bbb}

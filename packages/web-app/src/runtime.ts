@@ -2171,12 +2171,13 @@ function showFatalDialog(
   const directUrl = report ? fatalReportUrl(cfg?.crashReportUrl, report, kind) : ''
   const note = reportChoiceNote(trackerUrl, directUrl)
   if (note) panel.append(el('p', 'sc-note', note))
-  // In the footer row with Retry, which is where a button is looked for
-  // (#176 asked for exactly that). The cheaper one first — most people can
-  // finish it, which is the point.
+  // One row of actions, Retry first: it is the primary one and the only one
+  // every user wants. Then the report destinations, cheaper one first — most
+  // people can finish that one, which is the point (#176 asked for a button
+  // next to Retry, and this is it).
+  row.append(retryBtn)
   if (directUrl) row.append(reportLink(directUrl, 'Send to the developers'))
   if (trackerUrl) row.append(reportLink(trackerUrl, 'Open an issue'))
-  row.append(retryBtn)
   panel.append(row)
   // This screen is the only one a first-time visitor gets when the core dies
   // before onboarding, so it has to carry the usage-statistics notice the
