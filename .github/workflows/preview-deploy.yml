@@ -44,7 +44,7 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository && vars.PREVIEW_SSH_HOST != ''
     runs-on: ubuntu-latest
     # NO secrets in this job — it runs the PR's own build scripts. Only the
-    # same SLOTHFUL_* branding as prod (deploy-pages.yml) so previews match the
+    # same SLOTHFUL_* branding as prod (publish-npm.yml) so previews match the
     # flagship build. These are repo Variables, not secrets, and they have to be
     # here rather than on `deploy` because the composite build action's
     # assemble step reads them as inherited process env at build time.
