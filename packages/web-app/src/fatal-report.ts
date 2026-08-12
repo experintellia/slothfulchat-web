@@ -37,9 +37,16 @@ export function fatalReportText({
   // and a blind slice(0, 8) would render it as 'abc1234-'
   const short = String(commitHash).match(/^[0-9a-f]+/)?.[0].slice(0, 8) ?? ''
   const build = [version, short].filter(Boolean).join(' ')
+  // `details` LAST, and that ordering is load-bearing rather than cosmetic:
+  // it is the only unbounded field (a panic backtrace runs to thousands of
+  // characters), and fatalReportUrl clips the tail of this text to keep the
+  // URL inside what a server accepts. Anywhere but last, one big backtrace
+  // pushes every line below it out of the report — so the crashes with the
+  // most to say would arrive with no build, no origin and no browser. Last,
+  // the clip eats the deepest stack frames instead, which are what you need
+  // least.
   return [
     ['failure', kind],
-    ['details', collapse(details)],
     ['build', build],
     // WHICH deployment, which the version alone does not answer: prod, next
     // and every PR preview can carry the same version, and a preview's origin
@@ -51,6 +58,7 @@ export function fatalReportText({
     ['origin', origin],
     ['display', displayMode],
     ['browser', collapse(userAgent)],
+    ['details', collapse(details)],
   ]
     .filter(([, value]) => value)
     .map(([label, value]) => `${label}: ${value}`)
@@ -98,7 +106,7 @@ export const isOurBug = (kind = ''): boolean =>
  * is the claim that is exactly true. (What the operator's server then keeps is
  * their business, and docs/crash-reports.md's recipe keeps neither.) '' when
  * nothing to warn about — one no-account button, or none at all. */
-export function reportChoiceNote(tracker = false, direct = false): string {
+export function reportChoiceNote(tracker = '', direct = ''): string {
   if (!tracker) return ''
   const issue = 'Opening an issue needs an account on the tracker, and the report is public there.'
   return direct ? `${issue} Sending it to the developers needs neither.` : issue
@@ -124,7 +132,9 @@ export function fatalReportUrl(supportUrl = '', report = '', kind = ''): string 
   if (!supportUrl || !report) return ''
   try {
     const url = new URL(supportUrl)
-    url.searchParams.set('title', kind ? `Could not start: ${kind}` : 'Could not start')
+    // not "could not start": worker-died happens AFTER a successful boot, and
+    // a tracker full of "could not start: worker-died" mislabels every one
+    url.searchParams.set('title', kind ? `Crash: ${kind}` : 'Crash report')
     url.searchParams.set('body', report)
     // Clipped, not whole: an init-error can carry a Rust panic with a
     // backtrace, and a URL that long is refused outright (GitHub answers 414

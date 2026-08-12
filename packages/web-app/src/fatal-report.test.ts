@@ -104,21 +104,21 @@ test('only a failure of ours starts expanded — first aid outranks the report',
 })
 
 test('the note names what the tracker costs, and only when there is a tracker', () => {
-  const both = reportChoiceNote(true, true)
+  const both = reportChoiceNote('https://tracker.test/new', 'https://report.test/')
   match(both, /account/, 'the reason most reports never get filed')
   match(both, /public/, 'and that it is filed in the open')
   match(both, /needs neither/, 'and that the other button avoids both')
-  match(reportChoiceNote(true, false), /account/)
-  doesNotMatch(reportChoiceNote(true, false), /needs neither/, 'no second button to point at')
+  match(reportChoiceNote('https://tracker.test/new'), /account/)
+  doesNotMatch(reportChoiceNote('https://tracker.test/new'), /needs neither/, 'no second button')
   // nothing to warn about: a no-account button costs the user nothing to press,
   // and with no button at all there is nothing to explain
-  strictEqual(reportChoiceNote(false, true), '')
-  strictEqual(reportChoiceNote(false, false), '')
+  strictEqual(reportChoiceNote('', 'https://report.test/'), '')
+  strictEqual(reportChoiceNote('', ''), '')
   strictEqual(reportChoiceNote(), '')
 })
 
 test('the note claims "no account", never "anonymous" — the request carries an IP', () => {
-  for (const note of [reportChoiceNote(true, true), reportChoiceNote(true, false)]) {
+  for (const note of [reportChoiceNote('https://t.test/', 'https://r.test/'), reportChoiceNote('https://t.test/')]) {
     doesNotMatch(note, /anonym/i, 'a claim about identity we cannot keep')
   }
 })
@@ -154,6 +154,32 @@ test('a panic backtrace is clipped, not sent as a URL the server refuses', () =>
   const url = fatalReportUrl('https://example.test/r', 'failure: x\ndetails: ' + 'a'.repeat(9000))
   ok(url.length <= 6000, `URL stayed under the limit (${url.length})`)
   match(url, /failure/, 'the useful head of the report is still there')
+})
+
+test('a clipped report keeps the metadata and loses only the stack tail', () => {
+  // the biggest reports are the ones that most need saying WHICH build and
+  // WHICH deployment: clipping must never cost those lines
+  const report = fatalReportText({
+    kind: 'init-error',
+    details: 'panicked\n' + '    at frame '.repeat(2000),
+    version: '0.8.1',
+    commitHash: 'c381266f',
+    origin: 'https://pr-42.preview.slothful.chat',
+    displayMode: 'standalone',
+    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/150',
+  })
+  const body = new URL(fatalReportUrl('https://report.example.test/', report, 'init-error'))
+    .searchParams.get('body')
+  for (const line of ['failure:', 'build:', 'origin:', 'display:', 'browser:']) {
+    match(body, new RegExp('^' + line, 'm'), `${line} survived the clip`)
+  }
+  match(body, /at frame/, 'and the head of the stack is still there')
+})
+
+test('a post-boot crash is not titled "could not start"', () => {
+  const url = new URL(fatalReportUrl('https://example.test/r', 'failure: worker-died', 'worker-died'))
+  doesNotMatch(url.searchParams.get('title'), /could not start/i)
+  match(url.searchParams.get('title'), /worker-died/)
 })
 
 test('a non-ASCII error is clipped by ENCODED length, not by character count', () => {

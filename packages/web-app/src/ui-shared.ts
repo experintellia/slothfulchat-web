@@ -65,7 +65,7 @@ const OVERLAY_CSS = `
    <button> otherwise takes the UA's own button font and text centring. */
 .sc-btn{padding:8px 14px;border:none;border-radius:6px;background:#333;color:#fff;
  font-family:inherit;font-size:13px;cursor:pointer;display:inline-flex;
- align-items:center;text-decoration:none}
+ align-items:center;justify-content:center;text-decoration:none}
 .sc-btn.sc-primary{background:#2d7dff}
 .sc-btn-ghost{padding:6px 12px;border:1px solid #444;border-radius:6px;background:transparent;
  color:#ddd;font-size:13px;cursor:pointer}

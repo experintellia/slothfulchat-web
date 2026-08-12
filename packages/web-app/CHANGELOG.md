@@ -9,15 +9,9 @@
 - **Reporting a failed start is now one tap.** If the app can't start, the
   error screen has always shown the technical details and let you copy them —
   it now also offers to send them, prefilled, wherever the instance you use has
-  said reports should go. Where both are offered you can choose: opening an
-  issue on the public tracker needs an account there, sending it to the
-  developers needs neither, and the screen says so before you pick. When the
-  failure is one you can fix yourself — another tab already open, blocked
-  browser storage — that instruction stays in front and the technical details
-  fold away behind "Technical details". The report now carries the error's
-  stack trace and which site it came from, which is what makes a crash
-  diagnosable. Instances that configure no destination keep the copy button
-  and nothing else.
+  said reports should go, and says what each destination costs you before you
+  pick. Failures you can fix yourself lead with the fix instead, and the report
+  now carries the error's stack and which site it came from.
 
 - **An update caught mid-deploy no longer installs half of it.** The app checks
   each downloaded file against the checksum its release lists, so a deploy that

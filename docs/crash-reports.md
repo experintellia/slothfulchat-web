@@ -15,25 +15,32 @@ that reach you.
 
 ```
 failure: init-error
-details: Error: sahpool install failed: NotFoundError install@…/worker.js:311:9
 build: 0.8.1 c381266f
 origin: https://pr-42.preview.slothful.chat
 display: standalone
 browser: Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) …
+details: Error: sahpool install failed: NotFoundError install@…/worker.js:311:9
 ```
 
 | Line | What it is | When |
 |---|---|---|
-| `failure` | `opfs-locked`, `storage-blocked`, `init-error`, `no-wasm`, `migration-error` | always |
-| `details` | the worker's error text **and its stack** | `init-error` |
+| `failure` | `opfs-locked`, `storage-blocked`, `no-wasm`, `init-error`, `worker-died` | always |
 | `build` | app version + 8-character commit | release builds |
 | `origin` | which deployment — prod, a staging slot, `pr-<n>` for a preview | always |
 | `display` | `standalone` (installed PWA) or `browser` | always |
 | `browser` | `navigator.userAgent` | always |
+| `details` | the error text **and its stack** | `init-error`, `worker-died` |
 
-`opfs-locked` and `storage-blocked` carry no `details`: each has one known
-cause ("already open in another tab", "cookies/site data blocked"), so their
-*rate* is the whole signal and there is no error text worth having.
+`details` comes last because it is the only unbounded field: a long backtrace
+is clipped from the end to keep the URL inside what a server accepts, and every
+line above it survives that.
+
+`opfs-locked`, `storage-blocked` and `no-wasm` carry no `details`: each has one
+known cause ("already open in another tab", "cookies/site data blocked",
+"WebAssembly is switched off"), so their *rate* is the whole signal and there is
+no error text worth having. A failed database migration is not here at all — it
+does not stop the app, so it is reported in the affected account's device chat
+instead of on this screen.
 
 The stack is what makes the rest actionable — `NotFoundError` alone has several
 plausible origins (the sahpool install, the wasm fetch, a self-heal that gave
@@ -46,7 +53,7 @@ which is DOM-free and unit-tested next door.
 
 ## The two destinations
 
-Each variable adds one button to the error screen, beside "Copy details". Set
+Each variable adds one button to the error screen, below the report. Set
 either, both, or neither.
 
 | Variable | Button | Costs the user |

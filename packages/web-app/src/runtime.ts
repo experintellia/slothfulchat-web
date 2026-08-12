@@ -2159,9 +2159,13 @@ function showFatalDialog(
   // shown (#176). Collapsed, the report is one click away for anyone whose
   // first aid did not work — which is the only reason to press it.
   if (report) {
-    const details = el('details', 'sc-details')
-    details.open = isOurBug(kind)
-    details.append(el('summary', {}, 'Technical details'), reportBlock(report), copyButton(report))
+    const disclosure = el('details', 'sc-details')
+    disclosure.open = isOurBug(kind)
+    disclosure.append(
+      el('summary', {}, 'Technical details'),
+      reportBlock(report),
+      copyButton(report)
+    )
     // Absent, not inert, when the instance configured no destination: the copy
     // button above is then the whole route, and a button that goes nowhere is
     // worse than no button on a screen where nothing else works either. Each
@@ -2171,14 +2175,14 @@ function showFatalDialog(
     const cfg = (window as any).__slothfulConfig
     const trackerUrl = fatalReportUrl(cfg?.supportUrl, report, kind)
     const directUrl = fatalReportUrl(cfg?.crashReportUrl, report, kind)
-    const note = reportChoiceNote(Boolean(trackerUrl), Boolean(directUrl))
-    if (note) details.append(el('p', {}, note))
+    const note = reportChoiceNote(trackerUrl, directUrl)
+    if (note) disclosure.append(el('p', 'sc-note', note))
     const sendRow = el('div', 'sc-row')
     // the cheaper one first — most people can finish it, which is the point
     if (directUrl) sendRow.append(reportLink(directUrl, 'Send to the developers'))
     if (trackerUrl) sendRow.append(reportLink(trackerUrl, 'Open an issue'))
-    if (sendRow.childElementCount) details.append(sendRow)
-    panel.append(details)
+    if (sendRow.childElementCount) disclosure.append(sendRow)
+    panel.append(disclosure)
   }
   row.append(retryBtn)
   panel.append(row)
@@ -2309,11 +2313,11 @@ function reportBlock(report: string): HTMLElement {
  * popup blocker can refuse window.open() without telling anyone, while a link
  * also survives a long press ("open in new tab") and can be copied. */
 function reportLink(href: string, text: string): HTMLAnchorElement {
-  const a = el('a', 'sc-btn', text)
-  a.href = href
-  a.target = '_blank'
-  a.rel = 'noopener noreferrer'
-  return a
+  return Object.assign(el('a', 'sc-btn', text), {
+    href,
+    target: '_blank',
+    rel: 'noopener noreferrer',
+  })
 }
 
 /** Copy-to-clipboard, with the result said out loud rather than mimed: on a

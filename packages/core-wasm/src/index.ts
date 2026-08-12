@@ -169,9 +169,14 @@ export function startCore(
   // fail() re-dispatches the same type synthetically — its `dead` guard stops
   // the recursion, and the page-side dialog dedupes the double delivery.
   worker.addEventListener('message', (event: MessageEvent<unknown>) => {
-    const msg = event.data as { type?: string; message?: string }
+    const msg = event.data as { type?: string; message?: string; stack?: string }
     if (typeof event.data !== 'string' && msg?.type === 'fatal-worker-died') {
-      fail(new Error(msg.message ?? 'core worker died'))
+      const cause = new Error(msg.message ?? 'core worker died')
+      // carry the WORKER's stack across: fail() re-dispatches this Error, and
+      // an Error constructed here has our own frames — which would reach the
+      // user's report pointing at this dispatcher instead of at the panic
+      if (msg.stack) cause.stack = msg.stack
+      fail(cause)
     }
   })
 
