@@ -122,7 +122,7 @@ index 5a478ad..1887791 100644
              last_error: parking_lot::RwLock::new("".to_string()),
              migration_error: parking_lot::RwLock::new(None),
 diff --git a/src/download.rs b/src/download.rs
-index b5f9ec0..310a8a2 100644
+index b5f9ec0..fb971c0 100644
 --- a/src/download.rs
 +++ b/src/download.rs
 @@ -1,17 +1,28 @@
