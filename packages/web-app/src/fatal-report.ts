@@ -74,11 +74,9 @@ export function fatalDetails(message = '', stack = ''): string {
 
 /** The line under the two report buttons, naming what each one costs.
  *
- * The difference is the whole reason there are two: a tracker is public and
- * needs an account there, which is most of why crash reports never arrive.
- * Saying so is not a disclaimer — someone who does not want to be seen filing
- * it, or who will not sign up, needs to know which button is which BEFORE
- * pressing one, on a screen they cannot go back from.
+ * The difference is the whole reason there are two, and the user has to know
+ * which button is which BEFORE pressing one, on a screen they cannot go back
+ * from.
  *
  * Deliberately not the word "anonymous" for the direct send: the request
  * reaches that server with an IP address like any other, so "needs no account"
@@ -91,8 +89,12 @@ export function reportChoiceNote(tracker = false, direct = false): string {
   return direct ? `${issue} Sending it to the developers needs neither.` : issue
 }
 
-/** Where the dialog's "Report this" button goes: the instance's configured
- * support URL with the report prefilled as `?title=` / `?body=`. Those are
+// Well under the ~8000 where GitHub starts answering 414, with room for an
+// operator's own sink being stricter than that.
+const MAX_URL = 6000
+
+/** Where a report button goes: one of the instance's configured destinations
+ * with the report prefilled as `?title=` / `?body=`. Those are
  * GitHub's own new-issue parameters, so a tracker URL needs no extra config —
  * and they are a plain query, so an operator with no tracker can point this at
  * a webserver route that just logs the request (docs/crash-reports.md). Any
@@ -130,10 +132,6 @@ export function fatalReportUrl(supportUrl = '', report = '', kind = ''): string 
     return ''
   }
 }
-
-// Well under the ~8000 where GitHub starts answering 414, with room for an
-// operator's own sink being stricter than that.
-const MAX_URL = 6000
 
 // Error strings can carry newlines (a Rust panic with a backtrace, a stack).
 // One line per field keeps the block scannable in a paste, and stops a

@@ -348,14 +348,14 @@ function getCore(): Core {
     // is (almost certainly) running in another tab. ponytail: no faster
     // web-lock detection — its release lags on reloads and false-positives
     core.worker.addEventListener('message', event => {
-      const type = (event as MessageEvent).data?.type
+      const data = (event as MessageEvent).data
       // Something more specific is already explained on screen — the no-wasm
       // check, or an earlier fatal from this worker. Return before the event()
       // calls, not just before the dialog: a browser with WebAssembly off makes
       // the worker report a generic init-error too, and counting that as well
       // would attribute every Lockdown Mode user to a bug that isn't theirs.
       if (fatalShown) return
-      if (type === 'fatal-opfs-locked') {
+      if (data?.type === 'fatal-opfs-locked') {
         analytics.event('boot_error', { kind: 'opfs-locked' })
         showFatalDialog(
           'sc-already-running-dialog',
@@ -364,7 +364,7 @@ function getCore(): Core {
             'only run in one at a time. Close the other tab, then retry.',
           'opfs-locked'
         )
-      } else if (type === 'fatal-storage-blocked') {
+      } else if (data?.type === 'fatal-storage-blocked') {
         analytics.event('boot_error', { kind: 'storage-blocked' })
         showFatalDialog(
           'sc-storage-blocked-dialog',
@@ -375,17 +375,14 @@ function getCore(): Core {
             'Settings → Safari → Advanced → Block All Cookies.',
           'storage-blocked'
         )
-      } else if (type === 'fatal-init-error') {
+      } else if (data?.type === 'fatal-init-error') {
         analytics.event('boot_error', { kind: 'init-error' })
         showFatalDialog(
           'sc-init-error-dialog',
           `${APP_NAME} could not start`,
           'The stored data could not be loaded.',
           'init-error',
-          fatalDetails(
-            (event as MessageEvent).data?.message,
-            (event as MessageEvent).data?.stack
-          )
+          fatalDetails(data?.message, data?.stack)
         )
       } else if (type === 'fatal-worker-died') {
         // Not posted by the worker — startCore synthesises it when the worker
