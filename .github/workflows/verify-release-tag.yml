@@ -49,8 +49,11 @@ jobs:
     steps:
       # fetch-depth: 0 makes checkout fetch every branch and tag, so
       # origin/main and the tag AS IT IS ON THE REMOTE are both present.
+      # Pinned to a reviewed commit SHA like every other action in the release
+      # path — a floating tag is most dangerous here of all places, since this
+      # is the gate everything privileged hangs off.
       - name: Checkout (full history — the ancestor check needs main)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
