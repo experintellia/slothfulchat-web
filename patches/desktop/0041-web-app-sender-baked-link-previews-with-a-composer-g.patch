@@ -44,16 +44,16 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
  .../Settings/ExperimentalFeatures.tsx         |   5 +
  .../src/components/composer/Composer.tsx      |  54 ++-
- .../composer/linkPreview/LinkPreviewGhost.tsx | 116 ++++++
+ .../composer/linkPreview/LinkPreviewGhost.tsx | 131 +++++++
  .../composer/linkPreview/detectUrl.ts         |  80 +++++
  .../composer/linkPreview/generate.ts          | 254 +++++++++++++
  .../composer/linkPreview/openGraph.ts         |  56 +++
  .../composer/linkPreview/renderCard.ts        | 331 +++++++++++++++++
- .../composer/linkPreview/styles.module.scss   | 235 ++++++++++++
+ .../composer/linkPreview/styles.module.scss   | 251 +++++++++++++
  .../composer/linkPreview/useLinkPreview.ts    | 336 ++++++++++++++++++
  packages/shared/shared-types.d.ts             |   2 +
  packages/shared/state.ts                      |   1 +
- 11 files changed, 1453 insertions(+), 17 deletions(-)
+ 11 files changed, 1484 insertions(+), 17 deletions(-)
  create mode 100644 packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
  create mode 100644 packages/frontend/src/components/composer/linkPreview/detectUrl.ts
  create mode 100644 packages/frontend/src/components/composer/linkPreview/generate.ts
@@ -166,11 +166,12 @@ index bd99514..99cb83e 100644
                    className='attachment-quote-section is-attachment'
 diff --git a/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx b/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
 new file mode 100644
-index 0000000..c6c5094
+index 0000000..3985529
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/linkPreview/LinkPreviewGhost.tsx
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,131 @@
 +import React from 'react'
++import classNames from 'classnames'
 +
 +import { CloseButton } from '../../Dialog'
 +import type { UseLinkPreview } from './useLinkPreview'
@@ -193,6 +194,21 @@ index 0000000..c6c5094
 +    return null
 +  }
 +
++  // The aria-live wrapper is this outer div, which stays mounted across every
++  // phase change — a live region that appears together with its content (e.g.
++  // aria-live on the per-state divs) is not reliably announced, and the
++  // loading → ready swap would be silent for screen-reader users.
++  return (
++    <div aria-live='polite'>
++      <LinkPreviewPhaseView preview={preview} phase={phase} />
++    </div>
++  )
++}
++
++function LinkPreviewPhaseView({
++  preview,
++  phase,
++}: Props & { phase: NonNullable<UseLinkPreview['phase']> }) {
 +  if (phase.kind === 'ready') {
 +    // The baked card IS the preview (title/host/image are baked into it), so
 +    // show it big and skip the redundant text; keep only the size toggle (with
@@ -243,17 +259,16 @@ index 0000000..c6c5094
 +      : kind === 'loading'
 +        ? 'Generating preview…'
 +        : 'Link previews need a bridge with unfurl enabled.'
-+  const cardClass = [
-+    styles.ghostCard,
-+    kind === 'loading' && styles.ghostCardLoading,
-+    kind === 'unavailable' && styles.ghostCardMuted,
-+  ]
-+    .filter(Boolean)
-+    .join(' ')
 +  return (
-+    <div className={styles.ghost} aria-live='polite' data-testid={testId}>
++    <div className={styles.ghost} data-testid={testId}>
 +      <div className={styles.ghostLeft}>
-+        <div className={cardClass} aria-hidden='true'>
++        <div
++          className={classNames(styles.ghostCard, {
++            [styles.ghostCardLoading]: kind === 'loading',
++            [styles.ghostCardMuted]: kind === 'unavailable',
++          })}
++          aria-hidden='true'
++        >
 +          <div className={styles.ghostBody}>
 +            <span className={styles.skelLine} />
 +            <span className={`${styles.skelLine} ${styles.skelLineShort}`} />
@@ -1033,10 +1048,10 @@ index 0000000..b6326c4
 +}
 diff --git a/packages/frontend/src/components/composer/linkPreview/styles.module.scss b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
 new file mode 100644
-index 0000000..e2f9fa1
+index 0000000..b5e3c5f
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/linkPreview/styles.module.scss
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,251 @@
 +// Link-preview ghost / chip, shown in the composer's upper bar alongside the
 +// quote and attachment sections. Uses theme variables so it blends in both
 +// light and dark themes.
@@ -1076,9 +1091,8 @@ index 0000000..e2f9fa1
 +  padding: 0 2px;
 +  font-size: 12px;
 +  color: color-mix(in srgb, var(--messageText) 60%, transparent);
-+  white-space: nowrap;
-+  overflow: hidden;
-+  text-overflow: ellipsis;
++  // Wraps rather than truncates: on a narrow composer the unavailable state's
++  // explanation must stay fully readable.
 +}
 +
 +.ghostCard {
@@ -1103,9 +1117,10 @@ index 0000000..e2f9fa1
 +  max-width: 100%;
 +  box-sizing: border-box;
 +  // idle ↔ loading ↔ unavailable morph in place (same DOM), so ease the cues
++  // that actually change (border-style isn't animatable)
 +  transition:
 +    opacity 0.2s,
-+    border-color 0.2s;
++    filter 0.2s;
 +}
 +
 +// Loading: the same skeleton card, now shimmering — the placeholder is
@@ -1138,7 +1153,10 @@ index 0000000..e2f9fa1
 +@media (prefers-reduced-motion: reduce) {
 +  .ghostCardLoading .skelLine,
 +  .ghostCardLoading .ghostThumb {
++    // Drop the gradient too — with the animation off it would sit as a
++    // frozen white sheen at the sweep's parked position.
 +    animation: none;
++    background-image: none;
 +  }
 +}
 +
@@ -1206,6 +1224,19 @@ index 0000000..e2f9fa1
 +.ready {
 +  composes: base;
 +  align-items: center;
++}
++
++// Generic one-line chip row. Not used by the link-preview states themselves
++// anymore (they all share the ghost card), but Composer's "Tracking removed
++// from link" chip renders with these.
++.bar {
++  composes: base;
++  gap: 8px;
++}
++
++.barLabel {
++  font-size: 13px;
++  color: color-mix(in srgb, var(--messageText) 70%, transparent);
 +}
 +
 +// The baked card shown at a readable size — it already carries the title, host
