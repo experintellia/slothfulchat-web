@@ -82,9 +82,10 @@ const OVERLAY_CSS = `
    right-aligned row also orphans the last button on its own line when it
    wraps on a phone */
 .sc-card.sc-page .sc-row{justify-content:flex-start;margin-top:1.5rem}
-/* margin AND padding restated: `.sc-card.sc-page>p` above is more specific
-   than `.sc-analytics-note`, so without this the note keeps none of its own
-   spacing and its separator rule lands flush against the buttons */
+/* margin AND padding restated: the .sc-card.sc-page>p rule above is more
+   specific than .sc-analytics-note, so without this the note keeps none of
+   its own spacing and its separator rule lands flush against the buttons.
+   NB: no backticks in here — this block is a JS template literal. */
 .sc-card.sc-page .sc-analytics-note{margin:1.75rem 0 0;padding-top:1rem;
  border-top-color:#ddd;color:#555;font-size:14px}
 .sc-card.sc-page .sc-linkbtn{color:#0b57d0}
