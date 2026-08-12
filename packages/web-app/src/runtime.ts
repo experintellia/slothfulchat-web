@@ -33,7 +33,12 @@ import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
 import { el, overlayCard, scButton, showOnTop } from './ui-shared'
-import { fatalDetails, fatalReportText, fatalReportUrl, reportChoiceNote } from './fatal-report.ts'
+import {
+  fatalDetails,
+  fatalReportText,
+  fatalReportUrl,
+  reportChoiceNote,
+} from './fatal-report.ts'
 import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
@@ -384,7 +389,7 @@ function getCore(): Core {
           'init-error',
           fatalDetails(data?.message, data?.stack)
         )
-      } else if (type === 'fatal-worker-died') {
+      } else if (data?.type === 'fatal-worker-died') {
         // Not posted by the worker — startCore synthesises it when the worker
         // dies after boot (panic, OOM, terminate, undeserializable reply) and
         // has already rejected everything in flight. Nothing works from here,
@@ -397,7 +402,7 @@ function getCore(): Core {
             'received until you reload. Your messages are safe — they are ' +
             'stored in this browser.',
           'worker-died',
-          (event as MessageEvent).data?.message ?? 'unknown error'
+          fatalDetails(data?.message, data?.stack)
         )
       }
     })

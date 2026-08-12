@@ -151,7 +151,12 @@ export function startCore(
     // second notification mechanism: the page already listens for those, and
     // a terminated worker obviously can't post this one itself
     worker.dispatchEvent(
-      new MessageEvent('message', { data: { type: 'fatal-worker-died', message: cause.message } }),
+      new MessageEvent('message', {
+        // `stack` alongside the message, as the init-error path does: worker-died
+        // is the other kind that is a real bug, and the frames are what make one
+        // diagnosable from a user's report (web-app's fatal-report.ts).
+        data: { type: 'fatal-worker-died', message: cause.message, stack: cause.stack },
+      }),
     )
   }
   worker.onerror = (event) =>

@@ -415,6 +415,9 @@ self.addEventListener('unhandledrejection', event => {
   scope.postMessage({
     type: 'fatal-worker-died',
     message: String(event.reason),
+    // a rejection reason is usually an Error; the page joins the two without
+    // doubling the message (fatalDetails) and copes when this is undefined
+    stack: (event.reason as Error)?.stack,
   } as unknown as string)
 })
 
