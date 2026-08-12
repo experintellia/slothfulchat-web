@@ -137,7 +137,9 @@ flowchart LR
 3. Watch the Actions run (`gh run watch`). The core-wasm wasm build takes
    ~10 min uncached; the release, the staging and the prod deploy happen at the
    end.
-4. **Approve the staged packages** — nothing is installable until you do:
+4. **Approve the staged packages** — nothing is installable until you do
+   (first staged release only: the Trusted Publishers must allow
+   `npm stage publish` first — see [Auth](#auth)):
 
    ```sh
    npm stage list        # the three staged versions, with their stage ids

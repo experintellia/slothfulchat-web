@@ -175,7 +175,7 @@ runs:
 
         # One cache entry for every workflow that builds the web-app instead of
         # one per job name. Without this the key carries the job name, so CI's
-        # `test`, publish-npm'/preview-deploy's `build` and deploy-next's
+        # `test`, publish-npm's/preview-deploy's `build` and deploy-next's
         # `deploy` each kept a private ~1.1 GB copy — and preview-deploy, which
         # only ever runs on PRs, could never populate its own at all.
         shared-key: web-app-build
