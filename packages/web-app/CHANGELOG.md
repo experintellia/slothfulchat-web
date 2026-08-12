@@ -1,5 +1,11 @@
 # Changelog
 
+- **A chat engine that crashes now says so instead of spinning forever.** If
+  the engine died after startup, everything the app had asked it to do simply
+  waited for an answer that was never coming — an endless spinner with no error
+  and no way out. The failure is now reported straight away, with a dialog that
+  offers a reload.
+
 - **The link-preview offer in the composer now looks like one thing.** The
   placeholder, the loading state and the "needs a bridge" notice used to look
   like three unrelated widgets; they are now the same card that fills in — the
