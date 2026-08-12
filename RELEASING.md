@@ -61,6 +61,53 @@ and the Pages OIDC token respectively — check out nothing and only upload what
 and the last three are quick. `deploy` hangs off `build` directly, so a broken
 npm publish can't hold prod back and a rejected deploy can't block the release.
 
+### Which workflow runs when
+
+Every box that builds the app runs the same composite,
+`.github/actions/build-web-app` — that is what keeps what CI tests and what
+ships from drifting apart. Only the release path is gated on a tag.
+
+```mermaid
+flowchart TD
+    PR([pull request]) --> CI["<b>ci.yml</b><br/>lint · test<br/><i>dev build: no wasm-opt</i>"]
+    PR --> PV["<b>preview-deploy.yml</b><br/>per-PR preview"]
+    MAIN([push to main]) --> NX["<b>deploy-next.yml</b><br/>next.slothful.chat"]
+    TAG([push tag v*]) --> GATE
+
+    subgraph REL["publish-npm.yml — one build, three outputs"]
+        direction TB
+        GATE["<b>verify-tag</b><br/>unmoved tag · on main<br/>CI green · versions match"]
+        GATE --> B
+        B["<b>build</b> — contents: read<br/><i>the only job that runs repo code</i>"]
+        B --> R["<b>release</b><br/>contents: write"]
+        B --> D["<b>deploy</b><br/>pages + id-token"]
+        R --> P["<b>publish</b><br/>id-token"]
+    end
+
+    R --> RO(["GitHub release<br/>generic zip + customize.mjs"])
+    P --> PO(["npm <b>stage queue</b><br/>not installable yet"])
+    D --> DO(["web.slothful.chat"])
+    PO -.->|"human approves, 2FA"| NPM(["npm @latest"])
+
+    classDef out fill:#0b7285,stroke:#0b7285,color:#fff
+    classDef gate fill:#a61e4d,stroke:#a61e4d,color:#fff
+    class RO,PO,DO,NPM out
+    class GATE gate
+```
+
+Inside `build`, the order is load-bearing — the generic zip has to be packed
+before the branded pass overwrites `dist/`:
+
+```mermaid
+flowchart LR
+    A["build-web-app<br/><i>~20 min: patched core, jsonrpc<br/>client, desktop bundle, wasm</i><br/>no SLOTHFUL_* set"] --> B["pack<br/>zip + 3 npm tarballs"]
+    B --> C["assemble + build<br/><i>again, ~30s</i><br/>SLOTHFUL_* set"]
+    C --> D["smoke<br/>SMOKE_PRODUCTION=1<br/><i>boots the real dist</i>"]
+    D --> E["upload<br/>Pages artifact"]
+    B -.->|"artifacts"| F(["to release + publish"])
+    E -.->|"artifact"| G(["to deploy"])
+```
+
 1. Pick the next tag version (strictly greater than the last — the whole train
    moves up together) and set it everywhere at once:
 
