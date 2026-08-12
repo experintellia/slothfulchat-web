@@ -747,7 +747,15 @@ pub fn seed_db_from_template(name: &str) -> bool {
             return false;
         }
         match sqlite_vfs_import(name, bytes) {
-            Ok(()) => true,
+            Ok(()) => {
+                // one line per new account, and the only evidence the fast
+                // path is live — a template that silently stopped being
+                // applied looks exactly like a correct slow build
+                web_sys::console::log_1(&JsValue::from_str(&format!(
+                    "opfs: seeded {name:?} from the account template"
+                )));
+                true
+            }
             Err(err) => {
                 web_sys::console::warn_1(&JsValue::from_str(&format!(
                     "opfs: failed to seed {name:?} from the account template: {err}"
@@ -756,6 +764,26 @@ pub fn seed_db_from_template(name: &str) -> bool {
             }
         }
     })
+}
+
+/// Throws away a seed that turned out not to be a readable database: removes
+/// `name` so sqlite creates a real, empty one in its place, and drops the
+/// template so no further account is seeded from it this session.
+///
+/// The caller must have closed every connection to `name` — the point of
+/// calling this is that opening it did not work.
+pub fn discard_db_template(name: &str) {
+    DB_TEMPLATE.with(|t| *t.borrow_mut() = None);
+    SAHPOOL.with(|c| match c.borrow().as_ref() {
+        Some(util) => {
+            let _ = util.delete_db(name);
+        }
+        None => sqlite_wasm_rs::MemVfsUtil::<sqlite_wasm_rs::WasmOsCallback>::new().delete_db(name),
+    });
+    web_sys::console::warn_1(&JsValue::from_str(&format!(
+        "opfs: the account template did not open as a database — discarded it, \
+         {name:?} will be migrated from scratch"
+    )));
 }
 
 /// Exports database `name` from the default sqlite VFS and deletes it there.

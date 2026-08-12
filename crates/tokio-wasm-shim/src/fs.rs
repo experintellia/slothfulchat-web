@@ -41,8 +41,8 @@ fn checked_len_logged(path: &Path, size: u64) -> io::Result<usize> {
 }
 // re-exported here so the core can reach persistence entry points via `tokio::fs::*`
 pub use crate::opfs::{
-    enable_persistence, failed_count, flush_pending, seed_db_from_template, set_db_template,
-    sqlite_vfs_account_uuids, sqlite_vfs_import, sqlite_vfs_take,
+    discard_db_template, enable_persistence, failed_count, flush_pending, seed_db_from_template,
+    set_db_template, sqlite_vfs_account_uuids, sqlite_vfs_import, sqlite_vfs_take,
 };
 
 /// Point-in-time state of one memfs path, for the OPFS write-through.

@@ -17,14 +17,14 @@ this is safe on every open, and the template is optional: none
 installed, or one built before a migration landed, and the account
 just migrates the (remaining) way as before.
 ---
- src/sql.rs | 19 +++++++++++++++++++
- 1 file changed, 19 insertions(+)
+ src/sql.rs | 41 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
 
 diff --git a/src/sql.rs b/src/sql.rs
-index 406d7c5..e384175 100644
+index 406d7c5..6ffa5f1 100644
 --- a/src/sql.rs
 +++ b/src/sql.rs
-@@ -90,6 +90,25 @@ pub async fn check_passphrase(&self, passphrase: String) -> Result<bool> {
+@@ -90,6 +90,33 @@ pub async fn check_passphrase(&self, passphrase: String) -> Result<bool> {
          // Hold the lock to prevent other thread from opening the database.
          let _lock = self.pool.write().await;
  
@@ -39,14 +39,43 @@ index 406d7c5..e384175 100644
 +        // Here rather than in `try_open`: this is the first thing that ever
 +        // touches the file — `Connection::open` below CREATES it — and it is
 +        // also where the passphrase is known. Existing databases are never
-+        // touched, so every later open is unaffected.
++        // touched, so every later open is unaffected. It also puts the seed
++        // right before the probe that can undo it, see below.
++        //
++        // One semantic change to know about when writing a migration: a seeded
++        // database already has a `config` table, so `migrations::run` sees
++        // `exists_before_update == true` for what is in fact a brand-new
++        // account. No current migration branches on that (they all sit behind
++        // `dbversion <` gates a matched template is already past), but one that
++        // did would hand new accounts the upgrade path.
 +        #[cfg(target_arch = "wasm32")]
-+        if passphrase.is_empty()
-+            && let Some(name) = self.dbfile.to_str()
-+        {
-+            tokio::fs::seed_db_from_template(name);
-+        }
++        let seeded = passphrase.is_empty()
++            && self
++                .dbfile
++                .to_str()
++                .is_some_and(tokio::fs::seed_db_from_template);
 +
          // Test that the key is correct using a single connection.
          let connection = Connection::open(&self.dbfile)?;
          if !passphrase.is_empty() {
+@@ -101,6 +128,20 @@ pub async fn check_passphrase(&self, passphrase: String) -> Result<bool> {
+             .query_row("SELECT count(*) FROM sqlite_master", [], |_row| Ok(()))
+             .is_ok();
+ 
++        // A template that imported cleanly can still be unreadable — the VFS
++        // only checks the file header, not the schema. Without this, a new
++        // account would be created around a database that never opens and
++        // never heals (it exists, so it is never seeded again), which is a
++        // worse failure than the slow path this whole thing avoids. Undo the
++        // seed and let sqlite create a real empty database instead, and drop
++        // the template so no other account pays for it either.
++        #[cfg(target_arch = "wasm32")]
++        if seeded && !key_is_correct {
++            drop(connection);
++            tokio::fs::discard_db_template(self.dbfile.to_str().unwrap_or_default());
++            return Ok(true);
++        }
++
+         Ok(key_is_correct)
+     }
+ 

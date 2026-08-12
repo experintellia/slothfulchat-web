@@ -264,6 +264,15 @@ jobs:
       - name: Smoke test — core-wasm boots in the browser
         run: pnpm --filter @slothfulchat/core-wasm test
 
+      # The account template is an optimization and has to fail like one: a
+      # template sqlite cannot read must leave a WORKING account behind, not
+      # one wrapped around a database that never opens and never heals. The
+      # generator only ever proves the happy path — a seeded account is
+      # identical to a migrated one by design, so nothing it compares can see
+      # this branch.
+      - name: Test — an unreadable account template falls back, not breaks
+        run: node scripts/test-account-template-fallback.mjs
+
       # crypto offload (issue #3), the part reachable without a mail server:
       # key generation runs on the pool worker, and a pool that errors, never
       # answers, or traps never costs correctness — core recomputes inline.

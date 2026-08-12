@@ -125,8 +125,9 @@ pub fn set_crypto_offload(handler: js_sys::Function) {
 /// `scripts/gen-account-template.mjs`). Call before [`init`].
 ///
 /// Optional, and never load-bearing: without it — or with one built by an
-/// older core — account creation falls back to replaying migrations, which
-/// is only slower. See `Sql::try_open` in the core patch stack.
+/// older core, or one that turns out not to open — account creation falls
+/// back to replaying migrations, which is only slower. See
+/// `Sql::check_passphrase` in the core patch stack.
 #[wasm_bindgen]
 pub fn set_account_template(bytes: Vec<u8>) {
     tokio::fs::set_db_template(bytes);
