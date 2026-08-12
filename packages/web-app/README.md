@@ -182,7 +182,7 @@ in source. All optional:
 | `SLOTHFUL_RELAY_DIRECTORY` | Relay-directory JSON for the onboarding relay picker (`{"relays":[{"host":"…"}]}`, CORS-readable; the page CSP is pinned to this URL). Unset = the [chatmail-relays-mirror](https://github.com/experintellia/chatmail-relays-mirror) default; `off` = no picker. |
 | `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the "Public Bots" / "Public Channels" community suggestions in the New Chat dialog instance-wide (also hides the per-user settings toggle). |
 | `SLOTHFUL_SUPPORT_URL` | Public issue tracker: the fatal-start dialog's **"Open an issue"** button. The report is appended as `?title=&body=` (GitHub's new-issue params). The dialog says this one needs an account and is public. |
-| `SLOTHFUL_CRASH_REPORT_URL` | A destination needing no account: the same dialog's **"Send to the developers"** button, same `?title=&body=`. A webserver route that logs the request is enough (see [SELFHOSTING.md](../../SELFHOSTING.md#collecting-crash-reports)). |
+| `SLOTHFUL_CRASH_REPORT_URL` | A destination needing no account: the same dialog's **"Send to the developers"** button, same `?title=&body=`. A webserver route that logs the request is enough (see [docs/crash-reports.md](../../docs/crash-reports.md)). |
 
 Both are unset by default — then there is no button at all, only the copy-to-clipboard fallback, and a self-hosted build never points its users at this repo. Configuring either adds a paragraph to the generated `privacy.html` naming where reports go.
 | `SLOTHFUL_PLAUSIBLE_DOMAIN` | Plausible "site" id enabling **anonymous usage statistics**. Unset (the default) → no analytics at all: no events, no consent banner, no extra CSP origin. |

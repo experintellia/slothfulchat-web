@@ -42,7 +42,7 @@ import { EVENTS } from './src/events.ts'
 //                            a destination that needs no account: the same
 //                            dialog's "Send to the developers" button, same
 //                            ?title=&body=. A webserver route that logs the
-//                            request is enough (see SELFHOSTING.md).
+//                            request is enough (docs/crash-reports.md).
 //                            Both UNSET (self-host default) = no button at
 //                            all, only the copy-to-clipboard fallback
 // `build` carries the slothfulchat-web version + source commit shown in the

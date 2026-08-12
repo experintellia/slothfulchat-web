@@ -47,7 +47,7 @@ export function fatalReportText({
     // It has to be in the report body — a report may arrive from an origin
     // that isn't the one collecting it, and neither a Referer nor a CORS
     // Origin header survives the trip (the link is rel="noreferrer", and the
-    // sink in SELFHOSTING.md drops request headers from its log on purpose).
+    // sink in docs/crash-reports.md drops request headers from its log too).
     ['origin', origin],
     ['display', displayMode],
     ['browser', collapse(userAgent)],
@@ -83,7 +83,7 @@ export function fatalDetails(message = '', stack = ''): string {
  * Deliberately not the word "anonymous" for the direct send: the request
  * reaches that server with an IP address like any other, so "needs no account"
  * is the claim that is exactly true. (What the operator's server then keeps is
- * their business, and SELFHOSTING.md's recipe keeps neither.) '' when there is
+ * their business, and docs/crash-reports.md's recipe keeps neither.) '' when
  * nothing to warn about — one no-account button, or none at all. */
 export function reportChoiceNote(tracker = false, direct = false): string {
   if (!tracker) return ''
@@ -95,7 +95,7 @@ export function reportChoiceNote(tracker = false, direct = false): string {
  * support URL with the report prefilled as `?title=` / `?body=`. Those are
  * GitHub's own new-issue parameters, so a tracker URL needs no extra config —
  * and they are a plain query, so an operator with no tracker can point this at
- * a webserver route that just logs the request (see SELFHOSTING.md). Any
+ * a webserver route that just logs the request (docs/crash-reports.md). Any
  * query the destination already carries (`?labels=bug`) is kept.
  *
  * Returns '' when there is no destination or nothing to report — the caller

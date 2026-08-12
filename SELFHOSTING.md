@@ -139,77 +139,6 @@ The full design — the naming rule, the DNS-vs-TLS wildcard distinction, storag
 and deletion, and the flagship/preview deployment model — is in
 [WEBXDC.md](WEBXDC.md).
 
-## Collecting crash reports
-
-If the core fails to start, the app shows a dialog with the error text and a
-"Copy details" button. Two variables each add a button next to it, and you can
-set either, both, or neither:
-
-- `SLOTHFUL_SUPPORT_URL` → **"Open an issue"**. A tracker URL
-  (`https://github.com/you/fork/issues/new`) needs nothing else — those are
-  GitHub's own prefill parameters. The dialog tells the user this one needs an
-  account there and is public, because for most people that is the reason a
-  crash goes unreported.
-- `SLOTHFUL_CRASH_REPORT_URL` → **"Send to the developers"**. No account, not
-  public.
-
-For the second, a webserver route is the whole backend you need: the report is
-in the query string, so the **access log is the store**. No database, no
-service, nothing to compromise beyond the webserver you already run:
-
-```caddyfile
-report.example.chat {
-	header {
-		Content-Type "text/plain; charset=utf-8"
-		X-Content-Type-Options nosniff
-		Referrer-Policy no-referrer
-		-Server
-	}
-	@get method GET HEAD
-	handle @get {
-		respond "Thanks — your report was received." 200
-	}
-	respond 405
-	log {
-		output file /var/log/caddy/crash.log {
-			roll_size 10MiB   # bounds the disk cost of a flood: one live file + 3 rolled
-			roll_keep 3
-		}
-		format filter {
-			fields {
-				# you asked for the error, not for who hit it. BOTH ip fields:
-				# caddy logs remote_ip AND client_ip, so deleting one leaves the
-				# address in the log while looking like it doesn't
-				request>remote_ip delete
-				request>client_ip delete
-				request>remote_port delete
-				request>headers delete
-			}
-		}
-	}
-}
-```
-
-Two rules make that safe to leave open. **Never echo the query back** — a
-`respond` that includes the report would turn your own origin into an
-attacker-controlled page. And **read the log with care**: a hostile "error
-message" can contain terminal escape sequences, so `jq` (not `jq -r`) or
-`cat -v` when you page through it. Rate limiting needs a plugin build and isn't
-worth it up front; log rotation already caps what a flood can cost you.
-
-One sink can serve every instance you run — prod, a staging slot, PR previews —
-because the report names its own origin in the body. Don't try to read that
-from the request instead: the link is `rel="noreferrer"` and the log filter
-above drops request headers, so there is no `Referer` and no `Origin` to go on.
-
-Nothing here needs CORS. The button is a **link**, so clicking it is an
-ordinary top-level navigation to your sink — not a `fetch()` — which means no
-preflight, no `Access-Control-Allow-Origin`, and no extra `connect-src` in the
-app's CSP. That holds whatever domain the app itself is served from.
-
-The button is a plain link the user clicks, showing the exact text first — the
-app never sends a report on its own.
-
 ## 2. Run the bridge
 
 **Just for yourself?** Run it locally with no config — it listens on
@@ -264,8 +193,8 @@ how the `CHATMAIL_ALLOWLIST` allow-list works) are in the
 | `SLOTHFUL_IMPRINT_ADDRESS` | Postal address on the imprint page (newlines allowed). | `Example Str. 1\n12345 Town` |
 | `SLOTHFUL_IMPRINT_EMAIL` | Contact email on the imprint page. | `hello@example.chat` |
 | `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the community suggestions ("Public Bots", "Public Channels") in the New Chat dialog for the whole instance — the per-user settings toggle is hidden too. Unset/empty: suggestions are shown and each user can hide them in Settings → Chats and Media. | `1` |
-| `SLOTHFUL_SUPPORT_URL` | Your public issue tracker — the crash dialog's **"Open an issue"** button. The URL gets `?title=&body=` appended, which are GitHub's own new-issue parameters. The dialog tells users this one needs an account there and is public. | `https://github.com/you/your-fork/issues/new` |
-| `SLOTHFUL_CRASH_REPORT_URL` | A destination that needs **no account** — the same dialog's **"Send to the developers"** button, same `?title=&body=`. See ["Collecting crash reports"](#collecting-crash-reports): a webserver route is the entire backend. | `https://report.example.chat/` |
+| `SLOTHFUL_SUPPORT_URL` | Your issue tracker — a button on the "could not start" screen that opens a prefilled issue. Needs an account there. See [docs/crash-reports.md](docs/crash-reports.md). | `https://github.com/you/your-fork/issues/new` |
+| `SLOTHFUL_CRASH_REPORT_URL` | A crash-report destination that needs no account — the same screen's other button. A webserver route is the entire backend; see [docs/crash-reports.md](docs/crash-reports.md). | `https://report.example.chat/` |
 
 All are optional. Unset instance/proxy vars fall back to sane defaults; unset
 imprint vars produce a placeholder imprint page telling operators to configure
