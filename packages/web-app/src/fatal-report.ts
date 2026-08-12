@@ -57,6 +57,21 @@ export function fatalReportText({
     .join('\n')
 }
 
+/** The worker's error text and its stack, joined without doubling the message.
+ *
+ * The stack is the evidence: "NotFoundError" alone has several plausible
+ * origins (the sahpool install, the wasm fetch, a self-heal that failed) and
+ * the frames say which. Engines disagree on what `stack` contains, which is
+ * the whole reason this is a function and not a template string — V8 prefixes
+ * the message to it, Firefox and Safari give frames only, so `stack` alone
+ * loses the message on two of the three and `message + stack` repeats it on
+ * the third. Anything that isn't an Error (a thrown string, a DOMException
+ * without frames) still yields its message. */
+export function fatalDetails(message = '', stack = ''): string {
+  if (!stack) return message || 'unknown error'
+  return stack.includes(message) ? stack : `${message}\n${stack}`
+}
+
 /** Where the dialog's "Report this" button goes: the instance's configured
  * support URL with the report prefilled as `?title=` / `?body=`. Those are
  * GitHub's own new-issue parameters, so a tracker URL needs no extra config —

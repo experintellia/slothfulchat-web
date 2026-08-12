@@ -4,7 +4,30 @@
 import { doesNotMatch, match, ok, strictEqual } from 'node:assert'
 import { test } from 'node:test'
 
-import { fatalReportText, fatalReportUrl } from './fatal-report.ts'
+import { fatalDetails, fatalReportText, fatalReportUrl } from './fatal-report.ts'
+
+// The two shapes `stack` really comes in. V8 repeats the message on the first
+// line; SpiderMonkey/JavaScriptCore give frames only.
+const V8_STACK = 'Error: sahpool install failed: NotFoundError\n    at install (worker.ts:311:9)'
+const SPIDERMONKEY_STACK = 'install@https://web.slothful.chat/worker.js:311:9'
+
+test('the stack rides along, and the message is never doubled or dropped', () => {
+  const message = 'Error: sahpool install failed: NotFoundError'
+  strictEqual(fatalDetails(message, V8_STACK), V8_STACK, 'V8 already leads with the message')
+  strictEqual(
+    fatalDetails(message, SPIDERMONKEY_STACK),
+    `${message}\n${SPIDERMONKEY_STACK}`,
+    'frames-only stacks keep the message that names the failure'
+  )
+  match(fatalDetails(message, SPIDERMONKEY_STACK), /install@/, 'and keep the frames')
+})
+
+test('no stack (a thrown string, an old engine) still yields the message', () => {
+  strictEqual(fatalDetails('Error: boom', ''), 'Error: boom')
+  strictEqual(fatalDetails('Error: boom', undefined), 'Error: boom')
+  strictEqual(fatalDetails('', ''), 'unknown error', 'never renders as empty')
+  strictEqual(fatalDetails(), 'unknown error')
+})
 
 test('carries the error text the analytics catalogue cannot (#176)', () => {
   const report = fatalReportText({

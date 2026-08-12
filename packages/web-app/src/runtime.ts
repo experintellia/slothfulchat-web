@@ -33,7 +33,7 @@ import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
 import { el, overlayCard, scButton, showOnTop } from './ui-shared'
-import { fatalReportText, fatalReportUrl } from './fatal-report.ts'
+import { fatalDetails, fatalReportText, fatalReportUrl } from './fatal-report.ts'
 import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
@@ -382,7 +382,10 @@ function getCore(): Core {
           `${APP_NAME} could not start`,
           'The stored data could not be loaded.',
           'init-error',
-          (event as MessageEvent).data?.message ?? 'unknown error'
+          fatalDetails(
+            (event as MessageEvent).data?.message,
+            (event as MessageEvent).data?.stack
+          )
         )
       } else if (type === 'fatal-worker-died') {
         // Not posted by the worker — startCore synthesises it when the worker

@@ -10,6 +10,9 @@
 //   - only one fatal dialog is ever shown, however many fatals arrive
 //   - the dialog actually renders as a dialog, not just as the right text
 //     in the right elements (#211)
+//   - "Report this" carries the failure, the worker's error, its stack and the
+//     origin to the configured destination — and does not exist at all on an
+//     instance that configured none (#176)
 // No ws-tcp-proxy and no core boot needed — the dialog lives in runtime.js.
 // Modeled on scripts/test-bridge-dialog.mjs.
 import { chromium } from 'playwright'
@@ -149,12 +152,23 @@ await context.close()
 // never have reported twice would pass whether or not anything was suppressed.
 // Check 7a proves the stub's messages do reach the page's handler; 7b then
 // shows the second one being swallowed.
-async function withStubWorker(body) {
+async function withStubWorker(body, { config, inspect } = {}) {
   const ctx = await browser.newContext({ serviceWorkers: 'block' })
   const p = await ctx.newPage()
   await p.addInitScript(() => {
     Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
   })
+  // same instance-config injection as test-bridge-dialog.mjs: replace config.js
+  // wholesale rather than patching the object, because the real file assigns
+  // window.__slothfulConfig and would overwrite anything set before it
+  if (config) {
+    await p.route('**/config.js', route =>
+      route.fulfill({
+        contentType: 'text/javascript',
+        body: `window.__slothfulConfig=${JSON.stringify(config)}\n`,
+      })
+    )
+  }
   await p.route('**/core/worker.js', route =>
     route.fulfill({ contentType: 'text/javascript', body })
   )
@@ -163,6 +177,7 @@ async function withStubWorker(body) {
   const ids = await p.evaluate(() =>
     [...document.querySelectorAll('dialog')].filter(d => d.open).map(d => d.id)
   )
+  if (inspect) await inspect(p)
   await ctx.close()
   return ids
 }
@@ -185,6 +200,69 @@ if (both.length !== 1 || both[0] !== 'sc-init-error-dialog') {
   throw new Error(`the later generic fatal buried the specific one: ${JSON.stringify(both)}`)
 }
 console.log('OK: a later, less specific fatal does not bury the first')
+
+// --- 8) "Report this" only exists where a destination is configured --------
+// #176's own requirement: with no SLOTHFUL_SUPPORT_URL the button must be
+// ABSENT, not present and dead — on a screen where nothing works, a button
+// that goes nowhere is worse than no button. Both halves drive the identical
+// failure, so the config is the only difference between them.
+// The stub's stack is the frames-only shape Firefox and Safari produce (V8
+// repeats the message on the first line); it is the case where a naive join
+// would drop the message that names the failure.
+const INIT_FATAL = `self.postMessage({
+  type: 'fatal-init-error',
+  message: 'Error: sahpool install failed: NotFoundError',
+  stack: 'install@https://web.slothful.chat/core/worker.js:311:9',
+})`
+
+let href = ''
+let shown = ''
+await withStubWorker(INIT_FATAL, {
+  config: { instanceName: 'FatalTest', supportUrl: 'https://report.example.test/crash' },
+  inspect: async p => {
+    href = await p.locator('#sc-init-error-dialog a.sc-btn').getAttribute('href')
+    shown = await p.locator('#sc-init-error-dialog pre').innerText()
+  },
+})
+if (!href.startsWith('https://report.example.test/crash?')) {
+  throw new Error(`"Report this" points somewhere unexpected: ${href}`)
+}
+// searchParams, not decodeURIComponent: URLSearchParams writes spaces as '+',
+// which decodeURIComponent leaves alone — every needle below would miss
+const sent = new URL(href).searchParams.get('body')
+for (const [what, needle] of [
+  ['the failure kind', 'failure: init-error'],
+  ["the worker's error text", 'sahpool install failed'],
+  ['the stack', 'install@'],
+  ['the origin, which names the deployment', `origin: http://localhost:${APP_PORT}`],
+  ['the browser', 'browser: Mozilla/5.0'],
+]) {
+  if (!sent.includes(needle)) throw new Error(`the report link is missing ${what}: ${sent}`)
+}
+// what the user is asked to send has to be what they were shown
+for (const needle of ['sahpool install failed', 'install@']) {
+  if (!shown.includes(needle)) {
+    throw new Error(`the dialog sends more than it shows — missing ${needle}: ${shown}`)
+  }
+}
+console.log('OK: "Report this" carries kind, error, stack and origin to the configured URL')
+
+let anchors = -1
+let copyButtons = -1
+await withStubWorker(INIT_FATAL, {
+  config: { instanceName: 'FatalTest' },
+  inspect: async p => {
+    anchors = await p.locator('#sc-init-error-dialog a.sc-btn').count()
+    copyButtons = await p.locator('#sc-init-error-dialog pre + button').count()
+  },
+})
+if (anchors !== 0) {
+  throw new Error(`an unconfigured instance still renders ${anchors} report link(s)`)
+}
+if (copyButtons !== 1) {
+  throw new Error('no copy button either — an unconfigured instance has no way to report at all')
+}
+console.log('OK: no destination configured → no button, and Copy details still there')
 
 await browser.close()
 cleanup()

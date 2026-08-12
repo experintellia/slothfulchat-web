@@ -391,7 +391,17 @@ const ready = (async () => {
 // leaving the loading screen up forever
 ready.catch(err => {
   if (fatalReported) return
-  scope.postMessage({ type: 'fatal-init-error', message: String(err) } as unknown as string)
+  // `stack` as its own field, raw: without it the page gets "NotFoundError"
+  // and no way to tell which call produced it — the sahpool install, the wasm
+  // fetch, a self-heal that gave up. The page decides how to join the two
+  // (fatalDetails in web-app's fatal-report.ts); engines disagree on whether
+  // `stack` already repeats the message, and that belongs in a module with
+  // tests rather than here.
+  scope.postMessage({
+    type: 'fatal-init-error',
+    message: String(err),
+    stack: (err as Error)?.stack,
+  } as unknown as string)
 })
 // The post-boot sibling of the catch above, for the death the page cannot see
 // on its own: `onmessage` below is async, so a core panic mid-call (a wasm
