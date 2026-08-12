@@ -135,7 +135,14 @@ sw.addEventListener('install', (event: any) =>
         if (r.status !== 'fulfilled' || !r.value) continue
         const file = r.value
         const stored = await cache.match(file)
-        const got = stored && (await contentHash(await stored.arrayBuffer()))
+        if (!stored) {
+          // put succeeded but the entry is gone: storage pressure evicted it
+          // mid-install. Distinct from wrong bytes, and worth saying so — this
+          // one is about the device, not the deploy.
+          mismatched.set(file, `precache ${file}: evicted before it could be verified`)
+          continue
+        }
+        const got = await contentHash(await stored.arrayBuffer())
         if (got === MANIFEST[file]) continue
         await cache.delete(file)
         mismatched.set(file, `precache ${file}: got ${got}, manifest says ${MANIFEST[file]}`)
