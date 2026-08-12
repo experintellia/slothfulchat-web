@@ -27,7 +27,7 @@
   end while the pictures were still being written to storage, so a big backup
   sat at "done" for a while before the app moved on. The last stretch of the
   bar is now that saving step, so it keeps moving until the restore really is
-  finished — and a full bar means it is safe to reload.
+  finished — and if anything didn't make it to storage, the app says so.
 
 - **The privacy policy now says who actually receives the usage statistics.**
   When an instance runs its own Plausible server instead of the hosted service,
