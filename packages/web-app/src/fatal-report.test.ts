@@ -4,7 +4,12 @@
 import { doesNotMatch, match, ok, strictEqual } from 'node:assert'
 import { test } from 'node:test'
 
-import { fatalDetails, fatalReportText, fatalReportUrl } from './fatal-report.ts'
+import {
+  fatalDetails,
+  fatalReportText,
+  fatalReportUrl,
+  reportChoiceNote,
+} from './fatal-report.ts'
 
 // The two shapes `stack` really comes in. V8 repeats the message on the first
 // line; SpiderMonkey/JavaScriptCore give frames only.
@@ -85,6 +90,26 @@ test('a version with no commit hash still renders a build line', () => {
 test('a dirty-build hash is abbreviated without its suffix', () => {
   const report = fatalReportText({ kind: 'x', version: '0.9.0', commitHash: 'c381266-dirty' })
   match(report, /^build: 0\.9\.0 c381266$/m, 'no trailing dash from the suffix')
+})
+
+test('the note names what the tracker costs, and only when there is a tracker', () => {
+  const both = reportChoiceNote(true, true)
+  match(both, /account/, 'the reason most reports never get filed')
+  match(both, /public/, 'and that it is filed in the open')
+  match(both, /needs neither/, 'and that the other button avoids both')
+  match(reportChoiceNote(true, false), /account/)
+  doesNotMatch(reportChoiceNote(true, false), /needs neither/, 'no second button to point at')
+  // nothing to warn about: a no-account button costs the user nothing to press,
+  // and with no button at all there is nothing to explain
+  strictEqual(reportChoiceNote(false, true), '')
+  strictEqual(reportChoiceNote(false, false), '')
+  strictEqual(reportChoiceNote(), '')
+})
+
+test('the note claims "no account", never "anonymous" — the request carries an IP', () => {
+  for (const note of [reportChoiceNote(true, true), reportChoiceNote(true, false)]) {
+    doesNotMatch(note, /anonym/i, 'a claim about identity we cannot keep')
+  }
 })
 
 test('the report link prefills kind and error text at the configured destination', () => {

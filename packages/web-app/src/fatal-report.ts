@@ -72,6 +72,25 @@ export function fatalDetails(message = '', stack = ''): string {
   return stack.includes(message) ? stack : `${message}\n${stack}`
 }
 
+/** The line under the two report buttons, naming what each one costs.
+ *
+ * The difference is the whole reason there are two: a tracker is public and
+ * needs an account there, which is most of why crash reports never arrive.
+ * Saying so is not a disclaimer — someone who does not want to be seen filing
+ * it, or who will not sign up, needs to know which button is which BEFORE
+ * pressing one, on a screen they cannot go back from.
+ *
+ * Deliberately not the word "anonymous" for the direct send: the request
+ * reaches that server with an IP address like any other, so "needs no account"
+ * is the claim that is exactly true. (What the operator's server then keeps is
+ * their business, and SELFHOSTING.md's recipe keeps neither.) '' when there is
+ * nothing to warn about — one no-account button, or none at all. */
+export function reportChoiceNote(tracker = false, direct = false): string {
+  if (!tracker) return ''
+  const issue = 'Opening an issue needs an account on the tracker, and the report is public there.'
+  return direct ? `${issue} Sending it to the developers needs neither.` : issue
+}
+
 /** Where the dialog's "Report this" button goes: the instance's configured
  * support URL with the report prefilled as `?title=` / `?body=`. Those are
  * GitHub's own new-issue parameters, so a tracker URL needs no extra config —

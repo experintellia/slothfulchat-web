@@ -30,9 +30,13 @@
   are unavailable.
 - **Reporting a failed start is now one tap.** If the app can't start, the
   error screen has always shown the technical details and let you copy them —
-  it now also offers a "Report this" button that opens a prefilled report,
-  where the instance you use has said reports should go. Instances that
-  configure no destination keep the copy button and nothing else.
+  it now also offers to send them, prefilled, wherever the instance you use has
+  said reports should go. Where both are offered you can choose: opening an
+  issue on the public tracker needs an account there, sending it to the
+  developers needs neither, and the screen says so before you pick. The report
+  now carries the error's stack trace and which site it came from, which is
+  what makes a crash diagnosable. Instances that configure no destination keep
+  the copy button and nothing else.
 
 - **The privacy policy now says who actually receives the usage statistics.**
   When an instance runs its own Plausible server instead of the hosted service,

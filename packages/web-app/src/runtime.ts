@@ -33,7 +33,7 @@ import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
 import { el, overlayCard, scButton, showOnTop } from './ui-shared'
-import { fatalDetails, fatalReportText, fatalReportUrl } from './fatal-report.ts'
+import { fatalDetails, fatalReportText, fatalReportUrl, reportChoiceNote } from './fatal-report.ts'
 import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
@@ -2094,8 +2094,10 @@ let fatalShown = false
  * and no way to put an arbitrary error string through the analytics catalogue,
  * the user sending this somewhere is the only route from "it broke" to a fix
  * (#176). Selecting text by hand is not that route — on a phone it is barely
- * possible — so there is a copy button, plus a "Report this" link straight to
- * the destination when the instance configured one (SLOTHFUL_SUPPORT_URL). */
+ * possible — so there is a copy button, plus a link straight to each
+ * destination the instance configured: the public tracker
+ * (SLOTHFUL_SUPPORT_URL) and the one that needs no account
+ * (SLOTHFUL_CRASH_REPORT_URL). */
 function showFatalDialog(
   id: string,
   titleText: string,
@@ -2137,13 +2139,18 @@ function showFatalDialog(
   if (report) panel.append(reportBlock(report), copyButton(report))
   // Absent, not inert, when the instance configured no destination: the copy
   // button above is then the whole route, and a button that goes nowhere is
-  // worse than no button on a screen where nothing else works either.
-  const reportUrl = fatalReportUrl(
-    (window as any).__slothfulConfig?.supportUrl,
-    report,
-    kind
-  )
-  if (reportUrl) row.append(reportLink(reportUrl))
+  // worse than no button on a screen where nothing else works either. Each
+  // destination is its own button rather than one that picks for the user:
+  // they cost different things (an account, publicity) and only the person
+  // pressing it knows which price they are willing to pay.
+  const cfg = (window as any).__slothfulConfig
+  const trackerUrl = fatalReportUrl(cfg?.supportUrl, report, kind)
+  const directUrl = fatalReportUrl(cfg?.crashReportUrl, report, kind)
+  // the cheaper one first — most people can finish it, which is the point
+  if (directUrl) row.append(reportLink(directUrl, 'Send to the developers'))
+  if (trackerUrl) row.append(reportLink(trackerUrl, 'Open an issue'))
+  const note = reportChoiceNote(Boolean(trackerUrl), Boolean(directUrl))
+  if (note) panel.append(el('p', 'sc-note', note))
   row.append(retryBtn)
   panel.append(row)
   // This screen is the only one a first-time visitor gets when the core dies
@@ -2269,11 +2276,11 @@ function reportBlock(report: string): HTMLElement {
   return el('pre', 'sc-report', report)
 }
 
-/** "Report this" — an <a>, not a button that opens the URL itself: a popup
- * blocker can refuse window.open() without telling anyone, while a link also
- * survives a long press ("open in new tab") and can be copied. */
-function reportLink(href: string): HTMLAnchorElement {
-  const a = el('a', 'sc-btn', 'Report this')
+/** A report destination — an <a>, not a button that opens the URL itself: a
+ * popup blocker can refuse window.open() without telling anyone, while a link
+ * also survives a long press ("open in new tab") and can be copied. */
+function reportLink(href: string, text: string): HTMLAnchorElement {
+  const a = el('a', 'sc-btn', text)
   a.href = href
   a.target = '_blank'
   a.rel = 'noopener noreferrer'

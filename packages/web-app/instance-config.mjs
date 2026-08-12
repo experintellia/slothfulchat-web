@@ -35,10 +35,16 @@ import { EVENTS } from './src/events.ts'
 //                            ("Public Bots", "Public Channels") in the New
 //                            Chat dialog for the whole instance, including
 //                            the per-user settings toggle
-//   SLOTHFUL_SUPPORT_URL     where the fatal-start dialog's "Report this"
-//                            button sends the report (as ?title=&body=).
-//                            UNSET (self-host default) = no button at all,
-//                            only the copy-to-clipboard fallback
+//   SLOTHFUL_SUPPORT_URL     public issue tracker: the fatal-start dialog's
+//                            "Open an issue" button, which needs an account
+//                            there and files in the open (as ?title=&body=)
+//   SLOTHFUL_CRASH_REPORT_URL
+//                            a destination that needs no account: the same
+//                            dialog's "Send to the developers" button, same
+//                            ?title=&body=. A webserver route that logs the
+//                            request is enough (see SELFHOSTING.md).
+//                            Both UNSET (self-host default) = no button at
+//                            all, only the copy-to-clipboard fallback
 // `build` carries the slothfulchat-web version + source commit shown in the
 // About dialog/log (see gitBuildMeta() in assemble.mjs). customize.mjs
 // re-applying config to a prebuilt zip has no working tree to read this from,
@@ -99,12 +105,16 @@ export function buildConfig(env, build = {}) {
     hidePublicSuggestions: ['1', 'true', 'yes'].includes(
       (env.SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS || '').toLowerCase()
     ),
-    // destination for the "Report this" button on the fatal-start dialog
-    // (fatalReportUrl in src/fatal-report.ts appends ?title=&body=). No
-    // default on purpose: an unconfigured self-hosted instance must not point
-    // its users at THIS repo's tracker, and the dialog's copy button already
-    // gives them something to do without one (#176).
+    // The two destinations on the fatal-start dialog, each its own button
+    // (fatalReportUrl in src/fatal-report.ts appends ?title=&body= to either).
+    // They differ in what they cost the user, which is why they are not one
+    // setting: a tracker is public and needs an account there, and most people
+    // will not make one to report a crash; a plain endpoint needs neither.
+    // Neither has a default — an unconfigured self-hosted instance must not
+    // point its users at THIS repo's tracker, and the dialog's copy button
+    // already gives them something to do without one (#176).
     supportUrl: normalizeUrl(env.SLOTHFUL_SUPPORT_URL),
+    crashReportUrl: normalizeUrl(env.SLOTHFUL_CRASH_REPORT_URL),
     // release builds (CI sets NODE_ENV=production) hide devmode features:
     // window.exp access, debug log level, dev_ prototype themes
     devmode: env.NODE_ENV !== 'production',
@@ -337,6 +347,32 @@ longer complies, please report it to the email address above.</p>
 `
 }
 
+/** The crash-report paragraph, only on instances that configured somewhere for
+ * a report to go. The dialog offers a button labelled as needing no account,
+ * and a claim like that has to be backed somewhere the user can check: the
+ * report is sent by hand, its full text is on screen first, and it carries no
+ * message or account data — but the request reaches that server with an IP
+ * address, like every other request, and the policy says so rather than
+ * letting "no account" be read as "untraceable". */
+function crashReportSection(config) {
+  const targets = [config.crashReportUrl, config.supportUrl].filter(Boolean)
+  if (!targets.length) return ''
+  return `<h2>Reporting a failed start</h2>
+<p>If the app cannot start, the error screen shows you the technical details
+and offers to send them: the failure, the error text and its stack, the app
+version, this site's address, and your browser's user-agent string. Nothing
+else — no message content, no contacts, no account data. <strong>It is never
+sent automatically</strong>: the full text is on screen, and it goes nowhere
+unless you press one of the buttons, which are ordinary links to
+${targets.map(t => `<code>${esc(new URL(t).origin)}</code>`).join(' and ')}.
+Like any web request it arrives with your IP address — a report needs no
+account, which is not the same as being untraceable.${
+    config.supportUrl
+      ? ' A report opened as an issue on the tracker is public.'
+      : ''
+  }</p>`
+}
+
 // privacy.html — standalone privacy policy. The "what is collected" list is
 // rendered from src/events.ts — the same closed catalogue the app actually
 // sends from — so the published policy can never drift from the code.
@@ -483,6 +519,8 @@ when you accept the ghost preview offered under the composer. That fetch goes
 through the bridge you use, so the bridge operator learns that URL — use a
 local bridge for maximum privacy. Nothing about your contacts or conversations
 is sent along.</p>
+
+${crashReportSection(config)}
 
 ${analyticsSection}
 

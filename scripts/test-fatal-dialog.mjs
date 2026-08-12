@@ -10,9 +10,10 @@
 //   - only one fatal dialog is ever shown, however many fatals arrive
 //   - the dialog actually renders as a dialog, not just as the right text
 //     in the right elements (#211)
-//   - "Report this" carries the failure, the worker's error, its stack and the
-//     origin to the configured destination — and does not exist at all on an
-//     instance that configured none (#176)
+//   - a report button carries the failure, the worker's error, its stack and
+//     the origin to the configured destination, says what the tracker costs
+//     before it is pressed, and does not exist at all on an instance that
+//     configured no destination (#176)
 // No ws-tcp-proxy and no core boot needed — the dialog lives in runtime.js.
 // Modeled on scripts/test-bridge-dialog.mjs.
 import { chromium } from 'playwright'
@@ -201,11 +202,14 @@ if (both.length !== 1 || both[0] !== 'sc-init-error-dialog') {
 }
 console.log('OK: a later, less specific fatal does not bury the first')
 
-// --- 8) "Report this" only exists where a destination is configured --------
-// #176's own requirement: with no SLOTHFUL_SUPPORT_URL the button must be
+// --- 8) a report button exists only where a destination is configured ------
+// #176's own requirement: with neither destination set the button must be
 // ABSENT, not present and dead — on a screen where nothing works, a button
 // that goes nowhere is worse than no button. Both halves drive the identical
 // failure, so the config is the only difference between them.
+// The two destinations are separate buttons because they cost the user
+// different things, so this also checks that the difference is stated before
+// the click rather than after it.
 // The stub's stack is the frames-only shape Firefox and Safari produce (V8
 // repeats the message on the first line); it is the case where a naive join
 // would drop the message that names the failure.
@@ -217,15 +221,35 @@ const INIT_FATAL = `self.postMessage({
 
 let href = ''
 let shown = ''
+let labels = []
+let note = ''
 await withStubWorker(INIT_FATAL, {
-  config: { instanceName: 'FatalTest', supportUrl: 'https://report.example.test/crash' },
+  config: {
+    instanceName: 'FatalTest',
+    crashReportUrl: 'https://report.example.test/crash',
+    supportUrl: 'https://tracker.example.test/issues/new',
+  },
   inspect: async p => {
-    href = await p.locator('#sc-init-error-dialog a.sc-btn').getAttribute('href')
+    const links = p.locator('#sc-init-error-dialog a.sc-btn')
+    labels = await links.allInnerTexts()
+    href = await links.first().getAttribute('href')
     shown = await p.locator('#sc-init-error-dialog pre').innerText()
+    note = await p.locator('#sc-init-error-dialog .sc-note').innerText()
   },
 })
+// the no-account one first: it is the one most people can actually finish
+if (labels.length !== 2 || !/developers/i.test(labels[0]) || !/issue/i.test(labels[1])) {
+  throw new Error(`expected [Send to the developers, Open an issue], got ${JSON.stringify(labels)}`)
+}
 if (!href.startsWith('https://report.example.test/crash?')) {
-  throw new Error(`"Report this" points somewhere unexpected: ${href}`)
+  throw new Error(`the no-account button points somewhere unexpected: ${href}`)
+}
+// the tracker's price has to be visible BEFORE the click, on a screen with no back
+for (const needle of ['account', 'public']) {
+  if (!note.includes(needle)) throw new Error(`the choice note never mentions ${needle}: ${note}`)
+}
+if (/anonym/i.test(note)) {
+  throw new Error(`the note claims anonymity we cannot keep — the request carries an IP: ${note}`)
 }
 // searchParams, not decodeURIComponent: URLSearchParams writes spaces as '+',
 // which decodeURIComponent leaves alone — every needle below would miss
@@ -245,7 +269,8 @@ for (const needle of ['sahpool install failed', 'install@']) {
     throw new Error(`the dialog sends more than it shows — missing ${needle}: ${shown}`)
   }
 }
-console.log('OK: "Report this" carries kind, error, stack and origin to the configured URL')
+console.log('OK: both buttons offered, cheaper one first, each cost named up front')
+console.log('OK: the report carries kind, error, stack and origin to the configured URL')
 
 let anchors = -1
 let copyButtons = -1

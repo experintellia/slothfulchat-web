@@ -142,15 +142,20 @@ and deletion, and the flagship/preview deployment model — is in
 ## Collecting crash reports
 
 If the core fails to start, the app shows a dialog with the error text and a
-"Copy details" button. Set `SLOTHFUL_SUPPORT_URL` and it also shows **"Report
-this"**, a link to that URL with the report appended as `?title=&body=`.
+"Copy details" button. Two variables each add a button next to it, and you can
+set either, both, or neither:
 
-A tracker URL (`https://github.com/you/fork/issues/new`) needs nothing else —
-those are GitHub's own prefill parameters. If you have no tracker, or you'd
-rather not make a GitHub account the price of reporting a crash, a webserver
-route is the whole backend you need: the report is in the query string, so the
-**access log is the store**. No database, no service, nothing to compromise
-beyond the webserver you already run:
+- `SLOTHFUL_SUPPORT_URL` → **"Open an issue"**. A tracker URL
+  (`https://github.com/you/fork/issues/new`) needs nothing else — those are
+  GitHub's own prefill parameters. The dialog tells the user this one needs an
+  account there and is public, because for most people that is the reason a
+  crash goes unreported.
+- `SLOTHFUL_CRASH_REPORT_URL` → **"Send to the developers"**. No account, not
+  public.
+
+For the second, a webserver route is the whole backend you need: the report is
+in the query string, so the **access log is the store**. No database, no
+service, nothing to compromise beyond the webserver you already run:
 
 ```caddyfile
 report.example.chat {
@@ -259,7 +264,8 @@ how the `CHATMAIL_ALLOWLIST` allow-list works) are in the
 | `SLOTHFUL_IMPRINT_ADDRESS` | Postal address on the imprint page (newlines allowed). | `Example Str. 1\n12345 Town` |
 | `SLOTHFUL_IMPRINT_EMAIL` | Contact email on the imprint page. | `hello@example.chat` |
 | `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the community suggestions ("Public Bots", "Public Channels") in the New Chat dialog for the whole instance — the per-user settings toggle is hidden too. Unset/empty: suggestions are shown and each user can hide them in Settings → Chats and Media. | `1` |
-| `SLOTHFUL_SUPPORT_URL` | Where the crash dialog's **"Report this"** button sends the report: the URL gets `?title=&body=` appended, which are GitHub's own new-issue parameters. Unset = **no button** — your users are never sent to this repo's tracker; the dialog's "Copy details" button is the fallback. See ["Collecting crash reports"](#collecting-crash-reports) for a destination that isn't a tracker. | `https://github.com/you/your-fork/issues/new` |
+| `SLOTHFUL_SUPPORT_URL` | Your public issue tracker — the crash dialog's **"Open an issue"** button. The URL gets `?title=&body=` appended, which are GitHub's own new-issue parameters. The dialog tells users this one needs an account there and is public. | `https://github.com/you/your-fork/issues/new` |
+| `SLOTHFUL_CRASH_REPORT_URL` | A destination that needs **no account** — the same dialog's **"Send to the developers"** button, same `?title=&body=`. See ["Collecting crash reports"](#collecting-crash-reports): a webserver route is the entire backend. | `https://report.example.chat/` |
 
 All are optional. Unset instance/proxy vars fall back to sane defaults; unset
 imprint vars produce a placeholder imprint page telling operators to configure
