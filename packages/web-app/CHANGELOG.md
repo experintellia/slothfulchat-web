@@ -18,6 +18,48 @@
   the microphone prompt could leave recording broken until a reload, and the
   recorder's buttons kept their desktop spacing on narrow phone screens.
 
+- **The bridge picker can no longer get stuck behind the welcome screen.** Open
+  it while the app was still starting up and it could end up underneath the
+  screen that appeared a moment later: greyed out, none of its buttons
+  clickable and no way to close it. Our dialogs now move back to the front when
+  something else opens on top of them.
+
+- **Reporting a failed start is now one tap.** If the app can't start, the
+  error screen has always shown the technical details and let you copy them —
+  it now also offers to send them, prefilled, wherever the instance you use has
+  said reports should go, and says what each destination costs you before you
+  pick. The report now carries the error's stack and which site it came from,
+  which is what makes a crash diagnosable.
+
+- **An update caught mid-deploy no longer installs half of it.** The app checks
+  each downloaded file against the checksum its release lists, so a deploy that
+  is still being written out — or a CDN that answers one file from a stale copy
+  — leaves the working version in place and retries, instead of pinning a
+  mixture of two releases into the offline cache until the next one.
+
+- **Adding a profile is no longer a second-and-a-half wait.** Every new profile
+  built its database from scratch, step by step; it is now stamped out of a
+  ready-made one, which is most of that time gone — including for the very
+  first profile you create.
+
+- **A chat engine that crashes now says so instead of spinning forever.** If
+  the engine died after startup, everything the app had asked it to do simply
+  waited for an answer that was never coming — an endless spinner with no error
+  and no way out. The failure is now reported straight away, with a dialog that
+  offers a reload.
+
+- **The link-preview offer in the composer now looks like one thing.** The
+  placeholder, the loading state and the "needs a bridge" notice used to look
+  like three unrelated widgets; they are now the same card that fills in — the
+  skeleton shimmers while the preview is generated and greys out when previews
+  are unavailable.
+
+- **Restoring a backup no longer hangs at 100%.** The progress bar reached the
+  end while the pictures were still being written to storage, so a big backup
+  sat at "done" for a while before the app moved on. The last stretch of the
+  bar is now that saving step, so it keeps moving until the restore really is
+  finished — and if anything didn't make it to storage, the app says so.
+
 - **The privacy policy now says who actually receives the usage statistics.**
   When an instance runs its own Plausible server instead of the hosted service,
   the policy says so and names that server, rather than implying the data goes

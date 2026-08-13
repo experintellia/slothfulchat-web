@@ -22,10 +22,10 @@ all match `vX.Y.Z` and fails the run otherwise, so a half-bumped set never
 ships. It also refuses a tag whose commit isn't on `main`, or that moved after
 the run started: the tag is the only release authority.
 
-Both `publish-npm.yml` (npm) and `deploy-pages.yml` (prod, web.slothful.chat)
-run that same gate as their first job, so neither can ship what the other
-would reject. Re-running either by hand works, but only with the tag itself as
-the ref (`gh workflow run publish-npm.yml --ref v0.3.0`) — a branch run
+`publish-npm.yml` — npm, the GitHub release *and* prod (web.slothful.chat) all
+come out of it — runs that same gate as its first job, so nothing can ship what
+the gate would reject. Re-running by hand works, but only with the tag itself
+as the ref (`gh workflow run publish-npm.yml --ref v0.3.0`) — a branch run
 publishes and deploys nothing.
 
 The gate also refuses a commit whose required CI checks aren't green, so tag
@@ -35,25 +35,78 @@ for the half of this that lives in GitHub settings rather than in git.
 
 ## The flow
 
-Everything is automated by `.github/workflows/publish-npm.yml`, triggered by
-any `v*` tag. The workflow rebuilds from a clean checkout and does two things:
+`.github/workflows/publish-npm.yml`, triggered by any `v*` tag, rebuilds from a
+clean checkout **once** and ships that one build three ways:
 
-- **GitHub release**: builds a generic web-app dist (no `SLOTHFUL_*` vars) and
-  creates a release with `slothfulchat-web-<tag>.zip` + the standalone
-  `slothfulchat-customize.mjs` (see SELFHOSTING.md for how operators use them).
-- **npm**: publishes **each package whose package.json version is not on the
-  registry yet** — versions already on the registry are skipped. Since every
-  release bumps all three to a fresh number, they normally all publish; the
-  skip only makes re-running the same tag idempotent (a complete GitHub
-  release is likewise skipped — releases are immutable, so assets attach at
-  creation only; an asset-less one must be deleted before re-running).
+- **GitHub release**: a generic web-app dist (no `SLOTHFUL_*` vars) released as
+  `slothfulchat-web-<tag>.zip` + the standalone `slothfulchat-customize.mjs`
+  (see SELFHOSTING.md for how operators use them).
+- **npm**: **each package whose package.json version is not on the registry
+  yet** goes into npm's stage queue — versions already on the registry are
+  skipped. Since every release bumps all three to a fresh number, they normally
+  all stage; the skip only makes re-running the same tag idempotent (a complete
+  GitHub release is likewise skipped — releases are immutable, so assets attach
+  at creation only; an asset-less one must be deleted before re-running).
+  **Staged is not published** — see the approval step below.
+- **Prod** (web.slothful.chat, GitHub Pages): the same build with the flagship
+  `SLOTHFUL_*` branding baked in. Branding only enters at `assemble`, so the
+  job packs the generic zip first and then re-runs that cheap tail — it does
+  not compile anything twice.
 
-The run shows four jobs, not one: after the tag gate, `build` compiles
-everything and packs the assets holding a read-only token, then `release` and
-`publish` — which hold the release write token and the npm OIDC token
-respectively — check out nothing and only upload what `build` handed them. A
-watched run therefore sits in `build` for the ~10 min, and the last two jobs
-are quick.
+The run shows five jobs, not one: after the tag gate, `build` compiles
+everything and packs the assets holding a read-only token, then `release`,
+`publish` and `deploy` — holding the release write token, the npm OIDC token
+and the Pages OIDC token respectively — check out nothing and only upload what
+`build` handed them. A watched run therefore sits in `build` for the ~10 min,
+and the last three are quick. `deploy` hangs off `build` directly, so a broken
+npm publish can't hold prod back and a rejected deploy can't block the release.
+
+### Which workflow runs when
+
+Every box that builds the app runs the same composite,
+`.github/actions/build-web-app` — that is what keeps what CI tests and what
+ships from drifting apart. Only the release path is gated on a tag.
+
+```mermaid
+flowchart TD
+    PR([pull request]) --> CI["<b>ci.yml</b><br/>lint · test<br/><i>dev build: no wasm-opt</i>"]
+    PR --> PV["<b>preview-deploy.yml</b><br/>per-PR preview"]
+    MAIN([push to main]) --> NX["<b>deploy-next.yml</b><br/>next.slothful.chat"]
+    TAG([push tag v*]) --> GATE
+
+    subgraph REL["publish-npm.yml — one build, three outputs"]
+        direction TB
+        GATE["<b>verify-tag</b><br/>unmoved tag · on main<br/>CI green · versions match"]
+        GATE --> B
+        B["<b>build</b> — contents: read<br/><i>the only job that runs repo code</i>"]
+        B --> R["<b>release</b><br/>contents: write"]
+        B --> D["<b>deploy</b><br/>pages + id-token"]
+        R --> P["<b>publish</b><br/>id-token"]
+    end
+
+    R --> RO(["GitHub release<br/>generic zip + customize.mjs"])
+    P --> PO(["npm <b>stage queue</b><br/>not installable yet"])
+    D --> DO(["web.slothful.chat"])
+    PO -.->|"human approves, 2FA"| NPM(["npm @latest"])
+
+    classDef out fill:#0b7285,stroke:#0b7285,color:#fff
+    classDef gate fill:#a61e4d,stroke:#a61e4d,color:#fff
+    class RO,PO,DO,NPM out
+    class GATE gate
+```
+
+Inside `build`, the order is load-bearing — the generic zip has to be packed
+before the branded pass overwrites `dist/`:
+
+```mermaid
+flowchart LR
+    A["build-web-app<br/><i>~20 min: patched core, jsonrpc<br/>client, desktop bundle, wasm</i><br/>no SLOTHFUL_* set"] --> B["pack<br/>zip + 3 npm tarballs"]
+    B --> C["assemble + build<br/><i>again, ~30s</i><br/>SLOTHFUL_* set"]
+    C --> D["smoke<br/>SMOKE_PRODUCTION=1<br/><i>boots the real dist</i>"]
+    D --> E["upload<br/>Pages artifact"]
+    B -.->|"artifacts"| F(["to release + publish"])
+    E -.->|"artifact"| G(["to deploy"])
+```
 
 1. Pick the next tag version (strictly greater than the last — the whole train
    moves up together) and set it everywhere at once:
@@ -82,8 +135,22 @@ are quick.
    ```
 
 3. Watch the Actions run (`gh run watch`). The core-wasm wasm build takes
-   ~10 min uncached; publish happens at the end.
-4. Verify: `npm view @slothfulchat/<pkg> version` shows the new version.
+   ~10 min uncached; the release, the staging and the prod deploy happen at the
+   end.
+4. **Approve the staged packages** — nothing is installable until you do
+   (first staged release only: the Trusted Publishers must allow
+   `npm stage publish` first — see [Auth](#auth)):
+
+   ```sh
+   npm stage list        # the three staged versions, with their stage ids
+   npm stage approve <stage-id>   # once per package; prompts for 2FA
+   ```
+
+   (npmjs.com can approve them too. Check all three are listed *before* you
+   approve any — that is the whole point of the queue.) A staged version that
+   shouldn't ship goes away with `npm stage reject <stage-id>`.
+5. Verify: `npm view @slothfulchat/<pkg> version` shows the new version, and
+   web.slothful.chat serves the new build.
 
 ## "What's new" device message
 
@@ -144,6 +211,34 @@ Settings → Trusted Publisher points at this repo + `publish-npm.yml` (never
 rename that file). If the publish step fails auth, that config is the first
 thing to check.
 
+> [!IMPORTANT]
+> **Each package's Trusted Publisher must allow `npm stage publish` before the
+> next tag.** Trusted Publisher configs created **before 2026-05-20** were
+> grandfathered to allow `npm publish` **only** — ours predate that, so the
+> publish job will be rejected until the action is added. Per package, on
+> npmjs.com → package → Settings → Trusted Publisher → *Allowed actions*, tick
+> `npm stage publish` (keep `npm publish` ticked as the manual fallback), or run
+> `npm trust <provider> --allow-publish --allow-stage-publish`. This is the one
+> step that has to happen outside this repo.
+
+**The workflow stages, it does not publish.** `npm stage publish` uses the same
+OIDC exchange, but what it uploads is invisible to `npm install` until a
+maintainer approves it with 2FA — and approving is deliberately the one thing
+an OIDC token may *not* do. That is what makes the train coherent: the three
+packages used to go straight to `latest` one at a time, so a failure partway
+left `latest` describing half a release until someone re-ran the tag. Now a
+mid-train failure leaves nothing installable at all (issue #241). Needs npm
+≥ 11.15.0 and Node ≥ 22.14.0, both of which the publish job already pins.
+
+Staging **cannot create a package**: a brand-new one needs its first version
+published the manual way below, after which it can join the staged train.
+
+Provenance is built and uploaded *with* the staged tarball, not at approval —
+the attestation is attached to the same request body, so an OIDC run stages a
+signed artifact. Whether the registry then publishes that attestation when the
+stage is approved is not something the CLI decides; check the package page
+after the first staged release and correct this paragraph if it didn't.
+
 **Brand-new packages can't be created via trusted publishing**: the first
 version must be published manually (see fallback below), then the Trusted
 Publisher can be configured on the now-existing package.
@@ -169,6 +264,10 @@ Things that have silently broken before — check the dry-run output for them:
 - **`dist/index.d.ts` missing**: the build must run `tsc
   --emitDeclarationOnly` (not `--noEmit`) or the published `exports.types`
   points at nothing.
+- **`wasm-dist/fresh_account.db.gz` missing**: `build:wasm` deletes it (a
+  template from another tree must never pair with a fresh binary) and only
+  `gen-template` puts it back. Nothing breaks without it — accounts are just
+  created the slow way again — which is exactly why it goes unnoticed.
 
 ## Repository settings the release model depends on
 
@@ -202,9 +301,19 @@ Admin checklist — each item is one setting, with what it prevents:
       in the loop once a tag exists.
 - [ ] **A protected environment for the npm publish.** `publish-npm.yml` uses
       none, so the trusted-publisher OIDC token is minted with no approval step
-      at all. Create one (e.g. `npm`) with the same `v*` tag rule and required
-      reviewers, then reference it from the publish job — the job that holds
-      `id-token: write`, and only that one.
+      at all. Staged publishing softened this — the token can now only put
+      packages in a queue a human has to approve with 2FA — but the token is
+      still minted unreviewed. Create an environment (e.g. `npm`) with the same
+      `v*` tag rule and required reviewers, then reference it from the publish
+      job — the job that holds npm's `id-token: write`, and only that one.
+- [ ] **Trusted Publisher allows `npm stage publish`**, per package (npmjs.com
+      → package → Settings → Trusted Publisher → *Allowed actions*). **Required**
+      — configs created before 2026-05-20 allow `npm publish` only, and ours
+      predate that, so staging is rejected until this is ticked. Leaving
+      `npm publish` *un*ticked additionally makes the registry refuse a plain
+      publish from CI, so the human approval gate can't be removed by editing
+      this repo — worth doing, but it also removes the CI-side fallback, so
+      decide it deliberately.
 - [ ] **Actions settings** (Settings → Actions → General): workflow permissions
       default to *read repository contents*, and *Allow GitHub Actions to
       create and approve pull requests* stays off.

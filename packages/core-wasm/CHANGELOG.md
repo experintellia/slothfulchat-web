@@ -1,5 +1,19 @@
 # Changelog
 
+- **Creating an account is much faster.** New accounts are now stamped out of
+  a pre-migrated database shipped alongside the wasm binary
+  (`wasm-dist/fresh_account.db.gz`) instead of replaying every migration, which
+  on OPFS is where nearly all the time went. It is loaded automatically by the
+  bundled worker; embedders driving the wasm module themselves can call
+  `set_account_template()` before `init()`, and everything still works —
+  just more slowly — if they don't.
+
+- **A worker that dies after boot no longer strands its callers**: the
+  transport now watches the worker for errors and undeliverable replies, and
+  rejects every pending JSON-RPC and filesystem call instead of leaving them
+  waiting for a response that can never arrive. The failure is reported to the
+  page as a `fatal-worker-died` message.
+
 - **The published type definitions now match the core that ships with them.**
   They used to come from `@deltachat/jsonrpc-client` 2.53.0 on npm, two
   releases behind the pinned core and missing the API our patches add — the
@@ -38,11 +52,15 @@ durable account could be lost or corrupted:
   a later self-heal). Crashed backup-export leftovers are reclaimed.
 - A failed backup import no longer leaves a half-written, undecryptable
   database registered.
-- Second-device transfer (receiving a backup) now waits for its blobs to be
-  durable before reporting success, like file import already did, and both
-  report an honest failure count even when storage fills mid-restore (new
-  `Core.fsFailed()` baseline for `Core.fsFlush(since?)`; no-arg calls keep
-  the old behavior).
+- `import_backup` and `get_backup` (second-device transfer) now wait for the
+  restored blobs to be durable before they return, so their final
+  `ImexProgress(1000)` means "written to persistent storage" rather than
+  "unpacked, with an unknown amount of writing still to go". They reserve the
+  last 15% of the progress range for that write-out and report progress
+  across it, so a UI drawing the raw events shows the wait instead of a bar
+  that sits full while it happens. Both also report an honest failure count
+  when storage fills mid-restore (new `Core.fsFailed()` baseline for
+  `Core.fsFlush(since?)`; no-arg calls keep the old behavior).
 - A file whose write to persistent storage fails — a transient quota blip, a
   storage handle the browser invalidated — is now retried a few times instead
   of being dropped on the first error, and a write that is finally lost is

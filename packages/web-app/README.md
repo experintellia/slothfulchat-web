@@ -135,7 +135,7 @@ node scripts/test-calls-e2e.mjs     # outgoing audio call vs. a second local cor
 
 **Production** (`web.slothful.chat`) is the GitHub Pages deploy, and it builds
 only from a **`v*` release tag** —
-[`.github/workflows/deploy-pages.yml`](../../.github/workflows/deploy-pages.yml)
+[`.github/workflows/publish-npm.yml`](../../.github/workflows/publish-npm.yml)
 runs [`verify-release-tag.yml`](../../.github/workflows/verify-release-tag.yml)
 first and does nothing until the ref is proven to be an unmoved tag, on main,
 whose package versions match it (see [RELEASING.md](../../RELEASING.md)).
@@ -181,8 +181,15 @@ in source. All optional:
 | `SLOTHFUL_DEFAULT_CHATMAIL` | Chatmail relay the "create new account" flow signs up on (host, URL or `dcaccount:` QR). Unset = upstream's default relay. Scanned QR codes still override it. |
 | `SLOTHFUL_RELAY_DIRECTORY` | Relay-directory JSON for the onboarding relay picker (`{"relays":[{"host":"…"}]}`, CORS-readable; the page CSP is pinned to this URL). Unset = the [chatmail-relays-mirror](https://github.com/experintellia/chatmail-relays-mirror) default; `off` = no picker. |
 | `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the "Public Bots" / "Public Channels" community suggestions in the New Chat dialog instance-wide (also hides the per-user settings toggle). |
+| `SLOTHFUL_SUPPORT_URL` | Public issue tracker: the fatal-start dialog's **"Open an issue"** button. The report is appended as `?title=&body=` (GitHub's new-issue params). The dialog says this one needs an account and is public. |
+| `SLOTHFUL_CRASH_REPORT_URL` | A destination needing no account: the same dialog's **"Send to the developers"** button, same `?title=&body=`. A webserver route that logs the request is enough (see [docs/crash-reports.md](../../docs/crash-reports.md)). |
 | `SLOTHFUL_PLAUSIBLE_DOMAIN` | Plausible "site" id enabling **anonymous usage statistics**. Unset (the default) → no analytics at all: no events, no consent banner, no extra CSP origin. |
 | `SLOTHFUL_PLAUSIBLE_API` | Plausible events endpoint. Defaults to `https://plausible.io/api/event` when a domain is set; point it at your own instance to self-host analytics — the generated `privacy.html` then names your server as the recipient instead of Plausible's service. |
+
+Both report destinations are unset by default — then there is no button at all,
+only the copy-to-clipboard fallback, and a self-hosted build never points its
+users at this repo. Configuring either adds a section to the generated
+`privacy.html` naming where reports go.
 
 ### Telemetry & privacy
 

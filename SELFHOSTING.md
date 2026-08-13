@@ -48,7 +48,8 @@ release also ships the script standalone as `slothfulchat-customize.mjs`
 (`node slothfulchat-customize.mjs --in <downloaded zip>`).
 
 **GitHub Pages:** the repo ships
-[`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml).
+[`.github/workflows/publish-npm.yml`](.github/workflows/publish-npm.yml),
+which deploys Pages off the same build it cuts the release from.
 Set the variables below under **Settings → Secrets and variables → Actions →
 Variables**, then enable **Settings → Pages → Source = "GitHub Actions"**. It
 deploys on **`v*` release tags**, not on pushes to main: the workflow's first
@@ -83,7 +84,7 @@ pnpm --filter @slothfulchat/web-app build
 A static host that serves fixed headers only cannot be made to send security
 headers, and **the repository cannot fix this from inside** — GitHub Pages has
 no header configuration, so a Pages deployment (including the flagship one this
-repo's `deploy-pages.yml` produces) ships with none of the headers below. Put a
+repo's `publish-npm.yml` produces) ships with none of the headers below. Put a
 header-capable edge in front of it — Cloudflare (Transform Rules), Fastly,
 CloudFront + Lambda@Edge, or any reverse proxy — and have it add:
 
@@ -193,6 +194,8 @@ how the `CHATMAIL_ALLOWLIST` allow-list works) are in the
 | `SLOTHFUL_IMPRINT_ADDRESS` | Postal address on the imprint page (newlines allowed). | `Example Str. 1\n12345 Town` |
 | `SLOTHFUL_IMPRINT_EMAIL` | Contact email on the imprint page. | `hello@example.chat` |
 | `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS` | `1`/`true`: hide the community suggestions ("Public Bots", "Public Channels") in the New Chat dialog for the whole instance — the per-user settings toggle is hidden too. Unset/empty: suggestions are shown and each user can hide them in Settings → Chats and Media. | `1` |
+| `SLOTHFUL_SUPPORT_URL` | Your issue tracker — a button on the "could not start" screen that opens a prefilled issue. Needs an account there. See [docs/crash-reports.md](docs/crash-reports.md). | `https://github.com/you/your-fork/issues/new` |
+| `SLOTHFUL_CRASH_REPORT_URL` | A crash-report destination that needs no account — the same screen's other button. A webserver route is the entire backend; see [docs/crash-reports.md](docs/crash-reports.md). | `https://report.example.chat/` |
 
 All are optional. Unset instance/proxy vars fall back to sane defaults; unset
 imprint vars produce a placeholder imprint page telling operators to configure

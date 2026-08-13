@@ -32,8 +32,13 @@ import { EMOJI_SETS, DEFAULT_EMOJI_SET, emojiFonts } from './emoji-sets.ts'
 import * as session from './session'
 import { observeTransport } from './telemetry'
 import { showAnalyticsInfoDialog } from './consent'
-import { el, overlayCard, scButton } from './ui-shared'
-import { fatalReportText } from './fatal-report.ts'
+import { el, overlayCard, scButton, showOnTop } from './ui-shared'
+import {
+  fatalDetails,
+  fatalReportText,
+  fatalReportUrl,
+  reportChoiceNote,
+} from './fatal-report.ts'
 import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
@@ -348,14 +353,14 @@ function getCore(): Core {
     // is (almost certainly) running in another tab. ponytail: no faster
     // web-lock detection — its release lags on reloads and false-positives
     core.worker.addEventListener('message', event => {
-      const type = (event as MessageEvent).data?.type
+      const data = (event as MessageEvent).data
       // Something more specific is already explained on screen — the no-wasm
       // check, or an earlier fatal from this worker. Return before the event()
       // calls, not just before the dialog: a browser with WebAssembly off makes
       // the worker report a generic init-error too, and counting that as well
       // would attribute every Lockdown Mode user to a bug that isn't theirs.
       if (fatalShown) return
-      if (type === 'fatal-opfs-locked') {
+      if (data?.type === 'fatal-opfs-locked') {
         analytics.event('boot_error', { kind: 'opfs-locked' })
         showFatalDialog(
           'sc-already-running-dialog',
@@ -364,7 +369,7 @@ function getCore(): Core {
             'only run in one at a time. Close the other tab, then retry.',
           'opfs-locked'
         )
-      } else if (type === 'fatal-storage-blocked') {
+      } else if (data?.type === 'fatal-storage-blocked') {
         analytics.event('boot_error', { kind: 'storage-blocked' })
         showFatalDialog(
           'sc-storage-blocked-dialog',
@@ -375,14 +380,29 @@ function getCore(): Core {
             'Settings → Safari → Advanced → Block All Cookies.',
           'storage-blocked'
         )
-      } else if (type === 'fatal-init-error') {
+      } else if (data?.type === 'fatal-init-error') {
         analytics.event('boot_error', { kind: 'init-error' })
         showFatalDialog(
           'sc-init-error-dialog',
           `${APP_NAME} could not start`,
           'The stored data could not be loaded.',
           'init-error',
-          (event as MessageEvent).data?.message ?? 'unknown error'
+          fatalDetails(data?.message, data?.stack)
+        )
+      } else if (data?.type === 'fatal-worker-died') {
+        // Not posted by the worker — startCore synthesises it when the worker
+        // dies after boot (panic, OOM, terminate, undeserializable reply) and
+        // has already rejected everything in flight. Nothing works from here,
+        // so it gets the same blocking dialog as a failed start.
+        analytics.event('boot_error', { kind: 'worker-died' })
+        showFatalDialog(
+          'sc-worker-died-dialog',
+          `${APP_NAME} stopped working`,
+          'The chat engine stopped unexpectedly. Nothing can be sent or ' +
+            'received until you reload. Your messages are safe — they are ' +
+            'stored in this browser.',
+          'worker-died',
+          fatalDetails(data?.message, data?.stack)
         )
       }
     })
@@ -413,11 +433,14 @@ function getCore(): Core {
       // ASYNC OPFS flusher. If the page reloads before that queue drains, the
       // memfs is rebuilt from OPFS without the un-flushed blobs → broken images
       // that only return once re-fetched from the server ("reload N times to
-      // see the images", #77). Track the call so we can drain before reporting
-      // success — see the _onmessage wrap. `get_backup` is the second-device
+      // see the images", #77). The drain itself lives in core now (imex.rs
+      // awaits `flush_pending()` before the import returns, so the progress
+      // bar's 100% means durable, #90); what is still ours is *reporting* a
+      // write that never made it. Track the call to snapshot the failed-write
+      // baseline — see the _onmessage wrap. `get_backup` is the second-device
       // transfer receive: it unpacks blobs the same way and, unlike a file
       // import, has NO local backup to retry from if the tail is lost — so it
-      // needs the same durability hold.
+      // gets the same check.
       if (
         (message?.method === 'import_backup' || message?.method === 'get_backup') &&
         message.id != null
@@ -452,10 +475,12 @@ function getCore(): Core {
       }
       originalSend(message)
     }
-    // Hold a successful import/transfer response until fsFlush() confirms every
-    // imported blob has reached OPFS, so the frontend's promise resolves only
-    // once a reload would find everything. Errors pass straight through (a
-    // failed import wrote nothing to persist).
+    // Ask fsFlush() whether every imported blob actually reached OPFS before
+    // letting a successful import/transfer response through. Core already
+    // drained the queue before answering (#90), so this resolves as soon as the
+    // worker gets to it — the point is the count it returns, which is the only
+    // way the user hears about a restore that silently lost files. Errors pass
+    // straight through (a failed import wrote nothing to persist).
     const transport = core.transport as any
     const originalOnMessage = transport._onmessage.bind(transport)
     transport._onmessage = (message: any) => {
@@ -2074,9 +2099,12 @@ let fatalShown = false
  *
  * `kind`/`details` build the copyable report: with no app left to report from
  * and no way to put an arbitrary error string through the analytics catalogue,
- * the user pasting this somewhere is the only route from "it broke" to a fix
+ * the user sending this somewhere is the only route from "it broke" to a fix
  * (#176). Selecting text by hand is not that route — on a phone it is barely
- * possible, so there is a button. */
+ * possible — so there is a copy button, plus a link straight to each
+ * destination the instance configured: the public tracker
+ * (SLOTHFUL_SUPPORT_URL) and the one that needs no account
+ * (SLOTHFUL_CRASH_REPORT_URL). */
 function showFatalDialog(
   id: string,
   titleText: string,
@@ -2090,11 +2118,21 @@ function showFatalDialog(
   // bury the first and its more specific explanation.
   if (fatalShown) return
   fatalShown = true
+  // Stand boot-error.js down: it guesses "your browser may be too old" from a
+  // window-level error, which the same root cause can raise alongside the
+  // specific fatal we are about to show. Its guess would then sit behind this
+  // dialog contradicting it, with a second copy button and a first-aid step
+  // for a problem the user does not have.
+  ;(window as any).__slothfulFatal = true
+  document.getElementById('sc-boot-error')?.remove()
   // a probe that already ran may have left the bridge warning on screen; from
   // here on it is noise about the wrong problem (see checkBridge)
   hideBridgeToast()
   hideWelcomeHint()
-  const [overlay, panel] = overlayCard(id)
+  // the roomy 'page' shape, matching static/boot-error.js: this screen is
+  // the whole app for as long as it is up, and a 400px card made the one
+  // failure a user cannot work around look like a passing notification
+  const [overlay, panel] = overlayCard(id, 'page')
   overlay.oncancel = e => e.preventDefault() // Esc must not reveal a dead app
 
   const title = el('h2', {}, titleText)
@@ -2107,12 +2145,42 @@ function showFatalDialog(
     details,
     version: (window as any).__slothfulConfig?.version,
     commitHash: (window as any).__slothfulConfig?.commitHash,
+    // location, not config.instanceUrl: where the app is actually running is
+    // the fact worth having — a preview slot, someone's fork, a copy served
+    // from a domain its baked-in config never mentioned
+    origin: location.origin,
     userAgent: navigator.userAgent,
     displayMode: session.displayMode(),
   })
   panel.append(title, body)
+  // Everything stays visible. Two earlier shapes of this screen were both
+  // wrong: a 400px card made the report and its buttons crowd out the one
+  // line that actually helps ("close the other tab"), and folding them behind
+  // a disclosure buried the buttons instead — nobody opens a <details> to
+  // volunteer work. The page shape leaves room for both (see .sc-page).
+  //
+  // The report also has to stay visible for the send buttons to be honest:
+  // nothing may be sent that the user was not shown (#176), and a collapsed
+  // box is not shown.
   if (report) panel.append(reportBlock(report), copyButton(report))
+  // Absent, not inert, when the instance configured no destination: the copy
+  // button above is then the whole route, and a button that goes nowhere is
+  // worse than no button on a screen where nothing else works either. Each
+  // destination is its own button rather than one that picks for the user:
+  // they cost different things (an account, publicity) and only the person
+  // pressing it knows which price they are willing to pay.
+  const cfg = (window as any).__slothfulConfig
+  const trackerUrl = fatalReportUrl(cfg?.supportUrl, report, kind)
+  const directUrl = fatalReportUrl(cfg?.crashReportUrl, report, kind)
+  const note = reportChoiceNote(trackerUrl, directUrl)
+  if (note) panel.append(el('p', 'sc-note', note))
+  // One row of actions, Retry first: it is the primary one and the only one
+  // every user wants. Then the report destinations, cheaper one first — most
+  // people can finish that one, which is the point (#176 asked for a button
+  // next to Retry, and this is it).
   row.append(retryBtn)
+  if (directUrl) row.append(reportLink(directUrl, 'Send to the developers'))
+  if (trackerUrl) row.append(reportLink(trackerUrl, 'Open an issue'))
   panel.append(row)
   // This screen is the only one a first-time visitor gets when the core dies
   // before onboarding, so it has to carry the usage-statistics notice the
@@ -2122,7 +2190,14 @@ function showFatalDialog(
   const notify = analytics.isEnabled()
   if (notify) panel.append(analyticsNoticeLine())
   document.body.appendChild(overlay)
-  overlay.showModal()
+  showOnTop(overlay)
+  // ...and take the focus off whatever showModal() grabbed, so a screen reader
+  // starts at the heading too and the browser has no off-screen focused
+  // element to scroll back to. Here and not in showOnTop: this card has no
+  // inputs, while the bridge and throwaway dialogs do, and auto-focusing their
+  // first field is worth keeping.
+  panel.tabIndex = -1
+  panel.focus({ preventScroll: true })
   // only once the notice is actually on screen — releaseHeldEvents() records
   // that it was shown, so calling it without showing it would be a lie
   if (notify) analytics.releaseHeldEvents()
@@ -2237,6 +2312,17 @@ function reportBlock(report: string): HTMLElement {
   return el('pre', 'sc-report', report)
 }
 
+/** A report destination — an <a>, not a button that opens the URL itself: a
+ * popup blocker can refuse window.open() without telling anyone, while a link
+ * also survives a long press ("open in new tab") and can be copied. */
+function reportLink(href: string, text: string): HTMLAnchorElement {
+  return Object.assign(el('a', 'sc-btn', text), {
+    href,
+    target: '_blank',
+    rel: 'noopener noreferrer',
+  })
+}
+
 /** Copy-to-clipboard, with the result said out loud rather than mimed: on a
  * dead app a button that silently does nothing is indistinguishable from one
  * that worked. writeText needs a secure context and can be refused outright,
@@ -2305,7 +2391,7 @@ function showWebxdcNotImplementedDialog() {
     if (e.target === overlay) overlay.remove()
   }
   document.body.appendChild(overlay)
-  overlay.showModal()
+  showOnTop(overlay)
 }
 
 // --- Native 1:1 calls -------------------------------------------------------
@@ -3105,7 +3191,7 @@ function showBridgeToast() {
 
 function showBridgeDialog() {
   if (document.getElementById('sc-bridge-dialog')) return
-  const [overlay, panel] = overlayCard('sc-bridge-dialog', true)
+  const [overlay, panel] = overlayCard('sc-bridge-dialog', 'wide')
   // Escape closes the dialog without removing it; display:flex would keep it
   // visible, so drop it from the DOM entirely.
   overlay.onclose = () => overlay.remove()
@@ -3287,7 +3373,7 @@ function showBridgeDialog() {
     if (e.target === overlay) close()
   }
   document.body.appendChild(overlay)
-  overlay.showModal()
+  showOnTop(overlay)
   // showModal focuses the first focusable element — the details summary,
   // which paints a stray focus ring. The checked radio is the better start
   // (arrow keys then move the selection).
@@ -3301,7 +3387,7 @@ function showBridgeDialog() {
  * has been sent to it by the time this is answered. */
 function showBridgeConfirmDialog(url: string) {
   if (document.getElementById('sc-bridge-confirm-dialog')) return
-  const [overlay, panel] = overlayCard('sc-bridge-confirm-dialog', true)
+  const [overlay, panel] = overlayCard('sc-bridge-confirm-dialog', 'wide')
   overlay.onclose = () => overlay.remove()
 
   const title = el('h2', {}, 'Use a different bridge?')
@@ -3337,7 +3423,7 @@ function showBridgeConfirmDialog(url: string) {
     if (e.target === overlay) overlay.remove()
   }
   document.body.appendChild(overlay)
-  overlay.showModal()
+  showOnTop(overlay)
   keepBtn.focus() // the safe option, not the one that adopts the bridge
 }
 
@@ -3409,7 +3495,7 @@ function showThrowawayGate(): void {
   fatalShown = true
   hideBridgeToast()
   hideWelcomeHint()
-  const [overlay, panel] = overlayCard('sc-throwaway-dialog', true)
+  const [overlay, panel] = overlayCard('sc-throwaway-dialog', 'wide')
   overlay.oncancel = e => e.preventDefault() // Esc must not reveal a dead app
 
   const title = el('h2', {}, 'Start a throwaway session?')
@@ -3450,7 +3536,7 @@ function showThrowawayGate(): void {
 
   panel.append(title, body, note, row)
   document.body.appendChild(overlay)
-  overlay.showModal()
+  showOnTop(overlay)
   keepBtn.focus() // the safe option, not the one that throws the data away
 }
 

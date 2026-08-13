@@ -120,6 +120,27 @@ pub fn set_crypto_offload(handler: js_sys::Function) {
     tokio::offload::set_handler(handler);
 }
 
+/// Installs the pre-migrated account database every new account is stamped
+/// out of (`wasm-dist/fresh_account.db.gz`, generated from THIS artifact by
+/// `scripts/gen-account-template.mjs`). Call before [`init`].
+///
+/// Optional, and never load-bearing: without it — or with one built by an
+/// older core, or one that turns out not to open — account creation falls
+/// back to replaying migrations, which is only slower. See
+/// `Sql::check_passphrase` in the core patch stack.
+#[wasm_bindgen]
+pub fn set_account_template(bytes: Vec<u8>) {
+    tokio::fs::set_db_template(bytes);
+}
+
+/// Build tooling only (`scripts/gen-account-template.mjs`): takes the raw
+/// bytes of the sqlite database at `path` out of the VFS. Destructive — the
+/// database is gone afterwards, so this is for throwaway pages, not apps.
+#[wasm_bindgen]
+pub fn take_db(path: String) -> Result<Vec<u8>, JsValue> {
+    tokio::fs::sqlite_vfs_take(&path).map_err(|e| JsValue::from_str(&e))
+}
+
 /// Crypto-worker entry point: runs one op synchronously in THIS wasm
 /// instance (the pool worker loads the same artifact and only ever calls
 /// this — it never runs [`init`]).
@@ -544,7 +565,9 @@ impl DeltaChat {
     /// means fully durable. The caller surfaces a non-zero result instead of
     /// reporting a false import success.
     pub async fn fs_flush(&self, failed_since: u32) -> u32 {
-        tokio::fs::flush_pending(failed_since).await
+        // no progress reporting: by the time the web app asks, core has already
+        // drained the queue for the import it cares about (see imex.rs)
+        tokio::fs::flush_pending(failed_since, |_, _| {}).await
     }
 }
 

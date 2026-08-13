@@ -35,6 +35,16 @@ import { EVENTS } from './src/events.ts'
 //                            ("Public Bots", "Public Channels") in the New
 //                            Chat dialog for the whole instance, including
 //                            the per-user settings toggle
+//   SLOTHFUL_SUPPORT_URL     public issue tracker: the fatal-start dialog's
+//                            "Open an issue" button, which needs an account
+//                            there and files in the open (as ?title=&body=)
+//   SLOTHFUL_CRASH_REPORT_URL
+//                            a destination that needs no account: the same
+//                            dialog's "Send to the developers" button, same
+//                            ?title=&body=. A webserver route that logs the
+//                            request is enough (docs/crash-reports.md).
+//                            Both UNSET (self-host default) = no button at
+//                            all, only the copy-to-clipboard fallback
 // `build` carries the slothfulchat-web version + source commit shown in the
 // About dialog/log (see gitBuildMeta() in assemble.mjs). customize.mjs
 // re-applying config to a prebuilt zip has no working tree to read this from,
@@ -95,6 +105,16 @@ export function buildConfig(env, build = {}) {
     hidePublicSuggestions: ['1', 'true', 'yes'].includes(
       (env.SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS || '').toLowerCase()
     ),
+    // The two destinations on the fatal-start dialog, each its own button
+    // (fatalReportUrl in src/fatal-report.ts appends ?title=&body= to either).
+    // They differ in what they cost the user, which is why they are not one
+    // setting: a tracker is public and needs an account there, and most people
+    // will not make one to report a crash; a plain endpoint needs neither.
+    // Neither has a default — an unconfigured self-hosted instance must not
+    // point its users at THIS repo's tracker, and the dialog's copy button
+    // already gives them something to do without one (#176).
+    supportUrl: normalizeUrl(env.SLOTHFUL_SUPPORT_URL),
+    crashReportUrl: normalizeUrl(env.SLOTHFUL_CRASH_REPORT_URL),
     // release builds (CI sets NODE_ENV=production) hide devmode features:
     // window.exp access, debug log level, dev_ prototype themes
     devmode: env.NODE_ENV !== 'production',
@@ -135,31 +155,34 @@ export function analyticsOrigin(config) {
 export const DEFAULT_RELAY_DIRECTORY_URL =
   'https://raw.githubusercontent.com/experintellia/chatmail-relays-mirror/refs/heads/data/relays.json'
 
-// SLOTHFUL_RELAY_DIRECTORY: '' (use default mirror) | 'off' | http(s) URL.
-// Garbage (not a URL, not "off") counts as unset — a broken value must not
-// end up as a CSP source or a fetch target. The URL must be a SINGLE clean
-// token: it is appended verbatim into main.html's connect-src, so a value
-// with a space would inject an extra CSP source and a ';' would truncate the
-// directive (and break patchCsp idempotency). Reject anything with
-// whitespace/quotes/';' and require URL() to accept it.
-export function normalizeRelayDirectory(raw) {
-  // trim, strip wrapping shell quotes, trim again (padding may sit inside the
-  // quotes, e.g. `" off "`)
-  const value = (raw || '')
+// trim, strip wrapping shell quotes, trim again (padding may sit inside the
+// quotes, e.g. `" off "`)
+const unquote = raw =>
+  (raw || '')
     .trim()
     .replace(/^(['"])([\s\S]*)\1$/, '$2')
     .trim()
-  if (/^off$/i.test(value)) return 'off'
-  if (/^https?:\/\/\S+$/i.test(value) && !/["';]/.test(value)) {
-    try {
-      // eslint-disable-next-line no-new
-      new URL(value)
-      return value
-    } catch {
-      /* not a parseable URL — fall through to unset */
-    }
-  }
-  return ''
+
+/** A single clean http(s) URL from an env var, or '' for unset/garbage.
+ *
+ * Every URL var goes through this. A broken value must not end up half-used:
+ * one of these is appended verbatim into main.html's connect-src (the relay
+ * directory), where a value with a space would inject an extra CSP source and
+ * a ';' would truncate the directive (and break patchCsp idempotency), and
+ * another lands in an href. So: one token, no whitespace/quotes/';', and
+ * URL() has to accept it. */
+export function normalizeUrl(raw) {
+  const value = unquote(raw)
+  return /^https?:\/\/\S+$/i.test(value) && !/["';]/.test(value) && URL.canParse(value)
+    ? value
+    : ''
+}
+
+// SLOTHFUL_RELAY_DIRECTORY: '' (use default mirror) | 'off' | http(s) URL.
+// Garbage (not a URL, not "off") counts as unset — a broken value must not
+// end up as a CSP source or a fetch target.
+export function normalizeRelayDirectory(raw) {
+  return /^off$/i.test(unquote(raw)) ? 'off' : normalizeUrl(raw)
 }
 
 /** The relay-directory URL to pin in the CSP connect-src (and the frontend
@@ -324,6 +347,32 @@ longer complies, please report it to the email address above.</p>
 `
 }
 
+/** The crash-report paragraph, only on instances that configured somewhere for
+ * a report to go. The dialog offers a button labelled as needing no account,
+ * and a claim like that has to be backed somewhere the user can check: the
+ * report is sent by hand, its full text is on screen first, and it carries no
+ * message or account data — but the request reaches that server with an IP
+ * address, like every other request, and the policy says so rather than
+ * letting "no account" be read as "untraceable". */
+function crashReportSection(config) {
+  const targets = [config.crashReportUrl, config.supportUrl].filter(Boolean)
+  if (!targets.length) return ''
+  return `<h2>Reporting a failed start</h2>
+<p>If the app cannot start, the error screen shows you the technical details
+and offers to send them: the failure, the error text and its stack, the app
+version, this site's address, and your browser's user-agent string. Nothing
+else — no message content, no contacts, no account data. <strong>It is never
+sent automatically</strong>: the full text is on screen, and it goes nowhere
+unless you press one of the buttons, which are ordinary links to
+${targets.map(t => `<code>${esc(new URL(t).origin)}</code>`).join(' and ')}.
+Like any web request it arrives with your IP address — a report needs no
+account, which is not the same as being untraceable.${
+    config.supportUrl
+      ? ' A report opened as an issue on the tracker is public.'
+      : ''
+  }</p>`
+}
+
 // privacy.html — standalone privacy policy. The "what is collected" list is
 // rendered from src/events.ts — the same closed catalogue the app actually
 // sends from — so the published policy can never drift from the code.
@@ -471,6 +520,8 @@ through the bridge you use, so the bridge operator learns that URL — use a
 local bridge for maximum privacy. Nothing about your contacts or conversations
 is sent along.</p>
 
+${crashReportSection(config)}
+
 ${analyticsSection}
 
 <p class="meta">${esc(instanceLabel)}${
@@ -516,6 +567,8 @@ export function buildPrecache(entries) {
   const manifest = {}
   const included = [...entries].filter(([file]) => !precacheSkip(file))
   for (const [file, bytes] of included.sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    // blobs-sw.ts recomputes this over what it downloads and refuses an entry
+    // that disagrees, so the two must stay the same function
     manifest[file] = createHash('sha1').update(bytes).digest('hex').slice(0, 16)
   }
   const version = createHash('sha1').update(JSON.stringify(manifest)).digest('hex').slice(0, 12)

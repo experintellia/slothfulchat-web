@@ -146,6 +146,18 @@ try {
   await assertDialogRendered(page.locator('#sc-bridge-dialog'), 460, 'bridge dialog')
   console.log('OK: the bridge dialog is a centred, styled modal')
 
+  // #247: the top layer is ordered by showModal() call order and never
+  // re-sorts, so any modal the frontend opens after ours (the welcome screen,
+  // any Dialog.tsx) used to bury the picker — on screen but inert, with no way
+  // to reach its buttons. Which one won was a start-up race; open one here so
+  // the loser is always us, and let the real click below prove we recover.
+  await page.evaluate(() => {
+    const intruder = document.createElement('dialog')
+    intruder.id = 'sc-test-intruder'
+    document.body.append(intruder)
+    intruder.showModal()
+  })
+
   // picking localhost on an instance WITH a default must WRITE the key
   // (removal would snap back to the instance default)
   await selectRadio(0)

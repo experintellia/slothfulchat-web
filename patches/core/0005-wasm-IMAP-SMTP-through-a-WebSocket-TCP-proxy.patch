@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 6 Jul 2026 22:34:43 +0000
-Subject: [PATCH 05/31] wasm: IMAP/SMTP through a WebSocket-TCP proxy
+Subject: [PATCH 05/33] wasm: IMAP/SMTP through a WebSocket-TCP proxy
 
 Browsers cannot open TCP sockets, so on wasm32 connect_tcp_inner tunnels
 through a local WS proxy (src/net/ws_tcp.rs): ws_stream_wasm -> duplex
@@ -360,7 +360,7 @@ index a17aa17..04697b5 100644
   "js-sys",
   "wasm-bindgen",
 diff --git a/Cargo.toml b/Cargo.toml
-index 0a75276..75281633 100644
+index 0a75276..7528163 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -120,13 +120,21 @@ tokio-stream = { version = "0.1.17", features = ["fs"] }

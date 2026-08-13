@@ -7,7 +7,11 @@
  * backup import/export), and a one-shot `{ type: 'config', ... }` from
  * startCore delivers proxy/persist settings before init.
  */
-import initWasm, { init, set_crypto_offload } from '../wasm-dist/deltachat_wasm.js'
+import initWasm, {
+  init,
+  set_account_template,
+  set_crypto_offload,
+} from '../wasm-dist/deltachat_wasm.js'
 import { OPFS_PROBE_DEADLINE_MS, probeUntilDeadline } from './opfs-probe.mjs'
 
 interface FsRequest {
@@ -332,9 +336,48 @@ async function waitForOpfsSyncHandles(): Promise<void> {
  * catch below doesn't stack a second dialog on top of it. */
 let fatalReported = false
 
+/** Give up on the template fetch after this long. Nothing waits on it, so
+ * this only stops a stalled request from holding its ~900KB result and the
+ * connection open forever. */
+const TEMPLATE_FETCH_DEADLINE_MS = 10_000
+
+/** The pre-migrated account database new accounts are stamped out of, fetched
+ * in parallel with the wasm module (it is a few KB, gzipped by the generator
+ * because no static host reliably compresses `.db`). Purely an optimization:
+ * if it is missing, stale or corrupt, account creation replays migrations as
+ * it always did, so every failure here is a warning and never fatal.
+ *
+ * Cleared once handed to the wasm side, which keeps its own copy — holding the
+ * promise would pin a second ~900KB for the worker's lifetime. */
+let accountTemplate: Promise<Uint8Array | undefined> | undefined = (async () => {
+  const res = await fetch(new URL('../wasm-dist/fresh_account.db.gz', import.meta.url), {
+    signal: AbortSignal.timeout(TEMPLATE_FETCH_DEADLINE_MS),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const raw = new Uint8Array(await res.arrayBuffer())
+  // a host that serves .gz with `content-encoding: gzip` already unwrapped it
+  if (new TextDecoder().decode(raw.subarray(0, 6)) === 'SQLite') return raw
+  const plain = new Response(raw).body!.pipeThrough(new DecompressionStream('gzip'))
+  return new Uint8Array(await new Response(plain).arrayBuffer())
+})().catch(err => {
+  console.warn(`[core-wasm] no account template (${err}); new accounts will migrate`)
+  return undefined
+})
+
 const ready = (async () => {
   const { proxyUrl, persist } = await config
   await initWasm()
+  // non-blocking, like the crypto pool below: boot must never wait on an
+  // optimization. Awaiting it here delayed init by the length of a fetch, and
+  // that was enough to flip the order two <dialog>s open in — top-layer order
+  // is fixed at showModal() and never re-sorts, so the loser is unclickable
+  // for good. A profile created before this lands just migrates, which is the
+  // same fallback as having no template at all, and it needs a user action
+  // against an ~11KB fetch that is usually already in the SW cache.
+  void accountTemplate?.then(template => {
+    if (template) set_account_template(template)
+    accountTemplate = undefined // the wasm side holds its own copy now
+  })
   // non-blocking: boot never waits on the pool — until it registers, core
   // computes crypto inline (the correct fallback)
   void pool.ready.then(() =>
@@ -348,7 +391,34 @@ const ready = (async () => {
 // leaving the loading screen up forever
 ready.catch(err => {
   if (fatalReported) return
-  scope.postMessage({ type: 'fatal-init-error', message: String(err) } as unknown as string)
+  // `stack` as its own field, raw: without it the page gets "NotFoundError"
+  // and no way to tell which call produced it — the sahpool install, the wasm
+  // fetch, a self-heal that gave up. The page decides how to join the two
+  // (fatalDetails in web-app's fatal-report.ts); engines disagree on whether
+  // `stack` already repeats the message, and that belongs in a module with
+  // tests rather than here.
+  scope.postMessage({
+    type: 'fatal-init-error',
+    message: String(err),
+    stack: (err as Error)?.stack,
+  } as unknown as string)
+})
+// The post-boot sibling of the catch above, for the death the page cannot see
+// on its own: `onmessage` below is async, so a core panic mid-call (a wasm
+// trap out of dc.receive) rejects the handler's promise instead of throwing —
+// and browsers only propagate synchronous uncaught exceptions to the page's
+// `worker.onerror`, never rejections. Report it ourselves; startCore routes
+// this message into the same fail path as onerror. Any rejection landing here
+// is by definition one nothing was waiting on — today that is a poisoned
+// core, and loud beats a silent hang either way.
+self.addEventListener('unhandledrejection', event => {
+  scope.postMessage({
+    type: 'fatal-worker-died',
+    message: String(event.reason),
+    // a rejection reason is usually an Error; the page joins the two without
+    // doubling the message (fatalDetails) and copes when this is undefined
+    stack: (event.reason as Error)?.stack,
+  } as unknown as string)
 })
 
 scope.onmessage = async (

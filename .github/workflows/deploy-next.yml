@@ -1,6 +1,6 @@
 # next.slothful.chat = the current main branch, deployed to the flagship Caddy
 # server. This replaces the old Pages-on-main deployment (Pages is now prod, on
-# v* tags only — see deploy-pages.yml). Same build + gate-script upload path as
+# v* tags only — see publish-npm.yml). Same build + gate-script upload path as
 # the PR previews, into the server's permanent `next/` slot.
 #
 # Variable-gated on PREVIEW_SSH_HOST so it no-ops until the server exists.
@@ -25,7 +25,11 @@ jobs:
   deploy:
     if: vars.PREVIEW_SSH_HOST != ''
     runs-on: ubuntu-latest
-    # Same SLOTHFUL_* branding as prod (deploy-pages.yml). Analytics point at
+    # Cold-cache build (~20 min) + smoke + upload with headroom — same idea as
+    # ci.yml's 55. Without a cap, a hung smoke browser would hold this job (and
+    # the deploy-next concurrency group) for GitHub's 6-hour default.
+    timeout-minutes: 45
+    # Same SLOTHFUL_* branding as prod (publish-npm.yml). Analytics point at
     # their OWN Plausible site (SLOTHFUL_NEXT_PLAUSIBLE_DOMAIN) so next traffic
     # never pollutes prod stats; unset = no analytics at all, so this stays
     # dark until that site is registered in the Plausible UI (issue #134).
@@ -48,6 +52,8 @@ jobs:
       SLOTHFUL_IMPRINT_ADDRESS: ${{ vars.SLOTHFUL_IMPRINT_ADDRESS }}
       SLOTHFUL_IMPRINT_EMAIL: ${{ vars.SLOTHFUL_IMPRINT_EMAIL }}
       SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS: ${{ vars.SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS }}
+      SLOTHFUL_SUPPORT_URL: ${{ vars.SLOTHFUL_SUPPORT_URL }}
+      SLOTHFUL_CRASH_REPORT_URL: ${{ vars.SLOTHFUL_CRASH_REPORT_URL }}
       SLOTHFUL_PLAUSIBLE_DOMAIN: ${{ vars.SLOTHFUL_NEXT_PLAUSIBLE_DOMAIN }}
       SLOTHFUL_PLAUSIBLE_API: ${{ vars.SLOTHFUL_PLAUSIBLE_API }}
     steps:
@@ -61,6 +67,15 @@ jobs:
 
       - name: Build web-app dist/
         uses: ./.github/actions/build-web-app
+
+      # Boot the artifact that is about to go live — same reasoning as the
+      # release build's smoke step (publish-npm.yml): CI only ever smokes the
+      # --no-opt dev build, so without this the optimized production dist
+      # (wasm-opt on, minified frontend, devmode:false) would deploy without
+      # ever having been executed. No playwright install step: the build
+      # action above already installed chromium.
+      - name: Smoke test — the production dist boots before it ships
+        run: SMOKE_PRODUCTION=1 node scripts/smoke-web-app.mjs
 
       # Stream dist/ to the server; the deploy key's forced command runs the
       # gate script (`upload next`), which stages, validates the full merged

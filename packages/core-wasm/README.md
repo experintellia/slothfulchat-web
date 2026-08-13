@@ -67,6 +67,7 @@ cd -                                              # generated TS client at the p
 pnpm api-docs                                     # typedoc, with our options file
 pnpm install
 pnpm --filter @slothfulchat/core-wasm build:wasm  # needs clang + wasm32 target, ~10 min release
+pnpm --filter @slothfulchat/core-wasm gen-template # pre-migrated account db; needs chromium
 pnpm --filter @slothfulchat/core-wasm build
 pnpm smoke                                        # headless verification
 pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/example/index.html

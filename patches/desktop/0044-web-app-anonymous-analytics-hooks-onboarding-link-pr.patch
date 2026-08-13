@@ -16,20 +16,20 @@ All no-op on other targets and when analytics is disabled.
  3 files changed, 16 insertions(+)
 
 diff --git a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
-index eb6d6c2..84f1fc5 100644
+index 144b0ce..5054c2d 100644
 --- a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
 +++ b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
-@@ -204,6 +204,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
+@@ -206,6 +206,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
      if (!url || (!!draftFile && !isPreviewActive)) {
        return
      }
 +    // slothfulchat: anonymous analytics — the user accepted a link preview
 +    ;(window as any).__slothfulTrack?.('link_preview', { action: 'accept' })
      const token = ++tokenRef.current
-     setPhase({ kind: 'loading' })
-     // Bail out of a hung fetch so the spinner doesn't linger forever.
-@@ -257,6 +259,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
-   }, [accountId, url, draftFile, isPreviewActive, attach])
+     setPhase({ kind: 'loading', host })
+     // Bail out of a hung fetch so the shimmer doesn't linger forever.
+@@ -263,6 +265,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
+   }, [accountId, url, host, draftFile, isPreviewActive, attach])
  
    const onRemove = useCallback(() => {
 +    // slothfulchat: the user dismissed (removed) an attached preview
@@ -37,7 +37,7 @@ index eb6d6c2..84f1fc5 100644
      tokenRef.current++
      clearStagedTemp()
      if (previewActiveRef.current) {
-@@ -270,6 +274,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
+@@ -276,6 +280,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
    }, [clearStagedTemp, removeFile, setPreviewActive, url])
  
    const onDismiss = useCallback(() => {

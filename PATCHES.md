@@ -67,8 +67,23 @@ exists:
   `core/0005`, `core/0010`
 - **Backups** — file-based backup export/import reimplemented for the wasm
   VFS (sqlite-wasm-rs has no `sqlcipher_export`, so the database bytes are
-  swapped at the VFS level; encrypted backups stay unsupported on wasm).
-  `core/0008`, `core/0009`
+  swapped at the VFS level; encrypted backups stay unsupported on wasm). The
+  import waits for the OPFS mirror to drain before it returns, so its
+  100%-progress event means "durable" rather than "unpacked" — both the file
+  import and the second-device transfer receive go through that one place —
+  and the last 15% of the progress range is reserved for that drain, so
+  the wait is something the bar shows rather than dead time behind a bar that
+  already looks full. `core/0008`, `core/0009`, `core/0033`
+- **Account creation** — a new account replayed every migration past the
+  baseline schema, each one committing separately, and on OPFS a commit is a
+  batch of slow sync-access-handle writes (~1.7s per account; the same
+  migrations take ~52ms against the in-memory VFS, so it is write count, not
+  CPU). A new account's database file is now pre-filled from an already
+  migrated one, generated from the built wasm at build time
+  (`scripts/gen-account-template.mjs`) rather than checked in. Existing
+  databases are untouched, and the template is optional and self-correcting:
+  absent or built before a migration landed, the account just migrates the
+  remaining way. `core/0032`
 - **Crypto offload** — PGP key generation, encryption and decryption ran
   inline on the core worker (wasm has no real `spawn_blocking`), so every
   jsonrpc call queued behind them — up to ~1s on phones for account creation,
@@ -349,7 +364,9 @@ exists:
   IP/metadata leak) and every client renders an ordinary text+image message.
   Layout (compact vs large hero) follows the site's metadata and is toggleable
   on the draft; off by default (experimental), enableable in Settings → Advanced.
-  `desktop/0041`
+  The composer affordance's states (idle skeleton, loading shimmer, error
+  notice) all share one card silhouette instead of swapping between unrelated
+  widgets (#64). `desktop/0041`
 
 - **Composer completion menu (`:emoji:`)** — typing a colon shortcode plus two
   characters opens a scrollable, keyboard-navigable menu above the composer

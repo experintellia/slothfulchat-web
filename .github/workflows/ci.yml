@@ -17,7 +17,7 @@
 # stay out on purpose — see the NOTE at the bottom of this file.
 #
 # The build half of `test` used to be a hand-copied duplicate of
-# deploy-pages.yml carrying a "keep the two in sync" note. It is now the same
+# the prod deploy carrying a "keep the two in sync" note. It is now the same
 # composite action, with wasm-opt and production turned off — so the ordering
 # traps and toolchain setup are described in exactly one place.
 
@@ -29,10 +29,20 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Cancel superseded runs for the same ref (a new push to a PR obsoletes the old).
+# Cancel superseded runs for the same ref (a new push to a PR obsoletes the
+# old) — but only on PRs. A main run should complete: the release gate
+# (verify-release-tag.yml) requires green `lint`/`test` check runs on the
+# exact tagged commit, and a main run cancelled by the next merge leaves its
+# commit without them forever — CI cannot be re-run on a specific historical
+# commit. main is also the only branch that saves the shared Rust caches
+# (save-if below and in build-web-app), and a cancelled run saves nothing.
+# Not airtight: GitHub keeps at most ONE queued run per group and cancels a
+# superseded QUEUED run regardless of this flag, so three merges inside one
+# CI duration still skip the middle commit. This closes the common
+# two-merge case; a skipped commit simply can't be tagged for release.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -81,7 +91,8 @@ jobs:
       # release-asset pinning/digest/size caps, the analytics pre-notice gate,
       # translation-editor serialization, blob response headers, the OPFS
       # lock-wait deadline, the OpenRPC viewer's $ref inlining, keeping the
-      # api-docs React out of the app bundle)
+      # api-docs React out of the app bundle, the release workflow's npm
+      # staging loop — which otherwise only ever runs on a tag)
       - name: Unit-test pure helpers
         run: >-
           node --test
@@ -102,6 +113,7 @@ jobs:
           scripts/mock-madmail.test.mjs
           scripts/harness.test.mjs
           scripts/mark-fork-api.test.mjs
+          scripts/release-stage-loop.test.mjs
 
       # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —
       # Node's built-in type-stripping test runner needs no pnpm install, only
@@ -255,23 +267,23 @@ jobs:
       - name: Typecheck packages/calls (engine/ui/bridge)
         run: pnpm --filter @slothfulchat/calls build
 
-      # Playwright chromium for the headless smoke suites (--with-deps pulls the
-      # runner's shared libs). Uses the pinned playwright from the lockfile.
-      # Browser downloads are cached; `playwright install` skips the download
-      # when the pinned browser build is already in ~/.cache/ms-playwright.
-      - name: Cache Playwright browsers
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: playwright-${{ runner.os }}-
-      - name: Install Playwright chromium
-        run: pnpm exec playwright install --with-deps chromium
+      # Playwright chromium for the headless smoke suites is installed (and
+      # cached) by the build-web-app action above — it generates the account
+      # template in a browser, so it needs one anyway.
 
       # core-wasm smoke: serves the example page, asserts get_system_info +
       # typed client + fs side channel answer from inside the browser.
       - name: Smoke test — core-wasm boots in the browser
         run: pnpm --filter @slothfulchat/core-wasm test
+
+      # The account template is an optimization and has to fail like one: a
+      # template sqlite cannot read must leave a WORKING account behind, not
+      # one wrapped around a database that never opens and never heals. The
+      # generator only ever proves the happy path — a seeded account is
+      # identical to a migrated one by design, so nothing it compares can see
+      # this branch.
+      - name: Test — an unreadable account template falls back, not breaks
+        run: node scripts/test-account-template-fallback.mjs
 
       # crypto offload (issue #3), the part reachable without a mail server:
       # key generation runs on the pool worker, and a pool that errors, never
@@ -348,6 +360,11 @@ jobs:
       - name: E2E test — fatal-start dialog
         run: node scripts/test-fatal-dialog.mjs
 
+      # post-boot worker death (no proxy, no core boot — a stub worker that
+      # boots and then throws): every in-flight JSON-RPC and fs call must
+      # reject instead of hanging, and the app must show the reload dialog.
+      - name: E2E test — a dying core worker fails loudly, not silently
+        run: node scripts/test-worker-death.mjs
       # migration-error device message e2e (no proxy, no core boot — a stub
       # worker answers the sweep): core keeps an account whose database
       # migration failed open and only records the error, so the app must ask

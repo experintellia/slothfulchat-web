@@ -15,6 +15,8 @@ export class WasmTransport extends BaseTransport {
   // file is in web-app's tsconfig program (via its "paths"), which enables
   // erasableSyntaxOnly.
   private worker: Worker
+  /** Set once the worker can no longer answer; see {@link fail}. */
+  private dead: Error | null = null
 
   constructor(worker: Worker) {
     super()
@@ -24,6 +26,31 @@ export class WasmTransport extends BaseTransport {
       if (typeof event.data !== 'string') return
       this._onmessage(JSON.parse(event.data) as yerpc.Message)
     }
+  }
+
+  /** The worker is gone: no response is ever coming, for anything. Settle
+   * every request still waiting so callers get an error instead of a promise
+   * that never resolves, and refuse new ones for the same reason.
+   *
+   * yerpc keeps pending requests in a `private` map with no public way to
+   * settle them, so reach in — a hung UI is the worse trade. Cleared before
+   * rejecting so a handler that immediately retries isn't wiped again. */
+  fail(cause: Error): void {
+    if (this.dead) return
+    this.dead = cause
+    const requests = (this as unknown as { _requests?: Map<unknown, { reject(e: Error): void }> })
+      ._requests
+    // optional: if a yerpc bump renames the private map, degrade to leaving
+    // already-pending calls hanging rather than throwing out of the fail path
+    // (which would skip the terminate and the dialog after it)
+    if (!requests) return
+    const handlers = [...requests.values()]
+    requests.clear()
+    for (const handler of handlers) handler.reject(cause)
+  }
+
+  request(method: string, params?: yerpc.Params): Promise<unknown> {
+    return this.dead ? Promise.reject(this.dead) : super.request(method, params)
   }
 
   _send(message: yerpc.Message): void {
@@ -105,6 +132,54 @@ export function startCore(
     pending.get(msg.id)?.(msg)
     pending.delete(msg.id)
   })
+
+  // One failure path for every way the worker can stop answering after boot: a
+  // Rust panic or OOM (`error`), a reply that can't be structured-cloned
+  // (`messageerror`), or anything else that drops a response. Unlike the crypto
+  // pool in worker.ts — same shape, and the reason this mirrors it — core has
+  // no inline fallback, so the only honest move is to settle everything in
+  // flight with an error and put the failure in front of the user.
+  let dead: Error | null = null
+  const fail = (cause: Error): void => {
+    if (dead) return
+    dead = cause
+    transport.fail(cause)
+    for (const [id, settle] of pending) settle({ type: 'fs', id, ok: false, error: cause.message })
+    pending.clear()
+    worker.terminate()
+    // reuse the worker's own fatal-* message channel rather than adding a
+    // second notification mechanism: the page already listens for those, and
+    // a terminated worker obviously can't post this one itself
+    worker.dispatchEvent(
+      new MessageEvent('message', {
+        // `stack` alongside the message, as the init-error path does: worker-died
+        // is the other kind that is a real bug, and the frames are what make one
+        // diagnosable from a user's report (web-app's fatal-report.ts).
+        data: { type: 'fatal-worker-died', message: cause.message, stack: cause.stack },
+      }),
+    )
+  }
+  worker.onerror = (event) =>
+    fail(new Error(`core worker error: ${(event as ErrorEvent).message || 'unknown'}`))
+  worker.onmessageerror = () => fail(new Error('core worker reply was undeserializable'))
+  // …and the death `error` cannot see: a core panic inside the worker's async
+  // onmessage is an unhandled REJECTION there, which browsers never propagate
+  // to worker.onerror. The worker reports those itself (see the
+  // unhandledrejection reporter in worker.ts); settle everything on arrival.
+  // fail() re-dispatches the same type synthetically — its `dead` guard stops
+  // the recursion, and the page-side dialog dedupes the double delivery.
+  worker.addEventListener('message', (event: MessageEvent<unknown>) => {
+    const msg = event.data as { type?: string; message?: string; stack?: string }
+    if (typeof event.data !== 'string' && msg?.type === 'fatal-worker-died') {
+      const cause = new Error(msg.message ?? 'core worker died')
+      // carry the WORKER's stack across: fail() re-dispatches this Error, and
+      // an Error constructed here has our own frames — which would reach the
+      // user's report pointing at this dispatcher instead of at the panic
+      if (msg.stack) cause.stack = msg.stack
+      fail(cause)
+    }
+  })
+
   const fsRequest = (
     op: 'read' | 'write' | 'remove' | 'exists' | 'flush' | 'failed',
     path: string,
@@ -112,6 +187,7 @@ export function startCore(
     since?: number,
   ): Promise<FsResponse> =>
     new Promise((resolve, reject) => {
+      if (dead) return reject(dead)
       const id = nextId++
       pending.set(id, (response) =>
         response.ok
