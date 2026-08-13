@@ -1,0 +1,146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 13 Aug 2026 00:20:29 +0000
+Subject: [PATCH 83/83] web-app: fit the phone recording row on one line, show
+ the meter again
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The 0074 phone layout wrapped the recorder onto two rows and both were
+mostly empty: row 1 held pause/mic/timer then ~160px of gap before the
+picker and the original-audio pill, row 2 held ~200px of gap before
+Cancel/OK. The gap was the level meter, which the `max-width: 400px`
+block hid while its container kept `flex: 1` — so a phone recording
+showed no level feedback at all, and the space it would have used sat
+empty one row below.
+
+Two things forced the wrap, neither load-bearing:
+
+  - `.originalAudioPill` is ~110px of a 390px row, and it toggles an
+    encoding preference rather than driving the recording.
+  - `.cancel` / `.stopRecording` are pinned to `width: 85px`, ~40px more
+    than either label needs.
+
+Dropping both leaves pause+mic+timer+meter+picker+cancel+ok at roughly
+353px of a 380px content box, so the row fits on one line and the meter
+no longer has to be hidden to make room. The `max-width: 400px` block
+goes with it.
+
+The pill is hidden on phones, not removed, so the toggle needs a second
+home: the mic menu now carries it as a `menuitemcheckbox` row, and the
+picker renders whenever the experimental recorder is on instead of only
+when a second microphone is enumerated — otherwise a single-mic phone
+would have no way to reach it.
+
+Button height goes 32px -> 40px while the fixed width goes away. 32px is
+under the 44px touch-target guidance, and a mis-tap on Cancel discards
+the recording.
+---
+ .../AudioRecorder/AudioRecorder.tsx           | 31 ++++++++++++++++++-
+ .../AudioRecorder/styles.module.scss          | 29 +++++++++--------
+ 2 files changed, 46 insertions(+), 14 deletions(-)
+
+diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+index 9cfde87..b12bf46 100644
+--- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
++++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+@@ -659,7 +659,11 @@ export const AudioRecorder = ({
+           {tx('recording_no_sound')}
+         </span>
+       )}
+-      {audioInputs.length > 1 && (
++      {/* Rendered whenever the experimental recorder is on, not just for a
++          second microphone: phones hide the inline original-audio pill (it was
++          the ~110px that forced the recording row to wrap) and this menu is the
++          only way back to that toggle, so a single-mic phone needs it too. */}
++      {experimental && (
+         <div className={styles.micPicker} ref={micPickerRef}>
+           <IconButton
+             className={styles.micPickerButton}
+@@ -688,6 +692,31 @@ export const AudioRecorder = ({
+                   }
+                 }}
+               >
++                {/* ponytail: one row for both viewports rather than branching
++                    on width in JS — on desktop it duplicates the still-visible
++                    pill, which is harmless; on phones it replaces it. */}
++                <button
++                  type='button'
++                  role='menuitemcheckbox'
++                  aria-checked={originalAudio}
++                  className={styles.micMenuItem}
++                  data-testid='mic-menu-original-audio'
++                  title={
++                    tx('original_audio_explain') +
++                    (originalAudio && originalHonored === false
++                      ? '\n\n' + tx('original_audio_not_supported')
++                      : '')
++                  }
++                  onClick={toggleOriginalAudio}
++                >
++                  <span className={styles.micCheck}>
++                    {originalAudio ? '✓' : ''}
++                  </span>
++                  <span className={styles.micLabel}>
++                    {tx('original_audio')}
++                    {originalAudio && originalHonored === false ? ' ⚠️' : ''}
++                  </span>
++                </button>
+                 {audioInputs.map((d, i) => {
+                   const selected = d.deviceId === activeDeviceId
+                   const label = deviceLabel(d.label, i)
+diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+index 0ae60f3..bdfae7a 100644
+--- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
++++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+@@ -161,19 +161,6 @@
+ // Below 400px the meter is hidden to make room for Timer/Cancel/OK; the live
+ // waveform must hide too (its min-width would otherwise squeeze the buttons).
+ // Hide only the inner bar/canvas, not the flex:1 container spacer.
+-@media (max-width: 400px) {
+-  .volumeBarContainer {
+-    .volumeBar {
+-      display: none;
+-    }
+-  }
+-  // Compound selector: the base .liveWaveform rule is declared later in this
+-  // file and would win a same-specificity tie, un-hiding the waveform.
+-  .liveWaveformContainer .liveWaveform {
+-    display: none;
+-  }
+-}
+-
+ // Live recorder waveform (experimental; replaces .volumeBarContainer when the
+ // custom audio-player controls setting is on). Shares .volumeBar's footprint.
+ .liveWaveformContainer {
+@@ -374,13 +361,29 @@
+   .previewControls {
+     flex-basis: 100%;
+   }
++  // The original-audio pill is ~110px of the 390px row — the single thing that
++  // forced the wrap. Off the row on phones; the mic menu carries the toggle
++  // (see AudioRecorder.tsx), so it stays reachable.
++  .audioRecorder .originalAudioPill {
++    display: none;
++  }
+   // Prefixed with `.audioRecorder` to match the base block, whose SCSS nesting
+   // compiles these to `.audioRecorder .cancel` / `.audioRecorder .stopRecording`
+   // (and `.audioRecorder .stopRecording.stopRecording`). Same specificity +
+   // later source order → these win. Without the prefix the base out-ranked them
+   // and the desktop margins leaked onto the phone layout.
++  //
++  // The base block's fixed `width: 85px` is ~40px wider than either label
++  // needs; dropping it (plus the pill above) is what gets pause+mic+timer+
++  // meter+picker+cancel+ok onto one line at 390px, so the meter no longer has
++  // to be hidden to make room. 40px height: 32px sits under the 44px touch
++  // target guidance, and a mis-tap on Cancel discards the recording.
+   .audioRecorder .cancel,
+   .audioRecorder .stopRecording {
++    width: auto;
++    padding: 0 12px;
++    height: 40px;
++    margin-top: 0;
+     margin-inline-start: 6px;
+   }
+   .audioRecorder .stopRecording.stopRecording {

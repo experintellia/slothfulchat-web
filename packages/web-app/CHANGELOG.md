@@ -1,5 +1,11 @@
 # Changelog
 
+- **Recording a voice message on a phone shows the sound level again, on one
+  row.** The recorder used to wrap onto two half-empty rows with no level
+  meter at all. It now fits a single row with the meter visible, and the
+  Cancel/OK buttons are bigger and easier to hit. The "original audio" toggle
+  moved into the microphone menu to make room.
+
 - **Throwing away a voice recording no longer locks it instead.** Sliding the
   record button up and to the left to discard a recording could latch it into
   hands-free mode. Two smaller recorder fixes ride along: repeatedly denying

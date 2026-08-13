@@ -147,7 +147,13 @@ exists:
   `getUserMedia` rejects (repeated denials otherwise hit the browser's
   concurrent-context cap), and the phone-width button margins are prefixed
   with `.audioRecorder` so they out-rank the base block's nested rules.
-  `desktop/0072` – `desktop/0074`, `desktop/0082`
+  The phone recording row then stopped wrapping altogether: hiding the
+  ~110px original-audio pill (moved into the mic menu, which now renders
+  for a single microphone too) and dropping the 85px fixed width off
+  Cancel/OK fits pause+mic+timer+meter+picker+buttons on one line, so the
+  level meter no longer has to be hidden to make room and the buttons
+  clear the 40px touch target. `desktop/0072` – `desktop/0074`,
+  `desktop/0082` – `desktop/0083`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
