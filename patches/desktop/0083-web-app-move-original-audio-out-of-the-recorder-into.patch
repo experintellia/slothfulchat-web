@@ -32,10 +32,10 @@ and the four locale strings that went with it.
 Refs #179
 ---
  _locales/_untranslated_en.json                | 12 ------
- .../AudioRecorder/AudioRecorder.tsx           | 41 -------------------
- .../AudioRecorder/styles.module.scss          | 23 -----------
+ .../AudioRecorder/AudioRecorder.tsx           | 42 -------------------
+ .../AudioRecorder/styles.module.scss          | 23 ----------
  .../Settings/ExperimentalFeatures.tsx         |  6 +++
- 4 files changed, 6 insertions(+), 76 deletions(-)
+ 4 files changed, 6 insertions(+), 77 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
 index 169a8e9..7405e25 100644
@@ -61,18 +61,21 @@ index 169a8e9..7405e25 100644
      "message": "Select microphone"
    },
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-index 9cfde87..16f1a28 100644
+index 9cfde87..cb44420 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 +++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-@@ -23,7 +23,6 @@ import {
-   LOCK_DY,
+@@ -20,10 +20,8 @@ import { IconButton } from '../Icon'
+ import OutsideClickHelper from '../OutsideClickHelper'
+ import {
+   CANCEL_DX,
+-  LOCK_DY,
    classifyGesture,
    deviceLabel,
 -  originalAudioHonored,
    resolveDeviceId,
    silenceReset,
    silenceStep,
-@@ -201,10 +200,6 @@ export const AudioRecorder = ({
+@@ -201,10 +199,6 @@ export const AudioRecorder = ({
  
    // Recording pause state (experimental).
    const [paused, setPaused] = useState(false)
@@ -83,7 +86,7 @@ index 9cfde87..16f1a28 100644
    // Preview-before-send: after stopping, hold the recorded blob and play it
    // locally through the shared CustomAudioControls until the user sends /
    // re-records / discards. The object URL is revoked on every transition.
-@@ -313,7 +308,6 @@ export const AudioRecorder = ({
+@@ -313,7 +307,6 @@ export const AudioRecorder = ({
      })
      recorder.current = mic
      setPaused(false)
@@ -91,7 +94,7 @@ index 9cfde87..16f1a28 100644
      setNoSound(false)
      setAppliedDeviceId(null)
      setMicMenuOpen(false) // don't reopen a menu left open from a prior take
-@@ -342,14 +336,6 @@ export const AudioRecorder = ({
+@@ -342,14 +335,6 @@ export const AudioRecorder = ({
          // Capture the real device now feeding the stream (may differ from the
          // persisted id after a stale fallback) so the picker checkmark is right.
          setAppliedDeviceId(mic.getAppliedSettings()?.deviceId ?? null)
@@ -106,7 +109,7 @@ index 9cfde87..16f1a28 100644
          // OFF path only: the aborting 1s NO_INPUT alert. ON replaces it with the
          // non-aborting inline SilenceDetector warning (user can switch mics).
          if (!experimental) {
-@@ -431,13 +417,6 @@ export const AudioRecorder = ({
+@@ -431,13 +416,6 @@ export const AudioRecorder = ({
      }
    }
  
@@ -120,7 +123,7 @@ index 9cfde87..16f1a28 100644
    // ponytail: no `devicechange` listener — reopening the menu re-enumerates,
    // which is enough for the recorder's short-lived lifetime. Upgrade path is a
    // navigator.mediaDevices.ondevicechange refresh if hot-plug during a take
-@@ -619,25 +598,6 @@ export const AudioRecorder = ({
+@@ -619,25 +597,6 @@ export const AudioRecorder = ({
      }
    }, [previewUrl, mutexCtx.audioElement])
  
@@ -146,7 +149,7 @@ index 9cfde87..16f1a28 100644
    // --- mic picker + inline no-sound warning (experimental) ------------------
    // Active row = the device actually feeding the stream (getSettings) while
    // recording, else the persisted choice validated against the enumerated list
-@@ -844,7 +804,6 @@ export const AudioRecorder = ({
+@@ -844,7 +803,6 @@ export const AudioRecorder = ({
          <VolumeMeter volume={volume} />
        )}
        {micCluster}
