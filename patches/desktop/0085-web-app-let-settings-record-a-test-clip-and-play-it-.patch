@@ -31,8 +31,9 @@ path.
 Refs #179
 ---
  .../Settings/ExperimentalFeatures.tsx         |   2 +
- .../components/Settings/MicrophoneTest.tsx    | 168 ++++++++++++++++++
- 2 files changed, 170 insertions(+)
+ .../components/Settings/MicrophoneTest.tsx    | 172 ++++++++++++++++++
+ .../components/Settings/styles.module.scss    |   8 +
+ 3 files changed, 182 insertions(+)
  create mode 100644 packages/frontend/src/components/Settings/MicrophoneTest.tsx
 
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
@@ -57,10 +58,10 @@ index 4d64865..ba0d73e 100644
        <DesktopSettingsSwitch
 diff --git a/packages/frontend/src/components/Settings/MicrophoneTest.tsx b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
 new file mode 100644
-index 0000000..fd0df4a
+index 0000000..3367a0e
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,172 @@
 +import React, { useCallback, useEffect, useRef, useState } from 'react'
 +
 +import MicRecorder from '../AudioRecorder/MicRecorder'
@@ -206,26 +207,49 @@ index 0000000..fd0df4a
 +        {label}
 +      </SettingsButton>
 +      {phase === 'error' && (
-+        <div className={styles.settingsRowDescription}>
-+          Could not use the microphone. Check that the browser is allowed to
-+          access it.
++        <div className={styles.micTestResult}>
++          <div className={styles.settingsRowDescription}>
++            Could not use the microphone. Check that the browser is allowed to
++            access it.
++          </div>
 +        </div>
 +      )}
 +      {phase === 'done' && url != null && (
-+        <div className={styles.settingsRow} data-testid='mic-test-result'>
++        <div className={styles.micTestResult} data-testid='mic-test-result'>
 +          <audio ref={audioRef} src={url} preload='metadata' />
 +          <CustomAudioControls audioRef={audioRef} src={url} compact />
-+        </div>
-+      )}
-+      {phase === 'done' && originalAudio && (
-+        <div className={styles.settingsRowDescription}>
-+          {honored === false
-+            ? 'This browser or microphone ignored the request and filtered the sound anyway.'
-+            : honored === true
-+              ? 'Recorded unfiltered, as requested.'
-+              : "This browser did not say whether it filtered the sound, so it can't be confirmed either way."}
++          {/* Only meaningful when unfiltered was actually asked for — with the
++              switch off there is no request for the browser to honor. */}
++          {originalAudio && (
++            <div className={styles.settingsRowDescription}>
++              {honored === false
++                ? 'This browser or microphone ignored the request and filtered the sound anyway.'
++                : honored === true
++                  ? 'Recorded unfiltered, as requested.'
++                  : "This browser did not say whether it filtered the sound, so it can't be confirmed either way."}
++            </div>
++          )}
 +        </div>
 +      )}
 +    </>
 +  )
 +}
+diff --git a/packages/frontend/src/components/Settings/styles.module.scss b/packages/frontend/src/components/Settings/styles.module.scss
+index 49c82df..39c0fd2 100644
+--- a/packages/frontend/src/components/Settings/styles.module.scss
++++ b/packages/frontend/src/components/Settings/styles.module.scss
+@@ -170,6 +170,14 @@ $settingsHeight: 40px;
+   }
+ }
+ 
++// Microphone-test output: player + verdict. Shares the settings rows' 30px
++// gutter so the text lines up with the descriptions above, but deliberately
++// not .settingsRow — nothing here is clickable, and that class brings a
++// pointer cursor and a hover highlight with it.
++.micTestResult {
++  padding: 0 30px 10px;
++}
++
+ .settingsSelectorValue {
+   color: var(--colorPrimary);
+   font-weight: lighter;
