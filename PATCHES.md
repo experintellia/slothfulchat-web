@@ -477,6 +477,15 @@ Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not
 upstreamed — this is a private patch-stack experiment with no upstream
 contribution intended.
 
+- A download-on-demand message whose large part is gone from the server (a
+  chatmail relay deletes messages after a while) spun forever instead of
+  failing: the lookup that finds the message has no IMAP location left also
+  erased the record that the server had ever announced it, so the caller could
+  no longer tell "deleted" from "has not arrived yet" and left the message in
+  `InProgress`, retrying it on every fetch cycle. Such a message is now set to
+  `Failure`, which is what puts the retry button back on the bubble. Same fix
+  for our chunked download path when `receive_imf` rejects the assembled
+  message. `core/0034`
 - Camera selection in the QR reader did nothing on multi-camera Android
   Chromium devices, and the camera menu was blank before permissions were
   granted; stale stored camera ids no longer show the error screen.

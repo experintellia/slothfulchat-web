@@ -1,5 +1,11 @@
 # Changelog
 
+- **Downloading a message the server no longer has now fails instead of
+  spinning forever.** If the large part of a message was deleted on the server
+  before you got to it — chatmail relays clear messages out after a while —
+  tapping download left a spinner that never stopped. It now reports the
+  failure right away, with the retry button next to it.
+
 - **The bridge picker can no longer get stuck behind the welcome screen.** Open
   it while the app was still starting up and it could end up underneath the
   screen that appeared a moment later: greyed out, none of its buttons

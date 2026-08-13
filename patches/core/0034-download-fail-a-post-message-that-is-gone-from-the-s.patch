@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 13 Aug 2026 23:43:20 +0000
+Subject: [PATCH 34/34] download: fail a post-message that is gone from the
+ server
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A download-on-demand message whose post-message the server no longer has
+(a chatmail relay deletes messages after a while) stayed in
+`DownloadState::InProgress` forever: the UI showed a spinner that never
+finished and never offered the retry button.
+
+`download_msg()` finds no `imap` row for the message and, before
+returning the error, deletes the `available_post_msgs` entry — the very
+flag `download_msgs()` uses to tell "the server had it and it is gone
+now" (-> `Failure`) from "the post-message has not arrived yet" (-> keep
+waiting). With the flag erased the caller always took the second branch
+and also kept the `download` row, so every fetch cycle retried the same
+lookup and re-decided to wait.
+
+The location-unknown branch now checks that flag before clearing it: if
+the post-message was announced as available, the message is set to
+`Failure` and dropped from the download queue, so the bubble offers a
+retry (which re-queues it, and prefetch re-queues it by itself if the
+message reappears on the server). A post-message that has not arrived
+yet was never in `available_post_msgs` and keeps waiting as before.
+
+The tradeoff is a message moved out of the watched folder in the same
+IMAP iteration that runs the download: its `imap` row is deleted by the
+move and only recreated when the target folder is prefetched, so a
+download requested inside that window now fails once instead of
+completing by itself a moment later. It costs one tap on retry, and it
+only affects setups that move messages at all (chatmail does not).
+
+Our chunked download path had the same dead end for a different reason:
+when `receive_imf` rejects the assembled message it reports the device
+message and returns `Done`, which makes the caller drop the queue entry
+while the message keeps its `InProgress` state. It is set to `Failure`
+there too.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ src/download.rs | 80 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 79 insertions(+), 1 deletion(-)
+
+diff --git a/src/download.rs b/src/download.rs
+index fb971c0..f5808c4 100644
+--- a/src/download.rs
++++ b/src/download.rs
+@@ -464,7 +464,7 @@ pub(crate) async fn download_msg(
+ 
+     let Some((server_uid, server_folder, msg_transport_id)) = row else {
+         // No IMAP record found, we don't know the UID and folder.
+-        delete_from_available_post_msgs(context, &rfc724_mid).await?;
++        post_msg_location_unknown(context, &rfc724_mid).await?;
+         return Err(anyhow!(
+             "IMAP location for {rfc724_mid:?} post-message is unknown"
+         ));
+@@ -638,6 +638,11 @@ async fn fetch_single_msg(
+                 let mut msg = Message::new_text(text);
+                 add_device_msg(context, None, Some(&mut msg)).await?;
+                 staging.delete().await?;
++                // The caller drops the download queue entry for `Done`, so
++                // without this the message would keep its `InProgress` state
++                // with nothing left to move it on: a spinner that never ends
++                // and no button to retry it with.
++                set_state_to_failure(context, &rfc724_mid).await?;
+             }
+             Ok(_) => {
+                 staging.delete().await?;
+@@ -721,6 +726,26 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
+     Ok(())
+ }
+ 
++/// Handles a post-message whose IMAP location we do not know.
++///
++/// If it was recorded as available, it was on the server and is gone now — a
++/// chatmail relay deletes messages, a UID gets expunged. That location never
++/// comes back, so the message is failed here and taken out of the download
++/// queue; otherwise every fetch cycle would retry it and the UI would show
++/// "downloading" forever. Pressing download again re-queues it, and if the
++/// message does reappear on the server, prefetch queues it by itself.
++///
++/// A post-message that has merely not arrived yet was never recorded as
++/// available; it keeps waiting in the queue as before.
++async fn post_msg_location_unknown(context: &Context, rfc724_mid: &str) -> Result<()> {
++    if available_post_msgs_contains_rfc724_mid(context, rfc724_mid).await? {
++        set_state_to_failure(context, rfc724_mid).await?;
++        delete_from_downloads(context, rfc724_mid).await?;
++    }
++    delete_from_available_post_msgs(context, rfc724_mid).await?;
++    Ok(())
++}
++
+ async fn available_post_msgs_contains_rfc724_mid(
+     context: &Context,
+     rfc724_mid: &str,
+@@ -914,6 +939,59 @@ async fn test_update_download_state() -> Result<()> {
+         Ok(())
+     }
+ 
++    async fn download_contains(t: &TestContext, rfc724_mid: &str) -> Result<bool> {
++        Ok(t.sql
++            .query_get_value::<String>(
++                "SELECT rfc724_mid FROM download WHERE rfc724_mid=?",
++                (rfc724_mid,),
++            )
++            .await?
++            .is_some())
++    }
++
++    /// A post-message that is gone from the server must fail instead of being
++    /// retried forever, but one that has not arrived yet must keep waiting.
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_post_msg_location_unknown() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let (t, msg_id) = real_msg_id(&mut tcm).await?;
++        let mid = "post-msg@example.org";
++        t.sql
++            .execute("UPDATE msgs SET rfc724_mid=? WHERE id=?", (mid, msg_id))
++            .await?;
++        msg_id
++            .update_download_state(&t, DownloadState::InProgress)
++            .await?;
++        t.sql
++            .execute(
++                "INSERT INTO download (rfc724_mid, msg_id) VALUES (?,?)",
++                (mid, msg_id),
++            )
++            .await?;
++
++        // Never seen on the server: it may still arrive, so it stays queued.
++        post_msg_location_unknown(&t, mid).await?;
++        assert_eq!(
++            Message::load_from_db(&t, msg_id).await?.download_state(),
++            DownloadState::InProgress
++        );
++        assert!(download_contains(&t, mid).await?);
++
++        // Was on the server, gone now: fail it and stop retrying.
++        t.sql
++            .execute("INSERT INTO available_post_msgs VALUES (?)", (mid,))
++            .await?;
++        post_msg_location_unknown(&t, mid).await?;
++        assert_eq!(
++            Message::load_from_db(&t, msg_id).await?.download_state(),
++            DownloadState::Failure
++        );
++        assert!(!download_contains(&t, mid).await?);
++        assert!(!available_post_msgs_contains_rfc724_mid(&t, mid).await?);
++
++        Ok(())
++    }
++
+     /// Deterministic fake message bytes: assembly bugs (gaps, duplication,
+     /// reordering) show up as a mismatch against this pattern.
+     fn fake_message(len: usize) -> Vec<u8> {

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 11 Aug 2026 23:31:02 +0000
-Subject: [PATCH 33/33] wasm: drain the OPFS mirror before backup import
+Subject: [PATCH 33/34] wasm: drain the OPFS mirror before backup import
  returns
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
