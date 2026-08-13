@@ -3,8 +3,14 @@
 - **Recording a voice message on a phone shows the sound level again, on one
   row.** The recorder used to wrap onto two half-empty rows with no level
   meter at all. It now fits a single row with the meter visible, and the
-  Cancel/OK buttons are bigger and easier to hit. The "original audio" toggle
-  moved into the microphone menu to make room.
+  Cancel/OK buttons are bigger and easier to hit.
+
+- **The confusing "Voice quality" button is now a setting you can actually
+  test.** It sat in the recording bar, where it only appeared while a
+  recording was already running — too late to affect it — and its label
+  changed name depending on whether it was on. It is now "Record without
+  noise filtering" under Settings → Experimental, with a button that records
+  a few seconds and plays them back so you can hear the difference.
 
 - **Throwing away a voice recording no longer locks it instead.** Sliding the
   record button up and to the left to discard a recording could latch it into

@@ -1,0 +1,231 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 13 Aug 2026 13:09:32 +0000
+Subject: [PATCH 85/85] web-app: let settings record a test clip and play it
+ back
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+"Record without noise filtering" is a switch whose effect you can only
+judge by ear, and its description has to hedge ("some browsers and
+microphones ignore this setting") because the constraints are advisory.
+Both problems have the same answer: record a few seconds and listen.
+
+Adds a Test the microphone row under the switch. It records a 5s take
+with the setting as it currently stands, plays it back through the
+shared CustomAudioControls, and — when recording unfiltered was asked
+for — says whether the browser actually honored it, read back from
+track.getSettings() via the already-tested originalAudioHonored(). That
+readback lost its only surface when the recorder pill went away; this
+gives it a better one, next to the switch it describes and available
+without starting a real voice message.
+
+Not live monitoring: routing the mic to the speaker is what causes the
+feedback howl, and the mitigation apps rely on for that is echo
+cancellation — exactly what this setting disables. So live playback
+would be safe only while the setting is off, i.e. never when you want to
+test it. Record-then-play answers the same question with no feedback
+path.
+
+Refs #179
+---
+ .../Settings/ExperimentalFeatures.tsx         |   2 +
+ .../components/Settings/MicrophoneTest.tsx    | 168 ++++++++++++++++++
+ 2 files changed, 170 insertions(+)
+ create mode 100644 packages/frontend/src/components/Settings/MicrophoneTest.tsx
+
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index 4d64865..ba0d73e 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -5,6 +5,7 @@ import SettingsStoreInstance, {
+   type SettingsStoreState,
+ } from '../../stores/settings'
+ import DesktopSettingsSwitch from './DesktopSettingsSwitch'
++import MicrophoneTest from './MicrophoneTest'
+ import SettingsHeading from './SettingsHeading'
+ import SettingsSeparator from './SettingsSeparator'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+@@ -86,6 +87,7 @@ export function ExperimentalFeatures() {
+         description="Your device normally removes background noise, cancels echo and evens out volume. That's good for speech, but it can flatten music, ambient sound or room tone. Turn this on to record what the microphone actually hears. Some browsers and microphones ignore this setting."
+         forkAdded
+       />
++      <MicrophoneTest />
+       <SettingsSeparator />
+       <SettingsHeading>Chats</SettingsHeading>
+       <DesktopSettingsSwitch
+diff --git a/packages/frontend/src/components/Settings/MicrophoneTest.tsx b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
+new file mode 100644
+index 0000000..fd0df4a
+--- /dev/null
++++ b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
+@@ -0,0 +1,168 @@
++import React, { useCallback, useEffect, useRef, useState } from 'react'
++
++import MicRecorder from '../AudioRecorder/MicRecorder'
++import SettingsButton from './SettingsButton'
++import { CustomAudioControls } from '../AudioPlayer'
++import { useSettingsStore } from '../../stores/settings'
++import { originalAudioHonored } from '../AudioRecorder/recorderLogic'
++import { getLogger } from '@deltachat-desktop/shared/logger'
++import styles from './styles.module.scss'
++
++const log = getLogger('renderer/MicrophoneTest')
++
++/** Long enough to say a sentence, short enough that nobody waits for it. */
++const TAKE_MS = 5000
++
++type Phase = 'idle' | 'recording' | 'done' | 'error'
++
++/**
++ * Record a few seconds and play them back, so "record without noise filtering"
++ * can be judged by ear instead of by its description.
++ *
++ * Deliberately NOT live monitoring: routing the mic to the speaker is what
++ * causes the howl, and the mitigation every app relies on for that is echo
++ * cancellation — the very thing this setting turns off. Record-then-play
++ * answers the same question with no feedback path at all.
++ *
++ * ponytail: no A/B of filtered vs unfiltered in one take. The processing is
++ * applied by the OS during capture, so it can't be synthesised client-side and
++ * two differently-constrained tracks off one device aren't portable. Toggling
++ * the switch and recording again is the comparison; keeping the previous take
++ * around to play side by side is the upgrade if that turns out to be too
++ * fiddly to judge.
++ */
++export default function MicrophoneTest() {
++  const settings = useSettingsStore()[0]?.desktopSettings
++  const originalAudio = settings?.voiceRecordingOriginalAudio === true
++  const deviceId = settings?.voiceRecordingDeviceId ?? null
++
++  const [phase, setPhase] = useState<Phase>('idle')
++  const [url, setUrl] = useState<string | null>(null)
++  // Whether the mic/browser actually honored the unprocessed request.
++  // null = it didn't say (keys absent from getSettings), so we can't claim either way.
++  const [honored, setHonored] = useState<boolean | null>(null)
++  const audioRef = useRef<HTMLAudioElement | null>(null)
++  const recorderRef = useRef<MicRecorder | null>(null)
++  const timerRef = useRef<number | null>(null)
++  // Revoked on replace and on unmount; also guards the async stop path from
++  // writing state into an unmounted component.
++  const urlRef = useRef<string | null>(null)
++  const aliveRef = useRef(true)
++
++  const release = useCallback(() => {
++    if (timerRef.current != null) {
++      window.clearTimeout(timerRef.current)
++      timerRef.current = null
++    }
++    if (urlRef.current != null) {
++      URL.revokeObjectURL(urlRef.current)
++      urlRef.current = null
++    }
++  }, [])
++
++  useEffect(() => {
++    aliveRef.current = true
++    return () => {
++      aliveRef.current = false
++      // A take still running when the user leaves the page must not keep the
++      // microphone open.
++      recorderRef.current?.stop()
++      recorderRef.current = null
++      release()
++    }
++  }, [release])
++
++  const finish = useCallback(async () => {
++    const rec = recorderRef.current
++    if (rec == null) {
++      return
++    }
++    recorderRef.current = null
++    // Read the applied constraints BEFORE stop() tears the track down.
++    const applied = rec.getAppliedSettings()
++    try {
++      const [buffer] = await rec.stop().getMp3()
++      if (!aliveRef.current) {
++        return
++      }
++      const next = URL.createObjectURL(
++        new Blob(buffer as any, { type: 'audio/mp3' })
++      )
++      release()
++      urlRef.current = next
++      setUrl(next)
++      setHonored(applied ? originalAudioHonored(applied as any) : null)
++      setPhase('done')
++    } catch (err: any) {
++      log.error('test recording failed', err)
++      if (aliveRef.current) {
++        setPhase('error')
++      }
++    }
++  }, [release])
++
++  const start = useCallback(async () => {
++    if (phase === 'recording') {
++      // Second click ends the take early rather than starting a second one.
++      finish()
++      return
++    }
++    release()
++    setUrl(null)
++    setHonored(null)
++    const rec = new MicRecorder(() => {}, {
++      bitRate: 32,
++      originalAudio,
++      deviceId,
++    })
++    recorderRef.current = rec
++    setPhase('recording')
++    try {
++      await rec.start()
++    } catch (err: any) {
++      log.error('could not open the microphone', err)
++      recorderRef.current = null
++      if (aliveRef.current) {
++        setPhase('error')
++      }
++      return
++    }
++    if (!aliveRef.current) {
++      rec.stop()
++      return
++    }
++    timerRef.current = window.setTimeout(finish, TAKE_MS)
++  }, [phase, originalAudio, deviceId, finish, release])
++
++  const label =
++    phase === 'recording' ? 'Recording… tap to stop' : 'Test the microphone'
++
++  return (
++    <>
++      <SettingsButton onClick={start} dataTestid='mic-test-button'>
++        {label}
++      </SettingsButton>
++      {phase === 'error' && (
++        <div className={styles.settingsRowDescription}>
++          Could not use the microphone. Check that the browser is allowed to
++          access it.
++        </div>
++      )}
++      {phase === 'done' && url != null && (
++        <div className={styles.settingsRow} data-testid='mic-test-result'>
++          <audio ref={audioRef} src={url} preload='metadata' />
++          <CustomAudioControls audioRef={audioRef} src={url} compact />
++        </div>
++      )}
++      {phase === 'done' && originalAudio && (
++        <div className={styles.settingsRowDescription}>
++          {honored === false
++            ? 'This browser or microphone ignored the request and filtered the sound anyway.'
++            : honored === true
++              ? 'Recorded unfiltered, as requested.'
++              : "This browser did not say whether it filtered the sound, so it can't be confirmed either way."}
++        </div>
++      )}
++    </>
++  )
++}
