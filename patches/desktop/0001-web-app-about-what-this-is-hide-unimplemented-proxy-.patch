@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 7 Jul 2026 15:36:37 +0000
-Subject: [PATCH 01/81] web-app: about 'what this is' + hide unimplemented
+Subject: [PATCH 01/85] web-app: about 'what this is' + hide unimplemented
  proxy UI
 
 ---

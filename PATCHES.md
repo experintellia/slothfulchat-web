@@ -155,8 +155,26 @@ exists:
   and demotes the waveform to a 2px progress hairline)), and per-message
   player identity via an inert `#msg=<id>` src fragment, so a forwarded
   copy of a voice message no longer plays and auto-advances in lockstep
-  with the original (peaks stay cached once per underlying file).
-  `desktop/0072` – `desktop/0074`
+  with the original (peaks stay cached once per underlying file). Follow-up
+  fixes: the live pointermove handler now routes through `classifyGesture` so
+  a diagonal up-and-left flick cancels instead of latching the hands-free
+  lock, `MicRecorder.start()` closes the `AudioContext` it opened when
+  `getUserMedia` rejects (repeated denials otherwise hit the browser's
+  concurrent-context cap), and the phone-width button margins are prefixed
+  with `.audioRecorder` so they out-rank the base block's nested rules.
+  The "original audio" toggle then moved out of the recording row into
+  Settings → Experimental → Composer (issue #179): as a pill it was only
+  reachable while a take was running, which is the one moment it cannot
+  apply, and its label swapped nouns by state. With the pill gone and the
+  85px fixed width off Cancel/OK, the phone row fits
+  pause+mic+timer+meter+picker+buttons on one line, so the level meter no
+  longer has to be hidden to make room and the buttons clear the 40px
+  touch target. A "Test the microphone" row next to the switch records a
+  5s clip and plays it back, and reports whether the browser honored the
+  advisory constraints — record-then-play rather than live monitoring,
+  since the anti-howl mitigation is the echo cancellation this setting
+  disables. `desktop/0072` – `desktop/0074`, `desktop/0082` –
+  `desktop/0085`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP

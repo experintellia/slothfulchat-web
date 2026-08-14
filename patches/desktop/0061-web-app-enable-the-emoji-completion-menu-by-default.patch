@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 20 Jul 2026 20:32:35 +0000
-Subject: [PATCH 61/81] web-app: enable the emoji completion menu by default
+Subject: [PATCH 61/85] web-app: enable the emoji completion menu by default
 
 The :emoji: completion menu has proven itself; flip the
 experimentalCompletionMenu default to true so everyone gets it without

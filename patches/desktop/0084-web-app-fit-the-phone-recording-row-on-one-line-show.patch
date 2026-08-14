@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 13 Aug 2026 13:06:57 +0000
+Subject: [PATCH 84/85] web-app: fit the phone recording row on one line, show
+ the meter again
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The 0074 phone layout wrapped the recorder onto two rows and both were
+mostly empty: row 1 held pause/mic/timer then a wide gap before the
+picker, row 2 held ~200px of gap before Cancel/OK. The gap was the level
+meter, which the `max-width: 400px` block hid while its container kept
+`flex: 1` — so a phone recording showed no level feedback at all, and
+the space it would have used sat empty one row below.
+
+With the original-audio pill gone (previous patch) the only thing still
+forcing the wrap is the fixed `width: 85px` on Cancel/OK, ~20px more
+than either label needs. Dropping it leaves pause+mic+timer+meter+
+picker+cancel+ok at roughly 353px of a 380px content box, so the row
+fits on one line and the meter can come back — the `max-width: 400px`
+block goes with it.
+
+`flex-wrap: wrap` stays as a safety net for locales with longer labels.
+
+Button height goes 32px -> 40px while the fixed width goes away. 32px is
+under the 44px touch-target guidance, and a mis-tap on Cancel discards
+the recording.
+---
+ .../AudioRecorder/styles.module.scss          | 26 +++++++------------
+ 1 file changed, 10 insertions(+), 16 deletions(-)
+
+diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+index f0e2739..560a6dc 100644
+--- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
++++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+@@ -158,22 +158,6 @@
+   max-width: 56px;
+ }
+ 
+-// Below 400px the meter is hidden to make room for Timer/Cancel/OK; the live
+-// waveform must hide too (its min-width would otherwise squeeze the buttons).
+-// Hide only the inner bar/canvas, not the flex:1 container spacer.
+-@media (max-width: 400px) {
+-  .volumeBarContainer {
+-    .volumeBar {
+-      display: none;
+-    }
+-  }
+-  // Compound selector: the base .liveWaveform rule is declared later in this
+-  // file and would win a same-specificity tie, un-hiding the waveform.
+-  .liveWaveformContainer .liveWaveform {
+-    display: none;
+-  }
+-}
+-
+ // Live recorder waveform (experimental; replaces .volumeBarContainer when the
+ // custom audio-player controls setting is on). Shares .volumeBar's footprint.
+ .liveWaveformContainer {
+@@ -356,8 +340,18 @@
+   // (and `.audioRecorder .stopRecording.stopRecording`). Same specificity +
+   // later source order → these win. Without the prefix the base out-ranked them
+   // and the desktop margins leaked onto the phone layout.
++  //
++  // The base block's fixed `width: 85px` is ~20px wider than either label
++  // needs. Dropping it is what gets pause+mic+timer+meter+picker+cancel+ok
++  // onto one line at 390px, so the meter no longer has to be hidden to make
++  // room for the buttons. 40px height: 32px sits under the 44px touch-target
++  // guidance, and a mis-tap on Cancel discards the recording.
+   .audioRecorder .cancel,
+   .audioRecorder .stopRecording {
++    width: auto;
++    padding: 0 12px;
++    height: 40px;
++    margin-top: 0;
+     margin-inline-start: 6px;
+   }
+   .audioRecorder .stopRecording.stopRecording {
