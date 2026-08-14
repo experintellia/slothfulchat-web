@@ -483,9 +483,11 @@ contribution intended.
   erased the record that the server had ever announced it, so the caller could
   no longer tell "deleted" from "has not arrived yet" and left the message in
   `InProgress`, retrying it on every fetch cycle. Such a message is now set to
-  `Failure`, which is what puts the retry button back on the bubble. Same fix
-  for our chunked download path when `receive_imf` rejects the assembled
-  message. `core/0034`
+  `Failure`, which is what puts the retry button back on the bubble. The
+  lookup spans every transport (relays expire messages on their own
+  schedules), so a message another relay still holds stays that relay's job
+  rather than being failed. Same fix for our chunked download path when
+  `receive_imf` rejects the assembled message. `core/0034`
 - Camera selection in the QR reader did nothing on multi-camera Android
   Chromium devices, and the camera menu was blank before permissions were
   granted; stale stored camera ids no longer show the error screen.

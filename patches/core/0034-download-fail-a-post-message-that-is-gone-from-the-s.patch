@@ -42,14 +42,33 @@ there too.
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
- src/download.rs | 80 ++++++++++++++++++++++++++++++++++++++++++++++++-
- 1 file changed, 79 insertions(+), 1 deletion(-)
+ src/download.rs | 176 +++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 160 insertions(+), 16 deletions(-)
 
 diff --git a/src/download.rs b/src/download.rs
-index fb971c0..f5808c4 100644
+index fb971c0..7993be5 100644
 --- a/src/download.rs
 +++ b/src/download.rs
-@@ -464,7 +464,7 @@ pub(crate) async fn download_msg(
+@@ -446,25 +446,11 @@ pub(crate) async fn download_msg(
+     session: &mut Session,
+ ) -> Result<Option<FetchMsgResult>> {
+     let transport_id = session.transport_id();
+-    let row = context
+-        .sql
+-        .query_row_optional(
+-            "SELECT uid, folder, transport_id FROM imap
+-             WHERE rfc724_mid=? AND target!=''
+-             ORDER BY transport_id=? DESC LIMIT 1",
+-            (&rfc724_mid, transport_id),
+-            |row| {
+-                let server_uid: u32 = row.get(0)?;
+-                let server_folder: String = row.get(1)?;
+-                let msg_transport_id: u32 = row.get(2)?;
+-                Ok((server_uid, server_folder, msg_transport_id))
+-            },
+-        )
+-        .await?;
++    let row = imap_location(context, &rfc724_mid, transport_id).await?;
  
      let Some((server_uid, server_folder, msg_transport_id)) = row else {
          // No IMAP record found, we don't know the UID and folder.
@@ -58,7 +77,7 @@ index fb971c0..f5808c4 100644
          return Err(anyhow!(
              "IMAP location for {rfc724_mid:?} post-message is unknown"
          ));
-@@ -638,6 +638,11 @@ async fn fetch_single_msg(
+@@ -638,6 +624,11 @@ async fn fetch_single_msg(
                  let mut msg = Message::new_text(text);
                  add_device_msg(context, None, Some(&mut msg)).await?;
                  staging.delete().await?;
@@ -70,11 +89,41 @@ index fb971c0..f5808c4 100644
              }
              Ok(_) => {
                  staging.delete().await?;
-@@ -721,6 +726,26 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
+@@ -721,6 +712,56 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
      Ok(())
  }
  
-+/// Handles a post-message whose IMAP location we do not know.
++/// Where a post-message can be fetched from: `(uid, folder, transport_id)`.
++///
++/// The lookup spans every transport, preferring `transport_id`'s own row: a
++/// message that only exists on another transport is that transport's job, and
++/// must not be mistaken for one that is gone. Relays expire messages on their
++/// own schedules, so "not on this relay anymore" and "nowhere anymore" are
++/// different answers, and only the latter is `None`.
++async fn imap_location(
++    context: &Context,
++    rfc724_mid: &str,
++    transport_id: u32,
++) -> Result<Option<(u32, String, u32)>> {
++    context
++        .sql
++        .query_row_optional(
++            "SELECT uid, folder, transport_id FROM imap
++             WHERE rfc724_mid=? AND target!=''
++             ORDER BY transport_id=? DESC LIMIT 1",
++            (&rfc724_mid, transport_id),
++            |row| {
++                let server_uid: u32 = row.get(0)?;
++                let server_folder: String = row.get(1)?;
++                let msg_transport_id: u32 = row.get(2)?;
++                Ok((server_uid, server_folder, msg_transport_id))
++            },
++        )
++        .await
++}
++
++/// Handles a post-message whose IMAP location we do not know, on any transport
++/// (see [`imap_location`]).
 +///
 +/// If it was recorded as available, it was on the server and is gone now — a
 +/// chatmail relay deletes messages, a UID gets expunged. That location never
@@ -97,10 +146,27 @@ index fb971c0..f5808c4 100644
  async fn available_post_msgs_contains_rfc724_mid(
      context: &Context,
      rfc724_mid: &str,
-@@ -914,6 +939,59 @@ async fn test_update_download_state() -> Result<()> {
+@@ -914,6 +955,109 @@ async fn test_update_download_state() -> Result<()> {
          Ok(())
      }
  
++    /// Records a message as sitting at `uid` in `transport_id`'s INBOX.
++    async fn add_imap_row(
++        t: &TestContext,
++        transport_id: u32,
++        rfc724_mid: &str,
++        uid: u32,
++    ) -> Result<()> {
++        t.sql
++            .execute(
++                "INSERT INTO imap (transport_id, rfc724_mid, folder, uid, uidvalidity, target)
++                 VALUES (?,?,'INBOX',?,1,'INBOX')",
++                (transport_id, rfc724_mid, uid),
++            )
++            .await?;
++        Ok(())
++    }
++
 +    async fn download_contains(t: &TestContext, rfc724_mid: &str) -> Result<bool> {
 +        Ok(t.sql
 +            .query_get_value::<String>(
@@ -109,6 +175,39 @@ index fb971c0..f5808c4 100644
 +            )
 +            .await?
 +            .is_some())
++    }
++
++    /// A message another transport still holds must not look "gone": relays
++    /// expire messages on their own schedules, and only a message no transport
++    /// has a location for may be failed.
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_imap_location_spans_transports() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let t = tcm.alice().await;
++        let mid = "post-msg@example.org";
++        let at = |uid: u32, transport_id: u32| Some((uid, "INBOX".to_string(), transport_id));
++
++        // Nowhere: the only case the caller may treat as failed.
++        assert!(imap_location(&t, mid, 1).await?.is_none());
++
++        // Only on the other relay: hands the download to that transport
++        // instead of failing it here.
++        add_imap_row(&t, 2, mid, 200).await?;
++        assert_eq!(imap_location(&t, mid, 1).await?, at(200, 2));
++
++        // On both: fetch from the transport whose loop is asking.
++        add_imap_row(&t, 1, mid, 100).await?;
++        assert_eq!(imap_location(&t, mid, 1).await?, at(100, 1));
++        assert_eq!(imap_location(&t, mid, 2).await?, at(200, 2));
++
++        // Our own row marked for deletion is not a location anymore, the other
++        // relay's row still is.
++        t.sql
++            .execute("UPDATE imap SET target='' WHERE transport_id=1", ())
++            .await?;
++        assert_eq!(imap_location(&t, mid, 1).await?, at(200, 2));
++
++        Ok(())
 +    }
 +
 +    /// A post-message that is gone from the server must fail instead of being
