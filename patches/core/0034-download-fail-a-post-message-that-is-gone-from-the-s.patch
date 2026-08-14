@@ -8,45 +8,49 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 A download-on-demand message whose post-message the server no longer has
-(a chatmail relay deletes messages after a while) stayed in
-`DownloadState::InProgress` forever: the UI showed a spinner that never
-finished and never offered the retry button.
+spun forever instead of failing. `download_msg()` looks the message's IMAP
+location up, and when there is none left it also deleted the message from
+`available_post_msgs` before returning the error — which is the very flag
+`download_msgs()` then uses to decide whether the failure is final. With
+the flag gone it took the "will be downloaded once it arrives" branch,
+kept the `download` row and retried on every fetch cycle, so the bubble
+showed "downloading" with no percentage, no failure and no retry button,
+for good. A chatmail relay deleting the message after a while is enough to
+reach this.
 
-`download_msg()` finds no `imap` row for the message and, before
-returning the error, deletes the `available_post_msgs` entry — the very
-flag `download_msgs()` uses to tell "the server had it and it is gone
-now" (-> `Failure`) from "the post-message has not arrived yet" (-> keep
-waiting). With the flag erased the caller always took the second branch
-and also kept the `download` row, so every fetch cycle retried the same
-lookup and re-decided to wait.
+The decision is now made where the flag is still intact: a message that
+was announced as available and has no location left is set to `Failure`
+and dropped from the queue, which is what puts the retry button back. A
+post-message that has merely not arrived yet was never announced, so it
+keeps waiting exactly as before — the flag and the location row are
+written by the same prefetch pass, so "announced" really does mean "was on
+the server".
 
-The location-unknown branch now checks that flag before clearing it: if
-the post-message was announced as available, the message is set to
-`Failure` and dropped from the download queue, so the bubble offers a
-retry (which re-queues it, and prefetch re-queues it by itself if the
-message reappears on the server). A post-message that has not arrived
-yet was never in `available_post_msgs` and keeps waiting as before.
+The location lookup is now `imap_location()`, named because its
+transport-spanning behavior is load-bearing: relays expire messages on
+their own schedules, so only a message no transport has a location for may
+be failed, and one another relay still holds stays that relay's job. Its
+test pins all four cases.
 
-The tradeoff is a message moved out of the watched folder in the same
-IMAP iteration that runs the download: its `imap` row is deleted by the
-move and only recreated when the target folder is prefetched, so a
-download requested inside that window now fails once instead of
-completing by itself a moment later. It costs one tap on retry, and it
-only affects setups that move messages at all (chatmail does not).
+A relay that proves it does not serve the UID anymore (the chunked path's
+re-probe finds nothing) now also has its `imap` row deleted, so the retry
+looks the message up afresh instead of asking the same dead relay again,
+and the last location leaving is what makes the message failable. The
+whole-message fallback cannot tell "gone" from "fetch failed" and leaves
+its row alone.
 
-Our chunked download path had the same dead end for a different reason:
-when `receive_imf` rejects the assembled message it reports the device
-message and returns `Done`, which makes the caller drop the queue entry
-while the message keeps its `InProgress` state. It is set to `Failure`
-there too.
+Also fixes the chunked path leaving the same dead `InProgress` behind when
+`receive_imf` rejects the assembled message: the device message was posted
+and the queue entry dropped, but nothing moved the message out of
+`InProgress`.
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
- src/download.rs | 176 +++++++++++++++++++++++++++++++++++++++++++-----
- 1 file changed, 160 insertions(+), 16 deletions(-)
+ src/download.rs | 210 ++++++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 194 insertions(+), 16 deletions(-)
 
 diff --git a/src/download.rs b/src/download.rs
-index fb971c0..7993be5 100644
+index fb971c0..726f317 100644
 --- a/src/download.rs
 +++ b/src/download.rs
 @@ -446,25 +446,11 @@ pub(crate) async fn download_msg(
@@ -77,7 +81,15 @@ index fb971c0..7993be5 100644
          return Err(anyhow!(
              "IMAP location for {rfc724_mid:?} post-message is unknown"
          ));
-@@ -638,6 +624,11 @@ async fn fetch_single_msg(
+@@ -574,6 +560,7 @@ async fn fetch_single_msg(
+                         .map(|()| FetchMsgResult::Done);
+                 }
+                 staging.delete().await?;
++                forget_imap_location(context, transport_id, folder, uidvalidity, uid).await?;
+                 bail!("Failed to fetch UID {uid}");
+             }
+             ChunkOutcome::TooLarge => {
+@@ -638,6 +625,11 @@ async fn fetch_single_msg(
                  let mut msg = Message::new_text(text);
                  add_device_msg(context, None, Some(&mut msg)).await?;
                  staging.delete().await?;
@@ -89,7 +101,7 @@ index fb971c0..7993be5 100644
              }
              Ok(_) => {
                  staging.delete().await?;
-@@ -721,6 +712,56 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
+@@ -721,6 +713,83 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
      Ok(())
  }
  
@@ -122,6 +134,33 @@ index fb971c0..7993be5 100644
 +        .await
 +}
 +
++/// Forgets a location the server proved it no longer serves: the re-probe
++/// found no such UID, so this row can only send the next attempt back to a
++/// relay that does not have the message.
++///
++/// Dropping it means a retry looks the message up afresh — reaching another
++/// relay's copy once messages are received on several — and when the last
++/// location is gone [`post_msg_location_unknown`] fails the message for good.
++/// Only the chunked path can prove this; the whole-message fallback cannot
++/// tell "gone" from "fetch failed", and leaves its row alone.
++async fn forget_imap_location(
++    context: &Context,
++    transport_id: u32,
++    folder: &str,
++    uidvalidity: u32,
++    uid: u32,
++) -> Result<()> {
++    context
++        .sql
++        .execute(
++            "DELETE FROM imap
++             WHERE transport_id=? AND folder=? AND uidvalidity=? AND uid=?",
++            (transport_id, folder, uidvalidity, uid),
++        )
++        .await?;
++    Ok(())
++}
++
 +/// Handles a post-message whose IMAP location we do not know, on any transport
 +/// (see [`imap_location`]).
 +///
@@ -146,7 +185,7 @@ index fb971c0..7993be5 100644
  async fn available_post_msgs_contains_rfc724_mid(
      context: &Context,
      rfc724_mid: &str,
-@@ -914,6 +955,109 @@ async fn test_update_download_state() -> Result<()> {
+@@ -914,6 +983,115 @@ async fn test_update_download_state() -> Result<()> {
          Ok(())
      }
  
@@ -206,6 +245,12 @@ index fb971c0..7993be5 100644
 +            .execute("UPDATE imap SET target='' WHERE transport_id=1", ())
 +            .await?;
 +        assert_eq!(imap_location(&t, mid, 1).await?, at(200, 2));
++
++        // A relay that proved it does not serve the message anymore drops out
++        // of the lookup, so a retry does not ask it again — and the last
++        // location leaving is what makes the message failable.
++        forget_imap_location(&t, 2, "INBOX", 1, 200).await?;
++        assert!(imap_location(&t, mid, 1).await?.is_none());
 +
 +        Ok(())
 +    }

@@ -486,7 +486,9 @@ contribution intended.
   `Failure`, which is what puts the retry button back on the bubble. The
   lookup spans every transport (relays expire messages on their own
   schedules), so a message another relay still holds stays that relay's job
-  rather than being failed. Same fix for our chunked download path when
+  rather than being failed; a relay that proves it no longer serves the UID
+  loses its `imap` row, so a retry looks the message up afresh instead of
+  asking the same dead relay. Same fix for our chunked download path when
   `receive_imf` rejects the assembled message. `core/0034`
 - Camera selection in the QR reader did nothing on multi-camera Android
   Chromium devices, and the camera menu was blank before permissions were
