@@ -30,17 +30,22 @@ path.
 
 Refs #179
 ---
- .../Settings/ExperimentalFeatures.tsx         |   2 +
+ .../Settings/ExperimentalFeatures.tsx         |  13 +-
  .../components/Settings/MicrophoneTest.tsx    | 172 ++++++++++++++++++
  .../components/Settings/styles.module.scss    |   8 +
- 3 files changed, 182 insertions(+)
+ 3 files changed, 192 insertions(+), 1 deletion(-)
  create mode 100644 packages/frontend/src/components/Settings/MicrophoneTest.tsx
 
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 4d64865..ba0d73e 100644
+index 4d64865..b8716f3 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-@@ -5,6 +5,7 @@ import SettingsStoreInstance, {
+@@ -1,10 +1,11 @@
+-import React from 'react'
++import React, { useState } from 'react'
+ 
+ import SettingsStoreInstance, {
+   useSettingsStore,
    type SettingsStoreState,
  } from '../../stores/settings'
  import DesktopSettingsSwitch from './DesktopSettingsSwitch'
@@ -48,11 +53,28 @@ index 4d64865..ba0d73e 100644
  import SettingsHeading from './SettingsHeading'
  import SettingsSeparator from './SettingsSeparator'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
-@@ -86,6 +87,7 @@ export function ExperimentalFeatures() {
+@@ -32,6 +33,8 @@ export function ExperimentalFeatures() {
+   const tx = useTranslationFunction()
+   const settingsStore = useSettingsStore()[0]
+   const { openDialog } = useDialog()
++  // Remount key for the microphone test — see where it is used below.
++  const [micTestRun, setMicTestRun] = useState(0)
+ 
+   const showExperimentalInfoDialog = async (
+     settingsKey: keyof Pick<
+@@ -85,7 +88,15 @@ export function ExperimentalFeatures() {
+         label='Record without noise filtering'
          description="Your device normally removes background noise, cancels echo and evens out volume. That's good for speech, but it can flatten music, ambient sound or room tone. Turn this on to record what the microphone actually hears. Some browsers and microphones ignore this setting."
          forkAdded
++        callback={() => setMicTestRun(n => n + 1)}
        />
-+      <MicrophoneTest />
++      {/* Flipping the switch invalidates a finished take: the clip was
++          recorded under the old setting, and its verdict is read against the
++          new one — record with filtering on, then switch on, and it would
++          claim the browser "ignored the request" about a take that never made
++          one. Bumping the key remounts, and the existing unmount cleanup stops
++          any take in flight and revokes the object URL. */}
++      <MicrophoneTest key={micTestRun} />
        <SettingsSeparator />
        <SettingsHeading>Chats</SettingsHeading>
        <DesktopSettingsSwitch
