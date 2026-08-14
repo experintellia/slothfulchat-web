@@ -30,14 +30,14 @@ path.
 
 Refs #179
 ---
- .../Settings/ExperimentalFeatures.tsx         |  13 +-
- .../components/Settings/MicrophoneTest.tsx    | 172 ++++++++++++++++++
+ .../Settings/ExperimentalFeatures.tsx         |  20 +-
+ .../components/Settings/MicrophoneTest.tsx    | 247 ++++++++++++++++++
  .../components/Settings/styles.module.scss    |   8 +
- 3 files changed, 192 insertions(+), 1 deletion(-)
+ 3 files changed, 274 insertions(+), 1 deletion(-)
  create mode 100644 packages/frontend/src/components/Settings/MicrophoneTest.tsx
 
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 4d64865..b8716f3 100644
+index 4d64865..33daebb 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -1,10 +1,11 @@
@@ -62,10 +62,17 @@ index 4d64865..b8716f3 100644
  
    const showExperimentalInfoDialog = async (
      settingsKey: keyof Pick<
-@@ -85,7 +88,15 @@ export function ExperimentalFeatures() {
+@@ -85,7 +88,22 @@ export function ExperimentalFeatures() {
          label='Record without noise filtering'
          description="Your device normally removes background noise, cancels echo and evens out volume. That's good for speech, but it can flatten music, ambient sound or room tone. Turn this on to record what the microphone actually hears. Some browsers and microphones ignore this setting."
          forkAdded
++        // The recorder only applies this while the custom player is on
++        // (`experimental && originalAudio` in AudioRecorder); same
++        // dependent-switch treatment as the voice-message rows in Notifications.
++        disabled={
++          !settingsStore?.desktopSettings['experimentalAudioPlayerControls']
++        }
++        disabledValue={false}
 +        callback={() => setMicTestRun(n => n + 1)}
        />
 +      {/* Flipping the switch invalidates a finished take: the clip was
@@ -80,15 +87,22 @@ index 4d64865..b8716f3 100644
        <DesktopSettingsSwitch
 diff --git a/packages/frontend/src/components/Settings/MicrophoneTest.tsx b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
 new file mode 100644
-index 0000000..3367a0e
+index 0000000..dcb34a1
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
-@@ -0,0 +1,172 @@
-+import React, { useCallback, useEffect, useRef, useState } from 'react'
+@@ -0,0 +1,247 @@
++import React, {
++  useCallback,
++  useContext,
++  useEffect,
++  useRef,
++  useState,
++} from 'react'
 +
 +import MicRecorder from '../AudioRecorder/MicRecorder'
 +import SettingsButton from './SettingsButton'
 +import { CustomAudioControls } from '../AudioPlayer'
++import { MediaPlayerMutexContext } from '../../contexts/MediaPlayerMutexContext'
 +import { useSettingsStore } from '../../stores/settings'
 +import { originalAudioHonored } from '../AudioRecorder/recorderLogic'
 +import { getLogger } from '@deltachat-desktop/shared/logger'
@@ -99,7 +113,15 @@ index 0000000..3367a0e
 +/** Long enough to say a sentence, short enough that nobody waits for it. */
 +const TAKE_MS = 5000
 +
-+type Phase = 'idle' | 'recording' | 'done' | 'error'
++/**
++ * Below this the take is silence: MicRecorder opens the mic 300ms before it
++ * starts feeding the encoder, so a stop inside that window still yields a blob
++ * (Encoder.finish() always appends its flush block) that plays as 0:00. At the
++ * 32kbps this records at, 1KiB is about a quarter second.
++ */
++const MIN_TAKE_BYTES = 1024
++
++type Phase = 'idle' | 'recording' | 'done'
 +
 +/**
 + * Record a few seconds and play them back, so "record without noise filtering"
@@ -119,17 +141,31 @@ index 0000000..3367a0e
 + */
 +export default function MicrophoneTest() {
 +  const settings = useSettingsStore()[0]?.desktopSettings
-+  const originalAudio = settings?.voiceRecordingOriginalAudio === true
++  // Mirror AudioRecorder's own gate exactly (`experimental && originalAudio`,
++  // AudioRecorder.tsx). Recording unfiltered here while real voice messages
++  // stay filtered would make this a test of something the app doesn't do.
++  const experimental = settings?.experimentalAudioPlayerControls === true
++  const originalAudio =
++    experimental && settings?.voiceRecordingOriginalAudio === true
 +  const deviceId = settings?.voiceRecordingDeviceId ?? null
++  const mutexCtx = useContext(MediaPlayerMutexContext)
 +
 +  const [phase, setPhase] = useState<Phase>('idle')
 +  const [url, setUrl] = useState<string | null>(null)
++  const [error, setError] = useState<string | null>(null)
 +  // Whether the mic/browser actually honored the unprocessed request.
 +  // null = it didn't say (keys absent from getSettings), so we can't claim either way.
 +  const [honored, setHonored] = useState<boolean | null>(null)
 +  const audioRef = useRef<HTMLAudioElement | null>(null)
 +  const recorderRef = useRef<MicRecorder | null>(null)
 +  const timerRef = useRef<number | null>(null)
++  // Bumped on every start and on every stop. An in-flight start reads its
++  // generation before awaiting the permission prompt and closes the stream it
++  // opened if it has been superseded since — otherwise stopping while the
++  // prompt is up orphans the mic: MicRecorder.stop() is gated on a
++  // processor/microphone that only exist once the stream opens, so it no-ops,
++  // and the recording indicator stays lit for the rest of the session.
++  const startGenRef = useRef(0)
 +  // Revoked on replace and on unmount; also guards the async stop path from
 +  // writing state into an unmounted component.
 +  const urlRef = useRef<string | null>(null)
@@ -151,12 +187,40 @@ index 0000000..3367a0e
 +    return () => {
 +      aliveRef.current = false
 +      // A take still running when the user leaves the page must not keep the
-+      // microphone open.
++      // microphone open. No generation bump needed: an in-flight start checks
++      // aliveRef too, and closes the stream it opened when it resolves.
 +      recorderRef.current?.stop()
 +      recorderRef.current = null
 +      release()
 +    }
 +  }, [release])
++
++  // One sound at a time: the test clip and the global voice-message player
++  // each pause the other, the same arrangement the recorder's preview row has
++  // with the singleton.
++  useEffect(() => {
++    const singleton = mutexCtx.audioElement
++    const el = audioRef.current
++    if (url == null || el == null || singleton == null) {
++      return
++    }
++    const onTestPlay = () => {
++      if (!singleton.paused) {
++        singleton.pause()
++      }
++    }
++    const onSingletonPlay = () => {
++      if (!el.paused) {
++        el.pause()
++      }
++    }
++    el.addEventListener('play', onTestPlay)
++    singleton.addEventListener('play', onSingletonPlay)
++    return () => {
++      el.removeEventListener('play', onTestPlay)
++      singleton.removeEventListener('play', onSingletonPlay)
++    }
++  }, [url, mutexCtx.audioElement])
 +
 +  const finish = useCallback(async () => {
 +    const rec = recorderRef.current
@@ -164,25 +228,37 @@ index 0000000..3367a0e
 +      return
 +    }
 +    recorderRef.current = null
++    startGenRef.current++ // invalidate a start still waiting on the prompt
 +    // Read the applied constraints BEFORE stop() tears the track down.
 +    const applied = rec.getAppliedSettings()
++    if (applied == null) {
++      // Stopped before the mic ever opened: nothing was captured, and the
++      // superseded start() will close the stream when it resolves.
++      setPhase('idle')
++      return
++    }
 +    try {
 +      const [buffer] = await rec.stop().getMp3()
 +      if (!aliveRef.current) {
 +        return
 +      }
-+      const next = URL.createObjectURL(
-+        new Blob(buffer as any, { type: 'audio/mp3' })
-+      )
++      const blob = new Blob(buffer as any, { type: 'audio/mp3' })
++      if (blob.size < MIN_TAKE_BYTES) {
++        setPhase('idle')
++        setError('That take was too short to hear — give it a second or two.')
++        return
++      }
++      const next = URL.createObjectURL(blob)
 +      release()
 +      urlRef.current = next
 +      setUrl(next)
-+      setHonored(applied ? originalAudioHonored(applied as any) : null)
++      setHonored(originalAudioHonored(applied as any))
 +      setPhase('done')
 +    } catch (err: any) {
 +      log.error('test recording failed', err)
 +      if (aliveRef.current) {
-+        setPhase('error')
++        setPhase('idle')
++        setError('Could not process the recording.')
 +      }
 +    }
 +  }, [release])
@@ -196,6 +272,8 @@ index 0000000..3367a0e
 +    release()
 +    setUrl(null)
 +    setHonored(null)
++    setError(null)
++    const gen = ++startGenRef.current
 +    const rec = new MicRecorder(() => {}, {
 +      bitRate: 32,
 +      originalAudio,
@@ -207,13 +285,20 @@ index 0000000..3367a0e
 +      await rec.start()
 +    } catch (err: any) {
 +      log.error('could not open the microphone', err)
-+      recorderRef.current = null
++      if (gen === startGenRef.current) {
++        recorderRef.current = null
++      }
 +      if (aliveRef.current) {
-+        setPhase('error')
++        setPhase('idle')
++        setError(
++          'Could not use the microphone. Check that the browser is allowed to access it.'
++        )
 +      }
 +      return
 +    }
-+    if (!aliveRef.current) {
++    // Stopped or unmounted while the permission prompt was up. The stream is
++    // open now, so this stop() actually closes it.
++    if (gen !== startGenRef.current || !aliveRef.current) {
 +      rec.stop()
 +      return
 +    }
@@ -228,12 +313,9 @@ index 0000000..3367a0e
 +      <SettingsButton onClick={start} dataTestid='mic-test-button'>
 +        {label}
 +      </SettingsButton>
-+      {phase === 'error' && (
++      {error != null && (
 +        <div className={styles.micTestResult}>
-+          <div className={styles.settingsRowDescription}>
-+            Could not use the microphone. Check that the browser is allowed to
-+            access it.
-+          </div>
++          <div className={styles.settingsRowDescription}>{error}</div>
 +        </div>
 +      )}
 +      {phase === 'done' && url != null && (
