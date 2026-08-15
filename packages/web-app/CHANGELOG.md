@@ -1,5 +1,9 @@
 # Changelog
 
+- **The Diagnostics panel now also opens with Ctrl/Cmd+Shift+D.** The button in
+  the log dialog is unchanged — the shortcut is just a faster way there when
+  someone asks you for startup timings.
+
 ## 0.9.1 — 2026-08-15
 
 - Same app as 0.9.0, re-released because 0.9.0's packages never reached npm:
