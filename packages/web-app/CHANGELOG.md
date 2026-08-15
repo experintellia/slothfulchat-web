@@ -1,5 +1,9 @@
 # Changelog
 
+- **The Diagnostics panel now also opens with Ctrl/Cmd+Shift+D.** The button in
+  the log dialog is unchanged — the shortcut is just a faster way there when
+  someone asks you for startup timings.
+
 - **Recording a voice message on a phone shows the sound level again, on one
   row.** The recorder used to wrap onto two half-empty rows with no level
   meter at all. It now fits a single row with the meter visible, and the

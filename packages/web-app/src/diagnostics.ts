@@ -2,7 +2,8 @@
  * Diagnostics panel — an advanced-user overlay reachable in production.
  *
  * Opened from the Log dialog (a small patch adds a "Diagnostics" button there
- * that calls window.__slothfulDiagnostics.open()). Two sections:
+ * that calls window.__slothfulDiagnostics.open()), or with Ctrl/Cmd+Shift+D.
+ * Two sections:
  *
  *   • Performance — the local User Timing numbers from perf.ts (cold-start
  *     breakdown, recent-startups list, timed action round-trips) plus a
@@ -24,9 +25,22 @@ import { el, linkTo } from './ui-shared'
 let root: HTMLDialogElement | null = null
 
 /** Register window.__slothfulDiagnostics so the Log-dialog button can open us,
- * and expose a console entry point for local poking. */
+ * expose a console entry point for local poking, and bind the keyboard chord.
+ *
+ * Ctrl/Cmd+Shift+D mirrors the translation editor's Ctrl/Cmd+Shift+L: on a
+ * desktop browser it saves the Settings → Advanced → View Log → Diagnostics
+ * walk when someone is asked for numbers in a bug report. It is an addition,
+ * not a replacement — the Log-dialog button stays, because a phone has no
+ * chord and an installed PWA has no address bar either. */
 export function initDiagnostics(): void {
   ;(window as any).__slothfulDiagnostics = { open, close }
+  window.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+      e.preventDefault()
+      if (root?.open) close()
+      else open()
+    }
+  })
 }
 
 /** Injects the one media query the inline-styled overlay can't express: full
