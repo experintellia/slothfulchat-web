@@ -363,7 +363,13 @@ jobs:
             # if the packument ever disagrees with the `npm view` above.
             # If the registry answers a status other than 409 this stops the job
             # instead of skipping — loud, and the safe direction.
-            if ! out=$(npm stage publish "$tgz" --access public --ignore-scripts 2>&1); then
+            # `./` is load-bearing. npm resolves this argument as a package
+            # spec, and a bare `dir/file.tgz` matches the GitHub shorthand
+            # `owner/repo` before it is ever tried as a path — v0.9.0's run
+            # died on `git ls-remote ssh://git@github.com/npm-tarballs/
+            # slothfulchat-core-wasm-0.9.0.tgz.git`, Permission denied
+            # (publickey). A leading `./` forces the file interpretation.
+            if ! out=$(npm stage publish "./$tgz" --access public --ignore-scripts 2>&1); then
               echo "$out"
               echo "$out" | grep -qE 'E409|409 Conflict|cannot publish over the previously published versions' || exit 1
               echo "$spec is already staged — skipping"
