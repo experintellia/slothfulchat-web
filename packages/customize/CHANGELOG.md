@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.0 — 2026-08-15
+
 - The downloaded release zip is now verified before it is used: the asset is
   picked by its published name (`slothfulchat-web-<tag>.zip`) instead of "the
   first `.zip`", and its sha256 digest is checked against the release metadata.

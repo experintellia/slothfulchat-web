@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0 — 2026-08-15
+
+- **Each release now says what changed, in your device chat.** A short summary
+  of the release arrives as one message per version — starting with this one.
+  Delta Chat's own "what's new in 2.0" message is gone: it described an upgrade
+  from a version this app never had.
+
 - **Recording a voice message on a phone shows the sound level again, on one
   row.** The recorder used to wrap onto two half-empty rows with no level
   meter at all. It now fits a single row with the meter visible, and the

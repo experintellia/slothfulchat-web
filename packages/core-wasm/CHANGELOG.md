@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.0 — 2026-08-15
+
 - **Creating an account is much faster.** New accounts are now stamped out of
   a pre-migrated database shipped alongside the wasm binary
   (`wasm-dist/fresh_account.db.gz`) instead of replaying every migration, which
