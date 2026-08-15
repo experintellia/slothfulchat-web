@@ -1,5 +1,11 @@
 # Changelog
 
+- **The browser's own right-click menu no longer covers the app's.** Right-
+  clicking a chat, or one of the app icons in a chat's header, opened both
+  menus stacked on top of each other. Right-clicking selected text, a picture,
+  a link or a text box still gives you the browser's menu, which is where
+  "copy" lives.
+
 ## 0.9.1 — 2026-08-15
 
 - Same app as 0.9.0, re-released because 0.9.0's packages never reached npm:
