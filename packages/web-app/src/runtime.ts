@@ -3574,12 +3574,19 @@ let bridgeReachable: boolean | null = null
  *    view reports the bridge state instead.
  * Best-effort: on any error, assume 'required'. */
 async function bridgeNeed(): Promise<'none' | 'required' | 'fallback'> {
+  // telemetry.ts raises this while a bridge-free madmail (webimap) account is
+  // being onboarded, so the toast doesn't nag mid-flow. Honored only while
+  // nothing is configured yet — once transports exist the real transport list
+  // decides, so a flag left standing (abandoned onboarding, or a later switch
+  // to a bridge-requiring account) can never hide a warning that applies.
+  const onboardingWebimap = () =>
+    Boolean((window as any).__slothfulchatSuppressBridgeWarning)
   const accId = (window as any).__selectedAccountId as number | undefined
-  if (accId == null) return 'required'
+  if (accId == null) return onboardingWebimap() ? 'none' : 'required'
   try {
     const rpc = getCore().dc.rpc
     const transports = await rpc.listTransports(accId)
-    if (transports.length === 0) return 'required'
+    if (transports.length === 0) return onboardingWebimap() ? 'none' : 'required'
     const hasBridge = transports.some(t => !(t as any).webimap)
     if (!hasBridge) return 'none'
     const primaryAddr = (
@@ -3600,13 +3607,6 @@ async function checkBridge(): Promise<boolean> {
   // clicking it even opens the bridge dialog over the explanation of what
   // actually broke. Say nothing.
   if (fatalShown) {
-    hideBridgeToast()
-    hideWelcomeHint()
-    return true
-  }
-  // The frontend sets this while onboarding a bridge-free account (madmail
-  // webimap) — suppress the notice so it doesn't wrongly nag on that flow.
-  if ((window as any).__slothfulchatSuppressBridgeWarning) {
     hideBridgeToast()
     hideWelcomeHint()
     return true
