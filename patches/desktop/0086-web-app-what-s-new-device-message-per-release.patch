@@ -34,7 +34,7 @@ Seeded with 0.9.0.
  1 file changed, 37 insertions(+), 4 deletions(-)
 
 diff --git a/packages/frontend/src/deviceMessages.ts b/packages/frontend/src/deviceMessages.ts
-index 3b180fa..6ca3a20 100644
+index 3b180fa..a2aa9e2 100644
 --- a/packages/frontend/src/deviceMessages.ts
 +++ b/packages/frontend/src/deviceMessages.ts
 @@ -6,7 +6,6 @@ export async function updateDeviceChat(
@@ -83,7 +83,7 @@ index 3b180fa..6ca3a20 100644
 +
 +• Voice messages have a real player: seek on the waveform, change speed, and keep listening while you switch chats.
 +• Big attachments show their type, size and a preview before you download them, with a live percentage — and an interrupted download resumes instead of restarting.
-+• Longer messages can be expanded in the chat to read them in full, and you can copy the text of several messages at once.
++• New long messages can be expanded in the chat to read them in full, and you can copy the text of several messages at once.
 +• Faster: adding a profile is near-instant, and encryption no longer stalls the app.
 +• Privacy and security: exported backups no longer linger in browser storage, no usage statistics leave before you have seen the opt-out notice, and answering a call no longer starts your camera by itself.
 +
