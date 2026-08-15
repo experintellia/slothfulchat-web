@@ -27,15 +27,15 @@ SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS build/customize variable.
 ---
  .../src/components/AppPicker/index.tsx        |  17 +-
  .../src/components/Settings/ChatsAndMedia.tsx |  18 +
- .../components/dialogs/CreateChat/index.tsx   | 110 ++++-
- .../components/dialogs/PublicBots/index.tsx   | 375 ++++++++++++++++++
+ .../components/dialogs/CreateChat/index.tsx   | 110 +++++-
+ .../components/dialogs/PublicBots/index.tsx   | 374 ++++++++++++++++++
  .../dialogs/PublicBots/styles.module.scss     |  93 +++++
- .../dialogs/PublicChannels/index.tsx          | 107 +++++
+ .../dialogs/PublicChannels/index.tsx          | 106 +++++
  .../frontend/src/utils/getJsonFromBase64.ts   |  23 ++
  .../src/utils/slothfulInstanceConfig.ts       |  14 +
  packages/shared/shared-types.d.ts             |  11 +
  packages/shared/state.ts                      |   2 +
- 10 files changed, 752 insertions(+), 18 deletions(-)
+ 10 files changed, 750 insertions(+), 18 deletions(-)
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/index.tsx
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/styles.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/PublicChannels/index.tsx
@@ -114,7 +114,7 @@ index 4e131b7..934ab9c 100644
        <DownloadOnDemand settings={settingsStore.settings} />
  
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index 99af66c..b8559d6 100644
+index 4121343..4fba516 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 @@ -21,7 +21,7 @@ import {
@@ -142,7 +142,7 @@ index 99af66c..b8559d6 100644
  import { IMAGE_EXTENSIONS } from '@deltachat-desktop/shared/constants'
  
  // Exported (and a regular `enum` rather than `const enum`) so that callers like
-@@ -144,6 +147,17 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
+@@ -138,6 +141,17 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
    )
  }
  
@@ -160,7 +160,7 @@ index 99af66c..b8559d6 100644
  type CreateChatMainProps = {
    onClose: DialogProps['onClose']
  }
-@@ -184,6 +198,32 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -178,6 +192,32 @@ function CreateChatMain(props: CreateChatMainProps) {
    const showAddBroadcastList = queryStr.length === 0
    const showAddContactQRScan = queryStr.length === 0
  
@@ -193,7 +193,7 @@ index 99af66c..b8559d6 100644
    // Don't offer the classic email / add-contact options if
    // forceEncryption is set (default)
  
-@@ -211,6 +251,15 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -205,6 +245,15 @@ function CreateChatMain(props: CreateChatMainProps) {
          ? [CreateChatExtraItemType.ADD_BROADCAST_LIST]
          : []),
        ...(showNewEmail ? [CreateChatExtraItemType.NEW_EMAIL] : []),
@@ -209,7 +209,7 @@ index 99af66c..b8559d6 100644
        ...contactIds,
        ...(showAddContact ? [CreateChatExtraItemType.ADD_CONTACT] : []),
      ],
-@@ -221,6 +270,8 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -215,6 +264,8 @@ function CreateChatMain(props: CreateChatMainProps) {
        showAddContactQRScan,
        showAddGroup,
        showNewEmail,
@@ -218,7 +218,7 @@ index 99af66c..b8559d6 100644
        showPseudoListItemAddContactFromInviteLink,
      ]
    )
-@@ -452,6 +503,7 @@ function CreateChatMainRow({
+@@ -446,6 +497,7 @@ function CreateChatMainRow({
    const tx = useTranslationFunction()
    const accountId = selectedAccountId()
    const { openDialog } = useDialog()
@@ -226,7 +226,7 @@ index 99af66c..b8559d6 100644
  
    const el = (() => {
      switch (item) {
-@@ -510,6 +562,57 @@ function CreateChatMainRow({
+@@ -504,6 +556,57 @@ function CreateChatMainRow({
            </PseudoListItem>
          )
        }
@@ -284,7 +284,7 @@ index 99af66c..b8559d6 100644
        case CreateChatExtraItemType.ADD_CONTACT: {
          return (
            <PseudoListItemAddContact
-@@ -564,6 +667,9 @@ const enum CreateChatExtraItemType {
+@@ -558,6 +661,9 @@ const enum CreateChatExtraItemType {
    NEW_EMAIL,
    ADD_CONTACT,
    INVITE_LINK,
@@ -296,10 +296,10 @@ index 99af66c..b8559d6 100644
  type CreateGroupProps = {
 diff --git a/packages/frontend/src/components/dialogs/PublicBots/index.tsx b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
 new file mode 100644
-index 0000000..3c8b0ca
+index 0000000..ef081ff
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,374 @@
 +import React, { useCallback, useMemo, useState } from 'react'
 +
 +import Dialog, {
@@ -444,7 +444,6 @@ index 0000000..3c8b0ca
 +      onClose={onClose}
 +      fixed
 +      dataTestid='public-bots-dialog'
-+      fullscreenOnMobile
 +    >
 +      {settingsStore == null ? (
 +        // Wait for the settings store: the consent state is unknown, and
@@ -776,10 +775,10 @@ index 0000000..e2c490f
 +}
 diff --git a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 new file mode 100644
-index 0000000..4420fa5
+index 0000000..259404e
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,106 @@
 +import React from 'react'
 +
 +import Dialog, { DialogBody, DialogHeader } from '../../Dialog'
@@ -866,7 +865,6 @@ index 0000000..4420fa5
 +      width={400}
 +      onClose={onClose}
 +      dataTestid='public-channels-dialog'
-+      fullscreenOnMobile
 +    >
 +      <DialogHeader title='Public Channels' onClose={onClose} />
 +      <DialogBody>

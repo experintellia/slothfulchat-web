@@ -582,7 +582,9 @@ contribution intended.
 
 - Big dialogs (settings, about, profiles, media view, new-chat, QR scanner)
   go edge-to-edge on phone-sized viewports, and the QR camera view fills the
-  available height. `desktop/0020`
+  available height. Keyed on each dialog's `data-testid` rather than a prop
+  threaded through `<Dialog>`/`<DialogWithHeader>`, so opting one in is a
+  one-line `dataTestid`. `desktop/0020`
 - The settings sub-pages (chats & media, notifications, appearance, advanced,
   connectivity, profile editor) go edge-to-edge on phones too, matching the
   settings root; small pickers and alerts stay popups. `desktop/0031`
