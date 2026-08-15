@@ -1,5 +1,9 @@
 # Changelog
 
+- **The About dialog shows the build commit only in developer mode now.** Every
+  dumped log still names the exact version, commit and commit message, so bug
+  reports lose nothing.
+
 - **Recording a voice message on a phone shows the sound level again, on one
   row.** The recorder used to wrap onto two half-empty rows with no level
   meter at all. It now fits a single row with the meter visible, and the

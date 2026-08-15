@@ -257,9 +257,11 @@ exists:
   incoming group messages; we render them everywhere but hide the new cases
   by default, so themes can opt in to Rocket.Chat-style avatars on every
   message. Pixel-identical for existing themes. `desktop/0010`
-- **Build info in the About dialog** — shows the slothfulchat-web version and
-  source commit a deployed instance was built from, with the commit message
-  on hover. `desktop/0016`, `desktop/0024`, `desktop/0025`
+- **Build info in About & dumped logs** — the fork runtime feeds the source
+  commit a deployed instance was built from into `buildInfo.GIT_REF`
+  (`packages/web-app/src/runtime.ts`), which upstream's About renders in
+  devmode, and the Log dialog's dumped header names the slothfulchat-web
+  version, commit and commit message. `desktop/0024`
 - **Stickers, including animated Lottie** — Telegram `.tgs` (gzipped Lottie)
   stickers render and send, alongside static ones. Core classifies `.tgs` as a
   sticker and honors the `Chat-Content: sticker` header for file-bearing parts;

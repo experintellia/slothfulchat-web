@@ -1726,7 +1726,9 @@ class BrowserRuntime {
     this.runtime_info = {
       buildInfo: {
         VERSION: '2.53.1-slothfulchat-wasm',
-        GIT_REF: 'unknown',
+        // Real commit for upstream's About/Log "git:" lines (baked into
+        // config.js by assemble.mjs; '' on checkouts without git history).
+        GIT_REF: (window as any).__slothfulConfig?.commitHash || 'unknown',
         BUILD_TIMESTAMP: 0,
       },
       isAppx: false,
