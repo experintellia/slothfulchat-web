@@ -450,7 +450,10 @@ exists:
   keeps alive — the same slot the mobile clients use, so no new param and no
   storage of its own. The video card labels itself "Video · 0:23" rather than
   showing a play glyph, which would offer a click that cannot do anything until
-  the attachment is downloaded. `core/0022-0023`, `desktop/0068-0069`
+  the attachment is downloaded. The audio card follows the custom voice player
+  when that is enabled, so a placeholder no longer reflows into a different
+  shape the moment the download finishes. `core/0022-0023`,
+  `desktop/0068-0069`, `desktop/0080`
 
 - **Length and size of the media we send** — core measures images itself, but it
   has no audio or video decoder, so nothing ever set `Param::Duration` on an
@@ -640,7 +643,14 @@ contribution intended.
   welcome message the app adds one of its own: what the fork does differently,
   that everything lives in this browser and should be backed up (unencrypted),
   that it's a prototyping ground, and where to report bugs / self-host.
-  `core/0030`, `desktop/0078`
+  Each release then adds one "what's new" message from a table in
+  `deviceMessages.ts` — for most users the only release note they will ever
+  read, so RELEASING.md requires a human to approve the text. It is a table
+  rather than a patch per release so later releases amend one patch instead
+  of growing the stack; the `changelog-version-<v>` label makes core drop
+  repeats. Upstream's own `changelog-version-2.3.0` entry is dropped with it:
+  it announces what Delta Chat 2.0 brought over 1.x, and no SlothfulChat
+  release predates that. `core/0030`, `desktop/0078`, `desktop/0086`
 - **Hidden upstream UI that can't work in this build** — proxy settings
   (unimplemented on wasm), the second-device / multi-device backup
   transfer flow (iroh doesn't run in browsers yet), and the experimental
