@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1 — 2026-08-15
+
+- Same app as 0.9.0, re-released because 0.9.0's packages never reached npm:
+  a bug in our publish workflow made it read each tarball's path as a GitHub
+  repository name. Nothing changed in the code — if you are already on 0.9.0,
+  there is nothing here for you.
+
 ## 0.9.0 — 2026-08-15
 
 - **Creating an account is much faster.** New accounts are now stamped out of
