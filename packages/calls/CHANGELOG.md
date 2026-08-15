@@ -1,9 +1,9 @@
 # Changelog
 
 Headings here track the release train (`vX.Y.Z`) — the version this package
-actually shipped in. Its own `package.json` stays at `0.0.0`: it is private,
-not published to npm, and ships inside web-app, so `scripts/set-release-version.mjs`
-deliberately leaves it out of the synced bump.
+actually shipped in. Its own `package.json` stays at `0.0.0`: it ships inside
+web-app rather than on its own, so it has no independent version to bump, and
+`scripts/set-release-version.mjs` leaves it out of the synced train.
 
 ## 0.9.0 — 2026-08-15
 

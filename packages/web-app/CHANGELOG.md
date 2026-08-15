@@ -250,11 +250,20 @@
   call now offers **Accept** (audio only) and **Accept with video**, so the
   person calling you can't decide whether your camera starts. You can still
   switch the camera on at any point once the call is connected.
+- **A large attachment now says what it is before you download it.** In
+  encrypted chats a big file arrives as a placeholder first, and that used to
+  be a bare "[Image – 228 KiB] - Download" line. It is now a card matched to
+  the kind of file — picture, video, audio, document or app — showing the size
+  and a small blurred preview, with a proper download button.
 - Large videos now show a preview frame while they are still waiting to be
   downloaded: the poster is grabbed from the video when you attach it, so the
   recipient sees what is coming before spending the bandwidth.
 - Downloading a big message now shows a live percentage on the message bubble,
   and an interrupted download continues where it stopped.
+- **Encryption no longer makes the app stutter.** Generating your key and
+  encrypting or decrypting a big message now happen out of the way of
+  everything else, so the app keeps responding while they run — most
+  noticeable on phones, where it used to freeze for a second or more.
 - **Long messages are no longer cut off**: message text used to be trimmed to
   38 lines when it was saved, with the rest tucked away behind "Show Full
   Message" — which also made long messages uneditable. The full text is now
