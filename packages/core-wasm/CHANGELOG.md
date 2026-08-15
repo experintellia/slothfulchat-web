@@ -1,5 +1,13 @@
 # Changelog
 
+- **No `log`→console bridge any more**: core reports Info/Warning/Error both
+  through the `log` facade and as JSON-RPC events, so bridging the facade made
+  every core log line appear twice on a page that prints the events. The
+  module's own recovery diagnostics (accounts.toml healing, RPC serialization
+  failures) now use direct console bindings, and the `console_log`/`log`
+  dependencies are gone. Embedders that relied on the bridge should print the
+  event stream instead — the bundled web app does.
+
 - **Creating an account is much faster.** New accounts are now stamped out of
   a pre-migrated database shipped alongside the wasm binary
   (`wasm-dist/fresh_account.db.gz`) instead of replaying every migration, which

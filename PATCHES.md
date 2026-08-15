@@ -660,10 +660,12 @@ contribution intended.
   unchanged and rows written by official core are never rewritten, so
   messages already in a database keep their truncated text and still open in
   the HTML viewer. `core/0024`, `desktop/0076`
-- **Logging** — core Info/Warning/Error events are printed once by the
-  core-wasm console bridge instead of twice, and the Log dialog points to the
-  browser dev console instead of fetching a `/log` route this build never
-  serves. `desktop/0012`, `desktop/0024`
+- **Logging** — core Info/Warning/Error events are printed once instead of
+  twice: `packages/core-wasm` no longer installs a `log`→console bridge, and
+  the fork runtime prints the events itself on release builds (upstream's own
+  event logger runs in devmode only, so neither build double-prints). The Log
+  dialog points to the browser dev console instead of fetching a `/log` route
+  this build never serves. `desktop/0024`
 
 ## Missing / descoped (compared to upstream Delta Chat)
 

@@ -332,6 +332,22 @@ function getCore(): Core {
     core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))
     // time selected RPC round-trips (local) + derive anonymous usage events
     observeTransport(core.transport as any)
+    // Print core's own log events on release builds. core-wasm no longer
+    // bridges Rust `log` to the console (it made every core line appear
+    // twice), and upstream's event logger in App.tsx only runs with
+    // `log-debug`, i.e. devmode — so without this a deployed instance would
+    // have a silent console, which is exactly where the Log dialog sends
+    // people to collect a bug report. Levels mirror what the removed bridge
+    // did; in devmode upstream's (richer, colored) logger prints instead, so
+    // nothing is ever printed twice.
+    if (!((window as any).__slothfulConfig?.devmode ?? true)) {
+      ;(core.dc as any).on('ALL', (accountId: number, event: any) => {
+        const tag = `[core ${accountId}]`
+        if (event.kind === 'Info') console.info(tag, event.msg)
+        else if (event.kind === 'Warning') console.warn(tag, event.msg)
+        else if (event.kind === 'Error') console.error(tag, event.msg)
+      })
+    }
     // Scrub archives left over from an earlier session. Backup exports land in
     // EXPORTS_DIR and picked files (backup imports, attachments) are staged
     // under /tmp — both are plaintext, and the memfs is mirrored into OPFS, so
