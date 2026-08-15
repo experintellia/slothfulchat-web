@@ -1,0 +1,210 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 13 Aug 2026 13:06:22 +0000
+Subject: [PATCH 79/82] web-app: move "original audio" out of the recorder into
+ settings
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The toggle was a pill inside the recording row, which is the one place
+it cannot do anything: the row only exists while a take is running, and
+the setting is read in start() when the MicRecorder is built, so it
+"applies to the next recording". Using it meant starting a take you
+didn't want, toggling, cancelling, and recording again.
+
+Its label also swapped nouns by state — "Voice quality" when off,
+"Original audio" when on — so it read as two different controls rather
+than one control with two states, and "quality" suggested bitrate, the
+one thing it does not touch. It flips three advisory getUserMedia
+constraints (noiseSuppression, echoCancellation, autoGainControl); the
+encoder config is identical either way.
+
+It is a persisted preference, so it belongs with the other persisted
+preferences: Settings -> Experimental -> Composer, as a plain switch
+with a stable label that says what you would hear rather than naming
+the three DSP terms.
+
+Drops the pill, the now-dead honored-readback state in the recorder (no
+surface left to show it — a following patch gives it one in settings),
+and the four locale strings that went with it.
+
+Refs #179
+---
+ _locales/_untranslated_en.json                | 12 ------
+ .../AudioRecorder/AudioRecorder.tsx           | 42 -------------------
+ .../AudioRecorder/styles.module.scss          | 23 ----------
+ .../Settings/ExperimentalFeatures.tsx         |  6 +++
+ 4 files changed, 6 insertions(+), 77 deletions(-)
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 169a8e9..7405e25 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -146,18 +146,6 @@
+   "slide_up_to_lock": {
+     "message": "Slide up to lock"
+   },
+-  "original_audio": {
+-    "message": "Original audio"
+-  },
+-  "voice_quality": {
+-    "message": "Voice quality"
+-  },
+-  "original_audio_explain": {
+-    "message": "Record unprocessed audio (no noise suppression, echo cancellation or auto gain). Applies to the next recording."
+-  },
+-  "original_audio_not_supported": {
+-    "message": "Original audio is not supported by this browser or microphone"
+-  },
+   "select_microphone": {
+     "message": "Select microphone"
+   },
+diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+index 9cfde87..cb44420 100644
+--- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
++++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+@@ -20,10 +20,8 @@ import { IconButton } from '../Icon'
+ import OutsideClickHelper from '../OutsideClickHelper'
+ import {
+   CANCEL_DX,
+-  LOCK_DY,
+   classifyGesture,
+   deviceLabel,
+-  originalAudioHonored,
+   resolveDeviceId,
+   silenceReset,
+   silenceStep,
+@@ -201,10 +199,6 @@ export const AudioRecorder = ({
+ 
+   // Recording pause state (experimental).
+   const [paused, setPaused] = useState(false)
+-  // Whether the advisory "original audio" request was honored by the mic/browser
+-  // once the stream opened. null = unknown / not yet recorded / unsupported.
+-  const [originalHonored, setOriginalHonored] = useState<boolean | null>(null)
+-
+   // Preview-before-send: after stopping, hold the recorded blob and play it
+   // locally through the shared CustomAudioControls until the user sends /
+   // re-records / discards. The object URL is revoked on every transition.
+@@ -313,7 +307,6 @@ export const AudioRecorder = ({
+     })
+     recorder.current = mic
+     setPaused(false)
+-    setOriginalHonored(null)
+     setNoSound(false)
+     setAppliedDeviceId(null)
+     setMicMenuOpen(false) // don't reopen a menu left open from a prior take
+@@ -342,14 +335,6 @@ export const AudioRecorder = ({
+         // Capture the real device now feeding the stream (may differ from the
+         // persisted id after a stale fallback) so the picker checkmark is right.
+         setAppliedDeviceId(mic.getAppliedSettings()?.deviceId ?? null)
+-        // Advisory constraints are honored only if the mic/browser agrees —
+-        // read the truth back and reflect it in the pill's tooltip.
+-        if (experimental && originalAudio) {
+-          const applied = recorder.current?.getAppliedSettings()
+-          setOriginalHonored(
+-            applied ? originalAudioHonored(applied as any) : null
+-          )
+-        }
+         // OFF path only: the aborting 1s NO_INPUT alert. ON replaces it with the
+         // non-aborting inline SilenceDetector warning (user can switch mics).
+         if (!experimental) {
+@@ -431,13 +416,6 @@ export const AudioRecorder = ({
+     }
+   }
+ 
+-  const toggleOriginalAudio = () => {
+-    SettingsStoreInstance.effect.setDesktopSetting(
+-      'voiceRecordingOriginalAudio',
+-      !originalAudio
+-    )
+-  }
+-
+   // ponytail: no `devicechange` listener — reopening the menu re-enumerates,
+   // which is enough for the recorder's short-lived lifetime. Upgrade path is a
+   // navigator.mediaDevices.ondevicechange refresh if hot-plug during a take
+@@ -619,25 +597,6 @@ export const AudioRecorder = ({
+     }
+   }, [previewUrl, mutexCtx.audioElement])
+ 
+-  // --- original-audio pill (shared between recording rows) ------------------
+-  const originalPill = experimental && (
+-    <button
+-      type='button'
+-      className={styles.originalAudioPill}
+-      aria-pressed={originalAudio}
+-      title={
+-        tx('original_audio_explain') +
+-        (originalAudio && originalHonored === false
+-          ? '\n\n' + tx('original_audio_not_supported')
+-          : '')
+-      }
+-      onClick={toggleOriginalAudio}
+-    >
+-      {originalAudio ? tx('original_audio') : tx('voice_quality')}
+-      {originalAudio && originalHonored === false ? ' ⚠️' : ''}
+-    </button>
+-  )
+-
+   // --- mic picker + inline no-sound warning (experimental) ------------------
+   // Active row = the device actually feeding the stream (getSettings) while
+   // recording, else the persisted choice validated against the enumerated list
+@@ -844,7 +803,6 @@ export const AudioRecorder = ({
+         <VolumeMeter volume={volume} />
+       )}
+       {micCluster}
+-      {originalPill}
+       {/* display:contents on wide viewports (no layout change); becomes a
+           real flex group under 500px so cancel/ok wrap TOGETHER instead of
+           stranding ok alone on the next line. */}
+diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+index 0ae60f3..f0e2739 100644
+--- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
++++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+@@ -198,29 +198,6 @@
+   }
+ }
+ 
+-// Small pill toggling voice-quality vs unprocessed "original audio".
+-.originalAudioPill {
+-  align-self: center;
+-  flex-shrink: 0;
+-  height: 24px;
+-  padding: 0 10px;
+-  margin-inline-start: 8px;
+-  border-radius: 12px;
+-  border: 1px solid var(--separatorColor, #ccc);
+-  background-color: var(--buttonSecondaryBackground);
+-  color: var(--buttonSecondaryText);
+-  font-size: 12px;
+-  white-space: nowrap;
+-  cursor: pointer;
+-  &[aria-pressed='true'] {
+-    background-color: var(--buttonPrimaryBackground);
+-    color: #fff;
+-  }
+-  &:hover {
+-    background-color: var(--buttonSecondaryHover);
+-  }
+-}
+-
+ // Lock / slide-to-cancel affordances shown while press-and-holding the mic.
+ // Anchored to `.lower-bar` (position: relative), like the completion menu.
+ .holdHints {
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index c74636f..4d64865 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -80,6 +80,12 @@ export function ExperimentalFeatures() {
+         description='When your message contains a link and has no image, offer to attach a preview card. Off by default; turn on to be prompted.'
+         forkAdded
+       />
++      <DesktopSettingsSwitch
++        settingsKey='voiceRecordingOriginalAudio'
++        label='Record without noise filtering'
++        description="Your device normally removes background noise, cancels echo and evens out volume. That's good for speech, but it can flatten music, ambient sound or room tone. Turn this on to record what the microphone actually hears. Some browsers and microphones ignore this setting."
++        forkAdded
++      />
+       <SettingsSeparator />
+       <SettingsHeading>Chats</SettingsHeading>
+       <DesktopSettingsSwitch

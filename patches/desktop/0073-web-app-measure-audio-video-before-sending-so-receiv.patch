@@ -1,0 +1,299 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sun, 2 Aug 2026 10:11:59 +0000
+Subject: [PATCH 73/82] web-app: measure audio/video before sending so
+ receivers see the length
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Core measures images itself at send time, but it has no audio or video decoder,
+and on wasm it runs in a Web Worker with no DOM — so `Param::Duration` was never
+set on anything we send, `mimefactory` never wrote a `Chat-Duration` header, and
+`PostMsgMetadata` carried `duration: None`. The visible result was our own
+download-on-demand placeholder (desktop/0068) rendering its "–:––" fallback for
+voice messages *we* had just recorded, and every other client showing nothing.
+A video's pixel size is derived by nobody at all, so those placeholders could
+not even reserve the right shape.
+
+The browser already ships a demuxer for everything it can play, which is why the
+poster grab (desktop/0069) lives here too.
+
+- utils/mediaMetadata: `<video>` + `loadedmetadata` → pixel size and duration.
+  One element type covers both media kinds — a `<video>` loads audio-only files
+  fine, `videoWidth` simply stays 0. Every field is independently optional and
+  an undecodable file yields `{}`: this enriches a message, it never gates one.
+  Containers written by a live stream (MediaRecorder webm, and the header-less
+  mp3 our own recorder produces) report `Infinity` until a seek past the end
+  forces a scan, so that is done and bounded by the same abort/timeout as the
+  rest. `once()` moves here from videoPoster, widened to `HTMLMediaElement`.
+- useMessage: fill the new `MessageData` fields on the way into `send_msg`.
+  This sits on `sendMessage`, not on the draft, because the composer does not
+  send its draft — it builds a fresh `MessageData` from the draft state, so
+  params written onto the draft never reach the wire. One hook therefore covers
+  the composer, stickers, multi-file and drag-and-drop alike, with no draft
+  state to keep in sync and invalidate when the attachment changes.
+  Gated on the guessed mime rather than the viewtype, since pasted and dropped
+  media travels as `File` until core corrects it from the suffix at send time,
+  and skipped entirely when a caller already knows the duration.
+  The three fields are widened locally, the way backend-com already widens
+  `DownloadProgress`: this workspace typechecks against the published
+  @deltachat/jsonrpc-client, which predates our core patch.
+
+Images are left to core on purpose: it measures them after any re-encoding, so
+doing it here would be a slower way to get the same numbers, or a wrong one.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .../message/MessageListAndComposer.tsx        |   6 +-
+ .../frontend/src/hooks/chat/useMessage.ts     |  56 +++++++++-
+ packages/frontend/src/utils/mediaMetadata.ts  | 104 ++++++++++++++++++
+ packages/frontend/src/utils/videoPoster.ts    |  11 +-
+ 4 files changed, 161 insertions(+), 16 deletions(-)
+ create mode 100644 packages/frontend/src/utils/mediaMetadata.ts
+
+diff --git a/packages/frontend/src/components/message/MessageListAndComposer.tsx b/packages/frontend/src/components/message/MessageListAndComposer.tsx
+index 219c344..8ca2c10 100644
+--- a/packages/frontend/src/components/message/MessageListAndComposer.tsx
++++ b/packages/frontend/src/components/message/MessageListAndComposer.tsx
+@@ -176,7 +176,11 @@ export default function MessageListAndComposer({ accountId, chat }: Props) {
+             const msgViewType: T.Viewtype = isImage(file.parsed)
+               ? 'Image'
+               : 'File'
+-            sendMessage(accountId, chat.id, {
++            // Awaited so the files arrive in the order they were dropped:
++            // `sendMessage` measures audio and video before sending (see
++            // `withMediaMetadata`), so an unawaited media file would let the
++            // plain files behind it overtake it.
++            await sendMessage(accountId, chat.id, {
+               file: file.pathStr,
+               filename: file.parsed.name + file.parsed.ext,
+               viewtype: msgViewType,
+diff --git a/packages/frontend/src/hooks/chat/useMessage.ts b/packages/frontend/src/hooks/chat/useMessage.ts
+index 523d1ed..4d28cc4 100644
+--- a/packages/frontend/src/hooks/chat/useMessage.ts
++++ b/packages/frontend/src/hooks/chat/useMessage.ts
+@@ -1,9 +1,12 @@
+ import { useCallback } from 'react'
++import mimeTypes from 'mime-types'
+ 
+ import useChat from './useChat'
+ import { BackendRemote } from '../../backend-com'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { notifyWebxdcMessageSent } from '../useWebxdcMessageSent'
++import { mediaMetadata } from '../../utils/mediaMetadata'
++import { runtime } from '@deltachat-desktop/runtime-interface'
+ 
+ import type { T } from '@deltachat/jsonrpc-client'
+ 
+@@ -62,7 +65,17 @@ export type DeleteMessage = (
+ 
+ const log = getLogger('hooks/useMessage')
+ 
+-const MESSAGE_DEFAULT: T.MessageData = {
++// `width`/`height`/`duration` come from the regenerated local jsonrpc bindings; the
++// published @deltachat/jsonrpc-client pinned in this workspace's catalog predates them,
++// so they're widened locally here to keep tsc green (same pattern as backend-com's
++// `DownloadProgress` widening).
++type MessageData = T.MessageData & {
++  width?: number | null
++  height?: number | null
++  duration?: number | null
++}
++
++const MESSAGE_DEFAULT: MessageData = {
+   file: null,
+   filename: null,
+   viewtype: null,
+@@ -72,6 +85,38 @@ const MESSAGE_DEFAULT: T.MessageData = {
+   quotedMessageId: null,
+   quotedText: null,
+   text: null,
++  width: null,
++  height: null,
++  duration: null,
++}
++
++/**
++ * Fills in the size and duration of an audio or video attachment, which core cannot
++ * measure itself (no codecs, and its wasm has no DOM). Without them the message goes out
++ * with no `Chat-Duration` header, so every receiver's download-on-demand placeholder shows
++ * "–:––" for a voice message that we, the sender, could have measured in milliseconds.
++ *
++ * Sits on `sendMessage` rather than on the draft because the composer does not send its
++ * draft — it builds a fresh `MessageData` from the draft state, so anything stored on the
++ * draft is dropped. Here it covers every send path: composer, stickers, multi-file and
++ * drag-and-drop alike.
++ *
++ * Images are deliberately not handled: core reads their dimensions itself when it prepares
++ * the attachment, after any re-encoding, so measuring them here would only be a slower way
++ * to get the same numbers — or a wrong one.
++ */
++async function withMediaMetadata(data: MessageData): Promise<MessageData> {
++  const file = data.file
++  if (file == null || data.duration != null) {
++    return data
++  }
++  // The viewtype is not a reliable filter: pasted and dropped media is sent as `File` and
++  // only corrected to `Audio`/`Video` by core, from this very suffix, at send time.
++  const mime = mimeTypes.lookup(data.filename || file)
++  if (typeof mime !== 'string' || !/^(audio|video)\//.test(mime)) {
++    return data
++  }
++  return { ...data, ...(await mediaMetadata(runtime.transformBlobURL(file))) }
+ }
+ 
+ export default function useMessage() {
+@@ -131,10 +176,11 @@ export default function useMessage() {
+       chatId: number,
+       message: Partial<T.MessageData>
+     ) => {
+-      const msgId = await BackendRemote.rpc.sendMsg(accountId, chatId, {
+-        ...MESSAGE_DEFAULT,
+-        ...message,
+-      })
++      const msgId = await BackendRemote.rpc.sendMsg(
++        accountId,
++        chatId,
++        await withMediaMetadata({ ...MESSAGE_DEFAULT, ...message })
++      )
+ 
+       // Notify about the sent message (listeners can filter by message type if needed)
+       notifyWebxdcMessageSent(accountId, chatId, message)
+diff --git a/packages/frontend/src/utils/mediaMetadata.ts b/packages/frontend/src/utils/mediaMetadata.ts
+new file mode 100644
+index 0000000..f9301f0
+--- /dev/null
++++ b/packages/frontend/src/utils/mediaMetadata.ts
+@@ -0,0 +1,104 @@
++import { getLogger } from '@deltachat-desktop/shared/logger'
++
++const log = getLogger('renderer/utils/mediaMetadata')
++
++/** Only headers are read here, no frames are decoded, so this is much quicker than a poster
++ * grab — but a send waits on it, so it still gets a ceiling. */
++const TIMEOUT_MS = 3_000
++
++/** Core drops incoming durations of a day or more (`mimeparser`), so there is no point
++ * sending one. Also catches the `Infinity`/garbage a broken container can report. */
++const MAX_DURATION_MS = 24 * 60 * 60 * 1000
++
++/** Resolves on `event`, rejects on the element's `error` or on abort. */
++export function once(
++  el: HTMLMediaElement,
++  event: string,
++  signal: AbortSignal
++): Promise<void> {
++  return new Promise<void>((resolve, reject) => {
++    el.addEventListener(event, () => resolve(), { once: true, signal })
++    el.addEventListener('error', () => reject(el.error), { once: true, signal })
++    signal.addEventListener('abort', () => reject(signal.reason), {
++      once: true,
++    })
++  })
++}
++
++export type MediaMetadata = {
++  width?: number
++  height?: number
++  /** milliseconds */
++  duration?: number
++}
++
++/**
++ * Reads the pixel size and duration of the audio or video file at `url`.
++ *
++ * The browser ships a demuxer for everything it can play, so this needs neither a codec nor
++ * a dependency of our own — which is also why it cannot live in core, whose wasm runs in a
++ * worker with no DOM. Core measures images itself; those never need this.
++ *
++ * Every field is independently optional: whatever the browser could not tell us is simply
++ * left out, and an undecodable file yields `{}` rather than an error. Callers use this to
++ * enrich a message, never to gate one.
++ */
++export async function mediaMetadata(url: string): Promise<MediaMetadata> {
++  const abort = new AbortController()
++  const timer = setTimeout(() => abort.abort(new Error('timeout')), TIMEOUT_MS)
++  // A <video> loads audio-only files just fine (`videoWidth` stays 0), so one element
++  // covers both and the caller does not have to know which it has.
++  const el = document.createElement('video')
++  const meta: MediaMetadata = {}
++  try {
++    el.muted = true
++    el.preload = 'metadata'
++    el.src = url
++    await once(el, 'loadedmetadata', abort.signal)
++
++    if (el.videoWidth > 0 && el.videoHeight > 0) {
++      meta.width = el.videoWidth
++      meta.height = el.videoHeight
++    }
++    const durationMs = Math.round((await readDuration(el, abort.signal)) * 1000)
++    if (durationMs > 0 && durationMs < MAX_DURATION_MS) {
++      meta.duration = durationMs
++    }
++  } catch (error) {
++    log.warn('could not read media metadata:', error)
++  } finally {
++    clearTimeout(timer)
++    abort.abort()
++    // Drop the demuxer and let the browser release whatever it buffered.
++    el.removeAttribute('src')
++    el.load()
++  }
++  return meta
++}
++
++/**
++ * Duration in seconds, or NaN.
++ *
++ * Containers written by a live stream carry no duration in their header — MediaRecorder
++ * webm, and mp3 encoded without a Xing frame, which is what our own voice recorder
++ * produces. They report `Infinity` until something makes the browser scan to the end;
++ * seeking past any possible end is the way to ask for that. The position itself is
++ * irrelevant, the element is thrown away right after.
++ */
++async function readDuration(
++  el: HTMLMediaElement,
++  signal: AbortSignal
++): Promise<number> {
++  if (Number.isFinite(el.duration)) {
++    return el.duration
++  }
++  try {
++    el.currentTime = 1e101
++    await once(el, 'durationchange', signal)
++  } catch (error) {
++    // A file we cannot measure still has a usable size, and for a video the pixels are
++    // already read by now — keep those rather than failing the whole lookup.
++    log.warn('could not resolve an open-ended duration:', error)
++  }
++  return el.duration
++}
+diff --git a/packages/frontend/src/utils/videoPoster.ts b/packages/frontend/src/utils/videoPoster.ts
+index c066833..52af6c7 100644
+--- a/packages/frontend/src/utils/videoPoster.ts
++++ b/packages/frontend/src/utils/videoPoster.ts
+@@ -1,4 +1,5 @@
+ import { getLogger } from '@deltachat-desktop/shared/logger'
++import { once } from './mediaMetadata'
+ 
+ const log = getLogger('renderer/utils/videoPoster')
+ 
+@@ -10,16 +11,6 @@ const MAX_EDGE = 512
+  * this to decode one frame simply gets no poster. */
+ const TIMEOUT_MS = 5_000
+ 
+-function once(el: HTMLVideoElement, event: string, signal: AbortSignal) {
+-  return new Promise<void>((resolve, reject) => {
+-    el.addEventListener(event, () => resolve(), { once: true, signal })
+-    el.addEventListener('error', () => reject(el.error), { once: true, signal })
+-    signal.addEventListener('abort', () => reject(signal.reason), {
+-      once: true,
+-    })
+-  })
+-}
+-
+ /**
+  * Grabs a frame from the video at `url` as base64 JPEG (no `data:` prefix).
+  *

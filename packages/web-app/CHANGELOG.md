@@ -1,5 +1,9 @@
 # Changelog
 
+- **The About dialog shows the build commit only in developer mode now.** Every
+  dumped log still names the exact version, commit and commit message, so bug
+  reports lose nothing.
+
 ## 0.9.1 — 2026-08-15
 
 - Same app as 0.9.0, re-released because 0.9.0's packages never reached npm:

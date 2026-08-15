@@ -1,0 +1,359 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 13 Aug 2026 13:09:32 +0000
+Subject: [PATCH 81/82] web-app: let settings record a test clip and play it
+ back
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+"Record without noise filtering" is a switch whose effect you can only
+judge by ear, and its description has to hedge ("some browsers and
+microphones ignore this setting") because the constraints are advisory.
+Both problems have the same answer: record a few seconds and listen.
+
+Adds a Test the microphone row under the switch. It records a 5s take
+with the setting as it currently stands, plays it back through the
+shared CustomAudioControls, and — when recording unfiltered was asked
+for — says whether the browser actually honored it, read back from
+track.getSettings() via the already-tested originalAudioHonored(). That
+readback lost its only surface when the recorder pill went away; this
+gives it a better one, next to the switch it describes and available
+without starting a real voice message.
+
+Not live monitoring: routing the mic to the speaker is what causes the
+feedback howl, and the mitigation apps rely on for that is echo
+cancellation — exactly what this setting disables. So live playback
+would be safe only while the setting is off, i.e. never when you want to
+test it. Record-then-play answers the same question with no feedback
+path.
+
+Refs #179
+---
+ .../Settings/ExperimentalFeatures.tsx         |  20 +-
+ .../components/Settings/MicrophoneTest.tsx    | 247 ++++++++++++++++++
+ .../components/Settings/styles.module.scss    |   8 +
+ 3 files changed, 274 insertions(+), 1 deletion(-)
+ create mode 100644 packages/frontend/src/components/Settings/MicrophoneTest.tsx
+
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index 4d64865..33daebb 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -1,10 +1,11 @@
+-import React from 'react'
++import React, { useState } from 'react'
+ 
+ import SettingsStoreInstance, {
+   useSettingsStore,
+   type SettingsStoreState,
+ } from '../../stores/settings'
+ import DesktopSettingsSwitch from './DesktopSettingsSwitch'
++import MicrophoneTest from './MicrophoneTest'
+ import SettingsHeading from './SettingsHeading'
+ import SettingsSeparator from './SettingsSeparator'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+@@ -32,6 +33,8 @@ export function ExperimentalFeatures() {
+   const tx = useTranslationFunction()
+   const settingsStore = useSettingsStore()[0]
+   const { openDialog } = useDialog()
++  // Remount key for the microphone test — see where it is used below.
++  const [micTestRun, setMicTestRun] = useState(0)
+ 
+   const showExperimentalInfoDialog = async (
+     settingsKey: keyof Pick<
+@@ -85,7 +88,22 @@ export function ExperimentalFeatures() {
+         label='Record without noise filtering'
+         description="Your device normally removes background noise, cancels echo and evens out volume. That's good for speech, but it can flatten music, ambient sound or room tone. Turn this on to record what the microphone actually hears. Some browsers and microphones ignore this setting."
+         forkAdded
++        // The recorder only applies this while the custom player is on
++        // (`experimental && originalAudio` in AudioRecorder); same
++        // dependent-switch treatment as the voice-message rows in Notifications.
++        disabled={
++          !settingsStore?.desktopSettings['experimentalAudioPlayerControls']
++        }
++        disabledValue={false}
++        callback={() => setMicTestRun(n => n + 1)}
+       />
++      {/* Flipping the switch invalidates a finished take: the clip was
++          recorded under the old setting, and its verdict is read against the
++          new one — record with filtering on, then switch on, and it would
++          claim the browser "ignored the request" about a take that never made
++          one. Bumping the key remounts, and the existing unmount cleanup stops
++          any take in flight and revokes the object URL. */}
++      <MicrophoneTest key={micTestRun} />
+       <SettingsSeparator />
+       <SettingsHeading>Chats</SettingsHeading>
+       <DesktopSettingsSwitch
+diff --git a/packages/frontend/src/components/Settings/MicrophoneTest.tsx b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
+new file mode 100644
+index 0000000..dcb34a1
+--- /dev/null
++++ b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
+@@ -0,0 +1,247 @@
++import React, {
++  useCallback,
++  useContext,
++  useEffect,
++  useRef,
++  useState,
++} from 'react'
++
++import MicRecorder from '../AudioRecorder/MicRecorder'
++import SettingsButton from './SettingsButton'
++import { CustomAudioControls } from '../AudioPlayer'
++import { MediaPlayerMutexContext } from '../../contexts/MediaPlayerMutexContext'
++import { useSettingsStore } from '../../stores/settings'
++import { originalAudioHonored } from '../AudioRecorder/recorderLogic'
++import { getLogger } from '@deltachat-desktop/shared/logger'
++import styles from './styles.module.scss'
++
++const log = getLogger('renderer/MicrophoneTest')
++
++/** Long enough to say a sentence, short enough that nobody waits for it. */
++const TAKE_MS = 5000
++
++/**
++ * Below this the take is silence: MicRecorder opens the mic 300ms before it
++ * starts feeding the encoder, so a stop inside that window still yields a blob
++ * (Encoder.finish() always appends its flush block) that plays as 0:00. At the
++ * 32kbps this records at, 1KiB is about a quarter second.
++ */
++const MIN_TAKE_BYTES = 1024
++
++type Phase = 'idle' | 'recording' | 'done'
++
++/**
++ * Record a few seconds and play them back, so "record without noise filtering"
++ * can be judged by ear instead of by its description.
++ *
++ * Deliberately NOT live monitoring: routing the mic to the speaker is what
++ * causes the howl, and the mitigation every app relies on for that is echo
++ * cancellation — the very thing this setting turns off. Record-then-play
++ * answers the same question with no feedback path at all.
++ *
++ * ponytail: no A/B of filtered vs unfiltered in one take. The processing is
++ * applied by the OS during capture, so it can't be synthesised client-side and
++ * two differently-constrained tracks off one device aren't portable. Toggling
++ * the switch and recording again is the comparison; keeping the previous take
++ * around to play side by side is the upgrade if that turns out to be too
++ * fiddly to judge.
++ */
++export default function MicrophoneTest() {
++  const settings = useSettingsStore()[0]?.desktopSettings
++  // Mirror AudioRecorder's own gate exactly (`experimental && originalAudio`,
++  // AudioRecorder.tsx). Recording unfiltered here while real voice messages
++  // stay filtered would make this a test of something the app doesn't do.
++  const experimental = settings?.experimentalAudioPlayerControls === true
++  const originalAudio =
++    experimental && settings?.voiceRecordingOriginalAudio === true
++  const deviceId = settings?.voiceRecordingDeviceId ?? null
++  const mutexCtx = useContext(MediaPlayerMutexContext)
++
++  const [phase, setPhase] = useState<Phase>('idle')
++  const [url, setUrl] = useState<string | null>(null)
++  const [error, setError] = useState<string | null>(null)
++  // Whether the mic/browser actually honored the unprocessed request.
++  // null = it didn't say (keys absent from getSettings), so we can't claim either way.
++  const [honored, setHonored] = useState<boolean | null>(null)
++  const audioRef = useRef<HTMLAudioElement | null>(null)
++  const recorderRef = useRef<MicRecorder | null>(null)
++  const timerRef = useRef<number | null>(null)
++  // Bumped on every start and on every stop. An in-flight start reads its
++  // generation before awaiting the permission prompt and closes the stream it
++  // opened if it has been superseded since — otherwise stopping while the
++  // prompt is up orphans the mic: MicRecorder.stop() is gated on a
++  // processor/microphone that only exist once the stream opens, so it no-ops,
++  // and the recording indicator stays lit for the rest of the session.
++  const startGenRef = useRef(0)
++  // Revoked on replace and on unmount; also guards the async stop path from
++  // writing state into an unmounted component.
++  const urlRef = useRef<string | null>(null)
++  const aliveRef = useRef(true)
++
++  const release = useCallback(() => {
++    if (timerRef.current != null) {
++      window.clearTimeout(timerRef.current)
++      timerRef.current = null
++    }
++    if (urlRef.current != null) {
++      URL.revokeObjectURL(urlRef.current)
++      urlRef.current = null
++    }
++  }, [])
++
++  useEffect(() => {
++    aliveRef.current = true
++    return () => {
++      aliveRef.current = false
++      // A take still running when the user leaves the page must not keep the
++      // microphone open. No generation bump needed: an in-flight start checks
++      // aliveRef too, and closes the stream it opened when it resolves.
++      recorderRef.current?.stop()
++      recorderRef.current = null
++      release()
++    }
++  }, [release])
++
++  // One sound at a time: the test clip and the global voice-message player
++  // each pause the other, the same arrangement the recorder's preview row has
++  // with the singleton.
++  useEffect(() => {
++    const singleton = mutexCtx.audioElement
++    const el = audioRef.current
++    if (url == null || el == null || singleton == null) {
++      return
++    }
++    const onTestPlay = () => {
++      if (!singleton.paused) {
++        singleton.pause()
++      }
++    }
++    const onSingletonPlay = () => {
++      if (!el.paused) {
++        el.pause()
++      }
++    }
++    el.addEventListener('play', onTestPlay)
++    singleton.addEventListener('play', onSingletonPlay)
++    return () => {
++      el.removeEventListener('play', onTestPlay)
++      singleton.removeEventListener('play', onSingletonPlay)
++    }
++  }, [url, mutexCtx.audioElement])
++
++  const finish = useCallback(async () => {
++    const rec = recorderRef.current
++    if (rec == null) {
++      return
++    }
++    recorderRef.current = null
++    startGenRef.current++ // invalidate a start still waiting on the prompt
++    // Read the applied constraints BEFORE stop() tears the track down.
++    const applied = rec.getAppliedSettings()
++    if (applied == null) {
++      // Stopped before the mic ever opened: nothing was captured, and the
++      // superseded start() will close the stream when it resolves.
++      setPhase('idle')
++      return
++    }
++    try {
++      const [buffer] = await rec.stop().getMp3()
++      if (!aliveRef.current) {
++        return
++      }
++      const blob = new Blob(buffer as any, { type: 'audio/mp3' })
++      if (blob.size < MIN_TAKE_BYTES) {
++        setPhase('idle')
++        setError('That take was too short to hear — give it a second or two.')
++        return
++      }
++      const next = URL.createObjectURL(blob)
++      release()
++      urlRef.current = next
++      setUrl(next)
++      setHonored(originalAudioHonored(applied as any))
++      setPhase('done')
++    } catch (err: any) {
++      log.error('test recording failed', err)
++      if (aliveRef.current) {
++        setPhase('idle')
++        setError('Could not process the recording.')
++      }
++    }
++  }, [release])
++
++  const start = useCallback(async () => {
++    if (phase === 'recording') {
++      // Second click ends the take early rather than starting a second one.
++      finish()
++      return
++    }
++    release()
++    setUrl(null)
++    setHonored(null)
++    setError(null)
++    const gen = ++startGenRef.current
++    const rec = new MicRecorder(() => {}, {
++      bitRate: 32,
++      originalAudio,
++      deviceId,
++    })
++    recorderRef.current = rec
++    setPhase('recording')
++    try {
++      await rec.start()
++    } catch (err: any) {
++      log.error('could not open the microphone', err)
++      if (gen === startGenRef.current) {
++        recorderRef.current = null
++      }
++      if (aliveRef.current) {
++        setPhase('idle')
++        setError(
++          'Could not use the microphone. Check that the browser is allowed to access it.'
++        )
++      }
++      return
++    }
++    // Stopped or unmounted while the permission prompt was up. The stream is
++    // open now, so this stop() actually closes it.
++    if (gen !== startGenRef.current || !aliveRef.current) {
++      rec.stop()
++      return
++    }
++    timerRef.current = window.setTimeout(finish, TAKE_MS)
++  }, [phase, originalAudio, deviceId, finish, release])
++
++  const label =
++    phase === 'recording' ? 'Recording… tap to stop' : 'Test the microphone'
++
++  return (
++    <>
++      <SettingsButton onClick={start} dataTestid='mic-test-button'>
++        {label}
++      </SettingsButton>
++      {error != null && (
++        <div className={styles.micTestResult}>
++          <div className={styles.settingsRowDescription}>{error}</div>
++        </div>
++      )}
++      {phase === 'done' && url != null && (
++        <div className={styles.micTestResult} data-testid='mic-test-result'>
++          <audio ref={audioRef} src={url} preload='metadata' />
++          <CustomAudioControls audioRef={audioRef} src={url} compact />
++          {/* Only meaningful when unfiltered was actually asked for — with the
++              switch off there is no request for the browser to honor. */}
++          {originalAudio && (
++            <div className={styles.settingsRowDescription}>
++              {honored === false
++                ? 'This browser or microphone ignored the request and filtered the sound anyway.'
++                : honored === true
++                  ? 'Recorded unfiltered, as requested.'
++                  : "This browser did not say whether it filtered the sound, so it can't be confirmed either way."}
++            </div>
++          )}
++        </div>
++      )}
++    </>
++  )
++}
+diff --git a/packages/frontend/src/components/Settings/styles.module.scss b/packages/frontend/src/components/Settings/styles.module.scss
+index 49c82df..39c0fd2 100644
+--- a/packages/frontend/src/components/Settings/styles.module.scss
++++ b/packages/frontend/src/components/Settings/styles.module.scss
+@@ -170,6 +170,14 @@ $settingsHeight: 40px;
+   }
+ }
+ 
++// Microphone-test output: player + verdict. Shares the settings rows' 30px
++// gutter so the text lines up with the descriptions above, but deliberately
++// not .settingsRow — nothing here is clickable, and that class brings a
++// pointer cursor and a hover highlight with it.
++.micTestResult {
++  padding: 0 30px 10px;
++}
++
+ .settingsSelectorValue {
+   color: var(--colorPrimary);
+   font-weight: lighter;

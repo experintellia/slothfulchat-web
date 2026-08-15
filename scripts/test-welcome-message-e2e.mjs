@@ -1,4 +1,4 @@
-// E2E check for the SlothfulChat welcome device message (desktop/0078) and the
+// E2E check for the SlothfulChat welcome device message (desktop/0074) and the
 // dropped upstream welcome image (core/0029) — runs FULLY OFFLINE. One webimap
 // account is created through the real onboarding UI against an in-process mock
 // madmail server (trimmed from scripts/test-sidebar-resize-e2e.mjs) — that path

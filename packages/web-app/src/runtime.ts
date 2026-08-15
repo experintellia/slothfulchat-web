@@ -332,6 +332,22 @@ function getCore(): Core {
     core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))
     // time selected RPC round-trips (local) + derive anonymous usage events
     observeTransport(core.transport as any)
+    // Print core's own log events on release builds. core-wasm no longer
+    // bridges Rust `log` to the console (it made every core line appear
+    // twice), and upstream's event logger in App.tsx only runs with
+    // `log-debug`, i.e. devmode — so without this a deployed instance would
+    // have a silent console, which is exactly where the Log dialog sends
+    // people to collect a bug report. Levels mirror what the removed bridge
+    // did; in devmode upstream's (richer, colored) logger prints instead, so
+    // nothing is ever printed twice.
+    if (!((window as any).__slothfulConfig?.devmode ?? true)) {
+      ;(core.dc as any).on('ALL', (accountId: number, event: any) => {
+        const tag = `[core ${accountId}]`
+        if (event.kind === 'Info') console.info(tag, event.msg)
+        else if (event.kind === 'Warning') console.warn(tag, event.msg)
+        else if (event.kind === 'Error') console.error(tag, event.msg)
+      })
+    }
     // Scrub archives left over from an earlier session. Backup exports land in
     // EXPORTS_DIR and picked files (backup imports, attachments) are staged
     // under /tmp — both are plaintext, and the memfs is mirrored into OPFS, so
@@ -1710,7 +1726,9 @@ class BrowserRuntime {
     this.runtime_info = {
       buildInfo: {
         VERSION: '2.53.1-slothfulchat-wasm',
-        GIT_REF: 'unknown',
+        // Real commit for upstream's About/Log "git:" lines (baked into
+        // config.js by assemble.mjs; '' on checkouts without git history).
+        GIT_REF: (window as any).__slothfulConfig?.commitHash || 'unknown',
         BUILD_TIMESTAMP: 0,
       },
       isAppx: false,
@@ -3556,12 +3574,19 @@ let bridgeReachable: boolean | null = null
  *    view reports the bridge state instead.
  * Best-effort: on any error, assume 'required'. */
 async function bridgeNeed(): Promise<'none' | 'required' | 'fallback'> {
+  // telemetry.ts raises this while a bridge-free madmail (webimap) account is
+  // being onboarded, so the toast doesn't nag mid-flow. Honored only while
+  // nothing is configured yet — once transports exist the real transport list
+  // decides, so a flag left standing (abandoned onboarding, or a later switch
+  // to a bridge-requiring account) can never hide a warning that applies.
+  const onboardingWebimap = () =>
+    Boolean((window as any).__slothfulchatSuppressBridgeWarning)
   const accId = (window as any).__selectedAccountId as number | undefined
-  if (accId == null) return 'required'
+  if (accId == null) return onboardingWebimap() ? 'none' : 'required'
   try {
     const rpc = getCore().dc.rpc
     const transports = await rpc.listTransports(accId)
-    if (transports.length === 0) return 'required'
+    if (transports.length === 0) return onboardingWebimap() ? 'none' : 'required'
     const hasBridge = transports.some(t => !(t as any).webimap)
     if (!hasBridge) return 'none'
     const primaryAddr = (
@@ -3582,13 +3607,6 @@ async function checkBridge(): Promise<boolean> {
   // clicking it even opens the bridge dialog over the explanation of what
   // actually broke. Say nothing.
   if (fatalShown) {
-    hideBridgeToast()
-    hideWelcomeHint()
-    return true
-  }
-  // The frontend sets this while onboarding a bridge-free account (madmail
-  // webimap) — suppress the notice so it doesn't wrongly nag on that flow.
-  if ((window as any).__slothfulchatSuppressBridgeWarning) {
     hideBridgeToast()
     hideWelcomeHint()
     return true

@@ -1,0 +1,799 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sat, 8 Aug 2026 12:23:06 +0000
+Subject: [PATCH 77/82] web-app: long-press context menus and touch reordering
+ on phones
+
+Long-pressing a profile in the account sidebar did nothing on any
+phone, for different reasons per platform.
+
+Android: the <li> around each account is `draggable` for the desktop
+reorder gesture, and Blink spends a touch long press on starting that
+drag (which no finger can complete) instead of firing `contextmenu`.
+The same combination breaks the gallery media items, the gallery file
+icon and the message attachment icon; all four now switch `draggable`
+off on coarse pointers via one isCoarsePointer() helper.
+
+iOS: two more layers. The press selected the text under the finger --
+the app-wide `user-select: none` on button is only honored prefixed,
+so -webkit-user-select and -webkit-touch-callout now sit beside it.
+And Safari fires no `contextmenu` event for touch presses at all since
+iOS 13 (mdn/browser-compat-data#6376), so a document-level fallback
+synthesizes one once a single touch has rested within an 8px slop for
+700ms. Per-press feature detection, no UA sniffing: a browser that
+fires its own event (Blink, at ~500ms) cancels the fallback for that
+press. Editable text is left alone (a long press there means
+cursor/paste), and so is explicitly selectable text -- message bodies
+carry `user-select: text`, and a long press there means "select";
+a menu on top would make selecting text on iOS impossible, so a
+message's menu opens from the bubble's non-text parts instead
+(`user-select: auto` is resolved by walking up to the nearest
+text/none, like the browser does). The synthesized menu's release
+click is swallowed -- iOS, unlike Android, still delivers it, straight
+onto the menu's backdrop, closing what it just opened.
+
+Turning `draggable` off on touch would leave phones unable to reorder,
+so the sidebar drives the gesture itself from touch events: moving
+right away scrolls, resting opens the context menu (which puts the
+picked-up profile back down), holding for 250ms and then moving
+reorders -- taken over from the scroller via preventDefault on a
+non-passive touchmove. The mouse path keeps the browser's drag and
+drop; both paths end in one pure reorderedAccounts() with mocha cases.
+scripts/test-account-reorder-touch.mjs (outer repo) drives real CDP
+touch sequences at the real hook and fallback in chromium -- which,
+like iOS, fires no native long-press contextmenu for them: hold-then-
+move reorders, an early move scrolls, a rest opens the menu, a drag
+never does.
+
+ponytail: the fallback and the reorder tracker stay two small single-
+purpose handlers rather than one gesture engine; no auto-scroll while
+dragging (a long list moves in stages); isCoarsePointer reads the
+primary pointer, so a trackpad iPad gets the touch path -- upgrade per
+gesture via pointerType if that ever matters.
+---
+ packages/frontend/scss/_global.scss           |   9 +
+ .../AccountListSidebar/AccountListSidebar.tsx |   9 +-
+ .../attachment/galleryAttachment.tsx          |   5 +-
+ .../attachment/messageAttachment.tsx          |   5 +-
+ .../src/hooks/useAccountDragAndDrop.ts        | 249 +++++++++++++++---
+ packages/frontend/src/main.tsx                |   2 +
+ .../frontend/src/tests/accountOrder.test.ts   |  39 +++
+ packages/frontend/src/utils/accountOrder.ts   |  41 +++
+ .../frontend/src/utils/isCoarsePointer.ts     |  19 ++
+ .../src/utils/longPressContextMenu.ts         | 165 ++++++++++++
+ 10 files changed, 505 insertions(+), 38 deletions(-)
+ create mode 100644 packages/frontend/src/tests/accountOrder.test.ts
+ create mode 100644 packages/frontend/src/utils/accountOrder.ts
+ create mode 100644 packages/frontend/src/utils/isCoarsePointer.ts
+ create mode 100644 packages/frontend/src/utils/longPressContextMenu.ts
+
+diff --git a/packages/frontend/scss/_global.scss b/packages/frontend/scss/_global.scss
+index 3e827e0..becab06 100644
+--- a/packages/frontend/scss/_global.scss
++++ b/packages/frontend/scss/_global.scss
+@@ -73,6 +73,15 @@ button {
+   cursor: pointer;
+   font-size: inherit;
+   user-select: none;
++  // Safari does not reliably honor the unprefixed property (iOS in
++  // particular), so on an iPhone the line above does nothing: a long press
++  // selects the text under the finger — the letter of a letter avatar, a chat
++  // name — and a profile picture gets the "Save Image" callout, both on top of
++  // the long-press gesture the button was pressed for (its context menu, or
++  // picking a profile up to reorder it). Nothing here is text to select, and
++  // the prefixed properties are all Safari acts on, so both are spelled out.
++  -webkit-user-select: none;
++  -webkit-touch-callout: none;
+ }
+ button:disabled {
+   cursor: default;
+diff --git a/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx b/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
+index d9acfd6..6c7efbe 100644
+--- a/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
++++ b/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
+@@ -36,6 +36,7 @@ import AlertDialog from '../dialogs/AlertDialog'
+ import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
+ import useKeyBindingAction from '../../hooks/useKeyBindingAction'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
++import { isCoarsePointer } from '../../utils/isCoarsePointer'
+ 
+ const log = getLogger('AccountListSidebar')
+ 
+@@ -77,6 +78,7 @@ export default function AccountListSidebar({
+     handleDragLeave,
+     handleDragEnd,
+     handleDrop,
++    handleTouchStart,
+   } = useAccountDragAndDrop(accountsFetch)
+ 
+   const { smallScreenMode } = useContext(ScreenContext)
+@@ -243,12 +245,17 @@ export default function AccountListSidebar({
+               accountsFetch.lingeringResult?.value.map((id, index) => (
+                 <li
+                   key={id}
+-                  draggable
++                  // Not on touch: a long press would start a drag instead of
++                  // opening the profile's context menu.
++                  draggable={!isCoarsePointer()}
+                   onDragStart={e => handleDragStart(e, id)}
+                   onDragOver={e => handleDragOver(e, index)}
+                   onDrop={handleDrop}
+                   onDragEnd={handleDragEnd}
+                   onDragLeave={handleDragLeave}
++                  // Reordering with a finger, which the drag events above
++                  // are never fired for.
++                  onTouchStart={e => handleTouchStart(e, id)}
+                   className={classNames({
+                     [styles.dragging]: draggedAccountId === id,
+                     [styles.dragOverTop]:
+diff --git a/packages/frontend/src/components/attachment/galleryAttachment.tsx b/packages/frontend/src/components/attachment/galleryAttachment.tsx
+index e0f5e84..ebcd063 100644
+--- a/packages/frontend/src/components/attachment/galleryAttachment.tsx
++++ b/packages/frontend/src/components/attachment/galleryAttachment.tsx
+@@ -30,6 +30,7 @@ import { useRovingTabindex } from '../../contexts/RovingTabindex'
+ import ConfirmDeleteMessageDialog from '../dialogs/ConfirmDeleteMessage'
+ import { BackendRemote } from '../../backend-com'
+ import { useRpcFetch } from '../../hooks/useFetch'
++import { isCoarsePointer } from '../../utils/isCoarsePointer'
+ 
+ const log = getLogger('mediaAttachment')
+ 
+@@ -240,7 +241,7 @@ export function ImageAttachment({
+         }
+         onContextMenu={openContextMenu}
+         aria-haspopup='menu'
+-        draggable={!isBroken}
++        draggable={!isBroken && !isCoarsePointer()}
+         onDragStart={
+           file ? ev => dragAttachmentOut(file, message.fileName, ev) : undefined
+         }
+@@ -549,7 +550,7 @@ export function FileAttachmentRow({
+       >
+         <div
+           className='file-icon'
+-          draggable={file !== null}
++          draggable={file !== null && !isCoarsePointer()}
+           onDragStart={
+             file ? ev => dragAttachmentOut(file, fileName, ev) : undefined
+           }
+diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
+index ca9c68d..206d090 100644
+--- a/packages/frontend/src/components/attachment/messageAttachment.tsx
++++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
+@@ -28,6 +28,7 @@ import { BackendRemote } from '../../backend-com'
+ import { useRpcFetch } from '../../hooks/useFetch'
+ import { useHasChanged2 } from '../../hooks/useHasChanged'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
++import { isCoarsePointer } from '../../utils/isCoarsePointer'
+ 
+ type AttachmentProps = {
+   text?: string
+@@ -273,7 +274,7 @@ export default function Attachment({
+     >
+       <div
+         className='file-icon'
+-        draggable='true'
++        draggable={!isCoarsePointer()}
+         onDragStart={ev => dragAttachmentOut(file, fileName, ev)}
+         title={fileMime || 'null'}
+       >
+@@ -406,7 +407,7 @@ export function DraftAttachment({
+       <div className={classNames('message-attachment-generic')}>
+         <div
+           className='file-icon'
+-          draggable='true'
++          draggable={!isCoarsePointer()}
+           onDragStart={ev => file && dragAttachmentOut(file, fileName, ev)}
+           title={fileMime || 'null'}
+         >
+diff --git a/packages/frontend/src/hooks/useAccountDragAndDrop.ts b/packages/frontend/src/hooks/useAccountDragAndDrop.ts
+index 8b1d2ed..6de506a 100644
+--- a/packages/frontend/src/hooks/useAccountDragAndDrop.ts
++++ b/packages/frontend/src/hooks/useAccountDragAndDrop.ts
+@@ -1,6 +1,7 @@
+-import { useState } from 'react'
++import { useEffect, useRef, useState } from 'react'
+ import { BackendRemote } from '../backend-com'
+ import { useRpcFetch } from './useFetch'
++import { reorderedAccounts } from '../utils/accountOrder'
+ 
+ export interface DropIndicator {
+   index: number
+@@ -15,8 +16,18 @@ export interface UseAccountDragAndDropReturn {
+   handleDragLeave: () => void
+   handleDragEnd: () => void
+   handleDrop: (e: React.DragEvent) => void
++  handleTouchStart: (e: React.TouchEvent, accountId: number) => void
+ }
+ 
++/**
++ * How long the finger has to rest on a profile before the press becomes a
++ * reorder. Shorter than the ~500ms after which the browser fires
++ * `contextmenu`, so the two gestures can't both claim the same press.
++ */
++const ARM_DELAY_MS = 250
++/** Movement below this is the finger being imprecise, not a gesture. */
++const SLOP_PX = 8
++
+ export function useAccountDragAndDrop(
+   accountsFetch: NonNullable<ReturnType<typeof useRpcFetch>> & {
+     lingeringResult:
+@@ -29,6 +40,24 @@ export function useAccountDragAndDrop(
+   const [draggedAccountId, setDraggedAccountId] = useState<number | null>(null)
+   const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null)
+ 
++  const accounts =
++    accountsFetch.lingeringResult?.ok === true
++      ? accountsFetch.lingeringResult.value
++      : null
++
++  const saveOrder = (newAccounts: number[]) => {
++    try {
++      // Update backend with new order
++      BackendRemote.rpc.setAccountsOrder(newAccounts).then(() => {
++        // Refresh to get the updated order from backend
++        accountsFetch.refresh()
++      })
++    } catch (_error) {
++      // Revert on error
++      accountsFetch.refresh()
++    }
++  }
++
+   const handleDragStart = (e: React.DragEvent, accountId: number) => {
+     e.dataTransfer.effectAllowed = 'move'
+     // The browser snapshots the drag image right after this handler returns,
+@@ -64,59 +93,213 @@ export function useAccountDragAndDrop(
+     e.preventDefault()
+ 
+     if (draggedAccountId === null || dropIndicator === null) return
++    if (!accounts) return
+ 
+-    const accounts =
+-      accountsFetch.lingeringResult?.ok === true
+-        ? accountsFetch.lingeringResult.value
+-        : null
+-    if (!accounts || !Array.isArray(accounts)) return
++    const newAccounts = reorderedAccounts(
++      accounts,
++      accounts.indexOf(draggedAccountId),
++      dropIndicator.index,
++      dropIndicator.position
++    )
++    if (newAccounts) {
++      saveOrder(newAccounts)
++    }
+ 
+-    const dragIndex = accounts.indexOf(draggedAccountId)
+-    const dropIndex = dropIndicator.index
++    setDraggedAccountId(null)
++    setDropIndicator(null)
++  }
+ 
+-    if (dragIndex === -1 || dragIndex === dropIndex) {
+-      setDraggedAccountId(null)
+-      setDropIndicator(null)
+-      return
++  // --- Reordering with a finger ---------------------------------------
++  //
++  // A finger never starts the browser's own drag and drop, so this gesture
++  // is driven from touch events instead. It has to share one press with two
++  // other gestures: moving right away scrolls the profile list, and pressing
++  // without moving opens the profile's context menu. So the press arms a
++  // reorder after ARM_DELAY_MS — before the browser's long press would fire
++  // `contextmenu` — and only movement after that point takes the gesture
++  // over from the scroller. Move earlier and it stays a scroll; don't move
++  // at all and the context menu opens as it always did.
++  //
++  // Taking the gesture over means calling `preventDefault()` on `touchmove`,
++  // which React's own (passive) listeners cannot do — hence the handlers
++  // attached by hand for the duration of the press.
++
++  const gesture = useRef<{
++    identifier: number
++    accountId: number
++    startX: number
++    startY: number
++    armTimer: ReturnType<typeof setTimeout>
++    armed: boolean
++  } | null>(null)
++  // The listeners of the running press, kept so that they are removed by
++  // identity: the press ends in a later render than the one that started it.
++  const listeners = useRef<null | (() => void)>(null)
++  // Read at drop time, when the closure that has to write the new order is
++  // older than the last indicator we rendered.
++  const latestIndicator = useRef<DropIndicator | null>(null)
++
++  const [touchDraggedAccountId, setTouchDraggedAccountId] = useState<
++    number | null
++  >(null)
++
++  const showIndicator = (indicator: DropIndicator | null) => {
++    latestIndicator.current = indicator
++    setDropIndicator(indicator)
++  }
++
++  /**
++   * Where the profile would land if the finger let go at `y`: above or below
++   * whichever profile's middle is closest. Nearest-middle rather than
++   * "the item under the finger" so that the gaps between the avatars, and
++   * the space above the first and below the last one, all still aim
++   * somewhere.
++   */
++  const indicatorAt = (y: number): DropIndicator | null => {
++    if (!accounts) return null
++
++    let closest: DropIndicator | null = null
++    let closestDistance = Number.POSITIVE_INFINITY
++
++    const items = document.querySelectorAll('[x-account-sidebar-account-id]')
++    for (const item of Array.from(items)) {
++      const accountId = Number(
++        item.getAttribute('x-account-sidebar-account-id')
++      )
++      const index = accounts.indexOf(accountId)
++      if (index < 0) continue
++
++      const rect = item.getBoundingClientRect()
++      const middle = rect.top + rect.height / 2
++      const distance = Math.abs(y - middle)
++      if (distance < closestDistance) {
++        closestDistance = distance
++        closest = { index, position: y < middle ? 'top' : 'bottom' }
++      }
+     }
+ 
+-    // Create new array with reordered accounts
+-    const newAccounts = [...accounts]
+-    const [removed] = newAccounts.splice(dragIndex, 1)
++    return closest
++  }
++
++  const endTouchGesture = (drop: boolean) => {
++    const current = gesture.current
++    if (!current) return
++
++    clearTimeout(current.armTimer)
++    listeners.current?.()
++    listeners.current = null
++    gesture.current = null
+ 
+-    let targetIndex = dropIndex
+-    if (dragIndex < dropIndex) {
+-      targetIndex--
++    const indicator = latestIndicator.current
++    if (drop && current.armed && indicator && accounts) {
++      const newAccounts = reorderedAccounts(
++        accounts,
++        accounts.indexOf(current.accountId),
++        indicator.index,
++        indicator.position
++      )
++      if (newAccounts) {
++        saveOrder(newAccounts)
++      }
+     }
+ 
+-    if (dropIndicator.position === 'bottom') {
+-      targetIndex++
++    setTouchDraggedAccountId(null)
++    showIndicator(null)
++  }
++
++  const handleTouchStart = (e: React.TouchEvent, accountId: number) => {
++    // A second finger during a reorder is not a reorder anymore.
++    if (gesture.current || e.touches.length !== 1) {
++      endTouchGesture(false)
++      return
+     }
+ 
+-    newAccounts.splice(targetIndex, 0, removed)
++    const touch = e.touches[0]
++    const trackedTouch = (event: TouchEvent) =>
++      Array.from(event.touches).find(
++        candidate => candidate.identifier === touch.identifier
++      )
+ 
+-    try {
+-      // Update backend with new order
+-      BackendRemote.rpc.setAccountsOrder(newAccounts).then(() => {
+-        // Refresh to get the updated order from backend
+-        accountsFetch.refresh()
+-      })
+-    } catch (_error) {
+-      // Revert on error
+-      accountsFetch.refresh()
++    const onTouchMove = (event: TouchEvent) => {
++      const current = gesture.current
++      const moved = trackedTouch(event)
++      if (!current || !moved) return
++
++      if (!current.armed) {
++        // Still deciding: movement this early means the list is being
++        // scrolled, so hand the press back to the browser.
++        if (
++          Math.abs(moved.clientY - current.startY) > SLOP_PX ||
++          Math.abs(moved.clientX - current.startX) > SLOP_PX
++        ) {
++          endTouchGesture(false)
++        }
++        return
++      }
++
++      // Ours now: no scrolling, no long press, no click afterwards.
++      event.preventDefault()
++      showIndicator(indicatorAt(moved.clientY))
+     }
+ 
+-    setDraggedAccountId(null)
+-    setDropIndicator(null)
++    const onTouchEnd = (event: TouchEvent) => {
++      if (trackedTouch(event)) return
++      endTouchGesture(true)
++    }
++    const onTouchCancel = () => endTouchGesture(false)
++    // The finger rested instead of moving: the press was meant for the
++    // context menu after all, so drop the "picked up" state again.
++    const onContextMenu = () => endTouchGesture(false)
++
++    document.addEventListener('touchmove', onTouchMove, { passive: false })
++    document.addEventListener('touchend', onTouchEnd)
++    document.addEventListener('touchcancel', onTouchCancel)
++    document.addEventListener('contextmenu', onContextMenu)
++    listeners.current = () => {
++      document.removeEventListener('touchmove', onTouchMove)
++      document.removeEventListener('touchend', onTouchEnd)
++      document.removeEventListener('touchcancel', onTouchCancel)
++      document.removeEventListener('contextmenu', onContextMenu)
++    }
++
++    gesture.current = {
++      identifier: touch.identifier,
++      accountId,
++      startX: touch.clientX,
++      startY: touch.clientY,
++      armed: false,
++      armTimer: setTimeout(() => {
++        if (!gesture.current) return
++        gesture.current.armed = true
++        // Picked up: the profile dims, and the drop line follows the finger
++        // from here on. If the finger never moves, the context menu opens on
++        // top of this a moment later and `contextmenu` puts it back.
++        setTouchDraggedAccountId(accountId)
++        showIndicator(indicatorAt(touch.clientY))
++      }, ARM_DELAY_MS),
++    }
+   }
+ 
++  // Nothing above unmounts mid-press in practice, but a leaked listener (or
++  // timer) would outlive the sidebar and keep calling into it.
++  useEffect(
++    () => () => {
++      if (gesture.current) {
++        clearTimeout(gesture.current.armTimer)
++      }
++      listeners.current?.()
++    },
++    []
++  )
++
+   return {
+-    draggedAccountId,
++    draggedAccountId: draggedAccountId ?? touchDraggedAccountId,
+     dropIndicator,
+     handleDragStart,
+     handleDragOver,
+     handleDragLeave,
+     handleDragEnd,
+     handleDrop,
++    handleTouchStart,
+   }
+ }
+diff --git a/packages/frontend/src/main.tsx b/packages/frontend/src/main.tsx
+index 4f23488..320a832 100644
+--- a/packages/frontend/src/main.tsx
++++ b/packages/frontend/src/main.tsx
+@@ -10,6 +10,7 @@ import {
+   setLogHandler,
+ } from '@deltachat-desktop/shared/logger'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
++import { installLongPressContextMenu } from './utils/longPressContextMenu'
+ 
+ async function main() {
+   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+@@ -19,6 +20,7 @@ async function main() {
+     printProcessLogLevelInfo()
+ 
+     initSystemIntegration()
++    installLongPressContextMenu()
+     const domNode = document.querySelector('#root')
+     if (!domNode) {
+       throw new Error('No element with ID root in the DOM. Cannot continue')
+diff --git a/packages/frontend/src/tests/accountOrder.test.ts b/packages/frontend/src/tests/accountOrder.test.ts
+new file mode 100644
+index 0000000..970aac8
+--- /dev/null
++++ b/packages/frontend/src/tests/accountOrder.test.ts
+@@ -0,0 +1,39 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import { reorderedAccounts } from '../utils/accountOrder.js'
++
++describe('reorderedAccounts', () => {
++  it('moves a profile down, below the profile it was dropped on', () => {
++    expect(reorderedAccounts([1, 2, 3, 4], 0, 2, 'bottom')).to.deep.equal([
++      2, 3, 1, 4,
++    ])
++  })
++
++  it('moves a profile down, above the profile it was dropped on', () => {
++    expect(reorderedAccounts([1, 2, 3, 4], 0, 2, 'top')).to.deep.equal([
++      2, 1, 3, 4,
++    ])
++  })
++
++  it('moves a profile up', () => {
++    expect(reorderedAccounts([1, 2, 3, 4], 3, 1, 'top')).to.deep.equal([
++      1, 4, 2, 3,
++    ])
++    expect(reorderedAccounts([1, 2, 3, 4], 3, 1, 'bottom')).to.deep.equal([
++      1, 2, 4, 3,
++    ])
++  })
++
++  it('keeps every profile exactly once', () => {
++    const reordered = reorderedAccounts([1, 2, 3, 4], 1, 3, 'bottom')
++    expect(reordered?.slice().sort()).to.deep.equal([1, 2, 3, 4])
++  })
++
++  it('is not a move when dropped on itself or out of range', () => {
++    expect(reorderedAccounts([1, 2, 3], 1, 1, 'top')).to.equal(null)
++    expect(reorderedAccounts([1, 2, 3], -1, 1, 'top')).to.equal(null)
++    expect(reorderedAccounts([1, 2, 3], 0, 3, 'top')).to.equal(null)
++    expect(reorderedAccounts([], 0, 0, 'top')).to.equal(null)
++  })
++})
+diff --git a/packages/frontend/src/utils/accountOrder.ts b/packages/frontend/src/utils/accountOrder.ts
+new file mode 100644
+index 0000000..8b62aed
+--- /dev/null
++++ b/packages/frontend/src/utils/accountOrder.ts
+@@ -0,0 +1,41 @@
++export type DropPosition = 'top' | 'bottom'
++
++/**
++ * The account order after dropping the profile at `fromIndex` above or below
++ * the profile at `dropIndex`, or `null` when that is not a move (dropped on
++ * itself, or either index is out of range).
++ *
++ * Lives outside the sidebar because both the mouse drop and the touch drop
++ * end here, and because an order this gets wrong is written straight to the
++ * backend — cheaper to assert on than to click through.
++ */
++export function reorderedAccounts(
++  accounts: number[],
++  fromIndex: number,
++  dropIndex: number,
++  position: DropPosition
++): number[] | null {
++  const inRange = (i: number) => i >= 0 && i < accounts.length
++  if (!inRange(fromIndex) || !inRange(dropIndex) || fromIndex === dropIndex) {
++    return null
++  }
++
++  const reordered = accounts.slice()
++  const [moved] = reordered.splice(fromIndex, 1)
++  // Can't happen after the range check above, but this file is also compiled
++  // with `noUncheckedIndexedAccess` (the mocha run), which can't know that.
++  if (moved === undefined) {
++    return null
++  }
++
++  let targetIndex = dropIndex
++  if (fromIndex < dropIndex) {
++    targetIndex--
++  }
++  if (position === 'bottom') {
++    targetIndex++
++  }
++
++  reordered.splice(targetIndex, 0, moved)
++  return reordered
++}
+diff --git a/packages/frontend/src/utils/isCoarsePointer.ts b/packages/frontend/src/utils/isCoarsePointer.ts
+new file mode 100644
+index 0000000..d3f61ad
+--- /dev/null
++++ b/packages/frontend/src/utils/isCoarsePointer.ts
+@@ -0,0 +1,19 @@
++/**
++ * Whether the device is driven by a finger rather than a mouse.
++ *
++ * HTML5 drag-and-drop is a mouse affordance. On a touch screen Blink spends
++ * the long-press gesture on starting a drag whenever the pressed element is
++ * `draggable` (`EventHandler::HandleGestureLongPress` →
++ * `HandleDragDropIfPossible`), and never fires `contextmenu` — so every
++ * long-press context menu that sits on a draggable element is unreachable on
++ * a phone. Dragging a file out of a browser tab, or reordering profiles with
++ * a finger, is not something this app can do anyway, so `draggable` is simply
++ * switched off there.
++ *
++ * ponytail: reads the *primary* pointer, so a laptop with both a mouse and a
++ * touch screen keeps dragging (and keeps long-press broken). Upgrade path if
++ * that ever matters: decide per gesture from `pointerType` on `pointerdown`.
++ */
++export function isCoarsePointer(): boolean {
++  return window.matchMedia('(pointer: coarse)').matches
++}
+diff --git a/packages/frontend/src/utils/longPressContextMenu.ts b/packages/frontend/src/utils/longPressContextMenu.ts
+new file mode 100644
+index 0000000..3c624f5
+--- /dev/null
++++ b/packages/frontend/src/utils/longPressContextMenu.ts
+@@ -0,0 +1,165 @@
++/**
++ * Long press opens a context menu everywhere in this app — except on iOS.
++ * Since iOS 13, Safari does not fire `contextmenu` for touch presses at all
++ * (https://github.com/mdn/browser-compat-data/issues/6376 — the event only
++ * exists there for real pointing devices, e.g. an iPad trackpad's secondary
++ * click), so on an iPhone the menus of the chat list, the message list, the
++ * gallery and the account sidebar are all unreachable. The documented
++ * workaround is a long-press timer, and that is what this is.
++ *
++ * Watch every touch press and, if the finger rests in place for LONG_PRESS_MS
++ * without the browser firing `contextmenu` itself, dispatch one at the
++ * finger. Everything downstream is the same code that runs on Android — the
++ * `onContextMenu` handlers, their `preventDefault`, the position the menu
++ * opens at, and the account sidebar's reorder gesture putting the profile
++ * back down when the menu takes over.
++ *
++ * Whether the browser needs the help is decided per press, not per platform:
++ * no user-agent sniffing. A browser that fires the event itself (Blink, at
++ * ~500ms — before our timer) simply cancels the fallback for that press.
++ */
++
++/** Longer than the ~500ms after which Blink fires its own `contextmenu`. */
++const LONG_PRESS_MS = 700
++/** Movement below this is the finger being imprecise, not a scroll. */
++const SLOP_PX = 8
++
++export function installLongPressContextMenu() {
++  let press: {
++    x: number
++    y: number
++    timer: ReturnType<typeof setTimeout>
++  } | null = null
++  let synthesized = false
++
++  const cancel = () => {
++    if (press) {
++      clearTimeout(press.timer)
++      press = null
++    }
++  }
++
++  document.addEventListener(
++    'touchstart',
++    event => {
++      cancel()
++      synthesized = false
++
++      const touch = event.touches[0]
++      const target = event.target as HTMLElement | null
++      if (event.touches.length !== 1 || !touch || !target) {
++        return
++      }
++      // A long press on editable text means text editing (cursor placement,
++      // the paste callout) — same reason the app's own handlers leave inputs
++      // alone. And a press inside an open context menu is aimed at one of its
++      // items; a second menu on top would close the one being used.
++      if (
++        target.closest?.(
++          'input, textarea, [contenteditable="true"], .dc-context-menu-layer'
++        )
++      ) {
++        return
++      }
++      // Explicitly selectable text — message bodies — is the other place the
++      // platform's long press has a job of its own: starting a text
++      // selection. A menu on top of it would make selecting text on iOS
++      // impossible, so those presses are left alone; a message's menu opens
++      // from the bubble's non-text parts instead. `user-select: auto`
++      // resolves through the parent, so walk up until something decides.
++      for (let el: Element | null = target; el; el = el.parentElement) {
++        const style = window.getComputedStyle(el)
++        const userSelect = style.userSelect || style.webkitUserSelect
++        if (userSelect === 'text') {
++          return
++        }
++        if (userSelect === 'none') {
++          break
++        }
++      }
++
++      const { clientX: x, clientY: y } = touch
++      press = {
++        x,
++        y,
++        timer: setTimeout(() => {
++          press = null
++          synthesized = true
++          target.dispatchEvent(
++            new MouseEvent('contextmenu', {
++              bubbles: true,
++              cancelable: true,
++              clientX: x,
++              clientY: y,
++            })
++          )
++        }, LONG_PRESS_MS),
++      }
++    },
++    { passive: true }
++  )
++
++  document.addEventListener(
++    'touchmove',
++    event => {
++      const touch = event.touches[0]
++      if (!press || !touch) {
++        return
++      }
++      if (
++        Math.abs(touch.clientX - press.x) > SLOP_PX ||
++        Math.abs(touch.clientY - press.y) > SLOP_PX
++      ) {
++        cancel()
++      }
++    },
++    { passive: true }
++  )
++
++  document.addEventListener(
++    'touchend',
++    event => {
++      cancel()
++      if (synthesized) {
++        synthesized = false
++        // iOS still delivers the press's `click` after the finger lifts (it
++        // has no long-press cutoff for it once nothing native consumed the
++        // gesture, unlike Android) — and that click would land on the
++        // just-opened menu's backdrop and close it. Cancelling the touchend
++        // stops the click from being generated at all.
++        event.preventDefault()
++      }
++    },
++    // Non-passive for the preventDefault above.
++    { passive: false }
++  )
++  document.addEventListener(
++    'touchcancel',
++    () => {
++      cancel()
++      synthesized = false
++    },
++    { passive: true }
++  )
++
++  document.addEventListener(
++    'contextmenu',
++    event => {
++      if (!event.isTrusted) {
++        // Ours, on its way to the app's handlers.
++        return
++      }
++      if (synthesized) {
++        // The browser's own, arriving after ours on a device whose long
++        // press is slower than our timer: the menu is already open, and
++        // letting this one through would close it again.
++        event.preventDefault()
++        event.stopPropagation()
++        return
++      }
++      // The browser handles this press by itself — stay out of its way.
++      cancel()
++    },
++    true
++  )
++}

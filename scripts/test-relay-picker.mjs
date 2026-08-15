@@ -1,4 +1,4 @@
-// E2E test for the instant-onboarding relay picker (patch desktop/0042): the
+// E2E test for the instant-onboarding relay picker (patch desktop/0039): the
 // "create profile" screen shows a row with the chosen chatmail relay and a
 // button that opens a dialog to change it. The dialog lists the directory
 // relays (default first), probes each over the WS→TCP bridge when it opens

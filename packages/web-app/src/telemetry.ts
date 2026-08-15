@@ -57,6 +57,15 @@ export function observeTransport(transport: Transport): void {
   }
 }
 
+/** Read by bridgeNeed (runtime.ts): while true, a not-yet-configured account
+ * is treated as bridge-free — webimap (madmail) accounts don't use the WS→TCP
+ * bridge, so its "not reachable" toast would wrongly nag during onboarding.
+ * Deliberately has no unmount-style reset: bridgeNeed only honors it until
+ * the account has transports, after which the real transport list decides. */
+function setSuppressBridgeWarning(on: boolean): void {
+  ;(window as any).__slothfulchatSuppressBridgeWarning = on
+}
+
 function handle(method: string, params: unknown, p: Promise<unknown>, raw: Request): void {
   const accountId = Array.isArray(params) && typeof params[0] === 'number' ? params[0] : undefined
 
@@ -64,7 +73,11 @@ function handle(method: string, params: unknown, p: Promise<unknown>, raw: Reque
     // manual login (addr + password) — the "Use webimap" advanced toggle makes
     // this a bridge-free madmail/webimap transport instead of ordinary IMAP
     case 'add_or_update_transport': {
-      const webimap = /webimap/i.test(safeJson(params))
+      // value-form on purpose: every manual login's params carry the KEY
+      // ("webimap":null — DefaultCredentials seeds it), so a bare /webimap/
+      // matched ordinary IMAP logins too.
+      const webimap = /"webimap"\s*:\s*true/.test(safeJson(params))
+      setSuppressBridgeWarning(webimap)
       onConfigure(accountId, webimap ? 'webimap' : 'imap', webimap ? 'webimap' : 'manual', p)
       break
     }
@@ -72,7 +85,9 @@ function handle(method: string, params: unknown, p: Promise<unknown>, raw: Reque
     // default chatmail relay / scanned QR / webimap — distinguished by the QR
     case 'add_transport_from_qr': {
       const qr = Array.isArray(params) ? String(params[1] ?? '') : ''
-      const method2 = /webimap/i.test(qr) ? 'webimap' : qrScanSent ? 'qr' : 'chatmail'
+      const webimap = /^webimapaccount:/i.test(qr)
+      setSuppressBridgeWarning(webimap)
+      const method2 = webimap ? 'webimap' : qrScanSent ? 'qr' : 'chatmail'
       onConfigure(accountId, method2 === 'webimap' ? 'webimap' : 'imap', method2, p)
       break
     }
@@ -90,12 +105,20 @@ function handle(method: string, params: unknown, p: Promise<unknown>, raw: Reque
 
     case 'check_qr':
     case 'set_config_from_qr':
-    case 'secure_join':
+    case 'secure_join': {
+      // Earliest signal that a bridge-free madmail account is being onboarded:
+      // its `webimapaccount:` QR being checked, before any transport exists.
+      // A `dcaccount:` QR is ordinary chatmail onboarding, which needs the
+      // bridge, so it clears the flag again.
+      const qr = Array.isArray(params) ? String(params[1] ?? '') : ''
+      if (/^webimapaccount:/i.test(qr)) setSuppressBridgeWarning(true)
+      else if (/^dcaccount:/i.test(qr)) setSuppressBridgeWarning(false)
       if (!qrScanSent) {
         qrScanSent = true
         analytics.event('qr_scan')
       }
       break
+    }
 
     case 'export_backup':
       analytics.event('backup', { action: 'export' })
@@ -166,7 +189,8 @@ function ensureSendCtx(accountId: number, raw: Request): Promise<{ transport: st
     .then(([isChatmail, transports]) => {
       const ctx = {
         chatmail: isChatmail === '1' ? 'yes' : 'no',
-        transport: /webimap/i.test(safeJson(transports)) ? 'webimap' : 'imap',
+        // value-form: a transport carries a "webimap" key even when unset
+        transport: /"webimap"\s*:\s*true/.test(safeJson(transports)) ? 'webimap' : 'imap',
       }
       sendCtx.set(accountId, ctx)
       return ctx

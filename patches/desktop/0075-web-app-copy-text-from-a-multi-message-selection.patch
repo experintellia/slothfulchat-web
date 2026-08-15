@@ -1,0 +1,373 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 6 Aug 2026 22:38:56 +0000
+Subject: [PATCH 75/82] web-app: copy text from a multi-message selection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Selecting a second message collapsed the context menu to Forward and
+Delete. "Copy Text" is the obvious third entry there, so add it — plus
+Ctrl/Cmd + C on a focused selection — putting the selected message bodies
+on the clipboard, one per line.
+
+Messages without text (stickers, bare images, files, webxdc) drop out
+rather than becoming `[photo.jpg]` placeholder lines — that is transcript
+formatting, and Export Chat already writes real transcripts. A caption is
+text and gets copied; a not-yet-downloaded message contributes what is on
+screen, i.e. its caption without the appended "[Label – size]" tag, same
+as the single-message action. If nothing in the selection has text the
+write is failed instead of blanking the clipboard; that can only be known
+after the fetch, so the menu entry itself is always shown.
+
+The keyboard path sits with the other per-message shortcuts in
+`onKeyDown` (Ctrl + E/R/S, Delete) and shares `copyMessagesText()` with
+the menu. It only fires when the DOM selection is empty: a text selection
+means the user wants the browser's own copy, the same preference
+`buildContextMenu` encodes by offering "Copy Selection" over "Copy Text".
+
+The selection can span messages the list never loaded — a Shift + click
+range covers the whole chat, not just the rendered window — so the text
+comes from a `getMessages` round-trip. Browsers only honour a clipboard
+write inside the user gesture that triggered it, and awaiting that RPC
+first loses transient activation on WebKit, which then rejects the write.
+`writeClipboardText()` therefore also accepts a `Promise<string>`, and the
+browser targets hand it straight to `ClipboardItem` instead of awaiting;
+the Electron and Tauri targets just await it as before.
+
+Ordering is fixed for Forward and Delete along the way: `selectedItems`
+is a `Set` in click order, so Ctrl + clicking bottom-up used to forward
+and delete in reverse. The message list's own chronological ids are now
+exposed on `MessageMultiselectContext`, and both the menu and the
+keyboard handler filter those.
+---
+ .../src/components/message/Message.tsx        | 69 ++++++++++++++++++-
+ .../message/focusAndMultiselect.tsx           |  7 +-
+ .../frontend/src/tests/copyMessages.test.ts   | 43 ++++++++++++
+ packages/frontend/src/utils/copyMessages.ts   | 32 +++++++++
+ packages/runtime/runtime.ts                   |  7 +-
+ .../target-browser/runtime-browser/runtime.ts | 11 ++-
+ .../runtime-electron/runtime.ts               |  4 +-
+ .../target-tauri/runtime-tauri/runtime.ts     |  4 +-
+ 8 files changed, 167 insertions(+), 10 deletions(-)
+ create mode 100644 packages/frontend/src/tests/copyMessages.test.ts
+ create mode 100644 packages/frontend/src/utils/copyMessages.ts
+
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index 6cd9f5a..9ebcadb 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -64,6 +64,7 @@ import type { PrivateReply } from '../../hooks/chat/usePrivateReply'
+ import type { JumpToMessage } from '../../hooks/chat/useMessage'
+ import { mouseEventToPosition } from '../../utils/mouseEventToPosition'
+ import { useMessageFocusAndMultiselect } from './focusAndMultiselect'
++import { formatMessagesForClipboard } from '../../utils/copyMessages'
+ import { avatarInitial } from '@deltachat-desktop/shared/avatarInitial'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { IconButton } from '../Icon'
+@@ -509,6 +510,39 @@ function buildContextMenu(
+     },
+   ]
+ }
++/**
++ * Put the text of `messageIds` on the clipboard, one message per line. Pass
++ * them in display order. Shared by the multiselect context menu and
++ * Ctrl/Cmd + C.
++ *
++ * The selection can span messages the list never loaded — a Shift + click
++ * range covers the whole chat, not just the rendered window — so the text has
++ * to come from the backend.
++ *
++ * ponytail: one `getMessages` call for the whole selection; ceiling is a
++ * multi-thousand-message range turning into one big RPC and a multi-MB
++ * clipboard write. Upgrade path = chunk the fetch if it ever janks.
++ */
++function copyMessagesText(
++  accountId: number,
++  messageIds: Array<T.Message['id']>
++) {
++  const text = BackendRemote.rpc
++    .getMessages(accountId, messageIds)
++    .then(loaded =>
++      formatMessagesForClipboard(messageIds.map(id => loaded[id]))
++    )
++    // Nothing in the selection has text (only stickers/attachments). That
++    // can't be known before the fetch, so instead of hiding the menu entry,
++    // fail the write and leave the clipboard as it was.
++    .then(text => text || Promise.reject(new Error('no text to copy')))
++  // Deliberately not awaited before handing it over: browsers only honour a
++  // clipboard write inside the gesture that triggered it.
++  runtime
++    .writeClipboardText(text)
++    .catch(err => log.warn('failed to copy messages:', err))
++}
++
+ function buildMultiselectContextMenu(
+   {
+     accountId,
+@@ -535,6 +569,10 @@ function buildMultiselectContextMenu(
+           sourceChatId: chat.id,
+         }),
+     },
++    {
++      label: tx('menu_copy_text_to_clipboard'),
++      action: () => copyMessagesText(accountId, messageIds),
++    },
+     {
+       label: tx('delete'),
+       action: () =>
+@@ -655,7 +693,11 @@ export default function Message(props: {
+         ? buildMultiselectContextMenu(
+             {
+               ...common,
+-              messageIds: [...focusAndMultiselect.selectedItems],
++              // Display order, not click order — see `messageIds` on
++              // `MessageMultiselectContext`.
++              messageIds: focusAndMultiselect.messageIds.filter(id =>
++                focusAndMultiselect.selectedItems.has(id)
++              ),
+             },
+             target
+           )
+@@ -675,6 +717,7 @@ export default function Message(props: {
+       conversationType,
+       message,
+       isMultiselectMember,
++      focusAndMultiselect.messageIds,
+       focusAndMultiselect.selectedItems,
+       resetSelection,
+       openContextMenu,
+@@ -700,6 +743,11 @@ export default function Message(props: {
+           : focusAndMultiselect.selectedItems
+       const thisMsgSelected = messageIds.has(message.id)
+       const onlyThisMsgSelected = thisMsgSelected && messageIds.size === 1
++      // `messageIds` is a `Set` in click order; the list's own ids are
++      // chronological, so filter those to act on the selection in the order
++      // it is displayed rather than the order it was clicked.
++      const selectedInDisplayOrder = () =>
++        focusAndMultiselect.messageIds.filter(id => messageIds.has(id))
+       // Handle letter shortcuts with Ctrl/Cmd modifier
+       const isCtrlOrMetaKeyPress =
+         (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && message
+@@ -756,6 +804,23 @@ export default function Message(props: {
+         return
+       }
+ 
++      // Check if Ctrl/Cmd+"c" is pressed to copy the selected messages' text.
++      // Only when nothing is selected in the DOM: a text selection means the
++      // user wants the browser's own copy, which is the same preference
++      // `buildContextMenu` encodes by offering "Copy Selection" over
++      // "Copy Text".
++      if (
++        thisMsgSelected &&
++        isCtrlOrMetaKeyPress &&
++        matchesLetterShortcut(e, 'c') &&
++        !getSelectedText()
++      ) {
++        e.preventDefault()
++        e.stopPropagation()
++        copyMessagesText(accountId, selectedInDisplayOrder())
++        return
++      }
++
+       // Check if Ctrl/Cmd+Shift+"s" is pressed to unsave message
+       if (
+         onlyThisMsgSelected &&
+@@ -786,7 +851,7 @@ export default function Message(props: {
+         e.stopPropagation()
+         openDialog(ConfirmDeleteMessageDialog, {
+           accountId,
+-          messageIds: [...messageIds],
++          messageIds: selectedInDisplayOrder(),
+           loadedMessages: { [message.id]: message },
+           chat,
+         })
+diff --git a/packages/frontend/src/components/message/focusAndMultiselect.tsx b/packages/frontend/src/components/message/focusAndMultiselect.tsx
+index af71bb7..348cf1a 100644
+--- a/packages/frontend/src/components/message/focusAndMultiselect.tsx
++++ b/packages/frontend/src/components/message/focusAndMultiselect.tsx
+@@ -13,6 +13,10 @@ type MessageMultiselectContextValue = ReturnType<
+   typeof useMultiselect<T.Message['id']>
+ > & {
+   resetSelection: () => void
++  /** Every message in the list, in display (chronological) order.
++   * `selectedItems` is a `Set` in click order, so filter this to get a
++   * selection that isn't reversed by a bottom-up Ctrl + click. */
++  messageIds: Array<T.Message['id']>
+ }
+ export const MessageMultiselectContext =
+   React.createContext<MessageMultiselectContextValue>({
+@@ -21,6 +25,7 @@ export const MessageMultiselectContext =
+     onKeyDown: () => false,
+     selectedItems: new Set(),
+     resetSelection: () => {},
++    messageIds: [],
+   })
+ 
+ export function useMessageFocusAndMultiselectContextValue(props: {
+@@ -66,7 +71,7 @@ export function useMessageFocusAndMultiselectContextValue(props: {
+     // even though all you did is click a link inside of it.
+     { onNormalClick: 'unselectAll' }
+   )
+-  return { ...multiselect, resetSelection }
++  return { ...multiselect, resetSelection, messageIds: props.messageIds }
+ }
+ 
+ export function useMessageFocusAndMultiselect(
+diff --git a/packages/frontend/src/tests/copyMessages.test.ts b/packages/frontend/src/tests/copyMessages.test.ts
+new file mode 100644
+index 0000000..e0c3d89
+--- /dev/null
++++ b/packages/frontend/src/tests/copyMessages.test.ts
+@@ -0,0 +1,43 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import { formatMessagesForClipboard } from '../utils/copyMessages.js'
++
++import type { T } from '@deltachat/jsonrpc-client'
++
++const msg = (text: string, downloadState = 'Done') =>
++  ({ kind: 'message', text, downloadState }) as unknown as T.MessageLoadResult
++
++describe('formatMessagesForClipboard', () => {
++  it('joins the bodies in the order given (display order, not click order)', () => {
++    // The caller filters the list's chronological ids, so a bottom-up
++    // Ctrl + click selection still arrives here oldest-first.
++    expect(formatMessagesForClipboard([msg('one'), msg('two')])).to.equal(
++      'one\ntwo'
++    )
++  })
++
++  it('drops messages without text, and unloaded ones', () => {
++    expect(
++      formatMessagesForClipboard([
++        msg('caption'),
++        msg(''),
++        undefined,
++        { kind: 'loadingError', error: 'nope' } as T.MessageLoadResult,
++        msg('tail'),
++      ])
++    ).to.equal('caption\ntail')
++  })
++
++  it('copies the on-screen caption of a not-yet-downloaded message', () => {
++    expect(
++      formatMessagesForClipboard([
++        msg('hello [Image – 228.45 KiB]', 'Available'),
++      ])
++    ).to.equal('hello')
++  })
++
++  it('returns empty when nothing in the selection has text', () => {
++    expect(formatMessagesForClipboard([msg(''), msg('')])).to.equal('')
++  })
++})
+diff --git a/packages/frontend/src/utils/copyMessages.ts b/packages/frontend/src/utils/copyMessages.ts
+new file mode 100644
+index 0000000..acd5856
+--- /dev/null
++++ b/packages/frontend/src/utils/copyMessages.ts
+@@ -0,0 +1,32 @@
++// `.js` so the mocha/ts-node ESM runner can resolve it from the test too.
++import { placeholderCaption } from './downloadPlaceholder.js'
++
++import type { T } from '@deltachat/jsonrpc-client'
++
++/**
++ * The text that "Copy Text" puts on the clipboard for a multi-message
++ * selection: the message bodies, one per line, in the order given — pass the
++ * ids in display order, not click order.
++ *
++ * Messages without text (stickers, bare images, files, webxdc) drop out
++ * instead of getting a `[photo.jpg]` placeholder line: that is transcript
++ * formatting, and this is the same action as the single-message "Copy Text".
++ * Export Chat is where a dated, attributed transcript lives.
++ */
++export function formatMessagesForClipboard(
++  messages: Array<T.MessageLoadResult | undefined>
++): string {
++  return messages
++    .map(message => {
++      if (message?.kind !== 'message') {
++        return ''
++      }
++      // Not downloaded yet: copy what is on screen, i.e. the caption without
++      // the "[Label – size]" tag core appends — same as single-message copy.
++      return message.downloadState !== 'Done'
++        ? placeholderCaption(message.text)
++        : message.text
++    })
++    .filter(text => text !== '')
++    .join('\n')
++}
+diff --git a/packages/runtime/runtime.ts b/packages/runtime/runtime.ts
+index ff03f45..f4d2933 100644
+--- a/packages/runtime/runtime.ts
++++ b/packages/runtime/runtime.ts
+@@ -101,7 +101,12 @@ export interface Runtime {
+    * or null when no image was given from clipboard
+    */
+   readClipboardImage(): Promise<string | null>
+-  writeClipboardText(text: string): Promise<void>
++  /**
++   * @param text the text, or a promise of it. Browsers only honour a clipboard
++   * write inside the user gesture that triggered it, so a caller that still has
++   * to fetch the text must hand over the promise instead of awaiting it first.
++   */
++  writeClipboardText(text: string | Promise<string>): Promise<void>
+   writeClipboardImage(path: string): Promise<void>
+   getAppPath(name: RuntimeAppPath): Promise<string>
+   openMapsWebxdc(accountId: number, chatId?: number): void
+diff --git a/packages/target-browser/runtime-browser/runtime.ts b/packages/target-browser/runtime-browser/runtime.ts
+index a031932..061d133 100644
+--- a/packages/target-browser/runtime-browser/runtime.ts
++++ b/packages/target-browser/runtime-browser/runtime.ts
+@@ -589,8 +589,15 @@ class BrowserRuntime implements Runtime {
+     }
+     return null
+   }
+-  writeClipboardText(text: string): Promise<void> {
+-    return navigator.clipboard.writeText(text)
++  writeClipboardText(text: string | Promise<string>): Promise<void> {
++    if (typeof text === 'string') {
++      return navigator.clipboard.writeText(text)
++    }
++    // Awaiting first would lose transient activation (Safari/WebKit rejects
++    // the write); `ClipboardItem` takes the pending promise instead.
++    return navigator.clipboard.write([
++      new ClipboardItem({ 'text/plain': text }),
++    ])
+   }
+   async writeClipboardImage(path: string): Promise<void> {
+     try {
+diff --git a/packages/target-electron/runtime-electron/runtime.ts b/packages/target-electron/runtime-electron/runtime.ts
+index cd4cf5f..9dc1e92 100644
+--- a/packages/target-electron/runtime-electron/runtime.ts
++++ b/packages/target-electron/runtime-electron/runtime.ts
+@@ -338,8 +338,8 @@ class ElectronRuntime implements Runtime {
+   readClipboardImage(): Promise<string | null> {
+     return ipcBackend.invoke('electron.clipboard.readImage')
+   }
+-  writeClipboardText(text: string): Promise<void> {
+-    return ipcBackend.invoke('electron.clipboard.writeText', text)
++  async writeClipboardText(text: string | Promise<string>): Promise<void> {
++    return ipcBackend.invoke('electron.clipboard.writeText', await text)
+   }
+   writeClipboardImage(path: string): Promise<void> {
+     return ipcBackend.invoke('electron.clipboard.writeImage', path)
+diff --git a/packages/target-tauri/runtime-tauri/runtime.ts b/packages/target-tauri/runtime-tauri/runtime.ts
+index a5c47be..2af841a 100644
+--- a/packages/target-tauri/runtime-tauri/runtime.ts
++++ b/packages/target-tauri/runtime-tauri/runtime.ts
+@@ -491,8 +491,8 @@ class TauriRuntime implements Runtime {
+   readClipboardImage(): Promise<string | null> {
+     return invoke('get_clipboard_image_as_data_uri')
+   }
+-  writeClipboardText(text: string): Promise<void> {
+-    return writeText(text)
++  async writeClipboardText(text: string | Promise<string>): Promise<void> {
++    return writeText(await text)
+   }
+   writeClipboardImage(path: string): Promise<void> {
+     return invoke('copy_image_to_clipboard', { path })
