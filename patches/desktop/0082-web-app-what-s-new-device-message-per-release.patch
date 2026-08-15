@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sat, 15 Aug 2026 01:24:33 +0000
+Subject: [PATCH 82/82] web-app: "what's new" device message per release
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+For most users the device message is the only release note they will ever
+read, and nothing shipped one: updateDeviceChat() only replayed upstream
+Delta Chat's 2.3.0 changelog entry, so a SlothfulChat release told existing
+accounts nothing at all.
+
+Add a SLOTHFUL_RELEASE_MESSAGES table appended to updateDeviceChat(), one
+entry per release, oldest first. A table rather than a patch per release:
+later releases amend this one patch instead of growing the stack, and the
+existing `changelog-version-<v>` label convention already makes core drop
+repeats, so re-runs are free and an account only gets the versions it has
+not seen yet. Fresh accounts still skip the lot via skipCurrentChangelog.
+
+Drop the inherited `changelog-version-2.3.0` message while we are here. It
+describes what Delta Chat 2.0 brought over 1.x; SlothfulChat's first release
+was already past that, so it announced an upgrade none of our accounts ever
+lived through. That was the only caller of `tx` in this function.
+
+Text is a plain literal, not an _untranslated_en.json key — release blurbs
+go stale long before anyone could translate them. It closes on the version's
+own changelog anchor (#v-0.9.0), which survives later releases where a
+positional link would not.
+
+Seeded with 0.9.0.
+---
+ packages/frontend/src/deviceMessages.ts | 41 ++++++++++++++++++++++---
+ 1 file changed, 37 insertions(+), 4 deletions(-)
+
+diff --git a/packages/frontend/src/deviceMessages.ts b/packages/frontend/src/deviceMessages.ts
+index 3b180fa..a2aa9e2 100644
+--- a/packages/frontend/src/deviceMessages.ts
++++ b/packages/frontend/src/deviceMessages.ts
+@@ -6,7 +6,6 @@ export async function updateDeviceChat(
+   accountId: number,
+   skipCurrentChangelog: boolean = false
+ ) {
+-  const tx = window.static_translate
+   const addDeviceMessage = async (
+     label: string,
+     msg: Partial<Parameters<typeof BackendRemote.rpc.addDeviceMessage>[2]>
+@@ -28,11 +27,45 @@ export async function updateDeviceChat(
+       })
+     }
+   }
+-  await addDeviceMessage(`changelog-version-2.3.0`, {
+-    text: tx('update_2_0', 'https://delta.chat/donate'),
+-  })
++  // Upstream's `changelog-version-2.3.0` entry is deliberately gone: it
++  // announces what Delta Chat 2.0 brought over 1.x, and no SlothfulChat
++  // release ever predates that, so every account here would be told about
++  // an upgrade it never lived through.
++  for (const [version, text] of SLOTHFUL_RELEASE_MESSAGES) {
++    await addDeviceMessage(`changelog-version-${version}`, { text })
++  }
+ }
+ 
++/**
++ * One "what's new" message per SlothfulChat release, oldest first. For most
++ * users this is the only release note they ever read, so it is the release's
++ * user-facing summary rather than a changelog dump — see RELEASING.md, which
++ * also requires a human to approve the text before it ships.
++ *
++ * Appending here (rather than one patch per release) keeps the whole history
++ * in a single patch that later releases amend. The `changelog-version-` label
++ * makes core drop every repeat, so re-runs are free and existing accounts get
++ * only the versions they have not seen.
++ *
++ * Plain text, not markdown: device messages render literally and URLs
++ * autolink. The trailing link uses the version's own changelog anchor, so it
++ * keeps pointing at this release once later ones ship.
++ */
++const SLOTHFUL_RELEASE_MESSAGES: ReadonlyArray<readonly [string, string]> = [
++  [
++    '0.9.0',
++    `SlothfulChat 0.9.0
++
++• Voice messages have a real player: seek on the waveform, change speed, and keep listening while you switch chats.
++• Big attachments show their type, size and a preview before you download them, with a live percentage — and an interrupted download resumes instead of restarting.
++• New long messages can be expanded in the chat to read them in full, and you can copy the text of several messages at once.
++• Faster: adding a profile is near-instant, and encryption no longer stalls the app.
++• Privacy and security: exported backups no longer linger in browser storage, no usage statistics leave before you have seen the opt-out notice, and answering a call no longer starts your camera by itself.
++
++https://web.slothful.chat/changelog/?p=web-app#v-0.9.0`,
++  ],
++]
++
+ /**
+  * SlothfulChat's own welcome message: what this fork does differently (runs in
+  * the browser, back up your data, prototyping ground, self-host/fork it).

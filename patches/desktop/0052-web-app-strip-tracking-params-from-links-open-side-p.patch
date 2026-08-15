@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sun, 19 Jul 2026 22:53:39 +0000
-Subject: [PATCH 52/81] web-app: strip tracking params from links (open-side +
+Subject: [PATCH 52/82] web-app: strip tracking params from links (open-side +
  paste chip + setting)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+Headings here track the release train (`vX.Y.Z`) — the version this package
+actually shipped in. Its own `package.json` stays at `0.0.0`: it ships inside
+web-app rather than on its own, so it has no independent version to bump, and
+`scripts/set-release-version.mjs` leaves it out of the synced train.
+
+## 0.9.0 — 2026-08-15
+
+- An incoming call now offers **Accept** (audio only) and **Accept with
+  video**, so the caller's offer no longer decides whether the callee's
+  camera starts. The camera can still be turned on once the call is
+  connected.
+
+## 0.6.0 — 2026-07-15
 
 - Added native 1:1 WebRTC calls — **audio, video, and screen share** —
   wire-compatible with upstream `deltachat/calls-webapp` (raw-SDP offer/answer

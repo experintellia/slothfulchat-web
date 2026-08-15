@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 4 Aug 2026 09:59:17 +0000
-Subject: [PATCH 74/81] web-app: SlothfulChat welcome message in the device
+Subject: [PATCH 74/82] web-app: SlothfulChat welcome message in the device
  chat
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

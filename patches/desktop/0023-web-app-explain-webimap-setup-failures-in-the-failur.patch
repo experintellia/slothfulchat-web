@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 10 Jul 2026 22:57:40 +0000
-Subject: [PATCH 23/81] web-app: explain webimap setup failures in the failure
+Subject: [PATCH 23/82] web-app: explain webimap setup failures in the failure
  alert, not up front
 
 Replaces the pre-flight reachability/CORS probe in the madmail-server
