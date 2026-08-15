@@ -518,11 +518,15 @@ contribution intended.
   "Updating…", and a message that 404s on fetch/delete is treated as
   already-consumed instead of putting the poll loop into an error backoff.
   `core/0012`, `core/0013`
-- Right-clicking a chat in the chat list showed the browser's own context
-  menu on top of the app's: the chat-list handler awaited `getFullChatById`
-  before calling `preventDefault`, so it fired too late for the web build
-  (Electron has no native menu, so upstream never saw it). `preventDefault`
-  now runs synchronously before the await. `desktop/0036`
+- Right-clicking a chat in the chat list, or the webxdc app icons in the chat
+  header, showed the browser's own context menu on top of the app's: the
+  chat-list handler awaited `getFullChatById` before calling `preventDefault`
+  (too late — the browser has already acted), and the app-icon handler never
+  called it at all. Both now cancel synchronously in the handler that owns the
+  menu. Deliberately per-site, not app-wide: where the app has no menu of its
+  own — selected text, editable fields, images, links — the native menu is the
+  useful one, and those are exactly the four cases Electron shows.
+  `desktop/0036`
 - Long-press context menus were unreachable on phones, for stacked reasons.
   On Android, the account sidebar's `draggable` (the desktop reorder gesture)
   made Blink spend the long press starting a drag no finger can complete

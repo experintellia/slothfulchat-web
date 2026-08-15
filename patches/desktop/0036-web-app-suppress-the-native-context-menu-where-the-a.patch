@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Fri, 10 Jul 2026 16:38:13 +0000
+Subject: [PATCH 36/85] web-app: suppress the native context menu where the app
+ owns one
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Two right-click targets opened the browser's own context menu on top of
+the app's. Both are the same mistake — the handler that opens an app menu
+does not cancel the native one in time — and both only bite the web
+build, because Electron's menu template comes out empty in these spots
+(no selection, not editable, no link) and so nothing is drawn.
+
+- Chat list (`useChatContextMenu`): the handler awaits `getFullChatById`
+  before reaching `openContextMenuInternalHandler`'s `preventDefault`,
+  which is far too late; the browser has already taken the default action
+  by the time the promise resolves. Cancel synchronously, up front.
+- Webxdc app icon in the chat header (`AppIcon`): the handler never
+  called `preventDefault` at all. Only the inner <img> guarded itself, so
+  a right-click anywhere else on the button — its padding — got both
+  menus. Cancel in the handler that owns the menu and drop the now
+  redundant <img> guard, so one place decides.
+
+Deliberately NOT a blanket suppressor: the native menu is the useful one
+wherever the app has no menu of its own — selected text (the group name
+in a profile is `user-select: text` precisely so it can be copied),
+editable fields, images and links. Electron shows exactly those four, so
+matching it means suppressing per-site, not globally.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ packages/frontend/src/components/ChatView/ChatView.tsx    | 7 ++++++-
+ packages/frontend/src/components/chat/ChatContextMenu.tsx | 8 ++++++++
+ 2 files changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
+index 19fbda5..85f2b38 100644
+--- a/packages/frontend/src/components/ChatView/ChatView.tsx
++++ b/packages/frontend/src/components/ChatView/ChatView.tsx
+@@ -389,6 +389,12 @@ function AppIcon({ accountId, app }: { accountId: number; app: T.Message }) {
+         )
+       }}
+       onContextMenu={event => {
++        // Before anything else: this element owns a context menu, so the
++        // native one must not also open on top of it. (Electron shows nothing
++        // here unless the pointer is over the icon image, so upstream only
++        // guarded the <img>; a browser shows its own menu for the whole
++        // button.)
++        event.preventDefault()
+         openContextMenu({
+           ...mouseEventToPosition(event),
+           items: [
+@@ -415,7 +421,6 @@ function AppIcon({ accountId, app }: { accountId: number; app: T.Message }) {
+         className={styles.webxdcIcon}
+         src={runtime.getWebxdcIconURL(accountId, app.id)}
+         alt={appName}
+-        onContextMenu={(e: React.MouseEvent) => e.preventDefault()}
+       />
+     </Button>
+   )
+diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+index 60d6f43..5a93f1c 100644
+--- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
++++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+@@ -326,6 +326,14 @@ export function useChatContextMenu(): {
+     chatListItems: ChatListItem[],
+     activeChatId: number | null
+   ) => {
++    // Suppress the browser's native context menu synchronously, before the
++    // `await` below. `openContextMenuInternalHandler` also calls
++    // `preventDefault`, but that runs after this async function yields on the
++    // `getFullChatById` await, which is too late for the browser: the default
++    // action has already been taken and the native menu shows on top of ours.
++    // (On desktop Electron there is no native context menu, so this only bites
++    // the web build.)
++    event.preventDefault()
+     // only if chatListItems contains a single chat, we need the full chat
+     const selectedChat =
+       chatListItems.length === 1

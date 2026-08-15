@@ -1,5 +1,11 @@
 # Changelog
 
+- **The browser's own right-click menu no longer covers the app's.** Right-
+  clicking a chat, or one of the app icons in a chat's header, opened both
+  menus stacked on top of each other. Right-clicking selected text, a picture,
+  a link or a text box still gives you the browser's menu, which is where
+  "copy" lives.
+
 - **Recording a voice message on a phone shows the sound level again, on one
   row.** The recorder used to wrap onto two half-empty rows with no level
   meter at all. It now fits a single row with the meter visible, and the
