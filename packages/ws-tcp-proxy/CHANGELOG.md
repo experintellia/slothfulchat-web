@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — 2026-08-15
 
 - **Breaking, for hosted bridges:** the bridge now binds `127.0.0.1` instead of
   every interface. If you host one for others, set `HOST=0.0.0.0` (or your

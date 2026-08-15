@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0 — 2026-08-15
+
+- **Each release now says what changed, in your device chat.** A short summary
+  of the release arrives as one message per version — starting with this one.
+  Delta Chat's own "what's new in 2.0" message is gone: it described an upgrade
+  from a version this app never had.
+
 - **Recording a voice message on a phone shows the sound level again, on one
   row.** The recorder used to wrap onto two half-empty rows with no level
   meter at all. It now fits a single row with the meter visible, and the
@@ -243,11 +250,20 @@
   call now offers **Accept** (audio only) and **Accept with video**, so the
   person calling you can't decide whether your camera starts. You can still
   switch the camera on at any point once the call is connected.
+- **A large attachment now says what it is before you download it.** In
+  encrypted chats a big file arrives as a placeholder first, and that used to
+  be a bare "[Image – 228 KiB] - Download" line. It is now a card matched to
+  the kind of file — picture, video, audio, document or app — showing the size
+  and a small blurred preview, with a proper download button.
 - Large videos now show a preview frame while they are still waiting to be
   downloaded: the poster is grabbed from the video when you attach it, so the
   recipient sees what is coming before spending the bandwidth.
 - Downloading a big message now shows a live percentage on the message bubble,
   and an interrupted download continues where it stopped.
+- **Encryption no longer makes the app stutter.** Generating your key and
+  encrypting or decrypting a big message now happen out of the way of
+  everything else, so the app keeps responding while they run — most
+  noticeable on phones, where it used to freeze for a second or more.
 - **Long messages are no longer cut off**: message text used to be trimmed to
   38 lines when it was saved, with the rest tucked away behind "Show Full
   Message" — which also made long messages uneditable. The full text is now

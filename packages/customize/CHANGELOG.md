@@ -1,5 +1,7 @@
 # Changelog
 
+## 0.9.0 — 2026-08-15
+
 - The downloaded release zip is now verified before it is used: the asset is
   picked by its published name (`slothfulchat-web-<tag>.zip`) instead of "the
   first `.zip`", and its sha256 digest is checked against the release metadata.
@@ -11,6 +13,11 @@
 - `SLOTHFUL_RELAY_DIRECTORY` is now offered like every other variable: it was
   supported but never prompted for, so anyone using the interactive flow ended
   up with the default relay directory whether they wanted it or not.
+- Two new variables are prompted for, both for the dialog shown when the app
+  fails to start: `SLOTHFUL_SUPPORT_URL` (an "Open an issue" button pointing at
+  your tracker) and `SLOTHFUL_CRASH_REPORT_URL` (a "Send to the developers"
+  button pointing somewhere that needs no account). Leave either unset to drop
+  that button; with neither set, users copy the details by hand as before.
 
 ## 0.6.0 — 2026-07-15
 
