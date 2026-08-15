@@ -1,0 +1,26 @@
+/* Fork CSS overrides for the vendored frontend, loaded after bundle.css /
+ * fallback-theme.css (see main.html). Rules whose targets are stable global
+ * selectors can live here instead of patches/desktop — no upstream diff,
+ * nothing to rebase.
+ *
+ * Two limits decide what belongs here rather than in a patch:
+ *   • CSS-module local classes are NOT reachable — production builds minify
+ *     them to single letters (e.g. `.i .t .navbar-button`).
+ *   • Bug fixes stay patches on purpose, so they can be offered upstream and
+ *     so retargeting the stack to a new upstream release re-checks (or drops)
+ *     them. This file is for our own cosmetic/behavioral preferences.
+ */
+
+/* Touch devices: "Show Full Message…" / "Show more" are ~17px-tall tap
+ * targets, so taps often miss on phones. Grow the hit box with padding and
+ * cancel it with negative margins so the bubble layout stays pixel-for-pixel
+ * identical; position: relative paints the grown box above its neighbors so
+ * it wins the overlapped strip — a fingertip landing there meant the button. */
+@media (pointer: coarse) {
+  .message .show-html,
+  .message .show-more {
+    position: relative;
+    padding: 10px 12px 10px 0;
+    margin: -10px -12px -10px 0;
+  }
+}

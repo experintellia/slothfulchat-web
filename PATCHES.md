@@ -215,10 +215,10 @@ exists:
   Lives almost entirely in `packages/web-app` (`static/html-email.html`,
   `src/html-email.ts`, `openMessageHTML` in `src/runtime.ts`); guarded by
   `scripts/test-html-email.mjs` and the `scripts/test-html-email-e2e.mjs`
-  end-to-end check. Two small desktop changes: enlarge the "Show Full
-  Message…" tap target on touch devices (`desktop/0070`), and expose the
-  frontend safe-link opener the viewer routes `http(s)` links through
-  (`desktop/0071`).
+  end-to-end check. One small desktop change: expose the frontend safe-link
+  opener the viewer routes `http(s)` links through (`desktop/0071`). The
+  enlarged "Show Full Message…" touch tap target ships in the fork override
+  stylesheet (`packages/web-app/static/overrides.css`).
 - **webimap transport (madmail)** — a second mail transport speaking
   [madmail](https://github.com/themadorg/madmail)'s WebIMAP/WebSMTP REST API
   over plain HTTPS `fetch()`, so accounts on such servers need no bridge at
