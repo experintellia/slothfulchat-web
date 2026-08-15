@@ -1,4 +1,4 @@
-// Self-check for the video poster grabber (desktop/0069) — runs FULLY OFFLINE.
+// Self-check for the video poster grabber (desktop/0066) — runs FULLY OFFLINE.
 //
 // The risky part of sender-side video thumbnails is the browser-side frame grab, so this
 // bundles videoPoster.ts, records a real video in a real chromium from a canvas painted a

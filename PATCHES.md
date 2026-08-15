@@ -173,8 +173,8 @@ exists:
   5s clip and plays it back, and reports whether the browser honored the
   advisory constraints — record-then-play rather than live monitoring,
   since the anti-howl mitigation is the echo cancellation this setting
-  disables. `desktop/0072` – `desktop/0074`, `desktop/0082` –
-  `desktop/0085`
+  disables. `desktop/0068` – `desktop/0070`, `desktop/0078` –
+  `desktop/0081`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
@@ -186,7 +186,7 @@ exists:
   window. Lives mostly in our own `packages/calls` (engine/ui/bridge split) and
   `packages/web-app` wiring — see [`docs/calls.md`](docs/calls.md); the one
   upstream change is un-gating the ChatView call button and the `WhoCanCallMe`
-  setting for the browser target. `desktop/0048`
+  setting for the browser target. `desktop/0045`
 - **Resumable chunked downloads with progress** — "download on demand"
   messages are fetched with IMAP partial FETCH (`BODY.PEEK[]<offset.count>`,
   mandatory RFC 3501) in adaptively-sized chunks (128 KiB doubling to 4 MiB)
@@ -197,7 +197,7 @@ exists:
   bubble (on native platforms peak download memory also drops from
   message-size to chunk-size). Servers without working partial FETCH fall
   back to whole-message downloads with a one-time device-message notice.
-  `core/0020`–`core/0021`, `desktop/0067`; plus a `Fetch::body_origin()`
+  `core/0020`–`core/0021`, `desktop/0064`; plus a `Fetch::body_origin()`
   accessor in the vendored async-imap (to be proposed upstream).
 - **HTML email viewer ("Show Full Message…")** — the browser edition of
   desktop's sandboxed email window: a fullscreen in-app dialog whose content
@@ -216,7 +216,7 @@ exists:
   `src/html-email.ts`, `openMessageHTML` in `src/runtime.ts`); guarded by
   `scripts/test-html-email.mjs` and the `scripts/test-html-email-e2e.mjs`
   end-to-end check. One small desktop change: expose the frontend safe-link
-  opener the viewer routes `http(s)` links through (`desktop/0071`). The
+  opener the viewer routes `http(s)` links through (`desktop/0067`). The
   enlarged "Show Full Message…" touch tap target ships in the fork override
   stylesheet (`packages/web-app/static/overrides.css`).
 - **webimap transport (madmail)** — a second mail transport speaking
@@ -228,7 +228,7 @@ exists:
   CORS headers) — a cross-origin fetch failure is deliberately opaque in the
   browser, and an earlier up-front reachability/CORS probe misdiagnosed
   working servers, so the hints ride on the real error instead. `core/0011`,
-  `desktop/0011`, `desktop/0021`, `desktop/0026`
+  `desktop/0011`, `desktop/0019`, `desktop/0023`
 - **Profiling & anonymous usage statistics** — an in-app Diagnostics panel
   (opened from the log dialog) shows on-device startup/RPC timing that never
   leaves the device; PGP timing is measured in the wasm shim
@@ -241,18 +241,18 @@ exists:
   use), the Diagnostics button, and the consent surfaces (welcome-screen opt-out
   checkbox, Settings → Advanced toggle, privacy-policy links in About/welcome);
   a fourth fires `chat_export` when a chat export succeeds.
-  `desktop/0043`, `desktop/0044`, `desktop/0045`, `desktop/0046`
+  `desktop/0040`, `desktop/0041`, `desktop/0042`, `desktop/0043`
 - **Attachment details & failure reason in Message Info** — file name, MIME
   type, size, image/video dimensions, audio/video duration; delivery failures
   show as an error banner, and clicking a message's failed-status icon opens
-  Message Info instead of a bare alert. `desktop/0022`
+  Message Info instead of a bare alert. `desktop/0020`
 - **Hover popovers for read-by and reactions** — hovering the delivery-status
   icon of a *read* outgoing message shows who has read it (avatar, name and a
   relative timestamp); hovering a single reaction lists just the people who
   reacted with that emoji, while the "+N" overflow pill lists the rest. Both
   surface the info already in the Message Info / Reactions dialogs without a
   click, sharing a new `PeopleHoverInfo` component (and an `xSmall` Avatar
-  variant). `desktop/0034`
+  variant). `desktop/0031`
 - **Themeable avatars on all messages** — upstream renders avatars only for
   incoming group messages; we render them everywhere but hide the new cases
   by default, so themes can opt in to Rocket.Chat-style avatars on every
@@ -261,14 +261,14 @@ exists:
   commit a deployed instance was built from into `buildInfo.GIT_REF`
   (`packages/web-app/src/runtime.ts`), which upstream's About renders in
   devmode, and the Log dialog's dumped header names the slothfulchat-web
-  version, commit and commit message. `desktop/0024`
+  version, commit and commit message. `desktop/0022`
 - **Stickers, including animated Lottie** — Telegram `.tgs` (gzipped Lottie)
   stickers render and send, alongside static ones. Core classifies `.tgs` as a
   sticker and honors the `Chat-Content: sticker` header for file-bearing parts;
   the frontend plays `.tgs` with lottie-web's eval-free player (CSP-safe, with a
   gzip-bomb size cap) in both messages and the composer sticker picker (which
   now lists `.tgs` too). Mirrors ArcaneChat's animated-sticker support.
-  `core/0014`, `core/0015`, `desktop/0027`, `desktop/0030`
+  `core/0014`, `core/0015`, `desktop/0024`, `desktop/0027`
 - **Export Chat** — the three-dot menu exports the open chat as a
   Telegram-style zip: a standalone `index.html` viewer that renders the chat
   with the app's own stylesheets and message markup (embedded JSON data +
@@ -277,8 +277,8 @@ exists:
   files next to it; a `manifest.toml` makes the zip double as a webxdc
   viewer app when renamed to `.xdc`. A confirm dialog names what is not
   included (read receipts, full HTML e-mails, webxdc app content) and takes
-  an optional date range. `desktop/0032`, `desktop/0035`, `desktop/0037`,
-  `desktop/0039`
+  an optional date range. `desktop/0029`, `desktop/0032`, `desktop/0034`,
+  `desktop/0036`
 - **Community suggestions in the New Chat dialog** — pseudo entries below
   "New Group"/"New Channel": "Sloth (Slothful.chat Developer)" opens a chat
   with the developer (via a baked-in invite link, routed through the regular
@@ -296,7 +296,7 @@ exists:
   fedimeteo.com's per-city weather channels). Settings → Chats and Media can
   hide all these entries per user; the `SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS`
   build/customize variable hides them instance-wide including the toggles.
-  `desktop/0033`
+  `desktop/0030`
 - **Configurable default chatmail relay** — the welcome-screen "create new
   account" flow (instant onboarding, no scanned QR) creates addresses on the
   chatmail relay named by the `SLOTHFUL_DEFAULT_CHATMAIL` build/customize
@@ -306,7 +306,7 @@ exists:
   points at the configured relay and its `/privacy.html` (not upstream's
   default) whenever the account is actually created on it. Unset falls back to
   upstream's default instance; scanned `dcaccount:`/`dclogin:` QR codes still
-  override it. `desktop/0038`
+  override it. `desktop/0035`
 - **Relay picker on instant onboarding** — the "create profile" screen shows a
   row (right above the privacy-policy consent) with the chatmail relay the new
   address will be created on, and a button that opens a "Choose a chatmail
@@ -337,7 +337,7 @@ exists:
   chatmail relay by hostname. Because these are all chatmail relays, account creation on
   a picked/typed relay skips the classic-email autoconfig probes: the core
   tries the standard chatmail server convention first and only autoconfigures
-  if that doesn't connect (see `core/0016`). `desktop/0042`, `core/0016`
+  if that doesn't connect (see `core/0016`). `desktop/0039`, `core/0016`
 - **Add relays from a list, contact scan, or typed domain in the Transports
   dialog** — upstream's "Add transport" only scans a QR code (now labeled
   "Scan relay QR code…" so that's obvious). A second button, "Add from relay
@@ -357,7 +357,7 @@ exists:
   URL-form `SLOTHFUL_DEFAULT_CHATMAIL` endpoint exactly like onboarding
   does. A contact's mail domain isn't necessarily a chatmail relay — adding
   one that isn't fails loudly through the existing error alert.
-  `desktop/0054`
+  `desktop/0051`
 - **Privacy-preserving link previews** — when the draft contains a URL and no
   image, the composer offers a dismissible ghost to add a preview. Accepting
   fetches the link's OpenGraph metadata (through a bridge with unfurl enabled)
@@ -368,7 +368,7 @@ exists:
   on the draft; off by default (experimental), enableable in Settings → Advanced.
   The composer affordance's states (idle skeleton, loading shimmer, error
   notice) all share one card silhouette instead of swapping between unrelated
-  widgets (#64). `desktop/0041`
+  widgets (#64). `desktop/0038`
 
 - **Composer completion menu (`:emoji:`)** — typing a colon shortcode plus two
   characters opens a scrollable, keyboard-navigable menu above the composer
@@ -377,8 +377,8 @@ exists:
   `@emoji-mart/data` (no new dependency); a boundary guard keeps it from firing
   inside `http://` or `12:30`. Built as a generic `CompletionProvider` primitive
   so a future `@mention` menu reuses the same machinery. On by default,
-  switchable off in Settings → Experimental features. `desktop/0050`,
-  `desktop/0051`, `desktop/0061`
+  switchable off in Settings → Experimental features. `desktop/0047`,
+  `desktop/0048`, `desktop/0058`
 
 - **Emoji style picker** — an "Emoji style" picker under Settings →
   Appearance (browser edition only) chooses which emoji font the app renders
@@ -392,13 +392,13 @@ exists:
   (from emojibase-data, see `scripts/build-emoji-supplement.mjs`) so both the
   picker and the `:emoji:` completion can find newer emoji such as 🪎; the
   base dataset is untouched and the supplement's versions are capped at 15 so
-  emoji-mart's own version filter doesn't hide them. `desktop/0065`,
-  `desktop/0066`
+  emoji-mart's own version filter doesn't hide them. `desktop/0062`,
+  `desktop/0063`
 
 - **Translation editor in the keyboard-shortcuts cheat sheet** — lists the
   in-app translation editor (`Ctrl/Cmd+Shift+L`, implemented in `web-app`'s
   `runtime.ts`) in the shortcuts dialog so it's discoverable. One entry in
-  `getKeybindings`. `desktop/0052`
+  `getKeybindings`. `desktop/0049`
 
 - **Estimated time-to-read on the unread badge (experimental)** — the chat
   list can show roughly how long a chat's unread messages take to read
@@ -406,7 +406,7 @@ exists:
   cost per media message, voice messages by their duration. Only a capped
   window of the newest messages is fetched (scaled up and shown as "10+ min"
   beyond it), cached per chat on the fresh-message counter. Off by default,
-  Settings → Advanced → Experimental features. `desktop/0053`
+  Settings → Advanced → Experimental features. `desktop/0050`
 
 - **Tracking-parameter removal from links** — known trackers (`utm_*`,
   `fbclid`/`gclid` click ids, YouTube `si=`, Instagram `igsh=`, X `s=`/`t=`,
@@ -415,7 +415,7 @@ exists:
   cleaned silently before opening, and pasting a link with tracking rewrites
   the draft and shows an undoable "Tracking removed from link" chip in the
   composer (same slot as the link-preview ghost). One switch in Settings →
-  Chats and Media, on by default. `desktop/0055`
+  Chats and Media, on by default. `desktop/0052`
 
 - **Invite links render as cards** — an `https://i.delta.chat/#…` invite link
   in a message becomes a compact card (letter avatar, "Group/Channel/Contact
@@ -424,21 +424,21 @@ exists:
   core's `checkQr`, which would create a hidden contact as a side effect —
   so it is sender-controlled and cosmetic; clicking still opens the usual
   join/chat confirmation dialog, and unparseable fragments fall back to a
-  plain link. `desktop/0060`
+  plain link. `desktop/0057`
 
 - **Unread-only filter in the chat list** — a filter toggle next to the chat
   list search shows only chats with unread messages, via core's `is:unread`
   chatlist query (also composed with typed search text). The toggle filters
   the plain list without switching into search-results mode, with an
   "Unread: N chats" heading (mirroring search-in-chat) as a reminder that the
-  filter is active; the archive view is unaffected. `desktop/0063`
+  filter is active; the archive view is unaffected. `desktop/0060`
 
 - **Resizable chat-list sidebar** — a drag handle between the chat list and
   the chat view sets an explicit sidebar width (clamped so both panes stay
   usable), persisted per device in localStorage. Double-click resets to the
   default 3:8 split; the handle is a keyboard-operable separator
   (ArrowLeft/ArrowRight, RTL-aware) and is absent in the single-pane
-  small-screen layout. `desktop/0064`
+  small-screen layout. `desktop/0061`
 
 - **Rich download-on-demand placeholders** — large attachments in encrypted
   chats arrive as a placeholder before the real message; upstream shows a plain
@@ -452,7 +452,7 @@ exists:
   keeps alive — the same slot the mobile clients use, so no new param and no
   storage of its own. The video card labels itself "Video · 0:23" rather than
   showing a play glyph, which would offer a click that cannot do anything until
-  the attachment is downloaded. `core/0022-0023`, `desktop/0068-0069`
+  the attachment is downloaded. `core/0022-0023`, `desktop/0065-0066`
 
 - **Length and size of the media we send** — core measures images itself, but it
   has no audio or video decoder, so nothing ever set `Param::Duration` on an
@@ -463,7 +463,7 @@ exists:
   reads audio files just as well. It hangs off `sendMessage` rather than off the
   draft because the composer does not send its draft — it rebuilds a fresh
   `MessageData` from the draft state, so anything stored on the draft would be
-  dropped. `core/0028`, `desktop/0077`
+  dropped. `core/0028`, `desktop/0073`
 
 - **The all-media gallery says which chat an app came from** — the Apps tab of
   "All Media" mixes webxdc apps from every chat, and nothing in a row said
@@ -472,7 +472,7 @@ exists:
   onto the corner of the app icon (the same construction the chat list uses
   for message search results), and the chat name ahead of the app's own
   summary. Only in the global gallery — per-chat galleries would just repeat
-  the chat you are already in. `desktop/0075`
+  the chat you are already in. `desktop/0071`
 
 - **"Copy Text" for a multi-message selection** — selecting a second message
   collapsed the context menu to Forward and Delete. It now also copies the
@@ -489,7 +489,7 @@ exists:
   and awaiting it first would lose transient activation and make WebKit reject
   the clipboard write — `writeClipboardText()` therefore also takes a
   `Promise<string>`, which the browser targets hand straight to `ClipboardItem`.
-  `desktop/0079`
+  `desktop/0075`
 
 ## Bugfixes
 
@@ -500,22 +500,22 @@ contribution intended.
 - Camera selection in the QR reader did nothing on multi-camera Android
   Chromium devices, and the camera menu was blank before permissions were
   granted; stale stored camera ids no longer show the error screen.
-  `desktop/0013`
+  `desktop/0012`
 - Dialogs no longer close when a drag that started inside them (e.g.
   selecting text in an input) is released over the backdrop — an outside
   click only closes a dialog when the press also started on the backdrop.
-  `desktop/0029`
+  `desktop/0026`
 - Cancelling account creation crashed the welcome screen: a link component
   resolved the (now unselected) account at render time instead of click time.
   `desktop/0008`
 - Fast double-clicks on the "add account" button created duplicate accounts
   (account creation isn't instant in the wasm core); creation is now
-  coalesced and the button shows a spinner. `desktop/0018`
+  coalesced and the button shows a spinner. `desktop/0016`
 - Search fields gave no visual indication of focus; they now use the app's
   standard focus outline. `desktop/0009`
 - The drag image when reordering profiles in the sidebar included the white
   active/hover indicator bar; its color is blanked for the duration of the
-  dragstart snapshot. `desktop/0062`
+  dragstart snapshot. `desktop/0059`
 - webimap: the connectivity badge no longer sticks at "Connecting…" /
   "Updating…", and a message that 404s on fetch/delete is treated as
   already-consumed instead of putting the poll loop into an error backoff.
@@ -524,7 +524,7 @@ contribution intended.
   menu on top of the app's: the chat-list handler awaited `getFullChatById`
   before calling `preventDefault`, so it fired too late for the web build
   (Electron has no native menu, so upstream never saw it). `preventDefault`
-  now runs synchronously before the await. `desktop/0036`
+  now runs synchronously before the await. `desktop/0033`
 - Long-press context menus were unreachable on phones, for stacked reasons.
   On Android, the account sidebar's `draggable` (the desktop reorder gesture)
   made Blink spend the long press starting a drag no finger can complete
@@ -541,7 +541,7 @@ contribution intended.
   fallback; editable text is left alone, and so is explicitly selectable text
   — a long press on a message body still selects, the message's menu opens
   from the bubble's non-text parts; the synthesized menu's release click
-  is swallowed so it cannot close the menu it just opened. `desktop/0081`
+  is swallowed so it cannot close the menu it just opened. `desktop/0077`
 - Receiving a message from a contact left that contact's 1:1 chatlist item
   stale: becoming "recently seen" updates the item's indicator, but the event
   that tells the UI to re-render it was only emitted for the reverse
@@ -584,48 +584,48 @@ contribution intended.
   go edge-to-edge on phone-sized viewports, and the QR camera view fills the
   available height. Keyed on each dialog's `data-testid` rather than a prop
   threaded through `<Dialog>`/`<DialogWithHeader>`, so opting one in is a
-  one-line `dataTestid`. `desktop/0020`
+  one-line `dataTestid`. `desktop/0018`
 - The settings sub-pages (chats & media, notifications, appearance, advanced,
   connectivity, profile editor) go edge-to-edge on phones too, matching the
-  settings root; small pickers and alerts stay popups. `desktop/0031`
+  settings root; small pickers and alerts stay popups. `desktop/0028`
 - Profiles can be reordered with a finger: no browser starts its drag-and-drop
   from a touch, so the sidebar drives the gesture itself. A press arms a
   reorder after 250 ms — before the browser's ~500 ms long press — and only
   movement after that takes it over from the list scroller; moving earlier
   stays a scroll, resting still opens the context menu. Mouse reordering keeps
   using the browser's drag and drop; both end in one pure `reorderedAccounts()`
-  covered by `scripts/test-account-reorder-touch.mjs`. `desktop/0081`
+  covered by `scripts/test-account-reorder-touch.mjs`. `desktop/0077`
 - The QR reader defaults to the rear camera — you scan someone else's code,
-  not your own face. `desktop/0015`
+  not your own face. `desktop/0014`
 - The connectivity view shows a loading state instead of a blank iframe while
   the core is busy, and displays the WS bridge address with an edit button.
   `desktop/0002`, `desktop/0007`
 - About dialog links are restyled as settings-style buttons, including
   entries for the source repo and the bundled changelog viewer.
-  `desktop/0019`
+  `desktop/0017`
 - Prompt dialogs with a single text input (profile display name, contact
   name, account tag) confirm on Enter like a native `prompt()` would.
-  `desktop/0028`
+  `desktop/0025`
 - The chat title-bar icon buttons (apps, map, three-dot menu) had a cramped
   20×20 px hit box in a 50 px-tall navbar with an unclickable 12 px gap
   between them; each button's click target now fills that vertical dead space
   and the gap. Compensating negative margins keep the icons and navbar height
-  pixel-for-pixel unchanged. `desktop/0047`
+  pixel-for-pixel unchanged. `desktop/0044`
 - Webxdc last-used-app icons in the chat title bar (app-supplied, untrusted
   images) render on an opaque white tile, so a transparent icon can't blend
   into the navbar to impersonate a native control; their hit target stays
-  icon-sized, unlike the enlarged native buttons. `desktop/0049`
+  icon-sized, unlike the enlarged native buttons. `desktop/0046`
 
 - On wide screens (≥800px) Settings opens as a single two-pane dialog —
   navigation sidebar on the left, the selected section on the right, like
   Discord or macOS System Settings — instead of stacked dialogs; narrow
-  viewports keep the stacked flow. `desktop/0056`
+  viewports keep the stacked flow. `desktop/0053`
 - Experimental features moved out of Advanced into their own settings
   section, grouped under Composer / Chats / System sub-headings.
-  `desktop/0057`, `desktop/0059`
+  `desktop/0054`, `desktop/0056`
 - Settings that only exist in this fork are marked with a small sloth
   badge (tooltip explains it's not an upstream Delta Chat setting).
-  `desktop/0058`
+  `desktop/0055`
 
 ## Different decisions than upstream
 
@@ -635,7 +635,7 @@ contribution intended.
   self-referential "Delta Chat" strings are renamed (in every locale, via the
   translation-conversion step); credits, delta.chat links, and donation
   strings keep the Delta Chat name. `desktop/0001`, `desktop/0003`,
-  `desktop/0006`, `desktop/0017`, `desktop/0023`
+  `desktop/0006`, `desktop/0015`, `desktop/0021`
 - **Imprint links** on the About dialog and welcome screen — a hosted web app
   needs a legal-notice page. `desktop/0004`, `desktop/0005`
 - **Device chat** — core's welcome image is Delta Chat branding, so it is
@@ -644,14 +644,14 @@ contribution intended.
   welcome message the app adds one of its own: what the fork does differently,
   that everything lives in this browser and should be backed up (unencrypted),
   that it's a prototyping ground, and where to report bugs / self-host.
-  `core/0030`, `desktop/0078`
+  `core/0030`, `desktop/0074`
 - **Hidden upstream UI that can't work in this build** — proxy settings
   (unimplemented on wasm), the second-device / multi-device backup
   transfer flow (iroh doesn't run in browsers yet), and the experimental
   "Enable Webxdc Devtools" switch (it only toggles Electron's DevTools on a
   webxdc iframe — a browser's built-in dev tools can't be gated by the app,
   and webxdc apps don't run in this build anyway). `desktop/0001`,
-  `desktop/0014`, `desktop/0040`
+  `desktop/0013`, `desktop/0037`
 - **Long message text is stored in full** — core truncates message text to
   38 lines × 100 chars when writing `msgs.txt`, stashing the full body in
   `mime_headers` so a UI can re-offer it as an HTML message; that stores
@@ -663,13 +663,13 @@ contribution intended.
   items, notifications, search hits) now bound themselves. The schema is
   unchanged and rows written by official core are never rewritten, so
   messages already in a database keep their truncated text and still open in
-  the HTML viewer. `core/0024`, `desktop/0076`
+  the HTML viewer. `core/0024`, `desktop/0072`
 - **Logging** — core Info/Warning/Error events are printed once instead of
   twice: `packages/core-wasm` no longer installs a `log`→console bridge, and
   the fork runtime prints the events itself on release builds (upstream's own
   event logger runs in devmode only, so neither build double-prints). The Log
   dialog points to the browser dev console instead of fetching a `/log` route
-  this build never serves. `desktop/0024`
+  this build never serves. `desktop/0022`
 
 ## Missing / descoped (compared to upstream Delta Chat)
 
@@ -679,7 +679,7 @@ the full table with what re-enabling each one would take.
 - **webxdc apps** — not in upstream's browser edition either; needs a
   sandboxed iframe host on a separate origin (planned, see issue #2).
 - **Second-device / multi-device backup transfer** — the UI is hidden
-  (`desktop/0014`) because it *cannot* work here: browser iroh is relay-only
+  (`desktop/0013`) because it *cannot* work here: browser iroh is relay-only
   with no LAN connectivity, and Delta Chat's backup transfer is
   LAN-restricted by design. File-based backup export/import covers moving an
   account meanwhile.

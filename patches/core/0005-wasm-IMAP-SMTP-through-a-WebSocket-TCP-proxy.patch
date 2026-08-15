@@ -360,7 +360,7 @@ index a17aa17..04697b5 100644
   "js-sys",
   "wasm-bindgen",
 diff --git a/Cargo.toml b/Cargo.toml
-index 0a75276..7528163 100644
+index 0a75276..75281633 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -120,13 +120,21 @@ tokio-stream = { version = "0.1.17", features = ["fs"] }

@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Fri, 10 Jul 2026 11:48:16 +0000
+Subject: [PATCH 28/81] web-app: full-screen sub settings pages on mobile
+ viewports
+
+The big-dialogs-fullscreen patch made the settings root dialog go edge to
+edge on phones, but every page it opens on top still rendered as a small
+floating dialog: the four settings sections (chats & media, notifications,
+appearance, advanced), the connectivity view and the profile editor. Give
+them the data-testids the fullscreen selector list already names, so
+navigating through settings stays full-screen. Deeper pickers and alerts
+(select dialogs, confirmations) intentionally stay small popups.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ packages/frontend/src/components/Settings/Settings.tsx     | 7 ++++++-
+ .../frontend/src/components/dialogs/ConnectivityDialog.tsx | 6 +++++-
+ .../src/components/dialogs/EditProfileDialog/index.tsx     | 6 +++++-
+ 3 files changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
+index 2c59081..7c6a6ae 100644
+--- a/packages/frontend/src/components/Settings/Settings.tsx
++++ b/packages/frontend/src/components/Settings/Settings.tsx
+@@ -146,7 +146,12 @@ function SettingsSectionDialog(
+   } as const satisfies Partial<Parameters<typeof DialogHeader>[0]>
+ 
+   return (
+-    <Dialog onClose={closeThisDialog} fixed width={400}>
++    <Dialog
++      onClose={closeThisDialog}
++      fixed
++      width={400}
++      dataTestid='settings-section-dialog'
++    >
+       {settingsMode === 'chats_and_media' && (
+         <>
+           <DialogHeader title={tx('pref_chats')} {...commonHeaderProps} />
+diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+index 3ec99b6..d9c3b18 100644
+--- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
++++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+@@ -16,7 +16,11 @@ export default function ConnectivityDialog({ onClose }: DialogProps) {
+   const tx = useTranslationFunction()
+ 
+   return (
+-    <Dialog onClose={onClose} canOutsideClickClose={true}>
++    <Dialog
++      onClose={onClose}
++      canOutsideClickClose={true}
++      dataTestid='connectivity-dialog'
++    >
+       <DialogHeader title={tx('connectivity')} onClose={onClose} />
+       <ConnectivityDialogInner />
+     </Dialog>
+diff --git a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
+index 9835fd5..505a87f 100644
+--- a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
++++ b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
+@@ -32,7 +32,11 @@ export default function EditProfileDialog({ onClose, ...props }: Props) {
+   const tx = useTranslationFunction()
+ 
+   return (
+-    <Dialog canOutsideClickClose={false} onClose={onClose}>
++    <Dialog
++      canOutsideClickClose={false}
++      onClose={onClose}
++      dataTestid='edit-profile-dialog'
++    >
+       <DialogHeader title={tx('pref_profile_info_headline')} />
+       <EditProfileDialogInner onClose={onClose} {...props} />
+     </Dialog>

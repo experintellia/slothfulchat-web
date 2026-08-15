@@ -1,0 +1,257 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 9 Jul 2026 14:59:39 +0000
+Subject: [PATCH 18/81] web-app: full-screen big dialogs on mobile viewports
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Big dialogs (settings, about, gallery, profiles, new chat, QR scanner)
+go edge-to-edge on phone-sized viewports instead of floating as small
+rounded boxes, and the QR camera view fills the available height.
+
+Keyed on each dialog's `data-testid` (attribute selectors stay global in
+CSS modules), so no prop needs threading through <Dialog> and
+<DialogWithHeader>: dialogs that already carry a testid need no diff at
+all, the anonymous ones get a one-line `dataTestid`. The selector list
+also pre-names dialogs that later patches opt in (connectivity, edit
+profile, settings sections, public bots/channels) — unmatched attribute
+selectors are inert, and those patches then stay one-liners too.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ packages/frontend/scss/dialogs/_qr-code.scss  | 17 +++++++
+ .../src/components/Dialog/styles.module.scss  | 47 +++++++++++++++++++
+ .../components/QrReader/styles.module.scss    | 18 +++++++
+ .../src/components/dialogs/About/index.tsx    |  1 +
+ .../components/dialogs/CreateChat/index.tsx   | 18 +++++--
+ .../components/dialogs/MediaView/index.tsx    |  6 ++-
+ .../src/components/dialogs/QrCode.tsx         |  2 +-
+ .../components/dialogs/ViewProfile/index.tsx  |  1 +
+ 8 files changed, 105 insertions(+), 5 deletions(-)
+
+diff --git a/packages/frontend/scss/dialogs/_qr-code.scss b/packages/frontend/scss/dialogs/_qr-code.scss
+index 604d2df..eaa0427 100644
+--- a/packages/frontend/scss/dialogs/_qr-code.scss
++++ b/packages/frontend/scss/dialogs/_qr-code.scss
+@@ -1,4 +1,5 @@
+ @use '../mixins';
++@use '../variables';
+ 
+ .qr-code-switch {
+   display: flex;
+@@ -43,6 +44,22 @@
+   img.show-qr-dialog-qr-image {
+     min-height: 0;
+   }
++
++  // On mobile the QR dialog is full-screen: centre the code vertically in
++  // the available space instead of leaving it pinned to the top.
++  @media (max-width: variables.$dialog-breakpoint) {
++    justify-content: center;
++  }
++}
++
++// On mobile the QR dialog is full-screen, so let the scanner fill the
++// available height instead of sitting as a small box pinned to the top.
++.scan-qr-dialog-body {
++  @media (max-width: variables.$dialog-breakpoint) {
++    display: flex;
++    flex-direction: column;
++    justify-content: center;
++  }
+ }
+ 
+ .copy-link-icon {
+diff --git a/packages/frontend/src/components/Dialog/styles.module.scss b/packages/frontend/src/components/Dialog/styles.module.scss
+index 3eeed1a..f6da590 100644
+--- a/packages/frontend/src/components/Dialog/styles.module.scss
++++ b/packages/frontend/src/components/Dialog/styles.module.scss
+@@ -45,6 +45,53 @@ $paddingVertical: 20px;
+   }
+ }
+ 
++/* Big dialogs (settings, about, gallery, profiles, new chat, QR scanner…)
++   go edge-to-edge on small/mobile viewports: full screen, no rounded
++   corners, no margin or drop shadow. Keyed on each dialog's `data-testid`
++   (attribute selectors stay global in CSS modules) instead of a prop
++   threaded through <Dialog>/<DialogWithHeader>, so opting a dialog in is a
++   one-line `dataTestid` — most big dialogs already carry one. The list may
++   name dialogs added by later patches; unmatched selectors are inert. */
++@media (max-width: variables.$dialog-breakpoint) {
++  .dialog:is(
++      [data-testid='settings-dialog'],
++      [data-testid='settings-section-dialog'],
++      [data-testid='about-dialog'],
++      [data-testid='connectivity-dialog'],
++      [data-testid='create-chat-dialog'],
++      [data-testid='clone-chat-dialog'],
++      [data-testid='create-group-dialog'],
++      [data-testid='create-broadcast-dialog'],
++      [data-testid='edit-profile-dialog'],
++      [data-testid='media-view-dialog'],
++      [data-testid='public-bots-dialog'],
++      [data-testid='public-channels-dialog'],
++      [data-testid='qr-dialog'],
++      [data-testid='qrscan-dialog'],
++      [data-testid='view-group-dialog'],
++      [data-testid='view-profile-dialog']
++    ) {
++    border-radius: 0;
++    box-shadow: none;
++    margin: 0;
++    width: 100vw;
++    min-width: 100vw;
++    max-width: 100vw;
++    height: 100dvh;
++    max-height: 100dvh;
++
++    &:not(.noTopPadding) {
++      /* keep some breathing room above the header, and clear the device
++         status bar / notch on mobile */
++      padding-top: calc(#{$paddingVertical} + env(safe-area-inset-top, 0px));
++    }
++
++    .dialogBody {
++      max-height: none;
++    }
++  }
++}
++
+ .dialogHeader {
+   width: 100%;
+   align-items: center;
+diff --git a/packages/frontend/src/components/QrReader/styles.module.scss b/packages/frontend/src/components/QrReader/styles.module.scss
+index c423a78..d43ad0b 100644
+--- a/packages/frontend/src/components/QrReader/styles.module.scss
++++ b/packages/frontend/src/components/QrReader/styles.module.scss
+@@ -1,7 +1,19 @@
++@use '../../../scss/variables.scss';
++
+ .qrReader {
+   position: relative;
+   height: 375px;
+   margin-bottom: 20px;
++
++  // On small/mobile viewports the QR dialog is full-screen: grow the scanner
++  // to fill the available height (and let the video/status fill it too)
++  // instead of leaving it a small box at the top.
++  @media (max-width: variables.$dialog-breakpoint) {
++    height: auto;
++    min-height: 375px;
++    // keep the 20px bottom margin so the scanner doesn't touch the footer
++    flex: 1 1 auto;
++  }
+ }
+ 
+ .qrReaderVideo {
+@@ -58,6 +70,12 @@
+   text-align: center;
+   top: 0;
+ 
++  @media (max-width: variables.$dialog-breakpoint) {
++    // fill the grown scanner area rather than staying a fixed 375px box
++    height: auto;
++    bottom: 0;
++  }
++
+   &.info {
+     background-color: gray;
+   }
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index f7911ab..553bfcf 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -45,6 +45,7 @@ export default function About({ onClose }: DialogProps) {
+       width={400}
+       title={tx('global_menu_help_about_desktop')}
+       onClose={onClose}
++      dataTestid='about-dialog'
+     >
+       <DialogBody>
+         <DialogContent>
+diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
+index b20726b..4121343 100644
+--- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
++++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
+@@ -116,7 +116,7 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
+     : undefined
+ 
+   if (!chat || description === undefined) {
+-    return <Dialog width={400} onClose={onClose} fixed />
++    return <Dialog width={400} onClose={onClose} fixed dataTestid='clone-chat-dialog' />
+   }
+ 
+   return (
+@@ -681,7 +681,13 @@ export function CreateGroup(props: CreateGroupProps) {
+   }
+ 
+   return (
+-    <Dialog width={400} onClose={onClose} canOutsideClickClose={false} fixed>
++    <Dialog
++      width={400}
++      onClose={onClose}
++      canOutsideClickClose={false}
++      fixed
++      dataTestid='create-group-dialog'
++    >
+       <DialogHeader
+         title={
+           titleOverride ??
+@@ -799,7 +805,13 @@ export function CreateBroadcastList(props: CreateBroadcastListProps) {
+   }
+ 
+   return (
+-    <Dialog width={400} onClose={onClose} canOutsideClickClose={false} fixed>
++    <Dialog
++      width={400}
++      onClose={onClose}
++      canOutsideClickClose={false}
++      fixed
++      dataTestid='create-broadcast-dialog'
++    >
+       <DialogHeader title={tx('new_channel')} />
+       <form onSubmit={submitForm}>
+         <DialogBody>
+diff --git a/packages/frontend/src/components/dialogs/MediaView/index.tsx b/packages/frontend/src/components/dialogs/MediaView/index.tsx
+index 2c17308..378b39c 100644
+--- a/packages/frontend/src/components/dialogs/MediaView/index.tsx
++++ b/packages/frontend/src/components/dialogs/MediaView/index.tsx
+@@ -18,7 +18,11 @@ export default function MediaView(
+     chatId === 'all' ? tx('all_apps_and_media') : tx('apps_and_media')
+ 
+   return (
+-    <Dialog onClose={onClose} className={styles.mediaViewDialog}>
++    <Dialog
++      onClose={onClose}
++      className={styles.mediaViewDialog}
++      dataTestid='media-view-dialog'
++    >
+       <DialogHeader title={headerString} onClose={onClose} />
+       <DialogBody className={styles.mediaViewDialogBody}>
+         <Gallery chatId={chatId} />
+diff --git a/packages/frontend/src/components/dialogs/QrCode.tsx b/packages/frontend/src/components/dialogs/QrCode.tsx
+index 2a278f1..7859f2c 100644
+--- a/packages/frontend/src/components/dialogs/QrCode.tsx
++++ b/packages/frontend/src/components/dialogs/QrCode.tsx
+@@ -292,7 +292,7 @@ export function QrCodeScanQrInner({
+ 
+   return (
+     <>
+-      <DialogBody>
++      <DialogBody className='scan-qr-dialog-body'>
+         <QrReader
+           onScanSuccess={handleScan}
+           onError={handleError}
+diff --git a/packages/frontend/src/components/dialogs/ViewProfile/index.tsx b/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
+index 2fca890..d5ab9c0 100644
+--- a/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
++++ b/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
+@@ -89,6 +89,7 @@ export default function ViewProfile(
+       onClose={onClose}
+       fixed
+       className={styles.viewProfileDialog}
++      dataTestid='view-profile-dialog'
+     >
+       <DialogHeader
+         title={contact.isBot ? tx('bot') : tx('contact')}

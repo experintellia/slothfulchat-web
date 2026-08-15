@@ -143,7 +143,7 @@ opening the link would); the **message recipient still never contacts the URL**.
 
 ## Delivery in two increments
 
-### Increment 1 — desktop UI patch (`patches/desktop/0033`)
+### Increment 1 — desktop UI patch (`patches/desktop/0030`)
 
 Everything user-visible; works immediately on CORS-permissive sites; the unfurl
 fallback path is wired but simply behaves as "fetch failed" until increment 2
@@ -198,7 +198,7 @@ Wiring in **`Composer.tsx`**: derive the current URL from `draftState.text` in
   become an open web-preview fetcher, so there you opt in with `UNFURL=1`
   (`UNFURL=1`/`UNFURL=0` overrides either way). Self-check:
   `scripts/test-unfurl.mjs` (offline, in CI).
-- **Frontend** (`patches/desktop/0034`) — `generate.ts`'s fallback derives the
+- **Frontend** (`patches/desktop/0031`) — `generate.ts`'s fallback derives the
   unfurl endpoint from the **already-configured bridge URL** (`?proxy=` /
   `slothfulchat.proxyUrl` / default, swapping `ws→http`, `wss→https`) — there
   is no separate config. A local bridge previews CORS-blocked links out of the

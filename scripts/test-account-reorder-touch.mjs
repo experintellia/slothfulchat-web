@@ -1,5 +1,5 @@
 // Self-check for reordering profiles with a finger and the long-press context-menu
-// fallback (both desktop/0081) — runs FULLY OFFLINE.
+// fallback (both desktop/0077) — runs FULLY OFFLINE.
 //
 // The gesture has to share one press with two others: an early move scrolls the profile
 // list, a still press opens the context menu, and only "hold, then move" reorders. That

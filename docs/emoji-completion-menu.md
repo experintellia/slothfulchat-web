@@ -1,8 +1,8 @@
 # Composer completion menu (`:emoji:`, mentions later)
 
-Status: **implemented** as `patches/desktop/0049`, gated behind a
-setting (`experimentalCompletionMenu`) by `patches/desktop/0050`, on by
-default since `patches/desktop/0061` · Branch:
+Status: **implemented** as `patches/desktop/0046`, gated behind a
+setting (`experimentalCompletionMenu`) by `patches/desktop/0047`, on by
+default since `patches/desktop/0058` · Branch:
 `claude/emoji-completion-menu-ix4kdq`
 
 ## What & why
@@ -32,7 +32,7 @@ a second implementation.
 
 ## Architecture (what shipped)
 
-All under `packages/frontend/src/components/composer/` in `desktop/0049`:
+All under `packages/frontend/src/components/composer/` in `desktop/0046`:
 
 - `completion/types.ts` — the contract: `CompletionProvider` (`trigger`,
   `minChars`, `query(term)`), `CompletionItem` (`id`/`label`/`value`/`preview`),

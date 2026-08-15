@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Wed, 12 Aug 2026 13:49:31 +0000
+Subject: [PATCH 78/81] web-app: fix recorder gesture precedence, AudioContext
+ leak, phone margins
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Three follow-up fixes to the voice recorder, found reviewing the epic
+after it landed.
+
+1. Gesture: a diagonal up-AND-left "throw it away" flick locked the
+   recording hands-free instead of cancelling it. The live pointermove
+   handler locked the instant dy crossed LOCK_DY and set active=false,
+   so the pointerup path — which runs classifyGesture, and classifyGesture
+   checks cancel *before* lock — never ran. The unit-tested cancel-wins
+   precedence was unreachable in the real gesture. Fix: the live handler
+   now delegates to classifyGesture and live-locks only when it returns
+   'lock', so cancel-over-lock holds on the move path too (covered by the
+   existing "cancel wins over lock on a diagonal" case).
+
+2. AudioContext leak: start() opens an AudioContext up front, before
+   getUserMedia. On a gUM rejection (permission denied, or the stale-device
+   fallback's retry also failing) the caller's error path does not call
+   stop(), and stop() wouldn't close the context anyway — its teardown is
+   gated on a microphone/processor that never got wired. Repeated failed
+   attempts leaked contexts until the browser's concurrent-AudioContext cap
+   (~6 in Chrome) started throwing. Fix: start() closes and nulls its own
+   context on the reject path.
+
+3. Phone-layout margins: the max-width:500px overrides for .cancel /
+   .stopRecording are written outside .audioRecorder, while the base block
+   nests them under it. So .cancel/.stopRecording (0,1,0) lose to
+   .audioRecorder .cancel (0,2,0) for margin-inline-start, and the doubled
+   .stopRecording.stopRecording (0,2,0) still loses to
+   .audioRecorder .stopRecording.stopRecording (0,3,0) for margin-inline-end
+   — the narrow-viewport margins silently didn't apply either way. Fix:
+   prefix all three with .audioRecorder so specificity ties and later
+   source order wins.
+---
+ .../src/components/AudioRecorder/AudioRecorder.tsx  |  6 +++++-
+ .../src/components/AudioRecorder/MicRecorder.ts     | 10 ++++++++++
+ .../src/components/AudioRecorder/styles.module.scss | 13 ++++++++-----
+ 3 files changed, 23 insertions(+), 6 deletions(-)
+
+diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+index dc14d0a..9cfde87 100644
+--- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
++++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
+@@ -516,7 +516,11 @@ export const AudioRecorder = ({
+       const dy = ev.clientY - startY
+       setSlideDx(Math.min(dx, 0))
+       setCancelArmed(dx <= CANCEL_DX)
+-      if (dy <= LOCK_DY) {
++      // Reuse the release path's precedence: classifyGesture checks cancel
++      // before lock, so a diagonal up-AND-left flick stays a cancel (finalized
++      // on `up`) instead of latching a lock the user was trying to throw away.
++      // Live-lock only when the gesture classifies as a pure lock.
++      if (classifyGesture(dx, dy, Date.now() - startT) === 'lock') {
+         // Lock live: hands-free. Stop tracking and drop to the tap-to-stop row.
+         active = false
+         cleanup()
+diff --git a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
+index 9ba7f21..f1e2500 100644
+--- a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
++++ b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
+@@ -192,6 +192,16 @@ class MicRecorder {
+           resolve(stream)
+         })
+         .catch(err => {
++          // getUserMedia (incl. the stale-device fallback) failed: close the
++          // AudioContext start() opened up-front. The caller's error path does
++          // not call stop(), and stop() wouldn't close it anyway (its cleanup
++          // is gated on a microphone/processor that never got wired), so
++          // repeated denials would otherwise leak contexts until the browser's
++          // concurrent-AudioContext cap throws.
++          if (this.context && this.context.state !== 'closed') {
++            this.context.close()
++          }
++          this.context = null
+           reject(err)
+         })
+     })
+diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+index 576489f..0ae60f3 100644
+--- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
++++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
+@@ -374,13 +374,16 @@
+   .previewControls {
+     flex-basis: 100%;
+   }
+-  .cancel,
+-  .stopRecording {
++  // Prefixed with `.audioRecorder` to match the base block, whose SCSS nesting
++  // compiles these to `.audioRecorder .cancel` / `.audioRecorder .stopRecording`
++  // (and `.audioRecorder .stopRecording.stopRecording`). Same specificity +
++  // later source order → these win. Without the prefix the base out-ranked them
++  // and the desktop margins leaked onto the phone layout.
++  .audioRecorder .cancel,
++  .audioRecorder .stopRecording {
+     margin-inline-start: 6px;
+   }
+-  // Doubled class to out-rank the base block's nested `&.stopRecording`
+-  // (margin-inline-end: 40px) at equal position-independent specificity.
+-  .stopRecording.stopRecording {
++  .audioRecorder .stopRecording.stopRecording {
+     margin-inline-end: 6px;
+   }
+   // Cancel/OK wrap together as a right-aligned pair instead of OK being

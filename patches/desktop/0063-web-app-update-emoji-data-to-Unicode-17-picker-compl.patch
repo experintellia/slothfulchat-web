@@ -1,0 +1,1093 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Tue, 28 Jul 2026 14:55:36 +0000
+Subject: [PATCH 63/81] web-app: update emoji data to Unicode 17 (picker +
+ completion)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+@emoji-mart/data (~Unicode 15) lacks newer emoji, so neither the emoji picker
+nor the composer :emoji: completion could find/insert them (e.g. 🪎 treasure
+chest, Unicode 17.0). A generated supplement (from emojibase-data — see
+scripts/build-emoji-supplement.mjs) is folded into the dataset by a shared
+emojiDataExtended module that both surfaces import instead of @emoji-mart/data.
+Additive only; the base dataset is untouched. Supplement versions are capped at
+15 so emoji-mart's emojiVersion filter (choices max out at 15) doesn't hide them.
+---
+ .../EmojiPicker/emoji-supplement.json         | 991 ++++++++++++++++++
+ .../EmojiPicker/emojiDataExtended.ts          |  43 +
+ .../src/components/EmojiPicker/index.tsx      |   2 +-
+ .../composer/completion/emojiProvider.ts      |   2 +-
+ 4 files changed, 1036 insertions(+), 2 deletions(-)
+ create mode 100644 packages/frontend/src/components/EmojiPicker/emoji-supplement.json
+ create mode 100644 packages/frontend/src/components/EmojiPicker/emojiDataExtended.ts
+
+diff --git a/packages/frontend/src/components/EmojiPicker/emoji-supplement.json b/packages/frontend/src/components/EmojiPicker/emoji-supplement.json
+new file mode 100644
+index 0000000..136f1f2
+--- /dev/null
++++ b/packages/frontend/src/components/EmojiPicker/emoji-supplement.json
+@@ -0,0 +1,991 @@
++[
++ {
++  "category": "flags",
++  "id": "flag_sark",
++  "name": "Flag: Sark",
++  "keywords": [
++   "CQ",
++   "flag",
++   "cq"
++  ],
++  "skins": [
++   {
++    "unified": "1f1e8-1f1f6",
++    "native": "🇨🇶"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "foods",
++  "id": "brown_mushroom",
++  "name": "Brown Mushroom",
++  "keywords": [
++   "food",
++   "fungi",
++   "fungus",
++   "mushroom",
++   "nature",
++   "pizza",
++   "portobello",
++   "shiitake",
++   "shroom",
++   "spore",
++   "sprout",
++   "toppings",
++   "truffle",
++   "vegetable",
++   "vegetarian",
++   "veggie",
++   "brown"
++  ],
++  "skins": [
++   {
++    "unified": "1f344-200d-1f7eb",
++    "native": "🍄‍🟫"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "foods",
++  "id": "lime",
++  "name": "Lime",
++  "keywords": [
++   "acidity",
++   "citrus",
++   "cocktail",
++   "fruit",
++   "garnish",
++   "key",
++   "margarita",
++   "mojito",
++   "refreshing",
++   "salsa",
++   "sour",
++   "tangy",
++   "tequila",
++   "tropical",
++   "zest",
++   "lime"
++  ],
++  "skins": [
++   {
++    "unified": "1f34b-200d-1f7e9",
++    "native": "🍋‍🟩"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "foods",
++  "id": "root_vegetable",
++  "name": "Root Vegetable",
++  "keywords": [
++   "beet",
++   "food",
++   "garden",
++   "radish",
++   "root",
++   "salad",
++   "turnip",
++   "vegetable",
++   "vegetarian"
++  ],
++  "skins": [
++   {
++    "unified": "1fadc",
++    "native": "🫜"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "nature",
++  "id": "leafless_tree",
++  "name": "Leafless Tree",
++  "keywords": [
++   "bare",
++   "barren",
++   "branches",
++   "dead",
++   "drought",
++   "leafless",
++   "tree",
++   "trunk",
++   "winter",
++   "wood"
++  ],
++  "skins": [
++   {
++    "unified": "1fabe",
++    "native": "🪾"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "nature",
++  "id": "orca",
++  "name": "Orca",
++  "keywords": [
++   "marine",
++   "ocean",
++   "whale",
++   "orca"
++  ],
++  "skins": [
++   {
++    "unified": "1facd",
++    "native": "🫍"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "nature",
++  "id": "phoenix",
++  "name": "Phoenix",
++  "keywords": [
++   "ascend",
++   "ascension",
++   "emerge",
++   "fantasy",
++   "firebird",
++   "glory",
++   "immortal",
++   "rebirth",
++   "reincarnation",
++   "reinvent",
++   "renewal",
++   "revival",
++   "revive",
++   "rise",
++   "transform",
++   "phoenix"
++  ],
++  "skins": [
++   {
++    "unified": "1f426-200d-1f525",
++    "native": "🐦‍🔥"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "objects",
++  "id": "broken_chain",
++  "name": "Broken Chain",
++  "keywords": [
++   "break",
++   "breaking",
++   "broken",
++   "chain",
++   "cuffs",
++   "freedom"
++  ],
++  "skins": [
++   {
++    "unified": "26d3-fe0f-200d-1f4a5",
++    "native": "⛓️‍💥"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "objects",
++  "id": "harp",
++  "name": "Harp",
++  "keywords": [
++   "cupid",
++   "instrument",
++   "love",
++   "music",
++   "orchestra",
++   "harp"
++  ],
++  "skins": [
++   {
++    "unified": "1fa89",
++    "native": "🪉"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "objects",
++  "id": "shovel",
++  "name": "Shovel",
++  "keywords": [
++   "bury",
++   "dig",
++   "garden",
++   "hole",
++   "plant",
++   "scoop",
++   "snow",
++   "spade",
++   "shovel"
++  ],
++  "skins": [
++   {
++    "unified": "1fa8f",
++    "native": "🪏"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "objects",
++  "id": "treasure_chest",
++  "name": "Treasure Chest",
++  "keywords": [
++   "gem",
++   "gold",
++   "jewels",
++   "loot",
++   "money",
++   "prize",
++   "silver",
++   "valuables",
++   "wealth",
++   "treasure",
++   "chest"
++  ],
++  "skins": [
++   {
++    "unified": "1fa8e",
++    "native": "🪎"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "objects",
++  "id": "trombone",
++  "name": "Trombone",
++  "keywords": [
++   "brass",
++   "instrument",
++   "jazz",
++   "music",
++   "sad",
++   "slide",
++   "trombone"
++  ],
++  "skins": [
++   {
++    "unified": "1fa8a",
++    "native": "🪊"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "ballet_dancer",
++  "name": "Ballet Dancer",
++  "keywords": [
++   "ballet",
++   "dancer"
++  ],
++  "skins": [
++   {
++    "unified": "1f9d1-200d-1fa70",
++    "native": "🧑‍🩰"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "distorted_face",
++  "name": "Distorted Face",
++  "keywords": [
++   "anxiety",
++   "bloated",
++   "panic",
++   "shocked",
++   "surprised",
++   "vulnerable",
++   "distorted",
++   "face"
++  ],
++  "skins": [
++   {
++    "unified": "1faea",
++    "native": "🫪"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "face_with_bags_under_eyes",
++  "name": "Face With Bags Under Eyes",
++  "keywords": [
++   "bags",
++   "bored",
++   "exhausted",
++   "eyes",
++   "face",
++   "fatigued",
++   "late",
++   "sleepy",
++   "tired",
++   "weary",
++   "with",
++   "eye"
++  ],
++  "skins": [
++   {
++    "unified": "1fae9",
++    "native": "🫩"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "family_adult_adult_child",
++  "name": "Family: Adult, Adult, Child",
++  "keywords": [
++   "adult",
++   "child",
++   "family",
++   "aac"
++  ],
++  "skins": [
++   {
++    "unified": "1f9d1-200d-1f9d1-200d-1f9d2",
++    "native": "🧑‍🧑‍🧒"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "family_adult_adult_child_child",
++  "name": "Family: Adult, Adult, Child, Child",
++  "keywords": [
++   "adult",
++   "child",
++   "family",
++   "aacc"
++  ],
++  "skins": [
++   {
++    "unified": "1f9d1-200d-1f9d1-200d-1f9d2-200d-1f9d2",
++    "native": "🧑‍🧑‍🧒‍🧒"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "family_adult_child",
++  "name": "Family: Adult, Child",
++  "keywords": [
++   "adult",
++   "child",
++   "family",
++   "aa"
++  ],
++  "skins": [
++   {
++    "unified": "1f9d1-200d-1f9d2",
++    "native": "🧑‍🧒"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "family_adult_child_child",
++  "name": "Family: Adult, Child, Child",
++  "keywords": [
++   "adult",
++   "child",
++   "family",
++   "acc"
++  ],
++  "skins": [
++   {
++    "unified": "1f9d1-200d-1f9d2-200d-1f9d2",
++    "native": "🧑‍🧒‍🧒"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "fight_cloud",
++  "name": "Fight Cloud",
++  "keywords": [
++   "argument",
++   "brawl",
++   "debate",
++   "disagreement",
++   "fight",
++   "ruckus",
++   "wrestle",
++   "cloud"
++  ],
++  "skins": [
++   {
++    "unified": "1faef",
++    "native": "🫯"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "fingerprint",
++  "name": "Fingerprint",
++  "keywords": [
++   "clue",
++   "crime",
++   "detective",
++   "forensics",
++   "identity",
++   "mystery",
++   "print",
++   "safety",
++   "trace",
++   "fingerprint"
++  ],
++  "skins": [
++   {
++    "unified": "1fac6",
++    "native": "🫆"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "hairy_creature",
++  "name": "Hairy Creature",
++  "keywords": [
++   "bigfoot",
++   "cryptid",
++   "forest",
++   "giant",
++   "hairy",
++   "sasquatch",
++   "woodwose",
++   "yeti",
++   "creature"
++  ],
++  "skins": [
++   {
++    "unified": "1fac8",
++    "native": "🫈"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "head_shaking_horizontally",
++  "name": "Head Shaking Horizontally",
++  "keywords": [
++   "head",
++   "horizontally",
++   "no",
++   "shake",
++   "shaking"
++  ],
++  "skins": [
++   {
++    "unified": "1f642-200d-2194-fe0f",
++    "native": "🙂‍↔️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "head_shaking_vertically",
++  "name": "Head Shaking Vertically",
++  "keywords": [
++   "head",
++   "nod",
++   "shaking",
++   "vertically",
++   "yes"
++  ],
++  "skins": [
++   {
++    "unified": "1f642-200d-2195-fe0f",
++    "native": "🙂‍↕️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "man_in_manual_wheelchair_facing_right",
++  "name": "Man In Manual Wheelchair: Facing Right",
++  "keywords": [
++   "accessibility",
++   "facing",
++   "man",
++   "manual",
++   "right",
++   "wheelchair",
++   "in"
++  ],
++  "skins": [
++   {
++    "unified": "1f468-200d-1f9bd-200d-27a1-fe0f",
++    "native": "👨‍🦽‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "man_in_motorized_wheelchair_facing_right",
++  "name": "Man In Motorized Wheelchair: Facing Right",
++  "keywords": [
++   "accessibility",
++   "facing",
++   "man",
++   "motorized",
++   "right",
++   "wheelchair",
++   "in"
++  ],
++  "skins": [
++   {
++    "unified": "1f468-200d-1f9bc-200d-27a1-fe0f",
++    "native": "👨‍🦼‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "man_kneeling_facing_right",
++  "name": "Man Kneeling: Facing Right",
++  "keywords": [
++   "facing",
++   "kneel",
++   "kneeling",
++   "knees",
++   "man",
++   "right"
++  ],
++  "skins": [
++   {
++    "unified": "1f9ce-200d-2642-fe0f-200d-27a1-fe0f",
++    "native": "🧎‍♂️‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "man_running_facing_right",
++  "name": "Man Running: Facing Right",
++  "keywords": [
++   "facing",
++   "fast",
++   "hurry",
++   "man",
++   "marathon",
++   "move",
++   "quick",
++   "race",
++   "racing",
++   "right",
++   "run",
++   "rush",
++   "speed",
++   "running"
++  ],
++  "skins": [
++   {
++    "unified": "1f3c3-200d-2642-fe0f-200d-27a1-fe0f",
++    "native": "🏃‍♂️‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "man_walking_facing_right",
++  "name": "Man Walking: Facing Right",
++  "keywords": [
++   "amble",
++   "facing",
++   "gait",
++   "hike",
++   "man",
++   "pace",
++   "pedestrian",
++   "right",
++   "stride",
++   "stroll",
++   "walk",
++   "walking"
++  ],
++  "skins": [
++   {
++    "unified": "1f6b6-200d-2642-fe0f-200d-27a1-fe0f",
++    "native": "🚶‍♂️‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "man_with_white_cane_facing_right",
++  "name": "Man With White Cane: Facing Right",
++  "keywords": [
++   "accessibility",
++   "blind",
++   "cane",
++   "facing",
++   "man",
++   "probing",
++   "right",
++   "white",
++   "with"
++  ],
++  "skins": [
++   {
++    "unified": "1f468-200d-1f9af-200d-27a1-fe0f",
++    "native": "👨‍🦯‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "person_in_manual_wheelchair_facing_right",
++  "name": "Person In Manual Wheelchair: Facing Right",
++  "keywords": [
++   "accessibility",
++   "facing",
++   "manual",
++   "person",
++   "right",
++   "wheelchair",
++   "in"
++  ],
++  "skins": [
++   {
++    "unified": "1f9d1-200d-1f9bd-200d-27a1-fe0f",
++    "native": "🧑‍🦽‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "person_in_motorized_wheelchair_facing_right",
++  "name": "Person In Motorized Wheelchair: Facing Right",
++  "keywords": [
++   "accessibility",
++   "facing",
++   "motorized",
++   "person",
++   "right",
++   "wheelchair",
++   "in"
++  ],
++  "skins": [
++   {
++    "unified": "1f9d1-200d-1f9bc-200d-27a1-fe0f",
++    "native": "🧑‍🦼‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "person_kneeling_facing_right",
++  "name": "Person Kneeling: Facing Right",
++  "keywords": [
++   "facing",
++   "kneel",
++   "kneeling",
++   "knees",
++   "person",
++   "right"
++  ],
++  "skins": [
++   {
++    "unified": "1f9ce-200d-27a1-fe0f",
++    "native": "🧎‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "person_running_facing_right",
++  "name": "Person Running: Facing Right",
++  "keywords": [
++   "facing",
++   "fast",
++   "hurry",
++   "marathon",
++   "move",
++   "person",
++   "quick",
++   "race",
++   "racing",
++   "right",
++   "run",
++   "rush",
++   "speed",
++   "running"
++  ],
++  "skins": [
++   {
++    "unified": "1f3c3-200d-27a1-fe0f",
++    "native": "🏃‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "person_walking_facing_right",
++  "name": "Person Walking: Facing Right",
++  "keywords": [
++   "amble",
++   "facing",
++   "gait",
++   "hike",
++   "man",
++   "pace",
++   "pedestrian",
++   "person",
++   "right",
++   "stride",
++   "stroll",
++   "walk",
++   "walking"
++  ],
++  "skins": [
++   {
++    "unified": "1f6b6-200d-27a1-fe0f",
++    "native": "🚶‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "person_with_white_cane_facing_right",
++  "name": "Person With White Cane: Facing Right",
++  "keywords": [
++   "accessibility",
++   "blind",
++   "cane",
++   "facing",
++   "person",
++   "probing",
++   "right",
++   "white",
++   "with"
++  ],
++  "skins": [
++   {
++    "unified": "1f9d1-200d-1f9af-200d-27a1-fe0f",
++    "native": "🧑‍🦯‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "woman_in_manual_wheelchair_facing_right",
++  "name": "Woman In Manual Wheelchair: Facing Right",
++  "keywords": [
++   "accessibility",
++   "facing",
++   "manual",
++   "right",
++   "wheelchair",
++   "woman",
++   "in"
++  ],
++  "skins": [
++   {
++    "unified": "1f469-200d-1f9bd-200d-27a1-fe0f",
++    "native": "👩‍🦽‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "woman_in_motorized_wheelchair_facing_right",
++  "name": "Woman In Motorized Wheelchair: Facing Right",
++  "keywords": [
++   "accessibility",
++   "facing",
++   "motorized",
++   "right",
++   "wheelchair",
++   "woman",
++   "in"
++  ],
++  "skins": [
++   {
++    "unified": "1f469-200d-1f9bc-200d-27a1-fe0f",
++    "native": "👩‍🦼‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "woman_kneeling_facing_right",
++  "name": "Woman Kneeling: Facing Right",
++  "keywords": [
++   "facing",
++   "kneel",
++   "kneeling",
++   "knees",
++   "right",
++   "woman"
++  ],
++  "skins": [
++   {
++    "unified": "1f9ce-200d-2640-fe0f-200d-27a1-fe0f",
++    "native": "🧎‍♀️‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "woman_running_facing_right",
++  "name": "Woman Running: Facing Right",
++  "keywords": [
++   "facing",
++   "fast",
++   "hurry",
++   "marathon",
++   "move",
++   "quick",
++   "race",
++   "racing",
++   "right",
++   "run",
++   "rush",
++   "speed",
++   "woman",
++   "running"
++  ],
++  "skins": [
++   {
++    "unified": "1f3c3-200d-2640-fe0f-200d-27a1-fe0f",
++    "native": "🏃‍♀️‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "woman_walking_facing_right",
++  "name": "Woman Walking: Facing Right",
++  "keywords": [
++   "amble",
++   "facing",
++   "gait",
++   "hike",
++   "man",
++   "pace",
++   "pedestrian",
++   "right",
++   "stride",
++   "stroll",
++   "walk",
++   "walking",
++   "woman"
++  ],
++  "skins": [
++   {
++    "unified": "1f6b6-200d-2640-fe0f-200d-27a1-fe0f",
++    "native": "🚶‍♀️‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "people",
++  "id": "woman_with_white_cane_facing_right",
++  "name": "Woman With White Cane: Facing Right",
++  "keywords": [
++   "accessibility",
++   "blind",
++   "cane",
++   "facing",
++   "probing",
++   "right",
++   "white",
++   "woman",
++   "with"
++  ],
++  "skins": [
++   {
++    "unified": "1f469-200d-1f9af-200d-27a1-fe0f",
++    "native": "👩‍🦯‍➡️"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "places",
++  "id": "landslide",
++  "name": "Landslide",
++  "keywords": [
++   "avalanche",
++   "danger",
++   "disaster",
++   "earthquake",
++   "mountain",
++   "mudslide",
++   "rocks",
++   "landslide"
++  ],
++  "skins": [
++   {
++    "unified": "1f6d8",
++    "native": "🛘"
++   }
++  ],
++  "version": 15
++ },
++ {
++  "category": "symbols",
++  "id": "splatter",
++  "name": "Splatter",
++  "keywords": [
++   "drip",
++   "holi",
++   "ink",
++   "liquid",
++   "mess",
++   "paint",
++   "spill",
++   "stain",
++   "splatter"
++  ],
++  "skins": [
++   {
++    "unified": "1fadf",
++    "native": "🫟"
++   }
++  ],
++  "version": 15
++ }
++]
+diff --git a/packages/frontend/src/components/EmojiPicker/emojiDataExtended.ts b/packages/frontend/src/components/EmojiPicker/emojiDataExtended.ts
+new file mode 100644
+index 0000000..739d55e
+--- /dev/null
++++ b/packages/frontend/src/components/EmojiPicker/emojiDataExtended.ts
+@@ -0,0 +1,43 @@
++import data from '@emoji-mart/data'
++
++import supplement from './emoji-supplement.json'
++
++// @emoji-mart/data ships around Unicode 15. Fold in the newer emoji
++// (Unicode 15.1–17, generated from emojibase-data — see
++// scripts/build-emoji-supplement.mjs) so both the picker and the composer
++// `:emoji:` completion can find and insert them (e.g. 🪎 treasure chest,
++// Unicode 17.0). Additive only: the base dataset is left untouched.
++type EmojiMartData = {
++  categories: { id: string; emojis: string[] }[]
++  emojis: Record<string, unknown>
++  aliases: Record<string, string>
++  [key: string]: unknown
++}
++
++const base = data as unknown as EmojiMartData
++// Shallow-clone the parts we mutate so the shared @emoji-mart/data import is
++// never edited in place.
++const merged: EmojiMartData = {
++  ...base,
++  emojis: { ...base.emojis },
++  categories: base.categories.map(c => ({ ...c, emojis: [...c.emojis] })),
++}
++
++for (const e of supplement) {
++  if (merged.emojis[e.id]) {
++    continue // never clobber an existing emoji
++  }
++  merged.emojis[e.id] = {
++    id: e.id,
++    name: e.name,
++    keywords: e.keywords,
++    skins: e.skins,
++    version: e.version,
++  }
++  const category = merged.categories.find(c => c.id === e.category)
++  if (category && !category.emojis.includes(e.id)) {
++    category.emojis.push(e.id)
++  }
++}
++
++export default merged
+diff --git a/packages/frontend/src/components/EmojiPicker/index.tsx b/packages/frontend/src/components/EmojiPicker/index.tsx
+index 4b313e0..eeaf66e 100644
+--- a/packages/frontend/src/components/EmojiPicker/index.tsx
++++ b/packages/frontend/src/components/EmojiPicker/index.tsx
+@@ -1,6 +1,6 @@
+ import React, { useEffect, useRef } from 'react'
+ import classNames from 'classnames'
+-import emojiData from '@emoji-mart/data'
++import emojiData from './emojiDataExtended'
+ import { EmojiPicker as Picker } from '@emoji-mart-awesome/react'
+ 
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+diff --git a/packages/frontend/src/components/composer/completion/emojiProvider.ts b/packages/frontend/src/components/composer/completion/emojiProvider.ts
+index be07e66..4d7f676 100644
+--- a/packages/frontend/src/components/composer/completion/emojiProvider.ts
++++ b/packages/frontend/src/components/composer/completion/emojiProvider.ts
+@@ -1,4 +1,4 @@
+-import emojiData from '@emoji-mart/data'
++import emojiData from '../../EmojiPicker/emojiDataExtended'
+ 
+ import type { CompletionItem, CompletionProvider } from './types'
+ 

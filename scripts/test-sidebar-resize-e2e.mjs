@@ -1,4 +1,4 @@
-// E2E check for the resizable chat-list sidebar (desktop/0064) — runs FULLY
+// E2E check for the resizable chat-list sidebar (desktop/0061) — runs FULLY
 // OFFLINE. One webimap account against an in-process mock madmail server
 // (trimmed from scripts/test-export-chat-html.mjs) gets us to the two-pane
 // MainScreen; then the actual feature is exercised: drag the divider and the

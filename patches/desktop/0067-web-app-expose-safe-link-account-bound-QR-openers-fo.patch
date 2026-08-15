@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sat, 1 Aug 2026 19:09:44 +0000
+Subject: [PATCH 67/81] web-app: expose safe-link + account-bound QR openers
+ for the HTML-email viewer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The HTML-email viewer renders sender HTML in a script-less sandbox, so a
+link clicked inside it can't reach React. It relays such links to the app
+(runtime.openAppLink), which calls two globals registered here:
+
+- __slothfulOpenLinkSafely(url): http(s) links, run through the existing
+  useOpenNonMailtoLinkSafely hook so they get the same tracking-parameter
+  stripping a pasted or in-chat link gets. Account-agnostic.
+- __slothfulProcessQr(accountId, url): app links (mailto/openpgp4fpr/
+  dcaccount/dclogin/i.delta.chat invites) run through processQr bound to
+  the account the mail belongs to, passed explicitly — so the link runs
+  under that account even if the user switched the app to another one.
+
+Only the web-app runtime ever sets/uses these; upstream/electron never
+touch them.
+---
+ .../src/components/RuntimeAdapter.tsx         | 26 +++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/packages/frontend/src/components/RuntimeAdapter.tsx b/packages/frontend/src/components/RuntimeAdapter.tsx
+index 88876b5..42bcdd0 100644
+--- a/packages/frontend/src/components/RuntimeAdapter.tsx
++++ b/packages/frontend/src/components/RuntimeAdapter.tsx
+@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react'
+ 
+ import useMessage from '../hooks/chat/useMessage'
+ import useProcessQr from '../hooks/useProcessQr'
++import { useOpenNonMailtoLinkSafely } from '../hooks/useOpenLinkSafely'
+ import { clearNotificationsForChat } from '../system-integration/notifications'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ 
+@@ -33,6 +34,31 @@ export default function RuntimeAdapter({
+ 
+   const { closeDialog, openDialog, closeAllDialogs } = useDialog()
+   const openSendToDialogId = useRef<string | undefined>(undefined)
++  const openNonMailtoLinkSafely = useOpenNonMailtoLinkSafely()
++
++  // web-app (SlothfulChat): the HTML-email viewer renders sender HTML in a
++  // script-less sandbox, so a link clicked inside it can't reach React. It
++  // relays such links to the runtime, which calls these globals. Both are
++  // no-ops upstream/electron never touch.
++  //  - http(s) links -> the safe-link path (tracking-param stripping), same as
++  //    a pasted or in-chat link. Account-agnostic.
++  //  - app links (mailto/openpgp4fpr/dcaccount/dclogin/i.delta.chat invites) ->
++  //    processQr bound to the account the MAIL belongs to, passed explicitly,
++  //    so the link runs under that account even if the user has since switched
++  //    the app to another one (#3). processQr already takes accountId as an
++  //    argument, so no account-switch dance is needed.
++  useEffect(() => {
++    ;(window as any).__slothfulOpenLinkSafely = (url: string) => {
++      void openNonMailtoLinkSafely(url)
++    }
++    ;(window as any).__slothfulProcessQr = (qrAccountId: number, url: string) => {
++      processQr(qrAccountId, url, SCAN_CONTEXT_TYPE.DEFAULT)
++    }
++    return () => {
++      delete (window as any).__slothfulOpenLinkSafely
++      delete (window as any).__slothfulProcessQr
++    }
++  }, [openNonMailtoLinkSafely, processQr])
+ 
+   useEffect(() => {
+     runtime.onOpenQrUrl = (url: string) => {

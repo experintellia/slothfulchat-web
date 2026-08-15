@@ -28,7 +28,7 @@
 //    through the real UI: the ChatView call button's context menu (caller)
 //    and the IncomingCallRing's Accept button (callee) — see
 //    packages/calls/ui/CallOverlay.tsx / IncomingCallRing.tsx and the
-//    un-gate patch (patches/desktop/0047-*.patch) that exposes the call
+//    un-gate patch (patches/desktop/0044-*.patch) that exposes the call
 //    button for target === 'browser'.
 //  - "assert connected": AudioCallEngine's `connectionstatechange` listener
 //    (packages/calls/engine/audio-call.ts) transitions the call's state
