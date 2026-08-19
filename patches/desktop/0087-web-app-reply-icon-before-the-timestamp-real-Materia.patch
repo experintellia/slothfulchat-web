@@ -1,25 +1,19 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 19 Aug 2026 02:53:25 +0000
-Subject: [PATCH 87/87] web-app: reply count in message footer opens a
- reply-thread dialog
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
+Subject: [PATCH 87/87] web-app: reply icon before the timestamp, real Material
+ Symbols glyph
 
-Messages that have replies now show a reply-arrow icon plus count before
-the timestamp in the metadata footer, in the same shape as the broadcast
-view counter. Clicking it opens a Telegram-style thread dialog that
-renders the whole reply chain — root message plus nested replies,
-resolved and sorted by core via the new getMessageReplyCount/
-getMessageReplyThread jsonrpc calls — as regular message bubbles,
-refreshed on the chat's MsgsChanged events. The dialog wraps the bubbles
-in its own ReactionsBarProvider (dialogs render outside the message
-list's instance), and jumping to a message from a quote inside the
-dialog closes it through the existing __closeAllDialogs hook, landing
-in the chat as usual. The reply icon is Google's Material Symbols
-"reply" glyph, added as images/icons/reply.svg alongside the project's
-other Material icon assets.
+Move the reply-count badge in the message footer from after the
+timestamp to before it, and swap the placeholder chat_bubble.svg icon
+for Google's Material Symbols "reply" glyph (images/icons/reply.svg),
+matching how the project's other Material icons are sourced.
+
+Bubbles inside the ReplyThread dialog no longer show their own reply
+badge: a reply that itself has replies would let you open another
+thread dialog on top of the one you're already in, and so on without
+end. `Message` gains an optional `hideReplyCount` prop, set only by
+the dialog.
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
@@ -27,10 +21,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  images/icons/reply.svg                        |   1 +
  packages/frontend/scss/message/_metadata.scss |  24 +++-
  .../dialogs/ReplyThread.module.scss           |  17 +++
- .../src/components/dialogs/ReplyThread.tsx    | 125 ++++++++++++++++++
- .../src/components/message/Message.tsx        |   1 +
- .../components/message/MessageMetaData.tsx    |  84 ++++++++++++
- 7 files changed, 256 insertions(+), 3 deletions(-)
+ .../src/components/dialogs/ReplyThread.tsx    | 126 ++++++++++++++++++
+ .../src/components/message/Message.tsx        |   7 +-
+ .../components/message/MessageMetaData.tsx    |  88 ++++++++++++
+ 7 files changed, 266 insertions(+), 4 deletions(-)
  create mode 100644 images/icons/reply.svg
  create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.tsx
@@ -145,10 +139,10 @@ index 0000000..ca50da0
 +}
 diff --git a/packages/frontend/src/components/dialogs/ReplyThread.tsx b/packages/frontend/src/components/dialogs/ReplyThread.tsx
 new file mode 100644
-index 0000000..ea746d2
+index 0000000..eb40f10
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/ReplyThread.tsx
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,126 @@
 +import React, { useEffect, useEffectEvent } from 'react'
 +
 +import Dialog, { DialogBody, DialogContent, DialogHeader } from '../Dialog'
@@ -258,6 +252,7 @@ index 0000000..ea746d2
 +                        chat={chat}
 +                        message={message}
 +                        conversationType={conversationType}
++                        hideReplyCount
 +                      />
 +                    </li>
 +                  )
@@ -275,10 +270,23 @@ index 0000000..ea746d2
 +  )
 +}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 9ebcadb..911984e 100644
+index 9ebcadb..cd25f00 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -1302,6 +1302,7 @@ export default function Message(props: {
+@@ -606,8 +606,11 @@ export default function Message(props: {
+   chat: T.FullChat
+   message: T.Message
+   conversationType: ConversationType
++  // Set inside ReplyThread: a reply's own reply count would let you open
++  // another thread dialog on top of this one, and so on indefinitely.
++  hideReplyCount?: boolean
+ }) {
+-  const { message, conversationType, chat } = props
++  const { message, conversationType, chat, hideReplyCount } = props
+   const { viewType, text, hasLocation, hasHtml } = message
+   const direction = getDirection(message)
+   const status = mapCoreMsgStatus2String(message.state)
+@@ -1302,6 +1305,7 @@ export default function Message(props: {
            >
              <MessageMetaData
                messageId={message.id}
@@ -286,8 +294,16 @@ index 9ebcadb..911984e 100644
                fileMime={fileMime}
                direction={direction}
                status={status}
+@@ -1317,6 +1321,7 @@ export default function Message(props: {
+               viewType={effectiveViewType}
+               chatType={chat.chatType}
+               tabindexForInteractiveContents={tabindexForInteractiveContents}
++              hideReplyCount={hideReplyCount}
+             />
+             <div
+               // TODO the "+1" count aria-live announcment is perhaps not great
 diff --git a/packages/frontend/src/components/message/MessageMetaData.tsx b/packages/frontend/src/components/message/MessageMetaData.tsx
-index 4c86c98..f2514d1 100644
+index 4c86c98..a0e7199 100644
 --- a/packages/frontend/src/components/message/MessageMetaData.tsx
 +++ b/packages/frontend/src/components/message/MessageMetaData.tsx
 @@ -11,6 +11,8 @@ import { useRpcFetch } from '../../hooks/useFetch'
@@ -307,7 +323,15 @@ index 4c86c98..f2514d1 100644
    encrypted: boolean
    fileMime: string | null
    direction?: 'incoming' | 'outgoing'
-@@ -44,6 +47,7 @@ export default function MessageMetaData(props: Props) {
+@@ -37,6 +40,7 @@ type Props = {
+   viewType: T.Viewtype
+   chatType: T.ChatType
+   isSavedMessage: boolean
++  hideReplyCount?: boolean
+ }
+ 
+ export default function MessageMetaData(props: Props) {
+@@ -44,6 +48,7 @@ export default function MessageMetaData(props: Props) {
  
    const {
      messageId,
@@ -315,19 +339,29 @@ index 4c86c98..f2514d1 100644
      encrypted,
      direction,
      status,
-@@ -95,6 +99,11 @@ export default function MessageMetaData(props: Props) {
+@@ -58,6 +63,7 @@ export default function MessageMetaData(props: Props) {
+     viewType,
+     chatType,
+     isSavedMessage,
++    hideReplyCount,
+   } = props
+ 
+   return (
+@@ -95,6 +101,13 @@ export default function MessageMetaData(props: Props) {
        <div className='aria-live-wrapper' aria-live='polite'>
          {isEdited && <span className='edited'>{tx('edited')}</span>}
        </div>
-+      <ReplyCount
-+        messageId={messageId}
-+        chatId={chatId}
-+        tabindexForInteractiveContents={tabindexForInteractiveContents}
-+      />
++      {!hideReplyCount && (
++        <ReplyCount
++          messageId={messageId}
++          chatId={chatId}
++          tabindexForInteractiveContents={tabindexForInteractiveContents}
++        />
++      )}
        <Timestamp
          timestamp={timestamp}
          extended
-@@ -288,6 +297,81 @@ function ViewCount(props: { messageId: number }) {
+@@ -288,6 +301,81 @@ function ViewCount(props: { messageId: number }) {
    )
  }
  

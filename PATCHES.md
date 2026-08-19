@@ -497,7 +497,10 @@ exists:
   opens a thread dialog rendering the whole reply chain (root plus nested
   replies, any depth and branching) as regular message bubbles, refreshed
   live on the chat's events, with the usual quote-click jump landing back in
-  the chat. The icon is Google's Material Symbols "reply" glyph.
+  the chat. The icon is Google's Material Symbols "reply" glyph. Bubbles
+  inside the thread dialog don't show their own reply badge — a reply that
+  itself has replies would otherwise let you open a thread dialog on top of
+  the one you're already in, and so on without end.
   Core gains `get_message_reply_count` / `get_message_reply_thread` plus an
   index on the previously unindexed `msgs.mime_in_reply_to`: the count is one
   indexed `COUNT(*)` of direct replies, the thread one recursive CTE down
