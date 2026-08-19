@@ -9,6 +9,12 @@ timestamp to before it, and swap the placeholder chat_bubble.svg icon
 for Google's Material Symbols "reply" glyph (images/icons/reply.svg),
 matching how the project's other Material icons are sourced.
 
+The badge gets a rounded pill background on hover and keyboard focus so
+it reads as a button rather than as more metadata. It mixes from
+`currentColor`, which is already the metadata text color, so the same
+rule covers the light theme, the dark theme and the white-on-media
+variant without per-theme overrides.
+
 Bubbles inside the ReplyThread dialog no longer show their own reply
 badge: a reply that itself has replies would let you open another
 thread dialog on top of the one you're already in, and so on without
@@ -19,12 +25,12 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  _locales/_untranslated_en.json                |   7 +
  images/icons/reply.svg                        |   1 +
- packages/frontend/scss/message/_metadata.scss |  24 +++-
+ packages/frontend/scss/message/_metadata.scss |  35 ++++-
  .../dialogs/ReplyThread.module.scss           |  17 +++
  .../src/components/dialogs/ReplyThread.tsx    | 126 ++++++++++++++++++
  .../src/components/message/Message.tsx        |   7 +-
  .../components/message/MessageMetaData.tsx    |  88 ++++++++++++
- 7 files changed, 266 insertions(+), 4 deletions(-)
+ 7 files changed, 277 insertions(+), 4 deletions(-)
  create mode 100644 images/icons/reply.svg
  create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.tsx
@@ -54,7 +60,7 @@ index 0000000..364c7d6
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#1f1f1f"><path d="M760-200v-160q0-50-35-85t-85-35H273l144 144-57 56-240-240 240-240 57 56-144 144h367q83 0 141.5 58.5T840-360v160h-80Z"/></svg>
 diff --git a/packages/frontend/scss/message/_metadata.scss b/packages/frontend/scss/message/_metadata.scss
-index 7f82294..4a0fccd 100644
+index 7f82294..219fd63 100644
 --- a/packages/frontend/scss/message/_metadata.scss
 +++ b/packages/frontend/scss/message/_metadata.scss
 @@ -19,7 +19,8 @@
@@ -77,7 +83,7 @@ index 7f82294..4a0fccd 100644
      font-size: $font-size;
      line-height: $line-height;
      letter-spacing: 0.3px;
-@@ -73,6 +75,11 @@
+@@ -73,6 +75,22 @@
      // Assumes that there is always a date after it.
      margin-inline-end: 0.5ch;
    }
@@ -85,11 +91,22 @@ index 7f82294..4a0fccd 100644
 +    @include mixins.button-reset;
 +    cursor: pointer;
 +    margin-inline-end: 0.5ch;
++    // Pill on hover, so it reads as a button rather than as more metadata.
++    // `currentColor` is the metadata text color, which already adapts to the
++    // theme and turns white over media, so one rule covers all three.
++    padding-inline: 4px;
++    border-radius: 999px;
++    transition: background-color 100ms ease-in-out;
++
++    &:hover,
++    &:focus-visible {
++      background-color: color-mix(in srgb, currentColor 15%, transparent);
++    }
 +  }
    .viewCount {
      margin-inline-start: 1ch;
  
-@@ -93,7 +100,8 @@
+@@ -93,7 +111,8 @@
    .location-icon,
    .email-icon,
    .saved-message-icon,
@@ -99,7 +116,7 @@ index 7f82294..4a0fccd 100644
      display: inline-block;
    }
    .location-icon,
-@@ -115,4 +123,14 @@
+@@ -115,4 +134,14 @@
      // This value doesn't change the height of the wrapper.
      vertical-align: bottom;
    }
