@@ -492,6 +492,22 @@ exists:
   `Promise<string>`, which the browser targets hand straight to `ClipboardItem`.
   `desktop/0079`
 
+- **Reply threads, Telegram-style** — a message that has replies shows a small
+  bubble icon with the reply count next to its timestamp; clicking it opens a
+  thread dialog rendering the whole reply chain (root plus nested replies, any
+  depth and branching) as regular message bubbles, refreshed live on the
+  chat's events, with the usual quote-click jump landing back in the chat.
+  Core gains `get_message_reply_count` / `get_message_reply_thread` plus an
+  index on the previously unindexed `msgs.mime_in_reply_to`: the count is one
+  indexed `COUNT(*)` of direct replies, the thread one recursive CTE down
+  from the root found by walking `quoted_message()` upward. "Reply" here
+  deliberately means a quote-reply that is not forwarded — core sets
+  `In-Reply-To` on *every* outgoing message for email threading, so matching
+  the raw header would fuse consecutive messages into one giant thread — and
+  threads stay within one chat, which keeps "reply privately" answers out.
+  The header is matched in both stored forms (`<mid>` for incoming, bare mid
+  for outgoing messages). `core/0034`, `desktop/0087`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not

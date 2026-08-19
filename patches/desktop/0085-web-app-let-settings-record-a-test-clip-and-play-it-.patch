@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 13 Aug 2026 13:09:32 +0000
-Subject: [PATCH 85/86] web-app: let settings record a test clip and play it
+Subject: [PATCH 85/87] web-app: let settings record a test clip and play it
  back
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

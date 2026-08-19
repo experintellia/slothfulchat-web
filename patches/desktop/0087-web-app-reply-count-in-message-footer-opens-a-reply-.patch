@@ -1,0 +1,400 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Wed, 19 Aug 2026 02:53:25 +0000
+Subject: [PATCH 87/87] web-app: reply count in message footer opens a
+ reply-thread dialog
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Messages that have replies now show a chat-bubble icon plus count next to
+the timestamp, in the same shape as the broadcast view counter. Clicking
+it opens a Telegram-style thread dialog that renders the whole reply
+chain — root message plus nested replies, resolved and sorted by core via
+the new getMessageReplyCount/getMessageReplyThread jsonrpc calls — as
+regular message bubbles, refreshed on the chat's MsgsChanged events. The
+dialog wraps the bubbles in its own ReactionsBarProvider (dialogs render
+outside the message list's instance), and jumping to a message from a
+quote inside the dialog closes it through the existing __closeAllDialogs
+hook, landing in the chat as usual.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ _locales/_untranslated_en.json                |   7 +
+ packages/frontend/scss/message/_metadata.scss |  24 +++-
+ .../dialogs/ReplyThread.module.scss           |  17 +++
+ .../src/components/dialogs/ReplyThread.tsx    | 125 ++++++++++++++++++
+ .../src/components/message/Message.tsx        |   1 +
+ .../components/message/MessageMetaData.tsx    |  85 ++++++++++++
+ 6 files changed, 256 insertions(+), 3 deletions(-)
+ create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.module.scss
+ create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.tsx
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 7405e25..dfe4fcc 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -166,5 +166,12 @@
+   },
+   "slothful_welcome_selfhost": {
+     "message": "And it's yours to run: host your own instance, or fork it and change whatever you like 👉 https://github.com/experintellia/slothfulchat-web"
++  },
++  "reply_thread": {
++    "message": "Thread"
++  },
++  "n_replies": {
++    "one": "%d reply",
++    "other": "%d replies"
+   }
+ }
+diff --git a/packages/frontend/scss/message/_metadata.scss b/packages/frontend/scss/message/_metadata.scss
+index 7f82294..6129633 100644
+--- a/packages/frontend/scss/message/_metadata.scss
++++ b/packages/frontend/scss/message/_metadata.scss
+@@ -19,7 +19,8 @@
+ 
+     .date,
+     .edited,
+-    .viewCount {
++    .viewCount,
++    .replyCount {
+       color: white;
+     }
+ 
+@@ -63,7 +64,8 @@
+ 
+   .date,
+   .edited,
+-  .viewCount {
++  .viewCount,
++  .replyCount {
+     font-size: $font-size;
+     line-height: $line-height;
+     letter-spacing: 0.3px;
+@@ -73,6 +75,11 @@
+     // Assumes that there is always a date after it.
+     margin-inline-end: 0.5ch;
+   }
++  .replyCount {
++    @include mixins.button-reset;
++    cursor: pointer;
++    margin-inline-start: 1ch;
++  }
+   .viewCount {
+     margin-inline-start: 1ch;
+ 
+@@ -93,7 +100,8 @@
+   .location-icon,
+   .email-icon,
+   .saved-message-icon,
+-  .viewCountIcon {
++  .viewCountIcon,
++  .replyCountIcon {
+     display: inline-block;
+   }
+   .location-icon,
+@@ -115,4 +123,14 @@
+     // This value doesn't change the height of the wrapper.
+     vertical-align: bottom;
+   }
++  .replyCountIcon {
++    @include mixins.color-svg(
++      './images/icons/chat_bubble.svg',
++      currentColor,
++      $line-height - 4px
++    );
++    width: $line-height;
++    height: $line-height;
++    vertical-align: bottom;
++  }
+ }
+diff --git a/packages/frontend/src/components/dialogs/ReplyThread.module.scss b/packages/frontend/src/components/dialogs/ReplyThread.module.scss
+new file mode 100644
+index 0000000..ca50da0
+--- /dev/null
++++ b/packages/frontend/src/components/dialogs/ReplyThread.module.scss
+@@ -0,0 +1,17 @@
++.threadMessageList {
++  list-style: none;
++  margin: 0;
++  padding: 10px;
++
++  li {
++    margin-bottom: 10px;
++
++    // Outgoing bubbles `float: inline-end`; clear them the same way the
++    // message list's `li::after` clearfix does.
++    &::after {
++      content: '';
++      display: block;
++      clear: both;
++    }
++  }
++}
+diff --git a/packages/frontend/src/components/dialogs/ReplyThread.tsx b/packages/frontend/src/components/dialogs/ReplyThread.tsx
+new file mode 100644
+index 0000000..ea746d2
+--- /dev/null
++++ b/packages/frontend/src/components/dialogs/ReplyThread.tsx
+@@ -0,0 +1,125 @@
++import React, { useEffect, useEffectEvent } from 'react'
++
++import Dialog, { DialogBody, DialogContent, DialogHeader } from '../Dialog'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
++import { BackendRemote, onDCEvent } from '../../backend-com'
++import { useFetch, useRpcFetch } from '../../hooks/useFetch'
++import { MessagesDisplayContext } from '../../contexts/MessagesDisplayContext'
++import { ReactionsBarProvider } from '../ReactionsBar'
++import Message from '../message/Message'
++
++import styles from './ReplyThread.module.scss'
++
++import type { ConversationType } from '../message/MessageList'
++import type { DialogProps } from '../../contexts/DialogContext'
++
++// getMessageReplyCount/getMessageReplyThread come from the fork's regenerated local
++// jsonrpc bindings; the published @deltachat/jsonrpc-client pinned in this workspace's
++// catalog predates them, so they're typed locally here to keep tsc green (same pattern
++// as useMessage.ts's MessageData widening).
++export const rpcWithReplies = BackendRemote.rpc as typeof BackendRemote.rpc & {
++  getMessageReplyCount(accountId: number, msgId: number): Promise<number>
++  getMessageReplyThread(accountId: number, msgId: number): Promise<number[]>
++}
++
++/** Core returns the whole reply chain (root + nested replies) sorted by timestamp. */
++async function fetchThread(accountId: number, msgId: number) {
++  const ids = await rpcWithReplies.getMessageReplyThread(accountId, msgId)
++  const messages = await BackendRemote.rpc.getMessages(accountId, ids)
++  return { ids, messages }
++}
++
++export type Props = {
++  accountId: number
++  chatId: number
++  msgId: number
++}
++
++export default function ReplyThread({
++  accountId,
++  chatId,
++  msgId,
++  onClose,
++}: Props & DialogProps) {
++  const tx = useTranslationFunction()
++
++  const chatFetch = useRpcFetch(BackendRemote.rpc.getFullChatById, [
++    accountId,
++    chatId,
++  ])
++  const threadFetch = useFetch(fetchThread, [accountId, msgId])
++
++  // Replies can arrive, get edited or get deleted while the dialog is open.
++  // They always live in this message's chat, so its events are enough.
++  const refresh = useEffectEvent(() => threadFetch.refresh())
++  useEffect(
++    () =>
++      onDCEvent(accountId, 'MsgsChanged', ({ chatId: eventChatId }) => {
++        if (eventChatId === chatId) {
++          refresh()
++        }
++      }),
++    [accountId, chatId]
++  )
++
++  const chat = chatFetch.result?.ok ? chatFetch.result.value : null
++  const thread = threadFetch.lingeringResult?.ok
++    ? threadFetch.lingeringResult.value
++    : null
++
++  const conversationType: ConversationType | null = chat && {
++    hasMultipleParticipants: chat.chatType !== 'Single',
++    isDeviceChat: chat.isDeviceChat as boolean,
++    chatType: chat.chatType,
++  }
++
++  return (
++    <Dialog onClose={onClose}>
++      <DialogHeader title={tx('reply_thread')} onClose={onClose} />
++      <DialogBody>
++        {chat && conversationType && thread ? (
++          <MessagesDisplayContext.Provider
++            value={{
++              context: 'chat_messagelist',
++              chatId,
++              isDeviceChat: chat.isDeviceChat,
++            }}
++          >
++            {/* The bubbles' hover shortcut menu offers "react", which needs
++            this provider; the message list has its own instance, but dialogs
++            render outside of it. */}
++            <ReactionsBarProvider>
++              {/* ponytail: unvirtualized; threads are short — steal
++              react-window from ChatList if someone builds a 1000-reply
++              thread */}
++              <ol
++                className={styles.threadMessageList}
++                aria-label={tx('messages')}
++              >
++                {thread.ids.map(id => {
++                  const message = thread.messages[id]
++                  if (message?.kind !== 'message') {
++                    return null
++                  }
++                  return (
++                    <li key={id} className='message-wrapper'>
++                      <Message
++                        chat={chat}
++                        message={message}
++                        conversationType={conversationType}
++                      />
++                    </li>
++                  )
++                })}
++              </ol>
++            </ReactionsBarProvider>
++          </MessagesDisplayContext.Provider>
++        ) : (
++          <DialogContent>
++            <p>{tx('loading')}</p>
++          </DialogContent>
++        )}
++      </DialogBody>
++    </Dialog>
++  )
++}
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index 9ebcadb..911984e 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -1302,6 +1302,7 @@ export default function Message(props: {
+           >
+             <MessageMetaData
+               messageId={message.id}
++              chatId={message.chatId}
+               fileMime={fileMime}
+               direction={direction}
+               status={status}
+diff --git a/packages/frontend/src/components/message/MessageMetaData.tsx b/packages/frontend/src/components/message/MessageMetaData.tsx
+index 4c86c98..c1420d8 100644
+--- a/packages/frontend/src/components/message/MessageMetaData.tsx
++++ b/packages/frontend/src/components/message/MessageMetaData.tsx
+@@ -11,6 +11,8 @@ import { useRpcFetch } from '../../hooks/useFetch'
+ import { BackendRemote, onDCEvent } from '../../backend-com'
+ import { selectedAccountId } from '../../ScreenController'
+ import asyncThrottle from '@jcoreio/async-throttle'
++import useDialog from '../../hooks/dialog/useDialog'
++import ReplyThread, { rpcWithReplies } from '../dialogs/ReplyThread'
+ import { shouldHideDeliveryStatus } from './messageFunctions'
+ import {
+   HoverInfoTrigger,
+@@ -22,6 +24,7 @@ import {
+ 
+ type Props = {
+   messageId: T.Message['id']
++  chatId: T.Message['chatId']
+   encrypted: boolean
+   fileMime: string | null
+   direction?: 'incoming' | 'outgoing'
+@@ -44,6 +47,7 @@ export default function MessageMetaData(props: Props) {
+ 
+   const {
+     messageId,
++    chatId,
+     encrypted,
+     direction,
+     status,
+@@ -103,6 +107,12 @@ export default function MessageMetaData(props: Props) {
+       />
+       <span className='spacer' />
+ 
++      <ReplyCount
++        messageId={messageId}
++        chatId={chatId}
++        tabindexForInteractiveContents={tabindexForInteractiveContents}
++      />
++
+       {chatType === 'OutBroadcast' &&
+         // Don't show while sending, to reduce content shifting,
+         // because we'd be showing the "sending..." icon then,
+@@ -288,6 +298,81 @@ function ViewCount(props: { messageId: number }) {
+   )
+ }
+ 
++/**
++ * Reply icon + count for messages that have direct replies (modeled after
++ * {@link ViewCount}). Clicking it opens the {@link ReplyThread} dialog.
++ * Renders nothing while loading or when there are no replies.
++ */
++function ReplyCount(props: {
++  messageId: number
++  chatId: number
++  tabindexForInteractiveContents: -1 | 0
++}) {
++  const tx = useTranslationFunction()
++  const accountId = selectedAccountId()
++  const { openDialog } = useDialog()
++
++  const replyCountFetch = useRpcFetch(
++    useMemo(
++      () =>
++        asyncThrottle(
++          (...args: Parameters<typeof rpcWithReplies.getMessageReplyCount>) =>
++            rpcWithReplies.getMessageReplyCount(...args),
++          250
++        ),
++      []
++    ),
++    [accountId, props.messageId]
++  )
++
++  const refreshReplyCount = useEffectEvent(() => replyCountFetch.refresh())
++  useEffect(() => {
++    // Replies always live in the same chat as this message,
++    // so only this chat's events can change the count.
++    const onChatEvent = ({ chatId }: { chatId: number }) => {
++      if (chatId === props.chatId) {
++        refreshReplyCount()
++      }
++    }
++    const cleanup = [
++      onDCEvent(accountId, 'MsgsChanged', onChatEvent),
++      onDCEvent(accountId, 'IncomingMsg', onChatEvent),
++    ]
++    return () => cleanup.forEach(off => off())
++  }, [accountId, props.chatId])
++
++  const count = replyCountFetch.lingeringResult?.ok
++    ? replyCountFetch.lingeringResult.value
++    : 0
++  if (count === 0) {
++    return null
++  }
++
++  const label = tx('n_replies', String(count), { quantity: count })
++  return (
++    <button
++      type='button'
++      className='replyCount'
++      title={label}
++      aria-label={label}
++      tabIndex={props.tabindexForInteractiveContents}
++      onClick={ev => {
++        // Don't let the bubble's Ctrl/Shift + Click selection handling
++        // swallow this as a message click.
++        ev.stopPropagation()
++        openDialog(ReplyThread, {
++          accountId,
++          chatId: props.chatId,
++          msgId: props.messageId,
++        })
++      }}
++    >
++      <span aria-hidden className='replyCountIcon' />
++      <span className='replyCountValue'>{count}</span>
++    </button>
++  )
++}
++
+ /**
+  * Returns true if message contains visual media (image, sticker or video)
+  * without any further text.
