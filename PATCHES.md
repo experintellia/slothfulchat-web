@@ -492,11 +492,12 @@ exists:
   `Promise<string>`, which the browser targets hand straight to `ClipboardItem`.
   `desktop/0079`
 
-- **Reply threads, Telegram-style** — a message that has replies shows a small
-  bubble icon with the reply count next to its timestamp; clicking it opens a
-  thread dialog rendering the whole reply chain (root plus nested replies, any
-  depth and branching) as regular message bubbles, refreshed live on the
-  chat's events, with the usual quote-click jump landing back in the chat.
+- **Reply threads, Telegram-style** — a message that has replies shows a
+  reply-arrow icon with the reply count before its timestamp; clicking it
+  opens a thread dialog rendering the whole reply chain (root plus nested
+  replies, any depth and branching) as regular message bubbles, refreshed
+  live on the chat's events, with the usual quote-click jump landing back in
+  the chat. The icon is Google's Material Symbols "reply" glyph.
   Core gains `get_message_reply_count` / `get_message_reply_thread` plus an
   index on the previously unindexed `msgs.mime_in_reply_to`: the count is one
   indexed `COUNT(*)` of direct replies, the thread one recursive CTE down

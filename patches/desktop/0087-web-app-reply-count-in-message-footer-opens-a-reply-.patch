@@ -7,26 +7,31 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-Messages that have replies now show a chat-bubble icon plus count next to
-the timestamp, in the same shape as the broadcast view counter. Clicking
-it opens a Telegram-style thread dialog that renders the whole reply
-chain — root message plus nested replies, resolved and sorted by core via
-the new getMessageReplyCount/getMessageReplyThread jsonrpc calls — as
-regular message bubbles, refreshed on the chat's MsgsChanged events. The
-dialog wraps the bubbles in its own ReactionsBarProvider (dialogs render
-outside the message list's instance), and jumping to a message from a
-quote inside the dialog closes it through the existing __closeAllDialogs
-hook, landing in the chat as usual.
+Messages that have replies now show a reply-arrow icon plus count before
+the timestamp in the metadata footer, in the same shape as the broadcast
+view counter. Clicking it opens a Telegram-style thread dialog that
+renders the whole reply chain — root message plus nested replies,
+resolved and sorted by core via the new getMessageReplyCount/
+getMessageReplyThread jsonrpc calls — as regular message bubbles,
+refreshed on the chat's MsgsChanged events. The dialog wraps the bubbles
+in its own ReactionsBarProvider (dialogs render outside the message
+list's instance), and jumping to a message from a quote inside the
+dialog closes it through the existing __closeAllDialogs hook, landing
+in the chat as usual. The reply icon is Google's Material Symbols
+"reply" glyph, added as images/icons/reply.svg alongside the project's
+other Material icon assets.
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  _locales/_untranslated_en.json                |   7 +
+ images/icons/reply.svg                        |   1 +
  packages/frontend/scss/message/_metadata.scss |  24 +++-
  .../dialogs/ReplyThread.module.scss           |  17 +++
  .../src/components/dialogs/ReplyThread.tsx    | 125 ++++++++++++++++++
  .../src/components/message/Message.tsx        |   1 +
- .../components/message/MessageMetaData.tsx    |  85 ++++++++++++
- 6 files changed, 256 insertions(+), 3 deletions(-)
+ .../components/message/MessageMetaData.tsx    |  84 ++++++++++++
+ 7 files changed, 256 insertions(+), 3 deletions(-)
+ create mode 100644 images/icons/reply.svg
  create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.tsx
 
@@ -47,8 +52,15 @@ index 7405e25..dfe4fcc 100644
 +    "other": "%d replies"
    }
  }
+diff --git a/images/icons/reply.svg b/images/icons/reply.svg
+new file mode 100644
+index 0000000..364c7d6
+--- /dev/null
++++ b/images/icons/reply.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#1f1f1f"><path d="M760-200v-160q0-50-35-85t-85-35H273l144 144-57 56-240-240 240-240 57 56-144 144h367q83 0 141.5 58.5T840-360v160h-80Z"/></svg>
 diff --git a/packages/frontend/scss/message/_metadata.scss b/packages/frontend/scss/message/_metadata.scss
-index 7f82294..6129633 100644
+index 7f82294..4a0fccd 100644
 --- a/packages/frontend/scss/message/_metadata.scss
 +++ b/packages/frontend/scss/message/_metadata.scss
 @@ -19,7 +19,8 @@
@@ -78,7 +90,7 @@ index 7f82294..6129633 100644
 +  .replyCount {
 +    @include mixins.button-reset;
 +    cursor: pointer;
-+    margin-inline-start: 1ch;
++    margin-inline-end: 0.5ch;
 +  }
    .viewCount {
      margin-inline-start: 1ch;
@@ -99,9 +111,9 @@ index 7f82294..6129633 100644
    }
 +  .replyCountIcon {
 +    @include mixins.color-svg(
-+      './images/icons/chat_bubble.svg',
++      './images/icons/reply.svg',
 +      currentColor,
-+      $line-height - 4px
++      $line-height
 +    );
 +    width: $line-height;
 +    height: $line-height;
@@ -275,7 +287,7 @@ index 9ebcadb..911984e 100644
                direction={direction}
                status={status}
 diff --git a/packages/frontend/src/components/message/MessageMetaData.tsx b/packages/frontend/src/components/message/MessageMetaData.tsx
-index 4c86c98..c1420d8 100644
+index 4c86c98..f2514d1 100644
 --- a/packages/frontend/src/components/message/MessageMetaData.tsx
 +++ b/packages/frontend/src/components/message/MessageMetaData.tsx
 @@ -11,6 +11,8 @@ import { useRpcFetch } from '../../hooks/useFetch'
@@ -303,20 +315,19 @@ index 4c86c98..c1420d8 100644
      encrypted,
      direction,
      status,
-@@ -103,6 +107,12 @@ export default function MessageMetaData(props: Props) {
-       />
-       <span className='spacer' />
- 
+@@ -95,6 +99,11 @@ export default function MessageMetaData(props: Props) {
+       <div className='aria-live-wrapper' aria-live='polite'>
+         {isEdited && <span className='edited'>{tx('edited')}</span>}
+       </div>
 +      <ReplyCount
 +        messageId={messageId}
 +        chatId={chatId}
 +        tabindexForInteractiveContents={tabindexForInteractiveContents}
 +      />
-+
-       {chatType === 'OutBroadcast' &&
-         // Don't show while sending, to reduce content shifting,
-         // because we'd be showing the "sending..." icon then,
-@@ -288,6 +298,81 @@ function ViewCount(props: { messageId: number }) {
+       <Timestamp
+         timestamp={timestamp}
+         extended
+@@ -288,6 +297,81 @@ function ViewCount(props: { messageId: number }) {
    )
  }
  
