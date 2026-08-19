@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 15 Aug 2026 01:24:33 +0000
-Subject: [PATCH 86/86] web-app: "what's new" device message per release
+Subject: [PATCH 86/87] web-app: "what's new" device message per release
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
