@@ -2061,8 +2061,13 @@ function bridgeOptions(): { url: string; description: string }[] {
   return options
 }
 
-/** Reachable = a WS to the bridge's /dns health endpoint opens (it replies with
- * JSON then closes). Down = error/close before open, or timeout. */
+/** Reachable = the bridge's /dns health endpoint actually ANSWERS — a JSON
+ * array of IPs, which /dns/localhost is hardcoded to send everywhere (see
+ * ws-tcp-proxy.mjs). The handshake alone proves nothing: a reverse proxy that
+ * forwards the `/bridge` prefix instead of stripping it upgrades the socket
+ * happily and then rejects every request, because the bridge reads the first
+ * path segment as the endpoint kind. That must report as down, not fine.
+ * Down = no/garbled reply, error/close before it, or timeout. */
 function probeBridge(url: string, timeoutMs = 3000): Promise<boolean> {
   return new Promise(resolve => {
     let ws: WebSocket
@@ -2085,8 +2090,15 @@ function probeBridge(url: string, timeoutMs = 3000): Promise<boolean> {
       resolve(ok)
     }
     const timer = setTimeout(() => finish(false), timeoutMs)
-    ws.onopen = () => finish(true)
-    ws.onmessage = () => finish(true)
+    ws.onmessage = e => {
+      try {
+        // an old bridge that couldn't resolve 'localhost' answers [] — still a
+        // bridge, so the shape is what counts, not the contents
+        finish(Array.isArray(JSON.parse(String(e.data))))
+      } catch {
+        finish(false) // something answered, but it isn't a bridge
+      }
+    }
     ws.onerror = () => finish(false)
     ws.onclose = () => finish(false)
   })
