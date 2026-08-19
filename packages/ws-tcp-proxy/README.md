@@ -6,7 +6,7 @@ connections and DNS lookups through this WebSocket bridge. **TLS terminates
 inside the wasm core** — the bridge only ever relays ciphertext, it never sees
 your credentials or messages.
 
-It's a single ~130-line file (plus an optional second one for the off-by-default
+It's a single ~300-line file (plus an optional second one for the off-by-default
 [unfurl endpoint](#unfurl-endpoint-optional-for-link-previews)). Read it before
 you run it — that's the point.
 
@@ -73,8 +73,28 @@ empty allowlist **refuses to start**.
 | `PORT` | Port to listen on. | `8641` |
 | `HOST` | Bind address. `0.0.0.0` (or one interface address) to expose it; then `CHATMAIL_ALLOWLIST` is mandatory. | `127.0.0.1` |
 | `CHATMAIL_ALLOWLIST` | Comma-separated chatmail domains the bridge may reach. | empty (allow all) |
+| `MAX_CONNECTIONS` | Open tunnels served in total. | `512` |
+| `MAX_CONNECTIONS_PER_IP` | Open tunnels one client may hold. | `16` |
+| `TUNNEL_CONNECT_MS` | Dial deadline for a tunnel's TCP connection. | `10000` |
+| `TUNNEL_IDLE_MS` | Silence before a tunnel is dropped. Keep it well above your IMAP `IDLE` interval. | `1800000` |
+| `TRUST_PROXY` | `1`: read the client address from `X-Forwarded-For` rather than the socket. Only where your reverse proxy overwrites that header — otherwise it is a limit bypass. | off |
 | `UNFURL` | `1`/`0` to force the link-preview endpoint on/off. | on iff no allowlist |
 | `UNFURL_DEADLINE_MS` | Wall-clock ceiling for one unfurl (redirects + page + image together). | `20000` |
+
+## Resource limits
+
+The bridge is meant to survive a hostile or broken client, so it also caps what
+one can consume: 256 KB per WebSocket frame (IMAP/SMTP records are kilobytes),
+512 open tunnels overall and 16 per client, 120 new connections per client per
+minute, a 10 s dial deadline, a 30 min idle deadline and a 12 h hard lifetime
+per tunnel, a 30 s ping that reaps peers which vanished without closing, and
+backpressure in both directions — if either side stops reading, the bridge
+stops reading from the other rather than buffering the difference in memory.
+
+Resolved-IP authorizations (the allowlist above) are remembered **per client**:
+one client resolving an allowlisted domain does not open that IP for anyone
+else, which matters when an allowlisted domain shares an address with unrelated
+services.
 
 ## Unfurl endpoint (link previews)
 
@@ -103,8 +123,9 @@ socket's own `lookup`, so a rebinding resolver can't swap the address —
 literal-IP hosts are checked separately); redirects (max 5) re-run the checks
 per hop; 1 MB page / 4 MB image caps; 15 s per-socket inactivity timeout plus a
 20 s absolute deadline shared by every hop of one unfurl; 30 requests/min per
-client. Log lines name a target's scheme and host only, never its path or
-query — those routinely carry share tokens.
+client and at most 4 unfurls in flight at a time. Log lines name a target's
+scheme and host only, never its path or query — those routinely carry share
+tokens.
 
 (`UNFURL_ALLOW_PRIVATE=1` disables the private-IP guard for the test suite —
 never set it on a real deployment.) Note that recent Chromium blocks pages

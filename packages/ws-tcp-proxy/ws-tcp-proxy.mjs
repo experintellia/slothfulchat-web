@@ -24,6 +24,15 @@
 // CHATMAIL_ALLOWLIST is set (a vetted hosted bridge shouldn't silently fetch
 // arbitrary pages); UNFURL=1 / UNFURL=0 overrides either way.
 //
+// Resource limits (the numbers live in one block below): a frame-size cap, a
+// global and a per-client connection cap, new-connections-per-minute per
+// client, connect/idle/lifetime deadlines, a ping reap for vanished peers and
+// backpressure in both directions. Tunable: MAX_CONNECTIONS,
+// MAX_CONNECTIONS_PER_IP, TUNNEL_CONNECT_MS, TUNNEL_IDLE_MS. Per-client limits
+// key on the socket's peer address; behind a reverse proxy that is the proxy
+// for everyone, so set TRUST_PROXY=1 there — but only where the proxy itself
+// overwrites X-Forwarded-For.
+//
 // ponytail: still a single inspectable file — no auth, the bind address + the
 // optional domain allowlist are the only guards. A hostile authoritative DNS
 // server for an allowlisted domain could point it at an internal IP (SSRF);
@@ -39,11 +48,33 @@ import { createServer } from 'node:http';
 import { connect, isIP, BlockList } from 'node:net';
 import { resolve4, resolve6 } from 'node:dns/promises';
 import { WebSocketServer } from 'ws';
-import { unfurlHandler } from './unfurl.mjs';
+import { unfurlHandler, clientIp, rateLimited } from './unfurl.mjs';
 
 const PORT = Number(process.env.PORT ?? 8641);
 const HOST = process.env.HOST || '127.0.0.1'; // `||`: an empty HOST is unset, not a wildcard bind
 const ALLOWED_TCP_PORTS = new Set([143, 465, 587, 993]);
+
+// Resource limits. Sized for what this protocol actually does, so one client
+// (or one stuck server) can't consume the bridge for everybody.
+// One inbound WS frame. NOT the size of a mail or an attachment: a big
+// attachment arrives as thousands of frames, not one. maxPayload is receive-side
+// only, so downloads (bridge→browser) don't pass through it at all; what it
+// bounds is browser→bridge, where the core pumps the tunnel through
+// tokio's copy_bidirectional (8 KB buffer, patches/core/0005) — so real frames
+// are ≤8 KB and TLS caps a record at 16 KB regardless. 256 KB is headroom.
+const MAX_PAYLOAD = 256 * 1024;
+const MAX_BUFFERED = 1024 * 1024; // per direction, before we stop reading (see below)
+const MAX_CONNS = Number(process.env.MAX_CONNECTIONS) || 512; // whole bridge
+const MAX_CONNS_PER_IP = Number(process.env.MAX_CONNECTIONS_PER_IP) || 16;
+const NEW_CONNS_PER_MIN = 120; // per client; a reconnect storm is not 120/min
+const CONNECT_MS = Number(process.env.TUNNEL_CONNECT_MS) || 10_000; // dial deadline
+// Idle deadline. Generous because an IMAP IDLE connection is legitimately
+// silent for minutes at a time — cut this too short and you drop live mail
+// connections. Dead-but-not-closed peers are caught by the ping reap instead.
+const IDLE_MS = Number(process.env.TUNNEL_IDLE_MS) || 30 * 60_000;
+const MAX_TUNNEL_MS = 12 * 60 * 60_000; // absolute lifetime; the client reconnects
+const PING_MS = 30_000;
+const perIp = new Map(); // client ip -> open connections
 
 // Allowlist mode: empty env => allow-all (unchanged behavior).
 // CHATMAIL_WHITELIST is the deprecated pre-0.1.2 name; drop the fallback when
@@ -55,7 +86,7 @@ const ALLOWLIST = (process.env.CHATMAIL_ALLOWLIST ?? process.env.CHATMAIL_WHITEL
   .map(s => s.trim().toLowerCase())
   .filter(Boolean);
 const ALLOW_TTL_MS = 10 * 60 * 1000; // temporary: resolved IPs expire after 10 min
-const allowedIps = new Map(); // ip -> expiresAt (ms)
+const allowedIps = new Map(); // "clientIp|resolvedIp" -> expiresAt (ms)
 
 // Reachable-from-the-network + no allowlist = an open relay to every mail
 // server's IMAP/SMTP ports for anyone who can reach the port. Refuse that
@@ -94,11 +125,22 @@ const isAllowlisted = host => {
   const h = host.toLowerCase();
   return ALLOWLIST.some(d => h === d || h.endsWith('.' + d));
 };
-const ipAllowed = ip => {
-  const expires = allowedIps.get(ip);
+// The allow-list is keyed per requesting client, not globally: one client
+// resolving an allowlisted domain must not authorize that IP for everybody
+// else. Allowlisted chatmail domains can share an address with unrelated
+// services (CDN, shared hosting), and a global key would open 143/465/587/993
+// at that address for every client on the bridge.
+const allowIps = (client, ips) => {
+  if (allowedIps.size > 10_000) allowedIps.clear(); // bounded; entries are TTL'd anyway
+  const expires = Date.now() + ALLOW_TTL_MS;
+  for (const ip of ips) allowedIps.set(`${client}|${ip}`, expires);
+};
+const ipAllowed = (client, ip) => {
+  const key = `${client}|${ip}`;
+  const expires = allowedIps.get(key);
   if (expires === undefined) return false;
   if (expires < Date.now()) {
-    allowedIps.delete(ip);
+    allowedIps.delete(key);
     return false;
   }
   return true;
@@ -110,11 +152,26 @@ const server = createServer((req, res) => {
   res.statusCode = 404;
   res.end();
 });
-const wss = new WebSocketServer({ server });
+// maxPayload: ws defaults to 100 MiB per frame, which one client can make us
+// allocate at will. See MAX_PAYLOAD for why 256 KB is not a limit on mail size.
+const wss = new WebSocketServer({ server, maxPayload: MAX_PAYLOAD });
 // 'error' on a ws/http server or a socket is an unhandled throw with no
 // listener, i.e. one bad client kills the bridge for every connected user.
 wss.on('error', err => console.error('ws server error:', err.message));
 server.on('clientError', (err, socket) => socket.destroy());
+
+// Reap blackholed peers: a client that vanished (lid closed, NAT dropped the
+// mapping) never sends a FIN, so without a heartbeat its tunnel — and the TCP
+// connection behind it — would stay open forever.
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) ws.terminate();
+    else {
+      ws.isAlive = false;
+      ws.ping();
+    }
+  }
+}, PING_MS).unref();
 
 wss.on('connection', async (ws, req) => {
   // Attach before anything else, and before the first await below: a malformed
@@ -127,6 +184,30 @@ wss.on('connection', async (ws, req) => {
     console.warn(`ws ${req.url}: ${err.message}`);
     socket?.destroy();
   });
+  ws.isAlive = true;
+  ws.on('pong', () => (ws.isAlive = true));
+
+  // Connection caps, counted per client and for the bridge as a whole. Checked
+  // here rather than in the upgrade handshake: one close frame is cheap, and a
+  // guard in the handler everyone already reads beats a second code path.
+  // 1013 = "try again later".
+  const client = clientIp(req);
+  const open = (perIp.get(client) ?? 0) + 1;
+  perIp.set(client, open);
+  ws.on('close', () => {
+    const n = perIp.get(client) - 1;
+    if (n > 0) perIp.set(client, n);
+    else perIp.delete(client);
+  });
+  if (
+    wss.clients.size > MAX_CONNS ||
+    open > MAX_CONNS_PER_IP ||
+    rateLimited(`ws|${client}`, NEW_CONNS_PER_MIN)
+  ) {
+    console.warn(`ws ${req.url}: refused, ${client} over the connection limit`);
+    ws.close(1013, 'busy');
+    return;
+  }
   const [, kind, host, port] = req.url.split('/');
   if (kind === 'dns') {
     // localhost is answered from a hardcoded reply, never the resolver: the
@@ -137,10 +218,7 @@ wss.on('connection', async (ws, req) => {
     // through to /tcp — otherwise the health check never opens a tunnel.
     if (host && host.toLowerCase() === 'localhost') {
       const loopback = ['127.0.0.1', '::1'];
-      if (ALLOWLIST.length && isAllowlisted(host)) {
-        const expires = Date.now() + ALLOW_TTL_MS;
-        for (const ip of loopback) allowedIps.set(ip, expires);
-      }
+      if (ALLOWLIST.length && isAllowlisted(host)) allowIps(client, loopback);
       ws.send(JSON.stringify(loopback));
       ws.close();
       return;
@@ -149,11 +227,8 @@ wss.on('connection', async (ws, req) => {
       const [v4, v6] = await Promise.allSettled([resolve4(host), resolve6(host)]);
       const ips = [...(v4.value ?? []), ...(v6.value ?? [])];
       // In allowlist mode, remember IPs resolved for an allowlisted domain so
-      // the /tcp handler will let the core connect to them.
-      if (ALLOWLIST.length && isAllowlisted(host)) {
-        const expires = Date.now() + ALLOW_TTL_MS;
-        for (const ip of ips) allowedIps.set(ip, expires);
-      }
+      // the /tcp handler will let *this* client connect to them.
+      if (ALLOWLIST.length && isAllowlisted(host)) allowIps(client, ips);
       ws.send(JSON.stringify(ips));
     } catch (err) {
       ws.send(JSON.stringify([]));
@@ -165,22 +240,52 @@ wss.on('connection', async (ws, req) => {
     ws.close(4003, 'forbidden');
     return;
   }
-  if (ALLOWLIST.length && !ipAllowed(host)) {
+  if (ALLOWLIST.length && !ipAllowed(client, host)) {
     console.warn(`tcp ${host}:${port} blocked (not on the allowlist)`);
     ws.close(4003, 'forbidden');
     return;
   }
   console.log(`tcp ${host}:${port} open`);
   socket = connect(Number(port), host);
-  socket.on('data', (data) => ws.readyState === ws.OPEN && ws.send(data));
-  socket.on('close', () => ws.close());
+  // Deadlines. setTimeout's idle timer already runs during the dial (no bytes
+  // flow yet), so the same timer is the connect deadline first and the idle
+  // deadline once connected. Plus a hard lifetime cap, so a tunnel that stays
+  // just-barely-active can't be held open indefinitely.
+  socket.setTimeout(CONNECT_MS);
+  socket.on('timeout', () => socket.destroy(new Error('timed out')));
+  socket.on('connect', () => socket.setTimeout(IDLE_MS));
+  const lifetime = setTimeout(() => socket.destroy(new Error('max lifetime')), MAX_TUNNEL_MS);
+
+  // Backpressure, both directions: whichever side is slower must throttle the
+  // other, or we buffer the difference in this process until it dies.
+  //   tcp→ws: ws has no 'drain'. ws.bufferedAmount is the queue, and send()'s
+  //     callback fires once that frame has left it — so pause the TCP socket
+  //     when the queue passes the mark and resume from a callback that sees it
+  //     drained. Callbacks run in order and a paused socket queues nothing new,
+  //     so the last one always observes an empty queue: no missed resume.
+  //   ws→tcp: write() returning false means the kernel buffer is full; ws.pause()
+  //     stops reading further frames until the socket drains.
+  socket.on('data', (data) => {
+    if (ws.readyState !== ws.OPEN) return;
+    ws.send(data, () => ws.bufferedAmount < MAX_BUFFERED && socket.resume());
+    if (ws.bufferedAmount >= MAX_BUFFERED) socket.pause();
+  });
+  ws.on('message', (data) => {
+    if (!socket.write(data)) ws.pause();
+  });
+  socket.on('drain', () => ws.resume());
+
+  socket.on('close', () => {
+    clearTimeout(lifetime);
+    ws.close();
+  });
   socket.on('error', (err) => {
     console.error(`tcp ${host}:${port}:`, err.message);
     ws.close(4004, err.code ?? 'tcp error');
   });
-  ws.on('message', (data) => socket.write(data));
   ws.on('close', () => {
     console.log(`tcp ${host}:${port} closed`);
+    clearTimeout(lifetime);
     socket.destroy();
   });
 });
