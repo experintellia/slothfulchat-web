@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 20 Aug 2026 13:45:35 +0000
+Subject: [PATCH 87/87] web-app: only offer the copy context-menu entry when
+ there is something to copy
+
+The context menu's copy entry ("Copy Text"/"Copy Selection"/"Copy Email")
+was gated on `text !== ''`. But the caller passes `text: text || undefined`,
+so a message without a caption arrives as `undefined`, not `''`, and the
+guard was true for every message. A caption-less image therefore always
+offered "Copy Text", whose action (`text && writeClipboardText(text)`) does
+nothing at all.
+
+Gate on the truthiness of the three things the entry can actually copy
+instead: a live selection, a clicked email address, or non-empty message
+text. A caption-less image now hides the entry, unless text is selected --
+e.g. inside a quoted message, where "Copy Selection" stays available and
+works.
+
+Also fix `textSelected`: `getSelectedText()` returns `string | undefined`
+and never `null`, so the old `selectedText !== null` check made it true
+when there was no selection at all. That was harmless while the entry also
+required message text; now that a selection alone can show it, it would
+have offered a "Copy Selection" that copies `undefined`.
+---
+ packages/frontend/src/components/message/Message.tsx | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index 9ebcadb..5fecab4 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -301,7 +301,7 @@ function buildContextMenu(
+     clickTarget?.getAttribute('x-target-url') || clickTarget?.href || ''
+   // grab selected text before clicking, otherwise the selection might be already gone
+   const selectedText = getSelectedText()
+-  const textSelected: boolean = selectedText !== null && selectedText !== ''
++  const textSelected: boolean = Boolean(selectedText)
+ 
+   const isSavedMessage = message.savedMessageId !== null
+ 
+@@ -437,8 +437,11 @@ function buildContextMenu(
+         label: tx('menu_copy_link_to_clipboard'),
+         action: () => runtime.writeClipboardText(link),
+       },
+-    // copy item (selection or all text)
+-    text !== '' && copy_item,
++    // copy item (selection, email, or all text). `text` is `undefined` (not
++    // `''`) when the message has no caption, so this has to be a truthiness
++    // check. A caption-less image can still have a selection worth copying,
++    // e.g. from a quoted message.
++    Boolean(textSelected || email || text) && copy_item,
+     // Copy image
+     showCopyImage && {
+       label: tx('menu_copy_image_to_clipboard'),
