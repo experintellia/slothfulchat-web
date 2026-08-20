@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 20 Aug 2026 13:45:35 +0000
+Subject: [PATCH 87/87] web-app: keep Copy Selection available on caption-less
+ messages
+
+The context menu's copy entry ("Copy Text"/"Copy Selection"/"Copy
+Email") was gated on the message having its own text: `text !== '' &&
+copy_item`. An image (or any attachment) with no caption has
+`text === ''`, so the entry vanished entirely -- including "Copy
+Selection", even when the right-click landed on a text selection made
+elsewhere in the bubble, e.g. inside a quoted message. Selecting a
+quote's text and copying it from a caption-less image stopped working.
+
+Gate on there being something to copy instead: a live selection, a
+clicked email, or non-empty message text. A caption still hides the
+entry once none of the three apply, same as before.
+---
+ packages/frontend/src/components/message/Message.tsx | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index 9ebcadb..0f72152 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -437,8 +437,9 @@ function buildContextMenu(
+         label: tx('menu_copy_link_to_clipboard'),
+         action: () => runtime.writeClipboardText(link),
+       },
+-    // copy item (selection or all text)
+-    text !== '' && copy_item,
++    // copy item (selection, email, or all text) — a caption-less image can
++    // still have a selection worth copying, e.g. from a quoted message.
++    (textSelected || Boolean(email) || text !== '') && copy_item,
+     // Copy image
+     showCopyImage && {
+       label: tx('menu_copy_image_to_clipboard'),
