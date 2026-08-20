@@ -578,6 +578,12 @@ contribution intended.
   database but no `ChatModified` event told the UI to re-check it (broadcast
   joins already worked, since a broadcast's `can_send` doesn't depend on the
   handshake). Backport of upstream chatmail/core#7735. `core/0026`, `core/0027`
+- The context menu's copy entry was gated on the message having its own text
+  (`text !== ''`), so a caption-less image (or any other attachment) hid
+  "Copy Selection" too, even with text selected elsewhere in the bubble —
+  e.g. a quoted message's text. It now shows whenever there is something to
+  copy: a live selection, a clicked email, or non-empty message text.
+  `desktop/0087`
 
 ## UI & mobile polish
 
