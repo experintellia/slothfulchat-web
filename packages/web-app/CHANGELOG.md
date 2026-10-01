@@ -6,6 +6,10 @@
   tapping download left a spinner that never stopped. It now reports the
   failure right away, with the retry button next to it.
 
+- **Hardening**: bumped DOMPurify (used to sanitize HTML email before display)
+  to 3.4.16, which fixes a low-severity cross-site scripting issue in the
+  sanitizer.
+
 ## 0.9.1 — 2026-08-15
 
 - Same app as 0.9.0, re-released because 0.9.0's packages never reached npm:
