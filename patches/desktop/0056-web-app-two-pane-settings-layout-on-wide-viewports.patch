@@ -21,7 +21,7 @@ exact same content; SettingsIconButton gains an 'active' highlight
  3 files changed, 278 insertions(+), 121 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 1abbb9d..76b551e 100644
+index 7c6a6ae..5bdf714 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
 @@ -1,4 +1,4 @@
@@ -241,9 +241,9 @@ index 1abbb9d..76b551e 100644
 +  }
 +
    return (
-     <Dialog
-       onClose={onClose}
-@@ -67,66 +253,7 @@ export default function Settings({ onClose }: DialogProps) {
+     <Dialog onClose={onClose} fixed width={400} dataTestid='settings-dialog'>
+       <DialogHeader
+@@ -61,66 +247,7 @@ export default function Settings({ onClose }: DialogProps) {
          dataTestid='settings'
        />
        <DialogBody>
@@ -311,7 +311,7 @@ index 1abbb9d..76b551e 100644
        </DialogBody>
      </Dialog>
    )
-@@ -140,72 +267,28 @@ function SettingsSectionDialog(
+@@ -134,16 +261,11 @@ function SettingsSectionDialog(
  ) {
    const { settingsMode, onClose: closeThisDialog } = props
    const tx = useTranslationFunction()
@@ -327,7 +327,11 @@ index 1abbb9d..76b551e 100644
 -  } as const satisfies Partial<Parameters<typeof DialogHeader>[0]>
  
    return (
-     <Dialog onClose={closeThisDialog} fixed width={400} fullscreenOnMobile>
+     <Dialog
+@@ -152,59 +274,20 @@ function SettingsSectionDialog(
+       width={400}
+       dataTestid='settings-section-dialog'
+     >
 -      {settingsMode === 'chats_and_media' && (
 -        <>
 -          <DialogHeader title={tx('pref_chats')} {...commonHeaderProps} />
