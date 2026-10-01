@@ -6,6 +6,38 @@
   tapping download left a spinner that never stopped. It now reports the
   failure right away, with the retry button next to it.
 
+## 0.9.1 — 2026-08-15
+
+- Same app as 0.9.0, re-released because 0.9.0's packages never reached npm:
+  a bug in our publish workflow made it read each tarball's path as a GitHub
+  repository name. Nothing changed in the code — if you are already on 0.9.0,
+  there is nothing here for you.
+
+## 0.9.0 — 2026-08-15
+
+- **Each release now says what changed, in your device chat.** A short summary
+  of the release arrives as one message per version — starting with this one.
+  Delta Chat's own "what's new in 2.0" message is gone: it described an upgrade
+  from a version this app never had.
+
+- **Recording a voice message on a phone shows the sound level again, on one
+  row.** The recorder used to wrap onto two half-empty rows with no level
+  meter at all. It now fits a single row with the meter visible, and the
+  Cancel/OK buttons are bigger and easier to hit.
+
+- **The confusing "Voice quality" button is now a setting you can actually
+  test.** It sat in the recording bar, where it only appeared while a
+  recording was already running — too late to affect it — and its label
+  changed name depending on whether it was on. It is now "Record without
+  noise filtering" under Settings → Experimental, with a button that records
+  a few seconds and plays them back so you can hear the difference.
+
+- **Throwing away a voice recording no longer locks it instead.** Sliding the
+  record button up and to the left to discard a recording could latch it into
+  hands-free mode. Two smaller recorder fixes ride along: repeatedly denying
+  the microphone prompt could leave recording broken until a reload, and the
+  recorder's buttons kept their desktop spacing on narrow phone screens.
+
 - **The bridge picker can no longer get stuck behind the welcome screen.** Open
   it while the app was still starting up and it could end up underneath the
   screen that appeared a moment later: greyed out, none of its buttons
@@ -231,11 +263,20 @@
   call now offers **Accept** (audio only) and **Accept with video**, so the
   person calling you can't decide whether your camera starts. You can still
   switch the camera on at any point once the call is connected.
+- **A large attachment now says what it is before you download it.** In
+  encrypted chats a big file arrives as a placeholder first, and that used to
+  be a bare "[Image – 228 KiB] - Download" line. It is now a card matched to
+  the kind of file — picture, video, audio, document or app — showing the size
+  and a small blurred preview, with a proper download button.
 - Large videos now show a preview frame while they are still waiting to be
   downloaded: the poster is grabbed from the video when you attach it, so the
   recipient sees what is coming before spending the bandwidth.
 - Downloading a big message now shows a live percentage on the message bubble,
   and an interrupted download continues where it stopped.
+- **Encryption no longer makes the app stutter.** Generating your key and
+  encrypting or decrypting a big message now happen out of the way of
+  everything else, so the app keeps responding while they run — most
+  noticeable on phones, where it used to freeze for a second or more.
 - **Long messages are no longer cut off**: message text used to be trimmed to
   38 lines when it was saved, with the rest tucked away behind "Show Full
   Message" — which also made long messages uneditable. The full text is now

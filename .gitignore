@@ -5,3 +5,7 @@ dist/
 wasm-dist/
 .cache/
 *.log
+# Claude Code parks per-agent git worktrees here during a workflow run; they're
+# live checkouts of this same repo, removed when the run ends. The rest of
+# .claude/ (hooks, settings, workflows) stays tracked.
+.claude/worktrees/

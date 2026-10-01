@@ -155,8 +155,26 @@ exists:
   and demotes the waveform to a 2px progress hairline)), and per-message
   player identity via an inert `#msg=<id>` src fragment, so a forwarded
   copy of a voice message no longer plays and auto-advances in lockstep
-  with the original (peaks stay cached once per underlying file).
-  `desktop/0072` – `desktop/0074`
+  with the original (peaks stay cached once per underlying file). Follow-up
+  fixes: the live pointermove handler now routes through `classifyGesture` so
+  a diagonal up-and-left flick cancels instead of latching the hands-free
+  lock, `MicRecorder.start()` closes the `AudioContext` it opened when
+  `getUserMedia` rejects (repeated denials otherwise hit the browser's
+  concurrent-context cap), and the phone-width button margins are prefixed
+  with `.audioRecorder` so they out-rank the base block's nested rules.
+  The "original audio" toggle then moved out of the recording row into
+  Settings → Experimental → Composer (issue #179): as a pill it was only
+  reachable while a take was running, which is the one moment it cannot
+  apply, and its label swapped nouns by state. With the pill gone and the
+  85px fixed width off Cancel/OK, the phone row fits
+  pause+mic+timer+meter+picker+buttons on one line, so the level meter no
+  longer has to be hidden to make room and the buttons clear the 40px
+  touch target. A "Test the microphone" row next to the switch records a
+  5s clip and plays it back, and reports whether the browser honored the
+  advisory constraints — record-then-play rather than live monitoring,
+  since the anti-howl mitigation is the echo cancellation this setting
+  disables. `desktop/0072` – `desktop/0074`, `desktop/0082` –
+  `desktop/0085`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
@@ -432,7 +450,10 @@ exists:
   keeps alive — the same slot the mobile clients use, so no new param and no
   storage of its own. The video card labels itself "Video · 0:23" rather than
   showing a play glyph, which would offer a click that cannot do anything until
-  the attachment is downloaded. `core/0022-0023`, `desktop/0068-0069`
+  the attachment is downloaded. The audio card follows the custom voice player
+  when that is enabled, so a placeholder no longer reflows into a different
+  shape the moment the download finishes. `core/0022-0023`,
+  `desktop/0068-0069`, `desktop/0080`
 
 - **Length and size of the media we send** — core measures images itself, but it
   has no audio or video decoder, so nothing ever set `Param::Duration` on an
@@ -635,7 +656,14 @@ contribution intended.
   welcome message the app adds one of its own: what the fork does differently,
   that everything lives in this browser and should be backed up (unencrypted),
   that it's a prototyping ground, and where to report bugs / self-host.
-  `core/0030`, `desktop/0078`
+  Each release then adds one "what's new" message from a table in
+  `deviceMessages.ts` — for most users the only release note they will ever
+  read, so RELEASING.md requires a human to approve the text. It is a table
+  rather than a patch per release so later releases amend one patch instead
+  of growing the stack; the `changelog-version-<v>` label makes core drop
+  repeats. Upstream's own `changelog-version-2.3.0` entry is dropped with it:
+  it announces what Delta Chat 2.0 brought over 1.x, and no SlothfulChat
+  release predates that. `core/0030`, `desktop/0078`, `desktop/0086`
 - **Hidden upstream UI that can't work in this build** — proxy settings
   (unimplemented on wasm), the second-device / multi-device backup
   transfer flow (iroh doesn't run in browsers yet), and the experimental

@@ -143,6 +143,25 @@ test('a new version is staged', () => {
   match(r.stdout, /::notice::.*approve/)
 })
 
+// v0.9.0 shipped everywhere except npm because of this exact character. npm
+// resolves the argument as a package spec, and npm-package-arg matches the
+// GitHub shorthand `owner/repo` before it tries anything as a path, so a bare
+// `npm-tarballs/x.tgz` became a git dep:
+//   git ls-remote ssh://git@github.com/npm-tarballs/slothfulchat-core-wasm-0.9.0.tgz.git
+//   git@github.com: Permission denied (publickey).
+// Assert the shape, not one filename — a `./`-less path is the bug whatever it
+// is called.
+test('tarballs are passed as paths, not as GitHub owner/repo shorthands', () => {
+  const r = runStage({ 'a.tgz': '@slothfulchat/a@1.0.0', 'b.tgz': '@slothfulchat/b@1.0.0' })
+  strictEqual(r.status, 0, r.stdout)
+  const staged = r.calls.filter(c => c.startsWith('stage publish'))
+  strictEqual(staged.length, 2, r.calls.join(' | '))
+  for (const call of staged) {
+    const spec = call.split(' ')[2]
+    ok(spec.startsWith('./'), `npm would read ${spec} as github.com/${spec} — needs a ./ prefix`)
+  }
+})
+
 test('a re-run over an already-staged version continues instead of failing', () => {
   // The realistic partial train: a staged, b staged, c died. On the re-run
   // npm view still cannot see a and b (staged versions are invisible), so the
@@ -153,7 +172,7 @@ test('a re-run over an already-staged version continues instead of failing', () 
   )
   strictEqual(r.status, 0, r.stdout)
   strictEqual((r.stdout.match(/is already staged/g) ?? []).length, 2, r.stdout)
-  ok(r.calls.includes('stage publish npm-tarballs/c.tgz --access public --ignore-scripts'), r.calls.join(' | '))
+  ok(r.calls.includes('stage publish ./npm-tarballs/c.tgz --access public --ignore-scripts'), r.calls.join(' | '))
 })
 
 test('the CLI-owned "cannot publish over" conflict is tolerated too', () => {
@@ -173,7 +192,7 @@ test('any other staging failure stops the run', () => {
   ok(r.status !== 0, `a registry 500 was swallowed:\n${r.stdout}`)
   match(r.stdout, /500 Internal Server Error/) // the real error is surfaced, not eaten
   ok(
-    !r.calls.includes('stage publish npm-tarballs/b.tgz --access public --ignore-scripts'),
+    !r.calls.includes('stage publish ./npm-tarballs/b.tgz --access public --ignore-scripts'),
     'kept staging after a hard failure'
   )
 })
