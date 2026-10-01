@@ -71,7 +71,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  packages/frontend/src/backend/replyThreads.ts |  20 +++
  .../src/components/ChatView/ChatView.tsx      | 108 ++++++++++++-
  .../frontend/src/components/Icon/index.tsx    |   2 +
- .../src/components/composer/Composer.tsx      |  69 +++++++-
+ .../src/components/composer/Composer.tsx      |  79 ++++++++-
  .../src/components/message/Message.tsx        |  25 ++-
  .../src/components/message/MessageList.tsx    |  76 +++++++++
  .../message/MessageListAndComposer.tsx        |  20 ++-
@@ -82,7 +82,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  packages/frontend/src/stores/messagelist.ts   | 134 +++++++++++-----
  .../src/tests/replyThreadLayout.test.ts       |  41 +++++
  .../frontend/src/utils/replyThreadLayout.ts   |  58 +++++++
- 21 files changed, 822 insertions(+), 61 deletions(-)
+ 21 files changed, 832 insertions(+), 61 deletions(-)
  create mode 100644 images/icons/account_tree.svg
  create mode 100644 images/icons/reply.svg
  create mode 100644 images/icons/view_list.svg
@@ -463,7 +463,7 @@ index a3d7bba..e86224e 100644
  
  type IconColoring =
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index 0977055..b2749a6 100644
+index 0977055..4819db2 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
 @@ -26,7 +26,11 @@ import { useSettingsStore } from '../../stores/settings'
@@ -557,7 +557,7 @@ index 0977055..b2749a6 100644
    )
    const shiftPressed = useRef(false)
    const onEmojiSelect = (emoji: EmojiMartData) => {
-@@ -729,6 +764,30 @@ const Composer = forwardRef<
+@@ -729,6 +764,40 @@ const Composer = forwardRef<
                      />
                    </section>
                  )}
@@ -576,7 +576,17 @@ index 0977055..b2749a6 100644
 +                          type='button'
 +                          className={ghostStyles.labelButton}
 +                          style={{ marginInlineStart: 'auto' }}
-+                          onClick={() => setQuoteInDraft(latestThreadMsgId)}
++                          onClick={() => {
++                            // The full message when we have it: a bare ID
++                            // makes the draft refetch the quote, and a send
++                            // during that round-trip gets the quote put back.
++                            const latest = messageCache[latestThreadMsgId]
++                            setQuoteInDraft(
++                              latest?.kind === 'message'
++                                ? latest
++                                : latestThreadMsgId
++                            )
++                          }}
 +                        >
 +                          {tx('thread_reply_to_latest')}
 +                        </button>
@@ -588,7 +598,7 @@ index 0977055..b2749a6 100644
                <LinkPreviewGhost preview={linkPreview} />
                {trackingChip && (
                  <div
-@@ -853,6 +912,10 @@ const Composer = forwardRef<
+@@ -853,6 +922,10 @@ const Composer = forwardRef<
                    (!messageEditing.isEditingModeActive
                      ? composerSendMessage
                      : null) ??
