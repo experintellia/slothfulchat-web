@@ -60,7 +60,9 @@ export function initChatExport(
   blobUrl: (path: string) => string,
   save: (data: Uint8Array, name: string) => Promise<unknown>
 ): void {
-  ;(window as any).__slothfulExportChat = (
+  // async, so a throw from rpc() (getCore can refuse) rejects instead of
+  // escaping before the dialog has attached its .finally(onClose)
+  ;(window as any).__slothfulExportChat = async (
     chatId: number,
     options: ExportChatOptions
   ) => exportChatToZip(rpc(), blobUrl, save, chatId, options)
@@ -1352,8 +1354,15 @@ async function exportChatToZip(
   onProgress(1000)
   // anonymous analytics — the user exported a chat, with or without a custom
   // date range (yes = at least one date was filled); no-op when analytics is off
-  analytics.event('chat_export', {
-    custom_range: range.startTs !== null || range.endTs !== null ? 'yes' : 'no',
-  })
+  // guarded like __slothfulTrack: the file is already saved, so analytics must
+  // never turn this into "export failed"
+  try {
+    analytics.event('chat_export', {
+      custom_range:
+        range.startTs !== null || range.endTs !== null ? 'yes' : 'no',
+    })
+  } catch {
+    /* best-effort */
+  }
   return filename
 }
