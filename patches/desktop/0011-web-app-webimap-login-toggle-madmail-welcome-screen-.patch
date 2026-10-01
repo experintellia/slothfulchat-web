@@ -25,11 +25,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  .../frontend/src/components/LoginForm.tsx     |  17 +++
  .../components/Settings/DefaultCredentials.ts |   5 +-
  .../components/dialogs/ConnectivityDialog.tsx |   7 ++
- .../WelcomeScreen/InstantOnboardingScreen.tsx |  12 ++
  .../WelcomeScreen/OnboardingScreen.tsx        |  13 +++
  .../WelcomeScreen/UseWebimapServerDialog.tsx  | 109 ++++++++++++++++++
  .../screens/WelcomeScreen/UserAgreement.tsx   |   6 +
- 7 files changed, 168 insertions(+), 1 deletion(-)
+ 6 files changed, 156 insertions(+), 1 deletion(-)
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
 
 diff --git a/packages/frontend/src/components/LoginForm.tsx b/packages/frontend/src/components/LoginForm.tsx
@@ -103,29 +102,6 @@ index aa12862..3ec99b6 100644
        <button type='button' onClick={() => bridge.openDialog()}>
          Change…
        </button>
-diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
-index 58ab5d8..dc53ee4 100644
---- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
-+++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
-@@ -95,6 +95,18 @@ export default function InstantOnboardingScreen({
-     }
-   }
- 
-+  // webimap accounts don't use the WS→TCP bridge, so tell the runtime to hide
-+  // its "bridge not reachable" notice while onboarding one of them. (Standard
-+  // chatmail onboarding still shows it — those accounts do need the bridge.)
-+  const isWebimapOnboarding =
-+    welcomeQr?.qr.kind === 'account' && (welcomeQr.qr as any).webimap === true
-+  useEffect(() => {
-+    ;(window as any).__slothfulchatSuppressBridgeWarning = isWebimapOnboarding
-+    return () => {
-+      ;(window as any).__slothfulchatSuppressBridgeWarning = false
-+    }
-+  }, [isWebimapOnboarding])
-+
-   // do not do that inside of `onChangeDisplayName`,
-   // because that function is called on every keypress
-   const saveDisplayName = () =>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 index 044ff4c..d22373f 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
