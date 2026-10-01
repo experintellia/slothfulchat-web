@@ -5,8 +5,10 @@ Subject: [PATCH 87/87] web-app: Telegram-style reply threads as a message list
  mode
 
 A message that has replies shows a reply-arrow badge with the number of
-all replies below it (nested ones included) before its timestamp.
-Clicking the badge switches the message list into thread mode: it shows
+all replies below it (nested ones included) before its timestamp; a
+reply without replies of its own shows a count-less thread icon there
+instead (Material Symbols "forum"), so every message of a thread is a way
+into it. Clicking either switches the message list into thread mode: it shows
 only that reply thread (its root plus every reply below it, any depth
 and branching), scrolled to and highlighting the message you came from.
 
@@ -57,46 +59,48 @@ The published @deltachat/jsonrpc-client pin predates the new methods, so
 they're widened locally in backend/replyThreads.ts, same pattern as
 useMessage's MessageData. Icons are Google Material Symbols (reply,
 account_tree, view_list). New i18n keys: reply_thread, n_replies
-(plural), thread_reply_needs_quote, thread_reply_to_latest,
+(plural), thread_show, thread_reply_needs_quote, thread_reply_to_latest,
 thread_show_as_tree, thread_show_as_list, thread_close.
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
- _locales/_untranslated_en.json                |  22 +++
+ _locales/_untranslated_en.json                |  25 +++
  images/icons/account_tree.svg                 |   1 +
  images/icons/reply.svg                        |   1 +
+ images/icons/thread.svg                       |   1 +
  images/icons/view_list.svg                    |   1 +
  .../frontend/scss/composer/_composer.scss     |   6 +
  .../frontend/scss/message/_message-list.scss  |  11 ++
  packages/frontend/scss/message/_message.scss  |   9 +-
- packages/frontend/scss/message/_metadata.scss |  38 ++++-
+ packages/frontend/scss/message/_metadata.scss |  47 +++++-
  packages/frontend/src/backend/replyThreads.ts |  20 +++
  .../src/components/ChatView/ChatView.tsx      | 108 ++++++++++++-
  .../frontend/src/components/Icon/index.tsx    |   2 +
  .../src/components/composer/Composer.tsx      |  79 ++++++++-
- .../src/components/message/Message.tsx        |  25 ++-
+ .../src/components/message/Message.tsx        |  32 +++-
  .../src/components/message/MessageList.tsx    |  76 +++++++++
  .../message/MessageListAndComposer.tsx        |  20 ++-
- .../components/message/MessageMetaData.tsx    |  41 +++++
+ .../components/message/MessageMetaData.tsx    |  58 +++++++
  .../src/components/message/MessageWrapper.tsx |  23 ++-
  .../frontend/src/contexts/ChatContext.tsx     | 150 ++++++++++++++++++
  .../frontend/src/hooks/chat/useMessage.ts     |  33 +++-
  packages/frontend/src/stores/messagelist.ts   | 134 +++++++++++-----
  .../src/tests/replyThreadLayout.test.ts       |  41 +++++
  .../frontend/src/utils/replyThreadLayout.ts   |  58 +++++++
- 22 files changed, 838 insertions(+), 61 deletions(-)
+ 23 files changed, 875 insertions(+), 61 deletions(-)
  create mode 100644 images/icons/account_tree.svg
  create mode 100644 images/icons/reply.svg
+ create mode 100644 images/icons/thread.svg
  create mode 100644 images/icons/view_list.svg
  create mode 100644 packages/frontend/src/backend/replyThreads.ts
  create mode 100644 packages/frontend/src/tests/replyThreadLayout.test.ts
  create mode 100644 packages/frontend/src/utils/replyThreadLayout.ts
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 7405e25..9ec2922 100644
+index 7405e25..14b5714 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
-@@ -166,5 +166,27 @@
+@@ -166,5 +166,30 @@
    },
    "slothful_welcome_selfhost": {
      "message": "And it's yours to run: host your own instance, or fork it and change whatever you like 👉 https://github.com/experintellia/slothfulchat-web"
@@ -122,6 +126,9 @@ index 7405e25..9ec2922 100644
 +  },
 +  "thread_close": {
 +    "message": "Back to chat"
++  },
++  "thread_show": {
++    "message": "Show thread"
    }
  }
 diff --git a/images/icons/account_tree.svg b/images/icons/account_tree.svg
@@ -138,6 +145,13 @@ index 0000000..364c7d6
 +++ b/images/icons/reply.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#1f1f1f"><path d="M760-200v-160q0-50-35-85t-85-35H273l144 144-57 56-240-240 240-240 57 56-144 144h367q83 0 141.5 58.5T840-360v160h-80Z"/></svg>
+diff --git a/images/icons/thread.svg b/images/icons/thread.svg
+new file mode 100644
+index 0000000..d1f13fd
+--- /dev/null
++++ b/images/icons/thread.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#1f1f1f"><path d="M880-80 720-240H320q-33 0-56.5-23.5T240-320v-40h440q33 0 56.5-23.5T760-440v-280h40q33 0 56.5 23.5T880-640v560ZM160-473l47-47h393v-280H160v327ZM80-280v-520q0-33 23.5-56.5T160-880h440q33 0 56.5 23.5T680-800v280q0 33-23.5 56.5T600-440H240L80-280Zm80-240v-280 280Z"/></svg>
 diff --git a/images/icons/view_list.svg b/images/icons/view_list.svg
 new file mode 100644
 index 0000000..540a5ff
@@ -219,7 +233,7 @@ index 0785495..3ec01eb 100644
        color: white;
      }
 diff --git a/packages/frontend/scss/message/_metadata.scss b/packages/frontend/scss/message/_metadata.scss
-index 7f82294..f31bc56 100644
+index 7f82294..2651ba6 100644
 --- a/packages/frontend/scss/message/_metadata.scss
 +++ b/packages/frontend/scss/message/_metadata.scss
 @@ -19,7 +19,8 @@
@@ -273,7 +287,7 @@ index 7f82294..f31bc56 100644
      display: inline-block;
    }
    .location-icon,
-@@ -115,4 +137,14 @@
+@@ -115,4 +137,23 @@
      // This value doesn't change the height of the wrapper.
      vertical-align: bottom;
    }
@@ -286,6 +300,15 @@ index 7f82294..f31bc56 100644
 +    width: $line-height;
 +    height: $line-height;
 +    vertical-align: bottom;
++
++    // A reply without replies of its own: part of a thread, no count.
++    &.threadIcon {
++      @include mixins.color-svg(
++        './images/icons/thread.svg',
++        currentColor,
++        $line-height
++      );
++    }
 +  }
  }
 diff --git a/packages/frontend/src/backend/replyThreads.ts b/packages/frontend/src/backend/replyThreads.ts
@@ -629,7 +652,7 @@ index 0977055..4819db2 100644
                      log.error(
                        'Tried to send a message while draft is loading or in message editing mode'
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 9ebcadb..1e5d953 100644
+index 9ebcadb..b1ea0da 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -274,6 +274,7 @@ function buildContextMenu(
@@ -699,16 +722,23 @@ index 9ebcadb..1e5d953 100644
        tx,
      ]
    )
-@@ -1317,6 +1339,7 @@ export default function Message(props: {
+@@ -1317,6 +1339,14 @@ export default function Message(props: {
                viewType={effectiveViewType}
                chatType={chat.chatType}
                tabindexForInteractiveContents={tabindexForInteractiveContents}
 +              replyCount={replyCount}
++              isReply={
++                // A deliberate reply within this chat, as core counts them:
++                // a quote of a message here, not forwarded.
++                message.quote?.kind === 'WithMessage' &&
++                message.quote.chatId === message.chatId &&
++                !message.isForwarded
++              }
              />
              <div
                // TODO the "+1" count aria-live announcment is perhaps not great
 diff --git a/packages/frontend/src/components/message/MessageList.tsx b/packages/frontend/src/components/message/MessageList.tsx
-index 7c3f8ca..26f89f0 100644
+index 7c3f8ca..1044113 100644
 --- a/packages/frontend/src/components/message/MessageList.tsx
 +++ b/packages/frontend/src/components/message/MessageList.tsx
 @@ -36,6 +36,52 @@ import {
@@ -822,7 +852,7 @@ index 7c3f8ca..26f89f0 100644
 +                          // would only re-enter the thread you're in.
 +                          replyCount={
 +                            threadDepth === null
-+                              ? replyCounts[messageId.msg_id]
++                              ? (replyCounts[messageId.msg_id] ?? 0)
 +                              : undefined
 +                          }
 +                          inReplyThread={threadDepth !== null}
@@ -883,7 +913,7 @@ index 8ca2c10..d1ed438 100644
      </div>
    )
 diff --git a/packages/frontend/src/components/message/MessageMetaData.tsx b/packages/frontend/src/components/message/MessageMetaData.tsx
-index 4c86c98..34030bf 100644
+index 4c86c98..1f4b509 100644
 --- a/packages/frontend/src/components/message/MessageMetaData.tsx
 +++ b/packages/frontend/src/components/message/MessageMetaData.tsx
 @@ -11,6 +11,7 @@ import { useRpcFetch } from '../../hooks/useFetch'
@@ -894,31 +924,38 @@ index 4c86c98..34030bf 100644
  import { shouldHideDeliveryStatus } from './messageFunctions'
  import {
    HoverInfoTrigger,
-@@ -37,6 +38,11 @@ type Props = {
+@@ -37,6 +38,17 @@ type Props = {
    viewType: T.Viewtype
    chatType: T.ChatType
    isSavedMessage: boolean
 +  /**
 +   * All replies below this message. Only the chat's message list passes it
-+   * (fetched in one batch there); left out, no reply badge is shown.
++   * (fetched in one batch there, 0 when there are none); left out, no reply
++   * badge is shown.
 +   */
 +  replyCount?: number
++  /**
++   * The message is itself a reply. With no replies of its own it then gets
++   * a count-less thread icon, the way into its thread.
++   */
++  isReply?: boolean
  }
  
  export default function MessageMetaData(props: Props) {
-@@ -58,6 +64,7 @@ export default function MessageMetaData(props: Props) {
+@@ -58,6 +70,8 @@ export default function MessageMetaData(props: Props) {
      viewType,
      chatType,
      isSavedMessage,
 +    replyCount,
++    isReply,
    } = props
  
    return (
-@@ -95,6 +102,13 @@ export default function MessageMetaData(props: Props) {
+@@ -95,6 +109,13 @@ export default function MessageMetaData(props: Props) {
        <div className='aria-live-wrapper' aria-live='polite'>
          {isEdited && <span className='edited'>{tx('edited')}</span>}
        </div>
-+      {replyCount !== undefined && replyCount > 0 && (
++      {replyCount !== undefined && (replyCount > 0 || isReply) && (
 +        <ReplyCount
 +          messageId={messageId}
 +          count={replyCount}
@@ -928,13 +965,14 @@ index 4c86c98..34030bf 100644
        <Timestamp
          timestamp={timestamp}
          extended
-@@ -288,6 +302,33 @@ function ViewCount(props: { messageId: number }) {
+@@ -288,6 +309,43 @@ function ViewCount(props: { messageId: number }) {
    )
  }
  
 +/**
-+ * Reply icon + the number of all replies below this message. Clicking it
-+ * switches the message list to this message's reply thread.
++ * Reply icon + the number of all replies below this message, or, for a
++ * reply without replies of its own (count 0), just a thread icon. Clicking
++ * it switches the message list to this message's reply thread.
 + */
 +function ReplyCount(props: {
 +  messageId: number
@@ -943,7 +981,10 @@ index 4c86c98..34030bf 100644
 +}) {
 +  const tx = useTranslationFunction()
 +  const { openThread } = useChat()
-+  const label = tx('n_replies', String(props.count), { quantity: props.count })
++  const label =
++    props.count > 0
++      ? tx('n_replies', String(props.count), { quantity: props.count })
++      : tx('thread_show')
 +  return (
 +    <button
 +      type='button'
@@ -953,8 +994,14 @@ index 4c86c98..34030bf 100644
 +      tabIndex={props.tabindexForInteractiveContents}
 +      onClick={() => openThread(props.messageId)}
 +    >
-+      <span aria-hidden className='replyCountIcon' />
-+      <span className='replyCountValue'>{props.count}</span>
++      {props.count > 0 ? (
++        <>
++          <span aria-hidden className='replyCountIcon' />
++          <span className='replyCountValue'>{props.count}</span>
++        </>
++      ) : (
++        <span aria-hidden className='replyCountIcon threadIcon' />
++      )}
 +    </button>
 +  )
 +}

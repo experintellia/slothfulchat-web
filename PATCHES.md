@@ -494,7 +494,8 @@ exists:
 
 - **Reply threads, Telegram-style** — a message that has replies shows a
   reply-arrow badge with the number of all replies below it before its
-  timestamp; clicking it switches the message list into thread mode, which
+  timestamp, and a reply without replies of its own a count-less thread
+  icon; clicking either switches the message list into thread mode, which
   shows only that reply chain (root plus nested replies, any depth and
   branching), landing on the message you came from. It is the real message
   list, so the composer, drafts, reactions and live updates all keep working,
