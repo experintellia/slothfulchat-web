@@ -9,6 +9,9 @@
 # boundary: real caddy against hostile routes.caddy bundles (each fixture is
 # asserted to adapt cleanly first, so a rejection can only be the allowlist's
 # doing), the archive limits, and a final proof the happy path still works.
+# Cases 12-13 are the deploy transaction: a config that loads but does not
+# serve must roll back (curl is stubbed — nothing is listening here), and a
+# second deploy must not run while one holds the server lock.
 #
 # Run:  bash infra/flagship/test-deploy-preview.sh   (needs caddy in PATH; the
 # wildcard site address needs caddy >= 2.7, so a distro 2.6 in /usr/bin will
@@ -25,6 +28,14 @@ mkdir -p "$G/bin" "$G/srv/previews" "$G/work/dist/caddy"
 # sudo stub: swallow `sudo systemctl reload caddy`, log the call.
 printf '#!/bin/bash\necho "sudo $*" >>"%s/calls"\n' "$G" >"$G/bin/sudo"
 chmod +x "$G/bin/sudo"
+
+# curl stub: no caddy is actually serving here, so the health check's probes are
+# logged (so the tests can assert WHICH hosts were probed) and answered "up" —
+# unless $G/curl-fail exists, which is how case 12 plays a deploy that loads
+# fine and serves nothing.
+printf '#!/bin/bash\necho "$*" >>"%s/curl-calls"\n[ -e "%s/curl-fail" ] && exit 22\nexit 0\n' \
+	"$G" "$G" >"$G/bin/curl"
+chmod +x "$G/bin/curl"
 
 # Flagship-shaped config: the real previews glob, real routes.caddy in bundles.
 cat >"$G/Caddyfile" <<EOF
@@ -50,15 +61,20 @@ ln -s /etc/passwd "$G/work/dist/evil" && tar -C "$G/work" -czf "$G/evil.tgz" dis
 
 run() {
 	SSH_ORIGINAL_COMMAND=$1 SLOTHFUL_DEPLOY_ROOT=$G/srv SLOTHFUL_DEPLOY_CADDYFILE=$G/Caddyfile \
+		SLOTHFUL_DEPLOY_HEALTH_TIMEOUT=1 \
 		PATH="$G/bin:$PATH" bash "$here/deploy-preview.sh"
 }
 ok() { echo "ok: $*"; }
 
-# 1. fresh PR upload
+# 1. fresh PR upload. Both site addresses the bundle claims must be probed
+#    before the deploy is called done — including the *.webxdc. wildcard, at a
+#    concrete label under it, since that is what exercises the wildcard cert.
 run 'upload 5' <"$G/v1.tgz"
 [ -f "$G/srv/previews/pr-5/dist/marker-v1" ]
 grep -q 'pr-5\.preview\.slothful\.chat' "$G/srv/previews/pr-5/site.caddy"
-ok "fresh upload 5"
+grep -q 'https://pr-5\.preview\.slothful\.chat/' "$G/curl-calls"
+grep -q 'https://deploy-health\.webxdc\.pr-5\.preview\.slothful\.chat/' "$G/curl-calls"
+ok "fresh upload 5, both hosts health-checked"
 
 # 2. UPDATE of a deployed slot — the glob-collision regression case: must pass
 #    real validate even though the old slot is parked for rollback mid-swap.
@@ -213,8 +229,10 @@ tar -C "$G/sparse" --sparse -czf "$G/sparse.tgz" dist
 [ "$(stat -c %s "$G/sparse.tgz")" -lt 100000 ] || { echo "FAIL: sparse fixture is not tiny"; exit 1; }
 run 'upload 7' <"$G/sparse.tgz" && { echo "FAIL: sparse bomb accepted"; exit 1; }
 intact "sparse bomb"
-[ ! -e "$G/srv/previews/.incoming-pr-7" ] || { echo "FAIL: staging left behind"; exit 1; }
-[ ! -e "$G/srv/previews/.incoming-pr-7.tgz" ] || { echo "FAIL: staged archive left behind"; exit 1; }
+# Scratch is a unique mktemp path per run now, so the check is "nothing named
+# .incoming-* survives", not one fixed name.
+[ -z "$(find "$G/srv" -maxdepth 2 -name '.incoming-*' -print -quit)" ] \
+	|| { echo "FAIL: scratch left behind"; exit 1; }
 ok "sparse bomb rejected, scratch cleaned up"
 
 # 11. the real bundle still deploys after all that — the allowlist must not
@@ -222,5 +240,45 @@ ok "sparse bomb rejected, scratch cleaned up"
 run 'upload 7' <"$G/v2.tgz"
 [ -f "$slot/dist/marker-v2" ]
 ok "real bundle still accepted"
+
+# 12. a deploy that VALIDATES and RELOADS but does not serve. This is the case
+#     validate alone always called a success: config loads, site is dead. The
+#     rollback copy must still exist at that point, and caddy must be reloaded
+#     again after the restore — the dead bundle is already the loaded config,
+#     so putting the directory back is only half the job.
+run 'upload 7' <"$G/v1.tgz"   # back to a known marker so intact() applies
+before=$(wc -l <"$G/calls")
+touch "$G/curl-fail"
+run 'upload 7' <"$G/v2.tgz" && { echo "FAIL: dead deploy reported healthy"; exit 1; }
+intact "dead deploy"
+[ ! -e "$G/srv/.rollback/pr-7" ] || { echo "FAIL: rollback copy left behind"; exit 1; }
+[ "$(($(wc -l <"$G/calls") - before))" -eq 2 ] \
+	|| { echo "FAIL: expected a reload for the deploy and one after the rollback"; exit 1; }
+caddy validate --config "$G/Caddyfile" --adapter caddyfile >/dev/null 2>&1
+
+# same, with no previous deployment: the fresh slot must be removed entirely
+# rather than left serving nothing.
+run 'upload 8' <"$G/v2.tgz" && { echo "FAIL: dead fresh deploy reported healthy"; exit 1; }
+[ ! -e "$G/srv/previews/pr-8" ] || { echo "FAIL: dead fresh slot left behind"; exit 1; }
+caddy validate --config "$G/Caddyfile" --adapter caddyfile >/dev/null 2>&1
+rm "$G/curl-fail"
+ok "dead deploy rolled back (update + fresh slot)"
+
+# 13. the server lock. Everything above is per-slot logic; this is the part
+#     that stops two PRs from racing the shared validate/reload. Hold the lock
+#     from outside and a deploy must refuse rather than proceed — then succeed
+#     once it is free. (LOCK_WAIT is dialled down so the give-up path is a
+#     second, not the production quarter-hour.)
+flock "$G/srv/.deploy.lock" -c 'sleep 4' &
+holder=$!
+sleep 0.5
+SLOTHFUL_DEPLOY_LOCK_WAIT=1 run 'upload 7' <"$G/v2.tgz" 2>"$G/lock.err" \
+	&& { echo "FAIL: deploy ran while the lock was held"; exit 1; }
+grep -q 'server lock' "$G/lock.err" || { echo "FAIL: blocked for some other reason"; cat "$G/lock.err"; exit 1; }
+intact "lock held"
+wait "$holder"
+run 'upload 7' <"$G/v2.tgz"
+[ -f "$slot/dist/marker-v2" ]
+ok "server lock serialises deploys"
 
 echo "ALL PASS"
