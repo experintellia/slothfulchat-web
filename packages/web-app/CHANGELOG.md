@@ -5,16 +5,22 @@
   before you got to it — chatmail relays clear messages out after a while —
   tapping download left a spinner that never stopped. It now reports the
   failure, with the retry button next to it. A brand-new message still gets
-  ten minutes for its attachment to finish arriving, and if it fails anyway it
-  says the attachment may still be on its way rather than just "failed".
-
-- **Hardening**: bumped DOMPurify (used to sanitize HTML email before display)
-  to 3.4.16, which fixes a low-severity cross-site scripting issue in the
-  sanitizer.
+  ten minutes for its attachment to finish arriving. Instead of just "failed",
+  the message now says what to do: a recent one may still be on its way, an
+  older one has to be sent again.
 
 - **Hardening**: updated the TLS library that secures the connection to your
   mail server (rustls) to 0.23.45, which fixes a medium-severity flaw in how it
   checks the TLS 1.3 handshake.
+
+- **The browser's own right-click menu no longer covers the app's.** Right-
+  clicking a chat, or one of the app icons in a chat's header, opened both
+  menus stacked on top of each other. Right-clicking selected text, a picture,
+  a link or a text box still gives you the browser's menu, which is where
+  "copy" lives.
+- **Hardening**: bumped DOMPurify (used to sanitize HTML email before display)
+  to 3.4.16. The advisory it fixes covers a mode this app doesn't use, so mail
+  display was never affected; the update brings general sanitizer hardening.
 
 ## 0.9.1 — 2026-08-15
 
