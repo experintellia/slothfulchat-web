@@ -404,10 +404,11 @@ exists:
   emoji-mart's own version filter doesn't hide them. `desktop/0064`,
   `desktop/0065`
 
-- **Translation editor in the keyboard-shortcuts cheat sheet** — lists the
-  in-app translation editor (`Ctrl/Cmd+Shift+L`, implemented in `web-app`'s
-  `runtime.ts`) in the shortcuts dialog so it's discoverable. One entry in
-  `getKeybindings`. `desktop/0051`
+- **Fork shortcuts in the keyboard-shortcuts cheat sheet** — lists the
+  in-app translation editor (`Ctrl/Cmd+Shift+L`, `web-app`'s `runtime.ts`) and
+  the Diagnostics panel (`Ctrl/Cmd+Shift+D`, `diagnostics.ts`) in the
+  shortcuts dialog so they're discoverable. Two entries in `getKeybindings`.
+  `desktop/0051`
 
 - **Estimated time-to-read on the unread badge (experimental)** — the chat
   list can show roughly how long a chat's unread messages take to read

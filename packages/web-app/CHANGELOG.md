@@ -1,5 +1,7 @@
 # Changelog
 
+- **The keyboard-shortcuts dialog now lists Ctrl/Cmd+Shift+D** for the
+  Diagnostics panel, next to the translation editor's Ctrl/Cmd+Shift+L.
 - **Downloading a message the server no longer has now fails instead of
   spinning forever.** If the large part of a message was deleted on the server
   before you got to it — chatmail relays clear messages out after a while —
