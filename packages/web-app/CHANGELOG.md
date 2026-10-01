@@ -10,6 +10,10 @@
   to 3.4.16, which fixes a low-severity cross-site scripting issue in the
   sanitizer.
 
+- **Hardening**: updated the TLS library that secures the connection to your
+  mail server (rustls) to 0.23.45, which fixes a medium-severity flaw in how it
+  checks the TLS 1.3 handshake.
+
 ## 0.9.1 — 2026-08-15
 
 - Same app as 0.9.0, re-released because 0.9.0's packages never reached npm:
