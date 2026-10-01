@@ -23,17 +23,25 @@ In-Reply-To header (incoming). Threads are confined to one chat, so
 One SQL link condition (reply_link_sql) serves all three queries, so they
 can't disagree:
 - get_reply_counts() takes a batch of message IDs and returns, per
-  message, the number of all replies below it (nested ones included), in
-  one recursive query, so a message list asks once for what it shows.
+  message, the number of all replies below it (nested ones included). One
+  recursive query walks down from all of them at once, collecting each
+  reply link once, and the per-message counts are summed in memory: cost
+  is the union of the subtrees, not messages x subtree (which took over a
+  second for a page near the top of a long chain).
 - get_reply_thread() walks up to the root with a recursive query (no hop
-  cap; UNION ends cycles, whose root is their oldest message), then down
-  to every reply, and returns (message, parent) pairs sorted by
-  (timestamp, id) so the UI can show a list or lay out a tree. It returns
-  an empty list for a missing or deleted message.
+  cap; UNION ends cycles, where the root is the oldest message reached),
+  then down to every reply, and returns (message, parent) pairs sorted by
+  (timestamp, id) so the UI can show a list or lay out a tree. A message
+  with several parents (colliding Message-IDs) gets the oldest, so it
+  can't hang below its own descendant. It returns an empty list for a
+  missing or deleted message.
 
-The joins use the Message-ID indexes in both directions; the unary `+`
-on the chat_id/hidden terms keeps SQLite from preferring the chat_id
-index, which is ~100x slower on long chains.
+Every join goes from the known message to its neighbour through one of
+the Message-ID indexes: CROSS JOIN pins SQLite's join order (left alone
+it turns joins around or scans all of msgs, depending on table
+statistics) and the unary `+` on the chat_id/hidden terms keeps it off
+the chat_id index. A 3000-message thread loads in ~15ms on a 300k-row
+table either way.
 
 The index on msgs.mime_in_reply_to is created with IF NOT EXISTS after
 the numbered migrations instead of as migration 155: a fork must not
@@ -41,12 +49,12 @@ claim a version number upstream will use next, or databases already at
 that number silently skip upstream's real migration. The slothfulchat_
 prefix keeps the index name clear of upstream's.
 ---
- deltachat-jsonrpc/src/api.rs               |  51 ++++++-
+ deltachat-jsonrpc/src/api.rs               |  51 +++++-
  deltachat-jsonrpc/src/api/types/message.rs |   9 ++
- src/message.rs                             | 146 ++++++++++++++++++++-
- src/message/message_tests.rs               | 144 ++++++++++++++++++++
+ src/message.rs                             | 180 ++++++++++++++++++++-
+ src/message/message_tests.rs               | 148 +++++++++++++++++
  src/sql/migrations.rs                      |  12 ++
- 5 files changed, 359 insertions(+), 3 deletions(-)
+ 5 files changed, 397 insertions(+), 3 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
 index a409878..44018b9 100644
@@ -145,7 +153,7 @@ index 92b75f6..9fe1ef9 100644
  #[serde(rename_all = "camelCase")]
  pub struct MessageInfo {
 diff --git a/src/message.rs b/src/message.rs
-index 736ccdf..c330e9a 100644
+index 736ccdf..222de7f 100644
 --- a/src/message.rs
 +++ b/src/message.rs
 @@ -1,6 +1,6 @@
@@ -156,7 +164,7 @@ index 736ccdf..c330e9a 100644
  use std::path::{Path, PathBuf};
  use std::str;
  
-@@ -1525,6 +1525,150 @@ pub async fn get_msg_read_receipt_count(context: &Context, msg_id: MsgId) -> Res
+@@ -1525,6 +1525,184 @@ pub async fn get_msg_read_receipt_count(context: &Context, msg_id: MsgId) -> Res
          .await
  }
  
@@ -190,9 +198,12 @@ index 736ccdf..c330e9a 100644
 +/// index; the `IN` keeps the link exactly as strict as the downward step,
 +/// which finds `c` through the `mime_in_reply_to` index. `p.rfc724_mid!=''`
 +/// keeps messages without a Message-ID from matching every empty header.
-+/// The unary `+` keeps SQLite off the `chat_id` index, which it otherwise
-+/// prefers for these joins (100x slower on a long chain than the two
-+/// Message-ID indexes).
++/// The unary `+` keeps SQLite off the `chat_id` index, and the queries
++/// below join with `CROSS JOIN`, which pins SQLite's join order to the
++/// written one: from the known message to its neighbour through one of the
++/// two Message-ID indexes. Left to itself the planner turns joins around or
++/// scans all of `msgs` depending on table statistics — 100x slower on a long
++/// chain or a large database.
 +/// Threads stay within one chat, so "reply privately" answers are not part
 +/// of them; hidden messages (drafts) never are.
 +fn reply_link_sql(c: &str, p: &str) -> String {
@@ -223,31 +234,55 @@ index 736ccdf..c330e9a 100644
 +        .map(|id| id.to_u32().to_string())
 +        .collect::<Vec<_>>()
 +        .join(",");
-+    context
++    // One walk down from all given messages at once, collecting each reply
++    // link once (`UNION` deduplicates, which also ends reference cycles), so
++    // the cost is the size of the union of their subtrees. Walking each
++    // message's subtree separately in SQL cost (messages × subtree): over a
++    // second for a page near the top of a long reply chain.
++    let links: Vec<(MsgId, Option<MsgId>)> = context
 +        .sql
-+        .query_map_collect(
-+            // `UNION` deduplicates (origin, id), so a message reachable twice
-+            // is counted once and reference cycles terminate.
++        .query_map_vec(
 +            &format!(
-+                "WITH RECURSIVE below(origin, id) AS (
-+                     SELECT id, id FROM msgs WHERE id IN ({ids}) AND chat_id!=?1
++                "WITH RECURSIVE below(id, parent) AS (
++                     SELECT id, NULL FROM msgs WHERE id IN ({ids}) AND chat_id!=?1
 +                     UNION
-+                     SELECT b.origin, c.id FROM below b
-+                       JOIN msgs p ON p.id=b.id
-+                       JOIN msgs c ON {link}
++                     SELECT c.id, p.id FROM below b
++                       CROSS JOIN msgs p ON p.id=b.id
++                       CROSS JOIN msgs c ON {link}
 +                 )
-+                 SELECT origin, COUNT(*)-1 FROM below
-+                 GROUP BY origin HAVING COUNT(*)>1",
++                 SELECT id, parent FROM below",
 +                link = reply_link_sql("c", "p")
 +            ),
 +            (DC_CHAT_ID_TRASH,),
-+            |row| {
-+                let id: MsgId = row.get(0)?;
-+                let count: i64 = row.get(1)?;
-+                Ok((id, usize::try_from(count)?))
-+            },
++            |row| Ok((row.get(0)?, row.get(1)?)),
 +        )
-+        .await
++        .await?;
++    let mut children: BTreeMap<MsgId, Vec<MsgId>> = BTreeMap::new();
++    for (id, parent) in links {
++        if let Some(parent) = parent {
++            children.entry(parent).or_default().push(id);
++        }
++    }
++    // In memory, a walk per message is cheap; the visited set counts a reply
++    // reachable on two paths once and stops at cycles.
++    let mut counts = BTreeMap::new();
++    for &origin in msg_ids {
++        let mut seen = BTreeSet::from([origin]);
++        let mut stack = vec![origin];
++        while let Some(id) = stack.pop() {
++            for &child in children.get(&id).into_iter().flatten() {
++                if seen.insert(child) {
++                    stack.push(child);
++                }
++            }
++        }
++        // `seen` holds the origin itself plus its replies.
++        let replies = seen.len().saturating_sub(1);
++        if replies > 0 {
++            counts.insert(origin, replies);
++        }
++    }
++    Ok(counts)
 +}
 +
 +/// Returns the reply thread the given message belongs to: its root and all
@@ -257,8 +292,11 @@ index 736ccdf..c330e9a 100644
 +/// as a tree.
 +///
 +/// The root is the topmost message reached by walking up the reply link from
-+/// the given message; if replies form a cycle, the oldest message of it.
-+/// Returns an empty list if the message does not exist or is deleted.
++/// the given message; if the walk up ends in a cycle (which takes colliding
++/// Message-IDs), the oldest message the walk reached. Where a message has
++/// more than one parent (same cause), the oldest one counts, which keeps a
++/// reply from hanging below its own descendant. Returns an empty list if the
++/// message does not exist or is deleted.
 +pub async fn get_reply_thread(
 +    context: &Context,
 +    msg_id: MsgId,
@@ -274,14 +312,14 @@ index 736ccdf..c330e9a 100644
 +                     SELECT ?1
 +                     UNION
 +                     SELECT p.id FROM up
-+                       JOIN msgs c ON c.id=up.id
-+                       JOIN msgs p ON {link}
++                       CROSS JOIN msgs c ON c.id=up.id
++                       CROSS JOIN msgs p ON {link}
 +                 ),
 +                 root(id) AS (
-+                     SELECT r.id FROM up JOIN msgs r ON r.id=up.id
++                     SELECT r.id FROM up CROSS JOIN msgs r ON r.id=up.id
 +                     WHERE r.chat_id!=?2
 +                     ORDER BY EXISTS (
-+                         SELECT 1 FROM msgs c JOIN msgs p ON {link} WHERE c.id=r.id
++                         SELECT 1 FROM msgs c CROSS JOIN msgs p ON {link} WHERE c.id=r.id
 +                     ), r.timestamp, r.id
 +                     LIMIT 1
 +                 ),
@@ -289,12 +327,16 @@ index 736ccdf..c330e9a 100644
 +                     SELECT id, NULL FROM root
 +                     UNION
 +                     SELECT c.id, p.id FROM down d
-+                       JOIN msgs p ON p.id=d.id
-+                       JOIN msgs c ON {link}
++                       CROSS JOIN msgs p ON p.id=d.id
++                       CROSS JOIN msgs c ON {link}
 +                 )
-+                 SELECT m.id,
-+                        CASE WHEN m.id=(SELECT id FROM root) THEN NULL ELSE MIN(d.parent) END
-+                 FROM down d JOIN msgs m ON m.id=d.id
++                 -- Bare `d.parent` comes from the row with the MIN(): the
++                 -- oldest parent, and NULL (-1) for the root, which the
++                 -- seed row gives no parent.
++                 SELECT m.id, d.parent, MIN(COALESCE(pm.timestamp, -1))
++                 FROM down d
++                 CROSS JOIN msgs m ON m.id=d.id
++                 LEFT JOIN msgs pm ON pm.id=d.parent
 +                 GROUP BY m.id
 +                 ORDER BY m.timestamp, m.id"
 +            ),
@@ -308,10 +350,10 @@ index 736ccdf..c330e9a 100644
      msg.param
          .get(Param::Filename)
 diff --git a/src/message/message_tests.rs b/src/message/message_tests.rs
-index 407e247..def4696 100644
+index 407e247..98070aa 100644
 --- a/src/message/message_tests.rs
 +++ b/src/message/message_tests.rs
-@@ -81,6 +81,150 @@ async fn test_quote_basic() {
+@@ -81,6 +81,154 @@ async fn test_quote_basic() {
      assert_eq!(quoted_msg.get_text(), msg2.quoted_text().unwrap());
  }
  
@@ -452,6 +494,10 @@ index 407e247..def4696 100644
 +    let thread = get_reply_thread(alice, chain[60]).await?;
 +    assert_eq!(thread.len(), chain.len());
 +    assert_eq!(thread[0], (first, None)); // oldest message of the cycle is the root
++    // Every parent is older than its reply: none hangs below its own descendant.
++    for (i, (_, parent)) in thread.iter().enumerate().skip(1) {
++        assert!(thread[..i].iter().any(|(id, _)| Some(*id) == *parent));
++    }
 +    assert_eq!(
 +        get_reply_counts(alice, &[chain[60]]).await?,
 +        BTreeMap::from([(chain[60], 120)])
