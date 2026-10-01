@@ -384,8 +384,10 @@ exists:
   the description text that follows the command in the bio). Parses the bio
   with the same `botcommand` linkify tokenizer that already turns `/commands`
   in a status or message into a clickable chip, so the two features agree on
-  what counts as a command. No menu, and no bio fetch beyond the one already
-  needed for the chat header, when the contact lists none. `desktop/0087`
+  what counts as a command. Behind the same Settings → Experimental completion-menu
+  toggle as the emoji menu; the bio is read once when the DM opens (not
+  refreshed while it stays open). No menu when the contact lists no commands.
+  `desktop/0087`
 
 - **Emoji style picker** — an "Emoji style" picker under Settings →
   Appearance (browser edition only) chooses which emoji font the app renders

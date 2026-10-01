@@ -15,13 +15,13 @@ CompletionItem gains an optional description field so a suggestion
 row can show more than a glyph.
 ---
  .../scss/composer/_completion-menu.scss       | 22 +++++++-
- .../src/components/composer/Composer.tsx      | 20 ++++++++
- .../composer/ComposerMessageInput.tsx         | 48 +++++++++++++----
+ .../src/components/composer/Composer.tsx      | 19 +++++++
+ .../composer/ComposerMessageInput.tsx         | 46 +++++++++++++----
  .../composer/completion/CompletionMenu.tsx    |  5 ++
  .../composer/completion/botCommandProvider.ts | 51 +++++++++++++++++++
  .../components/composer/completion/types.ts   |  2 +
  .../frontend/src/tests/completion.test.ts     | 43 ++++++++++++++++
- 7 files changed, 180 insertions(+), 11 deletions(-)
+ 7 files changed, 177 insertions(+), 11 deletions(-)
  create mode 100644 packages/frontend/src/components/composer/completion/botCommandProvider.ts
 
 diff --git a/packages/frontend/scss/composer/_completion-menu.scss b/packages/frontend/scss/composer/_completion-menu.scss
@@ -65,7 +65,7 @@ index 130faa3..b6e9a1d 100644
    }
  }
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index 0977055..076a8dc 100644
+index 0977055..58d5982 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
 @@ -13,6 +13,7 @@ import { extension } from 'mime-types'
@@ -115,16 +115,8 @@ index 0977055..076a8dc 100644
                  loadingDraft={draftIsLoading}
                  sendMessageOrEditRequest={
                    (!messageEditing.isEditingModeActive
-@@ -874,6 +893,7 @@ const Composer = forwardRef<
-                   settingsStore?.desktopSettings.experimentalCompletionMenu ===
-                   true
-                 }
-+                botCommands={botCommands}
-                 loadingDraft={false}
-                 sendMessageOrEditRequest={
-                   messageEditing.doSendEditRequest ?? (() => {})
 diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
-index cb9d28a..56652b2 100644
+index cb9d28a..b561f5d 100644
 --- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 +++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 @@ -7,6 +7,10 @@ import { I18nContext } from '../../contexts/I18nContext'
@@ -181,18 +173,16 @@ index cb9d28a..56652b2 100644
        const token = findActiveToken(text, caret, provider)
        if (!token) {
          continue
-@@ -203,7 +214,17 @@ export default class ComposerMessageInput extends React.Component<
+@@ -203,7 +214,15 @@ export default class ComposerMessageInput extends React.Component<
          return
        }
        this.completionDismissed = null
 -      this.applyCompletion(token, provider.query(token.term))
 +      const items = provider.query(token.term)
-+      // already fully typed (e.g. `/editor` with `/editor` the only match):
-+      // nothing left to complete
-+      if (
-+        items.length === 1 &&
-+        items[0]?.value === text.slice(token.start, token.end)
-+      ) {
++      // already fully typed (e.g. `/help`): nothing left to complete, and
++      // Enter should send rather than re-pick
++      const typed = text.slice(token.start, token.end).toLowerCase()
++      if (items.some(i => i.value.toLowerCase() === typed)) {
 +        this.closeCompletion()
 +        return
 +      }
@@ -200,7 +190,7 @@ index cb9d28a..56652b2 100644
        return
      }
      this.closeCompletion()
-@@ -250,9 +271,14 @@ export default class ComposerMessageInput extends React.Component<
+@@ -250,9 +269,14 @@ export default class ComposerMessageInput extends React.Component<
        return
      }
      const text = this.props.text
@@ -217,7 +207,7 @@ index cb9d28a..56652b2 100644
      this.closeCompletion()
      this.props.onChange(updated)
    }
-@@ -405,7 +431,11 @@ export default class ComposerMessageInput extends React.Component<
+@@ -405,7 +429,11 @@ export default class ComposerMessageInput extends React.Component<
            <>
              {completion.open && (
                <CompletionMenu
