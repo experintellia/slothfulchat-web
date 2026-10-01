@@ -504,12 +504,12 @@ contribution intended.
   flag is dropped every cycle for any message whose pre-message has arrived —
   i.e. every message you can tap — so every error meant "wait", and the stale
   `imap` row sent each cycle back to the relay that had already expunged it.
-  Now the relay's answer is the proof: when the probe finds the UID missing or
-  `\Deleted`, that relay's row is forgotten; if another relay still holds the
-  message it is downloaded from there right away, and if none does the message
-  is set to `Failure`, which puts the retry button back. A message with no
-  known location at all fails too instead of waiting, so a retry can never
-  spin forever. Same fix for our chunked download path when `receive_imf`
+  Now the relay's answer is the proof: when the probe — on every server,
+  partial FETCH or not — finds the UID missing or `\Deleted`, that relay's row
+  is forgotten; if another relay still holds the message it is downloaded from
+  there right away, and if none does the message is set to `Failure`, which
+  puts the retry button back. A message with no known location at all fails
+  too instead of waiting, so a retry can never spin forever. Same fix for our chunked download path when `receive_imf`
   rejects the assembled message. `core/0034`
 - Camera selection in the QR reader did nothing on multi-camera Android
   Chromium devices, and the camera menu was blank before permissions were

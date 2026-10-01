@@ -44,8 +44,10 @@ transport-spanning behavior is load-bearing: only a message no relay has a
 location for may be failed. Tests cover the lookup across transports and
 the forget decision with two relays, without involving the flag.
 
-The whole-message fallback (servers without partial FETCH) cannot tell
-"gone" from "fetch failed" and leaves its row alone.
+The probe runs before the chunked/whole-message split: `FLAGS
+RFC822.SIZE` is plain RFC 3501, so servers without partial FETCH get the
+same proof. Any other fetch error is not proof that the message is gone and
+keeps the download queued, to retry on the next cycle.
 
 Also fixes the chunked path leaving `InProgress` behind when `receive_imf`
 rejects the assembled message: the device message was posted and the
@@ -53,11 +55,11 @@ queue entry dropped, but nothing moved the message out of `InProgress`.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/download.rs | 230 +++++++++++++++++++++++++++++++++++++++++++-----
- 1 file changed, 208 insertions(+), 22 deletions(-)
+ src/download.rs | 237 +++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 213 insertions(+), 24 deletions(-)
 
 diff --git a/src/download.rs b/src/download.rs
-index fb971c0..c2c1ea3 100644
+index fb971c0..17e0a1c 100644
 --- a/src/download.rs
 +++ b/src/download.rs
 @@ -446,25 +446,22 @@ pub(crate) async fn download_msg(
@@ -98,16 +100,16 @@ index fb971c0..c2c1ea3 100644
          return Err(anyhow!(
              "IMAP location for {rfc724_mid:?} post-message is unknown"
          ));
-@@ -531,15 +528,19 @@ async fn fetch_single_msg(
-             "Downloading message {}/{} in chunks...", folder, uid
-         );
+@@ -515,6 +512,21 @@ async fn fetch_single_msg(
+         ensure!(folder_exists, "No folder {folder}");
  
--        let Some(meta) = self.uid_fetch_meta(uid).await? else {
--            bail!("Failed to fetch UID {uid}");
+         let transport_id = self.transport_id();
 +        let uidvalidity = get_uidvalidity(context, transport_id, folder).await?;
 +        // A relay that no longer has the UID, or only as `\Deleted`, is gone
 +        // for this message: forget the location instead of retrying it on
-+        // every fetch cycle (see `forget_imap_location`).
++        // every fetch cycle (see `forget_imap_location`). Probed before the
++        // fallback branch on purpose: `FLAGS RFC822.SIZE` is plain RFC 3501,
++        // so servers without partial FETCH get the same proof.
 +        let meta = match self.uid_fetch_meta(uid).await? {
 +            Some(meta) if !meta.deleted => meta,
 +            _ => {
@@ -115,17 +117,28 @@ index fb971c0..c2c1ea3 100644
 +                    .await?;
 +                bail!("UID {uid} is gone from {folder}");
 +            }
-         };
++        };
++
+         let chunking_disabled = context
+             .chunked_download_disabled
+             .lock()
+@@ -531,15 +543,6 @@ async fn fetch_single_msg(
+             "Downloading message {}/{} in chunks...", folder, uid
+         );
+ 
+-        let Some(meta) = self.uid_fetch_meta(uid).await? else {
+-            bail!("Failed to fetch UID {uid}");
+-        };
 -        if meta.deleted {
 -            info!(context, "Not processing deleted msg {}.", uid);
 -            return Ok(FetchMsgResult::Done);
 -        }
- 
+-
 -        let uidvalidity = get_uidvalidity(context, transport_id, folder).await?;
          let mut staging =
              StagingFile::open(context, transport_id, folder, uidvalidity, uid).await?;
          let msg_id = rfc724_mid_exists(context, &rfc724_mid).await?;
-@@ -574,6 +575,8 @@ async fn fetch_single_msg(
+@@ -574,6 +577,8 @@ async fn fetch_single_msg(
                          .map(|()| FetchMsgResult::Done);
                  }
                  staging.delete().await?;
@@ -134,7 +147,7 @@ index fb971c0..c2c1ea3 100644
                  bail!("Failed to fetch UID {uid}");
              }
              ChunkOutcome::TooLarge => {
-@@ -638,6 +641,11 @@ async fn fetch_single_msg(
+@@ -638,6 +643,11 @@ async fn fetch_single_msg(
                  let mut msg = Message::new_text(text);
                  add_device_msg(context, None, Some(&mut msg)).await?;
                  staging.delete().await?;
@@ -146,7 +159,7 @@ index fb971c0..c2c1ea3 100644
              }
              Ok(_) => {
                  staging.delete().await?;
-@@ -721,6 +729,82 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
+@@ -721,6 +731,83 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
      Ok(())
  }
  
@@ -197,8 +210,9 @@ index fb971c0..c2c1ea3 100644
 +/// first relay is mixed in). Only when no relay is left is the message set to
 +/// `Failure` and dequeued, which puts the retry button back.
 +///
-+/// Only the chunked path probes; the whole-message fallback cannot tell
-+/// "gone" from "fetch failed" and leaves its row alone.
++/// The probe runs before the chunked/whole-message split, so servers without
++/// partial FETCH get the same treatment; any other fetch error is not proof
++/// and only retries.
 +async fn forget_imap_location(
 +    context: &Context,
 +    transport_id: u32,
@@ -229,7 +243,7 @@ index fb971c0..c2c1ea3 100644
  async fn available_post_msgs_contains_rfc724_mid(
      context: &Context,
      rfc724_mid: &str,
-@@ -914,6 +998,108 @@ async fn test_update_download_state() -> Result<()> {
+@@ -914,6 +1001,108 @@ async fn test_update_download_state() -> Result<()> {
          Ok(())
      }
  
