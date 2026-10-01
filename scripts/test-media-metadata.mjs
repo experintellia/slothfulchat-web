@@ -1,4 +1,4 @@
-// Self-check for the media metadata reader (desktop/0075) — runs FULLY OFFLINE.
+// Self-check for the media metadata reader (desktop/0073) — runs FULLY OFFLINE.
 //
 // This is what fills in `Chat-Duration` and a video's pixel size on send, and the part
 // that can actually break is the browser side: MediaRecorder writes containers with no
