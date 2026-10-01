@@ -1,0 +1,201 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Fri, 10 Jul 2026 01:05:26 +0000
+Subject: [PATCH 31/84] web-app: Export Chat entry in the three-dot menu (zip
+ built fork-side)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Telegram-style chat export: an 'Export Chat' entry in the main-view
+three-dot menu downloads the open chat as one zip (standalone html
+viewer that looks like the message list, messages.txt, messages.json,
+media/, and a webxdc manifest so the zip doubles as a viewer app).
+
+Only the entry and a progress dialog with cancel live here. The dialog
+calls window.__slothfulExportChat(chatId, options), registered by
+slothfulchat-web's packages/web-app/src/chat-export.ts, which fetches
+the messages, collects the media, inlines the app css and writes the
+zip — none of it touches React, so none of it is rebased against
+upstream. The dialog passes along what only the frontend bundle knows:
+the hashed css-module class names the viewer reuses (message bubbles,
+footer, reactions) and a moment formatter in the user's locale for
+messages.txt and the filename. Cancel aborts an AbortSignal. New
+strings live in _untranslated_en.json.
+---
+ _locales/_untranslated_en.json                |   6 +
+ .../src/components/chat/ChatContextMenu.tsx   |  11 ++
+ .../components/dialogs/ExportChatToHtml.tsx   | 113 ++++++++++++++++++
+ 3 files changed, 130 insertions(+)
+ create mode 100644 packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 8d24c02..64a2fb6 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -1,4 +1,10 @@
+ {
++  "menu_export_chat": {
++    "message": "Export Chat"
++  },
++  "chat_exported_as_x": {
++    "message": "Chat exported as %1$s"
++  },
+   "message_info_file_type": {
+     "message": "Type"
+   },
+diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+index ec54fd2..60d6f43 100644
+--- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
++++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+@@ -15,6 +15,7 @@ import useOpenViewGroupDialog from '../../hooks/dialog/useOpenViewGroupDialog'
+ import useOpenViewProfileDialog from '../../hooks/dialog/useOpenViewProfileDialog'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import DisappearingMessages from '../dialogs/DisappearingMessages'
++import ExportChatToHtml from '../dialogs/ExportChatToHtml'
+ import type { UnselectChat } from '../../contexts/ChatContext'
+ import { mouseEventToPosition } from '../../utils/mouseEventToPosition'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+@@ -413,6 +414,12 @@ export function useChatContextMenu(): {
+       })
+     }
+ 
++    const onExportChatToHtml = () => {
++      if (relatedChat) {
++        openDialog(ExportChatToHtml, { chat: relatedChat })
++      }
++    }
++
+     const onSearchInChat = () => {
+       window.__chatlistSetSearch?.('', activeChatId)
+       setTimeout(
+@@ -476,6 +483,10 @@ export function useChatContextMenu(): {
+         label: tx('search_in_chat'),
+         action: onSearchInChat,
+       },
++      isMainView && {
++        label: tx('menu_export_chat'),
++        action: onExportChatToHtml,
++      },
+       !isMainView && pin,
+       !isMainView &&
+         (chatListItems.some(c => c.freshMessageCounter > 0)
+diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+new file mode 100644
+index 0000000..c8e871d
+--- /dev/null
++++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+@@ -0,0 +1,113 @@
++import React, { useEffect, useRef, useState } from 'react'
++import moment from 'moment'
++import { T } from '@deltachat/jsonrpc-client'
++
++import { getLogger } from '@deltachat-desktop/shared/logger'
++import { selectedAccountId } from '../../ScreenController'
++import Dialog, {
++  DialogBody,
++  DialogContent,
++  DialogFooter,
++  DialogHeader,
++  FooterActionButton,
++  FooterActions,
++} from '../Dialog'
++import { DeltaProgressBar } from '../Login-Styles'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
++// unused, but it keeps esbuild's css-module order (and with it bundle.css's
++// cascade and class-name suffixes) the same as when the zip was built here
++import '../message/Message'
++
++import messageStyles from '../message/styles.module.scss'
++import reactionsStyles from '../Reactions/styles.module.scss'
++
++import type { DialogProps } from '../../contexts/DialogContext'
++
++const log = getLogger('renderer/dialogs/ExportChatToHtml')
++
++type Props = {
++  chat: T.FullChat
++} & DialogProps
++
++/**
++ * Progress dialog that exports the given chat to a Telegram-style zip
++ * download. The zip itself (viewer html, txt, json, media) is built outside
++ * this tree, by slothfulchat-web's packages/web-app/src/chat-export.ts, which
++ * registers window.__slothfulExportChat; this dialog only hands it what lives
++ * in the frontend bundle — the hashed css-module class names the viewer
++ * reuses and the user's moment locale — and shows progress.
++ */
++export default function ExportChatToHtml({ chat, onClose }: Props) {
++  const tx = useTranslationFunction()
++  const accountId = selectedAccountId()
++  const [progress, setProgress] = useState(0)
++  const abort = useRef(new AbortController())
++  const started = useRef(false)
++
++  useEffect(() => {
++    if (started.current) {
++      return
++    }
++    started.current = true
++    const signal = abort.current.signal
++    ;(window as any)
++      .__slothfulExportChat(chat.id, {
++        accountId,
++        startTs: null,
++        endTs: null,
++        styles: {
++          message: messageStyles.message,
++          messageFooter: messageStyles.messageFooter,
++          onlyMedia: messageStyles.onlyMedia,
++          reactions: reactionsStyles.reactions,
++          emoji: reactionsStyles.emoji,
++          emojiCount: reactionsStyles.emojiCount,
++          isFromSelf: reactionsStyles.isFromSelf,
++        },
++        formatDate: (ts: number, format: string) =>
++          moment.unix(ts).format(format),
++        onProgress: setProgress,
++        signal,
++      })
++      .then((filename: string) => {
++        window.__userFeedback?.({
++          type: 'success',
++          text: tx('chat_exported_as_x', filename),
++        })
++      })
++      .catch((error: any) => {
++        if (signal.aborted) {
++          return
++        }
++        log.error('chat export failed:', error)
++        window.__userFeedback?.({
++          type: 'error',
++          text: 'Chat export failed: ' + (error?.message || String(error)),
++        })
++      })
++      .finally(onClose)
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [])
++
++  return (
++    <Dialog
++      onClose={() => {}}
++      canOutsideClickClose={false}
++      canEscapeKeyClose={false}
++    >
++      <DialogHeader title={tx('menu_export_chat')} />
++      <DialogBody>
++        <DialogContent>
++          <DeltaProgressBar progress={progress} />
++        </DialogContent>
++        <DialogFooter>
++          <FooterActions align='end'>
++            <FooterActionButton onClick={() => abort.current.abort()}>
++              {tx('cancel')}
++            </FooterActionButton>
++          </FooterActions>
++        </DialogFooter>
++      </DialogBody>
++    </Dialog>
++  )
++}

@@ -239,9 +239,8 @@ exists:
   JSON-RPC traffic in `packages/web-app/src`; three desktop hooks add the UI-only
   signals (onboarding welcome, link-preview accept/dismiss, community-channel
   use), the Diagnostics button, and the consent surfaces (welcome-screen opt-out
-  checkbox, Settings → Advanced toggle, privacy-policy links in About/welcome);
-  a fourth fires `chat_export` when a chat export succeeds.
-  `desktop/0042`, `desktop/0043`, `desktop/0044`, `desktop/0045`
+  checkbox, Settings → Advanced toggle, privacy-policy links in About/welcome).
+  `desktop/0042`, `desktop/0043`, `desktop/0044`
 - **Attachment details & failure reason in Message Info** — file name, MIME
   type, size, image/video dimensions, audio/video duration; delivery failures
   show as an error banner, and clicking a message's failed-status icon opens
@@ -275,8 +274,10 @@ exists:
   files next to it; a `manifest.toml` makes the zip double as a webxdc
   viewer app when renamed to `.xdc`. A confirm dialog names what is not
   included (read receipts, full HTML e-mails, webxdc app content) and takes
-  an optional date range. `desktop/0031`, `desktop/0034`, `desktop/0036`,
-  `desktop/0038`
+  an optional date range. The patch is only the menu entry and those dialogs;
+  they call `window.__slothfulExportChat`, and everything that builds the zip
+  (messages, media, inlined css, viewer, fflate's store-only zip) lives in
+  `packages/web-app/src/chat-export.ts`. `desktop/0031`, `desktop/0038`
 - **Community suggestions in the New Chat dialog** — pseudo entries below
   "New Group"/"New Channel": "Sloth (Slothful.chat Developer)" opens a chat
   with the developer (via a baked-in invite link, routed through the regular
