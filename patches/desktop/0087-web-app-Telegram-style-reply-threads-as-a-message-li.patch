@@ -36,7 +36,8 @@ what its cache lacks and takes the new list as is instead of appending.
   quotes one of the thread's messages, so sending (and stickers) wait for
   such a quote, also while the thread is still loading; a bar in the
   quote slot (a live region for all of thread mode) says so and offers
-  "Reply to latest", and Enter does nothing meanwhile. The draft is the
+  "Reply to latest", Enter does nothing meanwhile, and the send button
+  looks disabled (it had no disabled style at all). The draft is the
   chat's draft. Sending several files at once (drop or attachment menu)
   goes out without a quote and so leaves thread mode, like any jump to a
   message outside the thread.
@@ -65,6 +66,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  images/icons/account_tree.svg                 |   1 +
  images/icons/reply.svg                        |   1 +
  images/icons/view_list.svg                    |   1 +
+ .../frontend/scss/composer/_composer.scss     |   6 +
  .../frontend/scss/message/_message-list.scss  |  11 ++
  packages/frontend/scss/message/_message.scss  |   9 +-
  packages/frontend/scss/message/_metadata.scss |  38 ++++-
@@ -82,7 +84,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  packages/frontend/src/stores/messagelist.ts   | 134 +++++++++++-----
  .../src/tests/replyThreadLayout.test.ts       |  41 +++++
  .../frontend/src/utils/replyThreadLayout.ts   |  58 +++++++
- 21 files changed, 832 insertions(+), 61 deletions(-)
+ 22 files changed, 838 insertions(+), 61 deletions(-)
  create mode 100644 images/icons/account_tree.svg
  create mode 100644 images/icons/reply.svg
  create mode 100644 images/icons/view_list.svg
@@ -143,6 +145,23 @@ index 0000000..540a5ff
 +++ b/images/icons/view_list.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#1f1f1f"><path d="M360-240h440v-107H360v107ZM160-613h120v-107H160v107Zm0 187h120v-107H160v107Zm0 186h120v-107H160v107Zm200-186h440v-107H360v107Zm0-187h440v-107H360v107ZM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h640q33 0 56.5 23.5T880-720v480q0 33-23.5 56.5T800-160H160Z"/></svg>
+diff --git a/packages/frontend/scss/composer/_composer.scss b/packages/frontend/scss/composer/_composer.scss
+index b24bd54..b62a11e 100644
+--- a/packages/frontend/scss/composer/_composer.scss
++++ b/packages/frontend/scss/composer/_composer.scss
+@@ -129,6 +129,12 @@
+       &:focus-visible {
+         outline-offset: 2px;
+       }
++      // E.g. in reply-thread mode until a thread message is quoted; the bar
++      // above the input says why.
++      &:disabled {
++        opacity: 0.4;
++        cursor: default;
++      }
+ 
+       .paper-plane {
+         height: 24px;
 diff --git a/packages/frontend/scss/message/_message-list.scss b/packages/frontend/scss/message/_message-list.scss
 index 1666557..d9986db 100644
 --- a/packages/frontend/scss/message/_message-list.scss
