@@ -1,0 +1,533 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Wed, 19 Aug 2026 03:14:17 +0000
+Subject: [PATCH 35/35] jsonrpc: reply counts and reply-thread queries for
+ reply threading
+
+Add get_reply_counts() and get_reply_thread() to src/message.rs plus thin
+getMessageReplyCounts/getMessageReplyThread JSON-RPC wrappers, for a
+Telegram-style thread view in the web UI.
+
+A reply is only counted when it is deliberate - it carries a quote and is
+not forwarded - because mime_in_reply_to alone is set on every outgoing
+message for email threading (prepare_msg_raw). The param check only
+accepts a `q=`/`a=` line that starts the string or follows a single
+newline after a non-newline character: a newline inside a param value is
+stored doubled, so quoted text with a line starting `a=` or `q=` must not
+pass for the message's own Forwarded/Quote param (it used to, which made
+such a reply drop out of its own thread). Both stored forms of the reply
+link are matched: the bare mid (outgoing) and the bracketed raw
+In-Reply-To header (incoming). Threads are confined to one chat, so
+"reply privately" answers stay out.
+
+One SQL link condition (reply_link_sql) serves all three queries, so they
+can't disagree:
+- get_reply_counts() takes a batch of message IDs and returns, per
+  message, the number of all replies below it (nested ones included). One
+  recursive query walks down from all of them at once, collecting each
+  reply link once, and the per-message counts are summed in memory: cost
+  is the union of the subtrees, not messages x subtree (which took over a
+  second for a page near the top of a long chain).
+- get_reply_thread() walks up to the root with a recursive query (no hop
+  cap; UNION ends cycles, where the root is the oldest message reached),
+  then down to every reply, and returns (message, parent) pairs sorted by
+  (timestamp, id) so the UI can show a list or lay out a tree. A message
+  with several parents (colliding Message-IDs) gets the oldest, so it
+  can't hang below its own descendant. It returns an empty list for a
+  missing or deleted message.
+
+Every join goes from the known message to its neighbour through one of
+the Message-ID indexes: CROSS JOIN pins SQLite's join order (left alone
+it turns joins around or scans all of msgs, depending on table
+statistics) and the unary `+` on the chat_id/hidden terms keeps it off
+the chat_id index. A 3000-message thread loads in ~15ms on a 300k-row
+table either way.
+
+The index on msgs.mime_in_reply_to is created with IF NOT EXISTS after
+the numbered migrations instead of as migration 155: a fork must not
+claim a version number upstream will use next, or databases already at
+that number silently skip upstream's real migration. The slothfulchat_
+prefix keeps the index name clear of upstream's.
+---
+ deltachat-jsonrpc/src/api.rs               |  51 +++++-
+ deltachat-jsonrpc/src/api/types/message.rs |   9 ++
+ src/message.rs                             | 180 ++++++++++++++++++++-
+ src/message/message_tests.rs               | 148 +++++++++++++++++
+ src/sql/migrations.rs                      |  12 ++
+ 5 files changed, 397 insertions(+), 3 deletions(-)
+
+diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
+index a409878..44018b9 100644
+--- a/deltachat-jsonrpc/src/api.rs
++++ b/deltachat-jsonrpc/src/api.rs
+@@ -24,7 +24,7 @@
+ use deltachat::location;
+ use deltachat::message::{
+     self, delete_msgs_ex, get_existing_msg_ids, get_msg_read_receipt_count, get_msg_read_receipts,
+-    markseen_msgs, Message, MessageState, MsgId, Viewtype,
++    get_reply_counts, get_reply_thread, markseen_msgs, Message, MessageState, MsgId, Viewtype,
+ };
+ use deltachat::peer_channels::{
+     leave_webxdc_realtime, send_webxdc_realtime_advertisement, send_webxdc_realtime_data,
+@@ -55,7 +55,7 @@
+ use types::contact::{ContactObject, VcardContact};
+ use types::events::Event;
+ use types::http::HttpResponse;
+-use types::message::{MessageData, MessageObject, MessageReadReceipt};
++use types::message::{MessageData, MessageObject, MessageReadReceipt, ReplyThreadEntry};
+ use types::notify_state::JsonrpcNotifyState;
+ use types::provider_info::ProviderInfo;
+ use types::reactions::JsonrpcReactions;
+@@ -1600,6 +1600,53 @@ async fn get_message_read_receipts(
+         Ok(receipts)
+     }
+ 
++    /// Returns, for each given message that has replies, the number of all
++    /// replies below it: direct replies and, recursively, replies to those.
++    /// Messages without replies are left out of the result.
++    ///
++    /// Only deliberate, non-hidden replies (messages quoting their parent) in
++    /// the same chat count; answers created via "reply privately" in another
++    /// chat are not part of the thread. One call covers a whole message list,
++    /// for the "N replies" badge.
++    async fn get_message_reply_counts(
++        &self,
++        account_id: u32,
++        message_ids: Vec<u32>,
++    ) -> Result<HashMap<u32, usize>> {
++        let ctx = self.get_context(account_id).await?;
++        let ids: Vec<MsgId> = message_ids.into_iter().map(MsgId::new).collect();
++        Ok(get_reply_counts(&ctx, &ids)
++            .await?
++            .into_iter()
++            .map(|(id, count)| (id.to_u32(), count))
++            .collect())
++    }
++
++    /// Returns the reply thread the given message belongs to: its root and
++    /// every reply below the root, any depth and branching, sorted by
++    /// timestamp. Each entry names the message it replies to, so the thread
++    /// can be shown as a chronological list or laid out as a tree; the root's
++    /// `parentId` is null.
++    ///
++    /// The root is found by walking up the chain of quoted messages within
++    /// the message's chat. Returns an empty list if the message does not
++    /// exist or was deleted.
++    async fn get_message_reply_thread(
++        &self,
++        account_id: u32,
++        message_id: u32,
++    ) -> Result<Vec<ReplyThreadEntry>> {
++        let ctx = self.get_context(account_id).await?;
++        Ok(get_reply_thread(&ctx, MsgId::new(message_id))
++            .await?
++            .into_iter()
++            .map(|(msg_id, parent_id)| ReplyThreadEntry {
++                msg_id: msg_id.to_u32(),
++                parent_id: parent_id.map(|id| id.to_u32()),
++            })
++            .collect())
++    }
++
+     /// Asks the core to start downloading a message fully.
+     /// This function is typically called when the user hits the "Download" button
+     /// that is shown by the UI in case `download_state` is `'Available'` or `'Failure'`
+diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
+index 92b75f6..9fe1ef9 100644
+--- a/deltachat-jsonrpc/src/api/types/message.rs
++++ b/deltachat-jsonrpc/src/api/types/message.rs
+@@ -695,6 +695,15 @@ pub struct MessageReadReceipt {
+     pub timestamp: i64,
+ }
+ 
++/// One message of a reply thread, see `get_message_reply_thread`.
++#[derive(Serialize, TypeDef, schemars::JsonSchema)]
++#[serde(rename_all = "camelCase")]
++pub struct ReplyThreadEntry {
++    pub msg_id: u32,
++    /// The message this one replies to; `None` for the thread's root.
++    pub parent_id: Option<u32>,
++}
++
+ #[derive(Serialize, TypeDef, schemars::JsonSchema)]
+ #[serde(rename_all = "camelCase")]
+ pub struct MessageInfo {
+diff --git a/src/message.rs b/src/message.rs
+index 736ccdf..222de7f 100644
+--- a/src/message.rs
++++ b/src/message.rs
+@@ -1,6 +1,6 @@
+ //! # Messages and their identifiers.
+ 
+-use std::collections::BTreeSet;
++use std::collections::{BTreeMap, BTreeSet};
+ use std::path::{Path, PathBuf};
+ use std::str;
+ 
+@@ -1525,6 +1525,184 @@ pub async fn get_msg_read_receipt_count(context: &Context, msg_id: MsgId) -> Res
+         .await
+ }
+ 
++/// SQL condition: the message aliased `m` is a deliberate reply — it carries a
++/// quote (`Param::Quote`, key 'q') and is not forwarded (`Param::Forwarded`,
++/// key 'a'). `mime_in_reply_to` alone does not mark a reply — it is set on
++/// *every* outgoing message for email threading (see `prepare_msg_raw`).
++///
++/// `param` is `key=value` lines, and a newline *inside* a value is stored
++/// doubled, so a real key line starts the string or follows a single `\n`
++/// that comes after a non-newline character. Matching a bare `\nq=` would
++/// also hit quoted text with a line starting `q=` or `a=`.
++// ponytail: GLOB can't count newline parity, so a value that itself *ends*
++// in `\n` right before the q/a line still hides that line. No field stored
++// before 'a' or 'q' carries such text in practice; if one ever does, filter
++// candidate rows in Rust with `Params::from_str` instead.
++fn is_reply_sql(m: &str) -> String {
++    format!(
++        "({m}.param GLOB 'q=*' OR {m}.param GLOB '*[^\n]\nq=*')
++         AND NOT ({m}.param GLOB 'a=*' OR {m}.param GLOB '*[^\n]\na=*')"
++    )
++}
++
++/// SQL condition: message `c` is a reply to message `p` — the one link used
++/// for counts, for walking up to a thread's root and for walking down from
++/// it, so all three always agree.
++///
++/// `mime_in_reply_to` holds the raw In-Reply-To header (`<mid>`) for incoming
++/// messages but the bare mid for outgoing ones, so both forms match. The
++/// `trim` equality lets the upward step find `p` through the `rfc724_mid`
++/// index; the `IN` keeps the link exactly as strict as the downward step,
++/// which finds `c` through the `mime_in_reply_to` index. `p.rfc724_mid!=''`
++/// keeps messages without a Message-ID from matching every empty header.
++/// The unary `+` keeps SQLite off the `chat_id` index, and the queries
++/// below join with `CROSS JOIN`, which pins SQLite's join order to the
++/// written one: from the known message to its neighbour through one of the
++/// two Message-ID indexes. Left to itself the planner turns joins around or
++/// scans all of `msgs` depending on table statistics — 100x slower on a long
++/// chain or a large database.
++/// Threads stay within one chat, so "reply privately" answers are not part
++/// of them; hidden messages (drafts) never are.
++fn reply_link_sql(c: &str, p: &str) -> String {
++    format!(
++        "{p}.rfc724_mid!='' AND {p}.rfc724_mid=trim({c}.mime_in_reply_to, '<>')
++         AND {c}.mime_in_reply_to IN ({p}.rfc724_mid, '<'||{p}.rfc724_mid||'>')
++         AND +{c}.chat_id=+{p}.chat_id AND +{c}.hidden=0
++         AND {reply}",
++        reply = is_reply_sql(c)
++    )
++}
++
++/// Returns, for each of the given messages that has replies, the number of
++/// all replies below it — direct replies and, recursively, replies to those.
++///
++/// Messages without replies are left out of the map. One query for any number
++/// of messages, so a message list can ask for everything it shows at once.
++pub async fn get_reply_counts(
++    context: &Context,
++    msg_ids: &[MsgId],
++) -> Result<BTreeMap<MsgId, usize>> {
++    if msg_ids.is_empty() {
++        return Ok(BTreeMap::new());
++    }
++    // Plain integers, so formatting them into the query is safe (as in sync.rs).
++    let ids = msg_ids
++        .iter()
++        .map(|id| id.to_u32().to_string())
++        .collect::<Vec<_>>()
++        .join(",");
++    // One walk down from all given messages at once, collecting each reply
++    // link once (`UNION` deduplicates, which also ends reference cycles), so
++    // the cost is the size of the union of their subtrees. Walking each
++    // message's subtree separately in SQL cost (messages × subtree): over a
++    // second for a page near the top of a long reply chain.
++    let links: Vec<(MsgId, Option<MsgId>)> = context
++        .sql
++        .query_map_vec(
++            &format!(
++                "WITH RECURSIVE below(id, parent) AS (
++                     SELECT id, NULL FROM msgs WHERE id IN ({ids}) AND chat_id!=?1
++                     UNION
++                     SELECT c.id, p.id FROM below b
++                       CROSS JOIN msgs p ON p.id=b.id
++                       CROSS JOIN msgs c ON {link}
++                 )
++                 SELECT id, parent FROM below",
++                link = reply_link_sql("c", "p")
++            ),
++            (DC_CHAT_ID_TRASH,),
++            |row| Ok((row.get(0)?, row.get(1)?)),
++        )
++        .await?;
++    let mut children: BTreeMap<MsgId, Vec<MsgId>> = BTreeMap::new();
++    for (id, parent) in links {
++        if let Some(parent) = parent {
++            children.entry(parent).or_default().push(id);
++        }
++    }
++    // In memory, a walk per message is cheap; the visited set counts a reply
++    // reachable on two paths once and stops at cycles.
++    let mut counts = BTreeMap::new();
++    for &origin in msg_ids {
++        let mut seen = BTreeSet::from([origin]);
++        let mut stack = vec![origin];
++        while let Some(id) = stack.pop() {
++            for &child in children.get(&id).into_iter().flatten() {
++                if seen.insert(child) {
++                    stack.push(child);
++                }
++            }
++        }
++        // `seen` holds the origin itself plus its replies.
++        let replies = seen.len().saturating_sub(1);
++        if replies > 0 {
++            counts.insert(origin, replies);
++        }
++    }
++    Ok(counts)
++}
++
++/// Returns the reply thread the given message belongs to: its root and all
++/// replies below the root (any depth and branching), as `(message, parent)`
++/// pairs sorted by (timestamp, id). The root's parent is `None`; every other
++/// parent is a message of the returned thread, so a UI can lay the pairs out
++/// as a tree.
++///
++/// The root is the topmost message reached by walking up the reply link from
++/// the given message; if the walk up ends in a cycle (which takes colliding
++/// Message-IDs), the oldest message the walk reached. Where a message has
++/// more than one parent (same cause), the oldest one counts, which keeps a
++/// reply from hanging below its own descendant. Returns an empty list if the
++/// message does not exist or is deleted.
++pub async fn get_reply_thread(
++    context: &Context,
++    msg_id: MsgId,
++) -> Result<Vec<(MsgId, Option<MsgId>)>> {
++    let link = reply_link_sql("c", "p");
++    context
++        .sql
++        .query_map_vec(
++            // Both recursions use `UNION`, so reference cycles terminate.
++            &format!(
++                "WITH RECURSIVE
++                 up(id) AS (
++                     SELECT ?1
++                     UNION
++                     SELECT p.id FROM up
++                       CROSS JOIN msgs c ON c.id=up.id
++                       CROSS JOIN msgs p ON {link}
++                 ),
++                 root(id) AS (
++                     SELECT r.id FROM up CROSS JOIN msgs r ON r.id=up.id
++                     WHERE r.chat_id!=?2
++                     ORDER BY EXISTS (
++                         SELECT 1 FROM msgs c CROSS JOIN msgs p ON {link} WHERE c.id=r.id
++                     ), r.timestamp, r.id
++                     LIMIT 1
++                 ),
++                 down(id, parent) AS (
++                     SELECT id, NULL FROM root
++                     UNION
++                     SELECT c.id, p.id FROM down d
++                       CROSS JOIN msgs p ON p.id=d.id
++                       CROSS JOIN msgs c ON {link}
++                 )
++                 -- Bare `d.parent` comes from the row with the MIN(): the
++                 -- oldest parent, and NULL (-1) for the root, which the
++                 -- seed row gives no parent.
++                 SELECT m.id, d.parent, MIN(COALESCE(pm.timestamp, -1))
++                 FROM down d
++                 CROSS JOIN msgs m ON m.id=d.id
++                 LEFT JOIN msgs pm ON pm.id=d.parent
++                 GROUP BY m.id
++                 ORDER BY m.timestamp, m.id"
++            ),
++            (msg_id, DC_CHAT_ID_TRASH),
++            |row| Ok((row.get(0)?, row.get(1)?)),
++        )
++        .await
++}
++
+ pub(crate) fn guess_msgtype_from_suffix(msg: &Message) -> Option<(Viewtype, &'static str)> {
+     msg.param
+         .get(Param::Filename)
+diff --git a/src/message/message_tests.rs b/src/message/message_tests.rs
+index 407e247..98070aa 100644
+--- a/src/message/message_tests.rs
++++ b/src/message/message_tests.rs
+@@ -81,6 +81,154 @@ async fn test_quote_basic() {
+     assert_eq!(quoted_msg.get_text(), msg2.quoted_text().unwrap());
+ }
+ 
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_reply_count_and_thread() -> Result<()> {
++    let mut tcm = TestContextManager::new();
++    let alice = &tcm.alice().await;
++    let bob = &tcm.bob().await;
++    let alice_chat = alice.create_chat(bob).await;
++    bob.create_chat(alice).await;
++
++    // A: root message from Alice.
++    let sent_a = alice.send_text(alice_chat.id, "A").await;
++    let a = sent_a.sender_msg_id;
++
++    // B: Bob replies to A; on Alice's side this arrives via receive_imf,
++    // so `mime_in_reply_to` holds the bracketed raw In-Reply-To header.
++    let a_bob = bob.recv_msg(&sent_a).await;
++    let mut b_bob = Message::new_text("B".to_string());
++    b_bob.set_quote(bob, Some(&a_bob)).await?;
++    chat::send_msg(bob, a_bob.chat_id, &mut b_bob).await?;
++    let b = alice.recv_msg(&bob.pop_sent_msg().await).await;
++    let raw_in_reply_to: String = alice
++        .sql
++        .query_get_value("SELECT mime_in_reply_to FROM msgs WHERE id=?", (b.id,))
++        .await?
++        .unwrap();
++    assert!(raw_in_reply_to.starts_with('<')); // bracketed form is what we test here
++
++    // C: Alice replies to B (outgoing reply stores the bare mid).
++    let mut c = Message::new_text("C".to_string());
++    c.set_quote(alice, Some(&b)).await?;
++    chat::send_msg(alice, alice_chat.id, &mut c).await?;
++
++    // D: unrelated message.
++    let d = alice.send_text(alice_chat.id, "D").await.sender_msg_id;
++
++    let counts = get_reply_counts(alice, &[a, b.id, c.id, d]).await?;
++    assert_eq!(counts, BTreeMap::from([(a, 2), (b.id, 1)]));
++
++    let thread = vec![(a, None), (b.id, Some(a)), (c.id, Some(b.id))];
++    for &(msg_id, _) in &thread {
++        assert_eq!(get_reply_thread(alice, msg_id).await?, thread);
++    }
++    assert_eq!(get_reply_thread(alice, d).await?, vec![(d, None)]);
++
++    // E: a second reply to A makes the thread branch.
++    let e = reply(alice, alice_chat.id, a, "E").await?;
++    assert_eq!(
++        get_reply_counts(alice, &[a, b.id]).await?,
++        BTreeMap::from([(a, 3), (b.id, 1)])
++    );
++    assert_eq!(
++        get_reply_thread(alice, c.id).await?,
++        vec![(a, None), (b.id, Some(a)), (c.id, Some(b.id)), (e, Some(a))]
++    );
++
++    // A deleted message has no thread.
++    delete_msgs(alice, &[d]).await?;
++    assert_eq!(get_reply_thread(alice, d).await?, vec![]);
++
++    Ok(())
++}
++
++/// Sends a text message from `t` that quote-replies to `parent`.
++async fn reply(t: &TestContext, chat_id: ChatId, parent: MsgId, text: &str) -> Result<MsgId> {
++    let mut msg = Message::new_text(text.to_string());
++    msg.set_quote(t, Some(&Message::load_from_db(t, parent).await?))
++        .await?;
++    chat::send_msg(t, chat_id, &mut msg).await
++}
++
++/// Quoted text with a line starting `a=` or `q=` must not pass for the
++/// message's own Forwarded/Quote param: it is stored as a continuation line.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_reply_thread_multiline_quote() -> Result<()> {
++    let mut tcm = TestContextManager::new();
++    let alice = &tcm.alice().await;
++    let bob = &tcm.bob().await;
++    let chat_id = alice.create_chat(bob).await.id;
++
++    let x = alice.send_text(chat_id, "x\na=1\nq=2").await.sender_msg_id;
++    let y = reply(alice, chat_id, x, "Y").await?;
++    let z = reply(alice, chat_id, y, "Z").await?;
++    let y_param: String = alice
++        .sql
++        .query_get_value("SELECT param FROM msgs WHERE id=?", (y,))
++        .await?
++        .unwrap();
++    assert!(y_param.contains("\n\na=1")); // the case under test is really stored
++
++    assert_eq!(
++        get_reply_counts(alice, &[x, y]).await?,
++        BTreeMap::from([(x, 2), (y, 1)])
++    );
++    let thread = vec![(x, None), (y, Some(x)), (z, Some(y))];
++    for &(msg_id, _) in &thread {
++        assert_eq!(get_reply_thread(alice, msg_id).await?, thread);
++    }
++    Ok(())
++}
++
++/// A reply chain longer than any fixed walk-up cap still resolves to its
++/// first message, and a reply cycle terminates.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_reply_thread_long_chain_and_cycle() -> Result<()> {
++    let mut tcm = TestContextManager::new();
++    let alice = &tcm.alice().await;
++    let bob = &tcm.bob().await;
++    let chat_id = alice.create_chat(bob).await.id;
++
++    let first = alice.send_text(chat_id, "0").await.sender_msg_id;
++    let mut chain = vec![first];
++    for i in 1..=120 {
++        chain.push(reply(alice, chat_id, *chain.last().unwrap(), &i.to_string()).await?);
++    }
++    let thread = get_reply_thread(alice, *chain.last().unwrap()).await?;
++    assert_eq!(thread.len(), chain.len());
++    assert_eq!(thread[0], (first, None));
++    assert_eq!(
++        get_reply_counts(alice, &[first]).await?,
++        BTreeMap::from([(first, 120)])
++    );
++
++    // Make the first message a reply to the last one: a cycle.
++    let last_mid: String = alice
++        .sql
++        .query_get_value("SELECT rfc724_mid FROM msgs WHERE id=?", (chain[120],))
++        .await?
++        .unwrap();
++    alice
++        .sql
++        .execute(
++            "UPDATE msgs SET mime_in_reply_to=?, param='q=120\n'||param WHERE id=?",
++            (last_mid, first),
++        )
++        .await?;
++    let thread = get_reply_thread(alice, chain[60]).await?;
++    assert_eq!(thread.len(), chain.len());
++    assert_eq!(thread[0], (first, None)); // oldest message of the cycle is the root
++    // Every parent is older than its reply: none hangs below its own descendant.
++    for (i, (_, parent)) in thread.iter().enumerate().skip(1) {
++        assert!(thread[..i].iter().any(|(id, _)| Some(*id) == *parent));
++    }
++    assert_eq!(
++        get_reply_counts(alice, &[chain[60]]).await?,
++        BTreeMap::from([(chain[60], 120)])
++    );
++    Ok(())
++}
++
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn test_no_quote() {
+     let mut tcm = TestContextManager::new();
+diff --git a/src/sql/migrations.rs b/src/sql/migrations.rs
+index 1ba18ce..e4ff13b 100644
+--- a/src/sql/migrations.rs
++++ b/src/sql/migrations.rs
+@@ -2456,6 +2456,18 @@ pub async fn run(context: &Context, sql: &Sql) -> Result<bool> {
+         .await?;
+     }
+ 
++    // slothfulchat: index for reverse In-Reply-To lookups (reply counts and
++    // reply threads). Deliberately not a numbered migration: the fork must not
++    // claim a version number upstream will use next — a database already at
++    // that number would silently skip upstream's real migration. `IF NOT
++    // EXISTS` makes this a no-op after the first run, and the `slothfulchat_`
++    // prefix keeps the name clear of upstream's indexes.
++    sql.execute(
++        "CREATE INDEX IF NOT EXISTS slothfulchat_msgs_index_in_reply_to ON msgs (mime_in_reply_to)",
++        (),
++    )
++    .await?;
++
+     let new_version = sql
+         .get_raw_config_int(VERSION_CFG)
+         .await?

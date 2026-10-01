@@ -2,7 +2,7 @@
 
 Status: **implemented** as `patches/desktop/0049`, gated behind a
 setting (`experimentalCompletionMenu`) by `patches/desktop/0050`, on by
-default since `patches/desktop/0061` · Branch:
+default since `patches/desktop/0060` · Branch:
 `claude/emoji-completion-menu-ix4kdq`
 
 ## What & why

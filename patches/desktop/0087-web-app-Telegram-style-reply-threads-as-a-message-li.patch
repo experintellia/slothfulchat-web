@@ -97,13 +97,13 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/utils/replyThreadLayout.ts
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 7405e25..14b5714 100644
+index ea3bd34..722a719 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
-@@ -166,5 +166,30 @@
+@@ -175,5 +175,30 @@
    },
-   "slothful_welcome_selfhost": {
-     "message": "And it's yours to run: host your own instance, or fork it and change whatever you like 👉 https://github.com/experintellia/slothfulchat-web"
+   "download_not_on_relay_send_again": {
+     "message": "Not found on your relay — send it again from your other device"
 +  },
 +  "reply_thread": {
 +    "message": "Thread"
@@ -199,10 +199,10 @@ index 1666557..d9986db 100644
          // The contents of the `<li>` are focusable (see `useRovingTabindex`).
          // Focusing an element inside a scrollable region makes the browser
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index 0785495..3ec01eb 100644
+index d2c58bd..b3c96bb 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
-@@ -287,7 +287,8 @@ $info-text-max-width: 400px;
+@@ -275,7 +275,8 @@ $info-text-max-width: 400px;
  
      .date,
      .edited,
@@ -212,7 +212,7 @@ index 0785495..3ec01eb 100644
        color: var(--messageMetadataIncoming);
      }
    }
-@@ -311,7 +312,8 @@ $info-text-max-width: 400px;
+@@ -299,7 +300,8 @@ $info-text-max-width: 400px;
    .metadata:not(.with-image-no-caption) {
      .date,
      .edited,
@@ -222,7 +222,7 @@ index 0785495..3ec01eb 100644
        color: var(--messageOutgoingStatusColor);
      }
  
-@@ -402,7 +404,8 @@ $info-text-max-width: 400px;
+@@ -390,7 +392,8 @@ $info-text-max-width: 400px;
    .metadata {
      .date,
      .edited,
@@ -338,7 +338,7 @@ index 0000000..e91bb42
 +  ): Promise<ReplyThreadEntry[]>
 +}
 diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
-index 2e08871..8d49d95 100644
+index ad239c0..ff8d250 100644
 --- a/packages/frontend/src/components/ChatView/ChatView.tsx
 +++ b/packages/frontend/src/components/ChatView/ChatView.tsx
 @@ -32,6 +32,7 @@ import { ContextMenuContext } from '../../contexts/ContextMenuContext'
@@ -652,10 +652,10 @@ index 0977055..4819db2 100644
                      log.error(
                        'Tried to send a message while draft is loading or in message editing mode'
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 9ebcadb..b1ea0da 100644
+index f108098..b6859fc 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -274,6 +274,7 @@ function buildContextMenu(
+@@ -275,6 +275,7 @@ function buildContextMenu(
      handleReactClick,
      chat,
      jumpToMessage,
@@ -663,7 +663,7 @@ index 9ebcadb..b1ea0da 100644
    }: {
      accountId: number
      message: T.Message | null
-@@ -284,6 +285,7 @@ function buildContextMenu(
+@@ -285,6 +286,7 @@ function buildContextMenu(
      handleReactClick: (event: React.MouseEvent<Element, MouseEvent>) => void
      chat: T.FullChat
      jumpToMessage: JumpToMessage
@@ -671,7 +671,7 @@ index 9ebcadb..b1ea0da 100644
    },
    clickTarget: HTMLAnchorElement | null
  ): (false | ContextMenuItem)[] {
-@@ -372,6 +374,20 @@ function buildContextMenu(
+@@ -374,6 +376,20 @@ function buildContextMenu(
      message.fromId > C.DC_CONTACT_ID_LAST_SPECIAL
  
    return [
@@ -692,7 +692,7 @@ index 9ebcadb..b1ea0da 100644
      // Reply
      showReply && {
        label: tx('notify_reply_button'),
-@@ -606,8 +622,12 @@ export default function Message(props: {
+@@ -613,8 +629,12 @@ export default function Message(props: {
    chat: T.FullChat
    message: T.Message
    conversationType: ConversationType
@@ -706,7 +706,7 @@ index 9ebcadb..b1ea0da 100644
    const { viewType, text, hasLocation, hasHtml } = message
    const direction = getDirection(message)
    const status = mapCoreMsgStatus2String(message.state)
-@@ -688,6 +708,7 @@ export default function Message(props: {
+@@ -695,6 +715,7 @@ export default function Message(props: {
          handleReactClick,
          chat: props.chat,
          jumpToMessage,
@@ -714,7 +714,7 @@ index 9ebcadb..b1ea0da 100644
        }
        const items = isMultiselectMember
          ? buildMultiselectContextMenu(
-@@ -726,6 +747,7 @@ export default function Message(props: {
+@@ -733,6 +754,7 @@ export default function Message(props: {
        showReactionsBar,
        text,
        jumpToMessage,
@@ -722,7 +722,7 @@ index 9ebcadb..b1ea0da 100644
        tx,
      ]
    )
-@@ -1317,6 +1339,14 @@ export default function Message(props: {
+@@ -1322,6 +1344,14 @@ export default function Message(props: {
                viewType={effectiveViewType}
                chatType={chat.chatType}
                tabindexForInteractiveContents={tabindexForInteractiveContents}

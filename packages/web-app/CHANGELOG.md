@@ -1,5 +1,30 @@
 # Changelog
 
+- **Downloading a message the server no longer has now fails instead of
+  spinning forever.** If the large part of a message was deleted on the server
+  before you got to it — chatmail relays clear messages out after a while —
+  tapping download left a spinner that never stopped. It now reports the
+  failure, with the retry button next to it. A brand-new message still gets
+  ten minutes for its attachment to finish arriving. Instead of just "failed",
+  the message now says what to do: a recent one may still be on its way, an
+  older one has to be sent again.
+
+- **Hardening**: updated the TLS library that secures the connection to your
+  mail server (rustls) to 0.23.45, which fixes a medium-severity flaw in how it
+  checks the TLS 1.3 handshake.
+
+- **The browser's own right-click menu no longer covers the app's.** Right-
+  clicking a chat, or one of the app icons in a chat's header, opened both
+  menus stacked on top of each other. Right-clicking selected text, a picture,
+  a link or a text box still gives you the browser's menu, which is where
+  "copy" lives.
+- **The Diagnostics panel now also opens with Ctrl/Cmd+Shift+D.** The button in
+  the log dialog is unchanged — the shortcut is just a faster way there when
+  someone asks you for startup timings.
+- **Hardening**: bumped DOMPurify (used to sanitize HTML email before display)
+  to 3.4.16. The advisory it fixes covers a mode this app doesn't use, so mail
+  display was never affected; the update brings general sanitizer hardening.
+
 ## 0.9.1 — 2026-08-15
 
 - Same app as 0.9.0, re-released because 0.9.0's packages never reached npm:

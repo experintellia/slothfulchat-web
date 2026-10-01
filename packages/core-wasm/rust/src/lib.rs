@@ -14,6 +14,18 @@ use tokio::sync::RwLock;
 use wasm_bindgen::prelude::*;
 use yerpc::{RpcClient, RpcSession};
 
+// Direct console bindings for our own recovery/serialization diagnostics —
+// they fire before or outside any account context, so they cannot travel as
+// JSON-RPC events, and a whole-module `log` bridge would double-print core's
+// own event logging (see the note in `init`).
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = warn)]
+    fn console_warn(s: &str);
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(s: &str);
+}
+
 #[wasm_bindgen]
 pub struct DeltaChat {
     session: RpcSession<CommandApi>,
@@ -38,7 +50,10 @@ pub async fn init(
     persist: bool,
 ) -> Result<DeltaChat, JsValue> {
     console_error_panic_hook::set_once();
-    let _ = console_log::init_with_level(log::Level::Info);
+    // No `log`→console bridge on purpose: core reports its Info/Warning/Error
+    // logging as JSON-RPC events too, and the page prints those, so a bridge
+    // here makes every core log line appear twice. Our own diagnostics below
+    // use the console bindings directly.
 
     if let Some(url) = ws_proxy_url {
         deltachat::net::ws_tcp::set_ws_proxy_url(url);
@@ -102,7 +117,7 @@ pub async fn init(
                 Ok(message) => {
                     let _ = on_message.call1(&JsValue::NULL, &JsValue::from_str(&message));
                 }
-                Err(err) => log::error!("failed to serialize RPC message: {err}"),
+                Err(err) => console_error(&format!("failed to serialize RPC message: {err}")),
             }
         }
     });
@@ -252,13 +267,13 @@ async fn heal_accounts_config(cause: &str) -> Result<Accounts, String> {
     let io = |e: std::io::Error| e.to_string();
     let bytes = tokio::fs::read(ACCOUNTS_CONFIG).await.map_err(io)?;
     let hex: Vec<String> = bytes.iter().take(64).map(|b| format!("{b:02x}")).collect();
-    log::error!(
+    console_error(&format!(
         "accounts.toml is corrupt ({cause}); quarantining to accounts.toml.broken and restoring \
          from backup / the account dirs.\nsize: {} bytes\nfirst 64 bytes: {}\nfirst 4 KiB (lossy):\n{}",
         bytes.len(),
         hex.join(" "),
         String::from_utf8_lossy(&bytes[..bytes.len().min(4096)])
-    );
+    ));
     tokio::fs::rename(ACCOUNTS_CONFIG, "/accounts/accounts.toml.broken")
         .await
         .map_err(io)?;
@@ -279,12 +294,12 @@ async fn heal_accounts_config(cause: &str) -> Result<Accounts, String> {
             tokio::fs::write(ACCOUNTS_CONFIG, bak).await.map_err(io)?;
             match Accounts::new(PathBuf::from("/accounts"), true).await {
                 Ok(accounts) => {
-                    log::warn!("restored accounts.toml from the last-good backup");
+                    console_warn("restored accounts.toml from the last-good backup");
                     return Ok(accounts);
                 }
-                Err(e) => log::warn!(
+                Err(e) => console_warn(&format!(
                     "backup accounts.toml is unusable too ({e:#}); rebuilding from the account dirs"
-                ),
+                )),
             }
         }
     }
@@ -294,10 +309,10 @@ async fn heal_accounts_config(cause: &str) -> Result<Accounts, String> {
     // accounts keep their numbering; new dirs get fresh ids. Renumbering from
     // 1 would break every persisted account reference (issue #75).
     let toml = rebuild_config(&uuids, bak.as_deref());
-    log::warn!(
+    console_warn(&format!(
         "rebuilt accounts.toml with {} account(s):\n{toml}",
         uuids.len()
-    );
+    ));
     tokio::fs::write(ACCOUNTS_CONFIG, &toml).await.map_err(io)?;
     Accounts::new(PathBuf::from("/accounts"), true)
         .await
