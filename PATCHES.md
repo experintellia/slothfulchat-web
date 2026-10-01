@@ -513,7 +513,7 @@ exists:
   the raw header would fuse consecutive messages into one giant thread — and
   threads stay within one chat, which keeps "reply privately" answers out.
   The header is matched in both stored forms (`<mid>` for incoming, bare mid
-  for outgoing messages). `core/0034`, `desktop/0087`
+  for outgoing messages). `core/0034`, `desktop/0088`
 
 ## Bugfixes
 
