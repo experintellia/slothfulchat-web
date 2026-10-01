@@ -4,7 +4,9 @@
   spinning forever.** If the large part of a message was deleted on the server
   before you got to it — chatmail relays clear messages out after a while —
   tapping download left a spinner that never stopped. It now reports the
-  failure right away, with the retry button next to it.
+  failure, with the retry button next to it. A brand-new message still gets
+  ten minutes for its attachment to finish arriving, and if it fails anyway it
+  says the attachment may still be on its way rather than just "failed".
 
 - **Hardening**: bumped DOMPurify (used to sanitize HTML email before display)
   to 3.4.16, which fixes a low-severity cross-site scripting issue in the

@@ -32,17 +32,30 @@ relay downloads it now, from scratch (staging files are per transport). If
 none is left, the message is set to `Failure` and dequeued, which puts the
 retry button back.
 
-`download_msg()`'s "no location known on any transport" branch now fails
-the message too, instead of waiting. Waiting is only right for a
-post-message that has not been seen yet, which cannot be told apart from
-one that is gone, and without this a retry after a proven failure would
-spin forever again. Tapping download before the post-message has arrived —
-which can take minutes while the sender uploads a large attachment — now
-fails once; the retry button fetches it once it is there.
+`download_msg()`'s "no location known on any transport" branch no longer
+waits forever either. That state is either a post-message that has not
+arrived yet or one that is gone, and nothing tells them apart, so it waits
+while the pre-message is fresh — ten minutes, since the sender may still be
+uploading a large attachment — and fails it after that. Inbox loops wake at
+least every 5-minute IDLE timeout, so one that never comes fails within
+about 15 minutes. A relay that proved the message gone fails it at once.
+
+Webimap transports fetch every message in full and never serve the
+`download` queue, so a download tapped there for a post-message that never
+reaches the relay spun forever too. The webimap loop now runs the same
+grace-then-fail check over the queue once per round.
 
 The location lookup is now `imap_location()`, named because its
 transport-spanning behavior is load-bearing: only a message no relay has a
-location for may be failed. Tests cover the lookup across transports and
+location for may be failed. It ignores rows of transports that were removed
+(they linger until housekeeping, up to a day), which would otherwise keep a
+message "held by another relay" that no loop serves.
+
+When the probe forgets a location it also deletes that location's staging
+file, which can never be resumed and would otherwise sit in the blobdir
+until housekeeping. And `download_full()` uses INSERT OR IGNORE, so tapping
+download while an auto-download of the same message is queued no longer
+returns an error to the UI. Tests cover the lookup across transports and
 the forget decision with two relays, without involving the flag.
 
 An empty FETCH is only taken as proof from a session that still completes
@@ -65,14 +78,24 @@ and one nobody asked for keeps its plain download button.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/download.rs | 267 +++++++++++++++++++++++++++++++++++++++++++-----
- 1 file changed, 243 insertions(+), 24 deletions(-)
+ src/download.rs | 389 ++++++++++++++++++++++++++++++++++++++++++++----
+ src/webimap.rs  |   4 +
+ 2 files changed, 368 insertions(+), 25 deletions(-)
 
 diff --git a/src/download.rs b/src/download.rs
-index fb971c0..b0630d5 100644
+index fb971c0..32ef52f 100644
 --- a/src/download.rs
 +++ b/src/download.rs
-@@ -446,25 +446,22 @@ pub(crate) async fn download_msg(
+@@ -95,7 +95,7 @@ pub async fn download_full(self, context: &Context) -> Result<()> {
+                 context
+                     .sql
+                     .execute(
+-                        "INSERT INTO download (rfc724_mid, msg_id) VALUES (?,?)",
++                        "INSERT OR IGNORE INTO download (rfc724_mid, msg_id) VALUES (?,?)",
+                         (msg.rfc724_mid(), msg.id),
+                     )
+                     .await?;
+@@ -446,25 +446,12 @@ pub(crate) async fn download_msg(
      session: &mut Session,
  ) -> Result<Option<FetchMsgResult>> {
      let transport_id = session.transport_id();
@@ -95,22 +118,12 @@ index fb971c0..b0630d5 100644
  
      let Some((server_uid, server_folder, msg_transport_id)) = row else {
          // No IMAP record found, we don't know the UID and folder.
-+        //
-+        // Nothing can fetch it, so fail it instead of waiting. Waiting is
-+        // only right for a post-message that has not been seen yet, which
-+        // cannot be told apart from one that is gone (see
-+        // `forget_imap_location`), and waiting on the wrong one is a spinner
-+        // that never ends. ponytail: tapping download in the seconds between
-+        // a pre-message and its post-message arriving now fails once; the
-+        // retry button fetches it. A late post-message within the download
-+        // limit is still fetched by itself.
          delete_from_available_post_msgs(context, &rfc724_mid).await?;
-+        set_state_to_failure(context, &rfc724_mid).await?;
-+        delete_from_downloads(context, &rfc724_mid).await?;
++        fail_unlocatable_post_msg(context, &rfc724_mid).await?;
          return Err(anyhow!(
              "IMAP location for {rfc724_mid:?} post-message is unknown"
          ));
-@@ -515,6 +512,30 @@ async fn fetch_single_msg(
+@@ -515,6 +502,36 @@ async fn fetch_single_msg(
          ensure!(folder_exists, "No folder {folder}");
  
          let transport_id = self.transport_id();
@@ -132,6 +145,12 @@ index fb971c0..b0630d5 100644
 +                // still reads as "gone" and fails the message; retry recovers
 +                // it only while the row exists, and this deletes it.
 +                self.run_command_and_check_ok("NOOP").await?;
++                // A half-finished download from this location can never be
++                // resumed; housekeeping only reclaims it within a day.
++                StagingFile::open(context, transport_id, folder, uidvalidity, uid)
++                    .await?
++                    .delete()
++                    .await?;
 +                forget_imap_location(context, transport_id, folder, uidvalidity, uid, &rfc724_mid)
 +                    .await?;
 +                bail!("UID {uid} is gone from {folder}");
@@ -141,7 +160,7 @@ index fb971c0..b0630d5 100644
          let chunking_disabled = context
              .chunked_download_disabled
              .lock()
-@@ -531,15 +552,6 @@ async fn fetch_single_msg(
+@@ -531,15 +548,6 @@ async fn fetch_single_msg(
              "Downloading message {}/{} in chunks...", folder, uid
          );
  
@@ -157,7 +176,7 @@ index fb971c0..b0630d5 100644
          let mut staging =
              StagingFile::open(context, transport_id, folder, uidvalidity, uid).await?;
          let msg_id = rfc724_mid_exists(context, &rfc724_mid).await?;
-@@ -574,6 +586,11 @@ async fn fetch_single_msg(
+@@ -574,6 +582,11 @@ async fn fetch_single_msg(
                          .map(|()| FetchMsgResult::Done);
                  }
                  staging.delete().await?;
@@ -169,7 +188,7 @@ index fb971c0..b0630d5 100644
                  bail!("Failed to fetch UID {uid}");
              }
              ChunkOutcome::TooLarge => {
-@@ -708,6 +725,16 @@ async fn disable_chunked_download(context: &Context, transport_id: u32) -> Resul
+@@ -708,6 +721,16 @@ async fn disable_chunked_download(context: &Context, transport_id: u32) -> Resul
  
  async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()> {
      if let Some(msg_id) = rfc724_mid_exists(context, rfc724_mid).await? {
@@ -186,7 +205,7 @@ index fb971c0..b0630d5 100644
          // Update download state to failure
          // so it can be retried.
          //
-@@ -721,6 +748,83 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
+@@ -721,6 +744,133 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
      Ok(())
  }
  
@@ -207,6 +226,7 @@ index fb971c0..b0630d5 100644
 +        .query_row_optional(
 +            "SELECT uid, folder, transport_id FROM imap
 +             WHERE rfc724_mid=? AND target!=''
++               AND transport_id IN (SELECT id FROM transports)
 +             ORDER BY transport_id=? DESC LIMIT 1",
 +            (&rfc724_mid, transport_id),
 +            |row| {
@@ -267,10 +287,59 @@ index fb971c0..b0630d5 100644
 +    Ok(())
 +}
 +
++/// How long after its pre-message arrived a post-message that no relay has
++/// yet may still be on its way. The sender uploads the post-message after the
++/// pre-message, which for a large attachment on a slow link takes minutes.
++/// Inbox loops wake at least every IDLE timeout (5 minutes), so a post-message
++/// that never comes fails within about 15 minutes.
++const POST_MSG_GRACE_SECS: i64 = 10 * 60;
++
++/// Handles a queued post-message that no relay has a location for.
++///
++/// That is either one that has not arrived yet or one that is gone, and
++/// nothing tells them apart, so a fresh one is given time to arrive (it stays
++/// queued and `InProgress`) and an older one is failed and dequeued — waiting
++/// on the wrong one is a spinner that never ends. A relay that *proved* the
++/// message gone is handled by [`forget_imap_location`] without a grace.
++async fn fail_unlocatable_post_msg(context: &Context, rfc724_mid: &str) -> Result<()> {
++    if let Some(msg_id) = rfc724_mid_exists(context, rfc724_mid).await? {
++        let received = Message::load_from_db(context, msg_id)
++            .await?
++            .get_received_timestamp();
++        if tools::time() - received < POST_MSG_GRACE_SECS {
++            return Ok(());
++        }
++    }
++    set_state_to_failure(context, rfc724_mid).await?;
++    delete_from_downloads(context, rfc724_mid).await?;
++    Ok(())
++}
++
++/// Ends the queued downloads no relay has a location for, after their grace.
++///
++/// Called from the webimap loop: webimap fetches every message in full as it
++/// arrives and never serves the `download` queue, so without this a download
++/// tapped for a post-message that never reaches the relay spins forever.
++pub(crate) async fn expire_unlocatable_downloads(context: &Context) -> Result<()> {
++    let rfc724_mids = context
++        .sql
++        .query_map_vec("SELECT rfc724_mid FROM download", (), |row| {
++            let rfc724_mid: String = row.get(0)?;
++            Ok(rfc724_mid)
++        })
++        .await?;
++    for rfc724_mid in &rfc724_mids {
++        if imap_location(context, rfc724_mid, 0).await?.is_none() {
++            fail_unlocatable_post_msg(context, rfc724_mid).await?;
++        }
++    }
++    Ok(())
++}
++
  async fn available_post_msgs_contains_rfc724_mid(
      context: &Context,
      rfc724_mid: &str,
-@@ -779,6 +883,11 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
+@@ -779,6 +929,11 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
              return Ok(());
          }
          if let Ok(Some(FetchMsgResult::Done)) = res {
@@ -282,10 +351,24 @@ index fb971c0..b0630d5 100644
              delete_from_downloads(context, rfc724_mid).await?;
              delete_from_available_post_msgs(context, rfc724_mid).await?;
          }
-@@ -914,6 +1023,116 @@ async fn test_update_download_state() -> Result<()> {
+@@ -914,6 +1069,190 @@ async fn test_update_download_state() -> Result<()> {
          Ok(())
      }
  
++    /// Makes transports 1 and 2 exist, so their `imap` rows count as locations.
++    async fn add_transports(t: &TestContext) -> Result<()> {
++        for id in [1u32, 2] {
++            t.sql
++                .execute(
++                    "INSERT OR IGNORE INTO transports (id, addr, entered_param, configured_param)
++                     VALUES (?, ?, '', '')",
++                    (id, format!("relay{id}@example.org")),
++                )
++                .await?;
++        }
++        Ok(())
++    }
++
 +    /// Records a message as sitting at `uid` in `transport_id`'s INBOX.
 +    async fn add_imap_row(
 +        t: &TestContext,
@@ -322,8 +405,14 @@ index fb971c0..b0630d5 100644
 +        let t = tcm.alice().await;
 +        let mid = "post-msg@example.org";
 +        let at = |uid: u32, transport_id: u32| Some((uid, "INBOX".to_string(), transport_id));
++        add_transports(&t).await?;
 +
 +        // Nowhere: the only case the caller may treat as failed.
++        assert!(imap_location(&t, mid, 1).await?.is_none());
++
++        // A transport that was removed is no location: its rows linger until
++        // housekeeping, and nothing would ever fetch from them.
++        add_imap_row(&t, 3, mid, 300).await?;
 +        assert!(imap_location(&t, mid, 1).await?.is_none());
 +
 +        // Only on the other relay: hands the download to that transport
@@ -367,6 +456,7 @@ index fb971c0..b0630d5 100644
 +                (mid, msg_id),
 +            )
 +            .await?;
++        add_transports(&t).await?;
 +        add_imap_row(&t, 1, mid, 100).await?;
 +        add_imap_row(&t, 2, mid, 200).await?;
 +        let state = async || -> Result<DownloadState> {
@@ -396,6 +486,74 @@ index fb971c0..b0630d5 100644
 +        Ok(())
 +    }
 +
++    /// A queued download no relay has a location for waits while its
++    /// pre-message is fresh (the post-message may still be uploading) and is
++    /// failed once that grace is over; one a relay still holds is left alone.
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_expire_unlocatable_downloads() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let (t, msg_id) = real_msg_id(&mut tcm).await?;
++        let mid = "post-msg@example.org";
++        let received = async |secs_ago: i64| -> Result<()> {
++            t.sql
++                .execute(
++                    "UPDATE msgs SET rfc724_mid=?, timestamp_rcvd=? WHERE id=?",
++                    (mid, tools::time() - secs_ago, msg_id),
++                )
++                .await?;
++            Ok(())
++        };
++        let state = async || -> Result<DownloadState> {
++            Ok(Message::load_from_db(&t, msg_id).await?.download_state())
++        };
++        msg_id
++            .update_download_state(&t, DownloadState::InProgress)
++            .await?;
++        t.sql
++            .execute(
++                "INSERT INTO download (rfc724_mid, msg_id) VALUES (?,?)",
++                (mid, msg_id),
++            )
++            .await?;
++
++        // Arrived a minute ago, post-message not on any relay yet: keep waiting.
++        received(60).await?;
++        expire_unlocatable_downloads(&t).await?;
++        assert_eq!(state().await?, DownloadState::InProgress);
++        assert!(download_contains(&t, mid).await?);
++
++        // Still on a relay, however old: that relay's loop downloads it.
++        received(POST_MSG_GRACE_SECS + 60).await?;
++        add_transports(&t).await?;
++        add_imap_row(&t, 1, mid, 100).await?;
++        expire_unlocatable_downloads(&t).await?;
++        assert_eq!(state().await?, DownloadState::InProgress);
++        assert!(download_contains(&t, mid).await?);
++
++        // Past the grace and on no relay: fail it, so the retry button shows.
++        t.sql.execute("DELETE FROM imap", ()).await?;
++        expire_unlocatable_downloads(&t).await?;
++        assert_eq!(state().await?, DownloadState::Failure);
++        assert!(!download_contains(&t, mid).await?);
++
++        Ok(())
++    }
++
      /// Deterministic fake message bytes: assembly bugs (gaps, duplication,
      /// reordering) show up as a mismatch against this pattern.
      fn fake_message(len: usize) -> Vec<u8> {
+diff --git a/src/webimap.rs b/src/webimap.rs
+index ced1beb..7e5fa9c 100644
+--- a/src/webimap.rs
++++ b/src/webimap.rs
+@@ -281,6 +281,10 @@ async fn fetch_idle(
+     connection: &Imap,
+     wait: u64,
+ ) -> Result<bool> {
++    // Webimap fetches every message in full and never serves the download
++    // queue; a download tapped for a post-message that never reaches the
++    // relay must still end once its grace is over.
++    crate::download::expire_unlocatable_downloads(ctx).await?;
+     let mut msgs = client.list_messages(ctx, wait).await?;
+     if msgs.is_empty() {
+         return Ok(true);

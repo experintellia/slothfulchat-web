@@ -1,0 +1,132 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 1 Oct 2026 20:06:37 +0000
+Subject: [PATCH 87/87] web-app: say a fresh failed download may still be
+ arriving
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Core gives a post-message that no relay has yet ten minutes before failing
+it, because its sender may still be uploading a large attachment (core/0034).
+Slower uploads can take longer, so a bare "download failed" on a message
+that arrived minutes ago reads like the attachment is lost when it most
+likely is not.
+
+A failed download on a message received less than an hour ago now reads
+"May still be arriving — try again in a few minutes" instead. One
+`DownloadFailedLabel` component replaces the four "download failed" spans in
+the download placeholder and the one in Message.tsx's plain fallback. The
+string is fork-only and goes into _untranslated_en.json.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ _locales/_untranslated_en.json                |  3 ++
+ .../message/DownloadOnDemandPlaceholder.tsx   | 29 +++++++++++++++----
+ .../src/components/message/Message.tsx        |  5 ++--
+ 3 files changed, 28 insertions(+), 9 deletions(-)
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 7405e25..ec10153 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -166,5 +166,8 @@
+   },
+   "slothful_welcome_selfhost": {
+     "message": "And it's yours to run: host your own instance, or fork it and change whatever you like 👉 https://github.com/experintellia/slothfulchat-web"
++  },
++  "download_may_still_arrive": {
++    "message": "May still be arriving — try again in a few minutes"
+   }
+ }
+diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
+index a8c369b..202dc18 100644
+--- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
++++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
+@@ -84,6 +84,25 @@ function Preview({
+   )
+ }
+ 
++/**
++ * Core waits ten minutes for a post-message no relay has yet before failing
++ * it, because the sender may still be uploading a large attachment; slower
++ * uploads can take longer than that. So a failure on a message that arrived
++ * recently says it may still come, instead of a bare "download failed".
++ */
++const FRESH_FAILURE_SECS = 60 * 60
++
++export function DownloadFailedLabel({ message }: { message: T.Message }) {
++  const tx = useTranslationFunction()
++  const fresh =
++    Date.now() / 1000 - message.receivedTimestamp < FRESH_FAILURE_SECS
++  return (
++    <span className='failed'>
++      {tx(fresh ? 'download_may_still_arrive' : 'download_failed')}
++    </span>
++  )
++}
++
+ function CircleDownloadButton({
+   messageId,
+   accountId,
+@@ -130,9 +149,7 @@ function DownloadControls({
+   const { downloadState } = message
+   return (
+     <div className='download-on-demand-controls'>
+-      {downloadState === 'Failure' && (
+-        <span className='failed'>{tx('download_failed')}</span>
+-      )}
++      {downloadState === 'Failure' && <DownloadFailedLabel message={message} />}
+       {downloadState === 'InProgress' ? (
+         <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
+       ) : (
+@@ -270,7 +287,7 @@ export default function DownloadOnDemandPlaceholder({
+           </div>
+         )}
+         {message.downloadState === 'Failure' && (
+-          <span className='failed'>{tx('download_failed')}</span>
++          <DownloadFailedLabel message={message} />
+         )}
+       </div>
+     )
+@@ -288,7 +305,7 @@ export default function DownloadOnDemandPlaceholder({
+           <div className='name'>{message.fileName}</div>
+         </div>
+         {message.downloadState === 'Failure' && (
+-          <span className='failed'>{tx('download_failed')}</span>
++          <DownloadFailedLabel message={message} />
+         )}
+         {message.downloadState === 'InProgress' ? (
+           <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
+@@ -329,7 +346,7 @@ export default function DownloadOnDemandPlaceholder({
+         <div className='name'>{message.fileName}</div>
+         <div className='size'>{filesize(message.fileBytes ?? 0)}</div>
+         {message.downloadState === 'Failure' && (
+-          <span className='failed'>{tx('download_failed')}</span>
++          <DownloadFailedLabel message={message} />
+         )}
+       </div>
+     </div>
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index 9ebcadb..bdf769a 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -48,6 +48,7 @@ import InvalidUnencryptedMailDialog from '../dialogs/InvalidUnencryptedMail'
+ import Button from '../Button'
+ import VCardComponent from './VCard'
+ import DownloadOnDemandPlaceholder, {
++  DownloadFailedLabel,
+   getPostMessageViewType,
+   placeholderCaption,
+ } from './DownloadOnDemandPlaceholder'
+@@ -1106,9 +1107,7 @@ export default function Message(props: {
+         <div className={'download'}>
+           {text} {'- '}
+           {downloadState == 'Failure' && (
+-            <span key='fail' className={'failed'}>
+-              {tx('download_failed')}
+-            </span>
++            <DownloadFailedLabel key='fail' message={message} />
+           )}
+           {downloadState == 'InProgress' && (
+             <span key='downloading'>

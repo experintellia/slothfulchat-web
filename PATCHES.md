@@ -508,10 +508,14 @@ contribution intended.
   partial FETCH or not — finds the UID missing or `\Deleted`, that relay's row
   is forgotten; if another relay still holds the message it is downloaded from
   there right away, and if none does the message is set to `Failure`, which
-  puts the retry button back. A message with no known location at all fails
-  too instead of waiting, so a retry can never spin forever. An empty probe
-  only counts from a session that still answers a tagged NOOP, so a dropped
-  connection retries instead of forgetting the location. And a fetch that
+  puts the retry button back. A message no relay has a location for waits ten
+  minutes from its arrival (the sender may still be uploading) and then fails
+  too, so a retry can never spin forever; webimap transports, which never
+  serve the download queue, run the same check every round. A failure on a
+  message that arrived within the hour says it may still be arriving
+  (`desktop/0087`). An empty probe only counts from a session that still
+  answers a tagged NOOP, so a dropped connection retries instead of
+  forgetting the location. And a fetch that
   ends without delivering the message (rejected, trashed, no body) now fails
   it instead of leaving it `InProgress`; only an in-progress download is ever
   set to `Failure`. `core/0034`
