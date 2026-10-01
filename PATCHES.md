@@ -550,8 +550,8 @@ contribution intended.
   called it at all. Both now cancel synchronously in the handler that owns the
   menu. Deliberately per-site, not app-wide: where the app has no menu of its
   own — selected text, editable fields, images, links — the native menu is the
-  useful one, and those are exactly the four cases Electron shows.
-  `desktop/0035`
+  useful one, and those are exactly the four cases Electron shows. Covered,
+  both halves, by `scripts/test-context-menu-e2e.mjs`. `desktop/0035`
 - Long-press context menus were unreachable on phones, for stacked reasons.
   On Android, the account sidebar's `draggable` (the desktop reorder gesture)
   made Blink spend the long press starting a drag no finger can complete

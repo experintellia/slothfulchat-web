@@ -424,6 +424,13 @@ jobs:
       - name: E2E test — resizable chat-list sidebar
         run: node scripts/test-sidebar-resize-e2e.mjs
 
+      # right-click menus e2e (fully offline, mock madmail): a chat-list row
+      # (right-click) and a chat-header webxdc app icon (context-menu key) open
+      # the app's menu with the native one cancelled; a selected profile name
+      # keeps the native menu (its Copy).
+      - name: E2E test — right-click menus
+        run: node scripts/test-context-menu-e2e.mjs
+
       # welcome device message e2e (fully offline, mock madmail): our message
       # lands in the device chat after core's own, the upstream welcome image
       # is gone, and the label keeps it from being added twice.
