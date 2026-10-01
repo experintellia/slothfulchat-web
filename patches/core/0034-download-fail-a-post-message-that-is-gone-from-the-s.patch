@@ -36,30 +36,40 @@ retry button back.
 the message too, instead of waiting. Waiting is only right for a
 post-message that has not been seen yet, which cannot be told apart from
 one that is gone, and without this a retry after a proven failure would
-spin forever again. Tapping download in the seconds between a pre-message
-and its post-message arriving now fails once; the retry button fetches it.
+spin forever again. Tapping download before the post-message has arrived —
+which can take minutes while the sender uploads a large attachment — now
+fails once; the retry button fetches it once it is there.
 
 The location lookup is now `imap_location()`, named because its
 transport-spanning behavior is load-bearing: only a message no relay has a
 location for may be failed. Tests cover the lookup across transports and
 the forget decision with two relays, without involving the flag.
 
+An empty FETCH is only taken as proof from a session that still completes
+a tagged NOOP: async-imap ends the stream without saying so on a dropped
+connection or a rejected command, and forgetting a location on either would
+leave a retry with nothing to fetch from.
+
 The probe runs before the chunked/whole-message split: `FLAGS
 RFC822.SIZE` is plain RFC 3501, so servers without partial FETCH get the
 same proof. Any other fetch error is not proof that the message is gone and
 keeps the download queued, to retry on the next cycle.
 
-Also fixes the chunked path leaving `InProgress` behind when `receive_imf`
-rejects the assembled message: the device message was posted and the
-queue entry dropped, but nothing moved the message out of `InProgress`.
+`download_msgs()` now fails a message that is still `InProgress` after a
+fetch reported `Done`: receive_imf rejecting or trashing it, or a FETCH
+response without a body, dropped the queue entry while nothing moved the
+message on. That covers the chunked and the whole-message path in one
+place. `set_state_to_failure()` now only acts on `InProgress`, so a message
+another transport finished meanwhile is never flipped back to `Failure`,
+and one nobody asked for keeps its plain download button.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/download.rs | 237 +++++++++++++++++++++++++++++++++++++++++++-----
- 1 file changed, 213 insertions(+), 24 deletions(-)
+ src/download.rs | 267 +++++++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 243 insertions(+), 24 deletions(-)
 
 diff --git a/src/download.rs b/src/download.rs
-index fb971c0..17e0a1c 100644
+index fb971c0..b0630d5 100644
 --- a/src/download.rs
 +++ b/src/download.rs
 @@ -446,25 +446,22 @@ pub(crate) async fn download_msg(
@@ -100,7 +110,7 @@ index fb971c0..17e0a1c 100644
          return Err(anyhow!(
              "IMAP location for {rfc724_mid:?} post-message is unknown"
          ));
-@@ -515,6 +512,21 @@ async fn fetch_single_msg(
+@@ -515,6 +512,30 @@ async fn fetch_single_msg(
          ensure!(folder_exists, "No folder {folder}");
  
          let transport_id = self.transport_id();
@@ -113,6 +123,15 @@ index fb971c0..17e0a1c 100644
 +        let meta = match self.uid_fetch_meta(uid).await? {
 +            Some(meta) if !meta.deleted => meta,
 +            _ => {
++                // An empty FETCH is also what a dropped connection or a
++                // rejected command looks like: async-imap ends the stream on
++                // either without saying so. Only a session that still
++                // completes a tagged command answered for real; otherwise
++                // this errors, the download stays queued and is retried.
++                // ponytail: a tagged NO to the probe itself on a live session
++                // still reads as "gone" and fails the message; retry recovers
++                // it only while the row exists, and this deletes it.
++                self.run_command_and_check_ok("NOOP").await?;
 +                forget_imap_location(context, transport_id, folder, uidvalidity, uid, &rfc724_mid)
 +                    .await?;
 +                bail!("UID {uid} is gone from {folder}");
@@ -122,7 +141,7 @@ index fb971c0..17e0a1c 100644
          let chunking_disabled = context
              .chunked_download_disabled
              .lock()
-@@ -531,15 +543,6 @@ async fn fetch_single_msg(
+@@ -531,15 +552,6 @@ async fn fetch_single_msg(
              "Downloading message {}/{} in chunks...", folder, uid
          );
  
@@ -138,28 +157,36 @@ index fb971c0..17e0a1c 100644
          let mut staging =
              StagingFile::open(context, transport_id, folder, uidvalidity, uid).await?;
          let msg_id = rfc724_mid_exists(context, &rfc724_mid).await?;
-@@ -574,6 +577,8 @@ async fn fetch_single_msg(
+@@ -574,6 +586,11 @@ async fn fetch_single_msg(
                          .map(|()| FetchMsgResult::Done);
                  }
                  staging.delete().await?;
++                // Same check as before the download: an empty answer is only
++                // proof from a session that still works.
++                self.run_command_and_check_ok("NOOP").await?;
 +                forget_imap_location(context, transport_id, folder, uidvalidity, uid, &rfc724_mid)
 +                    .await?;
                  bail!("Failed to fetch UID {uid}");
              }
              ChunkOutcome::TooLarge => {
-@@ -638,6 +643,11 @@ async fn fetch_single_msg(
-                 let mut msg = Message::new_text(text);
-                 add_device_msg(context, None, Some(&mut msg)).await?;
-                 staging.delete().await?;
-+                // The caller drops the download queue entry for `Done`, so
-+                // without this the message would keep its `InProgress` state
-+                // with nothing left to move it on: a spinner that never ends
-+                // and no button to retry it with.
-+                set_state_to_failure(context, &rfc724_mid).await?;
-             }
-             Ok(_) => {
-                 staging.delete().await?;
-@@ -721,6 +731,83 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
+@@ -708,6 +725,16 @@ async fn disable_chunked_download(context: &Context, transport_id: u32) -> Resul
+ 
+ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()> {
+     if let Some(msg_id) = rfc724_mid_exists(context, rfc724_mid).await? {
++        // Only an in-progress download can fail. A message another transport
++        // finished meanwhile must not be flipped back to `Failure`, and one
++        // nobody asked for yet keeps its plain download button.
++        // ponytail: check-then-update, not one statement; the window is the
++        // two awaits here, not the minutes a concurrent download takes.
++        if Message::load_from_db(context, msg_id).await?.download_state()
++            != DownloadState::InProgress
++        {
++            return Ok(());
++        }
+         // Update download state to failure
+         // so it can be retried.
+         //
+@@ -721,6 +748,83 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
      Ok(())
  }
  
@@ -243,7 +270,19 @@ index fb971c0..17e0a1c 100644
  async fn available_post_msgs_contains_rfc724_mid(
      context: &Context,
      rfc724_mid: &str,
-@@ -914,6 +1001,108 @@ async fn test_update_download_state() -> Result<()> {
+@@ -779,6 +883,11 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
+             return Ok(());
+         }
+         if let Ok(Some(FetchMsgResult::Done)) = res {
++            // A fetch can end without moving the message on: receive_imf
++            // rejecting or trashing it, or a FETCH response without a body.
++            // The queue entry goes either way, so anything still in progress
++            // is failed here, once for every path, rather than left spinning.
++            set_state_to_failure(context, rfc724_mid).await?;
+             delete_from_downloads(context, rfc724_mid).await?;
+             delete_from_available_post_msgs(context, rfc724_mid).await?;
+         }
+@@ -914,6 +1023,116 @@ async fn test_update_download_state() -> Result<()> {
          Ok(())
      }
  
@@ -345,6 +384,14 @@ index fb971c0..17e0a1c 100644
 +        assert!(imap_location(&t, mid, 1).await?.is_none());
 +        assert_eq!(state().await?, DownloadState::Failure);
 +        assert!(!download_contains(&t, mid).await?);
++
++        // Failure only ends a download in progress: a message that finished
++        // meanwhile, or that nobody asked for, keeps its state.
++        for s in [DownloadState::Done, DownloadState::Available] {
++            msg_id.update_download_state(&t, s).await?;
++            set_state_to_failure(&t, mid).await?;
++            assert_eq!(state().await?, s);
++        }
 +
 +        Ok(())
 +    }

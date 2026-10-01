@@ -509,8 +509,12 @@ contribution intended.
   is forgotten; if another relay still holds the message it is downloaded from
   there right away, and if none does the message is set to `Failure`, which
   puts the retry button back. A message with no known location at all fails
-  too instead of waiting, so a retry can never spin forever. Same fix for our chunked download path when `receive_imf`
-  rejects the assembled message. `core/0034`
+  too instead of waiting, so a retry can never spin forever. An empty probe
+  only counts from a session that still answers a tagged NOOP, so a dropped
+  connection retries instead of forgetting the location. And a fetch that
+  ends without delivering the message (rejected, trashed, no body) now fails
+  it instead of leaving it `InProgress`; only an in-progress download is ever
+  set to `Failure`. `core/0034`
 - Camera selection in the QR reader did nothing on multi-camera Android
   Chromium devices, and the camera menu was blank before permissions were
   granted; stale stored camera ids no longer show the error screen.
