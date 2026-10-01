@@ -1,0 +1,247 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Wed, 19 Aug 2026 03:14:17 +0000
+Subject: [PATCH 34/34] jsonrpc: reply count and reply-thread queries for reply
+ threading
+
+Add get_reply_count() and get_reply_thread() to src/message.rs plus thin
+getMessageReplyCount/getMessageReplyThread JSON-RPC wrappers, for a
+Telegram-style thread view in the web UI.
+
+A reply is only counted when it is deliberate - it carries a quote and is
+not forwarded - because mime_in_reply_to alone is set on every outgoing
+message for email threading (prepare_msg_raw). Both stored forms of the
+reply link are matched: the bare mid (outgoing) and the bracketed raw
+In-Reply-To header (incoming). Threads are confined to one chat, so
+"reply privately" answers stay out. get_reply_thread() walks quoted
+parents up to the thread root (100-hop cycle cap) and collects the root
+plus all nested replies with one recursive CTE, sorted by (timestamp, id).
+Migration 155 adds an index on msgs.mime_in_reply_to to back the reverse
+lookups.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ deltachat-jsonrpc/src/api.rs | 30 +++++++++++++-
+ src/message.rs               | 79 ++++++++++++++++++++++++++++++++++++
+ src/message/message_tests.rs | 48 ++++++++++++++++++++++
+ src/sql/migrations.rs        | 10 +++++
+ 4 files changed, 166 insertions(+), 1 deletion(-)
+
+diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
+index a409878..75abd43 100644
+--- a/deltachat-jsonrpc/src/api.rs
++++ b/deltachat-jsonrpc/src/api.rs
+@@ -24,7 +24,7 @@
+ use deltachat::location;
+ use deltachat::message::{
+     self, delete_msgs_ex, get_existing_msg_ids, get_msg_read_receipt_count, get_msg_read_receipts,
+-    markseen_msgs, Message, MessageState, MsgId, Viewtype,
++    get_reply_count, get_reply_thread, markseen_msgs, Message, MessageState, MsgId, Viewtype,
+ };
+ use deltachat::peer_channels::{
+     leave_webxdc_realtime, send_webxdc_realtime_advertisement, send_webxdc_realtime_data,
+@@ -1600,6 +1600,34 @@ async fn get_message_read_receipts(
+         Ok(receipts)
+     }
+ 
++    /// Returns the number of direct replies to a message.
++    ///
++    /// Only deliberate, non-hidden replies (messages quoting this one) in the same
++    /// chat are counted; answers created via "reply privately" in another chat are
++    /// not part of the thread.
++    /// For a Telegram-style thread view this is the number to show on the "N replies" button.
++    async fn get_message_reply_count(&self, account_id: u32, message_id: u32) -> Result<usize> {
++        let ctx = self.get_context(account_id).await?;
++        get_reply_count(&ctx, MsgId::new(message_id)).await
++    }
++
++    /// Returns all messages of the reply thread the given message belongs to,
++    /// sorted by timestamp.
++    ///
++    /// The thread root is resolved by walking the chain of quoted messages upwards
++    /// (staying within the message's chat), then the root and all nested replies
++    /// to it — any depth and branching — are returned, the root included.
++    /// Intended for a Telegram-style thread view.
++    async fn get_message_reply_thread(
++        &self,
++        account_id: u32,
++        message_id: u32,
++    ) -> Result<Vec<u32>> {
++        let ctx = self.get_context(account_id).await?;
++        let ids = get_reply_thread(&ctx, MsgId::new(message_id)).await?;
++        Ok(ids.iter().map(|id| id.to_u32()).collect())
++    }
++
+     /// Asks the core to start downloading a message fully.
+     /// This function is typically called when the user hits the "Download" button
+     /// that is shown by the UI in case `download_state` is `'Available'` or `'Failure'`
+diff --git a/src/message.rs b/src/message.rs
+index 736ccdf..04766ef 100644
+--- a/src/message.rs
++++ b/src/message.rs
+@@ -1525,6 +1525,85 @@ pub async fn get_msg_read_receipt_count(context: &Context, msg_id: MsgId) -> Res
+         .await
+ }
+ 
++/// SQL condition matching messages that are deliberate replies: they carry a
++/// quote (`Param::Quote`, key 'q') and are not forwarded (`Param::Forwarded`,
++/// key 'a'). `mime_in_reply_to` alone does not mark a reply — it is set on
++/// *every* outgoing message for email threading (see `prepare_msg_raw`).
++const IS_REPLY_CONDITION: &str = "(param GLOB '*\nq=*' OR param GLOB 'q=*')
++     AND NOT (param GLOB '*\na=*' OR param GLOB 'a=*')";
++
++/// Returns the number of direct replies to the given message.
++///
++/// Only deliberate, non-hidden replies (messages quoting this one) in the same
++/// chat are counted; "reply privately" answers living in another chat are not
++/// part of the thread.
++pub async fn get_reply_count(context: &Context, msg_id: MsgId) -> Result<usize> {
++    let msg = Message::load_from_db(context, msg_id).await?;
++    if msg.rfc724_mid.is_empty() {
++        return Ok(0);
++    }
++    context
++        .sql
++        .count(
++            // `mime_in_reply_to` holds the raw In-Reply-To header (`<mid>`) for
++            // incoming messages, but the bare mid for outgoing ones — match both.
++            &format!(
++                "SELECT COUNT(*) FROM msgs
++                 WHERE mime_in_reply_to IN (?1, '<'||?1||'>')
++                   AND chat_id=?2 AND hidden=0
++                   AND {IS_REPLY_CONDITION}"
++            ),
++            (&msg.rfc724_mid, msg.chat_id),
++        )
++        .await
++}
++
++/// Returns all messages of the reply thread the given message belongs to,
++/// sorted by (timestamp, id).
++///
++/// The thread root is found by walking up the chain of quoted messages within
++/// the message's chat, then the root and all nested deliberate replies to it
++/// (any depth and branching) are collected. Replies in other chats
++/// ("reply privately") and hidden messages are excluded.
++pub async fn get_reply_thread(context: &Context, msg_id: MsgId) -> Result<Vec<MsgId>> {
++    let mut root = Message::load_from_db(context, msg_id).await?;
++    let chat_id = root.chat_id;
++    // ponytail: 100-hop cap guards against In-Reply-To cycles in the upward walk.
++    for _ in 0..100 {
++        // `quoted_message()` (not `parent()`): only deliberate replies continue
++        // the thread upwards, `mime_in_reply_to` alone is just email threading.
++        match root.quoted_message(context).await? {
++            Some(parent) if parent.chat_id == chat_id => root = parent,
++            _ => break,
++        }
++    }
++    context
++        .sql
++        .query_map_vec(
++            // `mime_in_reply_to` holds `<mid>` for incoming, bare mid for
++            // outgoing messages — match both. `t.mid!=''` keeps messages
++            // without a Message-ID from matching everything with an empty
++            // `mime_in_reply_to`. `UNION` (not `UNION ALL`) makes the
++            // recursion terminate even on reference cycles.
++            &format!(
++                "WITH RECURSIVE thread(id, mid) AS (
++                     SELECT id, rfc724_mid FROM msgs WHERE id=?1
++                     UNION
++                     SELECT m.id, m.rfc724_mid FROM msgs m JOIN thread t
++                       ON t.mid!='' AND m.mime_in_reply_to IN (t.mid, '<'||t.mid||'>')
++                     WHERE m.chat_id=?2 AND m.hidden=0
++                       AND {IS_REPLY_CONDITION}
++                 )
++                 SELECT id FROM msgs
++                 WHERE id IN (SELECT id FROM thread)
++                 ORDER BY timestamp, id"
++            ),
++            (root.id, chat_id),
++            |row| Ok(row.get(0)?),
++        )
++        .await
++}
++
+ pub(crate) fn guess_msgtype_from_suffix(msg: &Message) -> Option<(Viewtype, &'static str)> {
+     msg.param
+         .get(Param::Filename)
+diff --git a/src/message/message_tests.rs b/src/message/message_tests.rs
+index 407e247..b400d7a 100644
+--- a/src/message/message_tests.rs
++++ b/src/message/message_tests.rs
+@@ -81,6 +81,54 @@ async fn test_quote_basic() {
+     assert_eq!(quoted_msg.get_text(), msg2.quoted_text().unwrap());
+ }
+ 
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_reply_count_and_thread() -> Result<()> {
++    let mut tcm = TestContextManager::new();
++    let alice = &tcm.alice().await;
++    let bob = &tcm.bob().await;
++    let alice_chat = alice.create_chat(bob).await;
++    bob.create_chat(alice).await;
++
++    // A: root message from Alice.
++    let sent_a = alice.send_text(alice_chat.id, "A").await;
++    let a = sent_a.sender_msg_id;
++
++    // B: Bob replies to A; on Alice's side this arrives via receive_imf,
++    // so `mime_in_reply_to` holds the bracketed raw In-Reply-To header.
++    let a_bob = bob.recv_msg(&sent_a).await;
++    let mut b_bob = Message::new_text("B".to_string());
++    b_bob.set_quote(bob, Some(&a_bob)).await?;
++    chat::send_msg(bob, a_bob.chat_id, &mut b_bob).await?;
++    let b = alice.recv_msg(&bob.pop_sent_msg().await).await;
++    let raw_in_reply_to: String = alice
++        .sql
++        .query_get_value("SELECT mime_in_reply_to FROM msgs WHERE id=?", (b.id,))
++        .await?
++        .unwrap();
++    assert!(raw_in_reply_to.starts_with('<')); // bracketed form is what we test here
++
++    // C: Alice replies to B (outgoing reply stores the bare mid).
++    let mut c = Message::new_text("C".to_string());
++    c.set_quote(alice, Some(&b)).await?;
++    chat::send_msg(alice, alice_chat.id, &mut c).await?;
++
++    // D: unrelated message.
++    let d = alice.send_text(alice_chat.id, "D").await.sender_msg_id;
++
++    assert_eq!(get_reply_count(alice, a).await?, 1);
++    assert_eq!(get_reply_count(alice, b.id).await?, 1);
++    assert_eq!(get_reply_count(alice, c.id).await?, 0);
++    assert_eq!(get_reply_count(alice, d).await?, 0);
++
++    let thread = vec![a, b.id, c.id];
++    for &msg_id in &thread {
++        assert_eq!(get_reply_thread(alice, msg_id).await?, thread);
++    }
++    assert_eq!(get_reply_thread(alice, d).await?, vec![d]);
++
++    Ok(())
++}
++
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn test_no_quote() {
+     let mut tcm = TestContextManager::new();
+diff --git a/src/sql/migrations.rs b/src/sql/migrations.rs
+index 1ba18ce..c408cdd 100644
+--- a/src/sql/migrations.rs
++++ b/src/sql/migrations.rs
+@@ -2456,6 +2456,16 @@ pub async fn run(context: &Context, sql: &Sql) -> Result<bool> {
+         .await?;
+     }
+ 
++    inc_and_check(&mut migration_version, 155)?;
++    if dbversion < migration_version {
++        // Index for reverse In-Reply-To lookups (reply counts and reply threads).
++        sql.execute_migration(
++            "CREATE INDEX msgs_index_in_reply_to ON msgs (mime_in_reply_to)",
++            migration_version,
++        )
++        .await?;
++    }
++
+     let new_version = sql
+         .get_raw_config_int(VERSION_CFG)
+         .await?
