@@ -498,6 +498,28 @@ Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not
 upstreamed — this is a private patch-stack experiment with no upstream
 contribution intended.
 
+- A download-on-demand message whose large part is gone from the server (a
+  chatmail relay deletes messages after a while) spun forever instead of
+  failing. Core decides a failure is final by `available_post_msgs`, but that
+  flag is dropped every cycle for any message whose pre-message has arrived —
+  i.e. every message you can tap — so every error meant "wait", and the stale
+  `imap` row sent each cycle back to the relay that had already expunged it.
+  Now the relay's answer is the proof: when the probe — on every server,
+  partial FETCH or not — finds the UID missing or `\Deleted`, that relay's row
+  is forgotten; if another relay still holds the message it is downloaded from
+  there right away, and if none does the message is set to `Failure`, which
+  puts the retry button back. A message no relay has a location for waits ten
+  minutes from its arrival (the sender may still be uploading) and then fails
+  too, so a retry can never spin forever; webimap transports, which never
+  serve the download queue, run the same check every round. The failure
+  label says what to do: a message that arrived within the hour "may still be
+  arriving", an older one is "not found on your relay — ask the sender to send
+  it again" (`desktop/0086`). An empty probe only counts from a session that
+  still answers a tagged NOOP, so a dropped connection retries instead of
+  forgetting the location. And a fetch that
+  ends without delivering the message (rejected, trashed, no body) now fails
+  it instead of leaving it `InProgress`; only an in-progress download is ever
+  set to `Failure`. `core/0034`
 - Camera selection in the QR reader did nothing on multi-camera Android
   Chromium devices, and the camera menu was blank before permissions were
   granted; stale stored camera ids no longer show the error screen.
