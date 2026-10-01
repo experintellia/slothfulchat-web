@@ -405,10 +405,11 @@ exists:
   emoji-mart's own version filter doesn't hide them. `desktop/0061`,
   `desktop/0062`
 
-- **Translation editor in the keyboard-shortcuts cheat sheet** — lists the
-  in-app translation editor (`Ctrl/Cmd+Shift+L`, implemented in `web-app`'s
-  `runtime.ts`) in the shortcuts dialog so it's discoverable. One entry in
-  `getKeybindings`. `desktop/0048`
+- **Fork shortcuts in the keyboard-shortcuts cheat sheet** — lists the
+  in-app translation editor (`Ctrl/Cmd+Shift+L`, `web-app`'s `runtime.ts`) and
+  the Diagnostics panel (`Ctrl/Cmd+Shift+D`, `diagnostics.ts`) in the
+  shortcuts dialog so they're discoverable. Two entries in `getKeybindings`.
+  `desktop/0048`
 
 - **Estimated time-to-read on the unread badge (experimental)** — the chat
   list can show roughly how long a chat's unread messages take to read
@@ -562,8 +563,8 @@ contribution intended.
   called it at all. Both now cancel synchronously in the handler that owns the
   menu. Deliberately per-site, not app-wide: where the app has no menu of its
   own — selected text, editable fields, images, links — the native menu is the
-  useful one, and those are exactly the four cases Electron shows.
-  `desktop/0034`
+  useful one, and those are exactly the four cases Electron shows. Covered,
+  both halves, by `scripts/test-context-menu-e2e.mjs`. `desktop/0034`
 - Long-press context menus were unreachable on phones, for stacked reasons.
   On Android, the account sidebar's `draggable` (the desktop reorder gesture)
   made Blink spend the long press starting a drag no finger can complete
