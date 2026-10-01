@@ -582,8 +582,9 @@ contribution intended.
   passes `text || undefined`, so the guard was true for every message and a
   caption-less image always offered a "Copy Text" that copied nothing. It
   now shows only when there is something to copy: a live selection, a
-  clicked email, or non-empty message text — so "Copy Selection" still
-  works on a caption-less image when the selection is elsewhere in the
+  clicked email, or the message's caption (on a not-yet-downloaded
+  placeholder the "[Image – size]" tag doesn't count) — so "Copy Selection"
+  still works on a caption-less image when the selection is elsewhere in the
   bubble, e.g. a quoted message's text. `desktop/0087`
 
 ## UI & mobile polish

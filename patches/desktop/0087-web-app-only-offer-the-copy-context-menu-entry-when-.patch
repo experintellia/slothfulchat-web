@@ -11,23 +11,23 @@ guard was true for every message. A caption-less image therefore always
 offered "Copy Text", whose action (`text && writeClipboardText(text)`) does
 nothing at all.
 
-Gate on the truthiness of the three things the entry can actually copy
-instead: a live selection, a clicked email address, or non-empty message
-text. A caption-less image now hides the entry, unless text is selected --
-e.g. inside a quoted message, where "Copy Selection" stays available and
-works.
+Gate on the truthiness of what the entry would actually copy instead: a
+live selection, a clicked email address, or the copyable text. For a
+not-yet-downloaded message the copyable text is `placeholderCaption(text)`,
+because core appends a "[Image - 3 MiB]" tag that the action strips; so a
+caption-less placeholder image hides the entry too, instead of offering a
+"Copy Text" that copies `''`. A caption-less image still offers "Copy
+Selection" when text is selected -- e.g. inside a quoted message.
 
-Also fix `textSelected`: `getSelectedText()` returns `string | undefined`
-and never `null`, so the old `selectedText !== null` check made it true
-when there was no selection at all. That was harmless while the entry also
-required message text; now that a selection alone can show it, it would
-have offered a "Copy Selection" that copies `undefined`.
+Also tidy `textSelected` to `Boolean(selectedText)`: `getSelectedText()`
+returns `string | undefined`, never `null`, so the old `!== null` half was
+dead code.
 ---
- packages/frontend/src/components/message/Message.tsx | 9 ++++++---
- 1 file changed, 6 insertions(+), 3 deletions(-)
+ .../src/components/message/Message.tsx        | 20 ++++++++++++-------
+ 1 file changed, 13 insertions(+), 7 deletions(-)
 
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 9ebcadb..5fecab4 100644
+index 9ebcadb..ac2645c 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -301,7 +301,7 @@ function buildContextMenu(
@@ -39,17 +39,38 @@ index 9ebcadb..5fecab4 100644
  
    const isSavedMessage = message.savedMessageId !== null
  
-@@ -437,8 +437,11 @@ function buildContextMenu(
+@@ -312,13 +312,14 @@ function buildContextMenu(
+    * - OR Copy email to clipboard
+    * - Fallback: OR Copy message text to copy
+    */
++  // On a placeholder, copy what's on screen: the caption without the
++  // appended "[Label - size]" tag the styled card already displays.
++  const copyText =
++    message.downloadState !== 'Done' ? placeholderCaption(text) : text
++
+   let copy_item: ContextMenuItem | false = {
+     label: tx('menu_copy_text_to_clipboard'),
+     action: () => {
+-      // On a placeholder, copy what's on screen: the caption without the
+-      // appended "[Label - size]" tag the styled card already displays.
+-      const copyText =
+-        message.downloadState !== 'Done' ? placeholderCaption(text) : text
+       copyText && runtime.writeClipboardText(copyText)
+     },
+   }
+@@ -437,8 +438,13 @@ function buildContextMenu(
          label: tx('menu_copy_link_to_clipboard'),
          action: () => runtime.writeClipboardText(link),
        },
 -    // copy item (selection or all text)
 -    text !== '' && copy_item,
 +    // copy item (selection, email, or all text). `text` is `undefined` (not
-+    // `''`) when the message has no caption, so this has to be a truthiness
-+    // check. A caption-less image can still have a selection worth copying,
-+    // e.g. from a quoted message.
-+    Boolean(textSelected || email || text) && copy_item,
++    // `''`) when the message has no caption, and a not-yet-downloaded
++    // caption-less message only has the "[Image - size]" tag, which
++    // `copyText` strips to `''`; so gate on what would actually be copied.
++    // A caption-less image can still have a selection worth copying, e.g.
++    // from a quoted message.
++    Boolean(textSelected || email || copyText) && copy_item,
      // Copy image
      showCopyImage && {
        label: tx('menu_copy_image_to_clipboard'),
