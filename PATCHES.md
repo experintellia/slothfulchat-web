@@ -504,16 +504,21 @@ exists:
   menu starts with "Show in chat", which closes the dialog and jumps to the
   message in the chat. The dialog opens scrolled to the message it was
   opened from, briefly highlighted like a jump-to-message in the chat.
-  Core gains `get_message_reply_count` / `get_message_reply_thread` plus an
-  index on the previously unindexed `msgs.mime_in_reply_to`: the count is one
-  indexed `COUNT(*)` of direct replies, the thread one recursive CTE down
-  from the root found by walking `quoted_message()` upward. "Reply" here
-  deliberately means a quote-reply that is not forwarded — core sets
-  `In-Reply-To` on *every* outgoing message for email threading, so matching
-  the raw header would fuse consecutive messages into one giant thread — and
-  threads stay within one chat, which keeps "reply privately" answers out.
-  The header is matched in both stored forms (`<mid>` for incoming, bare mid
-  for outgoing messages). `core/0034`, `desktop/0087`
+  Core gains `get_message_reply_counts` (batched: all replies below each
+  given message, nested ones included) and `get_message_reply_thread` (the
+  thread's root plus every reply below it, each with its parent, so the UI
+  can show a list or a tree). All queries share one SQL reply link, so counts
+  and threads can't disagree, and walk up and down with recursive queries on
+  the Message-ID indexes — no hop cap. "Reply" here deliberately means a
+  quote-reply that is not forwarded — core sets `In-Reply-To` on *every*
+  outgoing message for email threading, so matching the raw header would fuse
+  consecutive messages into one giant thread — and threads stay within one
+  chat, which keeps "reply privately" answers out. The header is matched in
+  both stored forms (`<mid>` for incoming, bare mid for outgoing messages).
+  The `mime_in_reply_to` index (`slothfulchat_msgs_index_in_reply_to`) is
+  created with `IF NOT EXISTS` after the numbered migrations rather than as a
+  numbered migration, so the fork never claims a version number upstream will
+  use next. `core/0034`, `desktop/0087`
 
 ## Bugfixes
 
