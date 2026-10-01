@@ -378,6 +378,15 @@ exists:
   switchable off in Settings → Experimental features. `desktop/0049`,
   `desktop/0050`, `desktop/0060`
 
+- **Composer completion menu (`/bot commands`)** — the second consumer of that
+  generic `CompletionProvider` primitive: in a DM chat, typing `/` opens the
+  same menu populated from any `/commands` the contact's bio lists (shown with
+  the description text that follows the command in the bio). Parses the bio
+  with the same `botcommand` linkify tokenizer that already turns `/commands`
+  in a status or message into a clickable chip, so the two features agree on
+  what counts as a command. No menu, and no bio fetch beyond the one already
+  needed for the chat header, when the contact lists none. `desktop/0087`
+
 - **Emoji style picker** — an "Emoji style" picker under Settings →
   Appearance (browser edition only) chooses which emoji font the app renders
   with, previewing each set in its own face; the emoji-mart composer picker
