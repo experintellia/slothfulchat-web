@@ -6,7 +6,8 @@
 // with UNFURL_ALLOW_PRIVATE=1; enablement tests cover the default (on for an
 // allow-all bridge, off once CHATMAIL_ALLOWLIST is set) and UNFURL=0. The
 // address guard's range table is asserted in-process, and a short
-// UNFURL_DEADLINE_MS bridge proves the absolute deadline against a slow drip.
+// UNFURL_DEADLINE_MS bridge proves the absolute deadline (and the in-flight
+// concurrency cap) against a slow drip.
 // Run:  node scripts/test-unfurl.mjs
 import { createServer } from 'node:http'
 import { fork } from 'node:child_process'
@@ -146,7 +147,19 @@ const defaultLocal = startService(8659, {}) // no allowlist → default on
 const defaultHosted = startService(8660, { CHATMAIL_ALLOWLIST: 'example.com' }) // allowlist → default off
 // short absolute deadline so the drip tests below finish in ~1 s, not ~20
 const impatient = startService(8661, { UNFURL: '1', UNFURL_ALLOW_PRIVATE: '1', UNFURL_DEADLINE_MS: '1200' })
-await new Promise((r) => setTimeout(r, 500))
+// Wait until each bridge really listens — a fixed sleep raced six forks on a
+// loaded machine. Any answer counts (404 = up, unfurl just disabled).
+const waitReady = async (...ports) => {
+  for (let i = 0; i < 100; i++) {
+    const up = await Promise.all(
+      ports.map((p) => fetch(`http://127.0.0.1:${p}/unfurl`).then(() => true, () => false))
+    )
+    if (up.every(Boolean)) return
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  throw new Error(`bridges never started listening on ${ports.join(', ')}`)
+}
+await waitReady(8655, 8656, 8658, 8659, 8660, 8661)
 
 const unfurl = (base, url, init) =>
   fetch(`${base}/unfurl?url=${encodeURIComponent(url)}`, init)
@@ -226,9 +239,22 @@ try {
   assert.ok(sharedMs < 1800, `page+image must share one deadline (took ${sharedMs}ms)`)
   console.log('OK: one absolute deadline spans redirects, page and image')
 
+  // concurrency cap: the rate limit counts requests per minute, not how many
+  // run at once. Six simultaneous drips (each of which would hold a socket and
+  // its buffers for the whole deadline) must not all be admitted — and the
+  // slots must come back afterwards.
+  const burst = await Promise.all(
+    Array.from({ length: 6 }, () => unfurl('http://127.0.0.1:8661', `${ogBase}/drip.html`))
+  )
+  const rejected = burst.filter((r) => r.status === 503).length
+  assert.equal(rejected, 2, `4 in flight, 2 refused — got ${burst.map((r) => r.status).join(',')}`)
+  const afterBurst = await unfurl('http://127.0.0.1:8661', `${ogBase}/page.html`)
+  assert.equal(afterBurst.status, 200, 'in-flight slots must be released when a request ends')
+  console.log('OK: concurrency cap refuses the overflow and releases its slots')
+
   // rate limit (fresh service so earlier calls don't count)
   const limited = startService(8657, { UNFURL_ALLOW_PRIVATE: '1' })
-  await new Promise((r) => setTimeout(r, 500))
+  await waitReady(8657)
   let last
   for (let i = 0; i < 31; i++) last = await unfurl('http://127.0.0.1:8657', `${ogBase}/page.html`)
   assert.equal(last.status, 429)

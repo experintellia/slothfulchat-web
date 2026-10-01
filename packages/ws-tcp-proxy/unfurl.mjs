@@ -10,7 +10,8 @@
 // loopback/link-local/CGNAT IPs refused (checked inside the socket's own
 // lookup, so a rebinding resolver can't swap the address; literal-IP hosts are
 // checked separately since they bypass lookup), redirects re-checked per hop,
-// size caps, one absolute deadline for the whole unfurl, rate limit.
+// size caps, one absolute deadline for the whole unfurl, rate limit, and a cap
+// on how many unfurls may be in flight at once.
 // UNFURL_ALLOW_PRIVATE=1 disables the IP guard for the test suite only.
 //
 // Logs name the target's scheme+host only: paths and query strings routinely
@@ -34,6 +35,12 @@ const FETCH_TIMEOUT_MS = 15_000; // per-socket inactivity
 const DEADLINE_MS = Number(process.env.UNFURL_DEADLINE_MS) || 20_000;
 const MAX_REDIRECTS = 5;
 const RATE_LIMIT = 30; // requests per client per minute
+// Concurrency cap: the rate limit bounds requests per minute, not how many are
+// in flight at once — 30 slow drips would each hold a socket and up to 4 MB of
+// buffer for the whole deadline. Small on purpose: a preview fetcher is not a
+// throughput service.
+const MAX_INFLIGHT = 4;
+let inflight = 0;
 
 // SSRF guard: only globally routable unicast is allowed out — everything the
 // IANA special-purpose registries mark non-global (loopback, private, CGNAT,
@@ -198,13 +205,26 @@ const logSafe = (url) => {
   }
 };
 
-const hits = new Map(); // "ip|minute" -> count
-const rateLimited = (ip) => {
-  const key = `${ip}|${Math.floor(Date.now() / 60_000)}`;
+// Who is asking — used by both limiters here and the tunnel limiter in
+// ws-tcp-proxy.mjs. Behind the TLS reverse proxy SELFHOSTING recommends, every
+// request arrives from the proxy's own address, so all clients would share one
+// budget. TRUST_PROXY=1 uses the left-most X-Forwarded-For entry instead; off
+// by default, because a header the client can set is itself a limit bypass
+// unless a reverse proxy you control overwrites it.
+const TRUST_PROXY = process.env.TRUST_PROXY === '1';
+export const clientIp = (req) =>
+  (TRUST_PROXY && req.headers['x-forwarded-for']?.split(',')[0].trim()) ||
+  req.socket.remoteAddress ||
+  '?';
+
+// Minute-bucket counter, shared with the tunnel limiter (different key prefix).
+const hits = new Map(); // "key|minute" -> count
+export const rateLimited = (key, limit) => {
+  const k = `${key}|${Math.floor(Date.now() / 60_000)}`;
   if (hits.size > 10_000) hits.clear();
-  const n = (hits.get(key) ?? 0) + 1;
-  hits.set(key, n);
-  return n > RATE_LIMIT;
+  const n = (hits.get(k) ?? 0) + 1;
+  hits.set(k, n);
+  return n > limit;
 };
 
 /** node:http request handler for GET /unfurl?url=… */
@@ -216,9 +236,11 @@ export async function unfurlHandler(req, res) {
     res.end(JSON.stringify(obj));
   };
   if (req.method !== 'GET') return send(405, { error: 'GET only' });
-  if (rateLimited(req.socket.remoteAddress ?? '?')) return send(429, { error: 'rate limited' });
+  if (rateLimited(clientIp(req), RATE_LIMIT)) return send(429, { error: 'rate limited' });
   const target = new URL(req.url, 'http://unfurl').searchParams.get('url');
   if (!target) return send(400, { error: 'missing ?url=' });
+  if (inflight >= MAX_INFLIGHT) return send(503, { error: 'too many unfurls in flight' });
+  inflight++;
 
   // one budget for the whole unfurl: redirects, page and image share it
   const deadline = AbortSignal.timeout(DEADLINE_MS);
@@ -258,5 +280,7 @@ export async function unfurlHandler(req, res) {
   } catch (err) {
     console.warn(`unfurl failed for ${logSafe(target)}: ${err.message}`);
     send(502, { error: err.message });
+  } finally {
+    inflight--;
   }
 }
