@@ -1,5 +1,10 @@
 # Changelog
 
+- **The browser's own right-click menu no longer covers the app's.** Right-
+  clicking a chat, or one of the app icons in a chat's header, opened both
+  menus stacked on top of each other. Right-clicking selected text, a picture,
+  a link or a text box still gives you the browser's menu, which is where
+  "copy" lives.
 - **Hardening**: bumped DOMPurify (used to sanitize HTML email before display)
   to 3.4.16. The advisory it fixes covers a mode this app doesn't use, so mail
   display was never affected; the update brings general sanitizer hardening.
