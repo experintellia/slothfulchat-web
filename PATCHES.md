@@ -500,17 +500,17 @@ contribution intended.
 
 - A download-on-demand message whose large part is gone from the server (a
   chatmail relay deletes messages after a while) spun forever instead of
-  failing: the lookup that finds the message has no IMAP location left also
-  erased the record that the server had ever announced it, so the caller could
-  no longer tell "deleted" from "has not arrived yet" and left the message in
-  `InProgress`, retrying it on every fetch cycle. Such a message is now set to
-  `Failure`, which is what puts the retry button back on the bubble. The
-  lookup spans every transport (relays expire messages on their own
-  schedules), so a message another relay still holds stays that relay's job
-  rather than being failed; a relay that proves it no longer serves the UID
-  loses its `imap` row, so a retry looks the message up afresh instead of
-  asking the same dead relay. Same fix for our chunked download path when
-  `receive_imf` rejects the assembled message. `core/0034`
+  failing. Core decides a failure is final by `available_post_msgs`, but that
+  flag is dropped every cycle for any message whose pre-message has arrived —
+  i.e. every message you can tap — so every error meant "wait", and the stale
+  `imap` row sent each cycle back to the relay that had already expunged it.
+  Now the relay's answer is the proof: when the probe finds the UID missing or
+  `\Deleted`, that relay's row is forgotten; if another relay still holds the
+  message it is downloaded from there right away, and if none does the message
+  is set to `Failure`, which puts the retry button back. A message with no
+  known location at all fails too instead of waiting, so a retry can never
+  spin forever. Same fix for our chunked download path when `receive_imf`
+  rejects the assembled message. `core/0034`
 - Camera selection in the QR reader did nothing on multi-camera Android
   Chromium devices, and the camera menu was blank before permissions were
   granted; stale stored camera ids no longer show the error screen.
