@@ -502,7 +502,8 @@ exists:
   itself has replies would otherwise let you open a thread dialog on top of
   the one you're already in, and so on without end. Instead, their context
   menu starts with "Show in chat", which closes the dialog and jumps to the
-  message in the chat.
+  message in the chat. The dialog opens scrolled to the message it was
+  opened from, briefly highlighted like a jump-to-message in the chat.
   Core gains `get_message_reply_count` / `get_message_reply_thread` plus an
   index on the previously unindexed `msgs.mime_in_reply_to`: the count is one
   indexed `COUNT(*)` of direct replies, the thread one recursive CTE down

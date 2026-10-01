@@ -28,16 +28,21 @@ was no way back to the message's place in the chat. It reuses the
 gallery's jumpToMessage call, which already closes all dialogs; the
 same `inReplyThread` prop gates it.
 
+The dialog opens scrolled to the message it was opened from, which
+plays the same fade as a jump-to-message highlight in the chat. The
+scroll happens once on first load, not on every live refetch, so new
+replies don't yank the reader back.
+
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  _locales/_untranslated_en.json                |   7 +
  images/icons/reply.svg                        |   1 +
  packages/frontend/scss/message/_metadata.scss |  35 ++++-
- .../dialogs/ReplyThread.module.scss           |  17 +++
- .../src/components/dialogs/ReplyThread.tsx    | 126 ++++++++++++++++++
- .../src/components/message/Message.tsx        |  25 +++-
- .../components/message/MessageMetaData.tsx    |  88 ++++++++++++
- 7 files changed, 295 insertions(+), 4 deletions(-)
+ .../dialogs/ReplyThread.module.scss           |  32 ++++
+ .../src/components/dialogs/ReplyThread.tsx    | 144 ++++++++++++++++++
+ .../src/components/message/Message.tsx        |  25 ++-
+ .../components/message/MessageMetaData.tsx    |  88 +++++++++++
+ 7 files changed, 328 insertions(+), 4 deletions(-)
  create mode 100644 images/icons/reply.svg
  create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.tsx
@@ -140,10 +145,10 @@ index 7f82294..219fd63 100644
  }
 diff --git a/packages/frontend/src/components/dialogs/ReplyThread.module.scss b/packages/frontend/src/components/dialogs/ReplyThread.module.scss
 new file mode 100644
-index 0000000..ca50da0
+index 0000000..ddb7ef7
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/ReplyThread.module.scss
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,32 @@
 +.threadMessageList {
 +  list-style: none;
 +  margin: 0;
@@ -161,13 +166,29 @@ index 0000000..ca50da0
 +    }
 +  }
 +}
++
++// The message the thread was opened from gets the same fade as a
++// jump-to-message highlight in the chat (`.highlight` in _message-list.scss).
++.entry {
++  animation: entryFade 3s 1;
++}
++
++@keyframes entryFade {
++  from {
++    background-color: var(--messageHightlightColor);
++  }
++  to {
++    background-color: transparent;
++  }
++}
 diff --git a/packages/frontend/src/components/dialogs/ReplyThread.tsx b/packages/frontend/src/components/dialogs/ReplyThread.tsx
 new file mode 100644
-index 0000000..804afae
+index 0000000..e1176c6
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/ReplyThread.tsx
-@@ -0,0 +1,126 @@
-+import React, { useEffect, useEffectEvent } from 'react'
+@@ -0,0 +1,144 @@
++import React, { useEffect, useEffectEvent, useRef } from 'react'
++import classNames from 'classnames'
 +
 +import Dialog, { DialogBody, DialogContent, DialogHeader } from '../Dialog'
 +import useTranslationFunction from '../../hooks/useTranslationFunction'
@@ -236,6 +257,17 @@ index 0000000..804afae
 +    ? threadFetch.lingeringResult.value
 +    : null
 +
++  // Land on the message the thread was opened from, once, when it first
++  // loads — not again on every refetch, or live updates would yank the
++  // scroll position away from wherever the user has read to.
++  const entryRef = useRef<HTMLLIElement>(null)
++  const loaded = thread !== null
++  useEffect(() => {
++    if (loaded) {
++      entryRef.current?.scrollIntoView({ block: 'center' })
++    }
++  }, [loaded])
++
 +  const conversationType: ConversationType | null = chat && {
 +    hasMultipleParticipants: chat.chatType !== 'Single',
 +    isDeviceChat: chat.isDeviceChat as boolean,
@@ -271,7 +303,13 @@ index 0000000..804afae
 +                    return null
 +                  }
 +                  return (
-+                    <li key={id} className='message-wrapper'>
++                    <li
++                      key={id}
++                      ref={id === msgId ? entryRef : undefined}
++                      className={classNames('message-wrapper', {
++                        [styles.entry]: id === msgId,
++                      })}
++                    >
 +                      <Message
 +                        chat={chat}
 +                        message={message}
