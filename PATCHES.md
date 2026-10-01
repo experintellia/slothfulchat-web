@@ -493,17 +493,17 @@ exists:
   `desktop/0079`
 
 - **Reply threads, Telegram-style** — a message that has replies shows a
-  reply-arrow icon with the reply count before its timestamp; clicking it
-  opens a thread dialog rendering the whole reply chain (root plus nested
-  replies, any depth and branching) as regular message bubbles, refreshed
-  live on the chat's events, with the usual quote-click jump landing back in
-  the chat. The icon is Google's Material Symbols "reply" glyph. Bubbles
-  inside the thread dialog don't show their own reply badge — a reply that
-  itself has replies would otherwise let you open a thread dialog on top of
-  the one you're already in, and so on without end. Instead, their context
-  menu starts with "Show in chat", which closes the dialog and jumps to the
-  message in the chat. The dialog opens scrolled to the message it was
-  opened from, briefly highlighted like a jump-to-message in the chat.
+  reply-arrow badge with the number of all replies below it before its
+  timestamp; clicking it switches the message list into thread mode, which
+  shows only that reply chain (root plus nested replies, any depth and
+  branching), landing on the message you came from. It is the real message
+  list, so the composer, drafts, reactions and live updates all keep working,
+  and it's full-screen on small screens. The navbar shows the chat and the
+  first line of the thread, a toggle between a chronological list and a
+  comment-style tree layout, and a button back to the chat. Sending in thread
+  mode needs a quote of a thread message (a bar offers "Reply to latest"), so
+  the reply stays in the thread; "Show in chat" in a bubble's menu, or
+  jumping to a message outside the thread, leaves it.
   Core gains `get_message_reply_counts` (batched: all replies below each
   given message, nested ones included) and `get_message_reply_thread` (the
   thread's root plus every reply below it, each with its parent, so the UI
