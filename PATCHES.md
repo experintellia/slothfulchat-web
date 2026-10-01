@@ -378,6 +378,17 @@ exists:
   switchable off in Settings → Experimental features. `desktop/0049`,
   `desktop/0050`, `desktop/0060`
 
+- **Composer completion menu (`/bot commands`)** — the second consumer of that
+  generic `CompletionProvider` primitive: in a DM chat, typing `/` opens the
+  same menu populated from any `/commands` the contact's bio lists (shown with
+  the description text that follows the command in the bio). Parses the bio
+  with the same `botcommand` linkify tokenizer that already turns `/commands`
+  in a status or message into a clickable chip, so the two features agree on
+  what counts as a command. Behind the same Settings → Experimental completion-menu
+  toggle as the emoji menu; the bio is read once when the DM opens (not
+  refreshed while it stays open). No menu when the contact lists no commands.
+  `desktop/0087`
+
 - **Emoji style picker** — an "Emoji style" picker under Settings →
   Appearance (browser edition only) chooses which emoji font the app renders
   with, previewing each set in its own face; the emoji-mart composer picker
@@ -519,7 +530,7 @@ exists:
   The `mime_in_reply_to` index (`slothfulchat_msgs_index_in_reply_to`) is
   created with `IF NOT EXISTS` after the numbered migrations rather than as a
   numbered migration, so the fork never claims a version number upstream will
-  use next. `core/0035`, `desktop/0087`
+  use next. `core/0035`, `desktop/0088`
 
 ## Bugfixes
 

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 19 Aug 2026 02:53:25 +0000
-Subject: [PATCH 87/87] web-app: Telegram-style reply threads as a message list
+Subject: [PATCH 88/88] web-app: Telegram-style reply threads as a message list
  mode
 
 A message that has replies shows a reply-arrow badge with the number of
@@ -505,10 +505,10 @@ index a3d7bba..e86224e 100644
  
  type IconColoring =
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index 0977055..4819db2 100644
+index 58d5982..6942c29 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
-@@ -26,7 +26,11 @@ import { useSettingsStore } from '../../stores/settings'
+@@ -27,7 +27,11 @@ import { useSettingsStore } from '../../stores/settings'
  import { BackendRemote, EffectfulBackendActions, Type } from '../../backend-com'
  import { selectedAccountId } from '../../ScreenController'
  import { runtime } from '@deltachat-desktop/runtime-interface'
@@ -521,15 +521,15 @@ index 0977055..4819db2 100644
  import useDialog from '../../hooks/dialog/useDialog'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
  import useMessage from '../../hooks/chat/useMessage'
-@@ -34,6 +38,7 @@ import useChat from '../../hooks/chat/useChat'
- import { useDraft, type DraftObject } from '../../hooks/chat/useDraft'
+@@ -36,6 +40,7 @@ import { useDraft, type DraftObject } from '../../hooks/chat/useDraft'
+ import { useRpcFetch } from '../../hooks/useFetch'
  
  import type { EmojiMartData } from '../EmojiPicker'
 +import type { ReplyThreadEntry } from '../../utils/replyThreadLayout'
  import { VisualVCardComponent } from '../message/VCard'
  import { ActionEmitter, KeybindAction } from '../../keybindings'
  import useKeyBindingAction from '../../hooks/useKeyBindingAction'
-@@ -77,6 +82,11 @@ const Composer = forwardRef<
+@@ -79,6 +84,11 @@ const Composer = forwardRef<
      clearDraftState: () => void
      setDraftState: (newValue: DraftObject) => void
      messageCache: { [msgId: number]: Type.MessageLoadResult | undefined }
@@ -541,7 +541,7 @@ index 0977055..4819db2 100644
    }
  >((props, ref) => {
    const {
-@@ -92,6 +102,7 @@ const Composer = forwardRef<
+@@ -94,6 +104,7 @@ const Composer = forwardRef<
      addFileToDraft,
      removeFile,
      messageCache,
@@ -549,7 +549,7 @@ index 0977055..4819db2 100644
    } = props
  
    const chatId = selectedChat.id
-@@ -264,8 +275,22 @@ const Composer = forwardRef<
+@@ -282,8 +293,22 @@ const Composer = forwardRef<
      ? messageEditing.newText.length > 0
      : draftState.text.length > 0 || !!draftState.file
  
@@ -573,7 +573,7 @@ index 0977055..4819db2 100644
        ? null
        : async () => {
            // Focus message input in case the message was sent
-@@ -360,6 +385,9 @@ const Composer = forwardRef<
+@@ -378,6 +403,9 @@ const Composer = forwardRef<
    const onEmojiIconClick = () => setShowEmojiPicker(!showEmojiPicker)
    const onStickerClick = useCallback(
      async (stickerPath: string) => {
@@ -583,7 +583,7 @@ index 0977055..4819db2 100644
        const quotedMessageId =
          draftState.quote?.kind === 'WithMessage'
            ? draftState.quote.messageId
-@@ -373,7 +401,14 @@ const Composer = forwardRef<
+@@ -391,7 +419,14 @@ const Composer = forwardRef<
          removeQuote()
        }
      },
@@ -599,7 +599,7 @@ index 0977055..4819db2 100644
    )
    const shiftPressed = useRef(false)
    const onEmojiSelect = (emoji: EmojiMartData) => {
-@@ -729,6 +764,40 @@ const Composer = forwardRef<
+@@ -747,6 +782,40 @@ const Composer = forwardRef<
                      />
                    </section>
                  )}
@@ -640,7 +640,7 @@ index 0977055..4819db2 100644
                <LinkPreviewGhost preview={linkPreview} />
                {trackingChip && (
                  <div
-@@ -853,6 +922,10 @@ const Composer = forwardRef<
+@@ -872,6 +941,10 @@ const Composer = forwardRef<
                    (!messageEditing.isEditingModeActive
                      ? composerSendMessage
                      : null) ??
