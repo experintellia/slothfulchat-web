@@ -18,8 +18,15 @@ variant without per-theme overrides.
 Bubbles inside the ReplyThread dialog no longer show their own reply
 badge: a reply that itself has replies would let you open another
 thread dialog on top of the one you're already in, and so on without
-end. `Message` gains an optional `hideReplyCount` prop, set only by
+end. `Message` gains an optional `inReplyThread` prop, set only by
 the dialog.
+
+Bubbles inside the dialog also get "Show in chat" at the top of their
+context menu. A bubble in the thread is out of context, and the hover
+shortcut's jump button only exists for forwarded/saved copies, so there
+was no way back to the message's place in the chat. It reuses the
+gallery's jumpToMessage call, which already closes all dialogs; the
+same `inReplyThread` prop gates it.
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
@@ -28,9 +35,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  packages/frontend/scss/message/_metadata.scss |  35 ++++-
  .../dialogs/ReplyThread.module.scss           |  17 +++
  .../src/components/dialogs/ReplyThread.tsx    | 126 ++++++++++++++++++
- .../src/components/message/Message.tsx        |   7 +-
+ .../src/components/message/Message.tsx        |  25 +++-
  .../components/message/MessageMetaData.tsx    |  88 ++++++++++++
- 7 files changed, 277 insertions(+), 4 deletions(-)
+ 7 files changed, 295 insertions(+), 4 deletions(-)
  create mode 100644 images/icons/reply.svg
  create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/ReplyThread.tsx
@@ -156,7 +163,7 @@ index 0000000..ca50da0
 +}
 diff --git a/packages/frontend/src/components/dialogs/ReplyThread.tsx b/packages/frontend/src/components/dialogs/ReplyThread.tsx
 new file mode 100644
-index 0000000..eb40f10
+index 0000000..804afae
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/ReplyThread.tsx
 @@ -0,0 +1,126 @@
@@ -269,7 +276,7 @@ index 0000000..eb40f10
 +                        chat={chat}
 +                        message={message}
 +                        conversationType={conversationType}
-+                        hideReplyCount
++                        inReplyThread
 +                      />
 +                    </li>
 +                  )
@@ -287,23 +294,76 @@ index 0000000..eb40f10
 +  )
 +}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 9ebcadb..cd25f00 100644
+index 9ebcadb..deb9a0a 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -606,8 +606,11 @@ export default function Message(props: {
+@@ -274,6 +274,7 @@ function buildContextMenu(
+     handleReactClick,
+     chat,
+     jumpToMessage,
++    inReplyThread,
+   }: {
+     accountId: number
+     message: T.Message | null
+@@ -284,6 +285,7 @@ function buildContextMenu(
+     handleReactClick: (event: React.MouseEvent<Element, MouseEvent>) => void
+     chat: T.FullChat
+     jumpToMessage: JumpToMessage
++    inReplyThread?: boolean
+   },
+   clickTarget: HTMLAnchorElement | null
+ ): (false | ContextMenuItem)[] {
+@@ -372,6 +374,19 @@ function buildContextMenu(
+     message.fromId > C.DC_CONTACT_ID_LAST_SPECIAL
+ 
+   return [
++    // Inside the thread dialog the bubble is out of context; this closes the
++    // dialog (jumpToMessage closes all dialogs) and lands on it in the chat.
++    Boolean(inReplyThread) && {
++      label: tx('show_in_chat'),
++      action: () =>
++        jumpToMessage({
++          accountId,
++          msgId: message.id,
++          msgChatId: message.chatId,
++          focus: true,
++          scrollIntoViewArg: { block: 'center' },
++        }),
++    },
+     // Reply
+     showReply && {
+       label: tx('notify_reply_button'),
+@@ -606,8 +621,12 @@ export default function Message(props: {
    chat: T.FullChat
    message: T.Message
    conversationType: ConversationType
-+  // Set inside ReplyThread: a reply's own reply count would let you open
-+  // another thread dialog on top of this one, and so on indefinitely.
-+  hideReplyCount?: boolean
++  // Set inside ReplyThread. Hides the bubble's own reply count (it would let
++  // you open another thread dialog on top of this one, and so on
++  // indefinitely) and adds "Show in chat" to its context menu.
++  inReplyThread?: boolean
  }) {
 -  const { message, conversationType, chat } = props
-+  const { message, conversationType, chat, hideReplyCount } = props
++  const { message, conversationType, chat, inReplyThread } = props
    const { viewType, text, hasLocation, hasHtml } = message
    const direction = getDirection(message)
    const status = mapCoreMsgStatus2String(message.state)
-@@ -1302,6 +1305,7 @@ export default function Message(props: {
+@@ -688,6 +707,7 @@ export default function Message(props: {
+         handleReactClick,
+         chat: props.chat,
+         jumpToMessage,
++        inReplyThread,
+       }
+       const items = isMultiselectMember
+         ? buildMultiselectContextMenu(
+@@ -726,6 +746,7 @@ export default function Message(props: {
+       showReactionsBar,
+       text,
+       jumpToMessage,
++      inReplyThread,
+       tx,
+     ]
+   )
+@@ -1302,6 +1323,7 @@ export default function Message(props: {
            >
              <MessageMetaData
                messageId={message.id}
@@ -311,11 +371,11 @@ index 9ebcadb..cd25f00 100644
                fileMime={fileMime}
                direction={direction}
                status={status}
-@@ -1317,6 +1321,7 @@ export default function Message(props: {
+@@ -1317,6 +1339,7 @@ export default function Message(props: {
                viewType={effectiveViewType}
                chatType={chat.chatType}
                tabindexForInteractiveContents={tabindexForInteractiveContents}
-+              hideReplyCount={hideReplyCount}
++              hideReplyCount={inReplyThread}
              />
              <div
                // TODO the "+1" count aria-live announcment is perhaps not great
