@@ -1,5 +1,9 @@
 # Changelog
 
+- **Hardening**: bumped DOMPurify (used to sanitize HTML email before display)
+  to 3.4.16. The advisory it fixes covers a mode this app doesn't use, so mail
+  display was never affected; the update brings general sanitizer hardening.
+
 ## 0.9.1 — 2026-08-15
 
 - Same app as 0.9.0, re-released because 0.9.0's packages never reached npm:
