@@ -503,6 +503,35 @@ exists:
   `Promise<string>`, which the browser targets hand straight to `ClipboardItem`.
   `desktop/0077`
 
+- **Reply threads, Telegram-style** — a message that has replies shows a
+  reply-arrow badge with the number of all replies below it before its
+  timestamp, and a reply without replies of its own a count-less thread
+  icon; clicking either switches the message list into thread mode, which
+  shows only that reply chain (root plus nested replies, any depth and
+  branching), landing on the message you came from. It is the real message
+  list, so the composer, drafts, reactions and live updates all keep working,
+  and it's full-screen on small screens. The navbar shows the chat and the
+  first line of the thread, a toggle between a chronological list and a
+  comment-style tree layout, and a button back to the chat. Sending in thread
+  mode needs a quote of a thread message (a bar offers "Reply to latest"), so
+  the reply stays in the thread; "Show in chat" in a bubble's menu, or
+  jumping to a message outside the thread, leaves it.
+  Core gains `get_message_reply_counts` (batched: all replies below each
+  given message, nested ones included) and `get_message_reply_thread` (the
+  thread's root plus every reply below it, each with its parent, so the UI
+  can show a list or a tree). All queries share one SQL reply link, so counts
+  and threads can't disagree, and walk up and down with recursive queries on
+  the Message-ID indexes — no hop cap. "Reply" here deliberately means a
+  quote-reply that is not forwarded — core sets `In-Reply-To` on *every*
+  outgoing message for email threading, so matching the raw header would fuse
+  consecutive messages into one giant thread — and threads stay within one
+  chat, which keeps "reply privately" answers out. The header is matched in
+  both stored forms (`<mid>` for incoming, bare mid for outgoing messages).
+  The `mime_in_reply_to` index (`slothfulchat_msgs_index_in_reply_to`) is
+  created with `IF NOT EXISTS` after the numbered migrations rather than as a
+  numbered migration, so the fork never claims a version number upstream will
+  use next. `core/0035`, `desktop/0088`
+
 ## Bugfixes
 
 Fixes for behavior that is broken (or only broken-in-a-browser) upstream. Not

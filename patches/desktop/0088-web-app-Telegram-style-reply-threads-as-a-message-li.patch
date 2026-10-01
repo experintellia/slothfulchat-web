@@ -1,0 +1,1690 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Wed, 19 Aug 2026 02:53:25 +0000
+Subject: [PATCH 88/88] web-app: Telegram-style reply threads as a message list
+ mode
+
+A message that has replies shows a reply-arrow badge with the number of
+all replies below it (nested ones included) before its timestamp; a
+reply without replies of its own shows a count-less thread icon there
+instead (Material Symbols "forum"), so every message of a thread is a way
+into it. Clicking either switches the message list into thread mode: it shows
+only that reply thread (its root plus every reply below it, any depth
+and branching), scrolled to and highlighting the message you came from.
+
+Thread mode is the real message list, not a separate view: the message
+list store takes an optional thread, and its five item loads go through
+one helper (fetchMessageListItems) that returns the thread's messages
+instead of the chat's. Paging, jumps, live updates on the chat's events,
+reactions, multiselect, keyboard navigation and the composer with its
+draft all work unchanged; on small screens the mode is full-screen
+because the message list is. A thread is identified by its root (looked
+up when it is opened), so deleting the message you entered from, or any
+other reply, doesn't end it; that message is only where to land, on
+entering, on leaving and on switching layout, falling back to the root
+once it's gone. If the root itself is gone, the view drops back to the
+chat. In the tree layout a new reply lands mid-list; the store loads
+what its cache lacks and takes the new list as is instead of appending.
+
+- Header: in thread mode the navbar shows the chat's avatar and name over
+  the first line of the thread's first message, a toggle between the
+  chronological list and a tree layout, and a button back to the chat
+  (which also replaces the small-screen back arrow).
+- Tree layout: replies sit below the message they answer, siblings stay
+  chronological, each indented by its depth (capped at 4) with a guide
+  line. Order and depth come from layoutThread(), tested in
+  replyThreadLayout.test.ts.
+- Composer: in thread mode a message only stays in the thread if it
+  quotes one of the thread's messages, so sending (and stickers) wait for
+  such a quote, also while the thread is still loading; a bar in the
+  quote slot (a live region for all of thread mode) says so and offers
+  "Reply to latest", Enter does nothing meanwhile, and the send button
+  looks disabled (it had no disabled style at all). The draft is the
+  chat's draft. Sending several files at once (drop or attachment menu)
+  goes out without a quote and so leaves thread mode, like any jump to a
+  message outside the thread.
+- Leaving: jumping to a message outside the thread (a quote, a search
+  result) leaves thread mode first; "Show in chat" in a bubble's context
+  menu leaves it and lands on that message; switching chats resets it.
+  Badges are hidden in thread mode.
+- Badge counts are fetched in one batch per visible page
+  (getMessageReplyCounts), again (throttled) on the chat's events,
+  instead of one request per bubble per event. The badge itself is
+  presentational.
+- The badge's `button-reset` now comes before the shared metadata rule,
+  so it gets the metadata font size and color, and it is in the
+  per-direction color rules (outgoing, sticker) like the date.
+
+The published @deltachat/jsonrpc-client pin predates the new methods, so
+they're widened locally in backend/replyThreads.ts, same pattern as
+useMessage's MessageData. Icons are Google Material Symbols (reply,
+account_tree, view_list). New i18n keys: reply_thread, n_replies
+(plural), thread_show, thread_reply_needs_quote, thread_reply_to_latest,
+thread_show_as_tree, thread_show_as_list, thread_close.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ _locales/_untranslated_en.json                |  25 +++
+ images/icons/account_tree.svg                 |   1 +
+ images/icons/reply.svg                        |   1 +
+ images/icons/thread.svg                       |   1 +
+ images/icons/view_list.svg                    |   1 +
+ .../frontend/scss/composer/_composer.scss     |   6 +
+ .../frontend/scss/message/_message-list.scss  |  11 ++
+ packages/frontend/scss/message/_message.scss  |   9 +-
+ packages/frontend/scss/message/_metadata.scss |  47 +++++-
+ packages/frontend/src/backend/replyThreads.ts |  20 +++
+ .../src/components/ChatView/ChatView.tsx      | 108 ++++++++++++-
+ .../frontend/src/components/Icon/index.tsx    |   2 +
+ .../src/components/composer/Composer.tsx      |  79 ++++++++-
+ .../src/components/message/Message.tsx        |  32 +++-
+ .../src/components/message/MessageList.tsx    |  76 +++++++++
+ .../message/MessageListAndComposer.tsx        |  20 ++-
+ .../components/message/MessageMetaData.tsx    |  58 +++++++
+ .../src/components/message/MessageWrapper.tsx |  23 ++-
+ .../frontend/src/contexts/ChatContext.tsx     | 150 ++++++++++++++++++
+ .../frontend/src/hooks/chat/useMessage.ts     |  33 +++-
+ packages/frontend/src/stores/messagelist.ts   | 134 +++++++++++-----
+ .../src/tests/replyThreadLayout.test.ts       |  41 +++++
+ .../frontend/src/utils/replyThreadLayout.ts   |  58 +++++++
+ 23 files changed, 875 insertions(+), 61 deletions(-)
+ create mode 100644 images/icons/account_tree.svg
+ create mode 100644 images/icons/reply.svg
+ create mode 100644 images/icons/thread.svg
+ create mode 100644 images/icons/view_list.svg
+ create mode 100644 packages/frontend/src/backend/replyThreads.ts
+ create mode 100644 packages/frontend/src/tests/replyThreadLayout.test.ts
+ create mode 100644 packages/frontend/src/utils/replyThreadLayout.ts
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index ea3bd34..722a719 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -175,5 +175,30 @@
+   },
+   "download_not_on_relay_send_again": {
+     "message": "Not found on your relay — send it again from your other device"
++  },
++  "reply_thread": {
++    "message": "Thread"
++  },
++  "n_replies": {
++    "one": "%d reply",
++    "other": "%d replies"
++  },
++  "thread_reply_needs_quote": {
++    "message": "Reply to a message of this thread to send"
++  },
++  "thread_reply_to_latest": {
++    "message": "Reply to latest"
++  },
++  "thread_show_as_tree": {
++    "message": "Show as tree"
++  },
++  "thread_show_as_list": {
++    "message": "Show as list"
++  },
++  "thread_close": {
++    "message": "Back to chat"
++  },
++  "thread_show": {
++    "message": "Show thread"
+   }
+ }
+diff --git a/images/icons/account_tree.svg b/images/icons/account_tree.svg
+new file mode 100644
+index 0000000..c8e9a99
+--- /dev/null
++++ b/images/icons/account_tree.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#1f1f1f"><path d="M600-120v-120H440v-400h-80v120H80v-320h280v120h240v-120h280v320H600v-120h-80v320h80v-120h280v320H600ZM160-760v160-160Zm520 400v160-160Zm0-400v160-160Zm0 160h120v-160H680v160Zm0 400h120v-160H680v160ZM160-600h120v-160H160v160Z"/></svg>
+diff --git a/images/icons/reply.svg b/images/icons/reply.svg
+new file mode 100644
+index 0000000..364c7d6
+--- /dev/null
++++ b/images/icons/reply.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#1f1f1f"><path d="M760-200v-160q0-50-35-85t-85-35H273l144 144-57 56-240-240 240-240 57 56-144 144h367q83 0 141.5 58.5T840-360v160h-80Z"/></svg>
+diff --git a/images/icons/thread.svg b/images/icons/thread.svg
+new file mode 100644
+index 0000000..d1f13fd
+--- /dev/null
++++ b/images/icons/thread.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#1f1f1f"><path d="M880-80 720-240H320q-33 0-56.5-23.5T240-320v-40h440q33 0 56.5-23.5T760-440v-280h40q33 0 56.5 23.5T880-640v560ZM160-473l47-47h393v-280H160v327ZM80-280v-520q0-33 23.5-56.5T160-880h440q33 0 56.5 23.5T680-800v280q0 33-23.5 56.5T600-440H240L80-280Zm80-240v-280 280Z"/></svg>
+diff --git a/images/icons/view_list.svg b/images/icons/view_list.svg
+new file mode 100644
+index 0000000..540a5ff
+--- /dev/null
++++ b/images/icons/view_list.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#1f1f1f"><path d="M360-240h440v-107H360v107ZM160-613h120v-107H160v107Zm0 187h120v-107H160v107Zm0 186h120v-107H160v107Zm200-186h440v-107H360v107Zm0-187h440v-107H360v107ZM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h640q33 0 56.5 23.5T880-720v480q0 33-23.5 56.5T800-160H160Z"/></svg>
+diff --git a/packages/frontend/scss/composer/_composer.scss b/packages/frontend/scss/composer/_composer.scss
+index b24bd54..b62a11e 100644
+--- a/packages/frontend/scss/composer/_composer.scss
++++ b/packages/frontend/scss/composer/_composer.scss
+@@ -129,6 +129,12 @@
+       &:focus-visible {
+         outline-offset: 2px;
+       }
++      // E.g. in reply-thread mode until a thread message is quoted; the bar
++      // above the input says why.
++      &:disabled {
++        opacity: 0.4;
++        cursor: default;
++      }
+ 
+       .paper-plane {
+         height: 24px;
+diff --git a/packages/frontend/scss/message/_message-list.scss b/packages/frontend/scss/message/_message-list.scss
+index 1666557..d9986db 100644
+--- a/packages/frontend/scss/message/_message-list.scss
++++ b/packages/frontend/scss/message/_message-list.scss
+@@ -151,6 +151,17 @@
+ 
+       min-width: 200px;
+ 
++      // Tree layout of a reply thread: a reply sits below the message it
++      // answers, indented by its depth below the thread's root
++      // (`--thread-depth`, capped in MessageWrapper), with a guide line at
++      // its own level. Theme-neutral: the line mixes from the text color.
++      &.thread-reply {
++        margin-inline-start: calc((var(--thread-depth) - 1) * 16px);
++        padding-inline-start: 14px;
++        border-inline-start: 2px solid
++          color-mix(in srgb, currentColor 20%, transparent);
++      }
++
+       .roving-tabindex {
+         // The contents of the `<li>` are focusable (see `useRovingTabindex`).
+         // Focusing an element inside a scrollable region makes the browser
+diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
+index d2c58bd..b3c96bb 100644
+--- a/packages/frontend/scss/message/_message.scss
++++ b/packages/frontend/scss/message/_message.scss
+@@ -275,7 +275,8 @@ $info-text-max-width: 400px;
+ 
+     .date,
+     .edited,
+-    .viewCount {
++    .viewCount,
++    .replyCount {
+       color: var(--messageMetadataIncoming);
+     }
+   }
+@@ -299,7 +300,8 @@ $info-text-max-width: 400px;
+   .metadata:not(.with-image-no-caption) {
+     .date,
+     .edited,
+-    .viewCount {
++    .viewCount,
++    .replyCount {
+       color: var(--messageOutgoingStatusColor);
+     }
+ 
+@@ -390,7 +392,8 @@ $info-text-max-width: 400px;
+   .metadata {
+     .date,
+     .edited,
+-    .viewCount {
++    .viewCount,
++    .replyCount {
+       font-size: 11px;
+       color: white;
+     }
+diff --git a/packages/frontend/scss/message/_metadata.scss b/packages/frontend/scss/message/_metadata.scss
+index 7f82294..2651ba6 100644
+--- a/packages/frontend/scss/message/_metadata.scss
++++ b/packages/frontend/scss/message/_metadata.scss
+@@ -19,7 +19,8 @@
+ 
+     .date,
+     .edited,
+-    .viewCount {
++    .viewCount,
++    .replyCount {
+       color: white;
+     }
+ 
+@@ -61,9 +62,29 @@
+     margin-bottom: 2px;
+   }
+ 
++  // Before the shared rule below: `button-reset` sets `font: inherit` and
++  // `color: inherit`, which must lose to the metadata size and color.
++  .replyCount {
++    @include mixins.button-reset;
++    cursor: pointer;
++    margin-inline-end: 0.5ch;
++    // Pill on hover, so it reads as a button rather than as more metadata.
++    // `currentColor` is the metadata color the rules below and the
++    // per-direction rules in _message.scss give it, so one rule covers light
++    // and dark themes, both bubble directions and media overlays.
++    padding-inline: 4px;
++    border-radius: 999px;
++    transition: background-color 100ms ease-in-out;
++
++    &:hover,
++    &:focus-visible {
++      background-color: color-mix(in srgb, currentColor 15%, transparent);
++    }
++  }
+   .date,
+   .edited,
+-  .viewCount {
++  .viewCount,
++  .replyCount {
+     font-size: $font-size;
+     line-height: $line-height;
+     letter-spacing: 0.3px;
+@@ -93,7 +114,8 @@
+   .location-icon,
+   .email-icon,
+   .saved-message-icon,
+-  .viewCountIcon {
++  .viewCountIcon,
++  .replyCountIcon {
+     display: inline-block;
+   }
+   .location-icon,
+@@ -115,4 +137,23 @@
+     // This value doesn't change the height of the wrapper.
+     vertical-align: bottom;
+   }
++  .replyCountIcon {
++    @include mixins.color-svg(
++      './images/icons/reply.svg',
++      currentColor,
++      $line-height
++    );
++    width: $line-height;
++    height: $line-height;
++    vertical-align: bottom;
++
++    // A reply without replies of its own: part of a thread, no count.
++    &.threadIcon {
++      @include mixins.color-svg(
++        './images/icons/thread.svg',
++        currentColor,
++        $line-height
++      );
++    }
++  }
+ }
+diff --git a/packages/frontend/src/backend/replyThreads.ts b/packages/frontend/src/backend/replyThreads.ts
+new file mode 100644
+index 0000000..e91bb42
+--- /dev/null
++++ b/packages/frontend/src/backend/replyThreads.ts
+@@ -0,0 +1,20 @@
++import { BackendRemote } from '../backend-com'
++
++import type { ReplyThreadEntry } from '../utils/replyThreadLayout'
++
++// getMessageReplyCounts/getMessageReplyThread come from the fork's regenerated
++// local jsonrpc bindings; the published @deltachat/jsonrpc-client pinned in
++// this workspace's catalog predates them, so they're typed locally here to keep
++// tsc green (same pattern as useMessage.ts's MessageData widening).
++export const rpcWithReplies = BackendRemote.rpc as typeof BackendRemote.rpc & {
++  /** All replies below each message; messages without replies are omitted. */
++  getMessageReplyCounts(
++    accountId: number,
++    msgIds: number[]
++  ): Promise<Record<number, number>>
++  /** The thread's messages, chronologically; empty if the message is gone. */
++  getMessageReplyThread(
++    accountId: number,
++    msgId: number
++  ): Promise<ReplyThreadEntry[]>
++}
+diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
+index ad239c0..ff8d250 100644
+--- a/packages/frontend/src/components/ChatView/ChatView.tsx
++++ b/packages/frontend/src/components/ChatView/ChatView.tsx
+@@ -32,6 +32,7 @@ import { ContextMenuContext } from '../../contexts/ContextMenuContext'
+ import { mouseEventToPosition } from '../../utils/mouseEventToPosition'
+ import useMessage from '../../hooks/chat/useMessage'
+ import classNames from 'classnames'
++import type { ThreadView } from '../../utils/replyThreadLayout'
+ 
+ const log = getLogger('ChatView')
+ 
+@@ -45,7 +46,7 @@ export function ChatView({
+   className?: string
+ }) {
+   const tx = useTranslationFunction()
+-  const { chatWithLinger, unselectChat } = useChat()
++  const { chatWithLinger, unselectChat, thread } = useChat()
+   const { smallScreenMode } = useContext(ScreenContext)
+ 
+   return (
+@@ -55,7 +56,8 @@ export function ChatView({
+       className={classNames(className, styles.chatAndNavbar)}
+     >
+       <nav className={styles.chatNavbar} data-tauri-drag-region>
+-        {smallScreenMode && (
++        {/* In thread mode the thread's own close button leads back. */}
++        {smallScreenMode && !thread && (
+           <span data-no-drag-region>
+             <Button
+               aria-label={tx('back')}
+@@ -67,11 +69,23 @@ export function ChatView({
+             </Button>
+           </span>
+         )}
+-        <div className={styles.chatNavbarHeadingWrapper} data-tauri-drag-region>
+-          {chatWithLinger && <ChatHeading chat={chatWithLinger} />}
+-        </div>
+-        {chatWithLinger && (
+-          <ChatNavButtons chat={chatWithLinger} lastUsedApps={lastUsedApps} />
++        {chatWithLinger && thread ? (
++          <ThreadNav chat={chatWithLinger} thread={thread} />
++        ) : (
++          <>
++            <div
++              className={styles.chatNavbarHeadingWrapper}
++              data-tauri-drag-region
++            >
++              {chatWithLinger && <ChatHeading chat={chatWithLinger} />}
++            </div>
++            {chatWithLinger && (
++              <ChatNavButtons
++                chat={chatWithLinger}
++                lastUsedApps={lastUsedApps}
++              />
++            )}
++          </>
+         )}
+       </nav>
+       <MessageListView accountId={accountId} />
+@@ -271,6 +285,86 @@ function ChatHeading({ chat }: { chat: T.FullChat }) {
+   )
+ }
+ 
++/** The first line of the thread's first message, for the thread's navbar. */
++async function fetchThreadRootText(accountId: number, rootId: number) {
++  const root = await BackendRemote.rpc.getMessage(accountId, rootId)
++  return (root.text || root.fileName || '').split('\n')[0]
++}
++
++/**
++ * The navbar in thread mode: the chat's avatar and name over the start of
++ * the thread's first message, then the list/tree toggle and the button
++ * back to the whole chat.
++ */
++function ThreadNav({ chat, thread }: { chat: T.FullChat; thread: ThreadView }) {
++  const tx = useTranslationFunction()
++  const accountId = selectedAccountId()
++  const { closeThread, setThreadLayout } = useChat()
++  const rootTextFetch = useRpcFetch(fetchThreadRootText, [
++    accountId,
++    thread.msgId,
++  ])
++  const rootText = rootTextFetch.lingeringResult?.ok
++    ? rootTextFetch.lingeringResult.value
++    : ''
++  const isTree = thread.layout === 'tree'
++  const toggleLabel = tx(isTree ? 'thread_show_as_list' : 'thread_show_as_tree')
++
++  return (
++    <>
++      <div className={styles.chatNavbarHeadingWrapper} data-tauri-drag-region>
++        <div className='navbar-heading' data-no-drag-region>
++          <Avatar
++            displayName={chat.name}
++            color={chat.color}
++            avatarPath={chat.profileImage || undefined}
++            small
++            wasSeenRecently={chat.wasSeenRecently}
++            // Decorative, like in `ChatHeading`: the name is right below.
++            aria-hidden={true}
++          />
++          <div style={{ marginInlineStart: '7px', overflow: 'hidden' }}>
++            <div className='navbar-chat-name'>
++              <h2 id='chat-section-heading' className='truncated'>
++                {chat.name}
++                <span className='visually-hidden'>
++                  <br />
++                  {tx('reply_thread')}
++                </span>
++              </h2>
++            </div>
++            <div className='navbar-chat-subtitle truncated'>{rootText}</div>
++          </div>
++        </div>
++      </div>
++      <div className='views' data-no-drag-region>
++        <Button
++          onClick={() => setThreadLayout(isTree ? 'list' : 'tree')}
++          aria-label={toggleLabel}
++          title={toggleLabel}
++          className='navbar-button'
++          styling='borderless'
++        >
++          <Icon
++            coloring='navbar'
++            icon={isTree ? 'view_list' : 'account_tree'}
++            size={18}
++          />
++        </Button>
++        <Button
++          onClick={() => closeThread()}
++          aria-label={tx('thread_close')}
++          title={tx('thread_close')}
++          className='navbar-button'
++          styling='borderless'
++        >
++          <Icon coloring='navbar' icon='cross' size={18} />
++        </Button>
++      </div>
++    </>
++  )
++}
++
+ function ChatNavButtons({
+   chat,
+   lastUsedApps,
+diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
+index a3d7bba..e86224e 100644
+--- a/packages/frontend/src/components/Icon/index.tsx
++++ b/packages/frontend/src/components/Icon/index.tsx
+@@ -4,6 +4,7 @@ import classNames from 'classnames'
+ import styles from './styles.module.scss'
+ 
+ export type IconName =
++  | 'account_tree'
+   | 'apps'
+   | 'archive'
+   | 'arrow-left'
+@@ -54,6 +55,7 @@ export type IconName =
+   | 'test-tube'
+   | 'trash'
+   | 'upload-file'
++  | 'view_list'
+   | 'visibility'
+ 
+ type IconColoring =
+diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
+index 58d5982..6942c29 100644
+--- a/packages/frontend/src/components/composer/Composer.tsx
++++ b/packages/frontend/src/components/composer/Composer.tsx
+@@ -27,7 +27,11 @@ import { useSettingsStore } from '../../stores/settings'
+ import { BackendRemote, EffectfulBackendActions, Type } from '../../backend-com'
+ import { selectedAccountId } from '../../ScreenController'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+-import { confirmDialog, isMessageEditable } from '../message/messageFunctions'
++import {
++  confirmDialog,
++  isMessageEditable,
++  setQuoteInDraft,
++} from '../message/messageFunctions'
+ import useDialog from '../../hooks/dialog/useDialog'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import useMessage from '../../hooks/chat/useMessage'
+@@ -36,6 +40,7 @@ import { useDraft, type DraftObject } from '../../hooks/chat/useDraft'
+ import { useRpcFetch } from '../../hooks/useFetch'
+ 
+ import type { EmojiMartData } from '../EmojiPicker'
++import type { ReplyThreadEntry } from '../../utils/replyThreadLayout'
+ import { VisualVCardComponent } from '../message/VCard'
+ import { ActionEmitter, KeybindAction } from '../../keybindings'
+ import useKeyBindingAction from '../../hooks/useKeyBindingAction'
+@@ -79,6 +84,11 @@ const Composer = forwardRef<
+     clearDraftState: () => void
+     setDraftState: (newValue: DraftObject) => void
+     messageCache: { [msgId: number]: Type.MessageLoadResult | undefined }
++    /**
++     * In thread mode, the thread's messages (chronological); `null` when
++     * showing the whole chat.
++     */
++    threadEntries: ReplyThreadEntry[] | null
+   }
+ >((props, ref) => {
+   const {
+@@ -94,6 +104,7 @@ const Composer = forwardRef<
+     addFileToDraft,
+     removeFile,
+     messageCache,
++    threadEntries,
+   } = props
+ 
+   const chatId = selectedChat.id
+@@ -282,8 +293,22 @@ const Composer = forwardRef<
+     ? messageEditing.newText.length > 0
+     : draftState.text.length > 0 || !!draftState.file
+ 
++  // In thread mode, a message only stays in the thread if it quotes one of
++  // the thread's messages, so sending waits for such a quote.
++  const threadQuoteMissing =
++    threadEntries !== null &&
++    !(
++      draftState.quote?.kind === 'WithMessage' &&
++      threadEntries.some(
++        entry =>
++          draftState.quote?.kind === 'WithMessage' &&
++          entry.msgId === draftState.quote.messageId
++      )
++    )
++  const latestThreadMsgId = threadEntries?.[threadEntries.length - 1]?.msgId
++
+   const composerSendMessage =
+-    messageEditing.isEditingModeActive || draftIsLoading
++    messageEditing.isEditingModeActive || draftIsLoading || threadQuoteMissing
+       ? null
+       : async () => {
+           // Focus message input in case the message was sent
+@@ -378,6 +403,9 @@ const Composer = forwardRef<
+   const onEmojiIconClick = () => setShowEmojiPicker(!showEmojiPicker)
+   const onStickerClick = useCallback(
+     async (stickerPath: string) => {
++      if (threadQuoteMissing) {
++        return
++      }
+       const quotedMessageId =
+         draftState.quote?.kind === 'WithMessage'
+           ? draftState.quote.messageId
+@@ -391,7 +419,14 @@ const Composer = forwardRef<
+         removeQuote()
+       }
+     },
+-    [accountId, chatId, draftState.quote, removeQuote, sendMessage]
++    [
++      accountId,
++      chatId,
++      draftState.quote,
++      removeQuote,
++      sendMessage,
++      threadQuoteMissing,
++    ]
+   )
+   const shiftPressed = useRef(false)
+   const onEmojiSelect = (emoji: EmojiMartData) => {
+@@ -747,6 +782,40 @@ const Composer = forwardRef<
+                     />
+                   </section>
+                 )}
++              {/* Mounted for all of thread mode, so the live region exists
++              before its text appears (e.g. after sending clears the quote)
++              and screen readers announce it. */}
++              {threadEntries !== null && (
++                <div aria-live='polite'>
++                  {threadQuoteMissing && (
++                    <div className={ghostStyles.bar}>
++                      <span className={ghostStyles.barLabel}>
++                        {tx('thread_reply_needs_quote')}
++                      </span>
++                      {latestThreadMsgId !== undefined && (
++                        <button
++                          type='button'
++                          className={ghostStyles.labelButton}
++                          style={{ marginInlineStart: 'auto' }}
++                          onClick={() => {
++                            // The full message when we have it: a bare ID
++                            // makes the draft refetch the quote, and a send
++                            // during that round-trip gets the quote put back.
++                            const latest = messageCache[latestThreadMsgId]
++                            setQuoteInDraft(
++                              latest?.kind === 'message'
++                                ? latest
++                                : latestThreadMsgId
++                            )
++                          }}
++                        >
++                          {tx('thread_reply_to_latest')}
++                        </button>
++                      )}
++                    </div>
++                  )}
++                </div>
++              )}
+               <LinkPreviewGhost preview={linkPreview} />
+               {trackingChip && (
+                 <div
+@@ -872,6 +941,10 @@ const Composer = forwardRef<
+                   (!messageEditing.isEditingModeActive
+                     ? composerSendMessage
+                     : null) ??
++                  (threadQuoteMissing
++                    ? // The bar above says why; nothing to log.
++                      () => {}
++                    : null) ??
+                   (() => {
+                     log.error(
+                       'Tried to send a message while draft is loading or in message editing mode'
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index f108098..b6859fc 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -275,6 +275,7 @@ function buildContextMenu(
+     handleReactClick,
+     chat,
+     jumpToMessage,
++    inReplyThread,
+   }: {
+     accountId: number
+     message: T.Message | null
+@@ -285,6 +286,7 @@ function buildContextMenu(
+     handleReactClick: (event: React.MouseEvent<Element, MouseEvent>) => void
+     chat: T.FullChat
+     jumpToMessage: JumpToMessage
++    inReplyThread?: boolean
+   },
+   clickTarget: HTMLAnchorElement | null
+ ): (false | ContextMenuItem)[] {
+@@ -374,6 +376,20 @@ function buildContextMenu(
+     message.fromId > C.DC_CONTACT_ID_LAST_SPECIAL
+ 
+   return [
++    // In thread mode the bubble is out of its chat context; this leaves the
++    // thread and lands on the message in the whole chat.
++    Boolean(inReplyThread) && {
++      label: tx('show_in_chat'),
++      action: () =>
++        jumpToMessage({
++          accountId,
++          msgId: message.id,
++          msgChatId: message.chatId,
++          focus: true,
++          scrollIntoViewArg: { block: 'center' },
++          exitThread: true,
++        }),
++    },
+     // Reply
+     showReply && {
+       label: tx('notify_reply_button'),
+@@ -613,8 +629,12 @@ export default function Message(props: {
+   chat: T.FullChat
+   message: T.Message
+   conversationType: ConversationType
++  // Set in thread mode: adds "Show in chat" to the context menu.
++  inReplyThread?: boolean
++  /** All replies below this message, for the reply badge in the footer. */
++  replyCount?: number
+ }) {
+-  const { message, conversationType, chat } = props
++  const { message, conversationType, chat, inReplyThread, replyCount } = props
+   const { viewType, text, hasLocation, hasHtml } = message
+   const direction = getDirection(message)
+   const status = mapCoreMsgStatus2String(message.state)
+@@ -695,6 +715,7 @@ export default function Message(props: {
+         handleReactClick,
+         chat: props.chat,
+         jumpToMessage,
++        inReplyThread,
+       }
+       const items = isMultiselectMember
+         ? buildMultiselectContextMenu(
+@@ -733,6 +754,7 @@ export default function Message(props: {
+       showReactionsBar,
+       text,
+       jumpToMessage,
++      inReplyThread,
+       tx,
+     ]
+   )
+@@ -1322,6 +1344,14 @@ export default function Message(props: {
+               viewType={effectiveViewType}
+               chatType={chat.chatType}
+               tabindexForInteractiveContents={tabindexForInteractiveContents}
++              replyCount={replyCount}
++              isReply={
++                // A deliberate reply within this chat, as core counts them:
++                // a quote of a message here, not forwarded.
++                message.quote?.kind === 'WithMessage' &&
++                message.quote.chatId === message.chatId &&
++                !message.isForwarded
++              }
+             />
+             <div
+               // TODO the "+1" count aria-live announcment is perhaps not great
+diff --git a/packages/frontend/src/components/message/MessageList.tsx b/packages/frontend/src/components/message/MessageList.tsx
+index 7c3f8ca..1044113 100644
+--- a/packages/frontend/src/components/message/MessageList.tsx
++++ b/packages/frontend/src/components/message/MessageList.tsx
+@@ -36,6 +36,52 @@ import {
+   useMessageFocusAndMultiselectContextValue,
+ } from './focusAndMultiselect'
+ import { marknoticedChat } from '../../backend/chat'
++import { rpcWithReplies } from '../../backend/replyThreads'
++import asyncThrottle from '@jcoreio/async-throttle'
++
++/**
++ * Reply-badge counts for the messages in `msgIds`, fetched in one batch, and
++ * again (throttled) after anything changes in the chat: a reply to any of
++ * them may have arrived or been deleted. Nothing is fetched when `msgIds` is
++ * empty (thread mode passes no IDs: badges are not shown there).
++ */
++function useReplyCounts(
++  accountId: number,
++  chatId: number,
++  msgIds: number[]
++): Record<number, number> {
++  const key = msgIds.join(',')
++  const [counts, setCounts] = useState<Record<number, number>>({})
++  const fetchCounts = useMemo(
++    () =>
++      asyncThrottle(async (ids: number[]) => {
++        try {
++          setCounts(await rpcWithReplies.getMessageReplyCounts(accountId, ids))
++        } catch (error) {
++          log.warn('getMessageReplyCounts failed', error)
++        }
++      }, 250),
++    [accountId]
++  )
++  useEffect(() => {
++    if (key === '') {
++      return
++    }
++    const ids = key.split(',').map(Number)
++    fetchCounts(ids)
++    const onChatEvent = ({ chatId: eventChatId }: { chatId: number }) => {
++      if (eventChatId === chatId || eventChatId === 0) {
++        fetchCounts(ids)
++      }
++    }
++    const cleanup = [
++      onDCEvent(accountId, 'MsgsChanged', onChatEvent),
++      onDCEvent(accountId, 'IncomingMsg', onChatEvent),
++    ]
++    return () => cleanup.forEach(off => off())
++  }, [accountId, chatId, key, fetchCounts])
++  return counts
++}
+ 
+ /**
+  * Returns a "live" version of `FullChat.freshMessageCounter`.
+@@ -113,7 +159,17 @@ export default function MessageList({
+     viewState,
+     jumpToMessageStack,
+     loaded,
++    thread,
+   } = messageListState
++  const replyCounts = useReplyCounts(
++    accountId,
++    chat.id,
++    thread !== null
++      ? []
++      : activeView.flatMap(item =>
++          item.kind === 'message' ? [item.msg_id] : []
++        )
++  )
+   const { hideReactionsBar, isReactionsBarShown } = useReactionsBar()
+ 
+   const messageListRef = useRef<HTMLDivElement | null>(null)
+@@ -692,6 +748,8 @@ export default function MessageList({
+           unreadMessageInViewIntersectionObserver
+         }
+         loadMissingMessages={loadMissingMessages}
++        replyCounts={replyCounts}
++        threadDepth={thread?.depth ?? null}
+       />
+       <JumpDownButton
+         // We're using `hidden` prop instead of simply not rendering
+@@ -731,6 +789,12 @@ export const MessageListInner = React.memo(
+     loaded: boolean
+     unreadMessageInViewIntersectionObserver: IntersectionObserver
+     loadMissingMessages: () => Promise<void>
++    replyCounts: Record<number, number>
++    /**
++     * In thread mode, each message's depth below the thread's root (empty in
++     * the list layout); `null` when showing the whole chat.
++     */
++    threadDepth: Record<number, number> | null
+   }) => {
+     const tx = useTranslationFunction()
+ 
+@@ -746,6 +810,8 @@ export const MessageListInner = React.memo(
+       loaded,
+       unreadMessageInViewIntersectionObserver,
+       loadMissingMessages,
++      replyCounts,
++      threadDepth,
+     } = props
+ 
+     const conversationType: ConversationType = {
+@@ -943,6 +1009,16 @@ export const MessageListInner = React.memo(
+                           unreadMessageInViewIntersectionObserver={
+                             unreadMessageInViewIntersectionObserver
+                           }
++                          // No badges in thread mode: the counts left from
++                          // the whole chat are stale there, and a badge
++                          // would only re-enter the thread you're in.
++                          replyCount={
++                            threadDepth === null
++                              ? (replyCounts[messageId.msg_id] ?? 0)
++                              : undefined
++                          }
++                          inReplyThread={threadDepth !== null}
++                          threadDepth={threadDepth?.[messageId.msg_id] ?? 0}
+                         />
+                       )
+                     } else if (message?.kind === 'loadingError') {
+diff --git a/packages/frontend/src/components/message/MessageListAndComposer.tsx b/packages/frontend/src/components/message/MessageListAndComposer.tsx
+index 8ca2c10..d1ed438 100644
+--- a/packages/frontend/src/components/message/MessageListAndComposer.tsx
++++ b/packages/frontend/src/components/message/MessageListAndComposer.tsx
+@@ -15,6 +15,7 @@ import ConfirmSendingFiles from '../dialogs/ConfirmSendingFiles'
+ import { ReactionsBarProvider } from '../ReactionsBar'
+ import useDialog from '../../hooks/dialog/useDialog'
+ import useMessage from '../../hooks/chat/useMessage'
++import useChat from '../../hooks/chat/useChat'
+ import { useMessageList } from '../../stores/messagelist'
+ import { IMAGE_EXTENSIONS } from '@deltachat-desktop/shared/constants'
+ 
+@@ -98,6 +99,7 @@ export default function MessageListAndComposer({ accountId, chat }: Props) {
+ 
+   const { openDialog, hasOpenDialogs } = useDialog()
+   const { sendMessage } = useMessage()
++  const { thread, closeThread } = useChat()
+ 
+   const regularMessageInputRef = useRef<ComposerMessageInput>(null)
+   const editMessageInputRef = useRef<ComposerMessageInput>(null)
+@@ -107,7 +109,18 @@ export default function MessageListAndComposer({ accountId, chat }: Props) {
+     state: messageListState,
+     fetchMoreBottom,
+     fetchMoreTop,
+-  } = useMessageList(accountId, chat.id)
++  } = useMessageList(accountId, chat.id, thread)
++
++  // The thread can't be loaded (its messages were deleted): back to the chat.
++  const threadGone =
++    thread !== null &&
++    messageListState.loaded &&
++    messageListState.thread?.entries.length === 0
++  useEffect(() => {
++    if (threadGone) {
++      closeThread(false)
++    }
++  }, [threadGone, closeThread])
+ 
+   const {
+     draftState,
+@@ -255,6 +268,11 @@ export default function MessageListAndComposer({ accountId, chat }: Props) {
+         clearDraftState={clearDraftState}
+         setDraftState={setDraftState}
+         messageCache={messageListState.messageCache}
++        // While a thread is still loading, its entries are not there yet:
++        // pass none rather than "not in thread mode", so sending stays gated.
++        threadEntries={
++          thread !== null ? (messageListState.thread?.entries ?? []) : null
++        }
+       />
+     </div>
+   )
+diff --git a/packages/frontend/src/components/message/MessageMetaData.tsx b/packages/frontend/src/components/message/MessageMetaData.tsx
+index 4c86c98..1f4b509 100644
+--- a/packages/frontend/src/components/message/MessageMetaData.tsx
++++ b/packages/frontend/src/components/message/MessageMetaData.tsx
+@@ -11,6 +11,7 @@ import { useRpcFetch } from '../../hooks/useFetch'
+ import { BackendRemote, onDCEvent } from '../../backend-com'
+ import { selectedAccountId } from '../../ScreenController'
+ import asyncThrottle from '@jcoreio/async-throttle'
++import useChat from '../../hooks/chat/useChat'
+ import { shouldHideDeliveryStatus } from './messageFunctions'
+ import {
+   HoverInfoTrigger,
+@@ -37,6 +38,17 @@ type Props = {
+   viewType: T.Viewtype
+   chatType: T.ChatType
+   isSavedMessage: boolean
++  /**
++   * All replies below this message. Only the chat's message list passes it
++   * (fetched in one batch there, 0 when there are none); left out, no reply
++   * badge is shown.
++   */
++  replyCount?: number
++  /**
++   * The message is itself a reply. With no replies of its own it then gets
++   * a count-less thread icon, the way into its thread.
++   */
++  isReply?: boolean
+ }
+ 
+ export default function MessageMetaData(props: Props) {
+@@ -58,6 +70,8 @@ export default function MessageMetaData(props: Props) {
+     viewType,
+     chatType,
+     isSavedMessage,
++    replyCount,
++    isReply,
+   } = props
+ 
+   return (
+@@ -95,6 +109,13 @@ export default function MessageMetaData(props: Props) {
+       <div className='aria-live-wrapper' aria-live='polite'>
+         {isEdited && <span className='edited'>{tx('edited')}</span>}
+       </div>
++      {replyCount !== undefined && (replyCount > 0 || isReply) && (
++        <ReplyCount
++          messageId={messageId}
++          count={replyCount}
++          tabindexForInteractiveContents={tabindexForInteractiveContents}
++        />
++      )}
+       <Timestamp
+         timestamp={timestamp}
+         extended
+@@ -288,6 +309,43 @@ function ViewCount(props: { messageId: number }) {
+   )
+ }
+ 
++/**
++ * Reply icon + the number of all replies below this message, or, for a
++ * reply without replies of its own (count 0), just a thread icon. Clicking
++ * it switches the message list to this message's reply thread.
++ */
++function ReplyCount(props: {
++  messageId: number
++  count: number
++  tabindexForInteractiveContents: -1 | 0
++}) {
++  const tx = useTranslationFunction()
++  const { openThread } = useChat()
++  const label =
++    props.count > 0
++      ? tx('n_replies', String(props.count), { quantity: props.count })
++      : tx('thread_show')
++  return (
++    <button
++      type='button'
++      className='replyCount'
++      title={label}
++      aria-label={label}
++      tabIndex={props.tabindexForInteractiveContents}
++      onClick={() => openThread(props.messageId)}
++    >
++      {props.count > 0 ? (
++        <>
++          <span aria-hidden className='replyCountIcon' />
++          <span className='replyCountValue'>{props.count}</span>
++        </>
++      ) : (
++        <span aria-hidden className='replyCountIcon threadIcon' />
++      )}
++    </button>
++  )
++}
++
+ /**
+  * Returns true if message contains visual media (image, sticker or video)
+  * without any further text.
+diff --git a/packages/frontend/src/components/message/MessageWrapper.tsx b/packages/frontend/src/components/message/MessageWrapper.tsx
+index 7868131..206804d 100644
+--- a/packages/frontend/src/components/message/MessageWrapper.tsx
++++ b/packages/frontend/src/components/message/MessageWrapper.tsx
+@@ -1,4 +1,5 @@
+ import React, { useLayoutEffect, useRef } from 'react'
++import classNames from 'classnames'
+ import { C } from '@deltachat/jsonrpc-client'
+ 
+ import Message from './Message'
+@@ -13,8 +14,16 @@ type RenderMessageProps = {
+   message: T.Message
+   conversationType: ConversationType
+   unreadMessageInViewIntersectionObserver: IntersectionObserver
++  replyCount?: number
++  inReplyThread: boolean
++  /** Depth below the thread's root in the tree layout of thread mode, else 0. */
++  threadDepth: number
+ }
+ 
++// Deeper replies stay at this indentation, so long chains don't squeeze the
++// bubbles to nothing.
++const MAX_THREAD_INDENT = 4
++
+ const log = getLogger('renderer/message/MessageWrapper')
+ 
+ export function MessageWrapper(props: RenderMessageProps) {
+@@ -56,7 +65,19 @@ export function MessageWrapper(props: RenderMessageProps) {
+   ])
+ 
+   return (
+-    <li id={props.key2} className='message-wrapper'>
++    <li
++      id={props.key2}
++      className={classNames('message-wrapper', {
++        'thread-reply': props.threadDepth > 0,
++      })}
++      style={
++        props.threadDepth > 0
++          ? ({
++              '--thread-depth': Math.min(props.threadDepth, MAX_THREAD_INDENT),
++            } as React.CSSProperties)
++          : undefined
++      }
++    >
+       <Message {...props} />
+       {/* TODO perf: `shouldInViewObserve` does not become `false`
+       when we do mark a message as read, because the messagelist.ts
+diff --git a/packages/frontend/src/contexts/ChatContext.tsx b/packages/frontend/src/contexts/ChatContext.tsx
+index 4cb9f0d..16e9ce2 100644
+--- a/packages/frontend/src/contexts/ChatContext.tsx
++++ b/packages/frontend/src/contexts/ChatContext.tsx
+@@ -8,6 +8,8 @@ import type { RefObject, PropsWithChildren } from 'react'
+ import type { T } from '@deltachat/jsonrpc-client'
+ import { useFetch } from '../hooks/useFetch'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
++import { rpcWithReplies } from '../backend/replyThreads'
++import type { ThreadLayout, ThreadView } from '../utils/replyThreadLayout'
+ 
+ const log = getLogger('ChatContext')
+ 
+@@ -34,6 +36,20 @@ export type ChatContextValue = {
+    */
+   selectChat: SelectChat
+   unselectChat: UnselectChat
++  /** Thread mode of the message list; `null` shows the whole chat. */
++  thread: ThreadView | null
++  /**
++   * Shows the reply thread `msgId` belongs to in the message list, landing
++   * on `msgId`.
++   */
++  openThread: (msgId: number) => void
++  /**
++   * Back to the whole chat, scrolled to the message the thread was opened
++   * from (or the thread's root if that is gone) — unless `land` is false,
++   * e.g. because the caller jumps somewhere itself.
++   */
++  closeThread: (land?: boolean) => void
++  setThreadLayout: (layout: ThreadLayout) => void
+ }
+ 
+ type Props = {
+@@ -99,6 +115,134 @@ export const ChatProvider = ({
+     window.__selectedChatId = chatId
+   }, [chatId])
+ 
++  // Keyed by session and chat, so switching account or chat leaves thread
++  // mode even before the explicit resets in `selectChat`/`unselectChat`.
++  // `view.msgId` is the thread's root, which identifies the thread for as
++  // long as it exists; `openedFrom` is only where to land.
++  const [thread_, setThread_] = useState<{
++    sessionId: symbol
++    chatId: number
++    view: ThreadView
++    openedFrom: number
++  } | null>(null)
++  const threadState =
++    thread_ !== null &&
++    thread_.sessionId === sessionId &&
++    thread_.chatId === chatId
++      ? thread_
++      : null
++  const thread = threadState?.view ?? null
++  // The layout last picked sticks for the next thread.
++  const [lastThreadLayout, setLastThreadLayout] = useState<ThreadLayout>('list')
++
++  /**
++   * Makes the next message list store (the one a thread switch creates) land
++   * on `msgId` in its `loadChat`.
++   */
++  const landOn = useCallback(
++    (msgId: number, highlight: boolean) => {
++      if (accountId == undefined || chatId == undefined) {
++        return
++      }
++      window.__internal_jump_to_message_asap = {
++        accountId,
++        chatId,
++        jumpToMessageArgs: [
++          {
++            msgId,
++            highlight,
++            focus: false,
++            scrollIntoViewArg: { block: 'center' },
++          },
++        ],
++      }
++    },
++    [accountId, chatId]
++  )
++  /**
++   * The message the thread was opened from while it still belongs to the
++   * thread (it may have been deleted since), else the thread's root; `null`
++   * if the thread is gone.
++   */
++  const landingSpot = useCallback(
++    async (state: NonNullable<typeof threadState>) => {
++      if (accountId == undefined) {
++        return null
++      }
++      const entries = await rpcWithReplies.getMessageReplyThread(
++        accountId,
++        state.view.msgId
++      )
++      return entries.some(entry => entry.msgId === state.openedFrom)
++        ? state.openedFrom
++        : (entries.find(entry => entry.parentId === null)?.msgId ?? null)
++    },
++    [accountId]
++  )
++
++  const openThread = useCallback(
++    async (msgId: number) => {
++      if (accountId == undefined || chatId == undefined) {
++        return
++      }
++      const entries = await rpcWithReplies.getMessageReplyThread(
++        accountId,
++        msgId
++      )
++      const root = entries.find(entry => entry.parentId === null)?.msgId
++      if (root === undefined) {
++        return
++      }
++      landOn(msgId, true)
++      setThread_({
++        sessionId,
++        chatId,
++        view: { msgId: root, layout: lastThreadLayout },
++        openedFrom: msgId,
++      })
++    },
++    [accountId, chatId, sessionId, landOn, lastThreadLayout]
++  )
++  const closeThread = useCallback(
++    (land = true) => {
++      if (!threadState) {
++        return
++      }
++      if (!land) {
++        setThread_(null)
++        return
++      }
++      landingSpot(threadState)
++        // Landing is a nicety: switch even if looking it up fails.
++        .catch(() => null)
++        .then(spot => {
++          if (spot !== null) {
++            landOn(spot, false)
++          }
++          setThread_(null)
++        })
++    },
++    [threadState, landingSpot, landOn]
++  )
++  const setThreadLayout = useCallback(
++    (layout: ThreadLayout) => {
++      if (!threadState) {
++        return
++      }
++      setLastThreadLayout(layout)
++      landingSpot(threadState)
++        // Landing is a nicety: switch even if looking it up fails.
++        .catch(() => null)
++        .then(spot => {
++          if (spot !== null) {
++            landOn(spot, false)
++          }
++          setThread_({ ...threadState, view: { ...threadState.view, layout } })
++        })
++    },
++    [threadState, landingSpot, landOn]
++  )
++
+   const chatFetch = useFetch(
+     useCallback(
+       async (accountId: number, chatId: number) => ({
+@@ -184,6 +328,7 @@ export const ChatProvider = ({
+ 
+       // Already set known state
+       setChatId(nextChatId)
++      setThread_(null)
+ 
+       // Clear system notifications and mark chat as seen in backend
+       marknoticedChat(accountId, nextChatId)
+@@ -196,6 +341,7 @@ export const ChatProvider = ({
+ 
+   const unselectChat = useCallback<UnselectChat>(() => {
+     setChatId(undefined)
++    setThread_(null)
+   }, [setChatId])
+ 
+   // Callback ref pattern: keeping ref in sync for external callers
+@@ -280,6 +426,10 @@ export const ChatProvider = ({
+     chatId,
+     selectChat,
+     unselectChat,
++    thread,
++    openThread,
++    closeThread,
++    setThreadLayout,
+   }
+ 
+   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>
+diff --git a/packages/frontend/src/hooks/chat/useMessage.ts b/packages/frontend/src/hooks/chat/useMessage.ts
+index 4d28cc4..07b2563 100644
+--- a/packages/frontend/src/hooks/chat/useMessage.ts
++++ b/packages/frontend/src/hooks/chat/useMessage.ts
+@@ -3,6 +3,7 @@ import mimeTypes from 'mime-types'
+ 
+ import useChat from './useChat'
+ import { BackendRemote } from '../../backend-com'
++import { rpcWithReplies } from '../../backend/replyThreads'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { notifyWebxdcMessageSent } from '../useWebxdcMessageSent'
+ import { mediaMetadata } from '../../utils/mediaMetadata'
+@@ -50,6 +51,11 @@ export type JumpToMessage = (params: {
+    * the messages list should not be horizontally scrollable.
+    */
+   scrollIntoViewArg?: Parameters<HTMLElement['scrollIntoView']>[0]
++  /**
++   * In thread mode, leave the thread even if the message belongs to it
++   * ("Show in chat"). A message outside the thread always leaves it.
++   */
++  exitThread?: boolean
+ }) => Promise<void>
+ 
+ export type SendMessage = (
+@@ -120,7 +126,7 @@ async function withMediaMetadata(data: MessageData): Promise<MessageData> {
+ }
+ 
+ export default function useMessage() {
+-  const { chatId, selectChat } = useChat()
++  const { chatId, selectChat, thread, closeThread } = useChat()
+ 
+   const jumpToMessage = useCallback<JumpToMessage>(
+     async ({
+@@ -131,6 +137,7 @@ export default function useMessage() {
+       focus,
+       msgParentId,
+       scrollIntoViewArg,
++      exitThread = false,
+     }) => {
+       log.debug(`jumpToMessage with messageId: ${msgId}`)
+ 
+@@ -139,6 +146,24 @@ export default function useMessage() {
+           .chatId
+       }
+ 
++      // In thread mode, a target outside the thread leaves the thread (as
++      // does "Show in chat"). Leaving creates a new message list store for
++      // the whole chat, whose `loadChat` picks up the jump below — so the
++      // thread's store must not try it first (it would not find the message).
++      // A target in another chat needs nothing here: switching chats leaves
++      // thread mode anyway.
++      const leaveThread =
++        thread !== null &&
++        msgChatId === chatId &&
++        (exitThread ||
++          !(
++            await rpcWithReplies.getMessageReplyThread(accountId, thread.msgId)
++          ).some(entry => entry.msgId === msgId))
++      if (leaveThread) {
++        // Without landing: the jump below is where to land.
++        closeThread(false)
++      }
++
+       // Workaround to actual jump to message in regarding mounted component view
+       // We must set this before the potential `selectChat()`,
+       // i.e. before the render of the message list
+@@ -158,7 +183,9 @@ export default function useMessage() {
+           },
+         ],
+       }
+-      window.__internal_check_jump_to_message?.()
++      if (!leaveThread) {
++        window.__internal_check_jump_to_message?.()
++      }
+ 
+       // Check if target message is in same chat, if not switch first
+       if (msgChatId !== chatId) {
+@@ -167,7 +194,7 @@ export default function useMessage() {
+ 
+       window.__closeAllDialogs?.()
+     },
+-    [chatId, selectChat]
++    [chatId, selectChat, thread, closeThread]
+   )
+ 
+   const sendMessage = useCallback<SendMessage>(
+diff --git a/packages/frontend/src/stores/messagelist.ts b/packages/frontend/src/stores/messagelist.ts
+index ee4700c..420a8ee 100644
+--- a/packages/frontend/src/stores/messagelist.ts
++++ b/packages/frontend/src/stores/messagelist.ts
+@@ -16,6 +16,9 @@ import { debounce } from 'debounce'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { useSettingsStore } from './settings'
+ import { shouldShowOSNotificationForCurrentChat } from '../system-integration/notifications'
++import { rpcWithReplies } from '../backend/replyThreads'
++import { layoutThread } from '../utils/replyThreadLayout'
++import type { ReplyThreadEntry, ThreadView } from '../utils/replyThreadLayout'
+ 
+ const log = getLogger('messagelist')
+ 
+@@ -59,6 +62,15 @@ interface MessageListState {
+   viewState: ChatViewState
+   jumpToMessageStack: number[]
+   loaded: boolean
++  /**
++   * In thread mode: the thread's messages in chronological order, and in
++   * the tree layout each message's depth below the thread's root.
++   * `null` when showing the whole chat.
++   */
++  thread: null | {
++    entries: ReplyThreadEntry[]
++    depth: Record<number, number>
++  }
+ }
+ 
+ const defaultState = () =>
+@@ -70,6 +82,7 @@ const defaultState = () =>
+     viewState: defaultChatViewState(),
+     jumpToMessageStack: [],
+     loaded: false,
++    thread: null,
+   }) as MessageListState
+ 
+ /*
+@@ -79,18 +92,27 @@ const defaultState = () =>
+  */
+ export function useMessageList(
+   accountId: number,
+-  chatId: number
++  chatId: number,
++  thread: ThreadView | null = null
+ ): {
+   state: MessageListState
+   store: MessageListStore
+   fetchMoreBottom: () => void
+   fetchMoreTop: () => void
+ } {
++  const threadMsgId = thread?.msgId
++  const threadLayout = thread?.layout
+   const store = useMemo(() => {
+-    const store = new MessageListStore(accountId, chatId)
++    const store = new MessageListStore(
++      accountId,
++      chatId,
++      threadMsgId === undefined || threadLayout === undefined
++        ? null
++        : { msgId: threadMsgId, layout: threadLayout }
++    )
+     store.effect.loadChat()
+     return store
+-  }, [accountId, chatId])
++  }, [accountId, chatId, threadMsgId, threadLayout])
+ 
+   // PERF: It's a shame that we have to re-render on settings changes
+   // even though we only depend on `volume`,
+@@ -222,11 +244,37 @@ export class MessageListStore extends Store<MessageListState> {
+ 
+   constructor(
+     private readonly accountId: number,
+-    private readonly chatId: number
++    private readonly chatId: number,
++    private readonly thread: ThreadView | null = null
+   ) {
+     super(defaultState(), 'MessageListStore')
+   }
+ 
++  /**
++   * The chat's message list items or, in thread mode, the thread's messages
++   * in display order. Every place that (re)loads the list goes through here,
++   * so thread mode gets paging, jumps and live updates from the same code.
++   */
++  private async fetchMessageListItems(): Promise<T.MessageListItem[]> {
++    if (this.thread === null) {
++      return await BackendRemote.rpc.getMessageListItems(
++        this.accountId,
++        this.chatId,
++        false,
++        true
++      )
++    }
++    // `thread.msgId` is the root, so the thread outlives the deletion of any
++    // reply, including the one it was opened from.
++    const entries = await rpcWithReplies.getMessageReplyThread(
++      this.accountId,
++      this.thread.msgId
++    )
++    const { order, depth } = layoutThread(entries, this.thread.layout)
++    this.setState(state => ({ ...state, thread: { entries, depth } }), 'thread')
++    return order.map(msg_id => ({ kind: 'message', msg_id }))
++  }
++
+   get activeView() {
+     const start = this.state.oldestFetchedMessageListItemIndex
+     const end = this.state.newestFetchedMessageListItemIndex
+@@ -237,10 +285,12 @@ export class MessageListStore extends Store<MessageListState> {
+ 
+   reducer = {
+     selectedChat: (payload: Partial<MessageListState>) => {
+-      this.setState(_ => {
++      this.setState(state => {
+         this.scheduler.unlock('scroll')
+         const modifiedState: MessageListState = {
+           ...defaultState(),
++          // Set by `fetchMessageListItems`, which just ran.
++          thread: state.thread,
+           ...payload,
+           loaded: true,
+         }
+@@ -449,16 +499,17 @@ export class MessageListStore extends Store<MessageListState> {
+           return await this.__jumpToMessage(...jumpArgs)
+         }
+ 
+-        const firstUnreadMsgIdP = BackendRemote.rpc.getFirstUnreadMessageOfChat(
+-          this.accountId,
+-          this.chatId
+-        )
+-        const messageListItemsP = BackendRemote.rpc.getMessageListItems(
+-          this.accountId,
+-          this.chatId,
+-          false,
+-          true
+-        )
++        // In thread mode the first unread message is usually not part of
++        // the thread; the thread lands on the message it was opened from,
++        // via `__internal_jump_to_message_asap` above.
++        const firstUnreadMsgIdP =
++          this.thread === null
++            ? BackendRemote.rpc.getFirstUnreadMessageOfChat(
++                this.accountId,
++                this.chatId
++              )
++            : Promise.resolve(null)
++        const messageListItemsP = this.fetchMessageListItems()
+ 
+         const firstUnreadMsgId = await firstUnreadMsgIdP
+         if (firstUnreadMsgId !== null) {
+@@ -690,12 +741,7 @@ export class MessageListStore extends Store<MessageListState> {
+         async () => {
+           // this.log.debug(`refresh`, this)
+           const state = this.state
+-          const messageListItems = await BackendRemote.rpc.getMessageListItems(
+-            this.accountId,
+-            this.chatId,
+-            false,
+-            true
+-          )
++          const messageListItems = await this.fetchMessageListItems()
+           let {
+             newestFetchedMessageListItemIndex,
+             oldestFetchedMessageListItemIndex,
+@@ -730,12 +776,7 @@ export class MessageListStore extends Store<MessageListState> {
+       'refresh'
+     ),
+     onEventIncomingMessage: this.scheduler.queuedEffect(async () => {
+-      const messageListItems = await BackendRemote.rpc.getMessageListItems(
+-        this.accountId,
+-        this.chatId,
+-        false,
+-        true
+-      )
++      const messageListItems = await this.fetchMessageListItems()
+       await this.__appendNewMessages(messageListItems)
+     }, 'onEventIncomingMessage'),
+     onEventMessagesChanged: this.scheduler.queuedEffect(
+@@ -785,12 +826,7 @@ export class MessageListStore extends Store<MessageListState> {
+             'DC_EVENT_MSGS_CHANGED',
+             'changed message seems to be a new message, refetching messageIds'
+           )
+-          const messageListItems = await BackendRemote.rpc.getMessageListItems(
+-            this.accountId,
+-            this.chatId,
+-            false,
+-            true
+-          )
++          const messageListItems = await this.fetchMessageListItems()
+ 
+           // Some "new" messages don't trigger `IncomingMsg` but only
+           // `MsgsChanged` — e.g. info messages from the current user's actions
+@@ -812,6 +848,30 @@ export class MessageListStore extends Store<MessageListState> {
+    * @returns
+    */
+   private async __appendNewMessages(messageListItems: T.MessageListItem[]) {
++    if (this.thread !== null) {
++      // The tree layout inserts a new reply below its parent, mid-list, which
++      // the append logic below can't express. Threads are short: load
++      // whatever the cache lacks up to the end and take the new list as is.
++      const newestIndex = messageListItems.length - 1
++      const missing = getView(
++        messageListItems,
++        Math.max(this.state.oldestFetchedMessageListItemIndex, 0),
++        newestIndex
++      ).flatMap(item =>
++        item.kind === 'message' && !this.state.messageCache[item.msg_id]
++          ? [item.msg_id]
++          : []
++      )
++      this.reducer.fetchedIncomingMessages({
++        messageListItems,
++        newMessageCacheItems:
++          missing.length === 0
++            ? {}
++            : await BackendRemote.rpc.getMessages(this.accountId, missing),
++        newestFetchedMessageIndex: newestIndex,
++      })
++      return
++    }
+     const last_item: Type.MessageListItem | undefined =
+       this.state.messageListItems[this.state.messageListItems.length - 1]
+ 
+@@ -1027,12 +1087,8 @@ export class MessageListStore extends Store<MessageListState> {
+     // - A new message has just been sent to the chat and we want to jump
+     //   to it.
+     if (!isMessageInCurrentChat || !currentMessageListContainsTheMessage) {
+-      messageListItems = await BackendRemote.rpc.getMessageListItems(
+-        accountId,
+-        chatId,
+-        false,
+-        true
+-      )
++      // `chatId` is always `this.chatId` (see `chatIdPreset` above).
++      messageListItems = await this.fetchMessageListItems()
+       jumpToMessageIndex = findMessageIndex()
+       // Yes, `jumpToMessageIndex` could stil be `undefined` here,
+       // but only if the chat actually contains no messages
+diff --git a/packages/frontend/src/tests/replyThreadLayout.test.ts b/packages/frontend/src/tests/replyThreadLayout.test.ts
+new file mode 100644
+index 0000000..000f60b
+--- /dev/null
++++ b/packages/frontend/src/tests/replyThreadLayout.test.ts
+@@ -0,0 +1,41 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import { layoutThread } from '../utils/replyThreadLayout.js'
++
++// Chronological, as core returns it: 1 is the root, 2 and 4 reply to it,
++// 3 replies to 2, 5 replies to 3.
++const entries = [
++  { msgId: 1, parentId: null },
++  { msgId: 2, parentId: 1 },
++  { msgId: 3, parentId: 2 },
++  { msgId: 4, parentId: 1 },
++  { msgId: 5, parentId: 3 },
++]
++
++describe('layoutThread', () => {
++  it('keeps the chronological order in the list layout', () => {
++    expect(layoutThread(entries, 'list')).to.deep.equal({
++      order: [1, 2, 3, 4, 5],
++      depth: {},
++    })
++  })
++
++  it('puts replies below their parent in the tree layout', () => {
++    expect(layoutThread(entries, 'tree')).to.deep.equal({
++      order: [1, 2, 3, 5, 4],
++      depth: { 1: 0, 2: 1, 3: 2, 5: 3, 4: 1 },
++    })
++  })
++
++  it('still shows entries not reachable from the root', () => {
++    const { order } = layoutThread(
++      [
++        { msgId: 1, parentId: null },
++        { msgId: 7, parentId: 8 },
++      ],
++      'tree'
++    )
++    expect(order).to.deep.equal([1, 7])
++  })
++})
+diff --git a/packages/frontend/src/utils/replyThreadLayout.ts b/packages/frontend/src/utils/replyThreadLayout.ts
+new file mode 100644
+index 0000000..993e93f
+--- /dev/null
++++ b/packages/frontend/src/utils/replyThreadLayout.ts
+@@ -0,0 +1,58 @@
++/** One message of a reply thread; `parentId` is null for the thread's root. */
++export type ReplyThreadEntry = { msgId: number; parentId: number | null }
++
++/**
++ * How the message list shows a thread: `list` is chronological like the
++ * normal chat, `tree` puts every reply below the message it answers, like a
++ * comment section.
++ */
++export type ThreadLayout = 'list' | 'tree'
++
++/**
++ * Thread mode of the message list: which thread (by its root message, which
++ * stays put while replies come and go), laid out how.
++ */
++export type ThreadView = { msgId: number; layout: ThreadLayout }
++
++/**
++ * Display order of a thread, and in the tree layout each message's depth
++ * below the root. Core returns `entries` chronologically, so siblings stay
++ * chronological in the tree too.
++ */
++export function layoutThread(
++  entries: ReplyThreadEntry[],
++  layout: ThreadLayout
++): { order: number[]; depth: Record<number, number> } {
++  if (layout === 'list') {
++    return { order: entries.map(e => e.msgId), depth: {} }
++  }
++  const children = new Map<number | null, number[]>()
++  for (const { msgId, parentId } of entries) {
++    const siblings = children.get(parentId)
++    if (siblings) {
++      siblings.push(msgId)
++    } else {
++      children.set(parentId, [msgId])
++    }
++  }
++  const order: number[] = []
++  const depth: Record<number, number> = {}
++  const visit = (id: number, d: number) => {
++    if (id in depth) {
++      return // core returns a tree; this only guarantees we can't loop
++    }
++    depth[id] = d
++    order.push(id)
++    for (const child of children.get(id) ?? []) {
++      visit(child, d + 1)
++    }
++  }
++  for (const root of children.get(null) ?? []) {
++    visit(root, 0)
++  }
++  // Anything not reachable from the root still shows up rather than vanish.
++  for (const { msgId } of entries) {
++    visit(msgId, 0)
++  }
++  return { order, depth }
++}
