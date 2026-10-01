@@ -41,6 +41,7 @@ import {
 } from './fatal-report.ts'
 import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
+import { initChatExport } from './chat-export'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
 
 // earliest boot milestone we control: our runtime bundle has finished loading
@@ -1496,8 +1497,8 @@ class BrowserRuntime {
     return ''
   }
   async downloadFile(pathToSource: string, filename: string): Promise<void> {
-    // blobdir attachments plus our own temp files (e.g. the chat HTML export,
-    // which the frontend stages via writeTempFile before downloading)
+    // blobdir attachments plus our own temp files (tmpPath(): staged
+    // uploads, files the frontend writes via writeTempFile*)
     if (
       !pathToSource.includes('dc.db-blobs') &&
       !pathToSource.startsWith('/tmp/')
@@ -1746,6 +1747,10 @@ class BrowserRuntime {
     // builds, where analytics is unconfigured. (The pageview + startup sample
     // are sent from getCore once account state is known.)
     initDiagnostics()
+
+    // chat export (three-dot menu → Export Chat): the desktop patch keeps the
+    // dialogs and calls window.__slothfulExportChat; the zip is built here
+    initChatExport(() => getCore().dc.rpc, this.transformBlobURL.bind(this), saveFile)
 
     // onboarding funnel hook: WelcomeScreen (desktop patch) calls this for the
     // top-of-funnel "welcome" step; the chosen method and success/failure are
