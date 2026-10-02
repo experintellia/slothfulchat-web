@@ -30,10 +30,10 @@ index ea3bd34..2f6785a 100644
    }
  }
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
-index 5773c9e..5be1c53 100644
+index 0d3ba43..91ff2e5 100644
 --- a/packages/frontend/scss/message/_message-download-placeholder.scss
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
-@@ -295,8 +295,48 @@
+@@ -260,8 +260,48 @@
      color: var(--colorPrimary, #415e6b);
    }
  
@@ -83,10 +83,10 @@ index 5773c9e..5be1c53 100644
        stroke: rgba(255, 255, 255, 0.4);
        opacity: 1;
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-index 8101f0a..0ceb29f 100644
+index b4691ab..e8553f4 100644
 --- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-@@ -27,21 +27,27 @@ const RING_R = 16
+@@ -26,21 +26,27 @@ const RING_R = 16
  const RING_C = 2 * Math.PI * RING_R
  
  function ProgressCircle({
@@ -123,7 +123,7 @@ index 8101f0a..0ceb29f 100644
          <circle className='track' cx='20' cy='20' r={RING_R} />
          <circle
            className='bar'
-@@ -55,6 +61,17 @@ function ProgressCircle({
+@@ -54,6 +60,17 @@ function ProgressCircle({
          />
        </svg>
        {!indeterminate && <span className='pct'>{percent}%</span>}
@@ -141,7 +141,7 @@ index 8101f0a..0ceb29f 100644
      </div>
    )
  }
-@@ -151,13 +168,17 @@ function DownloadControls({
+@@ -150,13 +167,17 @@ function DownloadControls({
    downloadPercent,
    tabindexForInteractiveContents,
  }: Omit<PlaceholderProps, 'postMessageViewType'>) {
@@ -161,7 +161,7 @@ index 8101f0a..0ceb29f 100644
        ) : (
          <CircleDownloadButton
            messageId={message.id}
-@@ -244,7 +265,12 @@ export default function DownloadOnDemandPlaceholder({
+@@ -239,7 +260,12 @@ export default function DownloadOnDemandPlaceholder({
    if (viewType === 'Audio' || viewType === 'Voice') {
      const downloadControl =
        message.downloadState === 'InProgress' ? (
@@ -175,7 +175,7 @@ index 8101f0a..0ceb29f 100644
        ) : (
          <CircleDownloadButton
            messageId={message.id}
-@@ -314,7 +340,12 @@ export default function DownloadOnDemandPlaceholder({
+@@ -296,7 +322,12 @@ export default function DownloadOnDemandPlaceholder({
            <DownloadFailedLabel message={message} />
          )}
          {message.downloadState === 'InProgress' ? (
@@ -189,7 +189,7 @@ index 8101f0a..0ceb29f 100644
          ) : (
            // Mirror the real card's big primary "Start" button, labeled Download.
            <Button
-@@ -340,7 +371,12 @@ export default function DownloadOnDemandPlaceholder({
+@@ -322,7 +353,12 @@ export default function DownloadOnDemandPlaceholder({
        className={'message-attachment-generic download-on-demand' + contentBelow}
      >
        {message.downloadState === 'InProgress' ? (

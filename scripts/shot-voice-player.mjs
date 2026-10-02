@@ -148,13 +148,7 @@ try {
   await rpc('forwardMessages', aliceId, [bobVoiceId], dm)
   console.log('OK: forwarded the voice note into the same chat')
 
-  // --- turn on the experimental custom player, reload so it applies ---
-  await page.evaluate(() => {
-    const KEY = 'slothfulchat.desktopSettings'
-    const s = JSON.parse(localStorage.getItem(KEY) || '{}')
-    s.experimentalAudioPlayerControls = true
-    localStorage.setItem(KEY, JSON.stringify(s))
-  })
+  // --- reload so the UI picks up the rpc-created accounts ---
   await page.reload()
   await page
     .locator('#new-chat-button')

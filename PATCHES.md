@@ -114,10 +114,10 @@ exists:
   native `<audio>` controls on voice/audio messages. The existing playback
   architecture (force-muted per-bubble mirror + global singleton, one-at-a-time
   playback, auto-advance) is untouched — the custom controls only drive the
-  local element. On by default; opt out at Settings → Advanced →
-  Experimental features (the switch stays there).
+  local element. Always on — the native-controls fallback and its setting
+  were retired once the player had shipped (#209).
   Phase two adds a canvas waveform (peaks computed lazily: fetch → decode →
-  64-bucket max-abs in a worker served by the web-app shell, ~4s budget,
+  64-bucket max-abs on the main thread, ~4s budget,
   silent fallback to the plain bar — playback never waits on it), remembered
   per-message playback position (restored on return, cleared on natural end),
   seek positions actually carried onto the global player (scrub-before-play

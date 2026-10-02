@@ -192,9 +192,6 @@ await cp(join(here, 'static/overrides.css'), join(dist, 'overrides.css'))
 // Clickjacking backstop for the three documents that load it (main/index,
 // call-popup, html-email) — see the file's header and SELFHOSTING.md.
 await cp(join(here, 'static/frame-guard.js'), join(dist, 'frame-guard.js'))
-// Voice-message waveform bucketing worker (progressive enhancement; the player
-// falls back to the plain seek bar if this file isn't served).
-await cp(join(here, 'static/waveform-worker.js'), join(dist, 'waveform-worker.js'))
 // Detached call window (docs/calls.md §Windowing, M4): a standalone same-origin
 // page the main tab opens with window.open. Its bundle (dist/call-popup.js) is
 // emitted by esbuild in `pnpm build`, alongside runtime.js. Self-contained CSP

@@ -84,17 +84,17 @@ label fallback and stale-deviceId decisions are mocha-tested
 WebAudio pipeline — covered by scripts/shot-voice-player.mjs, not the
 unit suite.
 ---
- .../AudioRecorder/AudioRecorder.tsx           | 727 ++++++++++++++++--
+ .../AudioRecorder/AudioRecorder.tsx           | 694 ++++++++++++++++--
  .../components/AudioRecorder/MicRecorder.ts   | 147 +++-
  .../components/AudioRecorder/recorderLogic.ts | 159 ++++
  .../AudioRecorder/styles.module.scss          | 272 ++++++-
  .../frontend/src/tests/audioRecorder.test.ts  | 172 +++++
- 5 files changed, 1419 insertions(+), 58 deletions(-)
+ 5 files changed, 1384 insertions(+), 60 deletions(-)
  create mode 100644 packages/frontend/src/components/AudioRecorder/recorderLogic.ts
  create mode 100644 packages/frontend/src/tests/audioRecorder.test.ts
 
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-index 2b0ec22..dc14d0a 100644
+index 2b0ec22..63d3880 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 +++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 @@ -1,4 +1,10 @@
@@ -211,7 +211,7 @@ index 2b0ec22..dc14d0a 100644
      >
        <div className={styles.volumeBar}>
          <div className={styles.mask}>
-@@ -98,6 +148,107 @@ export const AudioRecorder = ({
+@@ -98,6 +148,94 @@ export const AudioRecorder = ({
    const [volume, setVolume] = useState(0)
    const recorder = useRef<MicRecorder | null>(null)
    const { openDialog } = useDialog()
@@ -227,16 +227,11 @@ index 2b0ec22..dc14d0a 100644
 +  // unmount effect can run it if the component leaves mid-gesture.
 +  const gestureCleanupRef = useRef<(() => void) | null>(null)
 +
-+  // The whole phase-B polish (pause/resume, preview, gestures, original audio)
-+  // rides on the SAME experimental setting as the custom player. Off → today's
-+  // recorder, byte-identical.
 +  const settings = useSettingsStore()[0]?.desktopSettings
-+  const experimental = settings?.experimentalAudioPlayerControls === true
 +  const originalAudio = settings?.voiceRecordingOriginalAudio === true
 +  const voiceRecordingDeviceId = settings?.voiceRecordingDeviceId ?? null
-+  const liveWaveform = experimental
 +
-+  // Microphone picker (experimental). Enumerated while the recording row is up
++  // Microphone picker. Enumerated while the recording row is up
 +  // (permission is granted then, so labels populate); refreshed on each open.
 +  // Rendered only when there's more than one audioinput.
 +  const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([])
@@ -261,12 +256,12 @@ index 2b0ec22..dc14d0a 100644
 +  // recorder ref during render. null until the first stream opens.
 +  const [appliedDeviceId, setAppliedDeviceId] = useState<string | null>(null)
 +
-+  // Inline no-sound warning (experimental): the SilenceDetector drives it from
-+  // the per-frame RMS instead of the OFF path's aborting 1s NO_INPUT alert.
++  // Inline no-sound warning: the SilenceDetector drives it from the per-frame
++  // RMS (non-aborting, so the user can switch mics).
 +  const silenceRef = useRef<SilenceState>(silenceReset())
 +  const [noSound, setNoSound] = useState(false)
 +
-+  // Recording pause state (experimental).
++  // Recording pause state.
 +  const [paused, setPaused] = useState(false)
 +  // Whether the advisory "original audio" request was honored by the mic/browser
 +  // once the stream opened. null = unknown / not yet recorded / unsupported.
@@ -280,7 +275,7 @@ index 2b0ec22..dc14d0a 100644
 +  const previewBlobRef = useRef<Blob | null>(null)
 +  const previewAudioRef = useRef<HTMLAudioElement>(null)
 +
-+  // Press-and-hold gesture state (experimental). `holding` = pointer is down
++  // Press-and-hold gesture state. `holding` = pointer is down
 +  // mid-gesture (show lock/cancel affordances); once released as a tap or
 +  // locked, we drop to the tap-to-stop "latched" row.
 +  const [holding, setHolding] = useState(false)
@@ -293,33 +288,25 @@ index 2b0ec22..dc14d0a 100644
 +  // callback (~85ms) and draw imperatively — NOT from a [volume] effect: React
 +  // bails out when volume is unchanged (digital silence = exactly 0), so an
 +  // effect would never re-run and the waveform would freeze instead of scroll.
-+  const pushVolume = useCallback(
-+    (v: number) => {
-+      setVolume(v) // drives the meter aria-valuenow
-+      const h = historyRef.current
-+      h.copyWithin(0, 1) // shift left, newest at the right
-+      h[HISTORY - 1] = Math.min(v * 2, 1) // same scaling as VolumeMeter
-+      if (canvasRef.current != null) {
-+        // Only non-null while the setting is on and recording, so no gate needed.
-+        drawBars(canvasRef.current, h, 1)
-+      }
-+      // Experimental only: paused frames never reach here (onaudioprocess skips
-+      // them), so paused time can't accumulate as silence. OFF keeps the aborting
-+      // 1s alert instead, so we skip the detector to stay byte-identical. The
-+      // recorder captures this closure at construction (per take), so a mid-take
-+      // settings flip is picked up on the next recording — fine, it's rare.
-+      if (experimental) {
-+        const [next, warn] = silenceStep(silenceRef.current, v, Date.now())
-+        silenceRef.current = next
-+        setNoSound(prev => (prev === warn ? prev : warn))
-+      }
-+    },
-+    [experimental]
-+  )
++  const pushVolume = useCallback((v: number) => {
++    setVolume(v) // drives the meter aria-valuenow
++    const h = historyRef.current
++    h.copyWithin(0, 1) // shift left, newest at the right
++    h[HISTORY - 1] = Math.min(v * 2, 1) // same scaling as VolumeMeter
++    if (canvasRef.current != null) {
++      // Only non-null while recording, so no gate needed.
++      drawBars(canvasRef.current, h, 1)
++    }
++    // Paused frames never reach here (onaudioprocess skips them), so paused
++    // time can't accumulate as silence.
++    const [next, warn] = silenceStep(silenceRef.current, v, Date.now())
++    silenceRef.current = next
++    setNoSound(prev => (prev === warn ? prev : warn))
++  }, [])
  
    const onAccessDenied = useCallback(() => {
      openDialog(AlertDialog, {
-@@ -105,10 +256,25 @@ export const AudioRecorder = ({
+@@ -105,10 +243,25 @@ export const AudioRecorder = ({
      })
    }, [openDialog, tx])
  
@@ -345,7 +332,7 @@ index 2b0ec22..dc14d0a 100644
        log.debug('checkMediaAccess', { access })
        if (access === 'denied') {
          onAccessDenied()
-@@ -117,6 +283,9 @@ export const AudioRecorder = ({
+@@ -117,6 +270,9 @@ export const AudioRecorder = ({
        if (access === 'not-determined') {
          // try to ask for access
          const accessAllowed = await runtime.askForMediaAccess('microphone')
@@ -355,7 +342,7 @@ index 2b0ec22..dc14d0a 100644
          if (accessAllowed === false) {
            onAccessDenied()
            return
-@@ -128,59 +297,480 @@ export const AudioRecorder = ({
+@@ -128,59 +284,460 @@ export const AudioRecorder = ({
        return
      }
  
@@ -368,14 +355,11 @@ index 2b0ec22..dc14d0a 100644
      }
 +    // Rebuild per recording so the current originalAudio setting takes effect
 +    // (getUserMedia is called fresh in start(), so the choice applies here).
-+    // Gated on `experimental` so OFF mode always requests default constraints
-+    // (audio: true) — byte-identical to today regardless of the stored setting.
 +    const mic = new MicRecorder(pushVolume, {
 +      bitRate: 32,
-+      originalAudio: experimental && originalAudio,
-+      // Persisted picker choice (experimental only, so OFF stays default audio:
-+      // true → byte-identical). A stale id is caught in start() and reset below.
-+      deviceId: experimental ? voiceRecordingDeviceId : null,
++      originalAudio,
++      // Persisted picker choice. A stale id is caught in start() and reset below.
++      deviceId: voiceRecordingDeviceId,
 +    })
 +    recorder.current = mic
 +    setPaused(false)
@@ -418,23 +402,11 @@ index 2b0ec22..dc14d0a 100644
 +        setAppliedDeviceId(mic.getAppliedSettings()?.deviceId ?? null)
 +        // Advisory constraints are honored only if the mic/browser agrees —
 +        // read the truth back and reflect it in the pill's tooltip.
-+        if (experimental && originalAudio) {
++        if (originalAudio) {
 +          const applied = recorder.current?.getAppliedSettings()
 +          setOriginalHonored(
 +            applied ? originalAudioHonored(applied as any) : null
 +          )
-+        }
-+        // OFF path only: the aborting 1s NO_INPUT alert. ON replaces it with the
-+        // non-aborting inline SilenceDetector warning (user can switch mics).
-+        if (!experimental) {
-+          window.setTimeout(() => {
-+            if (!recorder.current?.audioSignalDetected && recording) {
-+              onError(
-+                new AudioRecorderError('No input', AudioErrorType.NO_INPUT)
-+              )
-+              onRecordingCancel()
-+            }
-+          }, 1000)
 +        }
        })
        .catch((err: any) => {
@@ -461,22 +433,17 @@ index 2b0ec22..dc14d0a 100644
        .then(([buffer, _blob]) => {
 -        saveVoiceAsDraft(new Blob(buffer as any, { type: 'audio/mp3' }))
 +        const blob = new Blob(buffer as any, { type: 'audio/mp3' })
-+        if (experimental) {
-+          // Don't draft yet — show the preview row (keep `recording` true so the
-+          // composer bar stays ours). Send/discard from there.
-+          const url = URL.createObjectURL(blob)
-+          if (previewUrlRef.current != null) {
-+            URL.revokeObjectURL(previewUrlRef.current)
-+          }
-+          previewUrlRef.current = url
-+          previewBlobRef.current = blob
-+          setHolding(false)
-+          setPaused(false)
-+          setPreviewUrl(url)
-+        } else {
-+          setRecording(false)
-+          saveVoiceAsDraft(blob)
++        // Don't draft yet — show the preview row (keep `recording` true so the
++        // composer bar stays ours). Send/discard from there.
++        const url = URL.createObjectURL(blob)
++        if (previewUrlRef.current != null) {
++          URL.revokeObjectURL(previewUrlRef.current)
 +        }
++        previewUrlRef.current = url
++        previewBlobRef.current = blob
++        setHolding(false)
++        setPaused(false)
++        setPreviewUrl(url)
        })
        .catch((err: any) => {
          onError(new AudioRecorderError(err.message))
@@ -559,13 +526,13 @@ index 2b0ec22..dc14d0a 100644
 +    onRecordingStart()
 +  }
 +
-+  // --- press-and-hold gesture (experimental) --------------------------------
++  // --- press-and-hold gesture --------------------------------
 +  // Window-level listeners (not setPointerCapture) so tracking survives the
 +  // mic button unmounting when the recording row replaces it.
 +  // ponytail: window listeners instead of setPointerCapture for that reason;
 +  // upgrade path is a stable button element if we ever want native capture.
 +  const onMicPointerDown = (e: React.PointerEvent) => {
-+    if (!experimental || e.button !== 0) {
++    if (e.button !== 0) {
 +      return
 +    }
 +    const startX = e.clientX
@@ -659,11 +626,11 @@ index 2b0ec22..dc14d0a 100644
 +  // labels populate). Loading an external list on mount is a valid effect;
 +  // setAudioInputs only fires after the async enumerate resolves.
 +  useEffect(() => {
-+    if (recording && experimental) {
++    if (recording) {
 +      // eslint-disable-next-line react-hooks/set-state-in-effect
 +      refreshDevices()
 +    }
-+  }, [recording, experimental, refreshDevices])
++  }, [recording, refreshDevices])
 +
 +  // Preview playback is mutually exclusive with the shared voice-message
 +  // singleton: whichever starts pauses the other (pause, not stop, so a
@@ -676,8 +643,7 @@ index 2b0ec22..dc14d0a 100644
 +    const singleton = mutexCtx.audioElement
 +    if (previewUrl == null || preview == null) {
 +      return
-     }
--  }, [recording])
++    }
 +    const onPreviewPlay = () => {
 +      if (!singleton.paused) {
 +        singleton.pause()
@@ -693,11 +659,12 @@ index 2b0ec22..dc14d0a 100644
 +    return () => {
 +      preview.removeEventListener('play', onPreviewPlay)
 +      singleton.removeEventListener('play', onSingletonPlay)
-+    }
+     }
+-  }, [recording])
 +  }, [previewUrl, mutexCtx.audioElement])
 +
 +  // --- original-audio pill (shared between recording rows) ------------------
-+  const originalPill = experimental && (
++  const originalPill = (
 +    <button
 +      type='button'
 +      className={styles.originalAudioPill}
@@ -715,7 +682,7 @@ index 2b0ec22..dc14d0a 100644
 +    </button>
 +  )
 +
-+  // --- mic picker + inline no-sound warning (experimental) ------------------
++  // --- mic picker + inline no-sound warning ------------------
 +  // Active row = the device actually feeding the stream (getSettings) while
 +  // recording, else the persisted choice validated against the enumerated list
 +  // (resolveDeviceId: a stale id resolves to null = system default).
@@ -725,7 +692,7 @@ index 2b0ec22..dc14d0a 100644
 +      voiceRecordingDeviceId,
 +      audioInputs.map(d => d.deviceId)
 +    )
-+  const micCluster = experimental && (
++  const micCluster = (
 +    <div className={styles.micCluster}>
 +      {noSound && (
 +        <span
@@ -855,16 +822,18 @@ index 2b0ec22..dc14d0a 100644
  
    if (!recording) {
      return (
-@@ -188,24 +778,73 @@ export const AudioRecorder = ({
+@@ -188,24 +745,69 @@ export const AudioRecorder = ({
          type='button'
          aria-label={tx('voice_message')}
          className={styles.microphoneButton}
 -        onClick={() => onRecordingStart()}
-+        onClick={experimental ? undefined : () => onRecordingStart()}
-+        onPointerDown={experimental ? onMicPointerDown : undefined}
++        onPointerDown={onMicPointerDown}
++        // Keyboard activation (Enter/Space) fires a click with detail 0 and no
++        // pointerdown; pointer clicks (detail >= 1) are the gesture's job.
++        onClick={e => e.detail === 0 && onRecordingStart()}
 +        // Suppress the long-press context menu so a touch hold records instead
 +        // of popping a menu (no useful context action on the mic button).
-+        onContextMenu={experimental ? e => e.preventDefault() : undefined}
++        onContextMenu={e => e.preventDefault()}
        >
          <span />
        </button>
@@ -877,12 +846,17 @@ index 2b0ec22..dc14d0a 100644
 -          className={styles.microphoneButton}
 -          onClick={() => onRecordingStop()}
 -          aria-label={tx('stop_recording')}
+-        >
+-          <span />
+-        </button>
+-        <Timer />
+-        <VolumeMeter volume={volume} />
 +  }
 +
 +  // recording (possibly holding = mid-gesture, or latched = tap-to-stop)
 +  return (
 +    <div className={styles.audioRecorder}>
-+      {holding && experimental && (
++      {holding && (
 +        <div className={styles.holdHints} aria-hidden='true'>
 +          <div className={styles.lockHint}>🔒 {tx('slide_up_to_lock')}</div>
 +          <div
@@ -894,15 +868,13 @@ index 2b0ec22..dc14d0a 100644
 +          </div>
 +        </div>
 +      )}
-+      {experimental && (
-+        <IconButton
-+          className={styles.pauseButton}
-+          icon={paused ? 'play' : 'pause'}
-+          coloring='currentColor'
-+          aria-label={paused ? tx('resume_recording') : tx('pause_recording')}
-+          onClick={togglePause}
-+        />
-+      )}
++      <IconButton
++        className={styles.pauseButton}
++        icon={paused ? 'play' : 'pause'}
++        coloring='currentColor'
++        aria-label={paused ? tx('resume_recording') : tx('pause_recording')}
++        onClick={togglePause}
++      />
 +      <button
 +        type='button'
 +        className={styles.microphoneButton}
@@ -911,27 +883,20 @@ index 2b0ec22..dc14d0a 100644
 +      >
 +        <span />
 +      </button>
-+      <Timer paused={experimental && paused} />
-+      {liveWaveform ? (
-+        <div
-+          role='meter'
-+          aria-valuemin={0}
-+          aria-valuemax={1}
-+          aria-valuenow={Math.min(volume * 2, 1)}
-+          className={styles.liveWaveformContainer}
-         >
--          <span />
--        </button>
--        <Timer />
-+          <canvas
-+            ref={canvasRef}
-+            className={styles.liveWaveform}
-+            aria-hidden='true'
-+          />
-+        </div>
-+      ) : (
-         <VolumeMeter volume={volume} />
-+      )}
++      <Timer paused={paused} />
++      <div
++        role='meter'
++        aria-valuemin={0}
++        aria-valuemax={1}
++        aria-valuenow={Math.min(volume * 2, 1)}
++        className={styles.liveWaveformContainer}
++      >
++        <canvas
++          ref={canvasRef}
++          className={styles.liveWaveform}
++          aria-hidden='true'
++        />
++      </div>
 +      {micCluster}
 +      {originalPill}
 +      {/* display:contents on wide viewports (no layout change); becomes a
@@ -941,7 +906,7 @@ index 2b0ec22..dc14d0a 100644
          <button
            type='button'
            className={styles.cancel}
-@@ -222,6 +861,6 @@ export const AudioRecorder = ({
+@@ -222,6 +824,6 @@ export const AudioRecorder = ({
            {tx('ok')}
          </button>
        </div>
