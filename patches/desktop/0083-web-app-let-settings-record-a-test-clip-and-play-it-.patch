@@ -30,14 +30,14 @@ path.
 
 Refs #179
 ---
- .../Settings/ExperimentalFeatures.tsx         |  20 +-
- .../components/Settings/MicrophoneTest.tsx    | 247 ++++++++++++++++++
+ .../Settings/ExperimentalFeatures.tsx         |  13 +-
+ .../components/Settings/MicrophoneTest.tsx    | 242 ++++++++++++++++++
  .../components/Settings/styles.module.scss    |   8 +
- 3 files changed, 274 insertions(+), 1 deletion(-)
+ 3 files changed, 262 insertions(+), 1 deletion(-)
  create mode 100644 packages/frontend/src/components/Settings/MicrophoneTest.tsx
 
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 4d64865..33daebb 100644
+index b2d9337..6573050 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -1,10 +1,11 @@
@@ -62,17 +62,10 @@ index 4d64865..33daebb 100644
  
    const showExperimentalInfoDialog = async (
      settingsKey: keyof Pick<
-@@ -85,7 +88,22 @@ export function ExperimentalFeatures() {
+@@ -85,7 +88,15 @@ export function ExperimentalFeatures() {
          label='Record without noise filtering'
          description="Your device normally removes background noise, cancels echo and evens out volume. That's good for speech, but it can flatten music, ambient sound or room tone. Turn this on to record what the microphone actually hears. Some browsers and microphones ignore this setting."
          forkAdded
-+        // The recorder only applies this while the custom player is on
-+        // (`experimental && originalAudio` in AudioRecorder); same
-+        // dependent-switch treatment as the voice-message rows in Notifications.
-+        disabled={
-+          !settingsStore?.desktopSettings['experimentalAudioPlayerControls']
-+        }
-+        disabledValue={false}
 +        callback={() => setMicTestRun(n => n + 1)}
        />
 +      {/* Flipping the switch invalidates a finished take: the clip was
@@ -87,10 +80,10 @@ index 4d64865..33daebb 100644
        <DesktopSettingsSwitch
 diff --git a/packages/frontend/src/components/Settings/MicrophoneTest.tsx b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
 new file mode 100644
-index 0000000..dcb34a1
+index 0000000..7d974a7
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,242 @@
 +import React, {
 +  useCallback,
 +  useContext,
@@ -141,12 +134,7 @@ index 0000000..dcb34a1
 + */
 +export default function MicrophoneTest() {
 +  const settings = useSettingsStore()[0]?.desktopSettings
-+  // Mirror AudioRecorder's own gate exactly (`experimental && originalAudio`,
-+  // AudioRecorder.tsx). Recording unfiltered here while real voice messages
-+  // stay filtered would make this a test of something the app doesn't do.
-+  const experimental = settings?.experimentalAudioPlayerControls === true
-+  const originalAudio =
-+    experimental && settings?.voiceRecordingOriginalAudio === true
++  const originalAudio = settings?.voiceRecordingOriginalAudio === true
 +  const deviceId = settings?.voiceRecordingDeviceId ?? null
 +  const mutexCtx = useContext(MediaPlayerMutexContext)
 +

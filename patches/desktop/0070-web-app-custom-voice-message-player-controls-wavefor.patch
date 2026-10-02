@@ -110,22 +110,21 @@ covers voicePlayerSurface from there).
  _locales/_untranslated_en.json                |  36 ++
  images/icons/pause.svg                        |   1 +
  images/icons/play.svg                         |   1 +
- .../src/components/AudioPlayer/Waveform.tsx   |  74 +++
- .../src/components/AudioPlayer/index.tsx      | 421 +++++++++++++++++-
- .../src/components/AudioPlayer/peaks.ts       | 211 +++++++++
+ .../src/components/AudioPlayer/Waveform.tsx   |  74 ++++
+ .../src/components/AudioPlayer/index.tsx      | 394 ++++++++++++++++--
+ .../src/components/AudioPlayer/peaks.ts       | 135 ++++++
  .../components/AudioPlayer/positionStore.ts   |  83 ++++
  .../components/AudioPlayer/styles.module.scss | 108 +++++
- .../src/components/AudioPlayer/utils.ts       |  24 +
+ .../src/components/AudioPlayer/utils.ts       |  43 ++
  .../frontend/src/components/Icon/index.tsx    |   2 +
- .../Settings/ExperimentalFeatures.tsx         |   6 +
  .../attachment/galleryAttachment.tsx          |   3 +-
  .../attachment/messageAttachment.tsx          |   9 +-
  .../src/components/message/Message.tsx        |   6 +-
  .../src/contexts/MediaPlayerMutexContext.tsx  |  52 ++-
  .../NextVoiceMessagePlayerContext.tsx         |  64 ++-
- packages/shared/shared-types.d.ts             |   8 +
- packages/shared/state.ts                      |   4 +
- 18 files changed, 1070 insertions(+), 43 deletions(-)
+ packages/shared/shared-types.d.ts             |   6 +
+ packages/shared/state.ts                      |   3 +
+ 17 files changed, 977 insertions(+), 43 deletions(-)
  create mode 100644 images/icons/pause.svg
  create mode 100644 images/icons/play.svg
  create mode 100644 packages/frontend/src/components/AudioPlayer/Waveform.tsx
@@ -276,7 +275,7 @@ index 0000000..15aa4be
 +  return <canvas ref={ref} className={className} aria-hidden='true' />
 +}
 diff --git a/packages/frontend/src/components/AudioPlayer/index.tsx b/packages/frontend/src/components/AudioPlayer/index.tsx
-index b531500..56781c5 100644
+index b531500..e883a6b 100644
 --- a/packages/frontend/src/components/AudioPlayer/index.tsx
 +++ b/packages/frontend/src/components/AudioPlayer/index.tsx
 @@ -1,4 +1,4 @@
@@ -285,7 +284,7 @@ index b531500..56781c5 100644
  
  import styles from './styles.module.scss'
  import classNames from 'classnames'
-@@ -8,6 +8,13 @@ import {
+@@ -8,6 +8,12 @@ import {
    MediaPlayerMutexContext,
    type MediaPlayerMutexContextValue,
  } from '../../contexts/MediaPlayerMutexContext'
@@ -295,11 +294,10 @@ index b531500..56781c5 100644
 +import { positionStore } from './positionStore'
 +import { IconButton } from '../Icon'
 +import useTranslationFunction from '../../hooks/useTranslationFunction'
-+import { useSettingsStore } from '../../stores/settings'
  
  const log = getLogger('AudioPlayer')
  
-@@ -15,6 +22,16 @@ type Props = React.AudioHTMLAttributes<HTMLAudioElement> & {
+@@ -15,6 +21,16 @@ type Props = React.AudioHTMLAttributes<HTMLAudioElement> & {
    src: string
  }
  
@@ -316,24 +314,7 @@ index b531500..56781c5 100644
  /**
   * Mutex-aware audio player. When one player starts playing, others get paused.
   */
-@@ -37,6 +54,16 @@ export function AudioPlayer({
-   const ignoreOnePlayEvent = useRef(false)
-   const ignoreOnePauseEvent = useRef(false)
- 
-+  const customControlsEnabled =
-+    useSettingsStore()[0]?.desktopSettings.experimentalAudioPlayerControls ===
-+    true
-+  // Read the setting from a ref inside the mirror effect's cleanup WITHOUT
-+  // adding it to the effect deps — a settings toggle must not re-run this
-+  // effect (its cleanup would pause+zero the local element mid-play, the
-+  // desync the render-tree comment below guards against).
-+  const customControlsEnabledRef = useRef(customControlsEnabled)
-+  customControlsEnabledRef.current = customControlsEnabled
-+
-   // When we start playing another media, pause this one.
-   //
-   // Also mirror the `paused` state of the global audio element.
-@@ -55,6 +82,18 @@ export function AudioPlayer({
+@@ -55,6 +71,18 @@ export function AudioPlayer({
        return
      }
  
@@ -352,7 +333,7 @@ index b531500..56781c5 100644
      // This is very primitive syncing. Only the `paused` state,
      // no regard for `currentTime`, `playbackRate` etc.
      // But it's good enough for a start.
-@@ -63,6 +102,15 @@ export function AudioPlayer({
+@@ -63,6 +91,15 @@ export function AudioPlayer({
          el.play()
          ignoreOnePlayEvent.current = true
        }
@@ -368,7 +349,7 @@ index b531500..56781c5 100644
      }
      const onPauseGlobal = () => {
        if (!el.paused) {
-@@ -70,18 +118,57 @@ export function AudioPlayer({
+@@ -70,18 +107,51 @@ export function AudioPlayer({
          ignoreOnePauseEvent.current = true
        }
      }
@@ -403,21 +384,15 @@ index b531500..56781c5 100644
 +      // which the >1s fast-path on replay skips.)
 +      const nearEnd =
 +        Number.isFinite(el.duration) && el.currentTime >= el.duration - 1
-+      if (
-+        customControlsEnabledRef.current &&
-+        !el.ended &&
-+        !nearEnd &&
-+        el.currentTime > 1
-+      ) {
++      if (!el.ended && !nearEnd && el.currentTime > 1) {
 +        positionStore.setPosition(props.src, el.currentTime)
 +      }
        el.pause()
 -      el.currentTime = 0
-+      // Native mode resets the deactivated element like upstream always did.
-+      // Custom mode keeps the position: the bubble displaying 0:00 while a
-+      // replay would resume mid-way read as a glitch — the held position IS
-+      // what will happen on the next play.
-+      if (!customControlsEnabledRef.current || el.ended || nearEnd) {
++      // Keep the position: the bubble displaying 0:00 while a replay would
++      // resume mid-way read as a glitch — the held position IS what will
++      // happen on the next play.
++      if (el.ended || nearEnd) {
 +        el.currentTime = 0
 +      }
  
@@ -427,7 +402,7 @@ index b531500..56781c5 100644
      }
    }, [
      mediaPlayerMutexCtx.audioElement,
-@@ -89,29 +176,315 @@ export function AudioPlayer({
+@@ -89,29 +159,305 @@ export function AudioPlayer({
      props.src,
    ])
  
@@ -449,13 +424,6 @@ index b531500..56781c5 100644
 +    ignoreOnePauseEvent.current = false
 +  }
 +
-+  // One stable render tree in both settings states: the <audio> element
-+  // identity must survive the settings toggle, otherwise flipping it
-+  // mid-playback remounts the local element at 0 while the singleton keeps
-+  // playing, desyncing the controls. OFF mode is byte-identical to before:
-+  // `controls={true}` renders like the hardcoded `controls`,
-+  // `className={undefined}` is a no-op through classNames(), `preload`
-+  // is omitted.
    return (
 -    // Muted because it's gonna be the <audio> element inside of
 -    // `MediaPlayerMutexContext` that actually plays the media.
@@ -482,21 +450,18 @@ index b531500..56781c5 100644
 +    <>
 +      <ForceMutedAudioPlayer
 +        ref={ref}
-+        preload={customControlsEnabled ? 'metadata' : undefined}
++        preload='metadata'
 +        {...props}
 +        {...mediaPlayerMutexCtx.eventListeners}
-+        controls={!customControlsEnabled}
-+        className={customControlsEnabled ? styles.hiddenAudio : undefined}
++        className={styles.hiddenAudio}
 +        onPlay={wrappedOnPlay}
 +        onPause={wrappedOnPause}
 +      />
-+      {customControlsEnabled && (
-+        <CustomAudioControls
-+          audioRef={ref}
-+          src={props.src}
-+          tabIndex={props.tabIndex}
-+        />
-+      )}
++      <CustomAudioControls
++        audioRef={ref}
++        src={props.src}
++        tabIndex={props.tabIndex}
++      />
 +    </>
 +  )
 +}
@@ -767,24 +732,24 @@ index b531500..56781c5 100644
  
 diff --git a/packages/frontend/src/components/AudioPlayer/peaks.ts b/packages/frontend/src/components/AudioPlayer/peaks.ts
 new file mode 100644
-index 0000000..3295eef
+index 0000000..47fdfae
 --- /dev/null
 +++ b/packages/frontend/src/components/AudioPlayer/peaks.ts
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,135 @@
 +// Voice-message waveform peaks — a progressive enhancement over the plain seek
 +// bar, never a dependency. On any error/timeout getPeaks resolves null and the
 +// player silently keeps the A1 bar. Playback never waits on this.
 +//
 +// Pipeline: in-session cache → fetch(src) → arrayBuffer → decodeAudioData →
-+// hand channel-0 to the shared worker for max-abs bucketing → Float32Array.
++// max-abs bucketing of channel 0 → Float32Array.
 +//
-+// Decode stays on the main thread on purpose: decodeAudioData is async and
-+// runs the actual decode off-thread internally, but it only exists on
-+// AudioContext/OfflineAudioContext, which a plain (non-AudioWorklet) Worker
-+// can't construct — so a worker can't decode. Only the cheap bucketing loop is
-+// offloaded.
++// decodeAudioData already runs the expensive decode off-thread internally;
++// the 64-bucket loop left on the main thread is a single linear pass.
++// ponytail: no worker for it. If sc:waveform:bucket measures show it janking
++// long messages, move bucketPeaks into a Worker (git history has one).
 +
 +import { getLogger } from '@deltachat-desktop/shared/logger'
++import { bucketPeaks } from './utils'
 +
 +const log = getLogger('AudioPlayer/peaks')
 +
@@ -820,79 +785,11 @@ index 0000000..3295eef
 +  }
 +}
 +
-+// --- shared bucketing worker (lazy, module-level) ------------------------
-+// undefined = not yet tried, null = construction failed (fallback forever).
-+let worker: Worker | null | undefined
-+let nextId = 0
-+const pending = new Map<number, (peaks: Float32Array | null) => void>()
-+
-+function getWorker(): Worker | null {
-+  if (worker !== undefined) {
-+    return worker
-+  }
-+  try {
-+    // Resolve relative to the document (like the web-app's BASE convention for
-+    // core/worker.js): a root-absolute '/waveform-worker.js' 404s on subpath
-+    // deploys (e.g. GitHub Pages project sites).
-+    worker = new Worker(new URL('waveform-worker.js', location.href), {
-+      type: 'module',
-+    })
-+    worker.onmessage = (e: MessageEvent) => {
-+      const { id, peaks } = e.data
-+      const resolve = pending.get(id)
-+      if (resolve) {
-+        pending.delete(id)
-+        resolve(peaks)
-+      }
-+    }
-+    // A load error (targets that don't serve the file) fires asynchronously and
-+    // does NOT throw above. Treat any worker error as a permanent fallback: drop
-+    // the worker so getWorker() never hands out a dead one again, and settle
-+    // in-flight callers now (releasing their retained AudioBuffers) instead of
-+    // leaking one `pending` entry each until the 4s budget.
-+    worker.onerror = () => {
-+      log.debug('waveform worker failed; permanent fallback')
-+      worker?.terminate()
-+      worker = null
-+      for (const resolve of pending.values()) {
-+        resolve(null)
-+      }
-+      pending.clear()
-+    }
-+  } catch {
-+    // Some environments don't serve the file / block module workers.
-+    worker = null
-+  }
-+  return worker
-+}
-+
-+function bucketInWorker(
-+  channel: Float32Array,
-+  n: number
-+): Promise<Float32Array | null> {
-+  const w = getWorker()
-+  if (w == null) {
-+    return Promise.resolve(null)
-+  }
-+  return new Promise(resolve => {
-+    const id = nextId++
-+    pending.set(id, resolve)
-+    w.postMessage({ id, data: channel, n }, [channel.buffer])
-+  })
-+}
-+
 +// --- pipeline ------------------------------------------------------------
 +async function computePeaks(
 +  src: string,
 +  signal: AbortSignal
 +): Promise<Float32Array | null> {
-+  // Worker known dead (load failed / unavailable): skip the pointless fetch +
-+  // main-thread decode and fall back to the plain bar. Also warms the worker on
-+  // the first call, in parallel with the fetch below.
-+  if (getWorker() == null) {
-+    fallbackMark('no-worker')
-+    return null
-+  }
 +  try {
 +    const t0 = performance.now()
 +    const resp = await fetch(src, { signal })
@@ -910,20 +807,12 @@ index 0000000..3295eef
 +    const audioBuffer = await ctx.decodeAudioData(bytes)
 +    const t2 = performance.now()
 +
-+    // slice() so we transfer a copy and don't neuter the AudioBuffer's channel.
-+    const channel = audioBuffer.getChannelData(0).slice()
-+    const peaks = await bucketInWorker(channel, N_PEAKS)
++    const peaks = bucketPeaks(audioBuffer.getChannelData(0), N_PEAKS)
 +    const t3 = performance.now()
 +
 +    // The 4s budget already fired (result discarded, 'timeout' marked): don't
 +    // pile success measures onto a run whose peaks were thrown away.
 +    if (signal.aborted) {
-+      return null
-+    }
-+    // Worker died mid-flight (onerror flushed `pending` with null): fall back
-+    // instead of reporting a phantom success.
-+    if (peaks == null) {
-+      fallbackMark('no-worker')
 +      return null
 +    }
 +
@@ -1193,10 +1082,10 @@ index 44a8c6f..cd6b046 100644
 +}
 diff --git a/packages/frontend/src/components/AudioPlayer/utils.ts b/packages/frontend/src/components/AudioPlayer/utils.ts
 new file mode 100644
-index 0000000..f20f6b4
+index 0000000..0aae0ee
 --- /dev/null
 +++ b/packages/frontend/src/components/AudioPlayer/utils.ts
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,43 @@
 +// Pure helpers for the custom audio player controls.
 +// Kept free of React/scss imports so they're trivially unit-testable.
 +
@@ -1221,6 +1110,25 @@ index 0000000..f20f6b4
 +  const i = PLAYBACK_RATES.indexOf(rate as (typeof PLAYBACK_RATES)[number])
 +  return PLAYBACK_RATES[(i + 1) % PLAYBACK_RATES.length] ?? 1
 +}
++
++/**
++ * Reduce a mono PCM channel to `n` peaks (max absolute sample per bucket).
++ * Values are in [0, 1]-ish.
++ */
++export function bucketPeaks(data: Float32Array, n: number): Float32Array {
++  const peaks = new Float32Array(Math.max(n, 0))
++  const bucketSize = data.length / n
++  for (let i = 0; i < n; i++) {
++    const start = Math.floor(i * bucketSize)
++    const end = Math.min(data.length, Math.floor((i + 1) * bucketSize))
++    let max = 0
++    for (let j = start; j < end; j++) {
++      max = Math.max(max, Math.abs(data[j] ?? 0))
++    }
++    peaks[i] = max
++  }
++  return peaks
++}
 diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
 index 6225d0d..a3d7bba 100644
 --- a/packages/frontend/src/components/Icon/index.tsx
@@ -1234,23 +1142,6 @@ index 6225d0d..a3d7bba 100644
    | 'person'
    | 'person-filled'
    | 'phone'
-diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 3704aa8..c74636f 100644
---- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-+++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-@@ -95,6 +95,12 @@ export function ExperimentalFeatures() {
-           showExperimentalInfoDialog('enableOnDemandLocationStreaming', value)
-         }
-       />
-+      <DesktopSettingsSwitch
-+        settingsKey='experimentalAudioPlayerControls'
-+        label='Custom voice-message player'
-+        description='Custom controls for voice and audio messages: play/pause, seek bar, elapsed time, and playback speed. On by default; turn off if playback gives you trouble.'
-+        forkAdded
-+      />
-       <SettingsSeparator />
-       <SettingsHeading>System</SettingsHeading>
-       {runtime.getRuntimeInfo().isContentProtectionSupported && (
 diff --git a/packages/frontend/src/components/attachment/galleryAttachment.tsx b/packages/frontend/src/components/attachment/galleryAttachment.tsx
 index cb7a06b..5e21ff9 100644
 --- a/packages/frontend/src/components/attachment/galleryAttachment.tsx
@@ -1526,15 +1417,13 @@ index 4da058e..e27ce66 100644
      </NextVoiceMessagePlayerContext.Provider>
    )
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 00c7641..9bce88b 100644
+index 00c7641..4c65163 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
-@@ -47,6 +47,14 @@ export interface DesktopSettingsType {
+@@ -47,6 +47,12 @@ export interface DesktopSettingsType {
    experimentalCompletionMenu: boolean
    /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
    experimentalUnreadReadTime: boolean
-+  /** webapp: custom voice/audio message player controls (play/pause, seek, time, speed). On by default. */
-+  experimentalAudioPlayerControls: boolean
 +  /** webapp: expose voice-message sender/chat/avatar in the OS media session (lock screen). Off by default (privacy: suppressed metadata otherwise). Shown in Settings -> Notifications, next to showNotificationContent. */
 +  voiceMessageMediaSessionDetails: boolean
 +  /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Toggled from the recorder UI, applies to the next recording. */
@@ -1545,14 +1434,13 @@ index 00c7641..9bce88b 100644
    locale: string | null
    notifications: boolean
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 7488ea7..667b0ee 100644
+index 7488ea7..fa8889f 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
-@@ -18,6 +18,10 @@ export function getDefaultState(): DesktopSettingsType {
+@@ -18,6 +18,9 @@ export function getDefaultState(): DesktopSettingsType {
      stripTrackingLinks: true,
      experimentalCompletionMenu: true,
      experimentalUnreadReadTime: false,
-+    experimentalAudioPlayerControls: true,
 +    voiceMessageMediaSessionDetails: false,
 +    voiceRecordingOriginalAudio: false,
 +    voiceRecordingDeviceId: undefined,
