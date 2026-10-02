@@ -12,8 +12,8 @@ before the first percentage arrives; the arc keeps showing progress.
 ---
  _locales/_untranslated_en.json                |  3 +
  .../_message-download-placeholder.scss        | 40 ++++++++++++
- .../message/DownloadOnDemandPlaceholder.tsx   | 63 +++++++++++++++----
- 3 files changed, 93 insertions(+), 13 deletions(-)
+ .../message/DownloadOnDemandPlaceholder.tsx   | 64 +++++++++++++++----
+ 3 files changed, 93 insertions(+), 14 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
 index ea3bd34..2f6785a 100644
@@ -82,7 +82,7 @@ index 5773c9e..5be1c53 100644
        stroke: rgba(255, 255, 255, 0.4);
        opacity: 1;
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-index 8101f0a..f47b936 100644
+index 8101f0a..3805ebd 100644
 --- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 @@ -27,21 +27,27 @@ const RING_R = 16
@@ -140,7 +140,13 @@ index 8101f0a..f47b936 100644
      </div>
    )
  }
-@@ -157,7 +174,12 @@ function DownloadControls({
+@@ -151,13 +168,17 @@ function DownloadControls({
+   downloadPercent,
+   tabindexForInteractiveContents,
+ }: Omit<PlaceholderProps, 'postMessageViewType'>) {
+-  const tx = useTranslationFunction()
+   const { downloadState } = message
+   return (
      <div className='download-on-demand-controls'>
        {downloadState === 'Failure' && <DownloadFailedLabel message={message} />}
        {downloadState === 'InProgress' ? (
@@ -154,7 +160,7 @@ index 8101f0a..f47b936 100644
        ) : (
          <CircleDownloadButton
            messageId={message.id}
-@@ -244,7 +266,12 @@ export default function DownloadOnDemandPlaceholder({
+@@ -244,7 +265,12 @@ export default function DownloadOnDemandPlaceholder({
    if (viewType === 'Audio' || viewType === 'Voice') {
      const downloadControl =
        message.downloadState === 'InProgress' ? (
@@ -168,7 +174,7 @@ index 8101f0a..f47b936 100644
        ) : (
          <CircleDownloadButton
            messageId={message.id}
-@@ -314,7 +341,12 @@ export default function DownloadOnDemandPlaceholder({
+@@ -314,7 +340,12 @@ export default function DownloadOnDemandPlaceholder({
            <DownloadFailedLabel message={message} />
          )}
          {message.downloadState === 'InProgress' ? (
@@ -182,7 +188,7 @@ index 8101f0a..f47b936 100644
          ) : (
            // Mirror the real card's big primary "Start" button, labeled Download.
            <Button
-@@ -340,7 +372,12 @@ export default function DownloadOnDemandPlaceholder({
+@@ -340,7 +371,12 @@ export default function DownloadOnDemandPlaceholder({
        className={'message-attachment-generic download-on-demand' + contentBelow}
      >
        {message.downloadState === 'InProgress' ? (
