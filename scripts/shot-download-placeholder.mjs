@@ -11,13 +11,10 @@
 // transport always fetches whole bodies, so withholding the post-message is
 // the only way to reach it offline.
 //
-// The chat then shows the placeholder and the real player side by side, in
-// both settings states, shot into .cache/placeholder-shots/:
+// The chat then shows the placeholder (the custom player's two-row layout) and
+// the real player side by side, shot into .cache/placeholder-shots/.
 //
-//   experimentalAudioPlayerControls OFF -> the native-<audio> pill
-//   experimentalAudioPlayerControls ON  -> the custom player's two-row layout
-//
-// It also asserts each variant's markup, so it doubles as the runnable check
+// It also asserts the placeholder's markup, so it doubles as the runnable check
 // for DownloadOnDemandPlaceholder's audio branch.
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
@@ -172,25 +169,14 @@ try {
       .click()
     await page.mouse.move(1000, 100)
   }
-  // experimentalAudioPlayerControls is ON by default, so both states have to
-  // be set explicitly. Writing localStorage takes a reload to reach the
-  // settings store — which is wanted anyway on the first call: the accounts
-  // were created through the rpc escape hatch, so the UI is still sitting on
-  // the onboarding dialog (which would swallow the sidebar clicks).
-  const setCustomControls = async on => {
-    await page.evaluate(v => {
-      const KEY = 'slothfulchat.desktopSettings'
-      const s = JSON.parse(localStorage.getItem(KEY) || '{}')
-      s.experimentalAudioPlayerControls = v
-      localStorage.setItem(KEY, JSON.stringify(s))
-    }, on)
-    await page.reload()
-    await page
-      .locator('#new-chat-button')
-      .waitFor({ state: 'visible', timeout: 120_000 })
-    await selectBob()
-  }
-  await setCustomControls(false)
+  // The accounts were created through the rpc escape hatch, so the UI is
+  // still sitting on the onboarding dialog (which would swallow the sidebar
+  // clicks) until a reload.
+  await page.reload()
+  await page
+    .locator('#new-chat-button')
+    .waitFor({ state: 'visible', timeout: 120_000 })
+  await selectBob()
 
   const placeholder = page
     .locator('.message-attachment-audio.download-on-demand')
@@ -211,7 +197,6 @@ try {
   const check = async (label, expected) => {
     await placeholder.waitFor({ state: 'visible', timeout: 60_000 })
     const got = {
-      pill: await placeholder.locator('.fake-audio-player').count(),
       custom: await placeholder.locator('.fake-custom-player').count(),
       waveform: await placeholder.locator('.fake-waveform').count(),
       download: await placeholder.locator('.circle-download-button').count(),
@@ -226,16 +211,10 @@ try {
     console.log(`OK: ${label} markup ${JSON.stringify(got)}`)
   }
 
-  // --- setting off: the native-<audio> pill, unchanged ---
-  await check('setting off', { pill: 1, custom: 0, waveform: 0, download: 1 })
-  await shot('01-native-pill')
+  await check('placeholder', { custom: 1, waveform: 1, download: 1 })
+  await shot('01-custom-player')
 
-  // --- setting on: the custom player's two-row layout ---
-  await setCustomControls(true)
-  await check('setting on', { pill: 0, custom: 1, waveform: 1, download: 1 })
-  await shot('02-custom-player')
-
-  console.log('PASS: both placeholder variants render as expected')
+  console.log('PASS: the placeholder renders as expected')
 } catch (err) {
   failed = true
   console.error('FAIL:', err)

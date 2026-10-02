@@ -1,5 +1,8 @@
 # Changelog
 
+- **The custom voice-message player is no longer optional.** The
+  "Custom voice-message player" switch under Experimental features is gone,
+  along with the browser's built-in audio controls it fell back to.
 - **The keyboard-shortcuts dialog now lists Ctrl/Cmd+Shift+D** for the
   Diagnostics panel, next to the translation editor's Ctrl/Cmd+Shift+L.
 - **Downloading a message the server no longer has now fails instead of

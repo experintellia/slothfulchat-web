@@ -61,7 +61,7 @@ index 169a8e9..7405e25 100644
      "message": "Select microphone"
    },
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-index 9cfde87..cb44420 100644
+index fe8d0c9..8f5dde1 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 +++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 @@ -20,10 +20,8 @@ import { IconButton } from '../Icon'
@@ -75,9 +75,9 @@ index 9cfde87..cb44420 100644
    resolveDeviceId,
    silenceReset,
    silenceStep,
-@@ -201,10 +199,6 @@ export const AudioRecorder = ({
+@@ -196,10 +194,6 @@ export const AudioRecorder = ({
  
-   // Recording pause state (experimental).
+   // Recording pause state.
    const [paused, setPaused] = useState(false)
 -  // Whether the advisory "original audio" request was honored by the mic/browser
 -  // once the stream opened. null = unknown / not yet recorded / unsupported.
@@ -86,7 +86,7 @@ index 9cfde87..cb44420 100644
    // Preview-before-send: after stopping, hold the recorded blob and play it
    // locally through the shared CustomAudioControls until the user sends /
    // re-records / discards. The object URL is revoked on every transition.
-@@ -313,7 +307,6 @@ export const AudioRecorder = ({
+@@ -297,7 +291,6 @@ export const AudioRecorder = ({
      })
      recorder.current = mic
      setPaused(false)
@@ -94,22 +94,22 @@ index 9cfde87..cb44420 100644
      setNoSound(false)
      setAppliedDeviceId(null)
      setMicMenuOpen(false) // don't reopen a menu left open from a prior take
-@@ -342,14 +335,6 @@ export const AudioRecorder = ({
+@@ -326,14 +319,6 @@ export const AudioRecorder = ({
          // Capture the real device now feeding the stream (may differ from the
          // persisted id after a stale fallback) so the picker checkmark is right.
          setAppliedDeviceId(mic.getAppliedSettings()?.deviceId ?? null)
 -        // Advisory constraints are honored only if the mic/browser agrees —
 -        // read the truth back and reflect it in the pill's tooltip.
--        if (experimental && originalAudio) {
+-        if (originalAudio) {
 -          const applied = recorder.current?.getAppliedSettings()
 -          setOriginalHonored(
 -            applied ? originalAudioHonored(applied as any) : null
 -          )
 -        }
-         // OFF path only: the aborting 1s NO_INPUT alert. ON replaces it with the
-         // non-aborting inline SilenceDetector warning (user can switch mics).
-         if (!experimental) {
-@@ -431,13 +416,6 @@ export const AudioRecorder = ({
+       })
+       .catch((err: any) => {
+         onError(new AudioRecorderError(err.message))
+@@ -398,13 +383,6 @@ export const AudioRecorder = ({
      }
    }
  
@@ -123,12 +123,12 @@ index 9cfde87..cb44420 100644
    // ponytail: no `devicechange` listener — reopening the menu re-enumerates,
    // which is enough for the recorder's short-lived lifetime. Upgrade path is a
    // navigator.mediaDevices.ondevicechange refresh if hot-plug during a take
-@@ -619,25 +597,6 @@ export const AudioRecorder = ({
+@@ -586,25 +564,6 @@ export const AudioRecorder = ({
      }
    }, [previewUrl, mutexCtx.audioElement])
  
 -  // --- original-audio pill (shared between recording rows) ------------------
--  const originalPill = experimental && (
+-  const originalPill = (
 -    <button
 -      type='button'
 -      className={styles.originalAudioPill}
@@ -146,12 +146,12 @@ index 9cfde87..cb44420 100644
 -    </button>
 -  )
 -
-   // --- mic picker + inline no-sound warning (experimental) ------------------
+   // --- mic picker + inline no-sound warning ------------------
    // Active row = the device actually feeding the stream (getSettings) while
    // recording, else the persisted choice validated against the enumerated list
-@@ -844,7 +803,6 @@ export const AudioRecorder = ({
-         <VolumeMeter volume={volume} />
-       )}
+@@ -804,7 +763,6 @@ export const AudioRecorder = ({
+         />
+       </div>
        {micCluster}
 -      {originalPill}
        {/* display:contents on wide viewports (no layout change); becomes a
@@ -192,7 +192,7 @@ index 0ae60f3..f0e2739 100644
  // Anchored to `.lower-bar` (position: relative), like the completion menu.
  .holdHints {
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index c74636f..4d64865 100644
+index 3704aa8..b2d9337 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -80,6 +80,12 @@ export function ExperimentalFeatures() {
