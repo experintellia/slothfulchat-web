@@ -5,6 +5,8 @@
   along with the browser's built-in audio controls it fell back to.
 - **The microphone button works from the keyboard again.** Pressing Enter or
   Space on it now starts a voice recording; before, only a click or tap did.
+- **"Remove tracking from links" now carries the 🦥 badge** in Settings, like
+  the other settings that only exist in SlothfulChat.
 - **The keyboard-shortcuts dialog now lists Ctrl/Cmd+Shift+D** for the
   Diagnostics panel, next to the translation editor's Ctrl/Cmd+Shift+L.
 - **Downloading a message the server no longer has now fails instead of
