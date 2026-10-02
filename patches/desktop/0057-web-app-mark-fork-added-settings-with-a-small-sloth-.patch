@@ -11,12 +11,12 @@ tell fork additions from upstream Delta Chat settings. Threaded as a
 'forkAdded' flag through SettingsSwitch/DesktopSettingsSwitch.
 ---
  .../frontend/src/components/Settings/Advanced.tsx   |  1 +
- .../src/components/Settings/ChatsAndMedia.tsx       |  2 ++
+ .../src/components/Settings/ChatsAndMedia.tsx       |  3 +++
  .../components/Settings/DesktopSettingsSwitch.tsx   |  4 ++++
  .../components/Settings/ExperimentalFeatures.tsx    |  3 +++
  .../src/components/Settings/SettingsSwitch.tsx      | 13 +++++++++++++
  .../src/components/Settings/styles.module.scss      |  8 ++++++++
- 6 files changed, 31 insertions(+)
+ 6 files changed, 32 insertions(+)
 
 diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
 index be8430c..318f944 100644
@@ -31,10 +31,18 @@ index be8430c..318f944 100644
          onChange={next => {
            analyticsUi.setEnabled(next)
 diff --git a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
-index b7df4da..a7e7481 100644
+index b7df4da..3e76a2c 100644
 --- a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
 +++ b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
-@@ -52,11 +52,13 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
+@@ -42,6 +42,7 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
+         settingsKey='stripTrackingLinks'
+         label='Remove tracking from links'
+         description='Strips known tracking parameters (utm_*, YouTube si=, …) when you paste or open a link'
++        forkAdded
+       />
+       {/* When the whole instance hides the suggestions
+       (SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS), these toggles are moot —
+@@ -52,11 +53,13 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
              settingsKey='hideNewChatSuggestions'
              label='Hide community suggestions'
              description='Hides the "Public Bots" and "Public Channels" entries in the "New Chat" dialog'
