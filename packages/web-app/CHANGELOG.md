@@ -1,7 +1,7 @@
 # Changelog
 
 - **A download can now be stopped.** Tapped a big video by accident? The
-  progress ring has an × that stops the download; tapping download again later
+  progress ring has an × that stops the download; tapping download again soon
   picks up where it left off.
 - **"Remove tracking from links" now carries the 🦥 badge** in Settings, like
   the other settings that only exist in SlothfulChat.

@@ -19,8 +19,8 @@ A whole-message fetch on a server without partial FETCH cannot be
 interrupted and still completes. Exposed over JSON-RPC as abort_download.
 ---
  deltachat-jsonrpc/src/api.rs |   8 +
- src/download.rs              | 288 +++++++++++++++++++++++++++++++----
- 2 files changed, 269 insertions(+), 27 deletions(-)
+ src/download.rs              | 306 +++++++++++++++++++++++++++++++----
+ 2 files changed, 284 insertions(+), 30 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
 index a409878..52547ec 100644
@@ -42,10 +42,10 @@ index a409878..52547ec 100644
      /// Searching can be done globally (chat_id=None) or in a specified chat only (chat_id set).
      ///
 diff --git a/src/download.rs b/src/download.rs
-index 32ef52f..6e80321 100644
+index 32ef52f..f342921 100644
 --- a/src/download.rs
 +++ b/src/download.rs
-@@ -105,6 +105,38 @@ pub async fn download_full(self, context: &Context) -> Result<()> {
+@@ -105,6 +105,46 @@ pub async fn download_full(self, context: &Context) -> Result<()> {
          Ok(())
      }
  
@@ -58,21 +58,29 @@ index 32ef52f..6e80321 100644
 +    /// partial FETCH cannot be interrupted and still completes.
 +    /// Does nothing unless the download is in progress.
 +    pub async fn abort_download(self, context: &Context) -> Result<()> {
-+        // One conditional statement: a download finishing meanwhile sets
-+        // `Done`, which must not be turned back into `Available`.
-+        if context
++        // One transaction: a download finishing meanwhile sets `Done`, which
++        // the conditional UPDATE leaves alone, and a re-tap cannot slip in
++        // between the two statements and have its queue row deleted.
++        let aborted = context
 +            .sql
-+            .execute(
-+                "UPDATE msgs SET download_state=? WHERE id=? AND download_state=?",
-+                (DownloadState::Available, self, DownloadState::InProgress),
-+            )
-+            .await?
-+            == 0
-+        {
++            .transaction(move |t| {
++                let aborted = t.execute(
++                    "UPDATE msgs SET download_state=? WHERE id=? AND download_state=?",
++                    (DownloadState::Available, self, DownloadState::InProgress),
++                )? > 0;
++                if aborted {
++                    t.execute(
++                        "DELETE FROM download WHERE rfc724_mid=(SELECT rfc724_mid FROM msgs WHERE id=?)",
++                        (self,),
++                    )?;
++                }
++                Ok(aborted)
++            })
++            .await?;
++        if !aborted {
 +            return Ok(());
 +        }
 +        let msg = Message::load_from_db(context, self).await?;
-+        delete_from_downloads(context, msg.rfc724_mid()).await?;
 +        context.emit_event(EventType::MsgsChanged {
 +            chat_id: msg.chat_id,
 +            msg_id: self,
@@ -84,7 +92,7 @@ index 32ef52f..6e80321 100644
      /// Updates the message download state. Returns `Ok` if the message doesn't exist anymore or has
      /// the download state up to date.
      pub(crate) async fn update_download_state(
-@@ -357,11 +389,31 @@ async fn chunked_fetch_loop(
+@@ -357,11 +397,31 @@ async fn chunked_fetch_loop(
      staging: &mut StagingFile,
      expected_size: Option<u64>,
      msg_id: Option<MsgId>,
@@ -116,17 +124,65 @@ index 32ef52f..6e80321 100644
          let Ok(offset) = u32::try_from(staging.len()) else {
              return Ok(ChunkOutcome::TooLarge);
          };
-@@ -557,6 +609,9 @@ async fn fetch_single_msg(
+@@ -440,9 +500,13 @@ async fn chunked_fetch_loop(
+ /// transport, returns `None`.
+ ///
+ /// Most messages are downloaded automatically on fetch instead.
++///
++/// `queued`: the download comes from the `download` table, so removing its
++/// row (abort) stops it between chunks.
+ pub(crate) async fn download_msg(
+     context: &Context,
+     rfc724_mid: String,
++    queued: bool,
+     session: &mut Session,
+ ) -> Result<Option<FetchMsgResult>> {
+     let transport_id = session.transport_id();
+@@ -460,7 +524,8 @@ pub(crate) async fn download_msg(
+         return Ok(None);
+     }
+     let result =
+-        Box::pin(session.fetch_single_msg(context, &server_folder, server_uid, rfc724_mid)).await?;
++        Box::pin(session.fetch_single_msg(context, &server_folder, server_uid, rfc724_mid, queued))
++            .await?;
+     if matches!(result, FetchMsgResult::Yielded) {
+         return Ok(Some(FetchMsgResult::Yielded));
+     }
+@@ -493,6 +558,7 @@ async fn fetch_single_msg(
+         folder: &str,
+         uid: u32,
+         rfc724_mid: String,
++        queued: bool,
+     ) -> Result<FetchMsgResult> {
+         if uid == 0 {
+             bail!("Attempt to fetch UID 0");
+@@ -557,6 +623,7 @@ async fn fetch_single_msg(
              &mut staging,
              meta.size.map(u64::from),
              msg_id,
-+            // Only a known message's download is queued (and abortable); the
-+            // lost-pre-message path has neither.
-+            msg_id.map(|_| rfc724_mid.as_str()),
++            queued.then_some(rfc724_mid.as_str()),
              tools::time_now(),
              SessionRangeFetcher { session: self, uid },
          )
-@@ -1372,6 +1427,7 @@ async fn test_chunked_fetch_happy_path() -> Result<()> {
+@@ -920,7 +987,7 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
+         .await?;
+ 
+     for rfc724_mid in &rfc724_mids {
+-        let res = download_msg(context, rfc724_mid.clone(), session).await;
++        let res = download_msg(context, rfc724_mid.clone(), true, session).await;
+         if let Ok(Some(FetchMsgResult::Yielded)) = res {
+             // Let the IMAP loop fetch newly arrived messages; the interrupt
+             // brings it back here and the download resumes from its staging
+@@ -991,7 +1058,7 @@ pub(crate) async fn download_known_post_messages_without_pre_message(
+         // because the Pre-Message got lost.
+         // The message may be in the wrong order,
+         // but at least we have it at all.
+-        let res = download_msg(context, rfc724_mid.clone(), session).await;
++        let res = download_msg(context, rfc724_mid.clone(), false, session).await;
+         if let Ok(Some(FetchMsgResult::Yielded)) = res {
+             context.scheduler.interrupt_inbox().await;
+             return Ok(());
+@@ -1372,6 +1439,7 @@ async fn test_chunked_fetch_happy_path() -> Result<()> {
              &mut staging,
              Some(data.len() as u64),
              Some(msg_id),
@@ -134,7 +190,7 @@ index 32ef52f..6e80321 100644
              tools::time_now(),
              fetcher,
          )
-@@ -1414,6 +1470,78 @@ async fn test_chunked_fetch_happy_path() -> Result<()> {
+@@ -1414,6 +1482,78 @@ async fn test_chunked_fetch_happy_path() -> Result<()> {
          Ok(())
      }
  
@@ -213,7 +269,7 @@ index 32ef52f..6e80321 100644
      #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
      async fn test_chunked_fetch_resume() -> Result<()> {
          let t = TestContext::new().await;
-@@ -1425,8 +1553,16 @@ async fn test_chunked_fetch_resume() -> Result<()> {
+@@ -1425,8 +1565,16 @@ async fn test_chunked_fetch_resume() -> Result<()> {
  
          let fetcher = FakeFetcher::new(data.clone());
          let calls = fetcher.calls_handle();
@@ -232,7 +288,7 @@ index 32ef52f..6e80321 100644
          let ChunkOutcome::Complete(body) = outcome else {
              panic!("expected Complete");
          };
-@@ -1444,8 +1580,16 @@ async fn test_chunked_fetch_exact_multiple() -> Result<()> {
+@@ -1444,8 +1592,16 @@ async fn test_chunked_fetch_exact_multiple() -> Result<()> {
          let mut staging = open_staging(&t, 1).await;
          let fetcher = FakeFetcher::new(data.clone());
          let calls = fetcher.calls_handle();
@@ -251,7 +307,7 @@ index 32ef52f..6e80321 100644
          let ChunkOutcome::Complete(body) = outcome else {
              panic!("expected Complete");
          };
-@@ -1470,8 +1614,16 @@ async fn test_chunked_fetch_empty_message() -> Result<()> {
+@@ -1470,8 +1626,16 @@ async fn test_chunked_fetch_empty_message() -> Result<()> {
          let mut staging = open_staging(&t, 1).await;
          let fetcher = FakeFetcher::new(data.clone());
          let calls = fetcher.calls_handle();
@@ -270,7 +326,7 @@ index 32ef52f..6e80321 100644
          let ChunkOutcome::Complete(body) = outcome else {
              panic!("expected Complete");
          };
-@@ -1495,6 +1647,7 @@ async fn test_chunked_fetch_size_lies() -> Result<()> {
+@@ -1495,6 +1659,7 @@ async fn test_chunked_fetch_size_lies() -> Result<()> {
                  &mut staging,
                  Some(claimed_size),
                  Some(msg_id),
@@ -278,7 +334,7 @@ index 32ef52f..6e80321 100644
                  tools::time_now(),
                  fetcher,
              )
-@@ -1539,8 +1692,16 @@ async fn test_chunked_fetch_origin_mismatch() -> Result<()> {
+@@ -1539,8 +1704,16 @@ async fn test_chunked_fetch_origin_mismatch() -> Result<()> {
                  bytes: data[offset as usize..end].to_vec(),
              }
          });
@@ -297,7 +353,7 @@ index 32ef52f..6e80321 100644
          assert!(matches!(outcome, ChunkOutcome::Unsupported));
  
          // origin None (server-omitted, treated as 0) with offset>0 and a
-@@ -1553,8 +1714,16 @@ async fn test_chunked_fetch_origin_mismatch() -> Result<()> {
+@@ -1553,8 +1726,16 @@ async fn test_chunked_fetch_origin_mismatch() -> Result<()> {
                  bytes: vec![1, 2, 3],
              }
          });
@@ -316,7 +372,7 @@ index 32ef52f..6e80321 100644
          assert!(matches!(outcome, ChunkOutcome::Unsupported));
          Ok(())
      }
-@@ -1585,8 +1754,16 @@ async fn test_chunked_fetch_server_ignores_range() -> Result<()> {
+@@ -1585,8 +1766,16 @@ async fn test_chunked_fetch_server_ignores_range() -> Result<()> {
              }
          });
          let calls = fetcher.calls_handle();
@@ -335,7 +391,7 @@ index 32ef52f..6e80321 100644
          let ChunkOutcome::Complete(body) = outcome else {
              panic!("expected Complete");
          };
-@@ -1607,8 +1784,16 @@ async fn test_chunked_fetch_server_ignores_range() -> Result<()> {
+@@ -1607,8 +1796,16 @@ async fn test_chunked_fetch_server_ignores_range() -> Result<()> {
                  bytes: data.to_vec(),
              }
          });
@@ -354,7 +410,7 @@ index 32ef52f..6e80321 100644
          let ChunkOutcome::Complete(body) = outcome else {
              panic!("expected Complete");
          };
-@@ -1627,8 +1812,16 @@ async fn test_chunked_fetch_server_ignores_range() -> Result<()> {
+@@ -1627,8 +1824,16 @@ async fn test_chunked_fetch_server_ignores_range() -> Result<()> {
                  bytes: data.to_vec(),
              }
          });
@@ -373,7 +429,7 @@ index 32ef52f..6e80321 100644
          assert!(matches!(outcome, ChunkOutcome::Unsupported));
  
          // Fresh download from a server that honors ranges but omits the
-@@ -1642,8 +1835,16 @@ async fn test_chunked_fetch_server_ignores_range() -> Result<()> {
+@@ -1642,8 +1847,16 @@ async fn test_chunked_fetch_server_ignores_range() -> Result<()> {
                  bytes: data[(offset as usize).min(data.len())..].to_vec(),
              }
          });
@@ -392,7 +448,7 @@ index 32ef52f..6e80321 100644
          let ChunkOutcome::Complete(body) = outcome else {
              panic!("expected Complete");
          };
-@@ -1658,8 +1859,16 @@ async fn test_chunked_fetch_io_error_keeps_staging() -> Result<()> {
+@@ -1658,8 +1871,16 @@ async fn test_chunked_fetch_io_error_keeps_staging() -> Result<()> {
  
          let mut staging = open_staging(&t, 1).await;
          let fetcher = FakeFetcher::new(data.clone()).fail_at(2);
@@ -411,7 +467,7 @@ index 32ef52f..6e80321 100644
          assert!(result.is_err());
  
          // The staging file on disk still has exactly the first chunk.
-@@ -1669,8 +1878,16 @@ async fn test_chunked_fetch_io_error_keeps_staging() -> Result<()> {
+@@ -1669,8 +1890,16 @@ async fn test_chunked_fetch_io_error_keeps_staging() -> Result<()> {
  
          // Retrying with a working fetcher resumes and completes correctly.
          let fetcher = FakeFetcher::new(data.clone());
@@ -430,7 +486,7 @@ index 32ef52f..6e80321 100644
          let ChunkOutcome::Complete(body) = outcome else {
              panic!("expected Complete");
          };
-@@ -1687,8 +1904,16 @@ async fn test_chunked_fetch_gone() -> Result<()> {
+@@ -1687,8 +1916,16 @@ async fn test_chunked_fetch_gone() -> Result<()> {
          let mut staging = open_staging(&t, 1).await;
          let fetcher =
              FakeFetcher::new(vec![1, 2, 3]).respond_with(|_, _, _| PartialFetchResult::Gone);
@@ -449,7 +505,7 @@ index 32ef52f..6e80321 100644
          assert!(matches!(outcome, ChunkOutcome::Gone));
          Ok(())
      }
-@@ -1705,14 +1930,23 @@ async fn test_chunked_fetch_yields_after_interval() -> Result<()> {
+@@ -1705,14 +1942,23 @@ async fn test_chunked_fetch_yields_after_interval() -> Result<()> {
              .checked_sub(YIELD_INTERVAL + Duration::from_secs(1))
              .unwrap();
          let fetcher = FakeFetcher::new(data.clone());

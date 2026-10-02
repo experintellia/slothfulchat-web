@@ -13,7 +13,8 @@ before the first percentage arrives; the arc keeps showing progress.
  _locales/_untranslated_en.json                |  3 +
  .../_message-download-placeholder.scss        | 40 ++++++++++++
  .../message/DownloadOnDemandPlaceholder.tsx   | 64 +++++++++++++++----
- 3 files changed, 93 insertions(+), 14 deletions(-)
+ .../src/components/message/Message.tsx        | 11 ++++
+ 4 files changed, 104 insertions(+), 14 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
 index ea3bd34..2f6785a 100644
@@ -82,7 +83,7 @@ index 5773c9e..5be1c53 100644
        stroke: rgba(255, 255, 255, 0.4);
        opacity: 1;
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-index 8101f0a..3805ebd 100644
+index 8101f0a..0ceb29f 100644
 --- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 @@ -27,21 +27,27 @@ const RING_R = 16
@@ -180,11 +181,11 @@ index 8101f0a..3805ebd 100644
          {message.downloadState === 'InProgress' ? (
 -          <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
 +          <ProgressCircle
-+          message={message}
-+          accountId={accountId}
-+          percent={downloadPercent}
-+          tabIndex={tabindexForInteractiveContents}
-+        />
++            message={message}
++            accountId={accountId}
++            percent={downloadPercent}
++            tabIndex={tabindexForInteractiveContents}
++          />
          ) : (
            // Mirror the real card's big primary "Start" button, labeled Download.
            <Button
@@ -202,3 +203,25 @@ index 8101f0a..3805ebd 100644
        ) : (
          <CircleDownloadButton
            messageId={message.id}
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index f108098..b32107f 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -1121,6 +1121,17 @@ export default function Message(props: {
+               {downloadPercent !== null && ` ${downloadPercent}%`}
+             </span>
+           )}
++          {downloadState == 'InProgress' && (
++            <button
++              type='button'
++              onClick={() =>
++                BackendRemote.rpc.abortDownload(accountId, message.id)
++              }
++              tabIndex={tabindexForInteractiveContents}
++            >
++              {tx('download_abort')}
++            </button>
++          )}
+           {(downloadState == 'Failure' || downloadState === 'Available') && (
+             <button
+               type='button'
