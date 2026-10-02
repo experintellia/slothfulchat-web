@@ -84,17 +84,17 @@ label fallback and stale-deviceId decisions are mocha-tested
 WebAudio pipeline — covered by scripts/shot-voice-player.mjs, not the
 unit suite.
 ---
- .../AudioRecorder/AudioRecorder.tsx           | 691 ++++++++++++++++--
+ .../AudioRecorder/AudioRecorder.tsx           | 694 ++++++++++++++++--
  .../components/AudioRecorder/MicRecorder.ts   | 147 +++-
  .../components/AudioRecorder/recorderLogic.ts | 159 ++++
  .../AudioRecorder/styles.module.scss          | 272 ++++++-
  .../frontend/src/tests/audioRecorder.test.ts  | 172 +++++
- 5 files changed, 1381 insertions(+), 60 deletions(-)
+ 5 files changed, 1384 insertions(+), 60 deletions(-)
  create mode 100644 packages/frontend/src/components/AudioRecorder/recorderLogic.ts
  create mode 100644 packages/frontend/src/tests/audioRecorder.test.ts
 
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-index 2b0ec22..238b5ab 100644
+index 2b0ec22..63d3880 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 +++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 @@ -1,4 +1,10 @@
@@ -822,12 +822,15 @@ index 2b0ec22..238b5ab 100644
  
    if (!recording) {
      return (
-@@ -188,24 +745,66 @@ export const AudioRecorder = ({
+@@ -188,24 +745,69 @@ export const AudioRecorder = ({
          type='button'
          aria-label={tx('voice_message')}
          className={styles.microphoneButton}
 -        onClick={() => onRecordingStart()}
 +        onPointerDown={onMicPointerDown}
++        // Keyboard activation (Enter/Space) fires a click with detail 0 and no
++        // pointerdown; pointer clicks (detail >= 1) are the gesture's job.
++        onClick={e => e.detail === 0 && onRecordingStart()}
 +        // Suppress the long-press context menu so a touch hold records instead
 +        // of popping a menu (no useful context action on the mic button).
 +        onContextMenu={e => e.preventDefault()}
@@ -903,7 +906,7 @@ index 2b0ec22..238b5ab 100644
          <button
            type='button'
            className={styles.cancel}
-@@ -222,6 +821,6 @@ export const AudioRecorder = ({
+@@ -222,6 +824,6 @@ export const AudioRecorder = ({
            {tx('ok')}
          </button>
        </div>

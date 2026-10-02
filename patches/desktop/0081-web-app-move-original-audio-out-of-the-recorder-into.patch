@@ -61,7 +61,7 @@ index 169a8e9..7405e25 100644
      "message": "Select microphone"
    },
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-index fe8d0c9..8f5dde1 100644
+index 75b50db..0ff0d4b 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 +++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 @@ -20,10 +20,8 @@ import { IconButton } from '../Icon'
@@ -149,7 +149,7 @@ index fe8d0c9..8f5dde1 100644
    // --- mic picker + inline no-sound warning ------------------
    // Active row = the device actually feeding the stream (getSettings) while
    // recording, else the persisted choice validated against the enumerated list
-@@ -804,7 +763,6 @@ export const AudioRecorder = ({
+@@ -807,7 +766,6 @@ export const AudioRecorder = ({
          />
        </div>
        {micCluster}
