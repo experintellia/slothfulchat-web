@@ -1,0 +1,149 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Fri, 2 Oct 2026 00:37:43 +0000
+Subject: [PATCH 35/35] download: let a running download be stopped
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+abort_download(msg_id) dequeues an in-progress download and puts the
+message back to Available, so the download button returns. The chunk loop
+checks before every chunk whether its message went back to Available —
+abort_download is the only way there from InProgress — and yields, which
+keeps the staging file: downloading again resumes at the byte offset
+until housekeeping reclaims the file. Yielding rather than finishing also
+avoids deleting a download row the user re-created by tapping again.
+
+A whole-message fetch on a server without partial FETCH cannot be
+interrupted and still completes. Exposed over JSON-RPC as abort_download.
+---
+ deltachat-jsonrpc/src/api.rs |  8 ++++
+ src/download.rs              | 82 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 90 insertions(+)
+
+diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
+index a409878..52547ec 100644
+--- a/deltachat-jsonrpc/src/api.rs
++++ b/deltachat-jsonrpc/src/api.rs
+@@ -1616,6 +1616,14 @@ async fn download_full_message(&self, account_id: u32, message_id: u32) -> Resul
+         MsgId::new(message_id).download_full(&ctx).await
+     }
+ 
++    /// Stops a download started with `download_full_message()`; the message
++    /// can be downloaded again later and resumes where it stopped.
++    /// Does nothing if the message is not downloading.
++    async fn abort_download(&self, account_id: u32, message_id: u32) -> Result<()> {
++        let ctx = self.get_context(account_id).await?;
++        MsgId::new(message_id).abort_download(&ctx).await
++    }
++
+     /// Search messages containing the given query string.
+     /// Searching can be done globally (chat_id=None) or in a specified chat only (chat_id set).
+     ///
+diff --git a/src/download.rs b/src/download.rs
+index 32ef52f..a21f0ab 100644
+--- a/src/download.rs
++++ b/src/download.rs
+@@ -105,6 +105,24 @@ pub async fn download_full(self, context: &Context) -> Result<()> {
+         Ok(())
+     }
+ 
++    /// Stops a download requested with [`MsgId::download_full`].
++    ///
++    /// Dequeues it and puts the download button back. The staging file is
++    /// kept, so downloading again resumes where this one stopped (until
++    /// housekeeping reclaims it). A chunked download running right now stops
++    /// before its next chunk; a whole-message fetch on a server without
++    /// partial FETCH cannot be interrupted and still completes.
++    /// Does nothing unless the download is in progress.
++    pub async fn abort_download(self, context: &Context) -> Result<()> {
++        let msg = Message::load_from_db(context, self).await?;
++        if msg.download_state() != DownloadState::InProgress {
++            return Ok(());
++        }
++        delete_from_downloads(context, msg.rfc724_mid()).await?;
++        self.update_download_state(context, DownloadState::Available)
++            .await
++    }
++
+     /// Updates the message download state. Returns `Ok` if the message doesn't exist anymore or has
+     /// the download state up to date.
+     pub(crate) async fn update_download_state(
+@@ -362,6 +380,24 @@ async fn chunked_fetch_loop(
+ ) -> Result<ChunkOutcome> {
+     let mut chunk_size = CHUNK_SIZE_START;
+     loop {
++        // `abort_download` is the only way back from `InProgress` to
++        // `Available`; stop before fetching more. Yielding keeps the staging
++        // file and the next cycle finds no `download` row to resume, unless
++        // the user tapped download again meanwhile.
++        if let Some(msg_id) = msg_id
++            && context
++                .sql
++                .query_get_value::<DownloadState>(
++                    "SELECT download_state FROM msgs WHERE id=?",
++                    (msg_id,),
++                )
++                .await?
++                == Some(DownloadState::Available)
++        {
++            info!(context, "Download of {msg_id} was aborted.");
++            return Ok(ChunkOutcome::Yielded);
++        }
++
+         let Ok(offset) = u32::try_from(staging.len()) else {
+             return Ok(ChunkOutcome::TooLarge);
+         };
+@@ -1414,6 +1450,52 @@ async fn test_chunked_fetch_happy_path() -> Result<()> {
+         Ok(())
+     }
+ 
++    /// An aborted download is dequeued, offers the download button again and
++    /// stops the running chunk loop before its next fetch.
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_abort_download() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let (t, msg_id) = real_msg_id(&mut tcm).await?;
++        let mid = Message::load_from_db(&t, msg_id)
++            .await?
++            .rfc724_mid()
++            .to_string();
++        msg_id
++            .update_download_state(&t, DownloadState::Available)
++            .await?;
++        msg_id.download_full(&t).await?;
++        assert!(download_contains(&t, &mid).await?);
++
++        msg_id.abort_download(&t).await?;
++        assert!(!download_contains(&t, &mid).await?);
++        let state = Message::load_from_db(&t, msg_id).await?.download_state();
++        assert_eq!(state, DownloadState::Available);
++
++        let mut staging = open_staging(&t, 1).await;
++        let fetcher = FakeFetcher::new(fake_message(1000));
++        let calls = fetcher.calls_handle();
++        let outcome = chunked_fetch_loop(
++            &t,
++            &mut staging,
++            None,
++            Some(msg_id),
++            tools::time_now(),
++            fetcher,
++        )
++        .await?;
++        assert!(matches!(outcome, ChunkOutcome::Yielded));
++        assert!(calls.lock().unwrap().is_empty());
++
++        // Aborting what is not downloading is a no-op.
++        msg_id
++            .update_download_state(&t, DownloadState::Done)
++            .await?;
++        msg_id.abort_download(&t).await?;
++        let state = Message::load_from_db(&t, msg_id).await?.download_state();
++        assert_eq!(state, DownloadState::Done);
++        Ok(())
++    }
++
+     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+     async fn test_chunked_fetch_resume() -> Result<()> {
+         let t = TestContext::new().await;
