@@ -3,6 +3,8 @@
 - **A download can now be stopped.** Tapped a big video by accident? The
   progress ring has an × that stops the download; tapping download again later
   picks up where it left off.
+- **"Remove tracking from links" now carries the 🦥 badge** in Settings, like
+  the other settings that only exist in SlothfulChat.
 - **The keyboard-shortcuts dialog now lists Ctrl/Cmd+Shift+D** for the
   Diagnostics panel, next to the translation editor's Ctrl/Cmd+Shift+L.
 - **Downloading a message the server no longer has now fails instead of
