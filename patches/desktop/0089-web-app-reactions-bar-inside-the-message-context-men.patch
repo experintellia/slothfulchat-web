@@ -33,6 +33,13 @@ link, media control or clickable info message), listed in the shortcuts
 sheet and in aria-keyshortcuts. The saved-messages "show in chat"
 button stays.
 
+Keyboard details: Tab closes the menu (APG) and an auto-repeated Enter
+is ignored, so holding Enter can't trigger the item it lands on. The
+standalone bar returns focus to the message when a pick or Escape closes
+it, and its positioning helper hides the bar transparently while
+measuring (visibility: hidden made the picker's search unfocusable, so
+its autofocus was lost when the menu hands over to it).
+
 Phones: a long press anywhere on a message opens the menu. On coarse
 pointers nothing in a bubble is selectable: iOS otherwise starts its own
 text selection ~500ms into the press and cancels the touch, and with it
