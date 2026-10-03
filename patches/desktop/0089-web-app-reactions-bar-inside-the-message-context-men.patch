@@ -28,17 +28,18 @@ selection, but a press on a link now opens the menu (Copy Link), with
 not cover it.
 ---
  packages/frontend/scss/message/_message.scss  |  6 ++
- .../frontend/scss/misc/_context_menu.scss     |  6 ++
- .../frontend/src/components/ContextMenu.tsx   | 72 ++++++++++++++-
- .../components/ReactionsBar/ReactionsBar.tsx  | 14 ++-
+ .../frontend/scss/misc/_context_menu.scss     | 11 +++
+ .../frontend/src/components/ContextMenu.tsx   | 82 ++++++++++++++++-
+ .../src/components/KeyboardShortcutHint.tsx   |  4 +
+ .../components/ReactionsBar/ReactionsBar.tsx  | 34 +++++--
  .../ReactionsBar/ReactionsBarContext.tsx      |  2 +
  .../src/components/ReactionsBar/index.ts      |  6 +-
  .../ReactionsBar/useReactionsBar.ts           |  4 +-
  .../src/components/ShortcutMenu/index.tsx     | 53 +----------
  .../ShortcutMenu/styles.module.scss           | 53 ++++++-----
- .../src/components/message/Message.tsx        | 88 +++++++++++--------
- .../src/utils/longPressContextMenu.ts         |  8 +-
- 11 files changed, 193 insertions(+), 119 deletions(-)
+ .../src/components/message/Message.tsx        | 91 +++++++++++--------
+ .../src/utils/longPressContextMenu.ts         | 14 ++-
+ 12 files changed, 233 insertions(+), 127 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
 index d2c58bd..74e9600 100644
@@ -58,10 +59,20 @@ index d2c58bd..74e9600 100644
  .message {
    position: relative;
 diff --git a/packages/frontend/scss/misc/_context_menu.scss b/packages/frontend/scss/misc/_context_menu.scss
-index 3a1a5c8..b825340 100644
+index 3a1a5c8..301c512 100644
 --- a/packages/frontend/scss/misc/_context_menu.scss
 +++ b/packages/frontend/scss/misc/_context_menu.scss
-@@ -94,3 +94,9 @@
+@@ -37,6 +37,9 @@
+ 
+   border-radius: 3px;
+   overflow: hidden;
++  // A tall menu on a small screen scrolls instead of cutting off items.
++  max-height: 100%;
++  overflow-y: auto;
+ 
+   box-shadow:
+     0 0 0 1px rgba(16, 22, 26, 0.1),
+@@ -94,3 +97,11 @@
      }
    }
  }
@@ -70,9 +81,11 @@ index 3a1a5c8..b825340 100644
 +  // position is determined in code, like the menu below it
 +  position: fixed;
 +  pointer-events: auto;
++  // Measured before it is moved: don't let the previous position squeeze it.
++  width: max-content;
 +}
 diff --git a/packages/frontend/src/components/ContextMenu.tsx b/packages/frontend/src/components/ContextMenu.tsx
-index a1f3b55..3a63c67 100644
+index a1f3b55..3380229 100644
 --- a/packages/frontend/src/components/ContextMenu.tsx
 +++ b/packages/frontend/src/components/ContextMenu.tsx
 @@ -9,6 +9,7 @@ import React, {
@@ -156,7 +169,7 @@ index a1f3b55..3a63c67 100644
  
      // Place at cursor first
      let top = cursorY.current
-@@ -150,14 +173,21 @@ export function ContextMenuLayer({
+@@ -150,14 +173,24 @@ export function ContextMenuLayer({
      }
  
      // If doesn't fit move down
@@ -165,7 +178,10 @@ index a1f3b55..3a63c67 100644
 +    if (top + blockHeight > layerHeight) {
 +      top -= blockHeight
      }
-+    top = Math.max(0, top)
++    // Keep it on screen: a narrow phone, a tall menu, or a keyboard open at
++    // the centre of a message taller than the window can push it off.
++    left = Math.max(0, Math.min(left, layerWidth - menu.width))
++    top = Math.max(0, Math.min(top, layerHeight - blockHeight))
  
      // Displaying Menu
      const rightLimit =
@@ -181,7 +197,7 @@ index a1f3b55..3a63c67 100644
    }, [])
  
    const cancel = useCallback((evt?: React.MouseEvent) => {
-@@ -188,6 +218,17 @@ export function ContextMenuLayer({
+@@ -188,6 +221,17 @@ export function ContextMenuLayer({
        // The dialog semantics are not needed, and are probably confusing.
        role='presentation'
      >
@@ -199,7 +215,35 @@ index a1f3b55..3a63c67 100644
        {currentItems.length > 0 && (
          <ContextMenu
            rightLimit={position.rightLimit}
-@@ -338,6 +379,29 @@ export function ContextMenu(props: {
+@@ -197,6 +241,10 @@ export function ContextMenuLayer({
+           openCallback={showAfter}
+           closeCallback={cancel}
+           ariaAttrs={currentAriaAttrs}
++          // With a header (reactions), start on the first action: a screen
++          // reader then announces the menu itself, and ArrowUp reaches the
++          // header.
++          focusFirstItem={!!CurrentHeader}
+         />
+       )}
+     </dialog>
+@@ -212,6 +260,7 @@ export function ContextMenu(props: {
+   closeCallback: (evt?: React.MouseEvent) => void
+   // TODO make this a required prop.
+   ariaAttrs?: MenuAriaAttrs
++  focusFirstItem?: boolean
+ }) {
+   const { closeCallback } = props
+ 
+@@ -222,7 +271,7 @@ export function ContextMenu(props: {
+   // always one item less than menuLevelEls
+   const [openSublevels, setSublevels] = useState<number[]>([])
+   // Which one of the last sublevel items the keyboard is focused on
+-  const keyboardFocus = useRef<number>(-1)
++  const keyboardFocus = useRef<number>(props.focusFirstItem ? 0 : -1)
+ 
+   const levelItems: ContextMenuLevel[] = useMemo(() => {
+     let items = props.items.filter(val => val !== false) as ContextMenuItem[]
+@@ -338,6 +387,29 @@ export function ContextMenu(props: {
          return skipIfSeperator(parent?.lastElementChild as HTMLDivElement)
        }
  
@@ -229,11 +273,26 @@ index a1f3b55..3a63c67 100644
        if (ev.code === 'ArrowDown') {
          getNeighborElementWithoutSeperator(
            parent,
+diff --git a/packages/frontend/src/components/KeyboardShortcutHint.tsx b/packages/frontend/src/components/KeyboardShortcutHint.tsx
+index 0d4a1ed..79d4027 100644
+--- a/packages/frontend/src/components/KeyboardShortcutHint.tsx
++++ b/packages/frontend/src/components/KeyboardShortcutHint.tsx
+@@ -258,6 +258,10 @@ export function getKeybindings(
+         title: tx('react'),
+         keyBindings: [[ctrl, 'R']],
+       },
++      {
++        title: tx('a11y_message_context_menu_btn_label'),
++        keyBindings: [['Enter']],
++      },
+     ].map(Shortcut),
+   ]
+ }
 diff --git a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx b/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
-index f2331b6..203ee5f 100644
+index f2331b6..a24c796 100644
 --- a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
 +++ b/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
-@@ -22,6 +22,10 @@ type Props = {
+@@ -22,6 +22,12 @@ type Props = {
    messageId: number
    myReaction?: string
    onClick: () => void
@@ -241,28 +300,57 @@ index f2331b6..203ee5f 100644
 +  showAllEmojis?: boolean
 +  /** Replaces swapping in the picker in place (used inside the context menu). */
 +  onShowAllEmojis?: () => void
++  /** Focus the first emoji on mount (off inside the context menu). */
++  autoFocus?: boolean
  }
  
  const DEFAULT_EMOJIS = ['👍', '👎', '❤️', '😂', '🙁']
-@@ -30,6 +34,8 @@ export default function ReactionsBar({
+@@ -30,11 +36,17 @@ export default function ReactionsBar({
    onClick,
    messageId,
    myReaction,
 +  showAllEmojis: initialShowAllEmojis = false,
 +  onShowAllEmojis,
++  autoFocus = true,
  }: Props) {
    const tx = useTranslationFunction()
  
-@@ -48,7 +54,7 @@ export default function ReactionsBar({
+   const reactionsBarRef = useRef<HTMLDivElement>(null)
+   useEffect(() => {
++    if (!autoFocus) {
++      return
++    }
+     // IDK why, but `focus()` doesn't work if it's the first time
+     // that we open the reactions bar for a chat.
+     setTimeout(() => {
+@@ -46,26 +58,30 @@ export default function ReactionsBar({
+       }
+       firstButton.focus()
      })
-   }, [])
+-  }, [])
++  }, [autoFocus])
  
 -  const [showAllEmojis, setShowAllEmojis] = useState(false)
 +  const [showAllEmojis, setShowAllEmojis] = useState(initialShowAllEmojis)
    const accountId = selectedAccountId()
  
    const toggleReaction = async (emoji: string) => {
-@@ -65,7 +71,11 @@ export default function ReactionsBar({
+-    if (emoji === myReaction) {
+-      await BackendRemote.rpc.sendReaction(accountId, messageId, [])
+-    } else {
+-      await BackendRemote.rpc.sendReaction(accountId, messageId, [emoji])
+-    }
+-
++    // Close first: a second tap during the RPC must not react again.
+     onClick()
++    await BackendRemote.rpc.sendReaction(
++      accountId,
++      messageId,
++      emoji === myReaction ? [] : [emoji]
++    )
+   }
+ 
+   const handleShowAllEmojis = (
      event: React.MouseEvent<HTMLButtonElement, MouseEvent>
    ) => {
      event.stopPropagation()
@@ -524,7 +612,7 @@ index 146bfda..9000c71 100644
    border-radius: 100%;
    height: 40px;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index b32107f..0274c30 100644
+index b32107f..c98556f 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -40,7 +40,11 @@ import useOpenViewProfileDialog from '../../hooks/dialog/useOpenViewProfileDialo
@@ -619,7 +707,7 @@ index b32107f..0274c30 100644
          chat: props.chat,
          jumpToMessage,
        }
-@@ -710,9 +677,34 @@ export default function Message(props: {
+@@ -710,9 +677,35 @@ export default function Message(props: {
            )
          : buildContextMenu(common, target)
  
@@ -632,6 +720,7 @@ index b32107f..0274c30 100644
 +                messageId={message.id}
 +                myReaction={getMyReaction(message.reactions)}
 +                onClick={close}
++                autoFocus={false}
 +                onShowAllEmojis={() => {
 +                  // The full picker is too big to sit above the menu, so
 +                  // hand over to the standalone bar, which keeps it on screen.
@@ -654,7 +743,7 @@ index b32107f..0274c30 100644
          ariaAttrs: {
            'aria-label': tx('a11y_message_context_menu_btn_label'),
          },
-@@ -865,6 +857,25 @@ export default function Message(props: {
+@@ -865,6 +858,27 @@ export default function Message(props: {
          return
        }
  
@@ -664,6 +753,8 @@ index b32107f..0274c30 100644
 +      if (
 +        e.key === 'Enter' &&
 +        e.target === e.currentTarget &&
++        // Clickable info messages are <button>s: Enter is their own action.
++        !(e.currentTarget instanceof HTMLButtonElement) &&
 +        !e.defaultPrevented &&
 +        !e.ctrlKey &&
 +        !e.metaKey &&
@@ -680,7 +771,7 @@ index b32107f..0274c30 100644
        // Audio / video elements have controls that utilize
        // arrows. That is seeking, changing volume.
        // So we don't want to switch focus if all user wanted to do
-@@ -1355,7 +1366,6 @@ export default function Message(props: {
+@@ -1355,7 +1369,6 @@ export default function Message(props: {
          </div>
        </div>
        <ShortcutMenu
@@ -689,7 +780,7 @@ index b32107f..0274c30 100644
          message={message}
          showContextMenu={showContextMenu}
 diff --git a/packages/frontend/src/utils/longPressContextMenu.ts b/packages/frontend/src/utils/longPressContextMenu.ts
-index 3c624f5..d568275 100644
+index 3c624f5..05a3585 100644
 --- a/packages/frontend/src/utils/longPressContextMenu.ts
 +++ b/packages/frontend/src/utils/longPressContextMenu.ts
 @@ -67,7 +67,13 @@ export function installLongPressContextMenu() {
@@ -707,3 +798,16 @@ index 3c624f5..d568275 100644
          const style = window.getComputedStyle(el)
          const userSelect = style.userSelect || style.webkitUserSelect
          if (userSelect === 'text') {
+@@ -85,6 +91,12 @@ export function installLongPressContextMenu() {
+         timer: setTimeout(() => {
+           press = null
+           synthesized = true
++          // On a link in selectable text, iOS may have started a word
++          // selection by now; the menu should offer Copy Link, not
++          // "Copy Selection" of that word.
++          if (target.closest?.('a[href]')) {
++            window.getSelection()?.removeAllRanges()
++          }
+           target.dispatchEvent(
+             new MouseEvent('contextmenu', {
+               bubbles: true,

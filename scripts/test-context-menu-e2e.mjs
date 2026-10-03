@@ -266,6 +266,10 @@ try {
   check(await rightClick(bubble), 'message cancels the native menu')
   await msgMenu.waitFor({ state: 'visible', timeout: 10_000 })
   check(await reactions.isVisible(), 'reactions bar opens with the menu')
+  // the bar slides in from 15px lower; compare where it comes to rest
+  await page.waitForFunction(() =>
+    document.querySelector('.dc-context-menu-header')?.getAnimations({ subtree: true }).length === 0
+  )
   const rBox = await reactions.boundingBox()
   const mBox = await msgMenu.boundingBox()
   check(rBox.y + rBox.height <= mBox.y, 'reactions bar sits above the menu')
@@ -291,14 +295,17 @@ try {
   await bubble.evaluate((el) => el.focus())
   await page.keyboard.press('Enter')
   await msgMenu.waitFor({ state: 'visible', timeout: 10_000 })
-  await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitemradio')
-  check((await focusedLabel()) === 'menuitemradio:👍', 'Enter opens it with 👍 focused')
+  await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem')
+  check(
+    (await focusedLabel()).startsWith('menuitem:'),
+    'Enter opens it on the first action (screen readers announce the menu)'
+  )
+  await page.keyboard.press('ArrowUp')
+  check((await focusedLabel()) === 'menuitemradio:👍', 'ArrowUp from the top reaches the reactions')
   await page.keyboard.press('ArrowRight')
   check((await focusedLabel()) === 'menuitemradio:👎', 'ArrowRight moves along the reactions')
   await page.keyboard.press('ArrowDown')
-  check((await focusedLabel()).startsWith('menuitem:'), 'ArrowDown enters the menu')
-  await page.keyboard.press('ArrowUp')
-  check((await focusedLabel()).startsWith('menuitemradio:'), 'ArrowUp from the top returns to the reactions')
+  check((await focusedLabel()).startsWith('menuitem:'), 'ArrowDown goes back into the menu')
   await page.keyboard.press('Escape')
   await msgMenu.waitFor({ state: 'hidden' })
   check(true, 'Escape closes it')
