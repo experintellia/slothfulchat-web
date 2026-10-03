@@ -7,8 +7,10 @@ Loud voice messages drew as solid blocks: bucketPeaks kept the loudest
 sample per bucket (max-abs), and a phone mic with automatic gain touches
 full scale in almost every bucket, so nearly every bar hit full height. It
 now takes RMS per bucket (perceived loudness) and normalizes to the
-recording's own 95th percentile, so quiet messages fill the height too; a
-recording that is <5% sound falls back to its max.
+recording's own 95th percentile, so quiet messages fill the height too. The
+reference is floored at a quarter of the loudest bucket: when speech fills
+<5% of the buckets, p95 is the mic's background noise and would otherwise
+draw the noise at full height.
 
 drawBars draws rounded 3px pills at a fixed 5px pitch: the bar count follows
 the canvas width (the 128 source peaks, up from 64, are averaged down to
@@ -24,9 +26,9 @@ add a rAF loop while playing if the sweep looks steppy.
 ---
  .../src/components/AudioPlayer/Waveform.tsx   | 62 ++++++++++++++-----
  .../src/components/AudioPlayer/peaks.ts       |  6 +-
- .../src/components/AudioPlayer/utils.ts       | 24 +++++--
- .../frontend/src/tests/audioPlayer.test.ts    | 34 +++++++++-
- 4 files changed, 99 insertions(+), 27 deletions(-)
+ .../src/components/AudioPlayer/utils.ts       | 28 +++++++--
+ .../frontend/src/tests/audioPlayer.test.ts    | 43 ++++++++++++-
+ 4 files changed, 112 insertions(+), 27 deletions(-)
 
 diff --git a/packages/frontend/src/components/AudioPlayer/Waveform.tsx b/packages/frontend/src/components/AudioPlayer/Waveform.tsx
 index 15aa4be..17f15a2 100644
@@ -147,7 +149,7 @@ index 47fdfae..94bd48b 100644
  const CACHE_MAX = 100
  
 diff --git a/packages/frontend/src/components/AudioPlayer/utils.ts b/packages/frontend/src/components/AudioPlayer/utils.ts
-index 0aae0ee..24cb1e2 100644
+index 0aae0ee..23c52c6 100644
 --- a/packages/frontend/src/components/AudioPlayer/utils.ts
 +++ b/packages/frontend/src/components/AudioPlayer/utils.ts
 @@ -24,8 +24,11 @@ export function nextPlaybackRate(rate: number): number {
@@ -164,7 +166,7 @@ index 0aae0ee..24cb1e2 100644
   */
  export function bucketPeaks(data: Float32Array, n: number): Float32Array {
    const peaks = new Float32Array(Math.max(n, 0))
-@@ -33,11 +36,22 @@ export function bucketPeaks(data: Float32Array, n: number): Float32Array {
+@@ -33,11 +36,26 @@ export function bucketPeaks(data: Float32Array, n: number): Float32Array {
    for (let i = 0; i < n; i++) {
      const start = Math.floor(i * bucketSize)
      const end = Math.min(data.length, Math.floor((i + 1) * bucketSize))
@@ -177,11 +179,15 @@ index 0aae0ee..24cb1e2 100644
 +    }
 +    peaks[i] = end > start ? Math.sqrt(sq / (end - start)) : 0
 +  }
-+  // ponytail: plain x / p95, no curve or floor. Long messages average
-+  // seconds of speech per bar and look fairly even; stretch the range (floor
-+  // just under the quietest 5%) if real recordings look too flat.
++  // Reference = p95, but at least a quarter of the max: when speech fills <5%
++  // of the buckets, p95 is the background noise level and would draw the
++  // noise full height.
++  // ponytail: linear, no curve or floor. Long messages average seconds of
++  // speech per bar and look fairly even; stretch the range (floor just under
++  // the quietest 5%) if real recordings look too flat.
 +  const sorted = Float32Array.from(peaks).sort()
-+  const ref = (sorted[Math.floor(n * 0.95)] || sorted[n - 1]) ?? 0 // <5% voiced
++  const max = sorted[n - 1] ?? 0
++  const ref = Math.max(sorted[Math.floor(n * 0.95)] ?? 0, max * 0.25)
 +  if (ref > 0) {
 +    for (let i = 0; i < n; i++) {
 +      peaks[i] = Math.min(1, (peaks[i] ?? 0) / ref)
@@ -191,10 +197,10 @@ index 0aae0ee..24cb1e2 100644
    return peaks
  }
 diff --git a/packages/frontend/src/tests/audioPlayer.test.ts b/packages/frontend/src/tests/audioPlayer.test.ts
-index 270eb02..83744b7 100644
+index 270eb02..34906c8 100644
 --- a/packages/frontend/src/tests/audioPlayer.test.ts
 +++ b/packages/frontend/src/tests/audioPlayer.test.ts
-@@ -175,19 +175,47 @@ describe('GlobalVoiceMessagePlayer / clampSeek', () => {
+@@ -175,19 +175,56 @@ describe('GlobalVoiceMessagePlayer / clampSeek', () => {
  
  describe('AudioPlayer / bucketPeaks', () => {
    // Float32Array stores ~7 significant digits, so compare with a tolerance.
@@ -224,6 +230,15 @@ index 270eb02..83744b7 100644
 +    const data = new Float32Array(800)
 +    for (let i = 0; i < data.length; i++) data[i] = 0.02 * Math.sin(i)
 +    expect(Math.max(...bucketPeaks(data, 8))).to.be.greaterThan(0.95)
++  })
++
++  it('keeps background noise low around a lone short sound', () => {
++    const data = new Float32Array(6400)
++    for (let i = 0; i < data.length; i++) data[i] = 0.01 * Math.sin(i) // noise
++    for (let i = 100; i < 200; i++) data[i] = 0.5 * Math.sin(i) // 1 of 64 voiced
++    const p = bucketPeaks(data, 64)
++    expect(p[1]).to.be.closeTo(1, 1e-6)
++    expect(p[30]).to.be.lessThan(0.15)
 +  })
 +
 +  it('still shows a lone short sound (<5% of buckets voiced)', () => {
