@@ -367,10 +367,17 @@ try {
   await page.keyboard.press('Tab')
   await msgMenu.waitFor({ state: 'hidden', timeout: 5_000 })
   check(await focusIsOnBubble(), 'Tab closes the menu and returns focus to the message')
+  // wait for focus after each key: a runner faster than the menu's own
+  // focus-on-open would otherwise send the arrows into nothing
+  const focusedRole = (role) =>
+    page.waitForFunction((r) => document.activeElement?.getAttribute('role') === r, role, { timeout: 5_000 })
   await page.keyboard.press('Enter')
   await msgMenu.waitFor({ state: 'visible', timeout: 10_000 })
+  await focusedRole('menuitem')
   await page.keyboard.press('ArrowUp') // first action → reactions
+  await focusedRole('menuitemradio')
   await page.keyboard.press('End') // → "more emojis"
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-haspopup') === 'dialog', null, { timeout: 5_000 })
   await page.keyboard.press('Enter')
   await msgMenu.waitFor({ state: 'hidden', timeout: 5_000 })
   // the picker's search field (inside emoji-mart's shadow root) gets focus
