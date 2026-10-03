@@ -3,8 +3,9 @@
 - **Reactions now sit on top of the message menu**, like in Signal and
   Telegram: right-click or long-press a message and pick an emoji or an
   action from one place. The hover icons next to messages are gone; keyboard
-  users can press Enter on a message to open the same menu. A long press on a
-  link in a message now opens the menu too.
+  users can press Enter on a message to open the same menu. On phones a long
+  press now opens the menu on iPhone too; to select part of a message, pick
+  "Select Text" in the menu.
 - **A download can now be stopped.** Tapped a big video by accident? The
   progress ring has an × that stops the download; tapping download again soon
   picks up where it left off.

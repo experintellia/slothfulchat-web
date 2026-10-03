@@ -273,9 +273,11 @@ try {
   check(await rightClick(bubble), 'message cancels the native menu')
   await msgMenu.waitFor({ state: 'visible', timeout: 10_000 })
   check(await reactions.isVisible(), 'reactions bar opens with the menu')
-  // the bar slides in from 15px lower; compare where it comes to rest
-  await page.waitForFunction(() =>
-    document.querySelector('.dc-context-menu-header')?.getAnimations({ subtree: true }).length === 0
+  check(
+    await page.evaluate(
+      () => document.querySelector('.dc-context-menu-header').getAnimations({ subtree: true }).length === 0
+    ),
+    'the bar appears at once with the menu (no slide-in)'
   )
   const rBox = await reactions.boundingBox()
   const mBox = await msgMenu.boundingBox()
@@ -285,6 +287,10 @@ try {
   check(
     (await msgMenu.getByRole('menuitem', { name: 'React', exact: true }).count()) === 0,
     'no separate "React" menu item'
+  )
+  check(
+    (await msgMenu.getByRole('menuitem', { name: 'Select Text' }).count()) === 0,
+    'no "Select Text" with a mouse (text is selectable in place)'
   )
   await reactions.getByRole('menuitemradio', { name: '❤️' }).click()
   await msgMenu.waitFor({ state: 'hidden' })
@@ -339,6 +345,10 @@ try {
   // 4f. long press with a finger
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 })
+  check(
+    await page.evaluate(() => matchMedia('(pointer: coarse)').matches),
+    'touch emulation makes the primary pointer coarse'
+  )
   const longPress = async ({ x, y }) => {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] })
     await page.waitForTimeout(900) // past LONG_PRESS_MS (700)
@@ -375,7 +385,34 @@ try {
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
   })
   await longPress(word)
-  check(!(await msgMenu.isVisible()), 'long press on message text leaves it to text selection')
+  check(await msgMenu.isVisible(), 'long press on message text opens the menu too (phones)')
+  await msgMenu.getByRole('menuitem', { name: 'Select Text' }).click()
+  const selectDialog = page.getByTestId('select-text-dialog')
+  await selectDialog.waitFor({ state: 'visible', timeout: 10_000 })
+  check(
+    (await selectDialog.getByText('Select Text').count()) > 0 &&
+      (await selectDialog.locator('.text').innerText()).includes('hello world'),
+    '"Select Text" shows the message under a "Select Text" heading'
+  )
+  check(
+    (await selectDialog.locator('.text').evaluate((el) => getComputedStyle(el).userSelect)) === 'text' &&
+      (await selectDialog.locator('a').count()) === 0,
+    '…selectable, with links as plain text'
+  )
+  if (process.env.SHOT) {
+    await page.screenshot({ path: process.env.SHOT.replace(/\.png$/, '-select.png') })
+  }
+  await page.keyboard.press('Escape')
+  await selectDialog.waitFor({ state: 'hidden' })
+  if (process.env.SHOT) {
+    // the menu at phone size, for review
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.waitForTimeout(500)
+    const small = await bubble.locator('.msg-container').boundingBox()
+    await longPress({ x: small.x + 4, y: small.y + 18 })
+    await page.screenshot({ path: process.env.SHOT.replace(/\.png$/, '-phone.png') })
+    await page.keyboard.press('Escape')
+  }
 
   console.log('PASS: right-click menus — app menu where the app owns one, native elsewhere')
 } catch (e) {
