@@ -334,6 +334,27 @@ try {
   await msgMenu.waitFor({ state: 'hidden' })
   check(true, 'Escape closes it')
 
+  // Closing then reopening within one task: the dialog's `close` event is
+  // queued and used to empty the menu that had just reopened (slow CI hit
+  // this between Escape and the next Enter).
+  check(
+    await bubble.evaluate(async (el) => {
+      const enter = () => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      el.focus()
+      enter()
+      await new Promise((r) => setTimeout(r, 300))
+      const layer = document.querySelector('dialog.dc-context-menu-layer')
+      layer.close()
+      enter()
+      await new Promise((r) => setTimeout(r, 500))
+      const ok = layer.open && !!layer.querySelector('.dc-context-menu')
+      layer.close()
+      await new Promise((r) => setTimeout(r, 100))
+      return ok
+    }),
+    'a menu reopened right after closing keeps its items'
+  )
+
   // keyboard edge cases: a held Enter, Tab, and focus after the full picker
   const focusIsOnBubble = () => bubble.evaluate((el) => document.activeElement === el)
   await bubble.evaluate((el) => el.focus())

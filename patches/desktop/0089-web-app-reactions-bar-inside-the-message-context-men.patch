@@ -40,6 +40,11 @@ it, and its positioning helper hides the bar transparently while
 measuring (visibility: hidden made the picker's search unfocusable, so
 its autofocus was lost when the menu hands over to it).
 
+The layer's dialog dispatches `close` as a separate task; a menu
+reopened in between (Escape, then Enter right away) was emptied by the
+late handler. onClose now leaves a reopened dialog alone, and a new
+open settles the previous menu's promise.
+
 Phones: a long press anywhere on a message opens the menu. On coarse
 pointers nothing in a bubble is selectable: iOS otherwise starts its own
 text selection ~500ms into the press and cancels the touch, and with it
@@ -51,17 +56,17 @@ menu.
  packages/frontend/scss/message/_message.scss  |  21 ++++
  .../frontend/scss/misc/_context_menu.scss     |  31 ++++-
  .../AbsolutePositioningHelper/index.tsx       |  10 +-
- .../frontend/src/components/ContextMenu.tsx   | 109 +++++++++++++++++-
+ .../frontend/src/components/ContextMenu.tsx   | 118 +++++++++++++++++-
  .../src/components/KeyboardShortcutHint.tsx   |   4 +
  .../components/ReactionsBar/ReactionsBar.tsx  |  35 ++++--
  .../ReactionsBar/ReactionsBarContext.tsx      |  19 ++-
  .../src/components/ReactionsBar/index.ts      |   6 +-
  .../ReactionsBar/styles.module.scss           |  12 ++
  .../ReactionsBar/useReactionsBar.ts           |   6 +-
- .../src/components/ShortcutMenu/index.tsx     |  53 +--------
- .../ShortcutMenu/styles.module.scss           |  59 +++++-----
- .../src/components/message/Message.tsx        |  91 ++++++++-------
- 13 files changed, 314 insertions(+), 142 deletions(-)
+ .../src/components/ShortcutMenu/index.tsx     |  53 +-------
+ .../ShortcutMenu/styles.module.scss           |  59 +++++----
+ .../src/components/message/Message.tsx        |  91 ++++++++------
+ 13 files changed, 323 insertions(+), 142 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
 index d2c58bd..7b22e08 100644
@@ -180,7 +185,7 @@ index c425116..bed4f65 100644
        className={styles.absolutePositioningHelper}
        ref={ref}
 diff --git a/packages/frontend/src/components/ContextMenu.tsx b/packages/frontend/src/components/ContextMenu.tsx
-index a1f3b55..81f67b7 100644
+index a1f3b55..6065767 100644
 --- a/packages/frontend/src/components/ContextMenu.tsx
 +++ b/packages/frontend/src/components/ContextMenu.tsx
 @@ -9,6 +9,7 @@ import React, {
@@ -235,7 +240,7 @@ index a1f3b55..81f67b7 100644
    const [currentAriaAttrs, setCurrentAriaAttrs] = useState<
      undefined | MenuAriaAttrs
    >(undefined)
-@@ -98,7 +115,7 @@ export function ContextMenuLayer({
+@@ -98,11 +115,15 @@ export function ContextMenuLayer({
    const endPromiseRef = useRef<(() => void) | null>(null)
  
    const show = useCallback(
@@ -244,7 +249,15 @@ index a1f3b55..81f67b7 100644
        if (!layerRef.current) {
          throw new Error('Somehow the ContextMenuLayer went missing')
        }
-@@ -115,6 +132,7 @@ export function ContextMenuLayer({
+ 
++      // A previous menu's `close` event may still be queued (see onClose);
++      // settle its promise now, the menu itself is already gone.
++      endPromiseRef.current?.()
++      endPromiseRef.current = null
+       layerRef.current.showModal()
+ 
+       // Filter out empty null items
+@@ -115,6 +136,7 @@ export function ContextMenuLayer({
        // Get required information
        setCurrentItems(items)
        setCurrentAriaAttrs(ariaAttrs)
@@ -252,7 +265,7 @@ index a1f3b55..81f67b7 100644
  
        await new Promise<void>((resolve, _reject) => {
          endPromiseRef.current = resolve
-@@ -135,10 +153,18 @@ export function ContextMenuLayer({
+@@ -135,10 +157,18 @@ export function ContextMenuLayer({
      const { height: layerHeight, width: layerWidth } =
        layerRef.current.getBoundingClientRect()
  
@@ -271,7 +284,7 @@ index a1f3b55..81f67b7 100644
  
      // Place at cursor first
      let top = cursorY.current
-@@ -150,14 +176,24 @@ export function ContextMenuLayer({
+@@ -150,14 +180,24 @@ export function ContextMenuLayer({
      }
  
      // If doesn't fit move down
@@ -299,7 +312,19 @@ index a1f3b55..81f67b7 100644
    }, [])
  
    const cancel = useCallback((evt?: React.MouseEvent) => {
-@@ -188,6 +224,17 @@ export function ContextMenuLayer({
+@@ -179,6 +219,11 @@ export function ContextMenuLayer({
+       className='dc-context-menu-layer'
+       onClick={cancel}
+       onClose={() => {
++        // `close` is dispatched as a separate task: a menu reopened in the
++        // meantime (Escape, then Enter right away) must not be emptied.
++        if (layerRef.current?.open) {
++          return
++        }
+         setCurrentItems([])
+         endPromiseRef.current?.()
+       }}
+@@ -188,6 +233,17 @@ export function ContextMenuLayer({
        // The dialog semantics are not needed, and are probably confusing.
        role='presentation'
      >
@@ -317,7 +342,7 @@ index a1f3b55..81f67b7 100644
        {currentItems.length > 0 && (
          <ContextMenu
            rightLimit={position.rightLimit}
-@@ -197,6 +244,10 @@ export function ContextMenuLayer({
+@@ -197,6 +253,10 @@ export function ContextMenuLayer({
            openCallback={showAfter}
            closeCallback={cancel}
            ariaAttrs={currentAriaAttrs}
@@ -328,7 +353,7 @@ index a1f3b55..81f67b7 100644
          />
        )}
      </dialog>
-@@ -212,6 +263,7 @@ export function ContextMenu(props: {
+@@ -212,6 +272,7 @@ export function ContextMenu(props: {
    closeCallback: (evt?: React.MouseEvent) => void
    // TODO make this a required prop.
    ariaAttrs?: MenuAriaAttrs
@@ -336,7 +361,7 @@ index a1f3b55..81f67b7 100644
  }) {
    const { closeCallback } = props
  
-@@ -224,6 +276,17 @@ export function ContextMenu(props: {
+@@ -224,6 +285,17 @@ export function ContextMenu(props: {
    // Which one of the last sublevel items the keyboard is focused on
    const keyboardFocus = useRef<number>(-1)
  
@@ -354,7 +379,7 @@ index a1f3b55..81f67b7 100644
    const levelItems: ContextMenuLevel[] = useMemo(() => {
      let items = props.items.filter(val => val !== false) as ContextMenuItem[]
      const levelItems = [{ items }]
-@@ -299,6 +362,18 @@ export function ContextMenu(props: {
+@@ -299,6 +371,18 @@ export function ContextMenu(props: {
      }
  
      const onKeyDown = (ev: KeyboardEvent) => {
@@ -373,7 +398,7 @@ index a1f3b55..81f67b7 100644
        const current = parent?.querySelector(':focus')
  
        enum Direction {
-@@ -338,6 +413,30 @@ export function ContextMenu(props: {
+@@ -338,6 +422,30 @@ export function ContextMenu(props: {
          return skipIfSeperator(parent?.lastElementChild as HTMLDivElement)
        }
  
@@ -404,7 +429,7 @@ index a1f3b55..81f67b7 100644
        if (ev.code === 'ArrowDown') {
          getNeighborElementWithoutSeperator(
            parent,
-@@ -372,7 +471,7 @@ export function ContextMenu(props: {
+@@ -372,7 +480,7 @@ export function ContextMenu(props: {
      return () => {
        document.removeEventListener('keydown', onKeyDown)
      }
