@@ -199,6 +199,12 @@ exists:
   back to whole-message downloads with a one-time device-message notice.
   `core/0020`–`core/0021`, `desktop/0066`; plus a `Fetch::body_origin()`
   accessor in the vendored async-imap (to be proposed upstream).
+- **Stopping a download** — the progress ring of a downloading message has an
+  × that stops it (new `abort_download` JSON-RPC call): the queue entry goes,
+  the download button comes back, and the running chunk loop stops before its
+  next chunk. The staging file stays, so tapping download again resumes where
+  it stopped. A whole-message fetch on a server without partial FETCH cannot
+  be interrupted and still finishes. `core/0035`, `desktop/0088`
 - **HTML email viewer ("Show Full Message…")** — the browser edition of
   desktop's sandboxed email window: a fullscreen in-app dialog whose content
   is DOMPurify-sanitized and rendered in an iframe with an opaque no-script

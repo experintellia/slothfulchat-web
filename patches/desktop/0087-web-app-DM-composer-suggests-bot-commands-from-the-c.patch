@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 27 Aug 2026 12:59:19 +0000
-Subject: [PATCH 87/87] web-app: DM composer suggests /bot commands from the
+Subject: [PATCH 87/88] web-app: DM composer suggests /bot commands from the
  contact's bio
 
 Reuses the :emoji: completion menu's generic CompletionProvider

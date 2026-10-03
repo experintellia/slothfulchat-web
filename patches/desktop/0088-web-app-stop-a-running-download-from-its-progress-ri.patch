@@ -1,0 +1,227 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Fri, 2 Oct 2026 00:37:43 +0000
+Subject: [PATCH 88/88] web-app: stop a running download from its progress ring
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The progress ring gets an × button calling abort_download. It takes the
+percentage's place on hover/focus, and for good on touch devices or
+before the first percentage arrives; the arc keeps showing progress.
+---
+ _locales/_untranslated_en.json                |  3 +
+ .../_message-download-placeholder.scss        | 40 ++++++++++++
+ .../message/DownloadOnDemandPlaceholder.tsx   | 64 +++++++++++++++----
+ .../src/components/message/Message.tsx        | 11 ++++
+ 4 files changed, 104 insertions(+), 14 deletions(-)
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index ea3bd34..2f6785a 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -175,5 +175,8 @@
+   },
+   "download_not_on_relay_send_again": {
+     "message": "Not found on your relay — send it again from your other device"
++  },
++  "download_abort": {
++    "message": "Stop download"
+   }
+ }
+diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
+index 0d3ba43..91ff2e5 100644
+--- a/packages/frontend/scss/message/_message-download-placeholder.scss
++++ b/packages/frontend/scss/message/_message-download-placeholder.scss
+@@ -260,8 +260,48 @@
+     color: var(--colorPrimary, #415e6b);
+   }
+ 
++  // Stop button over the whole ring. Its × takes the percentage's place on
++  // hover/focus, and for good where nothing can hover (touch) or there is no
++  // percentage yet; the arc still shows the progress.
++  .abort {
++    position: absolute;
++    inset: 0;
++    border: none;
++    border-radius: 50%;
++    padding: 0;
++    background: none;
++    cursor: pointer;
++    display: flex;
++    align-items: center;
++    justify-content: center;
++    opacity: 0;
++
++    & > span {
++      background-color: var(--colorPrimary, #415e6b);
++    }
++  }
++  .abort:hover,
++  .abort:focus-visible,
++  &:not(:has(.pct)) .abort {
++    opacity: 1;
++  }
++  &:has(.abort:hover, .abort:focus-visible) .pct {
++    visibility: hidden;
++  }
++  @media (hover: none) {
++    .abort {
++      opacity: 1;
++    }
++    .pct {
++      display: none;
++    }
++  }
++
+   // Over a blurred thumbnail the ring needs contrast.
+   .download-on-demand-overlay & {
++    .abort > span {
++      background-color: white;
++    }
+     .track {
+       stroke: rgba(255, 255, 255, 0.4);
+       opacity: 1;
+diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
+index b4691ab..e8553f4 100644
+--- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
++++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
+@@ -26,21 +26,27 @@ const RING_R = 16
+ const RING_C = 2 * Math.PI * RING_R
+ 
+ function ProgressCircle({
++  message,
++  accountId,
+   percent,
+-  label,
++  tabIndex,
+ }: {
++  message: T.Message
++  accountId: number
+   percent: number | null
+-  label: string
++  tabIndex: -1 | 0
+ }) {
++  const tx = useTranslationFunction()
+   const indeterminate = percent === null
+   return (
+-    <div
+-      className='download-progress-circle'
+-      role='progressbar'
+-      aria-label={label}
+-      aria-valuenow={indeterminate ? undefined : percent}
+-    >
+-      <svg viewBox='0 0 40 40' className={indeterminate ? 'indeterminate' : ''}>
++    <div className='download-progress-circle'>
++      <svg
++        viewBox='0 0 40 40'
++        className={indeterminate ? 'indeterminate' : ''}
++        role='progressbar'
++        aria-label={tx('downloading')}
++        aria-valuenow={indeterminate ? undefined : percent}
++      >
+         <circle className='track' cx='20' cy='20' r={RING_R} />
+         <circle
+           className='bar'
+@@ -54,6 +60,17 @@ function ProgressCircle({
+         />
+       </svg>
+       {!indeterminate && <span className='pct'>{percent}%</span>}
++      {/* Sibling of the progressbar, not inside it: a progressbar's
++          children are presentational, which would hide the button. */}
++      <button
++        type='button'
++        className='abort'
++        aria-label={tx('download_abort')}
++        onClick={() => BackendRemote.rpc.abortDownload(accountId, message.id)}
++        tabIndex={tabIndex}
++      >
++        <Icon icon='cross' size={14} />
++      </button>
+     </div>
+   )
+ }
+@@ -150,13 +167,17 @@ function DownloadControls({
+   downloadPercent,
+   tabindexForInteractiveContents,
+ }: Omit<PlaceholderProps, 'postMessageViewType'>) {
+-  const tx = useTranslationFunction()
+   const { downloadState } = message
+   return (
+     <div className='download-on-demand-controls'>
+       {downloadState === 'Failure' && <DownloadFailedLabel message={message} />}
+       {downloadState === 'InProgress' ? (
+-        <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
++        <ProgressCircle
++          message={message}
++          accountId={accountId}
++          percent={downloadPercent}
++          tabIndex={tabindexForInteractiveContents}
++        />
+       ) : (
+         <CircleDownloadButton
+           messageId={message.id}
+@@ -239,7 +260,12 @@ export default function DownloadOnDemandPlaceholder({
+   if (viewType === 'Audio' || viewType === 'Voice') {
+     const downloadControl =
+       message.downloadState === 'InProgress' ? (
+-        <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
++        <ProgressCircle
++          message={message}
++          accountId={accountId}
++          percent={downloadPercent}
++          tabIndex={tabindexForInteractiveContents}
++        />
+       ) : (
+         <CircleDownloadButton
+           messageId={message.id}
+@@ -296,7 +322,12 @@ export default function DownloadOnDemandPlaceholder({
+           <DownloadFailedLabel message={message} />
+         )}
+         {message.downloadState === 'InProgress' ? (
+-          <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
++          <ProgressCircle
++            message={message}
++            accountId={accountId}
++            percent={downloadPercent}
++            tabIndex={tabindexForInteractiveContents}
++          />
+         ) : (
+           // Mirror the real card's big primary "Start" button, labeled Download.
+           <Button
+@@ -322,7 +353,12 @@ export default function DownloadOnDemandPlaceholder({
+       className={'message-attachment-generic download-on-demand' + contentBelow}
+     >
+       {message.downloadState === 'InProgress' ? (
+-        <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
++        <ProgressCircle
++          message={message}
++          accountId={accountId}
++          percent={downloadPercent}
++          tabIndex={tabindexForInteractiveContents}
++        />
+       ) : (
+         <CircleDownloadButton
+           messageId={message.id}
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index f108098..b32107f 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -1121,6 +1121,17 @@ export default function Message(props: {
+               {downloadPercent !== null && ` ${downloadPercent}%`}
+             </span>
+           )}
++          {downloadState == 'InProgress' && (
++            <button
++              type='button'
++              onClick={() =>
++                BackendRemote.rpc.abortDownload(accountId, message.id)
++              }
++              tabIndex={tabindexForInteractiveContents}
++            >
++              {tx('download_abort')}
++            </button>
++          )}
+           {(downloadState == 'Failure' || downloadState === 'Available') && (
+             <button
+               type='button'
