@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 20 Aug 2026 13:45:35 +0000
-Subject: [PATCH 85/88] web-app: only offer the copy context-menu entry when
+Subject: [PATCH 85/92] web-app: only offer the copy context-menu entry when
  there is something to copy
 
 The context menu's copy entry ("Copy Text"/"Copy Selection"/"Copy Email")
