@@ -19,9 +19,10 @@
 //      would kill it)
 //   4. message menu (desktop/0089): reactions bar inside the same menu,
 //      above it; no hover icons; keyboard (Enter, arrows, focus-only "…"
-//      button); long press on the bubble / a link opens it, on text it
-//      doesn't (CDP touches, which headless chromium answers with no native
-//      long-press menu, like iOS — so the 0079 fallback is what's tested)
+//      button); on touch a long press anywhere on the bubble opens it —
+//      text, date row, link (CDP touches, which headless chromium answers
+//      with no native long-press menu, like iOS — so the 0079 fallback is
+//      what's tested)
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/test-context-menu-e2e.mjs
@@ -315,6 +316,20 @@ try {
   check((await focusedLabel()) === 'menuitemradio:👎', 'ArrowRight moves along the reactions')
   await page.keyboard.press('ArrowDown')
   check((await focusedLabel()).startsWith('menuitem:'), 'ArrowDown goes back into the menu')
+  await page.keyboard.press('ArrowDown')
+  const second = await focusedLabel()
+  const items = msgMenu.getByRole('menuitem')
+  const lastBox = await items.last().boundingBox()
+  await page.mouse.move(lastBox.x + 5, lastBox.y + 5)
+  await page.mouse.move(lastBox.x + 10, lastBox.y + 8)
+  check((await focusedLabel()) === second, 'moving the mouse over the menu leaves keyboard focus alone')
+  await page.keyboard.press('ArrowUp')
+  await page.keyboard.press('ArrowUp')
+  await page.keyboard.press('ArrowUp') // first item → reactions → last item
+  check(
+    (await focusedLabel()) === `menuitem:${(await items.last().textContent()).trim()}`,
+    'ArrowUp from the reactions wraps to the last action'
+  )
   await page.keyboard.press('Escape')
   await msgMenu.waitFor({ state: 'hidden' })
   check(true, 'Escape closes it')

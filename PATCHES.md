@@ -684,15 +684,11 @@ contribution intended.
 
 - **Reactions inside the message menu** — right-click, long press, Enter on
   a focused message or its "…" button open one menu with the reactions row
-  floating above it, like Signal and Telegram; the separate "React" item
-  and the hover react / "…" icons are gone ("…" stays for keyboard users,
-  visible only when focused). Arrow keys move along the reactions and down
-  into the menu; "more emojis" hands over to the standalone picker, and
-  Ctrl/Cmd+R still opens the reactions alone. On phones a long press
-  anywhere on a message opens the menu (iOS would otherwise start a text
-  selection and cancel the press); "Copy Text" copies the message, as in
-  other messengers. The menu is larger on touch, the reactions row smaller
-  with a mouse. `desktop/0089`
+  floating above it, like Signal and Telegram. The "React" item and the
+  hover icons are gone; "…" is hidden until it gets keyboard focus. On
+  phones a long press anywhere on a message opens the menu, so message
+  text can't be selected there (iOS would otherwise take the press for a
+  text selection); "Copy Text" copies it. `desktop/0089`
 - **Branding** — the app calls itself SlothfulChat and uses its own icon in
   the About dialog and welcome screen, with explicit "experimental fork, not
   affiliated with Delta Chat" notices and a source-code link. Only

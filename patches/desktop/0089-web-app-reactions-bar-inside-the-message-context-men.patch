@@ -9,38 +9,51 @@ menu; do the same.
 
 ContextMenu gains an optional `header` component, rendered inside the
 modal <dialog> (anything outside it is inert while the menu is open) and
-positioned with the menu as one block. Keyboard: the header's own roving
-tabindex handles left/right, ArrowDown enters the menu, ArrowUp on the
-first item returns to the header. Message passes the ReactionsBar as the
-header and drops the "React" item; "more emojis" closes the menu and
-hands over to the standalone bar with the picker open, which already
-keeps the large picker on screen. Ctrl/Cmd+R is unchanged.
+positioned with the menu as one block, kept on screen on both axes; a
+menu taller than the room below the header scrolls. With a header the
+menu focuses its first action once on open, so a screen reader announces
+the menu; ArrowUp from there reaches the header, the header's roving
+tabindex handles left/right, and ArrowDown/ArrowUp from it enter the
+menu at its first/last item. Item highlight is :focus-visible, so a
+mouse- or touch-opened menu doesn't look pre-selected.
+
+Message passes the ReactionsBar as the header and drops the "React"
+item; picking a reaction closes the menu before the RPC (no double
+send). "More emojis" closes the menu and hands over to the standalone
+bar with the picker open, which already keeps the large picker on
+screen. Ctrl/Cmd+R is unchanged. The bar has no slide-in inside the
+menu, is smaller with a mouse and stays finger-sized on touch; touch
+menu items get 16px text and 44px rows.
 
 The hover react / "..." icons are gone and no column is reserved for
 them. "..." stays in the DOM, visually hidden until :focus-visible, so
-keyboard users keep a focusable way in (macOS has no Menu key); Enter on
-the focused message itself (not on a link or media control inside it)
-opens the menu as well. The saved-messages "show in chat" button stays.
+keyboard and screen-reader users keep a way in (macOS has no Menu key);
+Enter on the focused message itself opens the menu as well (not on a
+link, media control or clickable info message), listed in the shortcuts
+sheet and in aria-keyshortcuts. The saved-messages "show in chat"
+button stays.
 
-The long-press fallback (0079) still leaves selectable text to text
-selection, but a press on a link now opens the menu (Copy Link), with
--webkit-touch-callout off on message links so iOS's preview sheet does
-not cover it.
+Phones: a long press anywhere on a message opens the menu. On coarse
+pointers nothing in a bubble is selectable: iOS otherwise starts its own
+text selection ~500ms into the press and cancels the touch, and with it
+0079's long-press fallback, so the menu never opened on iPhone. "Copy
+Text" copies the message, as in other messengers. Message links get
+-webkit-touch-callout: none so iOS's preview sheet doesn't cover the
+menu.
 ---
- packages/frontend/scss/message/_message.scss  | 21 +++++
- .../frontend/scss/misc/_context_menu.scss     | 24 +++++
- .../frontend/src/components/ContextMenu.tsx   | 82 ++++++++++++++++-
+ packages/frontend/scss/message/_message.scss  | 21 ++++
+ .../frontend/scss/misc/_context_menu.scss     | 31 +++++-
+ .../frontend/src/components/ContextMenu.tsx   | 95 ++++++++++++++++++-
  .../src/components/KeyboardShortcutHint.tsx   |  4 +
- .../components/ReactionsBar/ReactionsBar.tsx  | 34 +++++--
+ .../components/ReactionsBar/ReactionsBar.tsx  | 35 +++++--
  .../ReactionsBar/ReactionsBarContext.tsx      |  2 +
  .../src/components/ReactionsBar/index.ts      |  6 +-
  .../ReactionsBar/styles.module.scss           | 12 +++
- .../ReactionsBar/useReactionsBar.ts           |  4 +-
+ .../ReactionsBar/useReactionsBar.ts           |  6 +-
  .../src/components/ShortcutMenu/index.tsx     | 53 +----------
- .../ShortcutMenu/styles.module.scss           | 53 ++++++-----
- .../src/components/message/Message.tsx        | 91 +++++++++++--------
- .../src/utils/longPressContextMenu.ts         | 14 ++-
- 13 files changed, 273 insertions(+), 127 deletions(-)
+ .../ShortcutMenu/styles.module.scss           | 59 ++++++------
+ .../src/components/message/Message.tsx        | 91 ++++++++++--------
+ 12 files changed, 280 insertions(+), 135 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
 index d2c58bd..7b22e08 100644
@@ -75,20 +88,38 @@ index d2c58bd..7b22e08 100644
  .message {
    position: relative;
 diff --git a/packages/frontend/scss/misc/_context_menu.scss b/packages/frontend/scss/misc/_context_menu.scss
-index 3a1a5c8..ba68895 100644
+index 3a1a5c8..4cc3842 100644
 --- a/packages/frontend/scss/misc/_context_menu.scss
 +++ b/packages/frontend/scss/misc/_context_menu.scss
-@@ -37,6 +37,9 @@
+@@ -3,6 +3,8 @@
+ .dc-context-menu-layer {
+   width: 100vw;
+   height: 100vh;
++  // iOS Safari: 100vh reaches behind the toolbar
++  height: 100dvh;
+   // Built-in Chromium styles set `max-height` and `max-width`
+   // on `dialog:-internal-dialog-in-top-layer` to `calc(100% - 2em - 6px)`.
+   // Let's override that, otherwise the "backdrop" area doesn't
+@@ -37,6 +39,10 @@
  
    border-radius: 3px;
    overflow: hidden;
-+  // A tall menu on a small screen scrolls instead of cutting off items.
++  // A tall menu on a small screen scrolls instead of cutting off items
++  // (max-height is set in code, below the reactions header).
 +  max-height: 100%;
 +  overflow-y: auto;
  
    box-shadow:
      0 0 0 1px rgba(16, 22, 26, 0.1),
-@@ -94,3 +97,24 @@
+@@ -89,8 +95,31 @@
+     &.selected {
+       background-color: var(--chatListItemBgHover);
+     }
+-    &:focus {
++    // Not on a mouse- or touch-opened menu, whose first item gets focus
++    // only so screen readers start there.
++    &:focus-visible {
+       background-color: rgba(125, 125, 125, 0.4);
      }
    }
  }
@@ -114,7 +145,7 @@ index 3a1a5c8..ba68895 100644
 +  }
 +}
 diff --git a/packages/frontend/src/components/ContextMenu.tsx b/packages/frontend/src/components/ContextMenu.tsx
-index a1f3b55..3380229 100644
+index a1f3b55..c3e1dee 100644
 --- a/packages/frontend/src/components/ContextMenu.tsx
 +++ b/packages/frontend/src/components/ContextMenu.tsx
 @@ -9,6 +9,7 @@ import React, {
@@ -186,19 +217,26 @@ index a1f3b55..3380229 100644
  
        await new Promise<void>((resolve, _reject) => {
          endPromiseRef.current = resolve
-@@ -139,6 +157,11 @@ export function ContextMenuLayer({
+@@ -135,10 +153,18 @@ export function ContextMenuLayer({
+     const { height: layerHeight, width: layerWidth } =
+       layerRef.current.getBoundingClientRect()
+ 
++    // The header sits above the menu; both move as one block, so a tall
++    // menu may only take what the header leaves (it scrolls, see the scss).
++    const header = headerRef.current
++    const headerHeight = header ? header.offsetHeight + HEADER_GAP : 0
++    menuEl.style.maxHeight = `${layerHeight - headerHeight}px`
++
+     const menu = {
        height: menuEl.clientHeight,
        width: menuEl.clientWidth,
      }
-+    // The header sits above the menu; both move as one block.
-+    const header = headerRef.current
-+    const headerHeight = header ? header.offsetHeight + HEADER_GAP : 0
 +    const headerWidth = header?.offsetWidth ?? 0
 +    const blockHeight = headerHeight + menu.height
  
      // Place at cursor first
      let top = cursorY.current
-@@ -150,14 +173,24 @@ export function ContextMenuLayer({
+@@ -150,14 +176,24 @@ export function ContextMenuLayer({
      }
  
      // If doesn't fit move down
@@ -226,7 +264,7 @@ index a1f3b55..3380229 100644
    }, [])
  
    const cancel = useCallback((evt?: React.MouseEvent) => {
-@@ -188,6 +221,17 @@ export function ContextMenuLayer({
+@@ -188,6 +224,17 @@ export function ContextMenuLayer({
        // The dialog semantics are not needed, and are probably confusing.
        role='presentation'
      >
@@ -244,7 +282,7 @@ index a1f3b55..3380229 100644
        {currentItems.length > 0 && (
          <ContextMenu
            rightLimit={position.rightLimit}
-@@ -197,6 +241,10 @@ export function ContextMenuLayer({
+@@ -197,6 +244,10 @@ export function ContextMenuLayer({
            openCallback={showAfter}
            closeCallback={cancel}
            ariaAttrs={currentAriaAttrs}
@@ -255,7 +293,7 @@ index a1f3b55..3380229 100644
          />
        )}
      </dialog>
-@@ -212,6 +260,7 @@ export function ContextMenu(props: {
+@@ -212,6 +263,7 @@ export function ContextMenu(props: {
    closeCallback: (evt?: React.MouseEvent) => void
    // TODO make this a required prop.
    ariaAttrs?: MenuAriaAttrs
@@ -263,25 +301,35 @@ index a1f3b55..3380229 100644
  }) {
    const { closeCallback } = props
  
-@@ -222,7 +271,7 @@ export function ContextMenu(props: {
-   // always one item less than menuLevelEls
-   const [openSublevels, setSublevels] = useState<number[]>([])
+@@ -224,6 +276,17 @@ export function ContextMenu(props: {
    // Which one of the last sublevel items the keyboard is focused on
--  const keyboardFocus = useRef<number>(-1)
-+  const keyboardFocus = useRef<number>(props.focusFirstItem ? 0 : -1)
+   const keyboardFocus = useRef<number>(-1)
  
++  // Once, on open (not via keyboardFocus: every mouseover re-runs the effect
++  // below, which would keep pulling focus back to this item).
++  const { focusFirstItem } = props
++  useEffect(() => {
++    if (focusFirstItem) {
++      menuLevelEls.current[0]
++        ?.querySelector<HTMLElement>('[role="menuitem"]')
++        ?.focus()
++    }
++  }, [focusFirstItem])
++
    const levelItems: ContextMenuLevel[] = useMemo(() => {
      let items = props.items.filter(val => val !== false) as ContextMenuItem[]
-@@ -338,6 +387,29 @@ export function ContextMenu(props: {
+     const levelItems = [{ items }]
+@@ -338,6 +401,30 @@ export function ContextMenu(props: {
          return skipIfSeperator(parent?.lastElementChild as HTMLDivElement)
        }
  
 +      // Focus in the header (the reactions bar): it handles its own
-+      // left/right; ArrowDown (`current` is null) enters the menu below.
++      // left/right; with `current` null, ArrowDown enters the menu at its
++      // first item and ArrowUp at its last.
 +      const headerFocus = (ev.target as Element | null)?.closest?.(
 +        '.dc-context-menu-header'
 +      )
-+      if (headerFocus && ev.code !== 'ArrowDown') {
++      if (headerFocus && ev.code !== 'ArrowDown' && ev.code !== 'ArrowUp') {
 +        return
 +      }
 +      if (
@@ -318,30 +366,31 @@ index 0d4a1ed..79d4027 100644
    ]
  }
 diff --git a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx b/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
-index f2331b6..a24c796 100644
+index f2331b6..695008e 100644
 --- a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
 +++ b/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
-@@ -22,6 +22,12 @@ type Props = {
+@@ -22,6 +22,13 @@ type Props = {
    messageId: number
    myReaction?: string
    onClick: () => void
 +  /** Open with the full emoji picker instead of the default row. */
 +  showAllEmojis?: boolean
-+  /** Replaces swapping in the picker in place (used inside the context menu). */
++  /**
++   * Inside the context menu: replaces swapping in the picker in place, and
++   * the menu owns focus (no autofocus on the first emoji).
++   */
 +  onShowAllEmojis?: () => void
-+  /** Focus the first emoji on mount (off inside the context menu). */
-+  autoFocus?: boolean
  }
  
  const DEFAULT_EMOJIS = ['👍', '👎', '❤️', '😂', '🙁']
-@@ -30,11 +36,17 @@ export default function ReactionsBar({
+@@ -30,11 +37,17 @@ export default function ReactionsBar({
    onClick,
    messageId,
    myReaction,
 +  showAllEmojis: initialShowAllEmojis = false,
 +  onShowAllEmojis,
-+  autoFocus = true,
  }: Props) {
++  const autoFocus = !onShowAllEmojis
    const tx = useTranslationFunction()
  
    const reactionsBarRef = useRef<HTMLDivElement>(null)
@@ -352,7 +401,7 @@ index f2331b6..a24c796 100644
      // IDK why, but `focus()` doesn't work if it's the first time
      // that we open the reactions bar for a chat.
      setTimeout(() => {
-@@ -46,26 +58,30 @@ export default function ReactionsBar({
+@@ -46,26 +59,30 @@ export default function ReactionsBar({
        }
        firstButton.focus()
      })
@@ -458,7 +507,7 @@ index 72fe1c9..130a43d 100644
    background-color: rgb(120, 120, 120);
  }
 diff --git a/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts b/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts
-index fd313fb..1844d6c 100644
+index fd313fb..b8465b5 100644
 --- a/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts
 +++ b/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts
 @@ -11,7 +11,7 @@ type UseReactionsBar = Pick<
@@ -470,12 +519,14 @@ index fd313fb..1844d6c 100644
        reactions: T.Message['reactions']
      }
    ) => void
-@@ -49,7 +49,7 @@ export function showReactionsUi(message: T.Message, chat: T.FullChat): boolean {
+@@ -49,7 +49,9 @@ export function showReactionsUi(message: T.Message, chat: T.FullChat): boolean {
    return chat.canSend && !message.isInfo && message.originalMsgId === null
  }
  
 -function getMyReaction(reactions: T.Message['reactions']): string | undefined {
-+export function getMyReaction(reactions: T.Message['reactions']): string | undefined {
++export function getMyReaction(
++  reactions: T.Message['reactions']
++): string | undefined {
    if (
      reactions &&
      C.DC_CONTACT_ID_SELF in reactions.reactionsByContact &&
@@ -572,21 +623,22 @@ index a70e1f2..25658ed 100644
        tabIndex={props.tabIndex}
      >
 diff --git a/packages/frontend/src/components/ShortcutMenu/styles.module.scss b/packages/frontend/src/components/ShortcutMenu/styles.module.scss
-index 146bfda..9000c71 100644
+index 146bfda..c93dd15 100644
 --- a/packages/frontend/src/components/ShortcutMenu/styles.module.scss
 +++ b/packages/frontend/src/components/ShortcutMenu/styles.module.scss
-@@ -1,4 +1,6 @@
+@@ -1,53 +1,45 @@
 -$shortcutMenuWidth: 65px;
-+// Nothing is shown here by default any more (reactions and the menu open by
-+// right-click / long press / Enter), so no column is reserved for it.
++// Only Saved Messages' "show in chat" button takes space here (it sets
++// --shortcut-menu-width); the "…" button only shows on keyboard focus.
 +$shortcutMenuWidth: 0px;
  $transitionDuration: 50ms;
  
  .shortcutMenu {
-@@ -7,15 +9,9 @@ $transitionDuration: 50ms;
+   align-items: center;
+   display: flex;
    flex: 0 0 var(--shortcut-menu-width, #{$shortcutMenuWidth});
-   column-gap: 4px;
-   justify-content: space-between;
+-  column-gap: 4px;
+-  justify-content: space-between;
 +  position: relative;
    width: var(--shortcut-menu-width, #{$shortcutMenuWidth});
  
@@ -597,19 +649,23 @@ index 146bfda..9000c71 100644
 -  // Yes, `visibility` works ok.
 -  transition-property: visibility, opacity;
 -
-   &.incoming {
-     flex-direction: row;
-     margin-inline-start: 10px;
-@@ -27,7 +23,7 @@ $transitionDuration: 50ms;
+-  &.incoming {
+-    flex-direction: row;
+-    margin-inline-start: 10px;
+-  }
+-
+   &.outgoing {
+     flex-direction: row-reverse;
+-    margin-inline-end: 10px;
    }
  }
  
 -.shortcutMenuButton {
+-  opacity: 0.6;
 +.contextMenuButton {
-   opacity: 0.6;
    background-color: var(--chatViewBg);
    border: 0;
-@@ -35,19 +31,28 @@ $transitionDuration: 50ms;
+   border-radius: 50%;
    cursor: pointer;
    margin: 0;
    padding: 5px;
@@ -636,24 +692,21 @@ index 146bfda..9000c71 100644
 +    padding: 0;
 +  }
 +
-+  &:focus-visible {
-+    opacity: 1;
-+  }
-+
 +  .incoming > & {
-+    inset-inline-start: 0;
++    inset-inline-start: 10px;
 +  }
 +
 +  .outgoing > & {
-+    inset-inline-end: 0;
++    inset-inline-end: 10px;
 +  }
  }
  
  .shortcutMenuIcon {
-@@ -58,6 +63,12 @@ $transitionDuration: 50ms;
+@@ -58,6 +50,13 @@ $transitionDuration: 50ms;
  }
  
  .originalMessageButton {
++  margin-inline: 10px;
 +  visibility: var(--shortcut-menu-visibility);
 +  opacity: var(--shortcut-menu-multiplier);
 +  transition-duration: $transitionDuration;
@@ -664,7 +717,7 @@ index 146bfda..9000c71 100644
    border-radius: 100%;
    height: 40px;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index b32107f..c98556f 100644
+index b32107f..f46f8df 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -40,7 +40,11 @@ import useOpenViewProfileDialog from '../../hooks/dialog/useOpenViewProfileDialo
@@ -759,7 +812,7 @@ index b32107f..c98556f 100644
          chat: props.chat,
          jumpToMessage,
        }
-@@ -710,9 +677,35 @@ export default function Message(props: {
+@@ -710,9 +677,34 @@ export default function Message(props: {
            )
          : buildContextMenu(common, target)
  
@@ -772,7 +825,6 @@ index b32107f..c98556f 100644
 +                messageId={message.id}
 +                myReaction={getMyReaction(message.reactions)}
 +                onClick={close}
-+                autoFocus={false}
 +                onShowAllEmojis={() => {
 +                  // The full picker is too big to sit above the menu, so
 +                  // hand over to the standalone bar, which keeps it on screen.
@@ -795,7 +847,7 @@ index b32107f..c98556f 100644
          ariaAttrs: {
            'aria-label': tx('a11y_message_context_menu_btn_label'),
          },
-@@ -865,6 +858,27 @@ export default function Message(props: {
+@@ -865,6 +857,27 @@ export default function Message(props: {
          return
        }
  
@@ -823,6 +875,14 @@ index b32107f..c98556f 100644
        // Audio / video elements have controls that utilize
        // arrows. That is seeking, changing volume.
        // So we don't want to switch focus if all user wanted to do
+@@ -1181,6 +1194,7 @@ export default function Message(props: {
+     <div
+       onContextMenu={showContextMenu}
+       aria-haspopup='menu'
++      aria-keyshortcuts='Enter Shift+F10'
+       className={classNames(
+         'message',
+         direction,
 @@ -1355,7 +1369,6 @@ export default function Message(props: {
          </div>
        </div>
@@ -831,35 +891,3 @@ index b32107f..c98556f 100644
          direction={direction}
          message={message}
          showContextMenu={showContextMenu}
-diff --git a/packages/frontend/src/utils/longPressContextMenu.ts b/packages/frontend/src/utils/longPressContextMenu.ts
-index 3c624f5..05a3585 100644
---- a/packages/frontend/src/utils/longPressContextMenu.ts
-+++ b/packages/frontend/src/utils/longPressContextMenu.ts
-@@ -67,7 +67,13 @@ export function installLongPressContextMenu() {
-       // impossible, so those presses are left alone; a message's menu opens
-       // from the bubble's non-text parts instead. `user-select: auto`
-       // resolves through the parent, so walk up until something decides.
--      for (let el: Element | null = target; el; el = el.parentElement) {
-+      // Links are the exception: a long press on one opens the menu (with
-+      // its "Copy link"), as on Android, instead of selecting the link text.
-+      for (
-+        let el: Element | null = target.closest?.('a[href]') ? null : target;
-+        el;
-+        el = el.parentElement
-+      ) {
-         const style = window.getComputedStyle(el)
-         const userSelect = style.userSelect || style.webkitUserSelect
-         if (userSelect === 'text') {
-@@ -85,6 +91,12 @@ export function installLongPressContextMenu() {
-         timer: setTimeout(() => {
-           press = null
-           synthesized = true
-+          // On a link in selectable text, iOS may have started a word
-+          // selection by now; the menu should offer Copy Link, not
-+          // "Copy Selection" of that word.
-+          if (target.closest?.('a[href]')) {
-+            window.getSelection()?.removeAllRanges()
-+          }
-           target.dispatchEvent(
-             new MouseEvent('contextmenu', {
-               bubbles: true,
