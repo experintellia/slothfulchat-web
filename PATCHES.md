@@ -685,6 +685,13 @@ contribution intended.
 
 ## Different decisions than upstream
 
+- **Reactions inside the message menu** — right-click, long press, Enter on
+  a focused message or its "…" button open one menu with the reactions row
+  floating above it, like Signal and Telegram. The "React" item and the
+  hover icons are gone; "…" is hidden until it gets keyboard focus. On
+  phones a long press anywhere on a message opens the menu, so message
+  text can't be selected there (iOS would otherwise take the press for a
+  text selection); "Copy Text" copies it. `desktop/0089`
 - **Branding** — the app calls itself SlothfulChat and uses its own icon in
   the About dialog and welcome screen, with explicit "experimental fork, not
   affiliated with Delta Chat" notices and a source-code link. Only
