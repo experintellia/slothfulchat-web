@@ -5,6 +5,9 @@
   action from one place. The hover icons next to messages are gone; keyboard
   users can press Enter on a message to open the same menu. A long press on a
   link in a message now opens the menu too.
+- **A download can now be stopped.** Tapped a big video by accident? The
+  progress ring has an × that stops the download; tapping download again soon
+  picks up where it left off.
 - **The custom voice-message player is no longer optional.** The
   "Custom voice-message player" switch under Experimental features is gone,
   along with the browser's built-in audio controls it fell back to.

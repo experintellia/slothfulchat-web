@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 1 Oct 2026 20:06:37 +0000
-Subject: [PATCH 86/88] web-app: say why a download failed and what to do about
+Subject: [PATCH 86/89] web-app: say why a download failed and what to do about
  it
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 3 Oct 2026 00:32:55 +0000
-Subject: [PATCH 88/88] web-app: reactions bar inside the message context menu
+Subject: [PATCH 89/89] web-app: reactions bar inside the message context menu
 
 Reacting took two steps (right-click, "React", then a separate bar) or a
 hover icon. Signal and Telegram put the reactions on top of the message
@@ -524,7 +524,7 @@ index 146bfda..9000c71 100644
    border-radius: 100%;
    height: 40px;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index f108098..5909f70 100644
+index b32107f..0274c30 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -40,7 +40,11 @@ import useOpenViewProfileDialog from '../../hooks/dialog/useOpenViewProfileDialo
@@ -680,7 +680,7 @@ index f108098..5909f70 100644
        // Audio / video elements have controls that utilize
        // arrows. That is seeking, changing volume.
        // So we don't want to switch focus if all user wanted to do
-@@ -1344,7 +1355,6 @@ export default function Message(props: {
+@@ -1355,7 +1366,6 @@ export default function Message(props: {
          </div>
        </div>
        <ShortcutMenu

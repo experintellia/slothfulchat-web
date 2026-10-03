@@ -17,7 +17,7 @@
 //   3. right-click a selected profile name → native menu NOT cancelled (its
 //      Copy is the only way to copy a group name; an app-wide suppressor
 //      would kill it)
-//   4. message menu (desktop/0088): reactions bar inside the same menu,
+//   4. message menu (desktop/0089): reactions bar inside the same menu,
 //      above it; no hover icons; keyboard (Enter, arrows, focus-only "…"
 //      button); long press on the bubble / a link opens it, on text it
 //      doesn't (CDP touches, which headless chromium answers with no native
