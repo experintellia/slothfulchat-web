@@ -114,17 +114,20 @@ exists:
   native `<audio>` controls on voice/audio messages. The existing playback
   architecture (force-muted per-bubble mirror + global singleton, one-at-a-time
   playback, auto-advance) is untouched — the custom controls only drive the
-  local element. On by default; opt out at Settings → Advanced →
-  Experimental features (the switch stays there).
+  local element. Always on — the native-controls fallback and its setting
+  were retired once the player had shipped (#209).
   Phase two adds a canvas waveform (peaks computed lazily: fetch → decode →
-  64-bucket max-abs in a worker served by the web-app shell, ~4s budget,
+  128-bucket RMS normalized to the recording's 95th percentile on the main
+  thread, ~4s budget,
   silent fallback to the plain bar — playback never waits on it), remembered
   per-message playback position (restored on return, cleared on natural end),
   seek positions actually carried onto the global player (scrub-before-play
   now works), a live rolling waveform in the recorder's level meter, and
   on-device User Timing profiling of peak generation surfaced in Diagnostics
   ("measure first" — no peak cache until the numbers demand it, see issue
-  A2.5). Phase three upgrades the global mini-player: the same custom
+  A2.5). The bars are rounded, 3px wide at a fixed pitch (count follows the
+  bubble width), and the played colour sweeps through a bar instead of
+  jumping a whole bar at a time (`desktop/0085`). Phase three upgrades the global mini-player: the same custom
   controls drive the singleton directly (waveform, time, speed), plus a
   clickable sender line (avatar + name + chat) that jumps to the message,
   and `navigator.mediaSession` wiring (lock-screen/hardware play, pause,
@@ -199,6 +202,12 @@ exists:
   back to whole-message downloads with a one-time device-message notice.
   `core/0020`–`core/0021`, `desktop/0063`; plus a `Fetch::body_origin()`
   accessor in the vendored async-imap (to be proposed upstream).
+- **Stopping a download** — the progress ring of a downloading message has an
+  × that stops it (new `abort_download` JSON-RPC call): the queue entry goes,
+  the download button comes back, and the running chunk loop stops before its
+  next chunk. The staging file stays, so tapping download again resumes where
+  it stopped. A whole-message fetch on a server without partial FETCH cannot
+  be interrupted and still finishes. `core/0035`, `desktop/0086`
 - **HTML email viewer ("Show Full Message…")** — the browser edition of
   desktop's sandboxed email window: a fullscreen in-app dialog whose content
   is DOMPurify-sanitized and rendered in an iframe with an opaque no-script

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 12 Aug 2026 13:49:31 +0000
-Subject: [PATCH 77/84] web-app: fix recorder gesture precedence, AudioContext
+Subject: [PATCH 77/86] web-app: fix recorder gesture precedence, AudioContext
  leak, phone margins
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -45,10 +45,10 @@ after it landed.
  3 files changed, 23 insertions(+), 6 deletions(-)
 
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-index dc14d0a..9cfde87 100644
+index 63d3880..75b50db 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 +++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-@@ -516,7 +516,11 @@ export const AudioRecorder = ({
+@@ -483,7 +483,11 @@ export const AudioRecorder = ({
        const dy = ev.clientY - startY
        setSlideDx(Math.min(dx, 0))
        setCancelArmed(dx <= CANCEL_DX)

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 1 Oct 2026 20:06:37 +0000
-Subject: [PATCH 83/84] web-app: say why a download failed and what to do about
+Subject: [PATCH 83/86] web-app: say why a download failed and what to do about
  it
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -52,7 +52,7 @@ index 7405e25..ea3bd34 100644
    }
  }
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-index a8c369b..8101f0a 100644
+index 73525b8..b4691ab 100644
 --- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 @@ -1,6 +1,6 @@
@@ -63,7 +63,7 @@ index a8c369b..8101f0a 100644
  
  import { runtime } from '@deltachat-desktop/runtime-interface'
  import { BackendRemote } from '../../backend-com'
-@@ -84,6 +84,31 @@ function Preview({
+@@ -83,6 +83,31 @@ function Preview({
    )
  }
  
@@ -95,7 +95,7 @@ index a8c369b..8101f0a 100644
  function CircleDownloadButton({
    messageId,
    accountId,
-@@ -130,9 +155,7 @@ function DownloadControls({
+@@ -129,9 +154,7 @@ function DownloadControls({
    const { downloadState } = message
    return (
      <div className='download-on-demand-controls'>
@@ -106,16 +106,16 @@ index a8c369b..8101f0a 100644
        {downloadState === 'InProgress' ? (
          <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
        ) : (
-@@ -270,7 +293,7 @@ export default function DownloadOnDemandPlaceholder({
+@@ -252,7 +275,7 @@ export default function DownloadOnDemandPlaceholder({
            </div>
-         )}
+         </div>
          {message.downloadState === 'Failure' && (
 -          <span className='failed'>{tx('download_failed')}</span>
 +          <DownloadFailedLabel message={message} />
          )}
        </div>
      )
-@@ -288,7 +311,7 @@ export default function DownloadOnDemandPlaceholder({
+@@ -270,7 +293,7 @@ export default function DownloadOnDemandPlaceholder({
            <div className='name'>{message.fileName}</div>
          </div>
          {message.downloadState === 'Failure' && (
@@ -124,7 +124,7 @@ index a8c369b..8101f0a 100644
          )}
          {message.downloadState === 'InProgress' ? (
            <ProgressCircle percent={downloadPercent} label={tx('downloading')} />
-@@ -329,7 +352,7 @@ export default function DownloadOnDemandPlaceholder({
+@@ -311,7 +334,7 @@ export default function DownloadOnDemandPlaceholder({
          <div className='name'>{message.fileName}</div>
          <div className='size'>{filesize(message.fileBytes ?? 0)}</div>
          {message.downloadState === 'Failure' && (

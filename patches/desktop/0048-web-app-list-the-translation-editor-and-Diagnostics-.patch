@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 16 Jul 2026 02:54:51 +0000
-Subject: [PATCH 48/84] web-app: list the translation editor and Diagnostics
+Subject: [PATCH 48/86] web-app: list the translation editor and Diagnostics
  shortcuts in the keyboard shortcuts cheat sheet
 
 Ctrl/Cmd+Shift+L opens the in-app translation editor and Ctrl/Cmd+Shift+D the

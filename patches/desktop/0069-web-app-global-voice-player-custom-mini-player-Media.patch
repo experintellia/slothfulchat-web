@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 1 Aug 2026 17:29:03 +0000
-Subject: [PATCH 69/84] =?UTF-8?q?web-app:=20global=20voice=20player=20?=
+Subject: [PATCH 69/86] =?UTF-8?q?web-app:=20global=20voice=20player=20?=
  =?UTF-8?q?=E2=80=94=20custom=20mini-player,=20Media=20Session,=20mobile?=
  =?UTF-8?q?=20strip?=
 MIME-Version: 1.0
@@ -82,22 +82,22 @@ Pure helpers (mediaSessionMetadata, clampSeek, voicePlayerSurface) plus
 the positionStore/utils cases are covered by the audioPlayer mocha
 suite (lands here because it imports mediaSession.ts).
 ---
- .../GlobalVoiceMessagePlayer.tsx              | 524 +++++++++++++++++-
- .../GlobalVoiceMessagePlayer/mediaSession.ts  |  78 +++
+ .../GlobalVoiceMessagePlayer.tsx              | 517 ++++++++++++++++--
+ .../GlobalVoiceMessagePlayer/mediaSession.ts  |  72 +++
  .../styles.module.scss                        | 132 +++++
- .../src/components/Settings/Notifications.tsx |   9 +
+ .../src/components/Settings/Notifications.tsx |   6 +
  .../screens/MainScreen/MainScreen.tsx         |  12 +-
  .../screens/MainScreen/styles.module.scss     |  19 +
- .../frontend/src/tests/audioPlayer.test.ts    | 178 ++++++
- 7 files changed, 934 insertions(+), 18 deletions(-)
+ .../frontend/src/tests/audioPlayer.test.ts    | 193 +++++++
+ 7 files changed, 918 insertions(+), 33 deletions(-)
  create mode 100644 packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
  create mode 100644 packages/frontend/src/tests/audioPlayer.test.ts
 
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
-index 49a037c..b6ce215 100644
+index 49a037c..d6a6da1 100644
 --- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
 +++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
-@@ -1,20 +1,286 @@
+@@ -1,50 +1,503 @@
 -import React, { useContext } from 'react'
 +import React, { useContext, useEffect, useEffectEvent, useMemo } from 'react'
 +import classNames from 'classnames'
@@ -149,23 +149,15 @@ index 49a037c..b6ce215 100644
 +  const { smallScreenMode } = useContext(ScreenContext)
 +
 +  const desktopSettings = useSettingsStore()[0]?.desktopSettings
-+  const customControlsEnabled =
-+    desktopSettings?.experimentalAudioPlayerControls === true
 +  const showDetails = desktopSettings?.voiceMessageMediaSessionDetails === true
 +
 +  const currentSrc = mediaPlayerMutexCtx.currentSrc
 +  const currMessage = nextVoiceMessagePlayerCtx.currMessage
 +
-+  const surface = voicePlayerSurface(
-+    smallScreenMode,
-+    customControlsEnabled,
-+    currentSrc != null
-+  )
++  const surface = voicePlayerSurface(smallScreenMode, currentSrc != null)
 +  // The strip mounts above the chat-list/chat-view switch (it must survive
-+  // both), the bar and the native element inside the chat-list column.
-+  const isOurSurface = strip
-+    ? surface === 'strip'
-+    : surface === 'bar' || surface === 'native'
++  // both), the bar inside the chat-list column.
++  const isOurSurface = surface === (strip ? 'strip' : 'bar')
 +
 +  // Wrap the never-changing singleton in a stable ref object so
 +  // CustomAudioControls' effects (keyed on `audioRef`) don't re-subscribe on
@@ -176,10 +168,9 @@ index 49a037c..b6ce215 100644
 +  )
 +
 +  // Sender + chat for the mini-player's clickable label (once per message).
-+  // Only fetched with the custom player on, so the native path is untouched,
-+  // and only by the instance that actually renders, so the idle mount point
-+  // costs nothing.
-+  const active = isOurSurface && customControlsEnabled && currMessage != null
++  // Only fetched by the instance that actually renders, so the idle mount
++  // point costs nothing.
++  const active = isOurSurface && currMessage != null
 +  // ponytail: on auto-advance this refetches the message the context just
 +  // fetched as `nextMessage` (one duplicate local getMessage per advance; the
 +  // bubble-initiated first message has no prefetched copy, so the fetch must
@@ -234,7 +225,7 @@ index 49a037c..b6ce215 100644
 +  useMediaSession(
 +    // Belongs to whichever instance is mounted — the idle one must not
 +    // register (or, on a breakpoint change, clear) the OS handlers.
-+    isOurSurface && customControlsEnabled,
++    isOurSurface,
 +    mediaPlayerMutexCtx.audioElement,
 +    meta,
 +    // No next-track when there's no queued message (e.g. draft audio preview):
@@ -330,82 +321,63 @@ index 49a037c..b6ce215 100644
 +
 +  // Custom mini-player: sender line + singleton-driven controls, in place of
 +  // re-parenting the native <audio> singleton into the bar.
-+  if (surface === 'bar') {
-+    return (
-+      <section
-+        className={classNames(styles.root, styles.rootCustom)}
-+        aria-label={tx('audio')}
-+      >
-+        {/*
+   return (
+-    <section className={styles.root} aria-label={tx('audio')}>
+-      <div
+-        className={styles.audioElContainer}
+-        ref={el => {
+-          if (el == undefined) {
+-            return
+-          }
+-          // Don't append if already appended.
+-          // Otherwise the submenus of the audio element would close,
+-          // e.g. "playback rate".
+-          if (el.contains(mediaPlayerMutexCtx.audioElement)) {
+-            return
++    <section
++      className={classNames(styles.root, styles.rootCustom)}
++      aria-label={tx('audio')}
++    >
++      {/*
 +          Only render the clickable sender row once there's a message to jump
 +          to AND its fetch resolved — otherwise (draft audio preview, or an
 +          in-flight auto-advance fetch) this would be an empty focusable button
 +          whose activation does nothing. Controls + close still render.
 +        */}
-+        {currMessage != null && message != null && (
-+          <button
-+            className={styles.senderLine}
-+            type='button'
-+            onClick={onJumpToMessage}
-+            title={tx('jump_to_message')}
-+          >
-+            <Avatar
-+              avatarPath={avatarPath}
-+              color={message.sender.color}
-+              displayName={senderName}
-+              addr={message.sender.address}
-+              small
-+              aria-hidden={true}
-+            />
-+            <span className={styles.senderText}>
-+              <span className={styles.senderName}>{senderName}</span>
-+              {showChatName && (
-+                <span className={styles.chatName}>{chatName}</span>
-+              )}
-+            </span>
-+          </button>
-+        )}
-+        <div className={styles.controlsRow}>
-+          {/*
++      {currMessage != null && message != null && (
++        <button
++          className={styles.senderLine}
++          type='button'
++          onClick={onJumpToMessage}
++          title={tx('jump_to_message')}
++        >
++          <Avatar
++            avatarPath={avatarPath}
++            color={message.sender.color}
++            displayName={senderName}
++            addr={message.sender.address}
++            small
++            aria-hidden={true}
++          />
++          <span className={styles.senderText}>
++            <span className={styles.senderName}>{senderName}</span>
++            {showChatName && (
++              <span className={styles.chatName}>{chatName}</span>
++            )}
++          </span>
++        </button>
++      )}
++      <div className={styles.controlsRow}>
++        {/*
 +            Drive THE SINGLETON directly (not a muted proxy): play/pause/seek/
 +            rate act on the element that produces sound. A2's restore guard
 +            (`!globalEl.paused && src matches → skip`) is a no-op for live
 +            playback here because audioRef.current IS ctx.audioElement, so it
 +            never rewinds the message that's currently playing.
 +          */}
-+          <CustomAudioControls
-+            audioRef={singletonRef}
-+            src={currentSrc}
-+            compact
-+          />
-+          {closeButton}
-+        </div>
-+      </section>
-+    )
-+  }
-+
-+  // Native path (setting off): unchanged — re-parent the singleton controls.
-   return (
-     <section className={styles.root} aria-label={tx('audio')}>
-       <div
-@@ -32,19 +298,243 @@ export function GlobalVoiceMessagePlayer() {
-           el.append(mediaPlayerMutexCtx.audioElement)
-         }}
-       />
--      <button
--        className={styles.closeButton}
--        type='button'
--        aria-label={tx('close')}
--        onClick={() => {
--          mediaPlayerMutexCtx.stop()
--          // Functionality-wise this is not necessary, but let's do it
--          // for good measure.
--          nextVoiceMessagePlayerCtx.setCurrMessage(null)
--        }}
--      >
--        <Icon className={styles.closeButtonIcon} icon={'cross'} size={26} />
--      </button>
-+      {closeButton}
++        <CustomAudioControls audioRef={singletonRef} src={currentSrc} compact />
++        {closeButton}
++      </div>
 +    </section>
 +  )
 +}
@@ -476,7 +448,23 @@ index 49a037c..b6ce215 100644
 +          aria-label={tx('a11y_playback_speed', `${ctx.playbackRate}×`)}
 +          onClick={() =>
 +            ctx.setPlaybackRate(nextPlaybackRate(ctx.playbackRate))
-+          }
+           }
+-          el.append(mediaPlayerMutexCtx.audioElement)
+-        }}
+-      />
+-      <button
+-        className={styles.closeButton}
+-        type='button'
+-        aria-label={tx('close')}
+-        onClick={() => {
+-          mediaPlayerMutexCtx.stop()
+-          // Functionality-wise this is not necessary, but let's do it
+-          // for good measure.
+-          nextVoiceMessagePlayerCtx.setCurrMessage(null)
+-        }}
+-      >
+-        <Icon className={styles.closeButtonIcon} icon={'cross'} size={26} />
+-      </button>
 +        >
 +          {ctx.playbackRate}×
 +        </button>
@@ -647,10 +635,10 @@ index 49a037c..b6ce215 100644
 +}
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts b/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
 new file mode 100644
-index 0000000..a2a8e05
+index 0000000..c695897
 --- /dev/null
 +++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,72 @@
 +// Pure helpers for the global voice-message player: `navigator.mediaSession`
 +// metadata/seeking, and which player surface renders. Kept free of
 +// browser/React APIs so they're unit-testable; the hook in
@@ -658,13 +646,11 @@ index 0000000..a2a8e05
 +// setPositionState / action-handler calls.
 +
 +/**
-+ * Which player surface renders, from the layout, the experimental setting and
-+ * whether anything is playing. Exactly one at a time — the strip *replaces*
-+ * the bar on the single-column layout, it never doubles it.
++ * Which player surface renders, from the layout and whether anything is
++ * playing. Exactly one at a time — the strip *replaces* the bar on the
++ * single-column layout, it never doubles it.
 + *
 + * - `'none'` — nothing playing.
-+ * - `'native'` — setting off: the re-parented `<audio>` element, at the bottom
-+ *   of the chat-list column (unchanged on every viewport).
 + * - `'strip'` — single-column (small-screen) layout: that column is hidden
 + *   while a chat is open, taking the bar with it (#137), so the player moves
 + *   to a slim strip under the navbar instead.
@@ -672,14 +658,10 @@ index 0000000..a2a8e05
 + */
 +export function voicePlayerSurface(
 +  smallScreen: boolean,
-+  customControls: boolean,
 +  hasSrc: boolean
-+): 'none' | 'native' | 'strip' | 'bar' {
++): 'none' | 'strip' | 'bar' {
 +  if (!hasSrc) {
 +    return 'none'
-+  }
-+  if (!customControls) {
-+    return 'native'
 +  }
 +  return smallScreen ? 'strip' : 'bar'
 +}
@@ -870,10 +852,10 @@ index 9b4893c..7b78384 100644
 +  }
 +}
 diff --git a/packages/frontend/src/components/Settings/Notifications.tsx b/packages/frontend/src/components/Settings/Notifications.tsx
-index b29ea71..aeb2477 100644
+index b29ea71..3f65684 100644
 --- a/packages/frontend/src/components/Settings/Notifications.tsx
 +++ b/packages/frontend/src/components/Settings/Notifications.tsx
-@@ -118,6 +118,15 @@ export default function Notifications({ desktopSettings }: Props) {
+@@ -118,6 +118,12 @@ export default function Notifications({ desktopSettings }: Props) {
          label={tx('pref_show_notification_content')}
          disabled={!desktopSettings['notifications']}
        />
@@ -881,9 +863,6 @@ index b29ea71..aeb2477 100644
 +        settingsKey='voiceMessageMediaSessionDetails'
 +        label='Show voice-message details in system media controls'
 +        description='Show the sender name, chat name and avatar of the playing voice message in the OS media controls. Off by default: like notification content, these controls can appear on the lock screen, so the details would show there.'
-+        // only has an effect while the custom voice player draws the media
-+        // session; same dependent-switch treatment as the row above
-+        disabled={!desktopSettings['experimentalAudioPlayerControls']}
 +        forkAdded
 +      />
        <DesktopSettingsSwitch
@@ -951,14 +930,15 @@ index ecb6180..821e9bc 100644
    flex-direction: column;
 diff --git a/packages/frontend/src/tests/audioPlayer.test.ts b/packages/frontend/src/tests/audioPlayer.test.ts
 new file mode 100644
-index 0000000..1c0f28e
+index 0000000..270eb02
 --- /dev/null
 +++ b/packages/frontend/src/tests/audioPlayer.test.ts
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,193 @@
 +import { expect } from 'chai'
 +import { describe, it } from 'mocha'
 +
 +import {
++  bucketPeaks,
 +  formatAudioTime,
 +  nextPlaybackRate,
 +} from '../components/AudioPlayer/utils.js'
@@ -1099,21 +1079,16 @@ index 0000000..1c0f28e
 +
 +describe('GlobalVoiceMessagePlayer / voicePlayerSurface', () => {
 +  it('renders nothing when nothing is playing', () => {
-+    expect(voicePlayerSurface(true, true, false)).to.equal('none')
-+    expect(voicePlayerSurface(false, false, false)).to.equal('none')
++    expect(voicePlayerSurface(true, false)).to.equal('none')
++    expect(voicePlayerSurface(false, false)).to.equal('none')
 +  })
 +
-+  it('setting off: the native element, on every viewport', () => {
-+    expect(voicePlayerSurface(false, false, true)).to.equal('native')
-+    expect(voicePlayerSurface(true, false, true)).to.equal('native')
++  it('small screen: the under-navbar strip', () => {
++    expect(voicePlayerSurface(true, true)).to.equal('strip')
 +  })
 +
-+  it('small screen + setting on: the under-navbar strip', () => {
-+    expect(voicePlayerSurface(true, true, true)).to.equal('strip')
-+  })
-+
-+  it('wide screen + setting on: the chat-list column bar', () => {
-+    expect(voicePlayerSurface(false, true, true)).to.equal('bar')
++  it('wide screen: the chat-list column bar', () => {
++    expect(voicePlayerSurface(false, true)).to.equal('bar')
 +  })
 +})
 +
@@ -1131,5 +1106,24 @@ index 0000000..1c0f28e
 +  it('non-finite duration only clamps the lower bound', () => {
 +    expect(clampSeek(5, 10, Infinity)).to.equal(15)
 +    expect(clampSeek(5, -10, Infinity)).to.equal(0)
++  })
++})
++
++describe('AudioPlayer / bucketPeaks', () => {
++  // Float32Array stores ~7 significant digits, so compare with a tolerance.
++  it('takes the max absolute sample per bucket', () => {
++    const data = new Float32Array(64)
++    data[10] = -0.9 // bucket size 64/8 = 8, so sample 10 → bucket 1
++    const p = bucketPeaks(data, 8)
++    expect(p.length).to.equal(8)
++    expect(p[1]).to.be.closeTo(0.9, 1e-6)
++    expect(Array.from(p).filter(v => v !== 0).length).to.equal(1)
++  })
++
++  it('handles empty input and n <= 0', () => {
++    expect(Array.from(bucketPeaks(new Float32Array(0), 4))).to.deep.equal([
++      0, 0, 0, 0,
++    ])
++    expect(bucketPeaks(new Float32Array(4).fill(1), 0).length).to.equal(0)
 +  })
 +})
