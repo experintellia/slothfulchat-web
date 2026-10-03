@@ -190,8 +190,9 @@ exists:
   clear of the composer); scrolling back to the bubble, or "Show in Chat",
   pulls it back inline at the same spot. Our own UI goes into the player as
   children of the packaged skin and fades with its controls: the mini
-  player's buttons (no title bar), the video bubble's time/✓ (no black strip
-  under the player; reactions stay), and the fullscreen viewer's own buttons.
+  player's buttons (no title bar), the video bubble's time/✓ (under the
+  seek bar, no black strip under the player; reactions keep their spot), and
+  the fullscreen viewer's own buttons.
   Labels follow the app language: instead of Video.js's I18nProvider (which
   would inline all ~50 locale packs into the unsplit bundle) we feed its
   I18nContext the active language's pack, imported at runtime from

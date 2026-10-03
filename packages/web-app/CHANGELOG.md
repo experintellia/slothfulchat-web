@@ -4,7 +4,7 @@
   plays instead of covering the bottom of the picture, and the usual keyboard
   shortcuts work once you click the video. Videos no longer make the chat
   jump while loading, and starting one pauses a playing voice message. The
-  time and checkmark sit on the video and fade while it plays.
+  time and checkmark sit under the seek bar and fade while it plays.
 - **A playing video keeps going when you scroll past it or switch chats**, in
   a small floating window you can drag around or close. Scroll back to the
   video and it jumps back into the chat. "Show in Chat" there also works for

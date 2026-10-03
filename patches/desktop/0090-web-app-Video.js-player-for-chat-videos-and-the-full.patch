@@ -38,17 +38,21 @@ formats the browser can't decode.
   exists, English otherwise. App `pt` maps to pt-PT; Serbian keeps our
   Cyrillic strings (Video.js's sr pack is Latin script).
 
-- Video-only bubbles: the player reaches the bubble's bottom edge (no
-  black strip); time/✓ sit on the video above the control bar and fade
-  with the controls while playing (CSS on the container's documented
-  data-controls-visible state); reactions and a send error stay visible.
+- Video-only bubbles: the player fills the bubble to its bottom edge
+  (no black strip, with or without reactions). The footer keeps its
+  usual media row (reactions straddling the bottom edge, time/✓ at the
+  end) and the skin's control bar is lifted so time/✓ sit under the
+  seek bar; time/✓ fade with the controls while playing (CSS on the
+  container's documented data-controls-visible state), reactions and a
+  send error stay. Lifting the bar needs one rule on an internal skin
+  class (no public setting); the e2e layout checks catch a rename.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  packages/frontend/package.json                |   1 +
  .../scss/gallery/_attachment-view.scss        |  25 +++
  .../scss/message/_message-attachment.scss     |   8 +-
- packages/frontend/scss/message/_message.scss  |  20 ++
+ packages/frontend/scss/message/_message.scss  |  31 +++
  .../src/components/attachment/VideoPlayer.tsx | 198 ++++++++++++++++++
  .../attachment/messageAttachment.tsx          |  24 ++-
  .../components/dialogs/FullscreenMedia.tsx    |  16 +-
@@ -58,7 +62,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  packages/frontend/src/types.d.ts              |   1 +
  pnpm-lock.yaml                                | 172 +++++++++++++--
  pnpm-workspace.yaml                           |   9 +
- 13 files changed, 452 insertions(+), 33 deletions(-)
+ 13 files changed, 463 insertions(+), 33 deletions(-)
  create mode 100644 packages/frontend/src/components/attachment/VideoPlayer.tsx
 
 diff --git a/packages/frontend/package.json b/packages/frontend/package.json
@@ -137,23 +141,34 @@ index 7a3d610..af80545 100644
    }
  
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index d2c58bd..bc5724b 100644
+index d2c58bd..2548ec8 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
-@@ -354,6 +354,26 @@ $info-text-max-width: 400px;
+@@ -354,6 +354,37 @@ $info-text-max-width: 400px;
    }
  }
  
-+// The Video.js player reaches the bubble's bottom edge (no black strip under
-+// it): time/✓ sit on the video just above its control bar and fade with the
-+// controls while it plays; reactions stay. A send error stays visible.
++// The Video.js player fills the bubble down to its bottom edge (no black
++// strip). The footer keeps its usual media spot (bottom row: reactions at the
++// start, time/✓ at the end); the skin's control bar is lifted so that row sits
++// under the seek bar. Time/✓ fade with the controls while playing; reactions
++// and a send error stay.
 +.message.video-only {
-+  .message-attachment-media.video {
-+    // flush with the bubble's bottom edge (its padding is 6px here)
-+    margin-bottom: -6px;
++  .msg-container {
++    padding-bottom: 0;
 +  }
-+  footer {
-+    bottom: 60px;
++  .message-attachment-media.video {
++    margin-bottom: 0;
++    // undo the -4px that absorbs the (here removed) bubble padding
++    > .attachment-content {
++      margin-bottom: 0;
++    }
++  }
++  // ponytail: internal skin class (packaged skins expose no setting for the
++  // control bar's position); shot-video-player.mjs checks the layout, so a
++  // Video.js update that renames it fails there.
++  .video-controls-primary {
++    bottom: 30px;
 +  }
 +  .metadata {
 +    transition: opacity 0.25s;

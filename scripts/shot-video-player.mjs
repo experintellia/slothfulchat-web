@@ -167,24 +167,51 @@ try {
   // time/✓ sit on the video and fade with the controls; reactions stay
   const footerState = () =>
     page.evaluate(() => {
-      const msg = document.querySelector('.message.video-only')
+      const msgs = [...document.querySelectorAll('.message.video-only')]
+      const msg = msgs[0]
       const meta = msg.querySelector('footer .metadata')
-      const skin = msg.querySelector('.media-skin').getBoundingClientRect()
-      const bubbleBox = msg.querySelector('.msg-container').getBoundingClientRect()
+      const bar = msg.querySelector('.video-controls-primary').getBoundingClientRect()
+      const reaction = [...msg.querySelectorAll('footer *')].find(
+        (e) => e.children.length === 0 && /👍/.test(e.textContent)
+      )
+      // strip = bubble bottom minus player bottom, for every video bubble
+      // (the second one has no reaction)
+      const strips = msgs.map((m) =>
+        Math.round(
+          m.querySelector('.msg-container').getBoundingClientRect().bottom -
+            m.querySelector('.media-skin').getBoundingClientRect().bottom
+        )
+      )
+      const bubble = msg.querySelector('.msg-container').getBoundingClientRect()
       return {
         meta: getComputedStyle(meta).opacity,
-        reaction: /👍/.test(msg.querySelector('footer').textContent),
-        strip: bubbleBox.bottom - skin.bottom,
+        metaBelowBar: meta.getBoundingClientRect().top >= bar.bottom - 1,
+        reaction: !!reaction,
+        reactionFromBottom: reaction
+          ? Math.round(bubble.bottom - reaction.getBoundingClientRect().bottom)
+          : null,
+        strips,
       }
     })
   const playingFooter = await footerState()
   assert(playingFooter.meta === '0', 'time/✓ fade while playing')
   assert(playingFooter.reaction, 'reactions stay on the playing video')
-  assert(Math.abs(playingFooter.strip) <= 2, `no strip under the player (${playingFooter.strip}px)`)
+  assert(
+    playingFooter.strips.every((x) => Math.abs(x) <= 1),
+    `no strip under the player, with or without reactions (${playingFooter.strips}px)`
+  )
+  assert(
+    // media reactions straddle the bubble's bottom edge, as before the player
+    playingFooter.reactionFromBottom != null &&
+      Math.abs(playingFooter.reactionFromBottom) <= 14,
+    `reaction keeps its old spot on the bubble's bottom edge (${playingFooter.reactionFromBottom}px)`
+  )
   await player.hover()
   await page.waitForTimeout(300)
   assert(await controlsVisible(), 'controls come back on hover')
-  assert((await footerState()).meta === '1', 'time/✓ come back with the controls')
+  const shownFooter = await footerState()
+  assert(shownFooter.meta === '1', 'time/✓ come back with the controls')
+  assert(shownFooter.metaBelowBar, 'time/✓ sit under the seek bar')
   await shot('03-bubble-playing-hover')
 
   // hotkeys act while focus is inside the player
