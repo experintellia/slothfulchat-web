@@ -1,0 +1,863 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Fri, 2 Oct 2026 20:02:09 +0000
+Subject: [PATCH 90/92] web-app: Video.js player for chat videos and the
+ fullscreen viewer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replaces the native <video controls> in message bubbles and in
+FullscreenMedia with Video.js 10's packaged skin (@videojs/react).
+That brings controls that auto-hide 2 s after the pointer stops or
+leaves while playing (the native ones covered the bottom of the
+frame), YouTube-style hotkeys while the player has focus (space/k,
+j/l and arrows seek, up/down volume, m, f, i for PiP, 0-9, < >),
+touch tap-to-show-controls, double-tap seek and an error dialog for
+formats the browser can't decode.
+
+- Bubbles are sized from the sent dimensions like images (no jump
+  when metadata loads), 350px fallback; preload=metadata.
+- One medium at a time: a chat video starting pauses the voice
+  singleton (now exported) and other chat videos; a voice message
+  starting pauses videos. Scoped to video[data-chat-video].
+- Volume/mute are remembered in localStorage.
+- Keys inside a player stay with it: arrows don't move message-list
+  focus (Message.tsx carve-out) or switch media in the viewer, and the
+  type-to-focus-composer shortcut skips keys something already handled
+  (keybindings.ts: !defaultPrevented), which had eaten m/k/0-9 while
+  other letters still start a reply.
+- The viewer's own buttons (save, close, prev/next) fade with the
+  player's auto-hiding controls; hovered or focused ones stay visible.
+- Labels follow the app language without Video.js's I18nProvider,
+  which would inline all ~50 locale packs (+230 kB, the bundle has no
+  code splitting). We provide its I18nContext ourselves: the active
+  language's 3 kB pack is imported at runtime from videojs-locales/
+  (the web-app serves them, URL relative to the document so subpath
+  deployments work), our own locale strings fill in where no pack
+  exists, English otherwise. App `pt` maps to pt-PT; Serbian keeps our
+  Cyrillic strings (Video.js's sr pack is Latin script).
+
+- Video-only bubbles: the player reaches the bubble's bottom edge (no
+  black strip); time/✓ sit on the video above the control bar and fade
+  with the controls while playing (CSS on the container's documented
+  data-controls-visible state); reactions and a send error stay visible.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ packages/frontend/package.json                |   1 +
+ .../scss/gallery/_attachment-view.scss        |  25 +++
+ .../scss/message/_message-attachment.scss     |   8 +-
+ packages/frontend/scss/message/_message.scss  |  20 ++
+ .../src/components/attachment/VideoPlayer.tsx | 198 ++++++++++++++++++
+ .../attachment/messageAttachment.tsx          |  24 ++-
+ .../components/dialogs/FullscreenMedia.tsx    |  16 +-
+ .../src/components/message/Message.tsx        |   6 +-
+ .../src/contexts/MediaPlayerMutexContext.tsx  |   3 +-
+ packages/frontend/src/keybindings.ts          |   2 +
+ packages/frontend/src/types.d.ts              |   1 +
+ pnpm-lock.yaml                                | 172 +++++++++++++--
+ pnpm-workspace.yaml                           |   9 +
+ 13 files changed, 452 insertions(+), 33 deletions(-)
+ create mode 100644 packages/frontend/src/components/attachment/VideoPlayer.tsx
+
+diff --git a/packages/frontend/package.json b/packages/frontend/package.json
+index b43f0ff..e143f94 100644
+--- a/packages/frontend/package.json
++++ b/packages/frontend/package.json
+@@ -30,6 +30,7 @@
+     "@emoji-mart/data": "1.2.1",
+     "@jcoreio/async-throttle": "^1.6.1",
+     "@types/linkifyjs": "^2.1.7",
++    "@videojs/react": "10.0.0",
+     "classnames": "^2.5.1",
+     "debounce": "^1.2.1",
+     "emoji-mart-awesome": "3.0.0",
+diff --git a/packages/frontend/scss/gallery/_attachment-view.scss b/packages/frontend/scss/gallery/_attachment-view.scss
+index ebe85c1..db7d860 100644
+--- a/packages/frontend/scss/gallery/_attachment-view.scss
++++ b/packages/frontend/scss/gallery/_attachment-view.scss
+@@ -15,6 +15,15 @@
+     object-fit: contain;
+     user-select: none;
+   }
++
++  // Video.js skin container around the <video>
++  .fullscreen-video {
++    width: 100vw;
++    height: 100vh;
++    // edge to edge: no rounded frame
++    --media-video-border-radius: 0;
++    --media-frame-border: transparent;
++  }
+ }
+ 
+ .btn-wrapper {
+@@ -57,3 +66,19 @@
+ .react-transform-wrapper {
+   overflow: unset !important;
+ }
++
++// The viewer's own buttons fade with the video's auto-hiding controls. They
++// sit outside the player, so hovering one counts as leaving it: keep them
++// clickable while faded and show whichever is hovered or focused.
++.btn-wrapper,
++.media-previous-button,
++.media-next-button {
++  transition: opacity 0.25s;
++}
++.attachment-view:has(.media-skin:not([data-controls-visible]))
++  ~ :is(.btn-wrapper, .media-previous-button, .media-next-button):not(
++    :hover,
++    :focus-within
++  ) {
++  opacity: 0;
++}
+diff --git a/packages/frontend/scss/message/_message-attachment.scss b/packages/frontend/scss/message/_message-attachment.scss
+index 7a3d610..af80545 100644
+--- a/packages/frontend/scss/message/_message-attachment.scss
++++ b/packages/frontend/scss/message/_message-attachment.scss
+@@ -60,11 +60,17 @@
+     // redundant with attachment-container, but we get cursor flashing on move otherwise
+     cursor: pointer;
+ 
++    // The Video.js skin container; height/aspect-ratio come inline from the
++    // sent dimensions, 350px is the fallback when they are unknown.
+     &.video-content {
+       height: 350px;
+       min-width: 300px;
+       background-color: black;
+-      object-fit: scale-down;
++      cursor: auto;
++      text-align: start;
++      // the bubble already clips/rounds it
++      --media-video-border-radius: 0;
++      --media-frame-border: transparent;
+     }
+   }
+ 
+diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
+index d2c58bd..bc5724b 100644
+--- a/packages/frontend/scss/message/_message.scss
++++ b/packages/frontend/scss/message/_message.scss
+@@ -354,6 +354,26 @@ $info-text-max-width: 400px;
+   }
+ }
+ 
++// The Video.js player reaches the bubble's bottom edge (no black strip under
++// it): time/✓ sit on the video just above its control bar and fade with the
++// controls while it plays; reactions stay. A send error stays visible.
++.message.video-only {
++  .message-attachment-media.video {
++    // flush with the bubble's bottom edge (its padding is 6px here)
++    margin-bottom: -6px;
++  }
++  footer {
++    bottom: 60px;
++  }
++  .metadata {
++    transition: opacity 0.25s;
++  }
++  &:has(.media-skin:not([data-controls-visible]))
++    .metadata:not(:has(.status-icon.error)) {
++    opacity: 0;
++  }
++}
++
+ .message.type-sticker {
+   .msg-container {
+     background-color: transparent !important;
+diff --git a/packages/frontend/src/components/attachment/VideoPlayer.tsx b/packages/frontend/src/components/attachment/VideoPlayer.tsx
+new file mode 100644
+index 0000000..c9ead8a
+--- /dev/null
++++ b/packages/frontend/src/components/attachment/VideoPlayer.tsx
+@@ -0,0 +1,198 @@
++import React, { useEffect, useMemo, useState } from 'react'
++import { I18nContext, createTranslator } from '@videojs/react/i18n'
++import {
++  Video,
++  VideoPlayer as VjsPlayer,
++  VideoSkin,
++} from '@videojs/react/video'
++import '@videojs/react/video/skin.css'
++
++import { audioEl } from '../../contexts/MediaPlayerMutexContext'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
++
++const VOLUME_KEY = 'slothful.videoVolume'
++
++// One medium plays at a time: a chat video starting pauses the voice-message
++// singleton and every other chat video; a voice message starting pauses videos.
++// Scoped to `data-chat-video` so call/preview <video>s are left alone.
++function pauseChatVideos(except?: EventTarget | null) {
++  document
++    .querySelectorAll<HTMLVideoElement>('video[data-chat-video]')
++    .forEach(v => v !== except && v.pause())
++}
++document.addEventListener(
++  'play',
++  ev => {
++    if (
++      ev.target instanceof HTMLVideoElement &&
++      ev.target.hasAttribute('data-chat-video')
++    ) {
++      audioEl.pause()
++      pauseChatVideos(ev.target)
++    }
++  },
++  true
++)
++audioEl.addEventListener('play', () => pauseChatVideos())
++
++// Labels follow the app language. Not Video.js's I18nProvider (it would bundle
++// all ~50 packs); the web-app serves them in videojs-locales/ and we import only
++// the active one. Our own strings fill in where no pack exists.
++const OWN_STRINGS = {
++  'buttons.mute': 'mute',
++  'volume.muted': 'muted',
++  'common.ok': 'ok',
++  'menu.off': 'off',
++  'menu.back': 'back',
++  'menu.settings': 'menu_settings',
++  'menu.audio': 'audio',
++} as const
++
++type Strings = Record<string, string>
++const packs = new Map<string, Promise<Strings>>()
++
++function flatten(obj: object, prefix = '', out: Strings = {}): Strings {
++  for (const [k, v] of Object.entries(obj)) {
++    if (typeof v === 'string') out[prefix + k] = v
++    else if (v && typeof v === 'object') flatten(v, `${prefix}${k}.`, out)
++  }
++  return out
++}
++
++/** Pack files to try for an app locale, most specific first. */
++function packTags(locale: string): string[] {
++  const [lang, region] = locale.split(/[-_]/)
++  // our `pt` is European Portuguese, Video.js's `pt` re-exports pt-BR
++  if (lang === 'pt' && !region) return ['pt-PT']
++  // Video.js's `sr` is Latin script, our Serbian strings are Cyrillic
++  if (lang === 'sr' || lang === 'en') return []
++  return region ? [`${lang}-${region.toUpperCase()}`, lang] : [lang]
++}
++
++// ponytail: a failed pack load (offline before the SW precache filled) stays
++// English for the session; the browser's module map caches failed imports, so
++// retrying wouldn't refetch anyway.
++async function fetchPack(locale: string): Promise<Strings> {
++  for (const tag of packTags(locale)) {
++    // full URL: relative to the app (subpath deployments), not to bundle.js
++    const url = new URL(`videojs-locales/${tag}.js`, document.baseURI).href
++    try {
++      return flatten((await import(/* runtime, not bundled */ url)).default)
++    } catch {
++      // no such pack: try the next tag
++    }
++  }
++  return {}
++}
++
++function loadPack(locale: string): Promise<Strings> {
++  let pack = packs.get(locale)
++  if (!pack) {
++    pack = fetchPack(locale)
++    packs.set(locale, pack)
++  }
++  return pack
++}
++
++function useVideoJsI18n() {
++  const tx = useTranslationFunction()
++  const locale = window.localeData?.locale ?? 'en'
++  const [pack, setPack] = useState<Strings>({})
++  useEffect(() => {
++    let live = true
++    loadPack(locale).then(p => live && setPack(p))
++    return () => {
++      live = false
++    }
++  }, [locale])
++  return useMemo(() => {
++    const strings: Strings = {}
++    for (const [key, ours] of Object.entries(OWN_STRINGS)) {
++      strings[key] = tx(ours)
++    }
++    Object.assign(strings, pack)
++    const tag = locale.replace('_', '-')
++    return {
++      translator: createTranslator(strings, tag),
++      locale: tag,
++      localeFromProp: true,
++    }
++  }, [pack, tx, locale])
++}
++
++function restore(el: HTMLVideoElement, startAt: number | undefined) {
++  try {
++    const saved = JSON.parse(localStorage.getItem(VOLUME_KEY) ?? 'null')
++    if (Number.isFinite(saved?.volume)) {
++      el.volume = saved.volume
++      el.muted = saved.muted === true
++    }
++  } catch {
++    // storage blocked: default volume
++  }
++  if (startAt) {
++    el.currentTime = startAt
++  }
++}
++
++function save(el: HTMLVideoElement) {
++  try {
++    localStorage.setItem(
++      VOLUME_KEY,
++      JSON.stringify({ volume: el.volume, muted: el.muted })
++    )
++  } catch {
++    // storage blocked: skip
++  }
++}
++
++/**
++ * Video.js player used for chat videos (message bubble, fullscreen viewer,
++ * mini player). Keyboard shortcuts (space/k, j/l, arrows, m, f, i, 0-9, <>),
++ * auto-hiding controls and the error dialog come with the packaged skin; they
++ * act while focus is inside the player.
++ */
++export default function VideoPlayer({
++  src,
++  className,
++  style,
++  autoPlay,
++  startAt,
++  onEnded,
++  autoFocus,
++}: {
++  src: string
++  className?: string
++  style?: React.CSSProperties
++  autoPlay?: boolean
++  /** seconds to seek to once metadata is loaded */
++  startAt?: number
++  onEnded?: () => void
++  /** focus the player once loaded so its keyboard shortcuts work right away */
++  autoFocus?: boolean
++}) {
++  const i18n = useVideoJsI18n()
++  return (
++    <I18nContext.Provider value={i18n}>
++      <VjsPlayer>
++        <VideoSkin className={className} style={style}>
++          <Video
++            src={src}
++            data-chat-video
++            preload='metadata'
++            playsInline
++            autoPlay={autoPlay}
++            onLoadedMetadata={e => {
++              restore(e.currentTarget, startAt)
++              if (autoFocus) {
++                e.currentTarget.closest<HTMLElement>('.media-skin')?.focus()
++              }
++            }}
++            onVolumeChange={e => save(e.currentTarget)}
++            onEnded={onEnded}
++          />
++        </VideoSkin>
++      </VjsPlayer>
++    </I18nContext.Provider>
++  )
++}
+diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
+index 206d090..b5ab463 100644
+--- a/packages/frontend/src/components/attachment/messageAttachment.tsx
++++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
+@@ -19,6 +19,7 @@ import useDialog from '../../hooks/dialog/useDialog'
+ import useConfirmationDialog from '../../hooks/dialog/useConfirmationDialog'
+ import { AudioPlayer } from '../AudioPlayer'
+ import LottieSticker from './LottieSticker'
++import VideoPlayer from './VideoPlayer'
+ import { NextVoiceMessagePlayerContext } from '../../contexts/NextVoiceMessagePlayerContext'
+ // eslint-disable-next-line @typescript-eslint/no-unused-vars
+ import { AudioAttachment as GalleryAudioAttachment } from './galleryAttachment'
+@@ -223,7 +224,10 @@ export default function Attachment({
+       </button>
+     )
+   } else if (message.viewType === 'Video') {
+-    // the native fullscreen option is better right now so we don't need to open our own one
++    // Sized like an image from the sent dimensions, so the bubble doesn't
++    // jump when metadata loads; unknown dimensions keep the old 350px box.
++    const hasDimensions =
++      message.dimensionsWidth > 0 && message.dimensionsHeight > 0
+     return (
+       <div
+         className={classNames(
+@@ -232,13 +236,21 @@ export default function Attachment({
+           withCaption ? 'content-below' : null
+         )}
+       >
+-        <video
++        <VideoPlayer
+           className='attachment-content video-content'
+           src={runtime.transformBlobURL(message.file)}
+-          controls={true}
+-          // Despite the element having multiple interactive
+-          // (pseudo?) elements inside of it, tabindex applies to all of them.
+-          tabIndex={tabindexForInteractiveContents}
++          // ponytail: the skin's controls ignore the message list's roving
++          // tabindex (no prop for it) and stay tabbable. Upgrade path: an
++          // effect setting tabIndex on the skin's buttons/inputs from
++          // tabindexForInteractiveContents (not `inert`: it blocks clicks).
++          style={
++            hasDimensions
++              ? {
++                  height: calculateHeight(message),
++                  aspectRatio: `${message.dimensionsWidth} / ${message.dimensionsHeight}`,
++                }
++              : undefined
++          }
+         />
+       </div>
+     )
+diff --git a/packages/frontend/src/components/dialogs/FullscreenMedia.tsx b/packages/frontend/src/components/dialogs/FullscreenMedia.tsx
+index 314ccf9..e4ef1f0 100644
+--- a/packages/frontend/src/components/dialogs/FullscreenMedia.tsx
++++ b/packages/frontend/src/components/dialogs/FullscreenMedia.tsx
+@@ -19,6 +19,7 @@ import { useZoomKeyboardShortcuts } from '../../hooks/useZoomKeyboardShortcuts'
+ 
+ import type { DialogProps } from '../../contexts/DialogContext'
+ import { isImage } from '../attachment/Attachment'
++import VideoPlayer from '../attachment/VideoPlayer'
+ 
+ const log = getLogger('renderer/fullscreen_media')
+ 
+@@ -178,7 +179,16 @@ export default function FullscreenMedia(props: Props & DialogProps) {
+   } else if (msg.viewType === 'Audio' || msg.viewType === 'Voice') {
+     elm = <audio src={runtime.transformBlobURL(file)} controls />
+   } else if (msg.viewType === 'Video') {
+-    elm = <video src={runtime.transformBlobURL(file)} controls autoPlay />
++    elm = (
++      <VideoPlayer
++        // remount per message so prev/next starts the new video fresh
++        key={msg.id}
++        className='fullscreen-video'
++        src={runtime.transformBlobURL(file)}
++        autoPlay
++        autoFocus
++      />
++    )
+   } else if (!fileMime) {
+     // no file mime
+     elm = (
+@@ -263,6 +273,10 @@ export default function FullscreenMedia(props: Props & DialogProps) {
+       if (!left && !right) {
+         return
+       }
++      // Inside the video player the arrows seek (Video.js hotkeys).
++      if ((ev.target as Element).closest('.media-skin')) {
++        return
++      }
+       ev.preventDefault()
+       ev.stopPropagation()
+       if (left) {
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index b32107f..21f0b0f 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -885,8 +885,10 @@ export default function Message(props: {
+         (e.target instanceof HTMLMediaElement ||
+           // The experimental custom audio controls' seek bar
+           // (an <input type=range>) uses ArrowUp/Down/Home/End too.
+-          (e.target instanceof HTMLInputElement &&
+-            e.target.type === 'range')) &&
++          (e.target instanceof HTMLInputElement && e.target.type === 'range') ||
++          // Video.js player: arrows seek / change volume.
++          (e.target instanceof HTMLElement &&
++            e.target.closest('.media-skin') != null)) &&
+         // This is purely for future-proofing, in case
+         // the media element is a direct item of the roving tabindex widget,
+         // and not merely a child of such an item.
+diff --git a/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx b/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
+index 5ef1c94..b935b89 100644
+--- a/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
++++ b/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
+@@ -38,7 +38,8 @@ export type MediaPlayerMutexContextValue = {
+   setPlaybackRate: (rate: number) => void
+ }
+ 
+-const audioEl = document.createElement('audio')
++// Exported so chat videos can pause it (one media plays at a time).
++export const audioEl = document.createElement('audio')
+ audioEl.controls = true
+ // Clear a remembered voice-message position once it plays to its natural end —
+ // on the singleton, so it fires even if the bubble unmounted mid-play (playback
+diff --git a/packages/frontend/src/keybindings.ts b/packages/frontend/src/keybindings.ts
+index f31674b..9056d70 100644
+--- a/packages/frontend/src/keybindings.ts
++++ b/packages/frontend/src/keybindings.ts
+@@ -293,6 +293,8 @@ export function keyDownEvent2Action(
+         document.activeElement instanceof HTMLElement &&
+         isInput(document.activeElement)
+       ) &&
++      // Already handled, e.g. a focused video player's k/m/0-9 hotkeys.
++      !ev.defaultPrevented &&
+       // Regular keyboard "click".
+       ev.code !== 'Space' &&
+       ev.code !== 'Enter' &&
+diff --git a/packages/frontend/src/types.d.ts b/packages/frontend/src/types.d.ts
+index 32664c4..87475e2 100644
+--- a/packages/frontend/src/types.d.ts
++++ b/packages/frontend/src/types.d.ts
+@@ -15,6 +15,7 @@ declare module 'moment/min/locales'
+ // Tell tsc that CSS modules are alright
+ declare module '*.module.css'
+ declare module '*.module.scss'
++declare module '@videojs/react/video/skin.css'
+ 
+ type todo = any
+ 
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 1817bc4..66c6ad8 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -156,6 +156,9 @@ importers:
+       '@types/linkifyjs':
+         specifier: ^2.1.7
+         version: 2.1.7
++      '@videojs/react':
++        specifier: 10.0.0
++        version: 10.0.0(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+       classnames:
+         specifier: ^2.5.1
+         version: 2.5.1
+@@ -1442,9 +1445,6 @@ packages:
+   '@types/node@24.10.9':
+     resolution: {integrity: sha512-ne4A0IpG3+2ETuREInjPNhUGis1SFjv1d5asp8MzEAGtOZeTeHVDOYqOgqfhvseqg/iXty2hjBf1zAOb7RNiNw==}
+ 
+-  '@types/node@26.0.1':
+-    resolution: {integrity: sha512-fc3KiUoBt6kie0N9bIW3E47vZsuaMf0PM2AaUpLCLT0s/LvX1nxAim6Fc049cNxODPpGm6qRAuUOB86SkRuPQw==}
+-
+   '@types/plist@3.0.5':
+     resolution: {integrity: sha512-E6OCaRmAe4WDmWNsL/9RMqdkkzDCY1etutkflWk4c+AcjDU07Pcz1fQwTX0TQz+Pxqn9i4L1TU3UFpjnrcDgxA==}
+ 
+@@ -1554,16 +1554,93 @@ packages:
+     resolution: {integrity: sha512-6fJ9MHWtK14C1DSkiMlHUSOmrVebL7150xZJBlJiL62jjhIA4JmOq6flwBgDxIdBKKdoiZRel+dfPD5MLfny3w==}
+     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+ 
++  '@videojs/core@10.0.0':
++    resolution: {integrity: sha512-U5tYZGH3q96K/dlgytYCA3A4zGSlsWy2Ldy7A9rjCf3a/Zxc8Dc62TFRIDgsedpCMvBiBhWz1xlIeX/nPS5mog==}
++
++  '@videojs/media@10.0.0':
++    resolution: {integrity: sha512-qO1Wpdv0e9F+XtcsCl2kJuLPIJO83qgJM+mZ4FgiVvgyg8l6nABqWBe83jaYdV9VGL8vSfqolhUfrgMGAOicgA==}
++
++  '@videojs/native-hls-video@10.0.0':
++    resolution: {integrity: sha512-O9Nh9eDclzL34dd9CzFgW42V5aGu6Y541wRc/9sKvLiAtwIAQlff8CAQN27lDTn9Cz9KKDzd6P8Yxgjk1frPpQ==}
++
++  '@videojs/react@10.0.0':
++    resolution: {integrity: sha512-w6y9Fns+51nsd6qSv8tYT0RCcPVvXN+tKlVwHfVsYuFyPH6odaDu947MT7ncuZUDGRynY6RoKJnigjPX5LPp9w==}
++    peerDependencies:
++      '@videojs/cloudflare-video': 10.0.0
++      '@videojs/dash-video': 10.0.0
++      '@videojs/google-cast': 10.0.0
++      '@videojs/hlsjs-video': 10.0.0
++      '@videojs/mux-audio': 10.0.0
++      '@videojs/mux-data': 10.0.0
++      '@videojs/mux-video': 10.0.0
++      '@videojs/shaka-video': 10.0.0
++      '@videojs/spotify-audio': 10.0.0
++      '@videojs/tiktok-video': 10.0.0
++      '@videojs/twitch-video': 10.0.0
++      '@videojs/vimeo-video': 10.0.0
++      '@videojs/wistia-video': 10.0.0
++      '@videojs/youtube-video': 10.0.0
++      react: ^18.0.0 || ^19.0.0
++      react-dom: ^18.0.0 || ^19.0.0
++    peerDependenciesMeta:
++      '@videojs/cloudflare-video':
++        optional: true
++      '@videojs/dash-video':
++        optional: true
++      '@videojs/google-cast':
++        optional: true
++      '@videojs/hlsjs-video':
++        optional: true
++      '@videojs/mux-audio':
++        optional: true
++      '@videojs/mux-data':
++        optional: true
++      '@videojs/mux-video':
++        optional: true
++      '@videojs/shaka-video':
++        optional: true
++      '@videojs/spotify-audio':
++        optional: true
++      '@videojs/tiktok-video':
++        optional: true
++      '@videojs/twitch-video':
++        optional: true
++      '@videojs/vimeo-video':
++        optional: true
++      '@videojs/wistia-video':
++        optional: true
++      '@videojs/youtube-video':
++        optional: true
++
++  '@videojs/spf@10.0.0':
++    resolution: {integrity: sha512-Zka8t+ead3/6sFhWfU7WYYJWvL3d//QDuNm3JeRDABTvH8Qz9JQb6FD/NPIffWeGbaSYdW4vQk1Btz0Ol8HIOA==}
++
++  '@videojs/store@10.0.0':
++    resolution: {integrity: sha512-SeJ/PERBssswgfHTiSGfzlMEQ1N8sHjxQ2jp02hf760mNGYx6idtV4HvRbcNo5Ccn6O1OOiN/0Aim5Xc+E6ZAQ==}
++    peerDependencies:
++      '@videojs/element': 10.0.0
++      react: ^18.0.0 || ^19.0.0
++    peerDependenciesMeta:
++      '@videojs/element':
++        optional: true
++      react:
++        optional: true
++
++  '@videojs/utils@10.0.0':
++    resolution: {integrity: sha512-TKT61xKZAato+zpYII4TwCJsg662+14GmRKx10WmVsGIP8T2JMh1qCJnwhpc9RyfvmFG1M4eJkIh5eqzZhHmZQ==}
++
+   '@webxdc/types@2.1.2':
+     resolution: {integrity: sha512-oklcyHvUXqCS5JwbPVaN8tt7nSB8ffRmyrUlVt0HeSn4kDyNE46oKSbw3KtrDzl530KHnm67LfcK/AjWbBoXUA==}
+ 
+   '@xmldom/xmldom@0.8.13':
+     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
+     engines: {node: '>=10.0.0'}
++    deprecated: this version has critical issues, please update to the latest version
+ 
+   '@xmldom/xmldom@0.9.10':
+     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
+     engines: {node: '>=14.6'}
++    deprecated: this version has critical issues, please update to the latest version
+ 
+   abbrev@4.0.0:
+     resolution: {integrity: sha512-a1wflyaL0tHtJSmLSOVybYhy22vRih4eduhhrkcjgrWGnRfrZtovJ2FRjxuTtkkj47O/baf0R86QU5OuYpz8fA==}
+@@ -2262,6 +2339,7 @@ packages:
+   eslint@9.39.2:
+     resolution: {integrity: sha512-LEyamqS7W5HB3ujJyvi0HQK/dtVINZvd5mAAp9eT5S/ujByGjiZLCzPcHVzuXbpJDJF/cxwHlfceVUDZ2lnSTw==}
+     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
++    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+     hasBin: true
+     peerDependencies:
+       jiti: '*'
+@@ -3494,6 +3572,11 @@ packages:
+     resolution: {integrity: sha512-y3bGgqKj3QBdxLbLkomlohkvsA8gdAiUQlSBJnBhfn+BPxg4bc62d8TcBW15wavDfgexCgccckhcZvywyQYPOw==}
+     hasBin: true
+ 
++  react-compiler-runtime@1.0.0:
++    resolution: {integrity: sha512-rRfjYv66HlG8896yPUDONgKzG5BxZD1nV9U6rkm+7VCuvQc903C4MjcoZR4zPw53IKSOX9wMQVpA1IAbRtzQ7w==}
++    peerDependencies:
++      react: ^17.0.0 || ^18.0.0 || ^19.0.0 || ^0.0.0-experimental
++
+   react-dom@19.2.0:
+     resolution: {integrity: sha512-UlbRu4cAiGaIewkPyiRGJk0imDN2T3JjieT6spoL2UeSf5od4n5LB/mQ4ejmxhCFT1tYe8IvaFulzynWovsEFQ==}
+     peerDependencies:
+@@ -3724,6 +3807,9 @@ packages:
+     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
+     engines: {node: '>=14'}
+ 
++  signal-polyfill@0.2.2:
++    resolution: {integrity: sha512-p63Y4Er5/eMQ9RHg0M0Y64NlsQKpiu6MDdhBXpyywRuWiPywhJTpKJ1iB5K2hJEbFZ0BnDS7ZkJ+0AfTuL37Rg==}
++
+   simple-update-notifier@2.0.0:
+     resolution: {integrity: sha512-a2B9Y0KlNXl9u/vsW6sTIu9vGEpfKu2wRV6l1H3XEas/0gUIzGzBoP/IouTcUQbm9JWZLH3COxyn03TYlFax6w==}
+     engines: {node: '>=10'}
+@@ -3981,9 +4067,6 @@ packages:
+   undici-types@7.16.0:
+     resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
+ 
+-  undici-types@8.3.0:
+-    resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
+-
+   undici@6.27.0:
+     resolution: {integrity: sha512-YmfV3YnEDzXRC5lZ2jWtWWHKGUm1zIt8AhesR1tens+HTNv+YZlN/dp6G727LOvMJ8xjP9Be7Y2Sdr96LDm+pg==}
+     engines: {node: '>=18.17'}
+@@ -4429,7 +4512,7 @@ snapshots:
+       fs-extra: 10.1.0
+       isbinaryfile: 4.0.10
+       minimist: 1.2.8
+-      plist: 3.1.0
++      plist: 3.1.1
+     transitivePeerDependencies:
+       - supports-color
+ 
+@@ -4452,7 +4535,7 @@ snapshots:
+       dir-compare: 4.2.0
+       fs-extra: 11.3.5
+       minimatch: 9.0.9
+-      plist: 3.1.0
++      plist: 3.1.1
+     transitivePeerDependencies:
+       - supports-color
+ 
+@@ -4919,7 +5002,7 @@ snapshots:
+     dependencies:
+       '@types/http-cache-semantics': 4.2.0
+       '@types/keyv': 3.1.4
+-      '@types/node': 26.0.1
++      '@types/node': 22.19.3
+       '@types/responselike': 1.0.3
+ 
+   '@types/chai@4.3.20': {}
+@@ -4958,7 +5041,7 @@ snapshots:
+ 
+   '@types/fs-extra@9.0.13':
+     dependencies:
+-      '@types/node': 26.0.1
++      '@types/node': 22.19.3
+ 
+   '@types/http-cache-semantics@4.2.0': {}
+ 
+@@ -4972,7 +5055,7 @@ snapshots:
+ 
+   '@types/keyv@3.1.4':
+     dependencies:
+-      '@types/node': 26.0.1
++      '@types/node': 22.19.3
+ 
+   '@types/linkifyjs@2.1.7':
+     dependencies:
+@@ -5008,13 +5091,9 @@ snapshots:
+     dependencies:
+       undici-types: 7.16.0
+ 
+-  '@types/node@26.0.1':
+-    dependencies:
+-      undici-types: 8.3.0
+-
+   '@types/plist@3.0.5':
+     dependencies:
+-      '@types/node': 26.0.1
++      '@types/node': 22.19.3
+       xmlbuilder: 15.1.1
+     optional: true
+ 
+@@ -5055,7 +5134,7 @@ snapshots:
+ 
+   '@types/responselike@1.0.3':
+     dependencies:
+-      '@types/node': 26.0.1
++      '@types/node': 22.19.3
+ 
+   '@types/send@0.17.4':
+     dependencies:
+@@ -5166,12 +5245,58 @@ snapshots:
+       '@typescript-eslint/types': 8.61.1
+       eslint-visitor-keys: 5.0.1
+ 
++  '@videojs/core@10.0.0(react@19.2.0)':
++    dependencies:
++      '@videojs/media': 10.0.0
++      '@videojs/store': 10.0.0(react@19.2.0)
++      '@videojs/utils': 10.0.0
++    transitivePeerDependencies:
++      - '@videojs/element'
++      - react
++
++  '@videojs/media@10.0.0':
++    dependencies:
++      '@videojs/utils': 10.0.0
++
++  '@videojs/native-hls-video@10.0.0':
++    dependencies:
++      '@videojs/media': 10.0.0
++      '@videojs/utils': 10.0.0
++
++  '@videojs/react@10.0.0(react-dom@19.2.0(react@19.2.0))(react@19.2.0)':
++    dependencies:
++      '@videojs/core': 10.0.0(react@19.2.0)
++      '@videojs/media': 10.0.0
++      '@videojs/native-hls-video': 10.0.0
++      '@videojs/spf': 10.0.0
++      '@videojs/store': 10.0.0(react@19.2.0)
++      '@videojs/utils': 10.0.0
++      react: 19.2.0
++      react-compiler-runtime: 1.0.0(react@19.2.0)
++      react-dom: 19.2.0(react@19.2.0)
++    transitivePeerDependencies:
++      - '@videojs/element'
++
++  '@videojs/spf@10.0.0':
++    dependencies:
++      '@videojs/media': 10.0.0
++      '@videojs/utils': 10.0.0
++      signal-polyfill: 0.2.2
++
++  '@videojs/store@10.0.0(react@19.2.0)':
++    dependencies:
++      '@videojs/utils': 10.0.0
++      react-compiler-runtime: 1.0.0(react@19.2.0)
++    optionalDependencies:
++      react: 19.2.0
++
++  '@videojs/utils@10.0.0': {}
++
+   '@webxdc/types@2.1.2': {}
+ 
+   '@xmldom/xmldom@0.8.13': {}
+ 
+-  '@xmldom/xmldom@0.9.10':
+-    optional: true
++  '@xmldom/xmldom@0.9.10': {}
+ 
+   abbrev@4.0.0: {}
+ 
+@@ -7279,7 +7404,6 @@ snapshots:
+       '@xmldom/xmldom': 0.9.10
+       base64-js: 1.5.1
+       xmlbuilder: 15.1.1
+-    optional: true
+ 
+   possible-typed-array-names@1.1.0: {}
+ 
+@@ -7399,6 +7523,10 @@ snapshots:
+       minimist: 1.2.6
+       strip-json-comments: 2.0.1
+ 
++  react-compiler-runtime@1.0.0(react@19.2.0):
++    dependencies:
++      react: 19.2.0
++
+   react-dom@19.2.0(react@19.2.0):
+     dependencies:
+       react: 19.2.0
+@@ -7677,6 +7805,8 @@ snapshots:
+ 
+   signal-exit@4.1.0: {}
+ 
++  signal-polyfill@0.2.2: {}
++
+   simple-update-notifier@2.0.0:
+     dependencies:
+       semver: 7.7.3
+@@ -7992,8 +8122,6 @@ snapshots:
+ 
+   undici-types@7.16.0: {}
+ 
+-  undici-types@8.3.0: {}
+-
+   undici@6.27.0: {}
+ 
+   undici@7.28.0:
+diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
+index 9438f82..764e46e 100644
+--- a/pnpm-workspace.yaml
++++ b/pnpm-workspace.yaml
+@@ -43,3 +43,12 @@ catalog:
+   '@types/node': ^22.15.33
+   '@types/mocha': ^10.0.7
+   '@types/chai': ^4.3.17
++
++minimumReleaseAgeExclude:
++  - '@videojs/core@10.0.0'
++  - '@videojs/media@10.0.0'
++  - '@videojs/native-hls-video@10.0.0'
++  - '@videojs/react@10.0.0'
++  - '@videojs/spf@10.0.0'
++  - '@videojs/store@10.0.0'
++  - '@videojs/utils@10.0.0'

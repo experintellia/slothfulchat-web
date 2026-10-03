@@ -178,6 +178,29 @@ exists:
   since the anti-howl mitigation is the echo cancellation this setting
   disables. `desktop/0070` – `desktop/0072`, `desktop/0080` –
   `desktop/0083`
+- **Video player: Video.js skin, hotkeys, floating mini player** — chat
+  videos (bubbles and the fullscreen viewer) use Video.js 10's packaged skin
+  (`@videojs/react`) instead of native `<video controls>`: controls that
+  auto-hide while playing (the native ones covered the bottom of the frame),
+  YouTube-style hotkeys while the player has focus, touch gestures and an
+  error dialog for undecodable formats. Bubbles are sized from the sent
+  dimensions; one medium plays at a time across videos and the voice
+  singleton; volume is remembered. A playing video that scrolls out of view
+  or whose chat is left continues in a draggable floating window (top corner,
+  clear of the composer); scrolling back to the bubble, or "Show in Chat",
+  pulls it back inline at the same spot. Our own UI goes into the player as
+  children of the packaged skin and fades with its controls: the mini
+  player's buttons (no title bar), the video bubble's time/✓ (no black strip
+  under the player; reactions stay), and the fullscreen viewer's own buttons.
+  Labels follow the app language: instead of Video.js's I18nProvider (which
+  would inline all ~50 locale packs into the unsplit bundle) we feed its
+  I18nContext the active language's pack, imported at runtime from
+  `videojs-locales/` (copied by web-app's `assemble.mjs`), with our own
+  locale strings as a fallback. `desktop/0090` – `desktop/0091`
+- **"Jump to message" across profiles** — `useMessage().jumpToMessage` switches
+  to the message's profile itself (open its chat, then jump once the list
+  mounts) instead of three callers each copying that sequence or, in the video
+  mini player, hiding "Show in Chat". `desktop/0092`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP
@@ -207,7 +230,7 @@ exists:
   the download button comes back, and the running chunk loop stops before its
   next chunk. The staging file stays, so tapping download again resumes where
   it stopped. A whole-message fetch on a server without partial FETCH cannot
-  be interrupted and still finishes. `core/0035`, `desktop/0088`
+  be interrupted and still finishes. `core/0035`, `desktop/0089`
 - **HTML email viewer ("Show Full Message…")** — the browser edition of
   desktop's sandboxed email window: a fullscreen in-app dialog whose content
   is DOMPurify-sanitized and rendered in an iframe with an opaque no-script
