@@ -117,14 +117,17 @@ exists:
   local element. Always on — the native-controls fallback and its setting
   were retired once the player had shipped (#209).
   Phase two adds a canvas waveform (peaks computed lazily: fetch → decode →
-  64-bucket max-abs on the main thread, ~4s budget,
+  128-bucket RMS normalized to the recording's 95th percentile on the main
+  thread, ~4s budget,
   silent fallback to the plain bar — playback never waits on it), remembered
   per-message playback position (restored on return, cleared on natural end),
   seek positions actually carried onto the global player (scrub-before-play
   now works), a live rolling waveform in the recorder's level meter, and
   on-device User Timing profiling of peak generation surfaced in Diagnostics
   ("measure first" — no peak cache until the numbers demand it, see issue
-  A2.5). Phase three upgrades the global mini-player: the same custom
+  A2.5). The bars are rounded, 3px wide at a fixed pitch (count follows the
+  bubble width), and the played colour sweeps through a bar instead of
+  jumping a whole bar at a time (`desktop/0088`). Phase three upgrades the global mini-player: the same custom
   controls drive the singleton directly (waveform, time, speed), plus a
   clickable sender line (avatar + name + chat) that jumps to the message,
   and `navigator.mediaSession` wiring (lock-screen/hardware play, pause,
