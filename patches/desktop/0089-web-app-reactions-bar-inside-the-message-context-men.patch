@@ -27,25 +27,25 @@ selection, but a press on a link now opens the menu (Copy Link), with
 -webkit-touch-callout off on message links so iOS's preview sheet does
 not cover it.
 ---
- packages/frontend/scss/message/_message.scss  |  6 ++
- .../frontend/scss/misc/_context_menu.scss     | 11 +++
- .../frontend/src/components/ContextMenu.tsx   | 82 ++++++++++++++++-
- .../src/components/KeyboardShortcutHint.tsx   |  4 +
- .../components/ReactionsBar/ReactionsBar.tsx  | 34 +++++--
- .../ReactionsBar/ReactionsBarContext.tsx      |  2 +
- .../src/components/ReactionsBar/index.ts      |  6 +-
- .../ReactionsBar/useReactionsBar.ts           |  4 +-
- .../src/components/ShortcutMenu/index.tsx     | 53 +----------
- .../ShortcutMenu/styles.module.scss           | 53 ++++++-----
- .../src/components/message/Message.tsx        | 91 +++++++++++--------
- .../src/utils/longPressContextMenu.ts         | 14 ++-
- 12 files changed, 233 insertions(+), 127 deletions(-)
+ packages/frontend/scss/message/_message.scss  |  13 +++
+ .../frontend/scss/misc/_context_menu.scss     |  11 ++
+ .../frontend/src/components/ContextMenu.tsx   |  82 +++++++++++++-
+ .../src/components/KeyboardShortcutHint.tsx   |   4 +
+ .../components/ReactionsBar/ReactionsBar.tsx  |  34 ++++--
+ .../ReactionsBar/ReactionsBarContext.tsx      |   2 +
+ .../src/components/ReactionsBar/index.ts      |   6 +-
+ .../ReactionsBar/useReactionsBar.ts           |   4 +-
+ .../src/components/ShortcutMenu/index.tsx     |  53 +--------
+ .../ShortcutMenu/styles.module.scss           |  53 +++++----
+ .../src/components/message/Message.tsx        | 101 +++++++++++-------
+ .../src/utils/longPressContextMenu.ts         |  14 ++-
+ 12 files changed, 250 insertions(+), 127 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index d2c58bd..74e9600 100644
+index d2c58bd..9fff10c 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
-@@ -13,6 +13,12 @@ $info-text-max-width: 400px;
+@@ -13,6 +13,19 @@ $info-text-max-width: 400px;
    }
  }
  
@@ -53,6 +53,13 @@ index d2c58bd..74e9600 100644
 +// iOS would put its own link preview sheet on top of it.
 +.message a[href] {
 +  -webkit-touch-callout: none;
++}
++
++// Explicitly selectable (not just `auto`), so the iOS long-press fallback
++// leaves a press on message text to text selection.
++.message .text {
++  -webkit-user-select: text;
++  user-select: text;
 +}
 +
  /* Message Bubble */
@@ -612,7 +619,7 @@ index 146bfda..9000c71 100644
    border-radius: 100%;
    height: 40px;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index b32107f..c98556f 100644
+index b32107f..311653a 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -40,7 +40,11 @@ import useOpenViewProfileDialog from '../../hooks/dialog/useOpenViewProfileDialo
@@ -666,7 +673,21 @@ index b32107f..c98556f 100644
      showEdit && {
        // Not `tx('edit_message')`.
        // See https://github.com/deltachat/deltachat-desktop/issues/4695#issuecomment-2688716592
-@@ -650,32 +644,6 @@ export default function Message(props: {
+@@ -646,36 +640,20 @@ export default function Message(props: {
+         MouseEvent
+       >
+     ) => {
++      // A finger's long press on message text means "select text" (Android
++      // fires contextmenu for it too); on a link it still opens the menu.
++      const pressed = event.target as HTMLElement | null
++      if (
++        (event.nativeEvent as PointerEvent).pointerType === 'touch' &&
++        pressed?.closest?.('.text') &&
++        !pressed.closest('a[href]')
++      ) {
++        return
++      }
+       event.preventDefault() // prevent default runtime context menu from opening
  
        const showContextMenuEventPos = mouseEventToPosition(event)
  
@@ -699,7 +720,7 @@ index b32107f..c98556f 100644
        if (!isMultiselectMember) {
          resetSelection()
        }
-@@ -692,7 +660,6 @@ export default function Message(props: {
+@@ -692,7 +670,6 @@ export default function Message(props: {
          conversationType,
          openDialog,
          privateReply,
@@ -707,7 +728,7 @@ index b32107f..c98556f 100644
          chat: props.chat,
          jumpToMessage,
        }
-@@ -710,9 +677,35 @@ export default function Message(props: {
+@@ -710,9 +687,35 @@ export default function Message(props: {
            )
          : buildContextMenu(common, target)
  
@@ -743,7 +764,7 @@ index b32107f..c98556f 100644
          ariaAttrs: {
            'aria-label': tx('a11y_message_context_menu_btn_label'),
          },
-@@ -865,6 +858,27 @@ export default function Message(props: {
+@@ -865,6 +868,27 @@ export default function Message(props: {
          return
        }
  
@@ -771,7 +792,7 @@ index b32107f..c98556f 100644
        // Audio / video elements have controls that utilize
        // arrows. That is seeking, changing volume.
        // So we don't want to switch focus if all user wanted to do
-@@ -1355,7 +1369,6 @@ export default function Message(props: {
+@@ -1355,7 +1379,6 @@ export default function Message(props: {
          </div>
        </div>
        <ShortcutMenu

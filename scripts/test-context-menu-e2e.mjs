@@ -243,8 +243,15 @@ try {
     groupId,
     'hello world\n\n\n\n\nhttps://example.org/'
   )
+  // the open chat doesn't pick up a message sent over rpc; reopen it
+  // (again if a cold first load still misses it)
   const bubble = page.locator('.message', { hasText: 'hello world' })
-  await bubble.waitFor({ state: 'visible', timeout: 30_000 })
+  for (let i = 0; i < 3 && !(await bubble.isVisible()); i++) {
+    await page.locator('.chat-list-item', { hasText: 'Saved Messages' }).click()
+    await row.click()
+    await bubble.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {})
+  }
+  await bubble.waitFor({ state: 'visible', timeout: 1_000 })
   const reactions = page.getByRole('menu', { name: 'React' })
   const msgMenu = page.getByRole('menu', { name: 'Message actions' })
   const myReaction = async () =>
@@ -357,9 +364,13 @@ try {
   await msgMenu.waitFor({ state: 'hidden' })
 
   const word = await bubble.locator('.text').evaluate((el) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    let node = walker.nextNode()
+    while (node && !node.data.includes('hello')) node = walker.nextNode()
+    const at = node.data.indexOf('hello')
     const range = document.createRange()
-    range.setStart(el.firstChild, 0)
-    range.setEnd(el.firstChild, 5) // "hello"
+    range.setStart(node, at)
+    range.setEnd(node, at + 5)
     const r = range.getBoundingClientRect()
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
   })
