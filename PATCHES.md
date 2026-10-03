@@ -690,9 +690,9 @@ contribution intended.
   into the menu; "more emojis" hands over to the standalone picker, and
   Ctrl/Cmd+R still opens the reactions alone. On phones a long press
   anywhere on a message opens the menu (iOS would otherwise start a text
-  selection and cancel the press), so the touch menu has a "Select Text"
-  screen that shows the message with selectable text; the menu is larger
-  there, the reactions row smaller with a mouse. `desktop/0089`
+  selection and cancel the press); "Copy Text" copies the message, as in
+  other messengers. The menu is larger on touch, the reactions row smaller
+  with a mouse. `desktop/0089`
 - **Branding** — the app calls itself SlothfulChat and uses its own icon in
   the About dialog and welcome screen, with explicit "experimental fork, not
   affiliated with Delta Chat" notices and a source-code link. Only

@@ -288,10 +288,6 @@ try {
     (await msgMenu.getByRole('menuitem', { name: 'React', exact: true }).count()) === 0,
     'no separate "React" menu item'
   )
-  check(
-    (await msgMenu.getByRole('menuitem', { name: 'Select Text' }).count()) === 0,
-    'no "Select Text" with a mouse (text is selectable in place)'
-  )
   await reactions.getByRole('menuitemradio', { name: '❤️' }).click()
   await msgMenu.waitFor({ state: 'hidden' })
   for (let i = 0; i < 50 && (await myReaction()) !== '❤️'; i++) {
@@ -386,24 +382,8 @@ try {
   })
   await longPress(word)
   check(await msgMenu.isVisible(), 'long press on message text opens the menu too (phones)')
-  await msgMenu.getByRole('menuitem', { name: 'Select Text' }).click()
-  const selectDialog = page.getByTestId('select-text-dialog')
-  await selectDialog.waitFor({ state: 'visible', timeout: 10_000 })
-  check(
-    (await selectDialog.getByText('Select Text').count()) > 0 &&
-      (await selectDialog.locator('.text').innerText()).includes('hello world'),
-    '"Select Text" shows the message under a "Select Text" heading'
-  )
-  check(
-    (await selectDialog.locator('.text').evaluate((el) => getComputedStyle(el).userSelect)) === 'text' &&
-      (await selectDialog.locator('a').count()) === 0,
-    '…selectable, with links as plain text'
-  )
-  if (process.env.SHOT) {
-    await page.screenshot({ path: process.env.SHOT.replace(/\.png$/, '-select.png') })
-  }
   await page.keyboard.press('Escape')
-  await selectDialog.waitFor({ state: 'hidden' })
+  await msgMenu.waitFor({ state: 'hidden' })
   if (process.env.SHOT) {
     // the menu at phone size, for review
     await page.setViewportSize({ width: 390, height: 844 })

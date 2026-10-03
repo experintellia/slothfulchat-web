@@ -27,41 +27,26 @@ selection, but a press on a link now opens the menu (Copy Link), with
 -webkit-touch-callout off on message links so iOS's preview sheet does
 not cover it.
 ---
- _locales/_untranslated_en.json                |   3 +
- packages/frontend/scss/message/_message.scss  |  33 ++++++
- .../frontend/scss/misc/_context_menu.scss     |  24 ++++
- .../frontend/src/components/ContextMenu.tsx   |  82 +++++++++++++-
- .../src/components/KeyboardShortcutHint.tsx   |   4 +
- .../components/ReactionsBar/ReactionsBar.tsx  |  34 ++++--
- .../ReactionsBar/ReactionsBarContext.tsx      |   2 +
- .../src/components/ReactionsBar/index.ts      |   6 +-
- .../ReactionsBar/styles.module.scss           |  12 ++
- .../ReactionsBar/useReactionsBar.ts           |   4 +-
- .../src/components/ShortcutMenu/index.tsx     |  53 +--------
- .../ShortcutMenu/styles.module.scss           |  53 +++++----
- .../components/dialogs/SelectTextDialog.tsx   |  41 +++++++
- .../src/components/message/Message.tsx        | 104 +++++++++++-------
- .../src/utils/longPressContextMenu.ts         |  14 ++-
- 15 files changed, 342 insertions(+), 127 deletions(-)
- create mode 100644 packages/frontend/src/components/dialogs/SelectTextDialog.tsx
+ packages/frontend/scss/message/_message.scss  | 17 ++++
+ .../frontend/scss/misc/_context_menu.scss     | 24 +++++
+ .../frontend/src/components/ContextMenu.tsx   | 82 ++++++++++++++++-
+ .../src/components/KeyboardShortcutHint.tsx   |  4 +
+ .../components/ReactionsBar/ReactionsBar.tsx  | 34 +++++--
+ .../ReactionsBar/ReactionsBarContext.tsx      |  2 +
+ .../src/components/ReactionsBar/index.ts      |  6 +-
+ .../ReactionsBar/styles.module.scss           | 12 +++
+ .../ReactionsBar/useReactionsBar.ts           |  4 +-
+ .../src/components/ShortcutMenu/index.tsx     | 53 +----------
+ .../ShortcutMenu/styles.module.scss           | 53 ++++++-----
+ .../src/components/message/Message.tsx        | 91 +++++++++++--------
+ .../src/utils/longPressContextMenu.ts         | 14 ++-
+ 13 files changed, 269 insertions(+), 127 deletions(-)
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 2f6785a..a784350 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -1,4 +1,7 @@
- {
-+  "select_text": {
-+    "message": "Select Text"
-+  },
-   "export_chat_explain": {
-     "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
-   },
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index d2c58bd..64928e4 100644
+index d2c58bd..66aaf84 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
-@@ -13,6 +13,39 @@ $info-text-max-width: 400px;
+@@ -13,6 +13,23 @@ $info-text-max-width: 400px;
    }
  }
  
@@ -73,28 +58,12 @@ index d2c58bd..64928e4 100644
 +
 +// Phones: a long press on a message opens its menu (like Signal/Telegram),
 +// so the text must not start a selection first: iOS would cancel the touch
-+// and with it the long-press fallback. Selecting part of a message goes
-+// through the menu's "Select Text" screen instead.
++// and with it the long-press fallback. "Copy Text" in the menu copies it,
++// as in other messengers.
 +@media (pointer: coarse) {
 +  .message .text {
 +    -webkit-user-select: none;
 +    user-select: none;
-+  }
-+}
-+
-+.select-text-dialog {
-+  background-color: var(--chatViewBg);
-+  padding: 16px;
-+  display: flex;
-+  flex-direction: column;
-+
-+  .message .text {
-+    -webkit-user-select: text;
-+    user-select: text;
-+  }
-+
-+  .message.outgoing {
-+    align-self: flex-end;
 +  }
 +}
 +
@@ -690,55 +659,8 @@ index 146bfda..9000c71 100644
    background-color: var(--showInChatButtonBg);
    border-radius: 100%;
    height: 40px;
-diff --git a/packages/frontend/src/components/dialogs/SelectTextDialog.tsx b/packages/frontend/src/components/dialogs/SelectTextDialog.tsx
-new file mode 100644
-index 0000000..65be824
---- /dev/null
-+++ b/packages/frontend/src/components/dialogs/SelectTextDialog.tsx
-@@ -0,0 +1,41 @@
-+import React from 'react'
-+
-+import { DialogBody, DialogWithHeader } from '../Dialog'
-+import MessageBody from '../message/MessageBody'
-+import useTranslationFunction from '../../hooks/useTranslationFunction'
-+
-+import type { DialogProps } from '../../contexts/DialogContext'
-+
-+/**
-+ * Phones: a long press on a message opens its menu, so message text can't be
-+ * selected in the chat. This shows the message as it looks there, with
-+ * nothing to do but select (links are plain text).
-+ */
-+export default function SelectTextDialog({
-+  text,
-+  direction,
-+  onClose,
-+}: { text: string; direction: 'incoming' | 'outgoing' } & DialogProps) {
-+  const tx = useTranslationFunction()
-+  return (
-+    <DialogWithHeader
-+      title={tx('select_text')}
-+      onClose={onClose}
-+      dataTestid='select-text-dialog'
-+    >
-+      <DialogBody>
-+        <div className='select-text-dialog'>
-+          <div className={`message ${direction}`}>
-+            <div className='msg-container'>
-+              <div className='msg-body'>
-+                <div dir='auto' className='text'>
-+                  <MessageBody text={text} nonInteractiveContent />
-+                </div>
-+              </div>
-+            </div>
-+          </div>
-+        </div>
-+      </DialogBody>
-+    </DialogWithHeader>
-+  )
-+}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index b32107f..2f86558 100644
+index b32107f..c98556f 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -40,7 +40,11 @@ import useOpenViewProfileDialog from '../../hooks/dialog/useOpenViewProfileDialo
@@ -754,16 +676,7 @@ index b32107f..2f86558 100644
  import { ContextMenuContext } from '../../contexts/ContextMenuContext'
  import Reactions from '../Reactions'
  import ShortcutMenu from '../ShortcutMenu'
-@@ -74,6 +78,8 @@ import { useDownloadProgress } from '../../hooks/useDownloadProgress'
- import ForwardMessage from '../dialogs/ForwardMessage'
- import MessageDetail from '../dialogs/MessageDetail/MessageDetail'
- import ConfirmDeleteMessageDialog from '../dialogs/ConfirmDeleteMessage'
-+import SelectTextDialog from '../dialogs/SelectTextDialog'
-+import { isCoarsePointer } from '../../utils/isCoarsePointer'
- 
- const log = getLogger('Message')
- 
-@@ -272,7 +278,6 @@ function buildContextMenu(
+@@ -272,7 +276,6 @@ function buildContextMenu(
      conversationType,
      openDialog,
      privateReply,
@@ -771,7 +684,7 @@ index b32107f..2f86558 100644
      chat,
      jumpToMessage,
    }: {
-@@ -282,7 +287,6 @@ function buildContextMenu(
+@@ -282,7 +285,6 @@ function buildContextMenu(
      conversationType: ConversationType
      openDialog: OpenDialog
      privateReply: PrivateReply
@@ -779,7 +692,7 @@ index b32107f..2f86558 100644
      chat: T.FullChat
      jumpToMessage: JumpToMessage
    },
-@@ -363,9 +367,6 @@ function buildContextMenu(
+@@ -363,9 +365,6 @@ function buildContextMenu(
    // - https://github.com/deltachat/deltachat-android/blob/fd4a377752cc6778f161590fde2f9ab29c5d3011/src/main/java/org/thoughtcrime/securesms/ConversationFragment.java#L334
    const showEdit = isMessageEditable(message, chat)
  
@@ -789,7 +702,7 @@ index b32107f..2f86558 100644
    // Only show in groups, don't show on info messages or outgoing messages
    const showReplyPrivately =
      (conversationType.chatType === 'Group' ||
-@@ -416,11 +417,6 @@ function buildContextMenu(
+@@ -416,11 +415,6 @@ function buildContextMenu(
          }
        },
      },
@@ -801,25 +714,7 @@ index b32107f..2f86558 100644
      showEdit && {
        // Not `tx('edit_message')`.
        // See https://github.com/deltachat/deltachat-desktop/issues/4695#issuecomment-2688716592
-@@ -446,6 +442,17 @@ function buildContextMenu(
-     // A caption-less image can still have a selection worth copying, e.g.
-     // from a quoted message.
-     Boolean(textSelected || email || copyText) && copy_item,
-+    // Phones: a long press opens this menu instead of selecting text, so
-+    // selecting part of a message happens on a screen of its own.
-+    isCoarsePointer() &&
-+      !!copyText && {
-+        label: tx('select_text'),
-+        action: () =>
-+          openDialog(SelectTextDialog, {
-+            text: copyText,
-+            direction: getDirection(message),
-+          }),
-+      },
-     // Copy image
-     showCopyImage && {
-       label: tx('menu_copy_image_to_clipboard'),
-@@ -650,32 +657,6 @@ export default function Message(props: {
+@@ -650,32 +644,6 @@ export default function Message(props: {
  
        const showContextMenuEventPos = mouseEventToPosition(event)
  
@@ -852,7 +747,7 @@ index b32107f..2f86558 100644
        if (!isMultiselectMember) {
          resetSelection()
        }
-@@ -692,7 +673,6 @@ export default function Message(props: {
+@@ -692,7 +660,6 @@ export default function Message(props: {
          conversationType,
          openDialog,
          privateReply,
@@ -860,7 +755,7 @@ index b32107f..2f86558 100644
          chat: props.chat,
          jumpToMessage,
        }
-@@ -710,9 +690,35 @@ export default function Message(props: {
+@@ -710,9 +677,35 @@ export default function Message(props: {
            )
          : buildContextMenu(common, target)
  
@@ -896,7 +791,7 @@ index b32107f..2f86558 100644
          ariaAttrs: {
            'aria-label': tx('a11y_message_context_menu_btn_label'),
          },
-@@ -865,6 +871,27 @@ export default function Message(props: {
+@@ -865,6 +858,27 @@ export default function Message(props: {
          return
        }
  
@@ -924,7 +819,7 @@ index b32107f..2f86558 100644
        // Audio / video elements have controls that utilize
        // arrows. That is seeking, changing volume.
        // So we don't want to switch focus if all user wanted to do
-@@ -1355,7 +1382,6 @@ export default function Message(props: {
+@@ -1355,7 +1369,6 @@ export default function Message(props: {
          </div>
        </div>
        <ShortcutMenu
