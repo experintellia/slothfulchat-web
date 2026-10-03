@@ -269,6 +269,8 @@ try {
   const rBox = await reactions.boundingBox()
   const mBox = await msgMenu.boundingBox()
   check(rBox.y + rBox.height <= mBox.y, 'reactions bar sits above the menu')
+  // SHOT=/path.png saves what this looks like (for PR review)
+  if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT })
   check(
     (await msgMenu.getByRole('menuitem', { name: 'React', exact: true }).count()) === 0,
     'no separate "React" menu item'
