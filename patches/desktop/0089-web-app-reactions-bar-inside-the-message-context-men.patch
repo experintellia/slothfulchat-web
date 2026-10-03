@@ -41,19 +41,20 @@ Text" copies the message, as in other messengers. Message links get
 -webkit-touch-callout: none so iOS's preview sheet doesn't cover the
 menu.
 ---
- packages/frontend/scss/message/_message.scss  | 21 ++++
- .../frontend/scss/misc/_context_menu.scss     | 31 +++++-
- .../frontend/src/components/ContextMenu.tsx   | 95 ++++++++++++++++++-
- .../src/components/KeyboardShortcutHint.tsx   |  4 +
- .../components/ReactionsBar/ReactionsBar.tsx  | 35 +++++--
- .../ReactionsBar/ReactionsBarContext.tsx      |  2 +
- .../src/components/ReactionsBar/index.ts      |  6 +-
- .../ReactionsBar/styles.module.scss           | 12 +++
- .../ReactionsBar/useReactionsBar.ts           |  6 +-
- .../src/components/ShortcutMenu/index.tsx     | 53 +----------
- .../ShortcutMenu/styles.module.scss           | 59 ++++++------
- .../src/components/message/Message.tsx        | 91 ++++++++++--------
- 12 files changed, 280 insertions(+), 135 deletions(-)
+ packages/frontend/scss/message/_message.scss  |  21 ++++
+ .../frontend/scss/misc/_context_menu.scss     |  31 ++++-
+ .../AbsolutePositioningHelper/index.tsx       |  10 +-
+ .../frontend/src/components/ContextMenu.tsx   | 109 +++++++++++++++++-
+ .../src/components/KeyboardShortcutHint.tsx   |   4 +
+ .../components/ReactionsBar/ReactionsBar.tsx  |  35 ++++--
+ .../ReactionsBar/ReactionsBarContext.tsx      |  19 ++-
+ .../src/components/ReactionsBar/index.ts      |   6 +-
+ .../ReactionsBar/styles.module.scss           |  12 ++
+ .../ReactionsBar/useReactionsBar.ts           |   6 +-
+ .../src/components/ShortcutMenu/index.tsx     |  53 +--------
+ .../ShortcutMenu/styles.module.scss           |  59 +++++-----
+ .../src/components/message/Message.tsx        |  91 ++++++++-------
+ 13 files changed, 314 insertions(+), 142 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
 index d2c58bd..7b22e08 100644
@@ -144,8 +145,35 @@ index 3a1a5c8..4cc3842 100644
 +    padding: 12px 16px;
 +  }
 +}
+diff --git a/packages/frontend/src/components/AbsolutePositioningHelper/index.tsx b/packages/frontend/src/components/AbsolutePositioningHelper/index.tsx
+index c425116..bed4f65 100644
+--- a/packages/frontend/src/components/AbsolutePositioningHelper/index.tsx
++++ b/packages/frontend/src/components/AbsolutePositioningHelper/index.tsx
+@@ -108,17 +108,17 @@ export default function AbsolutePositioningHelper(props: Props) {
+   // Hide wrapper if observed element is not rendered yet. Do not remove
+   // it from DOM as we need to learn about it's size as soon as it comes in.
+   // This helps us to prevent weird flickering when React is not ready yet.
+-  const visibility =
+-    dimensions.refWidth === 0 || dimensions.refHeight === 0
+-      ? 'hidden'
+-      : 'visible'
++  // Transparent rather than `visibility: hidden`, which would make the
++  // content unfocusable and break its autofocus (the emoji picker's search).
++  const measured = dimensions.refWidth !== 0 && dimensions.refHeight !== 0
+ 
+   return (
+     <div
+       style={{
+         left: `${x}px`,
+         top: `${y}px`,
+-        visibility,
++        opacity: measured ? 1 : 0,
++        pointerEvents: measured ? undefined : 'none',
+       }}
+       className={styles.absolutePositioningHelper}
+       ref={ref}
 diff --git a/packages/frontend/src/components/ContextMenu.tsx b/packages/frontend/src/components/ContextMenu.tsx
-index a1f3b55..c3e1dee 100644
+index a1f3b55..81f67b7 100644
 --- a/packages/frontend/src/components/ContextMenu.tsx
 +++ b/packages/frontend/src/components/ContextMenu.tsx
 @@ -9,6 +9,7 @@ import React, {
@@ -319,7 +347,26 @@ index a1f3b55..c3e1dee 100644
    const levelItems: ContextMenuLevel[] = useMemo(() => {
      let items = props.items.filter(val => val !== false) as ContextMenuItem[]
      const levelItems = [{ items }]
-@@ -338,6 +401,30 @@ export function ContextMenu(props: {
+@@ -299,6 +362,18 @@ export function ContextMenu(props: {
+     }
+ 
+     const onKeyDown = (ev: KeyboardEvent) => {
++      // A held Enter auto-repeats onto whatever item the menu just focused.
++      if (ev.repeat && ev.key === 'Enter') {
++        ev.preventDefault()
++        return
++      }
++      // Tab leaves a menu (APG); closing the dialog returns focus to where
++      // the menu was opened from.
++      if (ev.key === 'Tab') {
++        ev.preventDefault()
++        closeCallback()
++        return
++      }
+       const current = parent?.querySelector(':focus')
+ 
+       enum Direction {
+@@ -338,6 +413,30 @@ export function ContextMenu(props: {
          return skipIfSeperator(parent?.lastElementChild as HTMLDivElement)
        }
  
@@ -350,6 +397,15 @@ index a1f3b55..c3e1dee 100644
        if (ev.code === 'ArrowDown') {
          getNeighborElementWithoutSeperator(
            parent,
+@@ -372,7 +471,7 @@ export function ContextMenu(props: {
+     return () => {
+       document.removeEventListener('keydown', onKeyDown)
+     }
+-  }, [openSublevels, expandMenu])
++  }, [openSublevels, expandMenu, closeCallback])
+ 
+   return (
+     <div>
 diff --git a/packages/frontend/src/components/KeyboardShortcutHint.tsx b/packages/frontend/src/components/KeyboardShortcutHint.tsx
 index 0d4a1ed..79d4027 100644
 --- a/packages/frontend/src/components/KeyboardShortcutHint.tsx
@@ -442,9 +498,15 @@ index f2331b6..695008e 100644
  
    const isMyReactionDefault = myReaction
 diff --git a/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx b/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
-index 0456b32..54caa17 100644
+index 0456b32..afe3592 100644
 --- a/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
 +++ b/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
+@@ -1,4 +1,4 @@
+-import React, { useEffect, useState } from 'react'
++import React, { useEffect, useRef, useState } from 'react'
+ 
+ import AbsolutePositioningHelper from '../AbsolutePositioningHelper'
+ import OutsideClickHelper from '../OutsideClickHelper'
 @@ -9,6 +9,7 @@ import type { PropsWithChildren } from 'react'
  export type ShowReactionBar = {
    messageId: number
@@ -453,7 +515,34 @@ index 0456b32..54caa17 100644
    x: number
    y: number
  }
-@@ -63,6 +64,7 @@ export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
+@@ -24,11 +25,26 @@ export const ReactionsBarContext =
+ 
+ export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
+   const [barArgs, setBarArgs] = useState<ShowReactionBar | null>(null)
++  const restoreFocusTo = useRef<HTMLElement | null>(null)
+ 
+   const showReactionsBar = (args: ShowReactionBar) => {
++    restoreFocusTo.current = document.activeElement as HTMLElement | null
+     setBarArgs(args)
+   }
+ 
++  // After a pick or Escape the focused emoji/search field is gone and focus
++  // falls to <body>; put keyboard users back on the message. Not after a
++  // click elsewhere, which has already moved focus where it was aimed.
++  useEffect(() => {
++    const el = restoreFocusTo.current
++    if (barArgs === null && el) {
++      restoreFocusTo.current = null
++      if (!document.activeElement || document.activeElement === document.body) {
++        el.focus()
++      }
++    }
++  }, [barArgs])
++
+   const hideReactionsBar = () => {
+     setBarArgs(null)
+   }
+@@ -63,6 +79,7 @@ export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
                key={barArgs.messageId}
                messageId={barArgs.messageId}
                myReaction={barArgs.myReaction}

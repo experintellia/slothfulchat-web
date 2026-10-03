@@ -334,6 +334,42 @@ try {
   await msgMenu.waitFor({ state: 'hidden' })
   check(true, 'Escape closes it')
 
+  // keyboard edge cases: a held Enter, Tab, and focus after the full picker
+  const focusIsOnBubble = () => bubble.evaluate((el) => document.activeElement === el)
+  await bubble.evaluate((el) => el.focus())
+  await page.keyboard.down('Enter')
+  await msgMenu.waitFor({ state: 'visible', timeout: 10_000 })
+  await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem')
+  await page.keyboard.down('Enter') // a second down is an auto-repeat (repeat: true)
+  await page.keyboard.up('Enter')
+  check(await msgMenu.isVisible(), 'a held Enter does not trigger the focused action')
+  await page.keyboard.press('Tab')
+  await msgMenu.waitFor({ state: 'hidden', timeout: 5_000 })
+  check(await focusIsOnBubble(), 'Tab closes the menu and returns focus to the message')
+  await page.keyboard.press('Enter')
+  await msgMenu.waitFor({ state: 'visible', timeout: 10_000 })
+  await page.keyboard.press('ArrowUp') // first action → reactions
+  await page.keyboard.press('End') // → "more emojis"
+  await page.keyboard.press('Enter')
+  await msgMenu.waitFor({ state: 'hidden', timeout: 5_000 })
+  // the picker's search field (inside emoji-mart's shadow root) gets focus
+  await page.waitForFunction(
+    () => {
+      const a = document.activeElement
+      return (a?.shadowRoot?.activeElement ?? a)?.tagName === 'INPUT'
+    },
+    null,
+    { timeout: 10_000 }
+  )
+  check(true, '"More emojis" from the menu focuses the picker search')
+  await page.keyboard.press('Escape')
+  await page.waitForFunction(
+    (el) => document.activeElement === el,
+    await bubble.elementHandle(),
+    { timeout: 5_000 }
+  ).catch(() => {})
+  check(await focusIsOnBubble(), 'closing the full emoji picker returns focus to the message')
+
   // 4d. Enter on a control inside the message keeps its own meaning
   const link = bubble.locator('a', { hasText: 'example.org' })
   await link.focus()
