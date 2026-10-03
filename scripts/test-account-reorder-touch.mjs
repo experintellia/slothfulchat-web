@@ -1,5 +1,5 @@
 // Self-check for reordering profiles with a finger and the long-press context-menu
-// fallback (both desktop/0079) — runs FULLY OFFLINE.
+// fallback (both desktop/0079; links in selectable text: desktop/0088) — runs FULLY OFFLINE.
 //
 // The gesture has to share one press with two others: an early move scrolls the profile
 // list, a still press opens the context menu, and only "hold, then move" reorders. That
@@ -98,7 +98,19 @@ const harness = `
             window.__menusOpened.push('selectable')
           },
         },
-        'selectable message text'
+        'selectable message text',
+        // A link in a message body: long press opens the menu (Copy link)
+        // instead of selecting the link text. Kept well away from the plain
+        // text: chromium's touch adjustment snaps a press onto a nearby link.
+        React.createElement(
+          'a',
+          {
+            id: 'link',
+            href: 'https://example.org/',
+            style: { display: 'block', marginTop: '60px' },
+          },
+          'a link'
+        )
       ),
       React.createElement(
         'ul',
@@ -267,10 +279,8 @@ try {
   //    "select", so a rest there must never open the menu.
   await reset()
   const sel = await page.locator('#selectable').boundingBox()
-  await touch('touchStart', {
-    x: sel.x + sel.width / 2,
-    y: sel.y + sel.height / 2,
-  })
+  // First line: the plain text, not the link below it.
+  await touch('touchStart', { x: sel.x + 20, y: sel.y + 5 })
   await page.waitForTimeout(900) // past LONG_PRESS_MS
   await touch('touchEnd')
   assert.deepEqual(
@@ -279,8 +289,23 @@ try {
     'no menu on explicitly selectable text'
   )
 
+  // 6. A link inside that selectable text: a rest there opens the menu.
+  await reset()
+  const link = await page.locator('#link').boundingBox()
+  await touch('touchStart', {
+    x: link.x + link.width / 2,
+    y: link.y + link.height / 2,
+  })
+  await page.waitForTimeout(900) // past LONG_PRESS_MS
+  await touch('touchEnd')
+  assert.deepEqual(
+    (await state()).menus,
+    ['selectable'],
+    'a long press on a link in selectable text opens the menu'
+  )
+
   console.log(
-    '✓ touch: hold-then-move reorders, a rest opens the menu, a scroll does neither, selectable text stays selectable'
+    '✓ touch: hold-then-move reorders, a rest opens the menu, a scroll does neither, selectable text stays selectable, links open the menu'
   )
 } finally {
   await browser.close()

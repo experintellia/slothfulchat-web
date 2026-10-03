@@ -1,5 +1,10 @@
 # Changelog
 
+- **Reactions now sit on top of the message menu**, like in Signal and
+  Telegram: right-click or long-press a message and pick an emoji or an
+  action from one place. The hover icons next to messages are gone; keyboard
+  users can press Enter on a message to open the same menu. A long press on a
+  link in a message now opens the menu too.
 - **The custom voice-message player is no longer optional.** The
   "Custom voice-message player" switch under Experimental features is gone,
   along with the browser's built-in audio controls it fell back to.
