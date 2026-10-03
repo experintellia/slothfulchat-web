@@ -1,0 +1,366 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Thu, 27 Aug 2026 12:59:19 +0000
+Subject: [PATCH 84/86] web-app: DM composer suggests /bot commands from the
+ contact's bio
+
+Reuses the :emoji: completion menu's generic CompletionProvider
+machinery (patch 0049) with a new trigger: typing `/` in a DM chat
+opens the same menu, populated from any /commands the contact's bio
+lists. Parsing reuses the existing botcommand linkify tokenizer
+(the one that already turns /commands in messages and status text
+into clickable chips), so word-boundary rules stay in one place.
+
+CompletionItem gains an optional description field so a suggestion
+row can show more than a glyph.
+---
+ .../scss/composer/_completion-menu.scss       | 22 +++++++-
+ .../src/components/composer/Composer.tsx      | 19 +++++++
+ .../composer/ComposerMessageInput.tsx         | 46 +++++++++++++----
+ .../composer/completion/CompletionMenu.tsx    |  5 ++
+ .../composer/completion/botCommandProvider.ts | 51 +++++++++++++++++++
+ .../components/composer/completion/types.ts   |  2 +
+ .../frontend/src/tests/completion.test.ts     | 43 ++++++++++++++++
+ 7 files changed, 177 insertions(+), 11 deletions(-)
+ create mode 100644 packages/frontend/src/components/composer/completion/botCommandProvider.ts
+
+diff --git a/packages/frontend/scss/composer/_completion-menu.scss b/packages/frontend/scss/composer/_completion-menu.scss
+index 130faa3..b6e9a1d 100644
+--- a/packages/frontend/scss/composer/_completion-menu.scss
++++ b/packages/frontend/scss/composer/_completion-menu.scss
+@@ -32,9 +32,16 @@
+     padding: 7px 12px;
+     cursor: default;
+ 
++    // A tint of the text colour over the menu background: contrast against
++    // `--textPrimary` holds in every theme. (`--chatListItemSelectedBg` plus
++    // `--chatListItemSelectedText` does not: dark themes pair a mid-blue bg
++    // with the dark `--bgPrimary` as text.)
+     &.active {
+-      background-color: var(--chatListItemSelectedBg);
+-      color: var(--chatListItemSelectedText, var(--textPrimary));
++      background-color: color-mix(
++        in srgb,
++        var(--textPrimary) 16%,
++        var(--bgPrimary)
++      );
+     }
+   }
+ 
+@@ -49,5 +56,16 @@
+     overflow: hidden;
+     text-overflow: ellipsis;
+     white-space: nowrap;
++    flex: 0 1 auto;
++  }
++
++  .completion-menu-description {
++    overflow: hidden;
++    text-overflow: ellipsis;
++    white-space: nowrap;
++    min-width: 0;
++    flex: 1 1 auto;
++    opacity: 0.7;
++    font-size: 0.9em;
+   }
+ }
+diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
+index 0977055..58d5982 100644
+--- a/packages/frontend/src/components/composer/Composer.tsx
++++ b/packages/frontend/src/components/composer/Composer.tsx
+@@ -13,6 +13,7 @@ import { extension } from 'mime-types'
+ 
+ import MenuAttachment from './menuAttachment'
+ import ComposerMessageInput from './ComposerMessageInput'
++import { parseBotCommandsFromStatus } from './completion/botCommandProvider'
+ import LinkPreviewGhost from './linkPreview/LinkPreviewGhost'
+ import ghostStyles from './linkPreview/styles.module.scss'
+ import Icon from '../Icon'
+@@ -32,6 +33,7 @@ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import useMessage from '../../hooks/chat/useMessage'
+ import useChat from '../../hooks/chat/useChat'
+ import { useDraft, type DraftObject } from '../../hooks/chat/useDraft'
++import { useRpcFetch } from '../../hooks/useFetch'
+ 
+ import type { EmojiMartData } from '../EmojiPicker'
+ import { VisualVCardComponent } from '../message/VCard'
+@@ -150,6 +152,22 @@ const Composer = forwardRef<
+ 
+   const settingsStore = useSettingsStore()[0]
+ 
++  // `/`-completion for DM chats whose contact lists `/commands` in their bio.
++  const dmContactId =
++    selectedChat.chatType === 'Single' ? selectedChat.contactIds[0] : undefined
++  const dmContactFetch = useRpcFetch(
++    BackendRemote.rpc.getContact,
++    dmContactId ? [accountId, dmContactId] : null
++  )
++  const dmContact = dmContactFetch?.result?.ok
++    ? dmContactFetch.result.value
++    : null
++  const botCommands = useMemo(
++    () =>
++      dmContact?.status ? parseBotCommandsFromStatus(dmContact.status) : [],
++    [dmContact?.status]
++  )
++
+   // Sender-baked link previews: when the draft has a URL and no image, offer to
+   // generate a preview card and attach it as an image. See docs/link-preview.md.
+   // Experimental and off by default; turn it on in Settings → Advanced.
+@@ -848,6 +866,7 @@ const Composer = forwardRef<
+                   settingsStore?.desktopSettings.experimentalCompletionMenu ===
+                   true
+                 }
++                botCommands={botCommands}
+                 loadingDraft={draftIsLoading}
+                 sendMessageOrEditRequest={
+                   (!messageEditing.isEditingModeActive
+diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
+index cb9d28a..b561f5d 100644
+--- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
++++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
+@@ -7,6 +7,10 @@ import { I18nContext } from '../../contexts/I18nContext'
+ import { CompletionMenu } from './completion/CompletionMenu'
+ import { findActiveToken } from './completion/findActiveToken'
+ import { emojiProvider } from './completion/emojiProvider'
++import {
++  createBotCommandProvider,
++  type BotCommand,
++} from './completion/botCommandProvider'
+ 
+ import type {
+   ActiveToken,
+@@ -19,10 +23,6 @@ const log = getLogger('renderer/composer/ComposerMessageInput')
+ const browserSupportsCSSFieldSizing = CSS.supports('field-sizing', 'content')
+ const maxLines = 9
+ 
+-// Completion providers, tried in order. Emoji now; a future @mention provider
+-// slots in here with no other change.
+-const completionProviders: CompletionProvider[] = [emojiProvider]
+-
+ type CompletionState = {
+   open: boolean
+   items: CompletionItem[]
+@@ -55,6 +55,8 @@ type ComposerMessageInputProps = {
+   enterKeySends: boolean
+   /** Enable the :emoji: completion menu (on by default). */
+   completionMenu?: boolean
++  /** `/commands` parsed from the DM contact's bio, for the `/` completion menu. */
++  botCommands?: BotCommand[]
+   onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
+   // used to show/hide send button
+   onChange: (text: string) => void
+@@ -186,12 +188,21 @@ export default class ComposerMessageInput extends React.Component<
+     this.refreshCompletion(el.value, el.selectionStart ?? el.value.length)
+   }
+ 
++  /** Providers tried in order. Emoji is always on; the bot-command provider
++   * only exists while the current chat's contact lists `/commands`. */
++  private get completionProviders(): CompletionProvider[] {
++    const { botCommands } = this.props
++    return botCommands?.length
++      ? [emojiProvider, createBotCommandProvider(botCommands)]
++      : [emojiProvider]
++  }
++
+   refreshCompletion(text: string, caret: number) {
+     if (!this.props.completionMenu) {
+       this.closeCompletion()
+       return
+     }
+-    for (const provider of completionProviders) {
++    for (const provider of this.completionProviders) {
+       const token = findActiveToken(text, caret, provider)
+       if (!token) {
+         continue
+@@ -203,7 +214,15 @@ export default class ComposerMessageInput extends React.Component<
+         return
+       }
+       this.completionDismissed = null
+-      this.applyCompletion(token, provider.query(token.term))
++      const items = provider.query(token.term)
++      // already fully typed (e.g. `/help`): nothing left to complete, and
++      // Enter should send rather than re-pick
++      const typed = text.slice(token.start, token.end).toLowerCase()
++      if (items.some(i => i.value.toLowerCase() === typed)) {
++        this.closeCompletion()
++        return
++      }
++      this.applyCompletion(token, items)
+       return
+     }
+     this.closeCompletion()
+@@ -250,9 +269,14 @@ export default class ComposerMessageInput extends React.Component<
+       return
+     }
+     const text = this.props.text
+-    const updated = text.slice(0, token.start) + item.value + text.slice(token.end)
++    // trailing space so typing can continue (and the menu doesn't reopen on
++    // the finished token); skip it if whitespace already follows
++    const value = /^\s/.test(text.slice(token.end))
++      ? item.value
++      : item.value + ' '
++    const updated = text.slice(0, token.start) + value + text.slice(token.end)
+     // reuse the existing caret-restore path (componentDidUpdate)
+-    this.setCursorPosition = token.start + item.value.length
++    this.setCursorPosition = token.start + value.length
+     this.closeCompletion()
+     this.props.onChange(updated)
+   }
+@@ -405,7 +429,11 @@ export default class ComposerMessageInput extends React.Component<
+           <>
+             {completion.open && (
+               <CompletionMenu
+-                ariaLabel={window.static_translate('emoji')}
++                ariaLabel={
++                  completion.token?.trigger === '/'
++                    ? 'Bot commands'
++                    : window.static_translate('emoji')
++                }
+                 items={completion.items}
+                 active={completion.active}
+                 onSelect={this.selectCompletion}
+diff --git a/packages/frontend/src/components/composer/completion/CompletionMenu.tsx b/packages/frontend/src/components/composer/completion/CompletionMenu.tsx
+index 6af6517..4b37f24 100644
+--- a/packages/frontend/src/components/composer/completion/CompletionMenu.tsx
++++ b/packages/frontend/src/components/composer/completion/CompletionMenu.tsx
+@@ -57,6 +57,11 @@ export function CompletionMenu({
+             <span className='completion-menu-preview'>{it.preview}</span>
+           )}
+           <span className='completion-menu-label'>{it.label}</span>
++          {it.description && (
++            <span className='completion-menu-description'>
++              {it.description}
++            </span>
++          )}
+         </div>
+       ))}
+     </div>
+diff --git a/packages/frontend/src/components/composer/completion/botCommandProvider.ts b/packages/frontend/src/components/composer/completion/botCommandProvider.ts
+new file mode 100644
+index 0000000..2a5388c
+--- /dev/null
++++ b/packages/frontend/src/components/composer/completion/botCommandProvider.ts
+@@ -0,0 +1,51 @@
++import * as linkify from 'linkifyjs'
++
++import '../../../utils/linkify/plugin-bot-command/index.js'
++
++import type { CompletionItem, CompletionProvider } from './types'
++
++// Bot-command completion for DM chats: if the contact's bio (status) lists
++// `/commands`, typing `/` in the composer suggests them. Reuses the same
++// linkify tokenizer that already turns `/command` into a clickable chip
++// inside a status/message (utils/linkify/plugin-bot-command), so the notion
++// of "what counts as a command" and its word-boundary rules stay in one
++// place instead of being reimplemented with a regex here.
++
++export type BotCommand = { command: string; description: string }
++
++export function parseBotCommandsFromStatus(status: string): BotCommand[] {
++  const commands: BotCommand[] = []
++  const seen = new Set<string>()
++  for (const line of status.split('\n')) {
++    for (const token of linkify.find(line, 'botcommand')) {
++      if (seen.has(token.value)) continue
++      seen.add(token.value)
++      const description = line
++        .slice(token.end)
++        .trim()
++        .replace(/^[-–:]\s*/, '')
++      commands.push({ command: token.value, description })
++    }
++  }
++  return commands
++}
++
++export function createBotCommandProvider(
++  commands: BotCommand[]
++): CompletionProvider {
++  return {
++    trigger: '/',
++    minChars: 0,
++    query(rawTerm: string): CompletionItem[] {
++      const term = rawTerm.toLowerCase()
++      return commands
++        .filter(c => c.command.slice(1).toLowerCase().startsWith(term))
++        .map(c => ({
++          id: c.command,
++          label: c.command,
++          value: c.command,
++          description: c.description || undefined,
++        }))
++    },
++  }
++}
+diff --git a/packages/frontend/src/components/composer/completion/types.ts b/packages/frontend/src/components/composer/completion/types.ts
+index 7b6a2a3..33a3573 100644
+--- a/packages/frontend/src/components/composer/completion/types.ts
++++ b/packages/frontend/src/components/composer/completion/types.ts
+@@ -10,6 +10,8 @@ export type CompletionItem = {
+   value: string
+   /** optional glyph/preview rendered at the start of the row */
+   preview?: string
++  /** optional secondary text rendered after the label, e.g. a bot command's description */
++  description?: string
+ }
+ 
+ export type CompletionProvider = {
+diff --git a/packages/frontend/src/tests/completion.test.ts b/packages/frontend/src/tests/completion.test.ts
+index 39a5f97..55ecbe8 100644
+--- a/packages/frontend/src/tests/completion.test.ts
++++ b/packages/frontend/src/tests/completion.test.ts
+@@ -3,6 +3,10 @@ import { describe, it } from 'mocha'
+ 
+ import { findActiveToken } from '../components/composer/completion/findActiveToken.js'
+ import { emojiProvider } from '../components/composer/completion/emojiProvider.js'
++import {
++  createBotCommandProvider,
++  parseBotCommandsFromStatus,
++} from '../components/composer/completion/botCommandProvider.js'
+ 
+ import type { CompletionItem } from '../components/composer/completion/types.js'
+ 
+@@ -63,3 +67,42 @@ describe('composer completion / emojiProvider', () => {
+     expect(items.some(i => i.id === 'smile')).to.equal(true)
+   })
+ })
++
++describe('composer completion / botCommandProvider', () => {
++  it('extracts /commands and their trailing description from a bio', () => {
++    expect(
++      parseBotCommandsFromStatus(
++        'I am a bot.\n/help - Show this help\n/subscribe Subscribe to updates'
++      )
++    ).to.deep.equal([
++      { command: '/help', description: 'Show this help' },
++      { command: '/subscribe', description: 'Subscribe to updates' },
++    ])
++  })
++
++  it('ignores a bio with no bot commands', () => {
++    expect(parseBotCommandsFromStatus('Just a regular contact')).to.deep.equal(
++      []
++    )
++  })
++
++  it('dedupes repeated commands, keeping the first occurrence', () => {
++    expect(
++      parseBotCommandsFromStatus('/help - first\n/help - second')
++    ).to.deep.equal([{ command: '/help', description: 'first' }])
++  })
++
++  it('the provider lists everything on an empty term and filters by prefix', () => {
++    const provider = createBotCommandProvider([
++      { command: '/help', description: 'Show help' },
++      { command: '/status', description: '' },
++    ])
++    expect(provider.query('').map(i => i.value)).to.deep.equal([
++      '/help',
++      '/status',
++    ])
++    const matches = provider.query('he')
++    expect(matches.map(i => i.value)).to.deep.equal(['/help'])
++    expect(matches[0]?.description).to.equal('Show help')
++  })
++})

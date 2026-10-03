@@ -1,4 +1,4 @@
-// E2E check for right-click menus (desktop/0035) — runs FULLY OFFLINE. One
+// E2E check for right-click menus (desktop/0034) — runs FULLY OFFLINE. One
 // webimap account against an in-process mock madmail server (trimmed from
 // scripts/test-sidebar-resize-e2e.mjs), one group with a webxdc app in it.
 //

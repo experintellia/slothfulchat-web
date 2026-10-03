@@ -1,0 +1,151 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Fri, 10 Jul 2026 19:15:47 +0000
+Subject: [PATCH 36/86] web-app: chat export confirm dialog (exclusions + date
+ range)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Export Chat now opens a confirm dialog before running: it explains what
+the export contains and — per review of what the app shows that an
+export cannot carry — states that read receipts, full HTML e-mail
+contents and webxdc app contents are not included. Optional From/Until
+date fields (inclusive, local time) are passed to
+window.__slothfulExportChat as unix-second bounds; the fork-side
+exporter applies them to the viewer, messages.json, messages.txt and
+the bundled media alike.
+
+New strings live in _untranslated_en.json.
+---
+ _locales/_untranslated_en.json                | 12 +++
+ .../components/dialogs/ExportChatToHtml.tsx   | 73 ++++++++++++++++---
+ 2 files changed, 73 insertions(+), 12 deletions(-)
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 4ab7816..fe3dfc4 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -1,4 +1,16 @@
+ {
++  "export_chat_explain": {
++    "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
++  },
++  "export_chat_start_date": {
++    "message": "From (optional)"
++  },
++  "export_chat_end_date": {
++    "message": "Until (optional)"
++  },
++  "export_chat_start_button": {
++    "message": "Export"
++  },
+   "menu_export_chat": {
+     "message": "Export Chat"
+   },
+diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+index c8e871d..d6d25d0 100644
+--- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
++++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
+@@ -1,4 +1,4 @@
+-import React, { useEffect, useRef, useState } from 'react'
++import React, { useRef, useState } from 'react'
+ import moment from 'moment'
+ import { T } from '@deltachat/jsonrpc-client'
+ 
+@@ -35,26 +35,31 @@ type Props = {
+  * this tree, by slothfulchat-web's packages/web-app/src/chat-export.ts, which
+  * registers window.__slothfulExportChat; this dialog only hands it what lives
+  * in the frontend bundle — the hashed css-module class names the viewer
+- * reuses and the user's moment locale — and shows progress.
++ * reuses and the user's moment locale — and shows progress. A confirm step
++ * first says what the export leaves out and takes an optional date range.
+  */
+ export default function ExportChatToHtml({ chat, onClose }: Props) {
+   const tx = useTranslationFunction()
+   const accountId = selectedAccountId()
++  const [phase, setPhase] = useState<'configure' | 'running'>('configure')
+   const [progress, setProgress] = useState(0)
++  const [startDate, setStartDate] = useState('')
++  const [endDate, setEndDate] = useState('')
+   const abort = useRef(new AbortController())
+-  const started = useRef(false)
+ 
+-  useEffect(() => {
+-    if (started.current) {
+-      return
+-    }
+-    started.current = true
++  const startExport = () => {
++    setPhase('running')
+     const signal = abort.current.signal
+     ;(window as any)
+       .__slothfulExportChat(chat.id, {
+         accountId,
+-        startTs: null,
+-        endTs: null,
++        // interpret both dates in the user's local timezone, inclusive
++        startTs: startDate
++          ? new Date(startDate + 'T00:00:00').getTime() / 1000
++          : null,
++        endTs: endDate
++          ? new Date(endDate + 'T23:59:59.999').getTime() / 1000
++          : null,
+         styles: {
+           message: messageStyles.message,
+           messageFooter: messageStyles.messageFooter,
+@@ -86,8 +91,52 @@ export default function ExportChatToHtml({ chat, onClose }: Props) {
+         })
+       })
+       .finally(onClose)
+-    // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [])
++  }
++
++  if (phase === 'configure') {
++    return (
++      <Dialog onClose={onClose} canOutsideClickClose={false} width={400}>
++        <DialogHeader title={tx('menu_export_chat')} />
++        <DialogBody>
++          <DialogContent>
++            <p className='whitespace'>{tx('export_chat_explain')}</p>
++            <label style={{ display: 'block', margin: '8px 0' }}>
++              {tx('export_chat_start_date')}{' '}
++              <input
++                type='date'
++                value={startDate}
++                onChange={event => setStartDate(event.target.value)}
++                data-testid='export-chat-start-date'
++              />
++            </label>
++            <label style={{ display: 'block', margin: '8px 0' }}>
++              {tx('export_chat_end_date')}{' '}
++              <input
++                type='date'
++                value={endDate}
++                onChange={event => setEndDate(event.target.value)}
++                data-testid='export-chat-end-date'
++              />
++            </label>
++          </DialogContent>
++          <DialogFooter>
++            <FooterActions align='end'>
++              <FooterActionButton onClick={onClose} data-testid='cancel'>
++                {tx('cancel')}
++              </FooterActionButton>
++              <FooterActionButton
++                styling='primary'
++                onClick={startExport}
++                data-testid='export-chat-start'
++              >
++                {tx('export_chat_start_button')}
++              </FooterActionButton>
++            </FooterActions>
++          </DialogFooter>
++        </DialogBody>
++      </Dialog>
++    )
++  }
+ 
+   return (
+     <Dialog
