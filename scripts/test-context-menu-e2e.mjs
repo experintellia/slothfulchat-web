@@ -351,11 +351,28 @@ try {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
     await page.waitForTimeout(300)
   }
+  // iOS takes a long press on anything selectable as a text selection and
+  // cancels the touch (chromium can't reproduce that), so on touch nothing
+  // in the bubble may be selectable: not the padding, not the date row.
+  check(
+    await bubble.evaluate((el) =>
+      [el, el.querySelector('.msg-container'), el.querySelector('.metadata'), el.querySelector('.text')].every(
+        (e) => e && getComputedStyle(e).userSelect === 'none'
+      )
+    ),
+    'on touch nothing in the bubble is selectable (bubble, padding, date, text)'
+  )
   const container = await bubble.locator('.msg-container').boundingBox()
   // left padding of the bubble, level with the first line
   await longPress({ x: container.x + 4, y: container.y + 18 })
   check(await msgMenu.isVisible(), 'long press on the bubble opens the menu (and the release keeps it open)')
   check(await reactions.isVisible(), '…with the reactions bar')
+  await page.keyboard.press('Escape')
+  await msgMenu.waitFor({ state: 'hidden' })
+
+  const meta = await bubble.locator('.metadata').boundingBox()
+  await longPress({ x: meta.x + meta.width / 2, y: meta.y + meta.height / 2 })
+  check(await msgMenu.isVisible(), 'long press on the date row opens the menu')
   await page.keyboard.press('Escape')
   await msgMenu.waitFor({ state: 'hidden' })
 

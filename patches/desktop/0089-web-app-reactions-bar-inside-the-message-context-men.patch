@@ -27,7 +27,7 @@ selection, but a press on a link now opens the menu (Copy Link), with
 -webkit-touch-callout off on message links so iOS's preview sheet does
 not cover it.
 ---
- packages/frontend/scss/message/_message.scss  | 17 ++++
+ packages/frontend/scss/message/_message.scss  | 21 +++++
  .../frontend/scss/misc/_context_menu.scss     | 24 +++++
  .../frontend/src/components/ContextMenu.tsx   | 82 ++++++++++++++++-
  .../src/components/KeyboardShortcutHint.tsx   |  4 +
@@ -40,13 +40,13 @@ not cover it.
  .../ShortcutMenu/styles.module.scss           | 53 ++++++-----
  .../src/components/message/Message.tsx        | 91 +++++++++++--------
  .../src/utils/longPressContextMenu.ts         | 14 ++-
- 13 files changed, 269 insertions(+), 127 deletions(-)
+ 13 files changed, 273 insertions(+), 127 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index d2c58bd..66aaf84 100644
+index d2c58bd..7b22e08 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
-@@ -13,6 +13,23 @@ $info-text-max-width: 400px;
+@@ -13,6 +13,27 @@ $info-text-max-width: 400px;
    }
  }
  
@@ -61,9 +61,13 @@ index d2c58bd..66aaf84 100644
 +// and with it the long-press fallback. "Copy Text" in the menu copies it,
 +// as in other messengers.
 +@media (pointer: coarse) {
-+  .message .text {
-+    -webkit-user-select: none;
-+    user-select: none;
++  // The whole bubble: padding and the date row resolve `auto` to selectable
++  // on iOS. ponytail: !important beats the explicit `user-select: text` that
++  // quotes, file names and invite cards set deeper in the bubble.
++  .message,
++  .message * {
++    -webkit-user-select: none !important;
++    user-select: none !important;
 +  }
 +}
 +
