@@ -2,13 +2,16 @@
 // One webimap account against an in-process mock madmail server (trimmed from
 // scripts/test-context-menu-e2e.mjs), two groups with events in them:
 //
-//   1. an .ics file sent as a plain attachment is indexed by core and shows
-//      in the chat's calendar (chat-header button), recurring weekly
-//   2. the Files tab no longer lists it
+//   1. an .ics file sent as a plain attachment becomes a Calendar message: an
+//      event card in the chat, and in the chat's calendar (chat-header
+//      button), recurring weekly
+//   2. the Files tab does not list it
 //   3. Ctrl/Cmd+Shift+Y opens the all-chats calendar; its sidebar lists both
 //      chats, and unticking one hides that chat's events
 //   4. "New event" → pick a chat → fill the form → the sent event shows up,
 //      in the agenda view too, and core has it
+//   5. attachment menu → Event → the draft shows an event card; sending it
+//      puts the card in the chat
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/test-calendar-e2e.mjs
@@ -138,16 +141,31 @@ try {
     text: 'see you there',
   })
   const day = (d) => Date.UTC(now.getFullYear(), now.getMonth(), d) / 1000
-  await rpc(
-    'sendCalendarEvent',
-    aliceId,
-    familyId,
-    { summary: 'Picnic', start: day(12), end: day(13), allDay: true },
-    null
+  const picnic = await rpc('makeCalendarIcs', {
+    summary: 'Picnic',
+    start: day(12),
+    end: day(13),
+    allDay: true,
+  })
+  const picnicPath = await page.evaluate(
+    (text) => window.exp.runtime.writeTempFile('picnic.ics', text),
+    picnic
   )
+  await rpc('sendMsg', aliceId, familyId, {
+    file: picnicPath,
+    filename: 'picnic.ics',
+    viewtype: 'Calendar',
+  })
 
-  // 1. chat calendar from the chat header
+  // 1. event card in the chat, then the chat calendar from the chat header
   await page.locator('.chat-list-item', { hasText: 'Team' }).click()
+  const bubble = page.locator('.message', { hasText: 'see you there' })
+  await bubble.waitFor({ timeout: 30_000 })
+  check(
+    await bubble.getByRole('button', { name: /Kickoff/ }).isVisible(),
+    'the .ics message shows as an event card'
+  )
+  check(!(await bubble.getByText('invite.ics').isVisible()), 'not as a file')
   await page.getByRole('button', { name: 'Calendar', exact: true }).click()
   await chip('Kickoff').first().waitFor({ state: 'visible', timeout: 30_000 })
   check((await chip('Kickoff').count()) >= 1, 'chat calendar shows the .ics event')
@@ -193,7 +211,30 @@ try {
     'core indexed the event sent from the UI'
   )
 
-  console.log('PASS: calendar — indexing, chat + all-chats views, sidebar, new event')
+  await page.keyboard.press('Escape')
+  await dialog.waitFor({ state: 'hidden' })
+
+  // 5. attachment menu → Event → draft preview → send
+  await page.locator('.chat-list-item', { hasText: 'Family' }).click()
+  await page.getByTestId('open-attachment-menu').click()
+  await page.getByTestId('attach-event').click()
+  await page.getByLabel('Title').fill('Lunch')
+  await page.getByRole('button', { name: 'Attach', exact: true }).click()
+  const draftCard = page.locator('.attachment-quote-section', { hasText: 'Lunch' })
+  await draftCard.waitFor({ timeout: 30_000 })
+  check(true, 'the draft shows the event as a card')
+  await page.locator('#composer-textarea-non-edit').fill('lunch?')
+  await page.locator('.send-button').click()
+  const sent = page.locator('.message', { hasText: 'lunch?' })
+  await sent.waitFor({ timeout: 30_000 })
+  check(
+    await sent.getByRole('button', { name: /Lunch/ }).isVisible(),
+    'the sent draft shows as an event card'
+  )
+  const all = await rpc('getCalendarEvents', aliceId, null, day(1), day(28) + 86400 * 40)
+  check(all.some((e) => e.summary === 'Lunch'), 'core indexed the drafted event')
+
+  console.log('PASS: calendar — message type, draft, indexing, views, sidebar, new event')
 } catch (e) {
   failed = true
   console.error(e)

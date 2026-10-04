@@ -208,25 +208,38 @@ exists:
   next chunk. The staging file stays, so tapping download again resumes where
   it stopped. A whole-message fetch on a server without partial FETCH cannot
   be interrupted and still finishes. `core/0035`, `desktop/0089`
-- **Calendar** — events from iCalendar attachments (shared `.ics` files and
-  the `text/calendar` part of email invitations, which core already turned
-  into a File) are parsed once and indexed in a `calendar_events` table, via
-  the `icalendar` and `rrule` crates (+ `chrono-tz`). One row per VEVENT;
-  recurring series are stored as a serialized `RRuleSet` and expanded per
-  query. Updates and cancellations are folded per UID (highest SEQUENCE wins,
-  RECURRENCE-ID overrides replace their occurrence). Windows time-zone names
-  from Outlook map to IANA through a small table, unknown ones fall back to
-  the VTIMEZONE's standard offset. The table is derived data and is created
-  with `CREATE TABLE IF NOT EXISTS` on open rather than as a numbered
-  migration, so it can never collide with upstream's migration numbers.
-  Indexed on receive; older messages and late downloads are indexed lazily
-  on the first query. New JSON-RPC: `get_calendar_events`,
-  `get_calendar_chats`, `send_calendar_event`. In the UI: a Calendar tab in
-  apps & media (month grid + agenda), an all-chats calendar (account menu,
-  Ctrl/Cmd+Shift+Y) with a per-chat colour/toggle sidebar, a calendar button
-  in the chat header, and a "New event" form that sends an `.ics` with an
-  optional message. `.ics` files left the Files tab. `core/0036`,
-  `desktop/0090`
+- **Calendar** — iCalendar attachments (shared `.ics` files and the
+  `text/calendar` part of email invitations) are a new message type,
+  `Viewtype::Calendar` (numbered 7000, far from upstream's 10–90, so a future
+  upstream viewtype can't collide in the database), wired like `Vcard`: the
+  `.ics` suffix upgrades File on send/draft, the receiver checks the content
+  and falls back to File without an event, `Summary1` carries the title for
+  the chat list ("📅 Title"). On the wire it stays a plain `text/calendar`
+  attachment, so other clients see a file. Events are parsed via the
+  `icalendar` and `rrule` crates (+ `chrono-tz`) and indexed in
+  `slothfulchat_calendar_events`; recurring series are stored as a serialized
+  `RRuleSet` and expanded per query, updates and cancellations folded per UID
+  (highest SEQUENCE wins, RECURRENCE-ID overrides replace their occurrence).
+  Windows time-zone names from Outlook map to IANA through a small table,
+  unknown ones fall back to the VTIMEZONE's standard offset. The fork's
+  tables and triggers carry a `slothfulchat_` prefix and are created with
+  `IF NOT EXISTS` on open, outside upstream's numbered migrations. Deletion in
+  every form is handled in one place, not in the deletion code paths: before
+  every read and in housekeeping, entries of messages that are deleted or in
+  trash (delete for me / everyone, ephemeral timers, delete-device-after,
+  chat deletion) are dropped. Not SQLite triggers: native backup import
+  copies triggers behind the connection's back (re-creating them made the
+  schema malformed) and they would travel in backups. Drafts, blocked chats
+  and contact requests stay out of the calendar. Indexed on receive and send;
+  older messages, late downloads and plain-File `.ics` (retyped to Calendar)
+  are picked up in housekeeping or on the next query. New JSON-RPC:
+  `get_calendar_events`, `get_calendar_chats`, `get_calendar_msg_events`,
+  `make_calendar_ics`, and `calendarEvent` on messages. In the UI: an event
+  card in the chat and in the draft preview, "Event" in the attachment menu,
+  a Calendar tab in apps & media (month grid + agenda), an all-chats calendar
+  (account menu, Ctrl/Cmd+Shift+Y) with a per-chat colour/toggle sidebar, a
+  calendar button in the chat header, and a "New event" form there.
+  `core/0036`, `desktop/0090`
 - **HTML email viewer ("Show Full Message…")** — the browser edition of
   desktop's sandboxed email window: a fullscreen in-app dialog whose content
   is DOMPurify-sanitized and rendered in an iframe with an opaque no-script
