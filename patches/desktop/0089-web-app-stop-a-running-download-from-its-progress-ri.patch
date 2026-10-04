@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 2 Oct 2026 00:37:43 +0000
-Subject: [PATCH 88/88] web-app: stop a running download from its progress ring
+Subject: [PATCH 89/90] web-app: stop a running download from its progress ring
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
