@@ -289,6 +289,26 @@ try {
     (await msgMenu.getByRole('menuitem', { name: 'React', exact: true }).count()) === 0,
     'no separate "React" menu item'
   )
+  await page.keyboard.press('Escape')
+  await msgMenu.waitFor({ state: 'hidden' })
+
+  // With room above and below, the menu opens right at the cursor and the
+  // reactions sit above it (the app's message, higher up the list).
+  const poll = await page.locator('.message', { hasText: 'Poll' }).boundingBox()
+  const at = { x: poll.x + 20, y: poll.y + 20 }
+  await page.mouse.click(at.x, at.y, { button: 'right' })
+  await msgMenu.waitFor({ state: 'visible', timeout: 10_000 })
+  const atMenu = await msgMenu.boundingBox()
+  const atBar = await reactions.boundingBox()
+  check(
+    Math.abs(atMenu.y - at.y) <= 2 && atBar.y + atBar.height <= at.y,
+    'with room, the menu opens at the cursor with the reactions above it'
+  )
+  await page.keyboard.press('Escape')
+  await msgMenu.waitFor({ state: 'hidden' })
+
+  check(await rightClick(bubble), 'message cancels the native menu (again)')
+  await msgMenu.waitFor({ state: 'visible', timeout: 10_000 })
   await reactions.getByRole('menuitemradio', { name: '❤️' }).click()
   await msgMenu.waitFor({ state: 'hidden' })
   for (let i = 0; i < 50 && (await myReaction()) !== '❤️'; i++) {
