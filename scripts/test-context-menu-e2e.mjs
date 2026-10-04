@@ -20,7 +20,7 @@
 //   4. message menu (desktop/0089): reactions bar inside the same menu,
 //      above it; no hover icons; keyboard (Enter, arrows, focus-only "…"
 //      button); on touch a long press anywhere on the bubble opens it —
-//      text, date row, link (CDP touches, which headless chromium answers
+//      text, padding, link (CDP touches, which headless chromium answers
 //      with no native long-press menu, like iOS — so the 0079 fallback is
 //      what's tested)
 //
@@ -283,14 +283,16 @@ try {
   const rBox = await reactions.boundingBox()
   const mBox = await msgMenu.boundingBox()
   check(rBox.y + rBox.height <= mBox.y, 'reactions bar sits above the menu')
-  // SHOT=/path.png saves what this looks like (for PR review)
-  if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT })
   check(
     (await msgMenu.getByRole('menuitem', { name: 'React', exact: true }).count()) === 0,
     'no separate "React" menu item'
   )
-  await page.keyboard.press('Escape')
+  await reactions.getByRole('menuitemradio', { name: '❤️' }).click()
   await msgMenu.waitFor({ state: 'hidden' })
+  for (let i = 0; i < 50 && (await myReaction()) !== '❤️'; i++) {
+    await page.waitForTimeout(100)
+  }
+  check((await myReaction()) === '❤️', 'clicking ❤️ reacts and closes the menu')
 
   // With room above and below, the menu opens right at the cursor and the
   // reactions sit above it (the app's message, higher up the list).
@@ -310,21 +312,9 @@ try {
       { timeout: 3_000 }
     )
     .then(() => true, () => false)
-  if (!placed) {
-    console.error('placement', at, await msgMenu.boundingBox(), await reactions.boundingBox(), page.viewportSize())
-  }
   check(placed, 'with room, the menu opens at the cursor with the reactions above it')
   await page.keyboard.press('Escape')
   await msgMenu.waitFor({ state: 'hidden' })
-
-  check(await rightClick(bubble), 'message cancels the native menu (again)')
-  await msgMenu.waitFor({ state: 'visible', timeout: 10_000 })
-  await reactions.getByRole('menuitemradio', { name: '❤️' }).click()
-  await msgMenu.waitFor({ state: 'hidden' })
-  for (let i = 0; i < 50 && (await myReaction()) !== '❤️'; i++) {
-    await page.waitForTimeout(100)
-  }
-  check((await myReaction()) === '❤️', 'clicking ❤️ reacts and closes the menu')
 
   // 4c. keyboard: Enter on the focused message, arrows across both parts
   const focusedLabel = () =>
@@ -377,12 +367,15 @@ try {
       layer.close()
       enter()
       await new Promise((r) => setTimeout(r, 500))
-      const ok = layer.open && !!layer.querySelector('.dc-context-menu')
+      const ok =
+        layer.open &&
+        document.activeElement?.closest('.dc-context-menu') &&
+        document.activeElement.getAttribute('role') === 'menuitem'
       layer.close()
       await new Promise((r) => setTimeout(r, 100))
       return ok
     }),
-    'a menu reopened right after closing keeps its items'
+    'a menu reopened right after closing keeps its items and focus'
   )
 
   // keyboard edge cases: a held Enter, Tab, and focus after the full picker
@@ -427,6 +420,16 @@ try {
     { timeout: 5_000 }
   ).catch(() => {})
   check(await focusIsOnBubble(), 'closing the full emoji picker returns focus to the message')
+  await page.keyboard.press('Control+r') // the standalone bar
+  await focusedRole('menuitemradio')
+  const over = await bubble.boundingBox()
+  await page.mouse.move(over.x + over.width / 2, over.y + 5)
+  await page.mouse.wheel(0, -200) // scrolling the list hides the bar
+  await page.waitForTimeout(300)
+  check(
+    !(await focusIsOnBubble()),
+    'scrolling away from the reactions bar does not pull focus back to the message'
+  )
 
   // 4d. Enter on a control inside the message keeps its own meaning
   const link = bubble.locator('a', { hasText: 'example.org' })
@@ -479,12 +482,6 @@ try {
   await page.keyboard.press('Escape')
   await msgMenu.waitFor({ state: 'hidden' })
 
-  const meta = await bubble.locator('.metadata').boundingBox()
-  await longPress({ x: meta.x + meta.width / 2, y: meta.y + meta.height / 2 })
-  check(await msgMenu.isVisible(), 'long press on the date row opens the menu')
-  await page.keyboard.press('Escape')
-  await msgMenu.waitFor({ state: 'hidden' })
-
   const lBox = await link.boundingBox()
   await longPress({ x: lBox.x + lBox.width / 2, y: lBox.y + lBox.height / 2 })
   check(await msgMenu.isVisible(), 'long press on a link opens the menu')
@@ -495,30 +492,12 @@ try {
   await page.keyboard.press('Escape')
   await msgMenu.waitFor({ state: 'hidden' })
 
-  const word = await bubble.locator('.text').evaluate((el) => {
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
-    let node = walker.nextNode()
-    while (node && !node.data.includes('hello')) node = walker.nextNode()
-    const at = node.data.indexOf('hello')
-    const range = document.createRange()
-    range.setStart(node, at)
-    range.setEnd(node, at + 5)
-    const r = range.getBoundingClientRect()
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
-  })
+  const textBox = await bubble.locator('.text').boundingBox()
+  const word = { x: textBox.x + 20, y: textBox.y + 8 } // on "hello"
   await longPress(word)
   check(await msgMenu.isVisible(), 'long press on message text opens the menu too (phones)')
   await page.keyboard.press('Escape')
   await msgMenu.waitFor({ state: 'hidden' })
-  if (process.env.SHOT) {
-    // the menu at phone size, for review
-    await page.setViewportSize({ width: 390, height: 844 })
-    await page.waitForTimeout(500)
-    const small = await bubble.locator('.msg-container').boundingBox()
-    await longPress({ x: small.x + 4, y: small.y + 18 })
-    await page.screenshot({ path: process.env.SHOT.replace(/\.png$/, '-phone.png') })
-    await page.keyboard.press('Escape')
-  }
 
   console.log('PASS: right-click menus — app menu where the app owns one, native elsewhere')
 } catch (e) {

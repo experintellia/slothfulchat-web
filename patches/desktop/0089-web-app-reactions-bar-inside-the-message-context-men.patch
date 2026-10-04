@@ -38,14 +38,15 @@ button stays.
 Keyboard details: Tab closes the menu (APG) and an auto-repeated Enter
 is ignored, so holding Enter can't trigger the item it lands on. The
 standalone bar returns focus to the message when a pick or Escape closes
-it, and its positioning helper hides the bar transparently while
+it (not when a click or scroll elsewhere hides it), and its positioning helper hides the bar transparently while
 measuring (visibility: hidden made the picker's search unfocusable, so
 its autofocus was lost when the menu hands over to it).
 
 The layer's dialog dispatches `close` as a separate task; a menu
 reopened in between (Escape, then Enter right away) was emptied by the
 late handler. onClose now leaves a reopened dialog alone, and a new
-open settles the previous menu's promise.
+open settles the previous menu's promise and remounts the menu, so it
+is positioned and focused afresh.
 
 Phones: a long press anywhere on a message opens the menu. On coarse
 pointers nothing in a bubble is selectable: iOS otherwise starts its own
@@ -56,19 +57,19 @@ Text" copies the message, as in other messengers. Message links get
 menu.
 ---
  packages/frontend/scss/message/_message.scss  |  21 +++
- .../frontend/scss/misc/_context_menu.scss     |  31 ++++-
+ .../frontend/scss/misc/_context_menu.scss     |  29 +++-
  .../AbsolutePositioningHelper/index.tsx       |  10 +-
- .../frontend/src/components/ContextMenu.tsx   | 131 ++++++++++++++++--
+ .../frontend/src/components/ContextMenu.tsx   | 133 ++++++++++++++++--
  .../src/components/KeyboardShortcutHint.tsx   |   4 +
  .../components/ReactionsBar/ReactionsBar.tsx  |  35 +++--
- .../ReactionsBar/ReactionsBarContext.tsx      |  19 ++-
+ .../ReactionsBar/ReactionsBarContext.tsx      |  26 +++-
  .../src/components/ReactionsBar/index.ts      |   6 +-
  .../ReactionsBar/styles.module.scss           |  12 ++
  .../ReactionsBar/useReactionsBar.ts           |   6 +-
  .../src/components/ShortcutMenu/index.tsx     |  53 +------
- .../ShortcutMenu/styles.module.scss           |  59 ++++----
- .../src/components/message/Message.tsx        |  91 ++++++------
- 13 files changed, 332 insertions(+), 146 deletions(-)
+ .../ShortcutMenu/styles.module.scss           |  63 ++++-----
+ .../src/components/message/Message.tsx        |  91 +++++++-----
+ 13 files changed, 334 insertions(+), 155 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
 index d2c58bd..7b22e08 100644
@@ -103,7 +104,7 @@ index d2c58bd..7b22e08 100644
  .message {
    position: relative;
 diff --git a/packages/frontend/scss/misc/_context_menu.scss b/packages/frontend/scss/misc/_context_menu.scss
-index 3a1a5c8..4cc3842 100644
+index 3a1a5c8..8ff9af1 100644
 --- a/packages/frontend/scss/misc/_context_menu.scss
 +++ b/packages/frontend/scss/misc/_context_menu.scss
 @@ -3,6 +3,8 @@
@@ -115,18 +116,16 @@ index 3a1a5c8..4cc3842 100644
    // Built-in Chromium styles set `max-height` and `max-width`
    // on `dialog:-internal-dialog-in-top-layer` to `calc(100% - 2em - 6px)`.
    // Let's override that, otherwise the "backdrop" area doesn't
-@@ -37,6 +39,10 @@
+@@ -37,6 +39,8 @@
  
    border-radius: 3px;
    overflow: hidden;
-+  // A tall menu on a small screen scrolls instead of cutting off items
-+  // (max-height is set in code, below the reactions header).
-+  max-height: 100%;
++  // A tall menu scrolls (max-height is set in code, see showAfter).
 +  overflow-y: auto;
  
    box-shadow:
      0 0 0 1px rgba(16, 22, 26, 0.1),
-@@ -89,8 +95,31 @@
+@@ -89,8 +93,31 @@
      &.selected {
        background-color: var(--chatListItemBgHover);
      }
@@ -187,7 +186,7 @@ index c425116..bed4f65 100644
        className={styles.absolutePositioningHelper}
        ref={ref}
 diff --git a/packages/frontend/src/components/ContextMenu.tsx b/packages/frontend/src/components/ContextMenu.tsx
-index a1f3b55..f604c8e 100644
+index a1f3b55..6b8e819 100644
 --- a/packages/frontend/src/components/ContextMenu.tsx
 +++ b/packages/frontend/src/components/ContextMenu.tsx
 @@ -9,6 +9,7 @@ import React, {
@@ -216,7 +215,7 @@ index a1f3b55..f604c8e 100644
  type ContextMenuLevel = {
    items: ContextMenuItem[]
  }
-@@ -78,6 +88,7 @@ export function ContextMenuLayer({
+@@ -78,19 +88,29 @@ export function ContextMenuLayer({
    setShowFunction: (showFn: OpenContextMenu) => void
  }) {
    const layerRef = useRef<HTMLDialogElement>(null)
@@ -224,7 +223,11 @@ index a1f3b55..f604c8e 100644
    const cursorX = useRef<number>(0)
    const cursorY = useRef<number>(0)
  
-@@ -86,11 +97,17 @@ export function ContextMenuLayer({
+   const [currentItems, setCurrentItems] = useState<ContextMenuItem[]>([])
++  // Fresh ContextMenu state per open, even when a reopen races the previous
++  // close and the menu never unmounts in between.
++  const [openCount, setOpenCount] = useState(0)
+   const [position, setPosition] = useState<{
      top: number
      left: number
      rightLimit: number
@@ -242,7 +245,7 @@ index a1f3b55..f604c8e 100644
    const [currentAriaAttrs, setCurrentAriaAttrs] = useState<
      undefined | MenuAriaAttrs
    >(undefined)
-@@ -98,11 +115,15 @@ export function ContextMenuLayer({
+@@ -98,11 +118,15 @@ export function ContextMenuLayer({
    const endPromiseRef = useRef<(() => void) | null>(null)
  
    const show = useCallback(
@@ -259,15 +262,16 @@ index a1f3b55..f604c8e 100644
        layerRef.current.showModal()
  
        // Filter out empty null items
-@@ -115,6 +136,7 @@ export function ContextMenuLayer({
+@@ -115,6 +139,8 @@ export function ContextMenuLayer({
        // Get required information
        setCurrentItems(items)
        setCurrentAriaAttrs(ariaAttrs)
 +      setCurrentHeader(() => header)
++      setOpenCount(c => c + 1)
  
        await new Promise<void>((resolve, _reject) => {
          endPromiseRef.current = resolve
-@@ -135,13 +157,24 @@ export function ContextMenuLayer({
+@@ -135,13 +161,24 @@ export function ContextMenuLayer({
      const { height: layerHeight, width: layerWidth } =
        layerRef.current.getBoundingClientRect()
  
@@ -295,7 +299,7 @@ index a1f3b55..f604c8e 100644
      let left = cursorX.current
  
      // If doesn't fit move to the left
-@@ -149,15 +182,27 @@ export function ContextMenuLayer({
+@@ -149,15 +186,27 @@ export function ContextMenuLayer({
        left -= menu.width
      }
  
@@ -327,7 +331,7 @@ index a1f3b55..f604c8e 100644
    }, [])
  
    const cancel = useCallback((evt?: React.MouseEvent) => {
-@@ -179,6 +224,11 @@ export function ContextMenuLayer({
+@@ -179,6 +228,11 @@ export function ContextMenuLayer({
        className='dc-context-menu-layer'
        onClick={cancel}
        onClose={() => {
@@ -339,7 +343,7 @@ index a1f3b55..f604c8e 100644
          setCurrentItems([])
          endPromiseRef.current?.()
        }}
-@@ -188,6 +238,17 @@ export function ContextMenuLayer({
+@@ -188,8 +242,20 @@ export function ContextMenuLayer({
        // The dialog semantics are not needed, and are probably confusing.
        role='presentation'
      >
@@ -356,19 +360,20 @@ index a1f3b55..f604c8e 100644
 +      )}
        {currentItems.length > 0 && (
          <ContextMenu
++          key={openCount}
            rightLimit={position.rightLimit}
-@@ -197,6 +258,10 @@ export function ContextMenuLayer({
+           top={position.top}
+           left={position.left}
+@@ -197,6 +263,8 @@ export function ContextMenuLayer({
            openCallback={showAfter}
            closeCallback={cancel}
            ariaAttrs={currentAriaAttrs}
-+          // With a header (reactions), start on the first action: a screen
-+          // reader then announces the menu itself, and ArrowUp reaches the
-+          // header.
++          // so screen readers announce the menu; ArrowUp reaches the header
 +          focusFirstItem={!!CurrentHeader}
          />
        )}
      </dialog>
-@@ -212,6 +277,7 @@ export function ContextMenu(props: {
+@@ -212,6 +280,7 @@ export function ContextMenu(props: {
    closeCallback: (evt?: React.MouseEvent) => void
    // TODO make this a required prop.
    ariaAttrs?: MenuAriaAttrs
@@ -376,7 +381,7 @@ index a1f3b55..f604c8e 100644
  }) {
    const { closeCallback } = props
  
-@@ -224,6 +290,17 @@ export function ContextMenu(props: {
+@@ -224,6 +293,17 @@ export function ContextMenu(props: {
    // Which one of the last sublevel items the keyboard is focused on
    const keyboardFocus = useRef<number>(-1)
  
@@ -394,7 +399,7 @@ index a1f3b55..f604c8e 100644
    const levelItems: ContextMenuLevel[] = useMemo(() => {
      let items = props.items.filter(val => val !== false) as ContextMenuItem[]
      const levelItems = [{ items }]
-@@ -299,6 +376,18 @@ export function ContextMenu(props: {
+@@ -299,6 +379,18 @@ export function ContextMenu(props: {
      }
  
      const onKeyDown = (ev: KeyboardEvent) => {
@@ -413,13 +418,12 @@ index a1f3b55..f604c8e 100644
        const current = parent?.querySelector(':focus')
  
        enum Direction {
-@@ -338,6 +427,30 @@ export function ContextMenu(props: {
+@@ -338,6 +430,29 @@ export function ContextMenu(props: {
          return skipIfSeperator(parent?.lastElementChild as HTMLDivElement)
        }
  
-+      // Focus in the header (the reactions bar): it handles its own
-+      // left/right; with `current` null, ArrowDown enters the menu at its
-+      // first item and ArrowUp at its last.
++      // In the header (own left/right), `current` is null: Down/Up enter
++      // the menu at its first/last item.
 +      const headerFocus = (ev.target as Element | null)?.closest?.(
 +        '.dc-context-menu-header'
 +      )
@@ -444,7 +448,7 @@ index a1f3b55..f604c8e 100644
        if (ev.code === 'ArrowDown') {
          getNeighborElementWithoutSeperator(
            parent,
-@@ -372,7 +485,7 @@ export function ContextMenu(props: {
+@@ -372,7 +487,7 @@ export function ContextMenu(props: {
      return () => {
        document.removeEventListener('keydown', onKeyDown)
      }
@@ -545,12 +549,12 @@ index f2331b6..695008e 100644
  
    const isMyReactionDefault = myReaction
 diff --git a/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx b/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
-index 0456b32..afe3592 100644
+index 0456b32..2a1dac8 100644
 --- a/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
 +++ b/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
 @@ -1,4 +1,4 @@
 -import React, { useEffect, useState } from 'react'
-+import React, { useEffect, useRef, useState } from 'react'
++import React, { useCallback, useEffect, useRef, useState } from 'react'
  
  import AbsolutePositioningHelper from '../AbsolutePositioningHelper'
  import OutsideClickHelper from '../OutsideClickHelper'
@@ -562,7 +566,7 @@ index 0456b32..afe3592 100644
    x: number
    y: number
  }
-@@ -24,11 +25,26 @@ export const ReactionsBarContext =
+@@ -24,14 +25,26 @@ export const ReactionsBarContext =
  
  export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
    const [barArgs, setBarArgs] = useState<ShowReactionBar | null>(null)
@@ -573,30 +577,51 @@ index 0456b32..afe3592 100644
      setBarArgs(args)
    }
  
-+  // After a pick or Escape the focused emoji/search field is gone and focus
-+  // falls to <body>; put keyboard users back on the message. Not after a
-+  // click elsewhere, which has already moved focus where it was aimed.
-+  useEffect(() => {
-+    const el = restoreFocusTo.current
-+    if (barArgs === null && el) {
-+      restoreFocusTo.current = null
-+      if (!document.activeElement || document.activeElement === document.body) {
-+        el.focus()
-+      }
-+    }
-+  }, [barArgs])
-+
-   const hideReactionsBar = () => {
+-  const hideReactionsBar = () => {
++  // Click/tap/scroll elsewhere: leave focus where the user took it.
++  const hideReactionsBar = useCallback(() => {
++    restoreFocusTo.current = null
      setBarArgs(null)
-   }
-@@ -63,6 +79,7 @@ export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
+-  }
++  }, [])
++
++  // Pick or Escape: the focused emoji/search field goes away with the bar,
++  // so put keyboard users back on the message it was opened from.
++  const closeAndRefocus = useCallback(() => {
++    const el = restoreFocusTo.current
++    hideReactionsBar()
++    el?.focus()
++  }, [hideReactionsBar])
+ 
+   const value: ReactionsBarValue = {
+     showReactionsBar,
+@@ -42,14 +55,14 @@ export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
+   useEffect(() => {
+     const hideOnEscape = (event: KeyboardEvent) => {
+       if (event.key === 'Escape' && barArgs !== null) {
+-        hideReactionsBar()
++        closeAndRefocus()
+       }
+     }
+     window.addEventListener('keyup', hideOnEscape)
+     return () => {
+       window.removeEventListener('keyup', hideOnEscape)
+     }
+-  }, [barArgs])
++  }, [barArgs, closeAndRefocus])
+ 
+   return (
+     <ReactionsBarContext.Provider value={value}>
+@@ -63,7 +76,8 @@ export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
                key={barArgs.messageId}
                messageId={barArgs.messageId}
                myReaction={barArgs.myReaction}
+-              onClick={hideReactionsBar}
 +              showAllEmojis={barArgs.showAllEmojis}
-               onClick={hideReactionsBar}
++              onClick={closeAndRefocus}
              />
            </OutsideClickHelper>
+         )}
 diff --git a/packages/frontend/src/components/ReactionsBar/index.ts b/packages/frontend/src/components/ReactionsBar/index.ts
 index 331b182..f743704 100644
 --- a/packages/frontend/src/components/ReactionsBar/index.ts
@@ -759,25 +784,21 @@ index a70e1f2..25658ed 100644
        tabIndex={props.tabIndex}
      >
 diff --git a/packages/frontend/src/components/ShortcutMenu/styles.module.scss b/packages/frontend/src/components/ShortcutMenu/styles.module.scss
-index 146bfda..c93dd15 100644
+index 146bfda..8e7e0fc 100644
 --- a/packages/frontend/src/components/ShortcutMenu/styles.module.scss
 +++ b/packages/frontend/src/components/ShortcutMenu/styles.module.scss
-@@ -1,53 +1,45 @@
+@@ -1,53 +1,41 @@
 -$shortcutMenuWidth: 65px;
-+// Only Saved Messages' "show in chat" button takes space here (it sets
-+// --shortcut-menu-width); the "…" button only shows on keyboard focus.
-+$shortcutMenuWidth: 0px;
- $transitionDuration: 50ms;
- 
+-$transitionDuration: 50ms;
+-
  .shortcutMenu {
    align-items: center;
    display: flex;
-   flex: 0 0 var(--shortcut-menu-width, #{$shortcutMenuWidth});
+-  flex: 0 0 var(--shortcut-menu-width, #{$shortcutMenuWidth});
 -  column-gap: 4px;
 -  justify-content: space-between;
-+  position: relative;
-   width: var(--shortcut-menu-width, #{$shortcutMenuWidth});
- 
+-  width: var(--shortcut-menu-width, #{$shortcutMenuWidth});
+-
 -  visibility: var(--shortcut-menu-visibility);
 -  opacity: var(--shortcut-menu-multiplier);
 -  transition-duration: $transitionDuration;
@@ -789,7 +810,11 @@ index 146bfda..c93dd15 100644
 -    flex-direction: row;
 -    margin-inline-start: 10px;
 -  }
--
++  // only Saved Messages' "show in chat" button takes space (it sets the var)
++  flex: 0 0 var(--shortcut-menu-width, 0px);
++  position: relative;
++  width: var(--shortcut-menu-width, 0px);
+ 
    &.outgoing {
      flex-direction: row-reverse;
 -    margin-inline-end: 10px;
@@ -838,14 +863,14 @@ index 146bfda..c93dd15 100644
  }
  
  .shortcutMenuIcon {
-@@ -58,6 +50,13 @@ $transitionDuration: 50ms;
+@@ -58,6 +46,13 @@ $transitionDuration: 50ms;
  }
  
  .originalMessageButton {
 +  margin-inline: 10px;
 +  visibility: var(--shortcut-menu-visibility);
 +  opacity: var(--shortcut-menu-multiplier);
-+  transition-duration: $transitionDuration;
++  transition-duration: 50ms;
 +  transition-timing-function: ease-out;
 +  // Yes, `visibility` works ok.
 +  transition-property: visibility, opacity;
