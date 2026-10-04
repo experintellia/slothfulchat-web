@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 2 Oct 2026 00:44:47 +0000
-Subject: [PATCH] web-app: rounded waveform bars, smooth progress, RMS peaks
+Subject: [PATCH 88/90] web-app: rounded waveform bars, smooth progress, RMS
+ peaks
 
 Loud voice messages drew as solid blocks: bucketPeaks kept the loudest
 sample per bucket (max-abs), and a phone mic with automatic gain touches

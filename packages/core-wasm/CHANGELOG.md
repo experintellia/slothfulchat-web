@@ -1,5 +1,10 @@
 # Changelog
 
+- **Calendar API**: `getCalendarEvents(accountId, chatId | null, from, to)`
+  returns the occurrences of events from `.ics` attachments and email
+  invitations (recurrences expanded, updates and cancellations applied),
+  `getCalendarChats` counts events per chat, and `sendCalendarEvent` sends a
+  new event as an `.ics` file with an optional message.
 - **No `log`→console bridge any more**: core reports Info/Warning/Error both
   through the `log` facade and as JSON-RPC events, so bridging the facade made
   every core log line appear twice on a page that prints the events. The

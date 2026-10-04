@@ -1,0 +1,1548 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sun, 4 Oct 2026 14:09:55 +0000
+Subject: [PATCH 90/90] web-app: calendar tab, all-chats calendar and sending
+ events
+
+A Calendar tab in the apps & media gallery shows the events of the
+iCalendar attachments that core indexes (core/0036): a month grid and an
+agenda list, with prev/next/today. Clicking an event shows its time,
+location, description and chat, with Open (the .ics) and Show in chat.
+
+- All-chats calendar (account menu "Calendar", Ctrl/Cmd+Shift+Y): a
+  sidebar lists the chats that have events with their counts; events are
+  coloured by chat colour, and unticking a chat hides it (remembered per
+  account in localStorage).
+- Chat header: a calendar button next to apps & media opens the chat's
+  calendar.
+- New event: title, all-day, start/end, repeat, location, description and
+  an optional message; in the all-chats view a chat is picked first via
+  the existing SelectChat dialog. Core writes the .ics and sends it.
+- The Files tab no longer lists downloaded .ics files; they live in the
+  calendar now.
+- Floating and all-day times come from core as wall-clock-in-UTC and are
+  shown unshifted.
+---
+ _locales/_untranslated_en.json                |  66 ++
+ images/icons/calendar.svg                     |   1 +
+ .../AccountListSidebar/AccountItem.tsx        |  10 +
+ .../src/components/Calendar/index.tsx         | 727 ++++++++++++++++++
+ .../components/Calendar/styles.module.scss    | 277 +++++++
+ .../src/components/ChatView/ChatView.tsx      |  15 +
+ packages/frontend/src/components/Gallery.tsx  | 166 ++--
+ .../frontend/src/components/Icon/index.tsx    |   1 +
+ .../src/components/KeyboardShortcutHint.tsx   |   4 +
+ .../components/dialogs/MediaView/index.tsx    |  13 +-
+ .../screens/MainScreen/MainScreen.tsx         |   7 +
+ packages/frontend/src/keybindings.ts          |   7 +
+ 12 files changed, 1226 insertions(+), 68 deletions(-)
+ create mode 100644 images/icons/calendar.svg
+ create mode 100644 packages/frontend/src/components/Calendar/index.tsx
+ create mode 100644 packages/frontend/src/components/Calendar/styles.module.scss
+
+diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
+index 2f6785a..2e8705d 100644
+--- a/_locales/_untranslated_en.json
++++ b/_locales/_untranslated_en.json
+@@ -178,5 +178,71 @@
+   },
+   "download_abort": {
+     "message": "Stop download"
++  },
++  "calendar": {
++    "message": "Calendar"
++  },
++  "calendar_month": {
++    "message": "Month"
++  },
++  "calendar_agenda": {
++    "message": "Agenda"
++  },
++  "calendar_new_event": {
++    "message": "New event"
++  },
++  "calendar_select_chat": {
++    "message": "Send event to…"
++  },
++  "calendar_no_events": {
++    "message": "No events in this month. Events from shared .ics files and email invitations show up here."
++  },
++  "calendar_no_chats": {
++    "message": "No chat has events yet."
++  },
++  "calendar_all_day": {
++    "message": "All day"
++  },
++  "calendar_event_title": {
++    "message": "Title"
++  },
++  "calendar_title_missing": {
++    "message": "Please enter a title."
++  },
++  "calendar_starts": {
++    "message": "Starts"
++  },
++  "calendar_ends": {
++    "message": "Ends"
++  },
++  "calendar_end_before_start": {
++    "message": "The event ends before it starts."
++  },
++  "calendar_repeat": {
++    "message": "Repeat"
++  },
++  "calendar_repeat_daily": {
++    "message": "Daily"
++  },
++  "calendar_repeat_weekly": {
++    "message": "Weekly"
++  },
++  "calendar_repeat_monthly": {
++    "message": "Monthly"
++  },
++  "calendar_repeat_yearly": {
++    "message": "Yearly"
++  },
++  "calendar_description": {
++    "message": "Description"
++  },
++  "calendar_message": {
++    "message": "Message (optional)"
++  },
++  "calendar_cancelled": {
++    "message": "This event was cancelled."
++  },
++  "calendar_recurring": {
++    "message": "Repeating event"
+   }
+ }
+diff --git a/images/icons/calendar.svg b/images/icons/calendar.svg
+new file mode 100644
+index 0000000..831f68d
+--- /dev/null
++++ b/images/icons/calendar.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="#e8eaed"><path d="M200-80q-33 0-56.5-23.5T120-160v-560q0-33 23.5-56.5T200-800h40v-80h80v80h320v-80h80v80h40q33 0 56.5 23.5T840-720v560q0 33-23.5 56.5T760-80H200Zm0-80h560v-400H200v400Zm0-480h560v-80H200v80Zm0 0v-80 80Zm280 240q-17 0-28.5-11.5T440-440q0-17 11.5-28.5T480-480q17 0 28.5 11.5T520-440q0 17-11.5 28.5T480-400Zm-160 0q-17 0-28.5-11.5T280-440q0-17 11.5-28.5T320-480q17 0 28.5 11.5T360-440q0 17-11.5 28.5T320-400Zm320 0q-17 0-28.5-11.5T600-440q0-17 11.5-28.5T640-480q17 0 28.5 11.5T680-440q0 17-11.5 28.5T640-400ZM480-240q-17 0-28.5-11.5T440-280q0-17 11.5-28.5T480-320q17 0 28.5 11.5T520-280q0 17-11.5 28.5T480-240Zm-160 0q-17 0-28.5-11.5T280-280q0-17 11.5-28.5T320-320q17 0 28.5 11.5T360-280q0 17-11.5 28.5T320-240Zm320 0q-17 0-28.5-11.5T600-280q0-17 11.5-28.5T640-320q17 0 28.5 11.5T680-280q0 17-11.5 28.5T640-240Z"/></svg>
+diff --git a/packages/frontend/src/components/AccountListSidebar/AccountItem.tsx b/packages/frontend/src/components/AccountListSidebar/AccountItem.tsx
+index 1b67426..5e178c0 100644
+--- a/packages/frontend/src/components/AccountListSidebar/AccountItem.tsx
++++ b/packages/frontend/src/components/AccountListSidebar/AccountItem.tsx
+@@ -129,6 +129,16 @@ export default function AccountItem({
+           }, 50)
+         },
+       },
++      {
++        label: tx('calendar'),
++        action: async () => {
++          await onSelectAccount(accountId)
++          // same 50ms workaround as for "All media" above
++          setTimeout(() => {
++            ActionEmitter.emitAction(KeybindAction.GlobalCalendar_Open)
++          }, 50)
++        },
++      },
+       {
+         label: tx('menu_show_global_map'),
+         action: async () => {
+diff --git a/packages/frontend/src/components/Calendar/index.tsx b/packages/frontend/src/components/Calendar/index.tsx
+new file mode 100644
+index 0000000..fba39bf
+--- /dev/null
++++ b/packages/frontend/src/components/Calendar/index.tsx
+@@ -0,0 +1,727 @@
++import React, { useCallback, useEffect, useMemo, useState } from 'react'
++import moment from 'moment'
++import classNames from 'classnames'
++import { C, T } from '@deltachat/jsonrpc-client'
++
++import { BackendRemote, onDCEvent } from '../../backend-com'
++import { selectedAccountId } from '../../ScreenController'
++import useDialog from '../../hooks/dialog/useDialog'
++import useMessage from '../../hooks/chat/useMessage'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
++import { openAttachmentInShell } from '../message/messageFunctions'
++import Button from '../Button'
++import Icon from '../Icon'
++import SelectChat from '../dialogs/SelectChat'
++import Dialog, {
++  DialogBody,
++  DialogContent,
++  DialogFooter,
++  DialogHeader,
++  FooterActionButton,
++  FooterActions,
++} from '../Dialog'
++import { getLogger } from '@deltachat-desktop/shared/logger'
++
++import type { DialogProps } from '../../contexts/DialogContext'
++
++import styles from './styles.module.scss'
++
++const log = getLogger('renderer/Calendar')
++
++type View = 'month' | 'agenda'
++
++type Occurrence = T.CalendarEvent & { s: Date; e: Date }
++
++/** Local `Date` of an event time. Floating/all-day times are wall-clock encoded as UTC. */
++function toDate(ts: number, floating: boolean): Date {
++  const d = new Date(ts * 1000)
++  return floating
++    ? new Date(
++        d.getUTCFullYear(),
++        d.getUTCMonth(),
++        d.getUTCDate(),
++        d.getUTCHours(),
++        d.getUTCMinutes()
++      )
++    : d
++}
++
++function overlapsDay(ev: Occurrence, day: moment.Moment) {
++  const dayStart = day.toDate()
++  const dayEnd = day.clone().add(1, 'day').toDate()
++  return ev.s < dayEnd && (ev.e > dayStart || +ev.s === +dayStart)
++}
++
++function formatRange(
++  ev: Occurrence,
++  tx: ReturnType<typeof useTranslationFunction>
++) {
++  if (ev.allDay) {
++    const last = moment(ev.e).subtract(1, 'day')
++    return last.isSame(ev.s, 'day')
++      ? `${moment(ev.s).format('dddd, LL')} · ${tx('calendar_all_day')}`
++      : `${moment(ev.s).format('ll')} – ${last.format('ll')}`
++  }
++  const sameDay = moment(ev.e).isSame(ev.s, 'day')
++  return `${moment(ev.s).format('dddd, LL LT')} – ${moment(ev.e).format(
++    sameDay ? 'LT' : 'dddd, LL LT'
++  )}`
++}
++
++function hiddenChatsKey(accountId: number) {
++  return `calendarHiddenChats:${accountId}`
++}
++
++function loadHiddenChats(accountId: number): Set<number> {
++  try {
++    return new Set(
++      JSON.parse(localStorage.getItem(hiddenChatsKey(accountId)) || '[]')
++    )
++  } catch {
++    return new Set()
++  }
++}
++
++/**
++ * Calendar of the events in iCalendar attachments, indexed by core.
++ * `chatId: 'all'` shows every chat, with a sidebar to toggle chats.
++ */
++export default function Calendar({ chatId }: { chatId: number | 'all' }) {
++  const tx = useTranslationFunction()
++  const { openDialog } = useDialog()
++  const accountId = selectedAccountId()
++  const all = chatId === 'all'
++
++  const [view, setView] = useState<View>('month')
++  const [cursor, setCursor] = useState(() => moment().startOf('month'))
++  const [selectedDay, setSelectedDay] = useState(() => moment().startOf('day'))
++  const [events, setEvents] = useState<Occurrence[]>([])
++  const [chatCounts, setChatCounts] = useState<T.CalendarChat[]>([])
++  const [chats, setChats] = useState<Record<number, T.BasicChat>>({})
++  const [hidden, setHidden] = useState(() => loadHiddenChats(accountId))
++  const [reload, setReload] = useState(0)
++
++  const gridStart = useMemo(() => cursor.clone().startOf('week'), [cursor])
++  const [from, to] = useMemo(
++    () =>
++      view === 'month'
++        ? [gridStart, gridStart.clone().add(42, 'days')]
++        : [cursor, cursor.clone().add(1, 'month')],
++    [view, cursor, gridStart]
++  )
++
++  useEffect(() => {
++    const bump = () => setReload(r => r + 1)
++    const cleanups = [
++      onDCEvent(accountId, 'IncomingMsg', bump),
++      onDCEvent(accountId, 'MsgDeleted', bump),
++    ]
++    return () => cleanups.forEach(f => f())
++  }, [accountId])
++
++  useEffect(() => {
++    let cancelled = false
++    BackendRemote.rpc
++      .getCalendarEvents(accountId, all ? null : chatId, from.unix(), to.unix())
++      .then(list => {
++        if (!cancelled) {
++          setEvents(
++            list.map(ev => ({
++              ...ev,
++              s: toDate(ev.start, ev.floating),
++              e: toDate(ev.end, ev.floating),
++            }))
++          )
++        }
++      })
++      .catch(log.error)
++    return () => {
++      cancelled = true
++    }
++  }, [accountId, all, chatId, from, to, reload])
++
++  useEffect(() => {
++    ;(all
++      ? BackendRemote.rpc.getCalendarChats(accountId)
++      : Promise.resolve([{ chatId: chatId as number, count: 0 }])
++    )
++      .then(async counts => {
++        setChatCounts(counts)
++        const infos = await Promise.all(
++          counts.map(c =>
++            BackendRemote.rpc.getBasicChatInfo(accountId, c.chatId)
++          )
++        )
++        setChats(Object.fromEntries(infos.map(c => [c.id, c])))
++      })
++      .catch(log.error)
++  }, [accountId, all, chatId, reload])
++
++  const toggleChat = (id: number) => {
++    const next = new Set(hidden)
++    next.has(id) ? next.delete(id) : next.add(id)
++    setHidden(next)
++    try {
++      localStorage.setItem(hiddenChatsKey(accountId), JSON.stringify([...next]))
++    } catch {
++      // ponytail: private mode / blocked storage, the toggle just isn't remembered
++    }
++  }
++
++  const visible = all ? events.filter(ev => !hidden.has(ev.chatId)) : events
++  const colorOf = (ev: T.CalendarEvent) => chats[ev.chatId]?.color
++
++  const openEvent = (ev: Occurrence) =>
++    openDialog(EventDetails, { event: ev, chat: chats[ev.chatId] })
++
++  const newEvent = () => {
++    const onSent = () => setReload(r => r + 1)
++    if (all) {
++      openDialog(PickChatDialog, {
++        onPick: (chatId: number) =>
++          openDialog(NewEventDialog, { chatId, day: selectedDay, onSent }),
++      })
++    } else {
++      openDialog(NewEventDialog, { chatId, day: selectedDay, onSent })
++    }
++  }
++
++  const step = (n: number) => setCursor(c => c.clone().add(n, 'month'))
++  const goToday = () => {
++    setCursor(moment().startOf('month'))
++    setSelectedDay(moment().startOf('day'))
++  }
++
++  return (
++    <div className={styles.calendar}>
++      <div className={styles.toolbar}>
++        <Button onClick={() => step(-1)} aria-label='←' styling='borderless'>
++          <Icon icon='chevron-left' size={18} />
++        </Button>
++        <Button onClick={goToday}>{tx('today')}</Button>
++        <Button onClick={() => step(1)} aria-label='→' styling='borderless'>
++          <Icon icon='chevron-right' size={18} />
++        </Button>
++        <h3 className={styles.title}>{cursor.format('MMMM YYYY')}</h3>
++        <div role='radiogroup' className={styles.viewSwitch}>
++          {(['month', 'agenda'] as const).map(v => (
++            <Button
++              key={v}
++              role='radio'
++              aria-checked={view === v}
++              active={view === v}
++              onClick={() => setView(v)}
++            >
++              {tx(`calendar_${v}`)}
++            </Button>
++          ))}
++        </div>
++        <Button styling='primary' onClick={newEvent}>
++          {tx('calendar_new_event')}
++        </Button>
++      </div>
++      <div className={styles.main}>
++        {all && (
++          <aside className={styles.sidebar} aria-label={tx('pref_chats')}>
++            {chatCounts.length === 0 && (
++              <p className={styles.hint}>{tx('calendar_no_chats')}</p>
++            )}
++            {chatCounts.map(({ chatId: id, count }) => (
++              <label key={id} className={styles.chatToggle}>
++                <input
++                  type='checkbox'
++                  checked={!hidden.has(id)}
++                  onChange={() => toggleChat(id)}
++                  style={{ accentColor: chats[id]?.color }}
++                />
++                <span className={styles.chatName}>
++                  {chats[id]?.name ?? '…'}
++                </span>
++                <span className={styles.count}>{count}</span>
++              </label>
++            ))}
++          </aside>
++        )}
++        {view === 'month' ? (
++          <MonthGrid
++            cursor={cursor}
++            gridStart={gridStart}
++            events={visible}
++            selectedDay={selectedDay}
++            onSelectDay={setSelectedDay}
++            onOpenEvent={openEvent}
++            colorOf={colorOf}
++          />
++        ) : (
++          <Agenda
++            from={from}
++            to={to}
++            events={visible}
++            onOpenEvent={openEvent}
++            colorOf={colorOf}
++          />
++        )}
++      </div>
++    </div>
++  )
++}
++
++function EventChip({
++  ev,
++  color,
++  onOpen,
++  showTime,
++}: {
++  ev: Occurrence
++  color?: string
++  onOpen: (ev: Occurrence) => void
++  showTime: boolean
++}) {
++  return (
++    <button
++      type='button'
++      className={classNames(styles.chip, ev.cancelled && styles.cancelled)}
++      style={{ '--chat-color': color } as React.CSSProperties}
++      onClick={e => {
++        e.stopPropagation()
++        onOpen(ev)
++      }}
++      title={ev.summary}
++    >
++      {showTime && !ev.allDay && (
++        <span className={styles.time}>{moment(ev.s).format('LT')}</span>
++      )}
++      {ev.summary || '…'}
++    </button>
++  )
++}
++
++function MonthGrid({
++  cursor,
++  gridStart,
++  events,
++  selectedDay,
++  onSelectDay,
++  onOpenEvent,
++  colorOf,
++}: {
++  cursor: moment.Moment
++  gridStart: moment.Moment
++  events: Occurrence[]
++  selectedDay: moment.Moment
++  onSelectDay: (day: moment.Moment) => void
++  onOpenEvent: (ev: Occurrence) => void
++  colorOf: (ev: Occurrence) => string | undefined
++}) {
++  const days = Array.from({ length: 42 }, (_, i) =>
++    gridStart.clone().add(i, 'days')
++  )
++  return (
++    <div className={styles.month} role='grid'>
++      {days.slice(0, 7).map(d => (
++        <div key={d.format('d')} className={styles.weekday} role='columnheader'>
++          {d.format('ddd')}
++        </div>
++      ))}
++      {days.map(day => (
++        <div
++          key={day.format('YYYY-MM-DD')}
++          role='gridcell'
++          aria-selected={day.isSame(selectedDay, 'day')}
++          className={classNames(styles.day, {
++            [styles.otherMonth]: !day.isSame(cursor, 'month'),
++            [styles.today]: day.isSame(moment(), 'day'),
++            [styles.selected]: day.isSame(selectedDay, 'day'),
++          })}
++          onClick={() => onSelectDay(day)}
++        >
++          <span className={styles.dayNumber}>{day.date()}</span>
++          {events
++            .filter(ev => overlapsDay(ev, day))
++            .map(ev => (
++              <EventChip
++                key={`${ev.uid}-${ev.start}`}
++                ev={ev}
++                color={colorOf(ev)}
++                onOpen={onOpenEvent}
++                showTime
++              />
++            ))}
++        </div>
++      ))}
++    </div>
++  )
++}
++
++function Agenda({
++  from,
++  to,
++  events,
++  onOpenEvent,
++  colorOf,
++}: {
++  from: moment.Moment
++  to: moment.Moment
++  events: Occurrence[]
++  onOpenEvent: (ev: Occurrence) => void
++  colorOf: (ev: Occurrence) => string | undefined
++}) {
++  const tx = useTranslationFunction()
++  const days: moment.Moment[] = []
++  for (const d = from.clone(); d.isBefore(to); d.add(1, 'day')) {
++    days.push(d.clone())
++  }
++  const groups = days
++    .map(day => ({ day, list: events.filter(ev => overlapsDay(ev, day)) }))
++    .filter(g => g.list.length > 0)
++  if (groups.length === 0) {
++    return <p className={styles.empty}>{tx('calendar_no_events')}</p>
++  }
++  return (
++    <ol className={styles.agenda}>
++      {groups.map(({ day, list }) => (
++        <li
++          key={day.format('YYYY-MM-DD')}
++          className={classNames(styles.agendaDay, {
++            [styles.today]: day.isSame(moment(), 'day'),
++          })}
++        >
++          <h4>{day.format('dddd, LL')}</h4>
++          {list.map(ev => (
++            <button
++              type='button'
++              key={`${ev.uid}-${ev.start}`}
++              className={classNames(
++                styles.agendaItem,
++                ev.cancelled && styles.cancelled
++              )}
++              style={{ '--chat-color': colorOf(ev) } as React.CSSProperties}
++              onClick={() => onOpenEvent(ev)}
++            >
++              <span className={styles.time}>
++                {ev.allDay
++                  ? tx('calendar_all_day')
++                  : `${moment(ev.s).format('LT')} – ${moment(ev.e).format('LT')}`}
++              </span>
++              <span className={styles.summary}>{ev.summary || '…'}</span>
++              {ev.location && (
++                <span className={styles.location}>{ev.location}</span>
++              )}
++            </button>
++          ))}
++        </li>
++      ))}
++    </ol>
++  )
++}
++
++function EventDetails({
++  event: ev,
++  chat,
++  onClose,
++}: { event: Occurrence; chat?: T.BasicChat } & DialogProps) {
++  const tx = useTranslationFunction()
++  const { jumpToMessage } = useMessage()
++  const { closeAllDialogs } = useDialog()
++  const accountId = selectedAccountId()
++
++  const open = async () => {
++    const msg = await BackendRemote.rpc.getMessage(accountId, ev.msgId)
++    openAttachmentInShell(msg).catch(log.error)
++  }
++
++  return (
++    <Dialog onClose={onClose} width={420}>
++      <DialogHeader title={ev.summary || '…'} onClose={onClose} />
++      <DialogBody>
++        <DialogContent>
++          {ev.cancelled && (
++            <p className={styles.cancelledNote}>{tx('calendar_cancelled')}</p>
++          )}
++          <p>{formatRange(ev, tx)}</p>
++          {ev.recurring && <p>{tx('calendar_recurring')}</p>}
++          {ev.location && (
++            <p>
++              {tx('location')}: {ev.location}
++            </p>
++          )}
++          {ev.description && (
++            <p className={styles.description}>{ev.description}</p>
++          )}
++          {chat && (
++            <p className={styles.chatLine}>
++              <span className={styles.dot} style={{ background: chat.color }} />
++              {chat.name}
++            </p>
++          )}
++        </DialogContent>
++      </DialogBody>
++      <DialogFooter>
++        <FooterActions align='spaceBetween'>
++          <FooterActionButton onClick={open}>{tx('open')}</FooterActionButton>
++          <FooterActionButton
++            onClick={() => {
++              closeAllDialogs()
++              jumpToMessage({
++                accountId,
++                msgId: ev.msgId,
++                msgChatId: ev.chatId,
++                focus: true,
++                scrollIntoViewArg: { block: 'center' },
++              })
++            }}
++          >
++            {tx('show_in_chat')}
++          </FooterActionButton>
++        </FooterActions>
++      </DialogFooter>
++    </Dialog>
++  )
++}
++
++/** SelectChat leaves closing to its caller (like MailtoDialog). */
++function PickChatDialog({
++  onPick,
++  onClose,
++}: { onPick: (chatId: number) => void } & DialogProps) {
++  const tx = useTranslationFunction()
++  return (
++    <SelectChat
++      headerTitle={tx('calendar_select_chat')}
++      listFlags={C.DC_GCL_FOR_FORWARDING | C.DC_GCL_NO_SPECIALS}
++      onClose={onClose}
++      onChatClick={({ chatId }) => {
++        onClose()
++        onPick(chatId)
++      }}
++    />
++  )
++}
++
++const REPEAT = ['', 'DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'] as const
++
++function NewEventDialog({
++  chatId,
++  day,
++  onSent,
++  onClose,
++}: {
++  chatId: number
++  day: moment.Moment
++  onSent: () => void
++} & DialogProps) {
++  const tx = useTranslationFunction()
++  const startDefault = day.clone().set({ hour: moment().hour() + 1, minute: 0 })
++  const [summary, setSummary] = useState('')
++  const [allDay, setAllDay] = useState(false)
++  const [startDate, setStartDate] = useState(startDefault.format('YYYY-MM-DD'))
++  const [startTime, setStartTime] = useState(startDefault.format('HH:mm'))
++  const [endDate, setEndDate] = useState(startDefault.format('YYYY-MM-DD'))
++  const [endTime, setEndTime] = useState(
++    startDefault.clone().add(1, 'hour').format('HH:mm')
++  )
++  const [location, setLocation] = useState('')
++  const [description, setDescription] = useState('')
++  const [repeat, setRepeat] = useState<(typeof REPEAT)[number]>('')
++  const [text, setText] = useState('')
++  const [error, setError] = useState<string | null>(null)
++  const [sending, setSending] = useState(false)
++
++  const send = useCallback(async () => {
++    // All-day: UTC midnights, end exclusive. Timed: local wall clock → instant.
++    const utcMidnight = (d: string) => Date.parse(`${d}T00:00:00Z`) / 1000
++    const start = allDay
++      ? utcMidnight(startDate)
++      : new Date(`${startDate}T${startTime}`).getTime() / 1000
++    const end = allDay
++      ? utcMidnight(endDate) + 86400
++      : new Date(`${endDate}T${endTime}`).getTime() / 1000
++    if (!summary.trim()) {
++      return setError(tx('calendar_title_missing'))
++    }
++    if (!(end >= start)) {
++      return setError(tx('calendar_end_before_start'))
++    }
++    setSending(true)
++    try {
++      await BackendRemote.rpc.sendCalendarEvent(
++        selectedAccountId(),
++        chatId,
++        {
++          summary: summary.trim(),
++          location: location.trim() || null,
++          description: description.trim() || null,
++          start,
++          end,
++          allDay,
++          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
++          rrule: repeat ? `FREQ=${repeat}` : null,
++        },
++        text.trim() || null
++      )
++      onSent()
++      onClose()
++    } catch (err: any) {
++      setError(err?.message ?? String(err))
++      setSending(false)
++    }
++  }, [
++    allDay,
++    chatId,
++    description,
++    endDate,
++    endTime,
++    location,
++    onClose,
++    onSent,
++    repeat,
++    startDate,
++    startTime,
++    summary,
++    text,
++    tx,
++  ])
++
++  return (
++    <Dialog onClose={onClose} canOutsideClickClose={false} width={440}>
++      <DialogHeader title={tx('calendar_new_event')} onClose={onClose} />
++      <DialogBody>
++        <DialogContent>
++          <form
++            className={styles.form}
++            onSubmit={e => {
++              e.preventDefault()
++              send()
++            }}
++          >
++            <label>
++              {tx('calendar_event_title')}
++              <input
++                required
++                autoFocus
++                value={summary}
++                onChange={e => setSummary(e.target.value)}
++              />
++            </label>
++            <label className={styles.inline}>
++              <input
++                type='checkbox'
++                checked={allDay}
++                onChange={e => setAllDay(e.target.checked)}
++              />
++              {tx('calendar_all_day')}
++            </label>
++            <label>
++              {tx('calendar_starts')}
++              <span className={styles.row}>
++                <input
++                  type='date'
++                  required
++                  value={startDate}
++                  onChange={e => {
++                    setStartDate(e.target.value)
++                    if (endDate < e.target.value) setEndDate(e.target.value)
++                  }}
++                />
++                {!allDay && (
++                  <input
++                    type='time'
++                    required
++                    value={startTime}
++                    onChange={e => setStartTime(e.target.value)}
++                  />
++                )}
++              </span>
++            </label>
++            <label>
++              {tx('calendar_ends')}
++              <span className={styles.row}>
++                <input
++                  type='date'
++                  required
++                  value={endDate}
++                  min={startDate}
++                  onChange={e => setEndDate(e.target.value)}
++                />
++                {!allDay && (
++                  <input
++                    type='time'
++                    required
++                    value={endTime}
++                    onChange={e => setEndTime(e.target.value)}
++                  />
++                )}
++              </span>
++            </label>
++            <label>
++              {tx('calendar_repeat')}
++              <select
++                value={repeat}
++                onChange={e => setRepeat(e.target.value as typeof repeat)}
++              >
++                {REPEAT.map(r => (
++                  <option key={r} value={r}>
++                    {tx(r ? `calendar_repeat_${r.toLowerCase()}` : 'never')}
++                  </option>
++                ))}
++              </select>
++            </label>
++            <label>
++              {tx('location')}
++              <input
++                value={location}
++                onChange={e => setLocation(e.target.value)}
++              />
++            </label>
++            <label>
++              {tx('calendar_description')}
++              <textarea
++                rows={3}
++                value={description}
++                onChange={e => setDescription(e.target.value)}
++              />
++            </label>
++            <label>
++              {tx('calendar_message')}
++              <textarea
++                rows={2}
++                value={text}
++                onChange={e => setText(e.target.value)}
++              />
++            </label>
++            {error && (
++              <p role='alert' className={styles.error}>
++                {error}
++              </p>
++            )}
++            {/* lets Enter in a text input submit the form */}
++            <button type='submit' hidden />
++          </form>
++        </DialogContent>
++      </DialogBody>
++      <DialogFooter>
++        <FooterActions align='end'>
++          <FooterActionButton onClick={onClose}>
++            {tx('cancel')}
++          </FooterActionButton>
++          <FooterActionButton
++            styling='primary'
++            disabled={sending}
++            onClick={send}
++          >
++            {tx('menu_send')}
++          </FooterActionButton>
++        </FooterActions>
++      </DialogFooter>
++    </Dialog>
++  )
++}
++
++/** Whether a message's attachment is shown in the calendar instead of the Files tab. */
++export function isCalendarFile(m: T.MessageLoadResult | undefined) {
++  return (
++    m?.kind === 'message' &&
++    m.downloadState === 'Done' &&
++    (m.fileMime === 'text/calendar' || /\.ics$/i.test(m.fileName ?? ''))
++  )
++}
+diff --git a/packages/frontend/src/components/Calendar/styles.module.scss b/packages/frontend/src/components/Calendar/styles.module.scss
+new file mode 100644
+index 0000000..75a588e
+--- /dev/null
++++ b/packages/frontend/src/components/Calendar/styles.module.scss
+@@ -0,0 +1,277 @@
++.calendar {
++  display: flex;
++  flex-direction: column;
++  height: 100%;
++  min-height: 0;
++  background: var(--galleryBg);
++  color: var(--textPrimary);
++}
++
++.toolbar {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: center;
++  gap: 6px;
++  padding: 8px 12px;
++  border-bottom: 1px solid var(--separatorColor);
++}
++
++.title {
++  margin: 0 auto 0 8px;
++  font-size: 1.1em;
++  text-transform: capitalize;
++}
++
++.viewSwitch {
++  display: flex;
++  gap: 2px;
++}
++
++.main {
++  display: flex;
++  flex: 1;
++  min-height: 0;
++}
++
++.sidebar {
++  width: 200px;
++  flex-shrink: 0;
++  overflow-y: auto;
++  padding: 8px;
++  border-inline-end: 1px solid var(--separatorColor);
++
++  @media (max-width: 600px) {
++    display: none;
++  }
++}
++
++.chatToggle {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  padding: 4px;
++  border-radius: 4px;
++  cursor: pointer;
++
++  &:hover {
++    background: var(--globalHoverBg);
++  }
++
++  input {
++    flex-shrink: 0;
++  }
++}
++
++.chatName {
++  flex: 1;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.count {
++  color: var(--textSecondary);
++  font-size: 0.85em;
++}
++
++.hint,
++.empty {
++  color: var(--textSecondary);
++  padding: 8px;
++}
++
++.empty {
++  flex: 1;
++  text-align: center;
++  padding-top: 40px;
++}
++
++.month {
++  flex: 1;
++  display: grid;
++  grid-template-columns: repeat(7, minmax(0, 1fr));
++  grid-template-rows: auto repeat(6, minmax(0, 1fr));
++  min-height: 0;
++  overflow-y: auto;
++}
++
++.weekday {
++  padding: 4px;
++  text-align: center;
++  font-size: 0.85em;
++  color: var(--textSecondary);
++  text-transform: capitalize;
++}
++
++.day {
++  display: flex;
++  flex-direction: column;
++  gap: 2px;
++  min-height: 70px;
++  padding: 2px 3px;
++  overflow: hidden;
++  border-top: 1px solid var(--separatorColor);
++  border-inline-start: 1px solid var(--separatorColor);
++  cursor: default;
++
++  &.otherMonth {
++    opacity: 0.5;
++  }
++
++  &.selected {
++    background: var(--globalHoverBg);
++  }
++}
++
++.dayNumber {
++  align-self: flex-end;
++  min-width: 1.6em;
++  padding: 0 4px;
++  border-radius: 1em;
++  text-align: center;
++  font-size: 0.85em;
++
++  .today & {
++    background: var(--colorPrimary);
++    color: var(--buttonPrimaryText);
++  }
++}
++
++.chip {
++  display: block;
++  width: 100%;
++  padding: 1px 4px;
++  border: 0;
++  border-inline-start: 3px solid var(--chat-color, var(--colorPrimary));
++  border-radius: 3px;
++  background: color-mix(
++    in srgb,
++    var(--chat-color, var(--colorPrimary)) 20%,
++    transparent
++  );
++  color: inherit;
++  font-size: 0.8em;
++  text-align: start;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  cursor: pointer;
++}
++
++.time {
++  margin-inline-end: 4px;
++  color: var(--textSecondary);
++}
++
++.cancelled {
++  text-decoration: line-through;
++  opacity: 0.6;
++}
++
++.agenda {
++  flex: 1;
++  margin: 0;
++  padding: 8px 16px;
++  list-style: none;
++  overflow-y: auto;
++}
++
++.agendaDay {
++  margin-bottom: 12px;
++
++  h4 {
++    margin: 0 0 4px;
++    text-transform: capitalize;
++  }
++
++  &.today h4 {
++    color: var(--colorPrimary);
++  }
++}
++
++.agendaItem {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 2px 12px;
++  width: 100%;
++  margin-bottom: 4px;
++  padding: 6px 10px;
++  border: 0;
++  border-inline-start: 4px solid var(--chat-color, var(--colorPrimary));
++  border-radius: 4px;
++  background: var(--bgPrimary);
++  color: inherit;
++  text-align: start;
++  cursor: pointer;
++
++  &:hover {
++    background: var(--globalHoverBg);
++  }
++
++  .time {
++    min-width: 9em;
++  }
++}
++
++.summary {
++  font-weight: bold;
++}
++
++.location {
++  color: var(--textSecondary);
++}
++
++.description {
++  white-space: pre-wrap;
++}
++
++.cancelledNote,
++.error {
++  color: var(--colorDanger);
++}
++
++.chatLine {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  color: var(--textSecondary);
++}
++
++.dot {
++  width: 10px;
++  height: 10px;
++  border-radius: 50%;
++}
++
++.form {
++  display: flex;
++  flex-direction: column;
++  gap: 10px;
++
++  label {
++    display: flex;
++    flex-direction: column;
++    gap: 4px;
++  }
++
++  input:not([type='checkbox']),
++  textarea,
++  select {
++    font: inherit;
++    padding: 4px 6px;
++  }
++
++  .inline {
++    flex-direction: row;
++    align-items: center;
++  }
++}
++
++.row {
++  display: flex;
++  gap: 6px;
++
++  input {
++    flex: 1;
++  }
++}
+diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
+index ad239c0..41956b3 100644
+--- a/packages/frontend/src/components/ChatView/ChatView.tsx
++++ b/packages/frontend/src/components/ChatView/ChatView.tsx
+@@ -295,6 +295,12 @@ function ChatNavButtons({
+       chatId,
+     })
+   }, [openDialog, chatId])
++  const openCalendarDialog = useCallback(() => {
++    openDialog(MediaView, {
++      chatId,
++      initialTab: 'calendar',
++    })
++  }, [openDialog, chatId])
+ 
+   return (
+     <div className='views' data-no-drag-region>
+@@ -310,6 +316,15 @@ function ChatNavButtons({
+       >
+         <Icon coloring='navbar' icon='apps' size={18} />
+       </Button>
++      <Button
++        onClick={openCalendarDialog}
++        aria-label={tx('calendar')}
++        title={tx('calendar')}
++        className='navbar-button'
++        styling='borderless'
++      >
++        <Icon coloring='navbar' icon='calendar' size={18} />
++      </Button>
+       {settingsStore?.desktopSettings.enableOnDemandLocationStreaming && (
+         <Button
+           onClick={() => openMapWebxdc(selectedAccountId(), chatId)}
+diff --git a/packages/frontend/src/components/Gallery.tsx b/packages/frontend/src/components/Gallery.tsx
+index f73a52f..886bdb9 100644
+--- a/packages/frontend/src/components/Gallery.tsx
++++ b/packages/frontend/src/components/Gallery.tsx
+@@ -33,10 +33,16 @@ import {
+ import InfiniteLoader from 'react-window-infinite-loader'
+ import { T } from '@deltachat/jsonrpc-client'
+ import { useTranslationWritingDirection } from '../hooks/useTranslationFunction'
++import Calendar, { isCalendarFile } from './Calendar'
+ 
+ const log = getLogger('renderer/Gallery')
+ 
+-type MediaTabKey = 'webxdc_apps' | 'gallery' | 'audio' | 'files'
++export type MediaTabKey =
++  | 'webxdc_apps'
++  | 'gallery'
++  | 'audio'
++  | 'files'
++  | 'calendar'
+ 
+ type GalleryElement = (
+   props: GalleryAttachmentElementProps & {
+@@ -70,9 +76,14 @@ const MediaTabs: Readonly<{
+     values: ['File'],
+     element: FileAttachmentRow,
+   },
++  // rendered by <Calendar> from core's calendar index, not from getChatMedia
++  calendar: {
++    values: [],
++    element: FileAttachmentRow,
++  },
+ }
+ 
+-type Props = { chatId: number | 'all' }
++type Props = { chatId: number | 'all'; initialTab?: MediaTabKey }
+ 
+ const getCurrentDocumentVerticalScrollbarWidth = () => {
+   const outer = document.createElement('div')
+@@ -122,10 +133,11 @@ export default class Gallery extends Component<
+   constructor(props: Props) {
+     super(props)
+ 
++    const initialTab = props.initialTab ?? 'webxdc_apps'
+     this.state = {
+-      currentTab: 'webxdc_apps',
+-      msgTypes: MediaTabs.webxdc_apps.values,
+-      element: WebxdcAttachment,
++      currentTab: initialTab,
++      msgTypes: MediaTabs[initialTab].values,
++      element: MediaTabs[initialTab].element,
+       mediaMessageIds: [],
+       mediaLoadResult: {},
+       loading: true,
+@@ -203,7 +215,7 @@ export default class Gallery extends Component<
+     if (this.props.chatId !== prevProps.chatId) {
+       // reset
+       this.reset()
+-      this.onSelect('webxdc_apps')
++      this.onSelect(this.props.initialTab ?? 'webxdc_apps')
+     }
+   }
+ 
+@@ -215,16 +227,34 @@ export default class Gallery extends Component<
+     const newElement = MediaTabs[tab].element
+     const accountId = selectedAccountId()
+     const chatId = this.props.chatId !== 'all' ? this.props.chatId : null
++    if (tab === 'calendar') {
++      this.setState({
++        currentTab: tab,
++        msgTypes,
++        element: newElement,
++        loading: false,
++      })
++      return
++    }
+     this.setState({ loading: true })
+ 
+     BackendRemote.rpc
+       .getChatMedia(accountId, chatId, msgTypes[0], msgTypes[1], msgTypes[2])
+-      .then(async media_ids => {
++      .then(async (media_ids: number[]) => {
+         const mediaLoadResult =
+           tab !== 'files'
+             ? // This state is unused if the tab is not 'files'.
+               []
+             : await BackendRemote.rpc.getMessages(accountId, media_ids)
++        if (tab === 'files') {
++          // .ics files live in the calendar tab
++          media_ids = media_ids.filter(
++            id =>
++              !isCalendarFile(
++                (mediaLoadResult as Record<number, T.MessageLoadResult>)[id]
++              )
++          )
++        }
+         media_ids.reverse() // order newest up - if we need different ordering we need to do it in core
+         this.setState({
+           currentTab: tab,
+@@ -311,7 +341,9 @@ export default class Gallery extends Component<
+           })
+ 
+     const showDateHeader =
+-      currentTab !== 'files' && currentTab !== 'webxdc_apps'
++      currentTab !== 'files' &&
++      currentTab !== 'webxdc_apps' &&
++      currentTab !== 'calendar'
+ 
+     return (
+       <div className='media-view'>
+@@ -349,7 +381,9 @@ export default class Gallery extends Component<
+               </div>
+             </>
+           )}
+-          {currentTab === 'webxdc_apps' && <div style={{ flexGrow: 1 }}></div>}
++          {(currentTab === 'webxdc_apps' || currentTab === 'calendar') && (
++            <div style={{ flexGrow: 1 }}></div>
++          )}
+         </ul>
+         <div
+           role='tabpanel'
+@@ -360,63 +394,67 @@ export default class Gallery extends Component<
+           // See https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Roles/tab_role#example
+           id={`gallery-tabpanel-${currentTab}`}
+           aria-labelledby={`gallery-tab-${currentTab}`}
+-          style={{ flexGrow: 1 }}
++          style={{ flexGrow: 1, minHeight: 0 }}
+         >
+-          <div
+-            ref={this.galleryItemsRef}
+-            className={`gallery gallery-image-object-fit_${
+-              galleryImageKeepAspectRatio ? 'contain' : 'cover'
+-            }`}
+-          >
+-            {mediaMessageIds.length < 1 && !loading && (
+-              <div className='empty-screen'>
+-                {/* IDEA: when we have someone doing illustrations this would be a great place to add some */}
+-                <p className='no-media-message'>{emptyTabMessage}</p>
+-              </div>
+-            )}
+-
+-            {currentTab === 'files' && (
+-              <>
+-                <AutoSizer disableWidth>
+-                  {({ height }) => (
+-                    <RovingTabindexProvider
+-                      wrapperElementRef={this.galleryItemsRef}
+-                      direction='vertical'
+-                    >
+-                      <FileTable
+-                        width={'100%'}
+-                        height={height}
+-                        mediaLoadResult={mediaLoadResult}
+-                        mediaMessageIds={filteredMediaMessageIds}
+-                        queryText={queryText}
+-                      ></FileTable>
+-                    </RovingTabindexProvider>
++          {currentTab === 'calendar' ? (
++            <Calendar chatId={this.props.chatId} />
++          ) : (
++            <div
++              ref={this.galleryItemsRef}
++              className={`gallery gallery-image-object-fit_${
++                galleryImageKeepAspectRatio ? 'contain' : 'cover'
++              }`}
++            >
++              {mediaMessageIds.length < 1 && !loading && (
++                <div className='empty-screen'>
++                  {/* IDEA: when we have someone doing illustrations this would be a great place to add some */}
++                  <p className='no-media-message'>{emptyTabMessage}</p>
++                </div>
++              )}
++
++              {currentTab === 'files' && (
++                <>
++                  <AutoSizer disableWidth>
++                    {({ height }) => (
++                      <RovingTabindexProvider
++                        wrapperElementRef={this.galleryItemsRef}
++                        direction='vertical'
++                      >
++                        <FileTable
++                          width={'100%'}
++                          height={height}
++                          mediaLoadResult={mediaLoadResult}
++                          mediaMessageIds={filteredMediaMessageIds}
++                          queryText={queryText}
++                        ></FileTable>
++                      </RovingTabindexProvider>
++                    )}
++                  </AutoSizer>
++                  {filteredMediaMessageIds.length === 0 && (
++                    <div className='empty-screen'>
++                      <p className='no-media-message'>
++                        {tx('search_no_result_for_x', queryText)}
++                      </p>
++                    </div>
+                   )}
+-                </AutoSizer>
+-                {filteredMediaMessageIds.length === 0 && (
+-                  <div className='empty-screen'>
+-                    <p className='no-media-message'>
+-                      {tx('search_no_result_for_x', queryText)}
+-                    </p>
+-                  </div>
+-                )}
+-              </>
+-            )}
+-
+-            {currentTab !== 'files' && (
+-              <GridGallery
+-                currentTab={currentTab}
+-                showChat={this.props.chatId === 'all'}
+-                element={this.state.element}
+-                openFullscreenMedia={this.openFullscreenMedia.bind(this)}
+-                mediaMessageIds={mediaMessageIds}
+-                galleryItemsRef={this.galleryItemsRef}
+-                updateFirstVisibleMessage={this.updateFirstVisibleMessage.bind(
+-                  this
+-                )}
+-              />
+-            )}
+-          </div>
++                </>
++              )}
++
++              {currentTab !== 'files' && (
++                <GridGallery
++                  currentTab={currentTab}
++                  showChat={this.props.chatId === 'all'}
++                  element={this.state.element}
++                  openFullscreenMedia={this.openFullscreenMedia.bind(this)}
++                  mediaMessageIds={mediaMessageIds}
++                  galleryItemsRef={this.galleryItemsRef}
++                  updateFirstVisibleMessage={this.updateFirstVisibleMessage.bind(
++                    this
++                  )}
++                />
++              )}
++            </div>
++          )}
+         </div>
+       </div>
+     )
+diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
+index a3d7bba..2222303 100644
+--- a/packages/frontend/src/components/Icon/index.tsx
++++ b/packages/frontend/src/components/Icon/index.tsx
+@@ -10,6 +10,7 @@ export type IconName =
+   | 'audio-muted'
+   | 'bell'
+   | 'brightness-6'
++  | 'calendar'
+   | 'camera'
+   | 'chat_bubble'
+   | 'chevron-left'
+diff --git a/packages/frontend/src/components/KeyboardShortcutHint.tsx b/packages/frontend/src/components/KeyboardShortcutHint.tsx
+index 0d4a1ed..748fd3d 100644
+--- a/packages/frontend/src/components/KeyboardShortcutHint.tsx
++++ b/packages/frontend/src/components/KeyboardShortcutHint.tsx
+@@ -214,6 +214,10 @@ export function getKeybindings(
+         title: 'Diagnostics',
+         keyBindings: [[ctrl, 'Shift', 'D']],
+       },
++      {
++        title: tx('calendar'),
++        keyBindings: [[ctrl, 'Shift', 'Y']],
++      },
+     ].map(Shortcut),
+     {
+       title: tx('message_input_shortcut_section'),
+diff --git a/packages/frontend/src/components/dialogs/MediaView/index.tsx b/packages/frontend/src/components/dialogs/MediaView/index.tsx
+index 378b39c..2f56e6a 100644
+--- a/packages/frontend/src/components/dialogs/MediaView/index.tsx
++++ b/packages/frontend/src/components/dialogs/MediaView/index.tsx
+@@ -1,5 +1,5 @@
+ import React from 'react'
+-import Gallery from '../../Gallery'
++import Gallery, { type MediaTabKey } from '../../Gallery'
+ import Dialog, { DialogBody, DialogHeader } from '../../Dialog'
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+ 
+@@ -10,12 +10,17 @@ import styles from './styles.module.scss'
+ export default function MediaView(
+   props: {
+     chatId: number | 'all'
++    initialTab?: MediaTabKey
+   } & DialogProps
+ ) {
+-  const { onClose, chatId } = props
++  const { onClose, chatId, initialTab } = props
+   const tx = useTranslationFunction()
+   const headerString =
+-    chatId === 'all' ? tx('all_apps_and_media') : tx('apps_and_media')
++    initialTab === 'calendar'
++      ? tx('calendar')
++      : chatId === 'all'
++        ? tx('all_apps_and_media')
++        : tx('apps_and_media')
+ 
+   return (
+     <Dialog
+@@ -25,7 +30,7 @@ export default function MediaView(
+     >
+       <DialogHeader title={headerString} onClose={onClose} />
+       <DialogBody className={styles.mediaViewDialogBody}>
+-        <Gallery chatId={chatId} />
++        <Gallery chatId={chatId} initialTab={initialTab} />
+       </DialogBody>
+     </Dialog>
+   )
+diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
+index 5c77d5f..9fb1b5b 100644
+--- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
++++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
+@@ -195,6 +195,13 @@ export default function MainScreen({ accountId }: Props) {
+     })
+   })
+ 
++  useKeyBindingAction(KeybindAction.GlobalCalendar_Open, () => {
++    openDialog(MediaView, {
++      chatId: 'all',
++      initialTab: 'calendar',
++    })
++  })
++
+   // Throttle in case the user switches chats very rapidly,
+   // e.g. by holding down Ctrl + PageDown.
+   //
+diff --git a/packages/frontend/src/keybindings.ts b/packages/frontend/src/keybindings.ts
+index f31674b..4df60fd 100644
+--- a/packages/frontend/src/keybindings.ts
++++ b/packages/frontend/src/keybindings.ts
+@@ -30,6 +30,7 @@ export enum KeybindAction {
+   MessageList_PageUp = 'msglist:pageup',
+   MessageList_PageDown = 'msglist:pagedown',
+   GlobalGallery_Open = 'globalgallery:open',
++  GlobalCalendar_Open = 'globalcalendar:open',
+ 
+   // Actions that are not necessarily triggered by keybindings
+   ChatList_SwitchToArchiveView = 'chatlist:switch-to-archive-view',
+@@ -212,6 +213,12 @@ export function keyDownEvent2Action(
+         return KeybindAction.ChatList_SearchInChat
+       }
+       return KeybindAction.ChatList_FocusSearchInput
++    } else if (
++      (ev.metaKey || ev.ctrlKey) &&
++      ev.shiftKey &&
++      matchesLetterShortcut(ev, 'y')
++    ) {
++      return KeybindAction.GlobalCalendar_Open
+     } else if ((ev.metaKey || ev.ctrlKey) && matchesLetterShortcut(ev, 'n')) {
+       return KeybindAction.NewChat_Open
+     } else if ((ev.metaKey || ev.ctrlKey) && matchesLetterShortcut(ev, 'k')) {

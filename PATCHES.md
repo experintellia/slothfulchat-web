@@ -207,7 +207,26 @@ exists:
   the download button comes back, and the running chunk loop stops before its
   next chunk. The staging file stays, so tapping download again resumes where
   it stopped. A whole-message fetch on a server without partial FETCH cannot
-  be interrupted and still finishes. `core/0035`, `desktop/0088`
+  be interrupted and still finishes. `core/0035`, `desktop/0089`
+- **Calendar** — events from iCalendar attachments (shared `.ics` files and
+  the `text/calendar` part of email invitations, which core already turned
+  into a File) are parsed once and indexed in a `calendar_events` table, via
+  the `icalendar` and `rrule` crates (+ `chrono-tz`). One row per VEVENT;
+  recurring series are stored as a serialized `RRuleSet` and expanded per
+  query. Updates and cancellations are folded per UID (highest SEQUENCE wins,
+  RECURRENCE-ID overrides replace their occurrence). Windows time-zone names
+  from Outlook map to IANA through a small table, unknown ones fall back to
+  the VTIMEZONE's standard offset. The table is derived data and is created
+  with `CREATE TABLE IF NOT EXISTS` on open rather than as a numbered
+  migration, so it can never collide with upstream's migration numbers.
+  Indexed on receive; older messages and late downloads are indexed lazily
+  on the first query. New JSON-RPC: `get_calendar_events`,
+  `get_calendar_chats`, `send_calendar_event`. In the UI: a Calendar tab in
+  apps & media (month grid + agenda), an all-chats calendar (account menu,
+  Ctrl/Cmd+Shift+Y) with a per-chat colour/toggle sidebar, a calendar button
+  in the chat header, and a "New event" form that sends an `.ics` with an
+  optional message. `.ics` files left the Files tab. `core/0036`,
+  `desktop/0090`
 - **HTML email viewer ("Show Full Message…")** — the browser edition of
   desktop's sandboxed email window: a fullscreen in-app dialog whose content
   is DOMPurify-sanitized and rendered in an iframe with an opaque no-script

@@ -1,5 +1,11 @@
 # Changelog
 
+- **Calendar.** Calendar invitations and shared `.ics` files now show up in a
+  Calendar tab (month view and agenda) in each chat's apps & media. The new
+  calendar button in the chat header opens it, and "Calendar" in the account
+  menu (or Ctrl/Cmd+Shift+Y) shows all chats at once, colour-coded per chat,
+  with a sidebar to hide chats. You can also create an event and send it to a
+  chat. `.ics` files no longer appear under Files.
 - **A download can now be stopped.** Tapped a big video by accident? The
   progress ring has an × that stops the download; tapping download again soon
   picks up where it left off.
