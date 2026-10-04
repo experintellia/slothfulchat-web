@@ -298,12 +298,22 @@ try {
   const at = { x: poll.x + 20, y: poll.y + 20 }
   await page.mouse.click(at.x, at.y, { button: 'right' })
   await msgMenu.waitFor({ state: 'visible', timeout: 10_000 })
-  const atMenu = await msgMenu.boundingBox()
-  const atBar = await reactions.boundingBox()
-  check(
-    Math.abs(atMenu.y - at.y) <= 2 && atBar.y + atBar.height <= at.y,
-    'with room, the menu opens at the cursor with the reactions above it'
-  )
+  // the menu renders first, then is positioned: let it settle
+  const placed = await page
+    .waitForFunction(
+      (y) => {
+        const m = document.querySelector('.dc-context-menu')?.getBoundingClientRect()
+        const h = document.querySelector('.dc-context-menu-header')?.getBoundingClientRect()
+        return m && h && Math.abs(m.top - y) <= 2 && h.bottom <= y
+      },
+      at.y,
+      { timeout: 3_000 }
+    )
+    .then(() => true, () => false)
+  if (!placed) {
+    console.error('placement', at, await msgMenu.boundingBox(), await reactions.boundingBox(), page.viewportSize())
+  }
+  check(placed, 'with room, the menu opens at the cursor with the reactions above it')
   await page.keyboard.press('Escape')
   await msgMenu.waitFor({ state: 'hidden' })
 
