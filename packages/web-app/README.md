@@ -222,7 +222,8 @@ for the user-facing summary):
   message `viewtype` / a chat-list length in `src/telemetry.ts` — never from
   content; a few UI-only signals (onboarding welcome, link-preview accept/dismiss,
   community-channel use) call `window.__slothfulTrack` from small desktop patch
-  hooks. Self-hosted builds (env unset) run none of this.
+  hooks, and `chat_export` fires from `src/chat-export.ts`, the fork-side half
+  of Export Chat. Self-hosted builds (env unset) run none of this.
 
 The instance/proxy values surface at runtime as `window.__slothfulConfig`
 (injected before `runtime.js`); `runtime.ts` reads `defaultProxyUrl` from it.
