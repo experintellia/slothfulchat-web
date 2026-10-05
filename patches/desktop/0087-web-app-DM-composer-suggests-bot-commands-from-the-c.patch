@@ -14,21 +14,34 @@ into clickable chips), so word-boundary rules stay in one place.
 CompletionItem gains an optional description field so a suggestion
 row can show more than a glyph.
 ---
- .../scss/composer/_completion-menu.scss       | 22 +++++++-
+ .../scss/composer/_completion-menu.scss       | 29 +++++++++--
  .../src/components/composer/Composer.tsx      | 19 +++++++
  .../composer/ComposerMessageInput.tsx         | 46 +++++++++++++----
  .../composer/completion/CompletionMenu.tsx    |  5 ++
  .../composer/completion/botCommandProvider.ts | 51 +++++++++++++++++++
  .../components/composer/completion/types.ts   |  2 +
  .../frontend/src/tests/completion.test.ts     | 43 ++++++++++++++++
- 7 files changed, 177 insertions(+), 11 deletions(-)
+ 7 files changed, 183 insertions(+), 12 deletions(-)
  create mode 100644 packages/frontend/src/components/composer/completion/botCommandProvider.ts
 
 diff --git a/packages/frontend/scss/composer/_completion-menu.scss b/packages/frontend/scss/composer/_completion-menu.scss
-index 130faa3..b6e9a1d 100644
+index 130faa3..cad4f00 100644
 --- a/packages/frontend/scss/composer/_completion-menu.scss
 +++ b/packages/frontend/scss/composer/_completion-menu.scss
-@@ -32,9 +32,16 @@
+@@ -15,7 +15,11 @@
+   inset-inline-start: 8px;
+   z-index: map.get(variables.$z-index, emoji-sticker-picker);
+ 
+-  width: min(320px, calc(100% - 16px));
++  // Grow to fit the longest row (bot command + description), up to the
++  // composer's width; never narrower than the old fixed 320px.
++  width: max-content;
++  min-width: min(320px, calc(100% - 16px));
++  max-width: calc(100% - 16px);
+   max-height: 240px;
+   overflow-y: auto;
+ 
+@@ -32,9 +36,16 @@
      padding: 7px 12px;
      cursor: default;
  
@@ -47,7 +60,7 @@ index 130faa3..b6e9a1d 100644
      }
    }
  
-@@ -49,5 +56,16 @@
+@@ -49,5 +60,17 @@
      overflow: hidden;
      text-overflow: ellipsis;
      white-space: nowrap;
@@ -59,7 +72,8 @@ index 130faa3..b6e9a1d 100644
 +    text-overflow: ellipsis;
 +    white-space: nowrap;
 +    min-width: 0;
-+    flex: 1 1 auto;
++    // shrinks long before the label, so the command name stays readable
++    flex: 1 1000 auto;
 +    opacity: 0.7;
 +    font-size: 0.9em;
    }
