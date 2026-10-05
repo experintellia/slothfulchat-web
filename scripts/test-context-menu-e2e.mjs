@@ -1,4 +1,4 @@
-// E2E check for right-click menus (desktop/0035) — runs FULLY OFFLINE. One
+// E2E check for right-click menus (desktop/0034) — runs FULLY OFFLINE. One
 // webimap account against an in-process mock madmail server (trimmed from
 // scripts/test-sidebar-resize-e2e.mjs), one group with a webxdc app in it.
 //
@@ -17,7 +17,7 @@
 //   3. right-click a selected profile name → native menu NOT cancelled (its
 //      Copy is the only way to copy a group name; an app-wide suppressor
 //      would kill it)
-//   4. message menu (desktop/0089): reactions bar inside the same menu,
+//   4. message menu (desktop/0087): reactions bar inside the same menu,
 //      above it; no hover icons; keyboard (Enter, arrows, focus-only "…"
 //      button); on touch a long press anywhere on the bubble opens it —
 //      text, padding, link (CDP touches, which headless chromium answers
