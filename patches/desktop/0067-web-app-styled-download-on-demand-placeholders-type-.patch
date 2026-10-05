@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 23 Jul 2026 01:40:02 +0000
-Subject: [PATCH 67/89] web-app: styled download-on-demand placeholders (type,
+Subject: [PATCH 64/87] web-app: styled download-on-demand placeholders (type,
  thumbnail, size)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -46,13 +46,12 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  packages/frontend/scss/manifest.scss          |   1 +
  .../_message-download-placeholder.scss        | 287 +++++++++++++++++
- .../components/dialogs/ExportChatToHtml.tsx   |  14 +-
  .../MessageDetail/BasicMessageInfo.tsx        |   2 +-
  .../message/DownloadOnDemandPlaceholder.tsx   | 303 ++++++++++++++++++
  .../src/components/message/Message.tsx        | 120 +++++--
  .../src/tests/placeholderCaption.test.ts      |  32 ++
  .../frontend/src/utils/downloadPlaceholder.ts |  33 ++
- 8 files changed, 755 insertions(+), 37 deletions(-)
+ 7 files changed, 744 insertions(+), 34 deletions(-)
  create mode 100644 packages/frontend/scss/message/_message-download-placeholder.scss
  create mode 100644 packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
  create mode 100644 packages/frontend/src/tests/placeholderCaption.test.ts
@@ -363,45 +362,6 @@ index 0000000..fb2417d
 +    transform: rotate(270deg);
 +  }
 +}
-diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-index 00a3bed..565ea32 100644
---- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-+++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-@@ -1047,7 +1047,10 @@ function chatExportViewer() {
-         lines.push(`* ${msg.text || ''}`)
-         continue
-       }
--      const filePart = msg.file ? `[${msg.fileName || 'attachment'}] ` : ''
-+      const filePart =
-+      msg.file && msg.downloadState === 'Done'
-+        ? `[${msg.fileName || 'attachment'}] `
-+        : ''
-       lines.push(
-         `[${stamp(msg.timestamp)}] ${authorName(msg.sender.displayName, msg.overrideSenderName)}: ${filePart}${msg.text || ''}`
-       )
-@@ -1241,7 +1244,10 @@ function buildMessagesTxt(
-     }
-     const time = moment.unix(msg.timestamp).format('YYYY-MM-DD HH:mm')
-     const author = getAuthorName(msg.sender.displayName, msg.overrideSenderName)
--    const filePart = msg.file ? `[${msg.fileName || 'attachment'}] ` : ''
-+    const filePart =
-+      msg.file && msg.downloadState === 'Done'
-+        ? `[${msg.fileName || 'attachment'}] `
-+        : ''
-     lines.push(`[${time}] ${author}: ${filePart}${msg.text || ''}`)
-   }
-   return lines.join('\n') + '\n'
-@@ -1477,7 +1483,9 @@ async function exportChatToZip(
-   for (const id of keptIds) {
-     const msg = messages[id]
-     if (msg) {
--      await collect(msg.file)
-+      if (msg.downloadState === 'Done') {
-+        await collect(msg.file)
-+      }
-       await collect(msg.sender.profileImage)
-       if (msg.quote?.kind === 'WithMessage') {
-         await collect(msg.quote.image)
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 index 5d3432a..b6e27a6 100644
 --- a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
