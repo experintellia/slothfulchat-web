@@ -56,13 +56,13 @@ get_calendar_msg_events(msg) and make_calendar_ics(event), which writes the
  Cargo.lock                                    |  156 +-
  Cargo.toml                                    |    2 +
  deltachat-jsonrpc/src/api.rs                  |   55 +
- deltachat-jsonrpc/src/api/types/calendar.rs   |   85 +
+ deltachat-jsonrpc/src/api/types/calendar.rs   |   88 +
  deltachat-jsonrpc/src/api/types/message.rs    |   18 +
  deltachat-jsonrpc/src/api/types/mod.rs        |    1 +
  deltachat-jsonrpc/typescript/pnpm-lock.yaml   | 2864 +++++++++++++++++
  .../typescript/pnpm-workspace.yaml            |    2 +
- src/calendar.rs                               |  804 +++++
- src/calendar/calendar_tests.rs                |  431 +++
+ src/calendar.rs                               |  812 +++++
+ src/calendar/calendar_tests.rs                |  441 +++
  src/chat.rs                                   |   18 +-
  src/lib.rs                                    |    1 +
  src/message.rs                                |   25 +
@@ -71,7 +71,7 @@ get_calendar_msg_events(msg) and make_calendar_ics(event), which writes the
  src/sql.rs                                    |   10 +
  src/stock_str.rs                              |    1 +
  src/summary.rs                                |   13 +
- 18 files changed, 4468 insertions(+), 33 deletions(-)
+ 18 files changed, 4489 insertions(+), 33 deletions(-)
  create mode 100644 deltachat-jsonrpc/src/api/types/calendar.rs
  create mode 100644 deltachat-jsonrpc/typescript/pnpm-lock.yaml
  create mode 100644 deltachat-jsonrpc/typescript/pnpm-workspace.yaml
@@ -591,10 +591,10 @@ index 52547ec..c161ea6 100644
      // ---------------------------------------------
 diff --git a/deltachat-jsonrpc/src/api/types/calendar.rs b/deltachat-jsonrpc/src/api/types/calendar.rs
 new file mode 100644
-index 0000000..2c875be
+index 0000000..052a219
 --- /dev/null
 +++ b/deltachat-jsonrpc/src/api/types/calendar.rs
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,88 @@
 +use deltachat::calendar::{CalendarEvent, NewCalendarEvent};
 +use serde::{Deserialize, Serialize};
 +use typescript_type_def::TypeDef;
@@ -619,6 +619,8 @@ index 0000000..2c875be
 +    pub floating: bool,
 +    pub cancelled: bool,
 +    pub recurring: bool,
++    /// `RRULE` value of the series, e.g. `FREQ=WEEKLY;...`, if it has one.
++    pub rrule: Option<String>,
 +}
 +
 +impl From<CalendarEvent> for JsonrpcCalendarEvent {
@@ -636,6 +638,7 @@ index 0000000..2c875be
 +            floating: e.floating,
 +            cancelled: e.cancelled,
 +            recurring: e.recurring,
++            rrule: e.rrule,
 +        }
 +    }
 +}
@@ -3641,10 +3644,10 @@ index 0000000..49c0ad7
 +  esbuild: false
 diff --git a/src/calendar.rs b/src/calendar.rs
 new file mode 100644
-index 0000000..ae7d486
+index 0000000..3d3a883
 --- /dev/null
 +++ b/src/calendar.rs
-@@ -0,0 +1,804 @@
+@@ -0,0 +1,812 @@
 +//! # Calendar.
 +//!
 +//! iCalendar attachments (`.ics` files and the `text/calendar` part of email invitations) are
@@ -3766,6 +3769,9 @@ index 0000000..ae7d486
 +    pub cancelled: bool,
 +    /// The event is part of a recurring series.
 +    pub recurring: bool,
++    /// `RRULE` value of the series (as normalized by the rrule crate, e.g.
++    /// `FREQ=WEEKLY;BYHOUR=10;...`), if it has one.
++    pub rrule: Option<String>,
 +}
 +
 +/// What a new event is created from.
@@ -3814,6 +3820,11 @@ index 0000000..ae7d486
 +            msg_id,
 +            chat_id,
 +            recurring: self.rrule.is_some() || self.recurrence_id != 0,
++            rrule: self.rrule.as_deref().and_then(|set| {
++                set.lines()
++                    .find_map(|l| l.strip_prefix("RRULE:"))
++                    .map(str::to_string)
++            }),
 +            end: start + (self.end - self.start),
 +            start,
 +            uid: self.uid,
@@ -4451,10 +4462,10 @@ index 0000000..ae7d486
 +mod calendar_tests;
 diff --git a/src/calendar/calendar_tests.rs b/src/calendar/calendar_tests.rs
 new file mode 100644
-index 0000000..b76920d
+index 0000000..6e59b6d
 --- /dev/null
 +++ b/src/calendar/calendar_tests.rs
-@@ -0,0 +1,431 @@
+@@ -0,0 +1,441 @@
 +use super::*;
 +use crate::chat;
 +use crate::test_utils::{TestContext, TestContextManager};
@@ -4778,13 +4789,23 @@ index 0000000..b76920d
 +        start: ts("2026-12-24T00:00:00Z"),
 +        end: ts("2026-12-25T00:00:00Z"),
 +        all_day: true,
++        rrule: Some("FREQ=YEARLY".to_string()),
 +        ..Default::default()
 +    })?;
 +    draft.set_file_from_bytes(alice, "draft.ics", ics.as_bytes(), None)?;
 +    chat_id.set_draft(alice, Some(&mut draft)).await?;
 +    let draft = chat_id.get_draft(alice).await?.unwrap();
 +    assert_eq!(draft.viewtype, Viewtype::Calendar);
-+    assert_eq!(msg_events(alice, &draft).await[0].summary, "Draft");
++    let draft_event = &msg_events(alice, &draft).await[0];
++    assert_eq!(draft_event.summary, "Draft");
++    // The rule comes back, so the UI can edit the draft's event.
++    assert!(
++        draft_event
++            .rrule
++            .as_deref()
++            .unwrap()
++            .starts_with("FREQ=YEARLY")
++    );
 +    assert_eq!(summaries(alice).await?, ["Party"]);
 +
 +    // A plain .ics File from before the viewtype (and the index) is retyped when indexed.

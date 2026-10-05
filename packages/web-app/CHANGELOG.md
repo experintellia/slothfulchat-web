@@ -5,7 +5,8 @@
   each chat's apps & media. The new calendar button in the chat header opens
   it, and "Calendar" in the account menu (or Ctrl/Cmd+Shift+Y) shows all
   chats at once, colour-coded per chat, with a sidebar to hide chats. Create
-  an event from the calendar or with "Event" in the attachment menu.
+  an event from the calendar or with "Event" in the attachment menu; until
+  it is sent, the pencil on the draft's event card lets you edit it.
 - **A download can now be stopped.** Tapped a big video by accident? The
   progress ring has an × that stops the download; tapping download again soon
   picks up where it left off.

@@ -234,8 +234,9 @@ exists:
   older messages, late downloads and plain-File `.ics` (retyped to Calendar)
   are picked up in housekeeping or on the next query. New JSON-RPC:
   `get_calendar_events`, `get_calendar_chats`, `get_calendar_msg_events`,
-  `make_calendar_ics`, and `calendarEvent` on messages. In the UI: an event
-  card in the chat and in the draft preview, "Event" in the attachment menu,
+  `make_calendar_ics`, and `calendarEvent` (with its `rrule`) on messages. In
+  the UI: an event card in the chat and in the draft preview (with an edit
+  button that reopens the form pre-filled until the draft is sent), "Event" in the attachment menu,
   a Calendar tab in apps & media (month grid + agenda), an all-chats calendar
   (account menu, Ctrl/Cmd+Shift+Y) with a per-chat colour/toggle sidebar, a
   calendar button in the chat header, and a "New event" form there.

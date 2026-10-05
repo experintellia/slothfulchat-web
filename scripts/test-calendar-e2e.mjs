@@ -10,8 +10,9 @@
 //      chats, and unticking one hides that chat's events
 //   4. "New event" → pick a chat → fill the form → the sent event shows up,
 //      in the agenda view too, and core has it
-//   5. attachment menu → Event → the draft shows an event card; sending it
-//      puts the card in the chat
+//   5. attachment menu → Event → the draft shows an event card; its edit
+//      button reopens the form pre-filled and replaces the draft's event
+//      (the message text stays); sending puts the edited card in the chat
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/test-calendar-e2e.mjs
@@ -219,20 +220,39 @@ try {
   await page.getByTestId('open-attachment-menu').click()
   await page.getByTestId('attach-event').click()
   await page.getByLabel('Title').fill('Lunch')
+  await page.getByLabel('Repeat').selectOption('WEEKLY')
   await page.getByRole('button', { name: 'Attach', exact: true }).click()
   const draftCard = page.locator('.attachment-quote-section', { hasText: 'Lunch' })
   await draftCard.waitFor({ timeout: 30_000 })
   check(true, 'the draft shows the event as a card')
-  await page.locator('#composer-textarea-non-edit').fill('lunch?')
+  const composer = page.locator('#composer-textarea-non-edit')
+  await composer.fill('lunch?')
+
+  await page.getByTestId('edit-draft-event').click()
+  check(
+    (await page.getByLabel('Title').inputValue()) === 'Lunch' &&
+      (await page.getByLabel('Repeat').inputValue()) === 'WEEKLY',
+    'edit opens the form pre-filled with the draft event'
+  )
+  await page.getByLabel('Title').fill('Team lunch')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await page
+    .locator('.attachment-quote-section', { hasText: 'Team lunch' })
+    .waitFor({ timeout: 30_000 })
+  check((await composer.inputValue()) === 'lunch?', 'editing keeps the message text')
   await page.locator('.send-button').click()
   const sent = page.locator('.message', { hasText: 'lunch?' })
   await sent.waitFor({ timeout: 30_000 })
   check(
-    await sent.getByRole('button', { name: /Lunch/ }).isVisible(),
-    'the sent draft shows as an event card'
+    await sent.getByRole('button', { name: /Team lunch/ }).isVisible(),
+    'the sent draft shows the edited event as a card'
   )
   const all = await rpc('getCalendarEvents', aliceId, null, day(1), day(28) + 86400 * 40)
-  check(all.some((e) => e.summary === 'Lunch'), 'core indexed the drafted event')
+  check(
+    all.some((e) => e.summary === 'Team lunch' && e.recurring) &&
+      !all.some((e) => e.summary === 'Lunch'),
+    'core indexed only the edited event'
+  )
 
   console.log('PASS: calendar — message type, draft, indexing, views, sidebar, new event')
 } catch (e) {

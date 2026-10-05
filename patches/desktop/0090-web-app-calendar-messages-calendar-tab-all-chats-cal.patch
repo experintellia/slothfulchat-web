@@ -28,16 +28,16 @@ like webxdc and vCard drafts do.
 - Floating and all-day times come from core as wall-clock-in-UTC and are
   shown unshifted.
 ---
- _locales/_untranslated_en.json                |  72 ++
+ _locales/_untranslated_en.json                |  75 ++
  images/icons/calendar.svg                     |   1 +
  .../AccountListSidebar/AccountItem.tsx        |  10 +
- .../src/components/Calendar/index.tsx         | 804 ++++++++++++++++++
+ .../src/components/Calendar/index.tsx         | 823 ++++++++++++++++++
  .../components/Calendar/styles.module.scss    | 340 ++++++++
  .../src/components/ChatView/ChatView.tsx      |  15 +
  packages/frontend/src/components/Gallery.tsx  | 157 ++--
  .../frontend/src/components/Icon/index.tsx    |   1 +
  .../src/components/KeyboardShortcutHint.tsx   |   4 +
- .../src/components/composer/Composer.tsx      |  14 +
+ .../src/components/composer/Composer.tsx      |  44 +-
  .../components/composer/menuAttachment.tsx    |  21 +
  .../components/dialogs/MediaView/index.tsx    |  13 +-
  .../src/components/message/Message.tsx        |  10 +-
@@ -45,16 +45,16 @@ like webxdc and vCard drafts do.
  packages/frontend/src/hooks/chat/useDraft.ts  |   6 +-
  .../frontend/src/hooks/chat/useMessage.ts     |   2 +-
  packages/frontend/src/keybindings.ts          |   7 +
- 17 files changed, 1413 insertions(+), 71 deletions(-)
+ 17 files changed, 1464 insertions(+), 72 deletions(-)
  create mode 100644 images/icons/calendar.svg
  create mode 100644 packages/frontend/src/components/Calendar/index.tsx
  create mode 100644 packages/frontend/src/components/Calendar/styles.module.scss
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 2f6785a..2533ac5 100644
+index 2f6785a..656396b 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
-@@ -178,5 +178,77 @@
+@@ -178,5 +178,80 @@
    },
    "download_abort": {
      "message": "Stop download"
@@ -130,6 +130,9 @@ index 2f6785a..2533ac5 100644
 +  },
 +  "calendar_attach": {
 +    "message": "Attach"
++  },
++  "calendar_edit_event": {
++    "message": "Edit event"
    }
  }
 diff --git a/images/icons/calendar.svg b/images/icons/calendar.svg
@@ -162,10 +165,10 @@ index 1b67426..5e178c0 100644
          action: async () => {
 diff --git a/packages/frontend/src/components/Calendar/index.tsx b/packages/frontend/src/components/Calendar/index.tsx
 new file mode 100644
-index 0000000..1babd1f
+index 0000000..3695e86
 --- /dev/null
 +++ b/packages/frontend/src/components/Calendar/index.tsx
-@@ -0,0 +1,804 @@
+@@ -0,0 +1,823 @@
 +import React, { useCallback, useEffect, useMemo, useState } from 'react'
 +import moment from 'moment'
 +import classNames from 'classnames'
@@ -694,32 +697,46 @@ index 0000000..1babd1f
 +} as const
 +
 +/**
-+ * Form for a new event. Hands the written `.ics` (a temp file) and, `withMessage`, the
-+ * message text to `onCreate`, which sends or drafts it.
++ * Form for a new event, or for editing `initial` (an unsent draft's event). Hands the
++ * written `.ics` (a temp file) and, `withMessage`, the message text to `onCreate`, which
++ * sends or drafts it.
 + */
 +export function NewEventDialog({
 +  day,
++  initial,
 +  withMessage,
 +  onCreate,
 +  onClose,
 +}: {
 +  day: moment.Moment
++  initial?: T.CalendarEvent
 +  withMessage: boolean
 +  onCreate: (icsFile: string, text: string | null) => Promise<void> | void
 +} & DialogProps) {
 +  const tx = useTranslationFunction()
-+  const startDefault = day.clone().set({ hour: moment().hour() + 1, minute: 0 })
-+  const [summary, setSummary] = useState('')
-+  const [allDay, setAllDay] = useState(false)
-+  const [startDate, setStartDate] = useState(startDefault.format('YYYY-MM-DD'))
-+  const [startTime, setStartTime] = useState(startDefault.format('HH:mm'))
-+  const [endDate, setEndDate] = useState(startDefault.format('YYYY-MM-DD'))
-+  const [endTime, setEndTime] = useState(
-+    startDefault.clone().add(1, 'hour').format('HH:mm')
++  const first = initial && toOccurrence(initial)
++  const start0 = first
++    ? moment(first.s)
++    : day.clone().set({ hour: moment().hour() + 1, minute: 0 })
++  const end0 = first
++    ? // all-day ends are exclusive midnights; the form shows the last day
++      moment(first.e).subtract(first.allDay ? 1 : 0, 'day')
++    : start0.clone().add(1, 'hour')
++  const [summary, setSummary] = useState(initial?.summary ?? '')
++  const [allDay, setAllDay] = useState(initial?.allDay ?? false)
++  const [startDate, setStartDate] = useState(start0.format('YYYY-MM-DD'))
++  const [startTime, setStartTime] = useState(start0.format('HH:mm'))
++  const [endDate, setEndDate] = useState(end0.format('YYYY-MM-DD'))
++  const [endTime, setEndTime] = useState(end0.format('HH:mm'))
++  const [location, setLocation] = useState(initial?.location ?? '')
++  const [description, setDescription] = useState(initial?.description ?? '')
++  // ponytail: the form knows FREQ only; editing keeps the frequency and drops
++  // COUNT/UNTIL/BYDAY etc. of a picked-in .ics
++  const [repeat, setRepeat] = useState<keyof typeof REPEAT>(
++    (initial?.rrule?.match(/FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)/)?.[1] as
++      | keyof typeof REPEAT
++      | undefined) ?? ''
 +  )
-+  const [location, setLocation] = useState('')
-+  const [description, setDescription] = useState('')
-+  const [repeat, setRepeat] = useState<keyof typeof REPEAT>('')
 +  const [text, setText] = useState('')
 +  const [error, setError] = useState<string | null>(null)
 +  const [sending, setSending] = useState(false)
@@ -776,7 +793,10 @@ index 0000000..1babd1f
 +
 +  return (
 +    <Dialog onClose={onClose} canOutsideClickClose={false} width={440}>
-+      <DialogHeader title={tx('calendar_new_event')} onClose={onClose} />
++      <DialogHeader
++        title={tx(initial ? 'calendar_edit_event' : 'calendar_new_event')}
++        onClose={onClose}
++      />
 +      <DialogBody>
 +        <DialogContent>
 +          <form
@@ -903,7 +923,9 @@ index 0000000..1babd1f
 +            disabled={sending}
 +            onClick={send}
 +          >
-+            {withMessage ? tx('menu_send') : tx('calendar_attach')}
++            {withMessage
++              ? tx('menu_send')
++              : tx(initial ? 'save' : 'calendar_attach')}
 +          </FooterActionButton>
 +        </FooterActions>
 +      </DialogFooter>
@@ -1606,18 +1628,28 @@ index 0d4a1ed..748fd3d 100644
      {
        title: tx('message_input_shortcut_section'),
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index 58d5982..71b6d09 100644
+index 58d5982..b2ea8e0 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
-@@ -37,6 +37,7 @@ import { useRpcFetch } from '../../hooks/useFetch'
+@@ -16,7 +16,8 @@ import ComposerMessageInput from './ComposerMessageInput'
+ import { parseBotCommandsFromStatus } from './completion/botCommandProvider'
+ import LinkPreviewGhost from './linkPreview/LinkPreviewGhost'
+ import ghostStyles from './linkPreview/styles.module.scss'
+-import Icon from '../Icon'
++import Icon, { IconButton } from '../Icon'
++import moment from 'moment'
+ import { useLinkPreview } from './linkPreview/useLinkPreview'
+ import { stripTrackingFromPaste } from '../../utils/trackingParams'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+@@ -37,6 +38,7 @@ import { useRpcFetch } from '../../hooks/useFetch'
  
  import type { EmojiMartData } from '../EmojiPicker'
  import { VisualVCardComponent } from '../message/VCard'
-+import { CalendarEventCard } from '../Calendar'
++import { CalendarEventCard, NewEventDialog } from '../Calendar'
  import { ActionEmitter, KeybindAction } from '../../keybindings'
  import useKeyBindingAction from '../../hooks/useKeyBindingAction'
  import { CloseButton } from '../Dialog'
-@@ -732,6 +733,7 @@ const Composer = forwardRef<
+@@ -732,6 +734,7 @@ const Composer = forwardRef<
                )}
                {draftState.file &&
                  !draftState.vcardContact &&
@@ -1625,7 +1657,7 @@ index 58d5982..71b6d09 100644
                  !linkPreview.isPreviewActive && (
                    <section
                      className='attachment-quote-section is-attachment'
-@@ -792,6 +794,18 @@ const Composer = forwardRef<
+@@ -792,6 +795,45 @@ const Composer = forwardRef<
                    />
                  </section>
                )}
@@ -1635,10 +1667,37 @@ index 58d5982..71b6d09 100644
 +                  aria-label={tx('attachment')}
 +                >
 +                  <CalendarEventCard event={draftState.calendarEvent} />
-+                  <CloseButton
-+                    onClick={removeFile}
-+                    aria-label={tx('remove_attachment')}
-+                  />
++                  <div
++                    style={{
++                      display: 'flex',
++                      alignItems: 'center',
++                      gap: 8,
++                      marginInlineStart: 'auto',
++                    }}
++                  >
++                    <IconButton
++                      icon='lead-pencil'
++                      size={18}
++                      aria-label={tx('calendar_edit_event')}
++                      title={tx('calendar_edit_event')}
++                      data-testid='edit-draft-event'
++                      onClick={() =>
++                        draftState.calendarEvent &&
++                        openDialog(NewEventDialog, {
++                          day: moment(),
++                          initial: draftState.calendarEvent,
++                          withMessage: false,
++                          // replaces the draft's .ics, the text stays
++                          onCreate: (file: string) =>
++                            addFileToDraft(file, 'event.ics', 'Calendar'),
++                        })
++                      }
++                    />
++                    <CloseButton
++                      onClick={removeFile}
++                      aria-label={tx('remove_attachment')}
++                    />
++                  </div>
 +                </section>
 +              )}
              </>

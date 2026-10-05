@@ -1,7 +1,8 @@
 # Changelog
 
 - **Calendar messages**: `.ics` attachments are a new viewtype, `Calendar`,
-  with the first event in `calendarEvent` on the message.
+  with the first event in `calendarEvent` on the message (including its
+  `rrule`, so a draft's event can be edited).
   `getCalendarEvents(accountId, chatId | null, from, to)` returns event
   occurrences across chats (recurrences expanded, updates and cancellations
   applied), `getCalendarChats` counts events per chat, `getCalendarMsgEvents`
