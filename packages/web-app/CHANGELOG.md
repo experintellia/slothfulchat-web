@@ -1,5 +1,8 @@
 # Changelog
 
+- **Bots' commands pop up as you type `/`.** In a chat with a bot whose
+  profile text lists `/commands`, typing `/` shows them with their
+  descriptions; pick one with the arrow keys and Enter, or a click.
 - **Reactions now sit on top of the message menu**, like in Signal and
   Telegram: right-click or long-press a message and pick an emoji or an
   action from one place. The hover icons next to messages are gone; keyboard
