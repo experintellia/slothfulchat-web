@@ -178,6 +178,31 @@ exists:
   since the anti-howl mitigation is the echo cancellation this setting
   disables. `desktop/0067` – `desktop/0069`, `desktop/0077` –
   `desktop/0080`
+- **Video player: Video.js skin, hotkeys, floating mini player** — chat
+  videos (bubbles and the fullscreen viewer) use Video.js 10's packaged skin
+  (`@videojs/react`) instead of native `<video controls>`: controls that
+  auto-hide while playing (the native ones covered the bottom of the frame),
+  YouTube-style hotkeys while the player has focus, touch gestures and an
+  error dialog for undecodable formats. Bubbles are sized from the sent
+  dimensions; one medium plays at a time across videos and the voice
+  singleton; volume is remembered. A playing video that scrolls out of view
+  or whose chat is left continues in a draggable floating window (top corner,
+  clear of the composer); scrolling back to the bubble, or "Show in Chat",
+  pulls it back inline at the same spot. Our own UI goes into the player as
+  children of the packaged skin and fades with its controls: the mini
+  player's buttons (no title bar; close and "Show in Chat" styled like the
+  skin's own, with its tooltips), the video bubble's time/✓ (under the
+  seek bar, no black strip under the player; reactions keep their spot), and
+  the fullscreen viewer's own buttons.
+  Labels follow the app language: instead of Video.js's I18nProvider (which
+  would inline all ~50 locale packs into the unsplit bundle) we feed its
+  I18nContext the active language's pack, imported at runtime from
+  `videojs-locales/` (copied by web-app's `assemble.mjs`), with our own
+  locale strings as a fallback. `desktop/0088` – `desktop/0089`
+- **"Jump to message" across profiles** — `useMessage().jumpToMessage` switches
+  to the message's profile itself (open its chat, then jump once the list
+  mounts) instead of three callers each copying that sequence or, in the video
+  mini player, hiding "Show in Chat". `desktop/0090`
 - **Native 1:1 calls (audio, video, screen share)** — our own WebRTC peer,
   wire-compatible with real Delta Chat clients (which run
   [`deltachat/calls-webapp`](https://github.com/deltachat/calls-webapp)): raw-SDP

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 3 Oct 2026 00:32:55 +0000
-Subject: [PATCH 87/87] web-app: reactions bar inside the message context menu
+Subject: [PATCH 87/90] web-app: reactions bar inside the message context menu
 
 Reacting took two steps (right-click, "React", then a separate bar) or a
 hover icon. Signal and Telegram put the reactions on top of the message

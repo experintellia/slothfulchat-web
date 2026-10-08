@@ -1,5 +1,14 @@
 # Changelog
 
+- **Videos get a proper player.** The controls now fade away while a video
+  plays instead of covering the bottom of the picture, and the usual keyboard
+  shortcuts work once you click the video. Videos no longer make the chat
+  jump while loading, and starting one pauses a playing voice message. The
+  time and checkmark sit under the seek bar and fade while it plays.
+- **A playing video keeps going when you scroll past it or switch chats**, in
+  a small floating window you can drag around or close. Scroll back to the
+  video and it jumps back into the chat. "Show in Chat" there also works for
+  videos from another profile.
 - **Reactions now sit on top of the message menu**, like in Signal and
   Telegram: right-click or long-press a message and pick an emoji or an
   action from one place. The hover icons next to messages are gone; keyboard

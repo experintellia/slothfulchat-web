@@ -1,0 +1,601 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Fri, 2 Oct 2026 22:37:58 +0000
+Subject: [PATCH 89/90] web-app: floating video mini player for scrolled-away
+ and chat-switched videos
+
+A playing chat video that scrolls out of view (an IntersectionObserver
+on the bubble: < 30% visible) or whose bubble unmounts (chat switch)
+hands its message, src and position to a VideoMiniPlayerContext; a
+small floating window over the app (mounted once with the provider in
+ScreenController) resumes it with the same Video.js player, so hotkeys
+and the skin's native PiP button work there too. When the bubble is
+>= 60% visible again (scrolling back, returning to the chat, "Show in
+Chat") it takes the video back via takeBack(): the window closes and
+the bubble continues from the same spot, playing or paused as it was.
+The 30/60 gap keeps it from flapping at the edge.
+
+- Opens top-right below the chat header (inline-end, so RTL mirrors),
+  clear of the composer; sized to the video's aspect ratio so portrait
+  clips aren't a thin strip. Draggable by its header (left button,
+  pointer capture); the spot is clamped and remembered in localStorage.
+- "Show in Chat" jumps back to the message, where the bubble takes the
+  video back. Same account only for now
+  (jumpToMessage can't cross accounts, see #276). x or the video
+  ending closes it, handing keyboard focus to the composer.
+- Each handoff remounts the window, so handing the same video over
+  again resumes at the new spot. A bubble that unmounts because its
+  message was deleted doesn't hand off.
+- The handoff runs in a layout-effect cleanup, while the detached
+  <video> still reports playing; the account is captured at mount.
+- ponytail: the mini player starts its own <video> at the handed-over
+  position instead of moving the element (local blob URL, sub-second
+  hiccup); upgrade path is one portaled element shared by both.
+
+- No title bar: drag area, "Show in Chat" and close are an overlay
+  passed as children into the skin's container (VideoPlayer `children`),
+  so they fade with the controls (data-controls-visible) and hovering
+  them keeps the controls up. Close (at the corner) and "Show in Chat"
+  match the skin's own top buttons: Video.js's public Tooltip parts with
+  the skin's button/tooltip classes, in a group styled like the skin's
+  top-right one that hides the same way. Packaged skins have no slots for extra
+  controls; the documented alternative is copying the whole skin source
+  in, which this avoids. The bar is marked data-interactive, which
+  Video.js's tap gesture skips, so a drag or click on it doesn't pause.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ packages/frontend/src/ScreenController.tsx    |  43 ++--
+ .../src/components/VideoMiniPlayer/index.tsx  | 238 ++++++++++++++++++
+ .../VideoMiniPlayer/styles.module.scss        |  64 +++++
+ .../src/components/attachment/VideoPlayer.tsx | 105 +++++++-
+ .../attachment/messageAttachment.tsx          |   1 +
+ 5 files changed, 430 insertions(+), 21 deletions(-)
+ create mode 100644 packages/frontend/src/components/VideoMiniPlayer/index.tsx
+ create mode 100644 packages/frontend/src/components/VideoMiniPlayer/styles.module.scss
+
+diff --git a/packages/frontend/src/ScreenController.tsx b/packages/frontend/src/ScreenController.tsx
+index 393034c..0082e51 100644
+--- a/packages/frontend/src/ScreenController.tsx
++++ b/packages/frontend/src/ScreenController.tsx
+@@ -29,6 +29,7 @@ import { InstantOnboardingProvider } from './contexts/InstantOnboardingContext'
+ import { MediaPlayerMutexProvider } from './contexts/MediaPlayerMutexContext'
+ import { SmallScreenModeMacOSTitleBar } from './components/SmallScreenModeMacOSTitleBar'
+ import { NextVoiceMessagePlayerProvider } from './contexts/NextVoiceMessagePlayerContext'
++import { VideoMiniPlayerProvider } from './components/VideoMiniPlayer'
+ 
+ const log = getLogger('renderer/ScreenController')
+ 
+@@ -417,28 +418,30 @@ export default class ScreenController extends Component {
+                 inside of `DialogContextProvider`. */}
+                 <MediaPlayerMutexProvider>
+                   <NextVoiceMessagePlayerProvider>
+-                    <DialogContextProvider>
+-                      <RuntimeAdapter accountId={this.selectedAccountId} />
+-                      <KeybindingsContextProvider>
+-                        <div className='main-container-container'>
+-                          {this.state.smallScreenMode &&
+-                            runtime.getRuntimeInfo().isMac && (
+-                              <SmallScreenModeMacOSTitleBar />
+-                            )}
+-                          <div className='main-container'>
+-                            <AccountListSidebar
+-                              selectedAccountId={this.selectedAccountId}
+-                              onAddAccount={this.addAndSelectAccount}
+-                              onSelectAccount={this.selectAccount.bind(this)}
+-                              openAccountDeletionScreen={this.openAccountDeletionScreen.bind(
+-                                this
++                    <VideoMiniPlayerProvider>
++                      <DialogContextProvider>
++                        <RuntimeAdapter accountId={this.selectedAccountId} />
++                        <KeybindingsContextProvider>
++                          <div className='main-container-container'>
++                            {this.state.smallScreenMode &&
++                              runtime.getRuntimeInfo().isMac && (
++                                <SmallScreenModeMacOSTitleBar />
+                               )}
+-                            />
+-                            {this.renderScreen(this.selectedAccountId)}
++                            <div className='main-container'>
++                              <AccountListSidebar
++                                selectedAccountId={this.selectedAccountId}
++                                onAddAccount={this.addAndSelectAccount}
++                                onSelectAccount={this.selectAccount.bind(this)}
++                                openAccountDeletionScreen={this.openAccountDeletionScreen.bind(
++                                  this
++                                )}
++                              />
++                              {this.renderScreen(this.selectedAccountId)}
++                            </div>
+                           </div>
+-                        </div>
+-                      </KeybindingsContextProvider>
+-                    </DialogContextProvider>
++                        </KeybindingsContextProvider>
++                      </DialogContextProvider>
++                    </VideoMiniPlayerProvider>
+                   </NextVoiceMessagePlayerProvider>
+                 </MediaPlayerMutexProvider>
+               </ContextMenuProvider>
+diff --git a/packages/frontend/src/components/VideoMiniPlayer/index.tsx b/packages/frontend/src/components/VideoMiniPlayer/index.tsx
+new file mode 100644
+index 0000000..5780e6d
+--- /dev/null
++++ b/packages/frontend/src/components/VideoMiniPlayer/index.tsx
+@@ -0,0 +1,238 @@
++import React, {
++  createContext,
++  useCallback,
++  useMemo,
++  useRef,
++  useState,
++} from 'react'
++
++import styles from './styles.module.scss'
++import VideoPlayer, { readJSON, writeJSON } from '../attachment/VideoPlayer'
++import Icon, { type IconName } from '../Icon'
++import { Tooltip } from '@videojs/react'
++import useMessage from '../../hooks/chat/useMessage'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
++
++export type MiniVideo = {
++  accountId: number
++  chatId: number
++  msgId: number
++  src: string
++  /** position to resume from, seconds */
++  time: number
++  /** sent dimensions, 0 when unknown */
++  width: number
++  height: number
++}
++
++/**
++ * A chat video that scrolls out of view or whose bubble unmounts (chat
++ * switch) while playing keeps playing here, in a floating window over the
++ * app, until its bubble is visible again and takes it back.
++ */
++export const VideoMiniPlayerContext = createContext<{
++  setCurrent: (video: MiniVideo | null) => void
++  /** close the window if it shows this message; its playback state, or null */
++  takeBack: (
++    accountId: number,
++    msgId: number
++  ) => { time: number; playing: boolean } | null
++}>({ setCurrent: () => {}, takeBack: () => null })
++
++export function VideoMiniPlayerProvider({
++  children,
++}: React.PropsWithChildren<{}>) {
++  const [current, setCurrent] = useState<MiniVideo | null>(null)
++  const boxRef = useRef<HTMLDivElement>(null)
++  // reads the live window (data-msg + its <video>), so no stale state
++  const takeBack = useCallback((accountId: number, msgId: number) => {
++    const box = boxRef.current
++    const video = box?.querySelector('video')
++    if (!video || box?.dataset.msg !== `${accountId}:${msgId}`) return null
++    setCurrent(null)
++    return { time: video.currentTime, playing: !video.paused && !video.ended }
++  }, [])
++  const value = useMemo(() => ({ setCurrent, takeBack }), [takeBack])
++  return (
++    <VideoMiniPlayerContext.Provider value={value}>
++      {children}
++      {current && (
++        <VideoMiniPlayer
++          // per handoff: handing the same video over again resumes at the new spot
++          key={`${current.accountId}:${current.msgId}:${current.time}`}
++          video={current}
++          rootRef={boxRef}
++          onClose={() => setCurrent(null)}
++        />
++      )}
++    </VideoMiniPlayerContext.Provider>
++  )
++}
++
++const POS_KEY = 'slothful.videoMiniPlayerPos'
++
++function readPos(): { x: number; y: number } | null {
++  const p = readJSON(POS_KEY)
++  return Number.isFinite(p?.x) && Number.isFinite(p?.y) ? p : null
++}
++
++const clamp = (v: number, max: number) => Math.max(0, Math.min(v, max))
++/** keep at least a grabbable corner of the window on screen */
++const onScreen = (p: { x: number; y: number }) => ({
++  x: clamp(p.x, window.innerWidth - 120),
++  y: clamp(p.y, window.innerHeight - 80),
++})
++
++function VideoMiniPlayer({
++  video,
++  rootRef,
++  onClose,
++}: {
++  video: MiniVideo
++  rootRef: React.RefObject<HTMLDivElement | null>
++  onClose: () => void
++}) {
++  const tx = useTranslationFunction()
++  const { jumpToMessage } = useMessage()
++  // null = default corner (CSS), else top-left in px
++  const [pos, setPos] = useState(readPos)
++  const grab = useRef({ dx: 0, dy: 0 })
++
++  const close = () => {
++    // don't drop keyboard focus onto <body> with the window
++    if (rootRef.current?.contains(document.activeElement)) {
++      document
++        .querySelector<HTMLElement>('.create-or-edit-message-input')
++        ?.focus()
++    }
++    onClose()
++  }
++
++  // ponytail: an unresolved cross-account jump hides the button instead
++  // (useMessage's jumpToMessage can't switch accounts), see issue #276.
++  const canJump = video.accountId === window.__selectedAccountId
++  const aspect =
++    video.width > 0 && video.height > 0 ? video.width / video.height : 16 / 9
++
++  return (
++    <div
++      ref={rootRef}
++      className={styles.root}
++      role='region'
++      aria-label={tx('video')}
++      data-msg={`${video.accountId}:${video.msgId}`}
++      style={{
++        // portrait videos get a narrower window instead of a thin strip
++        width: `min(360px, 60vw, calc(50vh * ${aspect}))`,
++        ...(pos && {
++          left: onScreen(pos).x,
++          top: onScreen(pos).y,
++          insetInlineEnd: 'auto',
++        }),
++      }}
++    >
++      <VideoPlayer
++        className={styles.player}
++        style={{ aspectRatio: aspect }}
++        src={video.src}
++        startAt={video.time}
++        autoPlay
++        onEnded={close}
++      >
++        {/* inside the player, so it fades with its controls and hovering it
++            counts as player activity (#277) */}
++        <div
++          className={styles.topBar}
++          // Video.js skips its tap gestures (click = pause) on these, so a
++          // drag or a click on the bar doesn't pause the video
++          data-interactive
++          onPointerDown={e => {
++            const root = rootRef.current
++            if (
++              e.button !== 0 ||
++              root == null ||
++              (e.target as Element).closest('button')
++            ) {
++              return
++            }
++            const box = root.getBoundingClientRect()
++            grab.current = { dx: e.clientX - box.left, dy: e.clientY - box.top }
++            e.currentTarget.setPointerCapture(e.pointerId)
++          }}
++          onPointerMove={e => {
++            if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
++            setPos(
++              onScreen({
++                x: e.clientX - grab.current.dx,
++                y: e.clientY - grab.current.dy,
++              })
++            )
++          }}
++          // also fires on pointerup and pointercancel
++          onLostPointerCapture={() => writeJSON(POS_KEY, pos)}
++        >
++          <div className={styles.buttons}>
++            <BarButton icon='cross' label={tx('close')} onClick={close} />
++            {canJump && (
++              <BarButton
++                icon='chat_bubble'
++                label={tx('show_in_chat')}
++                // once visible, the bubble takes the video back (takeBack)
++                onClick={() =>
++                  jumpToMessage({
++                    accountId: video.accountId,
++                    msgId: video.msgId,
++                    msgChatId: video.chatId,
++                    focus: true,
++                    scrollIntoViewArg: { block: 'center' },
++                  })
++                }
++              />
++            )}
++          </div>
++        </div>
++      </VideoPlayer>
++    </div>
++  )
++}
++
++/**
++ * A button that looks and behaves like the skin's own (cast, PiP, fullscreen):
++ * Video.js's public Tooltip parts with the skin's button/tooltip classes.
++ * ponytail: those class names are the skin's, not a documented API; a skin
++ * update that renames them only costs the look, not function.
++ */
++function BarButton({
++  icon,
++  label,
++  onClick,
++}: {
++  icon: IconName
++  label: string
++  onClick: () => void
++}) {
++  return (
++    <Tooltip.Root side='bottom'>
++      <Tooltip.Trigger
++        render={
++          <button
++            type='button'
++            className='media-button'
++            aria-label={label}
++            onClick={onClick}
++          />
++        }
++      >
++        <Icon
++          className='media-button-icon'
++          icon={icon}
++          size={18}
++          coloring='currentColor'
++        />
++      </Tooltip.Trigger>
++      <Tooltip.Popup className='media-popup media-popup-safe-area media-popup-transition media-popup-surface media-tooltip'>
++        <Tooltip.Label>{label}</Tooltip.Label>
++      </Tooltip.Popup>
++    </Tooltip.Root>
++  )
++}
+diff --git a/packages/frontend/src/components/VideoMiniPlayer/styles.module.scss b/packages/frontend/src/components/VideoMiniPlayer/styles.module.scss
+new file mode 100644
+index 0000000..f9db7c7
+--- /dev/null
++++ b/packages/frontend/src/components/VideoMiniPlayer/styles.module.scss
+@@ -0,0 +1,64 @@
++.root {
++  position: fixed;
++  // top corner, clear of the composer; inline-end mirrors in RTL
++  top: 64px;
++  inset-inline-end: 16px;
++  z-index: 50;
++  max-height: calc(100vh - 80px);
++  border-radius: 12px;
++  overflow: hidden;
++  background: black;
++  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
++}
++
++.player {
++  display: block;
++  width: 100%;
++  --media-video-border-radius: 0;
++  --media-frame-border: transparent;
++}
++
++// Drag strip across the top (marked data-interactive in the markup, so the
++// skin's tap-to-pause ignores it) holding our buttons in a group styled like
++// the skin's own top-right one; both hide with the controls.
++.topBar {
++  position: absolute;
++  inset-block-start: 0;
++  inset-inline: 0;
++  z-index: 20;
++  display: flex;
++  padding: calc(var(--media-spacing) * 2);
++  cursor: grab;
++  touch-action: none;
++
++  &:active {
++    cursor: grabbing;
++  }
++}
++
++// ponytail: mirrors the skin's compact top-right group using its custom
++// properties (--media-popover, --media-hidden-*); a skin update may change them.
++.buttons {
++  display: flex;
++  align-items: center;
++  gap: 1px;
++  padding: calc(var(--media-spacing) * 0.5);
++  border-radius: var(--media-controls-radius);
++  background-color: var(--media-popover);
++  color: var(--media-popover-foreground);
++  box-shadow:
++    0 0 0 1px var(--media-surface-border, var(--media-border)),
++    var(--media-shadow-surface);
++  backdrop-filter: var(--media-backdrop-filter-surface);
++  cursor: auto;
++  transition-property: filter, opacity, scale, translate;
++  transition-duration: var(--media-duration-controls);
++  transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
++
++  :global(.media-skin):not([data-controls-visible]) &:not(:focus-within) {
++    pointer-events: none;
++    translate: 0 calc(var(--media-hidden-offset) * -1);
++    scale: var(--media-hidden-scale);
++    opacity: 0;
++  }
++}
+diff --git a/packages/frontend/src/components/attachment/VideoPlayer.tsx b/packages/frontend/src/components/attachment/VideoPlayer.tsx
+index 35e6f8f..ff00b77 100644
+--- a/packages/frontend/src/components/attachment/VideoPlayer.tsx
++++ b/packages/frontend/src/components/attachment/VideoPlayer.tsx
+@@ -1,4 +1,11 @@
+-import React, { useEffect, useMemo, useState } from 'react'
++import React, {
++  useContext,
++  useEffect,
++  useLayoutEffect,
++  useMemo,
++  useRef,
++  useState,
++} from 'react'
+ import { I18nContext, createTranslator } from '@videojs/react/i18n'
+ import {
+   Video,
+@@ -8,7 +15,9 @@ import {
+ import '@videojs/react/video/skin.css'
+ 
+ import { audioEl } from '../../contexts/MediaPlayerMutexContext'
++import { MiniVideo, VideoMiniPlayerContext } from '../VideoMiniPlayer'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
++import { BackendRemote } from '../../backend-com'
+ 
+ const VOLUME_KEY = 'slothful.videoVolume'
+ 
+@@ -144,6 +153,28 @@ function restore(el: HTMLVideoElement, startAt: number | undefined) {
+   }
+ }
+ 
++/** `accountId:msgId` of chat video bubbles currently in view */
++const inView = new Set<string>()
++
++/**
++ * Continue `el` in the mini player, unless its message was deleted or its
++ * bubble is back in view (scrolled back, or remounted) by the time we know.
++ */
++function handOff(
++  el: HTMLVideoElement,
++  video: Omit<MiniVideo, 'time'>,
++  setCurrent: (v: MiniVideo) => void
++) {
++  const time = el.currentTime
++  BackendRemote.rpc.getMessage(video.accountId, video.msgId).then(
++    m =>
++      m.chatId === video.chatId &&
++      !inView.has(`${video.accountId}:${video.msgId}`) &&
++      setCurrent({ ...video, time }),
++    () => {}
++  )
++}
++
+ /**
+  * Video.js player used for chat videos (message bubble, fullscreen viewer,
+  * mini player). Keyboard shortcuts (space/k, j/l, arrows, m, f, i, 0-9, <>),
+@@ -158,6 +189,8 @@ export default function VideoPlayer({
+   startAt,
+   onEnded,
+   autoFocus,
++  message,
++  children,
+ }: {
+   src: string
+   className?: string
+@@ -168,13 +201,82 @@ export default function VideoPlayer({
+   onEnded?: () => void
+   /** focus the player once loaded so its keyboard shortcuts work right away */
+   autoFocus?: boolean
++  /**
++   * Our own overlay UI, rendered inside the skin's container (the skin has no
++   * slots for extra controls). Fade it with the container's documented state
++   * attribute: `.media-skin:not([data-controls-visible])`.
++   */
++  children?: React.ReactNode
++  /** a chat message's video: hand it to the mini player if unmounted mid-play */
++  message?: {
++    id: number
++    chatId: number
++    dimensionsWidth: number
++    dimensionsHeight: number
++  }
+ }) {
++  const videoRef = useRef<HTMLVideoElement>(null)
++  const { setCurrent, takeBack } = useContext(VideoMiniPlayerContext)
++  const msgId = message?.id
++  const chatId = message?.chatId
++  const width = message?.dimensionsWidth ?? 0
++  const height = message?.dimensionsHeight ?? 0
++  // Layout-effect cleanup runs before React detaches the <video>, while it
++  // still reports playing. ponytail: the mini player starts its own <video>
++  // at the same position (local blob URL, so a sub-second hiccup) rather than
++  // moving this element. Upgrade path: one portaled element shared by both.
++  useLayoutEffect(() => {
++    const el = videoRef.current
++    // at mount: by unmount time an account switch may already have changed it
++    const accountId = window.__selectedAccountId
++    if (!el || msgId == null || chatId == null || accountId == null) return
++    const video = { accountId, chatId, msgId, src, width, height }
++    const key = `${accountId}:${msgId}`
++
++    // Scrolled out of view while playing → mini player; back in view → take
++    // it back. 0.3/0.6 apart so it doesn't flap at the edge. ponytail: one
++    // observer per video bubble; share one like MessageList's if that grows.
++    const io = new IntersectionObserver(
++      ([entry]) => {
++        if (entry.intersectionRatio < 0.3) {
++          inView.delete(key)
++          // picture-in-picture plays on outside the chat: leave it there
++          if (
++            !el.paused &&
++            !el.ended &&
++            document.pictureInPictureElement !== el
++          ) {
++            el.pause()
++            handOff(el, video, setCurrent)
++          }
++        } else if (entry.intersectionRatio >= 0.6) {
++          inView.add(key)
++          const back = takeBack(accountId, msgId)
++          if (back) {
++            el.currentTime = back.time
++            if (back.playing) el.play()
++          }
++        }
++      },
++      { threshold: [0, 0.3, 0.6] }
++    )
++    const box = el.closest('.media-skin')
++    if (box) io.observe(box)
++
++    return () => {
++      io.disconnect()
++      inView.delete(key)
++      if (!el.paused && !el.ended) handOff(el, video, setCurrent)
++    }
++  }, [msgId, chatId, src, width, height, setCurrent, takeBack])
++
+   const i18n = useVideoJsI18n()
+   return (
+     <I18nContext.Provider value={i18n}>
+       <VjsPlayer>
+         <VideoSkin className={className} style={style}>
+           <Video
++            ref={videoRef}
+             src={src}
+             data-chat-video
+             preload='metadata'
+@@ -194,6 +296,7 @@ export default function VideoPlayer({
+             }
+             onEnded={onEnded}
+           />
++          {children}
+         </VideoSkin>
+       </VjsPlayer>
+     </I18nContext.Provider>
+diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
+index b5ab463..44fb2ad 100644
+--- a/packages/frontend/src/components/attachment/messageAttachment.tsx
++++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
+@@ -239,6 +239,7 @@ export default function Attachment({
+         <VideoPlayer
+           className='attachment-content video-content'
+           src={runtime.transformBlobURL(message.file)}
++          message={message}
+           // ponytail: the skin's controls ignore the message list's roving
+           // tabindex (no prop for it) and stay tabbable. Upgrade path: an
+           // effect setting tabIndex on the skin's buttons/inputs from

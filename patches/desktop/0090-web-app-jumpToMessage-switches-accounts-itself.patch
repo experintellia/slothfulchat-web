@@ -1,0 +1,293 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sat, 3 Oct 2026 01:37:56 +0000
+Subject: [PATCH 90/90] web-app: jumpToMessage switches accounts itself
+
+useMessage().jumpToMessage now handles a message in another account:
+it saves the target chat as that account's last chat, selects the
+account, and queues the jump for when its message list mounts
+(__internal_jump_to_message_asap). Errors are logged there.
+
+That sequence was copied into CommandPalette and the global voice
+player, and the video mini player hid its "Show in Chat" button for
+other accounts instead. All three now just call jumpToMessage, so
+"Show in Chat" in the video mini player works across accounts too.
+GlobalVoiceMessagePlayer loses the accountId prop it only needed for
+that check.
+
+Not touched: the notification click path (RuntimeAdapter) and
+ForwardMessage, which also close dialogs / open chats on their own.
+
+Closes #276.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../GlobalVoiceMessagePlayer.tsx              | 46 ++++---------------
+ .../src/components/VideoMiniPlayer/index.tsx  | 33 ++++++-------
+ .../dialogs/CommandPalette/index.tsx          | 37 ++++-----------
+ .../screens/MainScreen/MainScreen.tsx         |  4 +-
+ .../frontend/src/hooks/chat/useMessage.ts     | 34 ++++++++++----
+ 5 files changed, 58 insertions(+), 96 deletions(-)
+
+diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
+index d6a6da1..e949e41 100644
+--- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
++++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
+@@ -14,23 +14,16 @@ import { useSettingsStore } from '../../stores/settings'
+ import { useRpcFetch } from '../../hooks/useFetch'
+ import { BackendRemote } from '../../backend-com'
+ import useMessage from '../../hooks/chat/useMessage'
+-import { saveLastChatId } from '../../backend/chat'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+-import { getLogger } from '@deltachat-desktop/shared/logger'
+ import {
+   mediaSessionMetadata,
+   clampSeek,
+   voicePlayerSurface,
+ } from './mediaSession'
+ 
+-const log = getLogger('GlobalVoiceMessagePlayer')
+-
+ export function GlobalVoiceMessagePlayer({
+-  accountId: selectedAccountId,
+   strip,
+ }: {
+-  /** The currently selected account, to decide same- vs cross-account jump. */
+-  accountId: number | undefined
+   /**
+    * This instance is the under-navbar strip mount point (small-screen layout),
+    * not the chat-list column one. Both are mounted; the one that isn't the
+@@ -143,37 +136,14 @@ export function GlobalVoiceMessagePlayer({
+     if (m == null) {
+       return
+     }
+-    if (m.accountId === selectedAccountId) {
+-      jumpToMessage({
+-        accountId: m.accountId,
+-        msgId: m.messageId,
+-        msgChatId: m.chatId,
+-        focus: true,
+-        scrollIntoViewArg: { block: 'center' },
+-      })
+-      return
+-    }
+-    // ponytail: cross-account jump mirrors CommandPalette's idiom (jumpToMessage
+-    // can't cross accounts). Rare — reachable only when the singleton keeps
+-    // playing after the user switches accounts. Upgrade path: factor
+-    // CommandPalette's helper out if a third caller ever needs it.
+-    saveLastChatId(m.accountId, m.chatId)
+-      .then(() => window.__selectAccount(m.accountId))
+-      .then(() => {
+-        window.__internal_jump_to_message_asap = {
+-          accountId: m.accountId,
+-          chatId: m.chatId,
+-          jumpToMessageArgs: [
+-            {
+-              msgId: m.messageId,
+-              focus: true,
+-              scrollIntoViewArg: { block: 'center' },
+-            },
+-          ],
+-        }
+-        window.__internal_check_jump_to_message?.()
+-      })
+-      .catch(err => log.error('failed to jump to voice message', err))
++    // also across accounts: jumpToMessage switches first
++    jumpToMessage({
++      accountId: m.accountId,
++      msgId: m.messageId,
++      msgChatId: m.chatId,
++      focus: true,
++      scrollIntoViewArg: { block: 'center' },
++    })
+   }
+ 
+   const onClose = () => {
+diff --git a/packages/frontend/src/components/VideoMiniPlayer/index.tsx b/packages/frontend/src/components/VideoMiniPlayer/index.tsx
+index 5780e6d..78b06e3 100644
+--- a/packages/frontend/src/components/VideoMiniPlayer/index.tsx
++++ b/packages/frontend/src/components/VideoMiniPlayer/index.tsx
+@@ -108,9 +108,6 @@ function VideoMiniPlayer({
+     onClose()
+   }
+ 
+-  // ponytail: an unresolved cross-account jump hides the button instead
+-  // (useMessage's jumpToMessage can't switch accounts), see issue #276.
+-  const canJump = video.accountId === window.__selectedAccountId
+   const aspect =
+     video.width > 0 && video.height > 0 ? video.width / video.height : 16 / 9
+ 
+@@ -173,22 +170,20 @@ function VideoMiniPlayer({
+         >
+           <div className={styles.buttons}>
+             <BarButton icon='cross' label={tx('close')} onClick={close} />
+-            {canJump && (
+-              <BarButton
+-                icon='chat_bubble'
+-                label={tx('show_in_chat')}
+-                // once visible, the bubble takes the video back (takeBack)
+-                onClick={() =>
+-                  jumpToMessage({
+-                    accountId: video.accountId,
+-                    msgId: video.msgId,
+-                    msgChatId: video.chatId,
+-                    focus: true,
+-                    scrollIntoViewArg: { block: 'center' },
+-                  })
+-                }
+-              />
+-            )}
++            <BarButton
++              icon='chat_bubble'
++              label={tx('show_in_chat')}
++              // once visible, the bubble takes the video back (takeBack)
++              onClick={() =>
++                jumpToMessage({
++                  accountId: video.accountId,
++                  msgId: video.msgId,
++                  msgChatId: video.chatId,
++                  focus: true,
++                  scrollIntoViewArg: { block: 'center' },
++                })
++              }
++            />
+           </div>
+         </div>
+       </VideoPlayer>
+diff --git a/packages/frontend/src/components/dialogs/CommandPalette/index.tsx b/packages/frontend/src/components/dialogs/CommandPalette/index.tsx
+index 1898860..5525ac4 100644
+--- a/packages/frontend/src/components/dialogs/CommandPalette/index.tsx
++++ b/packages/frontend/src/components/dialogs/CommandPalette/index.tsx
+@@ -132,34 +132,15 @@ export default function CommandPalette({ mode = 'search', onClose }: Props) {
+           log.error('failed to open chat in other account', error)
+         }
+       },
+-      jumpToMessage: async (scopeAccountId, cId, msgId) => {
+-        if (scopeAccountId === currentAccountId) {
+-          jumpToMessage({
+-            accountId: scopeAccountId,
+-            msgId,
+-            msgChatId: cId,
+-            focus: false,
+-            scrollIntoViewArg: { block: 'center' },
+-          })
+-          return
+-        }
+-        try {
+-          // `jumpToMessage` can't cross accounts, so switch first and then jump
+-          // once the target account's message list mounts.
+-          await saveLastChatId(scopeAccountId, cId)
+-          await window.__selectAccount(scopeAccountId)
+-          window.__internal_jump_to_message_asap = {
+-            accountId: scopeAccountId,
+-            chatId: cId,
+-            jumpToMessageArgs: [
+-              { msgId, scrollIntoViewArg: { block: 'center' }, focus: false },
+-            ],
+-          }
+-          window.__internal_check_jump_to_message?.()
+-        } catch (error) {
+-          log.error('failed to jump to message in other account', error)
+-        }
+-      },
++      // also across accounts: jumpToMessage switches first
++      jumpToMessage: (scopeAccountId, cId, msgId) =>
++        jumpToMessage({
++          accountId: scopeAccountId,
++          msgId,
++          msgChatId: cId,
++          focus: false,
++          scrollIntoViewArg: { block: 'center' },
++        }),
+       createChatByContactId: async (scopeAccountId, contactId) => {
+         if (scopeAccountId === currentAccountId) {
+           await createChatByContactId(scopeAccountId, contactId)
+diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
+index 5c77d5f..6bc7536 100644
+--- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
++++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
+@@ -307,7 +307,7 @@ export default function MainScreen({ accountId }: Props) {
+           while sitting visually below it — acceptable for four controls; if
+           it bothers AT users, move the strip after the columns and switch
+           the reservation rule to a class on `.main-screen`. */}
+-      <GlobalVoiceMessagePlayer accountId={accountId} strip />
++      <GlobalVoiceMessagePlayer strip />
+       <div
+         className={styles.chatListAndHeaderAndAudioPlayer}
+         ref={chatListSidebarRef}
+@@ -362,7 +362,7 @@ export default function MainScreen({ accountId }: Props) {
+           />
+         </section>
+ 
+-        <GlobalVoiceMessagePlayer accountId={accountId} />
++        <GlobalVoiceMessagePlayer />
+       </div>
+       {!smallScreenMode && (
+         <div
+diff --git a/packages/frontend/src/hooks/chat/useMessage.ts b/packages/frontend/src/hooks/chat/useMessage.ts
+index 4d28cc4..5de8754 100644
+--- a/packages/frontend/src/hooks/chat/useMessage.ts
++++ b/packages/frontend/src/hooks/chat/useMessage.ts
+@@ -3,6 +3,7 @@ import mimeTypes from 'mime-types'
+ 
+ import useChat from './useChat'
+ import { BackendRemote } from '../../backend-com'
++import { saveLastChatId } from '../../backend/chat'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { notifyWebxdcMessageSent } from '../useWebxdcMessageSent'
+ import { mediaMetadata } from '../../utils/mediaMetadata'
+@@ -11,15 +12,9 @@ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import type { T } from '@deltachat/jsonrpc-client'
+ 
+ export type JumpToMessage = (params: {
+-  // "not from a different account" because apparently
+-  // `selectAccount` throws if `nextAccountId` is not the same
+-  // as the current account ID.
+-  //
+-  // TODO refactor: can't we just remove this property then?
+   /**
+-   * The ID of the currently selected account.
+-   * jumpToMessage from `useMessage()` _cannot_ jump to messages
+-   * of different accounts.
++   * The message's account. If it isn't the selected one, jumpToMessage
++   * switches to it first (opening the target chat) and then jumps.
+    */
+   accountId: number
+   msgId: number
+@@ -139,6 +134,25 @@ export default function useMessage() {
+           .chatId
+       }
+ 
++      // Another account: switch to it (opening the target chat), then jump
++      // once its message list mounts.
++      if (accountId !== window.__selectedAccountId) {
++        try {
++          await saveLastChatId(accountId, msgChatId)
++          await window.__selectAccount(accountId)
++          window.__internal_jump_to_message_asap = {
++            accountId,
++            chatId: msgChatId,
++            jumpToMessageArgs: [{ msgId, highlight, focus, scrollIntoViewArg }],
++          }
++          window.__internal_check_jump_to_message?.()
++          window.__closeAllDialogs?.()
++        } catch (error) {
++          log.error('failed to jump to message in other account', error)
++        }
++        return
++      }
++
+       // Workaround to actual jump to message in regarding mounted component view
+       // We must set this before the potential `selectChat()`,
+       // i.e. before the render of the message list
+@@ -185,7 +199,9 @@ export default function useMessage() {
+       // Notify about the sent message (listeners can filter by message type if needed)
+       notifyWebxdcMessageSent(accountId, chatId, message)
+ 
+-      // Jump down on sending
++      // Jump down on sending, unless the user switched to another account
++      // while it was sending: jumpToMessage would switch back.
++      if (accountId !== window.__selectedAccountId) return
+       jumpToMessage({
+         accountId,
+         msgId,
