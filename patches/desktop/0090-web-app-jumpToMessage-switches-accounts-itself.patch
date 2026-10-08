@@ -26,8 +26,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../src/components/VideoMiniPlayer/index.tsx  | 33 ++++++-------
  .../dialogs/CommandPalette/index.tsx          | 37 ++++-----------
  .../screens/MainScreen/MainScreen.tsx         |  4 +-
- .../frontend/src/hooks/chat/useMessage.ts     | 30 ++++++++----
- 5 files changed, 55 insertions(+), 95 deletions(-)
+ .../frontend/src/hooks/chat/useMessage.ts     | 34 ++++++++++----
+ 5 files changed, 58 insertions(+), 96 deletions(-)
 
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
 index d6a6da1..e949e41 100644
@@ -225,7 +225,7 @@ index 5c77d5f..6bc7536 100644
        {!smallScreenMode && (
          <div
 diff --git a/packages/frontend/src/hooks/chat/useMessage.ts b/packages/frontend/src/hooks/chat/useMessage.ts
-index 4d28cc4..e8b6656 100644
+index 4d28cc4..5de8754 100644
 --- a/packages/frontend/src/hooks/chat/useMessage.ts
 +++ b/packages/frontend/src/hooks/chat/useMessage.ts
 @@ -3,6 +3,7 @@ import mimeTypes from 'mime-types'
@@ -280,3 +280,14 @@ index 4d28cc4..e8b6656 100644
        // Workaround to actual jump to message in regarding mounted component view
        // We must set this before the potential `selectChat()`,
        // i.e. before the render of the message list
+@@ -185,7 +199,9 @@ export default function useMessage() {
+       // Notify about the sent message (listeners can filter by message type if needed)
+       notifyWebxdcMessageSent(accountId, chatId, message)
+ 
+-      // Jump down on sending
++      // Jump down on sending, unless the user switched to another account
++      // while it was sending: jumpToMessage would switch back.
++      if (accountId !== window.__selectedAccountId) return
+       jumpToMessage({
+         accountId,
+         msgId,

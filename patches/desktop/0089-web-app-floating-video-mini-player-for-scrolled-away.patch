@@ -48,9 +48,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  packages/frontend/src/ScreenController.tsx    |  43 ++--
  .../src/components/VideoMiniPlayer/index.tsx  | 238 ++++++++++++++++++
  .../VideoMiniPlayer/styles.module.scss        |  64 +++++
- .../src/components/attachment/VideoPlayer.tsx |  87 ++++++-
+ .../src/components/attachment/VideoPlayer.tsx | 105 +++++++-
  .../attachment/messageAttachment.tsx          |   1 +
- 5 files changed, 412 insertions(+), 21 deletions(-)
+ 5 files changed, 430 insertions(+), 21 deletions(-)
  create mode 100644 packages/frontend/src/components/VideoMiniPlayer/index.tsx
  create mode 100644 packages/frontend/src/components/VideoMiniPlayer/styles.module.scss
 
@@ -432,7 +432,7 @@ index 0000000..f9db7c7
 +  }
 +}
 diff --git a/packages/frontend/src/components/attachment/VideoPlayer.tsx b/packages/frontend/src/components/attachment/VideoPlayer.tsx
-index 35e6f8f..e29f8ab 100644
+index 35e6f8f..ff00b77 100644
 --- a/packages/frontend/src/components/attachment/VideoPlayer.tsx
 +++ b/packages/frontend/src/components/attachment/VideoPlayer.tsx
 @@ -1,4 +1,11 @@
@@ -458,11 +458,17 @@ index 35e6f8f..e29f8ab 100644
  
  const VOLUME_KEY = 'slothful.videoVolume'
  
-@@ -144,6 +153,19 @@ function restore(el: HTMLVideoElement, startAt: number | undefined) {
+@@ -144,6 +153,28 @@ function restore(el: HTMLVideoElement, startAt: number | undefined) {
    }
  }
  
-+/** Continue `el` in the mini player, unless its message was deleted. */
++/** `accountId:msgId` of chat video bubbles currently in view */
++const inView = new Set<string>()
++
++/**
++ * Continue `el` in the mini player, unless its message was deleted or its
++ * bubble is back in view (scrolled back, or remounted) by the time we know.
++ */
 +function handOff(
 +  el: HTMLVideoElement,
 +  video: Omit<MiniVideo, 'time'>,
@@ -470,7 +476,10 @@ index 35e6f8f..e29f8ab 100644
 +) {
 +  const time = el.currentTime
 +  BackendRemote.rpc.getMessage(video.accountId, video.msgId).then(
-+    m => m.chatId === video.chatId && setCurrent({ ...video, time }),
++    m =>
++      m.chatId === video.chatId &&
++      !inView.has(`${video.accountId}:${video.msgId}`) &&
++      setCurrent({ ...video, time }),
 +    () => {}
 +  )
 +}
@@ -478,7 +487,7 @@ index 35e6f8f..e29f8ab 100644
  /**
   * Video.js player used for chat videos (message bubble, fullscreen viewer,
   * mini player). Keyboard shortcuts (space/k, j/l, arrows, m, f, i, 0-9, <>),
-@@ -158,6 +180,8 @@ export default function VideoPlayer({
+@@ -158,6 +189,8 @@ export default function VideoPlayer({
    startAt,
    onEnded,
    autoFocus,
@@ -487,7 +496,7 @@ index 35e6f8f..e29f8ab 100644
  }: {
    src: string
    className?: string
-@@ -168,13 +192,73 @@ export default function VideoPlayer({
+@@ -168,13 +201,82 @@ export default function VideoPlayer({
    onEnded?: () => void
    /** focus the player once loaded so its keyboard shortcuts work right away */
    autoFocus?: boolean
@@ -521,6 +530,7 @@ index 35e6f8f..e29f8ab 100644
 +    const accountId = window.__selectedAccountId
 +    if (!el || msgId == null || chatId == null || accountId == null) return
 +    const video = { accountId, chatId, msgId, src, width, height }
++    const key = `${accountId}:${msgId}`
 +
 +    // Scrolled out of view while playing → mini player; back in view → take
 +    // it back. 0.3/0.6 apart so it doesn't flap at the edge. ponytail: one
@@ -528,11 +538,18 @@ index 35e6f8f..e29f8ab 100644
 +    const io = new IntersectionObserver(
 +      ([entry]) => {
 +        if (entry.intersectionRatio < 0.3) {
-+          if (!el.paused && !el.ended) {
++          inView.delete(key)
++          // picture-in-picture plays on outside the chat: leave it there
++          if (
++            !el.paused &&
++            !el.ended &&
++            document.pictureInPictureElement !== el
++          ) {
 +            el.pause()
 +            handOff(el, video, setCurrent)
 +          }
 +        } else if (entry.intersectionRatio >= 0.6) {
++          inView.add(key)
 +          const back = takeBack(accountId, msgId)
 +          if (back) {
 +            el.currentTime = back.time
@@ -547,6 +564,7 @@ index 35e6f8f..e29f8ab 100644
 +
 +    return () => {
 +      io.disconnect()
++      inView.delete(key)
 +      if (!el.paused && !el.ended) handOff(el, video, setCurrent)
 +    }
 +  }, [msgId, chatId, src, width, height, setCurrent, takeBack])
@@ -561,7 +579,7 @@ index 35e6f8f..e29f8ab 100644
              src={src}
              data-chat-video
              preload='metadata'
-@@ -194,6 +278,7 @@ export default function VideoPlayer({
+@@ -194,6 +296,7 @@ export default function VideoPlayer({
              }
              onEnded={onEnded}
            />
