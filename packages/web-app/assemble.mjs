@@ -1,7 +1,7 @@
 // Assembles dist/: upstream's prebuilt frontend bundle + locales + themes.json
 // + our static overlays (main.html, manifest) + the wasm core worker.
 // Our runtime.js/blobs-sw.js are added by `pnpm build` afterwards.
-import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -77,6 +77,18 @@ await cp(join(here, 'static/fonts/emoji-sets'), join(dist, 'fonts/emoji-sets'), 
   recursive: true,
 })
 
+// Video.js player label packs (3 kB each), imported at runtime by the
+// frontend's VideoPlayer for the active language only — bundling them would
+// inline all ~50 (+230 kB). @videojs/core sits next to @videojs/react in
+// pnpm's store; only the dependency-free per-language files are needed.
+const videojsLocales = join(
+  await realpath(join(repo, 'build/desktop/packages/frontend/node_modules/@videojs/react')),
+  '../core/dist/default/i18n/locales'
+)
+await cp(videojsLocales, join(dist, 'videojs-locales'), {
+  recursive: true,
+  filter: f => f === videojsLocales || /^[a-z]{2}(-[A-Z]{2})?\.js$/.test(basename(f)),
+})
 await mkdir(join(dist, 'locales'))
 for (const file of await readdir(locales)) {
   if (file.endsWith('.json')) {
