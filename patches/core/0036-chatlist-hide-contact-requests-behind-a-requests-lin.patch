@@ -11,23 +11,30 @@ created, raises a notification), burying the real conversations.
 Add a DC_GCL_NO_REQUESTS chatlist flag. With it the normal chatlist
 leaves contact requests (blocked=2) out and, unless DC_GCL_NO_SPECIALS is
 set, puts the new DC_CHAT_ID_REQUESTS_LINK (8) pseudo chat on top when
-any exist, mirroring DC_CHAT_ID_ARCHIVED_LINK. The requests themselves
-are listed with a new `is:request` query keyword, handled like
-`is:unread` and composable with search text. The flag is ignored by the
-query and archive branches, so search still finds requests.
+any unarchived request exists, mirroring DC_CHAT_ID_ARCHIVED_LINK; the
+"all done" hint is not added while requests wait. Archived requests stay
+in the archive like any archived chat and are not counted.
+
+The requests themselves are listed with a new `is:request` query
+keyword, handled like `is:unread` and composable with search text. With
+DC_GCL_NO_REQUESTS, a query made only of filter keywords (e.g. a bare
+`is:unread`) also leaves requests out; typed search text still finds
+them.
 
 JSON-RPC returns the link as ChatListItemFetchResult::RequestsLink, whose
-fresh_message_counter is the number of request chats (get_request_cnt).
-That count only changes when the set of chats changes, so
-emit_chatlist_changed also emits ChatlistItemChanged for the link.
+fresh_message_counter is the number of requests (get_request_cnt). That
+count only changes when the set of chats changes, so
+emit_chatlist_changed also emits ChatlistItemChanged for the link, and
+accepting a request now emits ChatlistChanged (it moves the chat from
+the requests link into the normal list).
 ---
- deltachat-ffi/deltachat.h                    |  2 +
- deltachat-jsonrpc/src/api/types/chat_list.rs |  9 ++++
- src/chat.rs                                  |  5 ++
- src/chatlist.rs                              | 51 ++++++++++++++++++--
- src/constants.rs                             |  3 ++
- src/events/chatlist_events.rs                |  4 ++
- 6 files changed, 69 insertions(+), 5 deletions(-)
+ deltachat-ffi/deltachat.h                    |   2 +
+ deltachat-jsonrpc/src/api/types/chat_list.rs |   9 +
+ src/chat.rs                                  |   7 +
+ src/chatlist.rs                              | 195 ++++++++++++++++++-
+ src/constants.rs                             |   3 +
+ src/events/chatlist_events.rs                |  36 ++++
+ 6 files changed, 245 insertions(+), 7 deletions(-)
 
 diff --git a/deltachat-ffi/deltachat.h b/deltachat-ffi/deltachat.h
 index daec469..552be54 100644
@@ -77,7 +84,7 @@ index 615f004..a7a335d 100644
  
      if chat_id.is_archived_link() {
 diff --git a/src/chat.rs b/src/chat.rs
-index 58ee0b3..d30ef11 100644
+index 58ee0b3..d1b0d42 100644
 --- a/src/chat.rs
 +++ b/src/chat.rs
 @@ -170,6 +170,11 @@ pub fn is_archived_link(self) -> bool {
@@ -92,22 +99,32 @@ index 58ee0b3..d30ef11 100644
      /// Virtual chat ID signalling there are **only** archived chats.
      ///
      /// This can be included in the chatlist if the
+@@ -463,6 +468,8 @@ pub(crate) async fn accept_ex(self, context: &Context, sync: sync::Sync) -> Resu
+         if self.set_blocked(context, Blocked::Not).await? {
+             context.emit_event(EventType::ChatModified(self));
+             chatlist_events::emit_chatlist_item_changed(context, self);
++            // An accepted request leaves the requests link for the normal list.
++            chatlist_events::emit_chatlist_changed(context);
+         }
+ 
+         if sync.into() {
 diff --git a/src/chatlist.rs b/src/chatlist.rs
-index 0563ea7..456fd2a 100644
+index 0563ea7..b94f4d1 100644
 --- a/src/chatlist.rs
 +++ b/src/chatlist.rs
-@@ -5,8 +5,8 @@
+@@ -5,8 +5,9 @@
  
  use crate::chat::{Chat, ChatId, ChatVisibility, update_special_chat_names};
  use crate::constants::{
 -    Blocked, Chattype, DC_CHAT_ID_ALLDONE_HINT, DC_CHAT_ID_ARCHIVED_LINK, DC_GCL_ADD_ALLDONE_HINT,
 -    DC_GCL_ARCHIVED_ONLY, DC_GCL_FOR_FORWARDING, DC_GCL_NO_SPECIALS,
-+    Blocked, Chattype, DC_CHAT_ID_ALLDONE_HINT, DC_CHAT_ID_ARCHIVED_LINK, DC_CHAT_ID_REQUESTS_LINK, DC_GCL_ADD_ALLDONE_HINT,
-+    DC_GCL_ARCHIVED_ONLY, DC_GCL_FOR_FORWARDING, DC_GCL_NO_REQUESTS, DC_GCL_NO_SPECIALS,
++    Blocked, Chattype, DC_CHAT_ID_ALLDONE_HINT, DC_CHAT_ID_ARCHIVED_LINK, DC_CHAT_ID_REQUESTS_LINK,
++    DC_GCL_ADD_ALLDONE_HINT, DC_GCL_ARCHIVED_ONLY, DC_GCL_FOR_FORWARDING, DC_GCL_NO_REQUESTS,
++    DC_GCL_NO_SPECIALS,
  };
  use crate::contact::{Contact, ContactId};
  use crate::context::Context;
-@@ -20,6 +20,8 @@
+@@ -20,6 +21,8 @@
  /// Regex to find out if a query should filter by unread messages.
  pub static IS_UNREAD_FILTER: LazyLock<regex::Regex> =
      LazyLock::new(|| regex::Regex::new(r"\bis:unread\b").unwrap());
@@ -116,7 +133,7 @@ index 0563ea7..456fd2a 100644
  
  /// An object representing a single chatlist in memory.
  ///
-@@ -83,10 +85,14 @@ impl Chatlist {
+@@ -83,10 +86,15 @@ impl Chatlist {
      ///   not needed when DC_GCL_ARCHIVED_ONLY is already set)
      /// - if the flag DC_GCL_ADD_ALLDONE_HINT is set, DC_CHAT_ID_ALLDONE_HINT
      ///   is added as needed.
@@ -127,11 +144,12 @@ index 0563ea7..456fd2a 100644
      /// `query`: An optional query for filtering the list. Only chats matching this query
      /// are returned. When `is:unread` is contained in the query, the chatlist is
      /// filtered such that only chats with unread messages show up.
-+    /// When `is:request` is contained in the query, only contact requests show up.
++    /// When `is:request` is contained in the query, only unarchived contact requests show up.
++    /// With DC_GCL_NO_REQUESTS, a query of only such filter keywords leaves requests out.
      ///
      /// `query_contact_id`: An optional contact ID for filtering the list. Only chats including this contact ID
      /// are returned.
-@@ -100,6 +106,7 @@ pub async fn try_load(
+@@ -100,6 +108,7 @@ pub async fn try_load(
          let flag_for_forwarding = 0 != listflags & DC_GCL_FOR_FORWARDING;
          let flag_no_specials = 0 != listflags & DC_GCL_NO_SPECIALS;
          let flag_add_alldone_hint = 0 != listflags & DC_GCL_ADD_ALLDONE_HINT;
@@ -139,28 +157,32 @@ index 0563ea7..456fd2a 100644
  
          let process_row = |row: &rusqlite::Row| {
              let chat_id: ChatId = row.get(0)?;
-@@ -178,6 +185,8 @@ pub async fn try_load(
+@@ -178,6 +187,11 @@ pub async fn try_load(
              ensure!(!query.is_empty(), "query mustn't be empty");
              let only_unread = IS_UNREAD_FILTER.find(&query).is_some();
              query = IS_UNREAD_FILTER.replace(&query, "").trim().to_string();
 +            let only_requests = IS_REQUEST_FILTER.find(&query).is_some();
 +            query = IS_REQUEST_FILTER.replace(&query, "").trim().to_string();
++            // A bare filter like `is:unread` still keeps requests behind their link;
++            // typed search text finds them.
++            let hide_requests = flag_no_requests && !only_requests && query.is_empty();
  
              // allow searching over special names that may change at any time
              // when the ui calls set_stock_translation()
-@@ -203,9 +212,10 @@ pub async fn try_load(
+@@ -203,9 +217,11 @@ pub async fn try_load(
                     AND c.blocked!=1
                     AND IFNULL(c.name_normalized,c.name) LIKE ?3
                     AND (NOT ?4 OR EXISTS (SELECT 1 FROM msgs m WHERE m.chat_id = c.id AND m.state == ?5 AND hidden=0))
-+                   AND (NOT ?6 OR c.blocked=?7)
++                   AND (NOT ?6 OR (c.blocked=?7 AND c.archived!=?8))
++                   AND (NOT ?9 OR c.blocked!=?7)
                   GROUP BY c.id
                   ORDER BY IFNULL(NULLIF(m.timestamp,0),c.created_timestamp) DESC, m.id DESC;",
 -                    (MessageState::OutDraft, skip_id, str_like_cmd, only_unread, MessageState::InFresh),
-+                    (MessageState::OutDraft, skip_id, str_like_cmd, only_unread, MessageState::InFresh, only_requests, Blocked::Request),
++                    (MessageState::OutDraft, skip_id, str_like_cmd, only_unread, MessageState::InFresh, only_requests, Blocked::Request, ChatVisibility::Archived, hide_requests),
                      process_row,
                  )
                  .await?
-@@ -276,11 +286,11 @@ pub async fn try_load(
+@@ -276,20 +292,25 @@ pub async fn try_load(
                                        AND (hidden=0 OR state=?)
                                        ORDER BY timestamp DESC, id DESC LIMIT 1)
                       WHERE c.id>9 AND c.id!=?
@@ -174,27 +196,33 @@ index 0563ea7..456fd2a 100644
                      process_row,
                  ).await?
              };
-@@ -290,6 +300,9 @@ pub async fn try_load(
++            let has_requests =
++                !flag_no_specials && flag_no_requests && get_request_cnt(context).await? > 0;
+             if !flag_no_specials && get_archived_cnt(context).await? > 0 {
+-                if ids.is_empty() && flag_add_alldone_hint {
++                if ids.is_empty() && flag_add_alldone_hint && !has_requests {
+                     ids.push((DC_CHAT_ID_ALLDONE_HINT, None));
                  }
                  ids.insert(0, (DC_CHAT_ID_ARCHIVED_LINK, None));
              }
-+            if !flag_no_specials && flag_no_requests && get_request_cnt(context).await? > 0 {
++            if has_requests {
 +                ids.insert(0, (DC_CHAT_ID_REQUESTS_LINK, None));
 +            }
              ids
          };
  
-@@ -446,6 +459,17 @@ pub async fn get_archived_cnt(context: &Context) -> Result<usize> {
+@@ -446,6 +467,18 @@ pub async fn get_archived_cnt(context: &Context) -> Result<usize> {
      Ok(count)
  }
  
-+/// Returns the number of contact requests, see `DC_CHAT_ID_REQUESTS_LINK`.
++/// Returns the number of unarchived contact requests, see `DC_CHAT_ID_REQUESTS_LINK`.
++/// Archived requests stay in the archive, like any archived chat.
 +pub async fn get_request_cnt(context: &Context) -> Result<usize> {
 +    context
 +        .sql
 +        .count(
-+            "SELECT COUNT(*) FROM chats WHERE id>9 AND blocked=?;",
-+            (Blocked::Request,),
++            "SELECT COUNT(*) FROM chats WHERE id>9 AND blocked=? AND archived!=?;",
++            (Blocked::Request, ChatVisibility::Archived),
 +        )
 +        .await
 +}
@@ -202,7 +230,16 @@ index 0563ea7..456fd2a 100644
  /// Gets the last message of a chat, the message that would also be displayed in the ChatList
  /// Used for passing to `deltachat::chatlist::Chatlist::get_summary2`
  pub async fn get_last_message_for_chat(
-@@ -539,6 +563,23 @@ async fn test_try_load() -> Result<()> {
+@@ -470,7 +503,7 @@ mod tests {
+     use super::*;
+     use crate::chat::save_msgs;
+     use crate::chat::{
+-        add_contact_to_chat, create_broadcast, create_group, get_chat_contacts,
++        add_contact_to_chat, create_broadcast, create_group, get_chat_contacts, marknoticed_chat,
+         remove_contact_from_chat, send_text_msg, set_chat_name,
+     };
+     use crate::receive_imf::receive_imf;
+@@ -539,6 +572,23 @@ async fn test_try_load() -> Result<()> {
              .unwrap();
          assert_eq!(chats.len(), 1);
  
@@ -226,6 +263,142 @@ index 0563ea7..456fd2a 100644
          let chats = Chatlist::try_load(bob, DC_GCL_ARCHIVED_ONLY, None, None)
              .await
              .unwrap();
+@@ -896,4 +946,135 @@ async fn test_load_broken() {
+         assert!(chats.get_summary(&t, 2, None).await.is_err());
+         assert_eq!(chats.get_index_for_id(chat_id1).unwrap(), 2);
+     }
++
++    /// A non-contact cloning a group again and again only grows the requests link.
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_requests_link_cloned_groups() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++        let bob = &tcm.bob().await;
++        let own = create_group(bob, "own").await?;
++
++        let mut requests = vec![];
++        for name in ["clone 1", "clone 2", "clone 3"] {
++            let chat_id = alice.create_group_with_members(name, &[bob]).await;
++            let msg = bob.recv_msg(&alice.send_text(chat_id, "hi").await).await;
++            requests.push(msg.chat_id);
++        }
++
++        let chats = Chatlist::try_load(bob, DC_GCL_NO_REQUESTS, None, None).await?;
++        assert_eq!(
++            chats.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
++            [DC_CHAT_ID_REQUESTS_LINK, own]
++        );
++        assert_eq!(get_request_cnt(bob).await?, 3);
++        assert_eq!(
++            Chatlist::try_load(bob, 0, Some("is:request"), None)
++                .await?
++                .len(),
++            3
++        );
++        let chats = Chatlist::try_load(bob, 0, Some("clone 2 is:request"), None).await?;
++        assert_eq!(chats.len(), 1);
++        assert_eq!(chats.get_chat_id(0)?, requests[1]);
++
++        // The unread filter alone keeps requests behind the link; search text finds them.
++        let chats = Chatlist::try_load(bob, DC_GCL_NO_REQUESTS, Some("is:unread"), None).await?;
++        assert_eq!(chats.len(), 0);
++        let chats = Chatlist::try_load(bob, DC_GCL_NO_REQUESTS, Some("clone"), None).await?;
++        assert_eq!(chats.len(), 3);
++
++        marknoticed_chat(bob, requests[0]).await?;
++        let chats = Chatlist::try_load(bob, 0, Some("is:unread is:request"), None).await?;
++        assert_eq!(chats.len(), 2);
++        assert!(chats.get_index_for_id(requests[0]).is_none());
++
++        requests[0].accept(bob).await?;
++        requests[1].block(bob).await?;
++        assert_eq!(get_request_cnt(bob).await?, 1);
++        let chats = Chatlist::try_load(bob, DC_GCL_NO_REQUESTS, None, None).await?;
++        assert_eq!(chats.get_chat_id(0)?, DC_CHAT_ID_REQUESTS_LINK);
++        assert!(chats.get_index_for_id(requests[0]).is_some());
++        assert!(chats.get_index_for_id(requests[1]).is_none());
++
++        requests[2].accept(bob).await?;
++        assert_eq!(get_request_cnt(bob).await?, 0);
++        let chats = Chatlist::try_load(bob, DC_GCL_NO_REQUESTS, None, None).await?;
++        assert!(chats.get_index_for_id(DC_CHAT_ID_REQUESTS_LINK).is_none());
++        assert_eq!(chats.len(), 3);
++        Ok(())
++    }
++
++    /// A 1:1 from a stranger is a request; once accepted, their groups are not.
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_requests_link_one_to_one_then_known_contact() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++        let bob = &tcm.bob().await;
++
++        let alice_bob = alice.create_chat_id(bob).await;
++        let one_to_one = bob
++            .recv_msg(&alice.send_text(alice_bob, "hi").await)
++            .await
++            .chat_id;
++        let chats = Chatlist::try_load(bob, DC_GCL_NO_REQUESTS, None, None).await?;
++        assert_eq!(chats.len(), 1);
++        assert_eq!(chats.get_chat_id(0)?, DC_CHAT_ID_REQUESTS_LINK);
++        let chats = Chatlist::try_load(bob, 0, Some("is:request"), None).await?;
++        assert_eq!(chats.get_chat_id(0)?, one_to_one);
++
++        one_to_one.accept(bob).await?;
++        let group = alice.create_group_with_members("group", &[bob]).await;
++        let group = bob
++            .recv_msg(&alice.send_text(group, "hi").await)
++            .await
++            .chat_id;
++        assert_eq!(get_request_cnt(bob).await?, 0);
++        let chats = Chatlist::try_load(bob, DC_GCL_NO_REQUESTS, None, None).await?;
++        assert_eq!(
++            chats.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
++            [group, one_to_one]
++        );
++        Ok(())
++    }
++
++    /// Requests link goes above the archive link, and archived requests still count.
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_requests_link_with_archive() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = &tcm.alice().await;
++        let bob = &tcm.bob().await;
++        let archived = create_group(bob, "archived").await?;
++        archived
++            .set_visibility(bob, ChatVisibility::Archived)
++            .await?;
++        let chat_id = alice.create_group_with_members("request", &[bob]).await;
++        let request = bob
++            .recv_msg(&alice.send_text(chat_id, "hi").await)
++            .await
++            .chat_id;
++
++        let flags = DC_GCL_NO_REQUESTS | DC_GCL_ADD_ALLDONE_HINT;
++        let chats = Chatlist::try_load(bob, flags, None, None).await?;
++        assert_eq!(
++            chats.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
++            // no "all done" hint while requests wait
++            [DC_CHAT_ID_REQUESTS_LINK, DC_CHAT_ID_ARCHIVED_LINK]
++        );
++        let chats = Chatlist::try_load(bob, flags | DC_GCL_NO_SPECIALS, None, None).await?;
++        assert_eq!(chats.len(), 0);
++
++        // An archived request lives in the archive only, like any archived chat.
++        request
++            .set_visibility(bob, ChatVisibility::Archived)
++            .await?;
++        assert_eq!(get_request_cnt(bob).await?, 0);
++        let chats = Chatlist::try_load(bob, DC_GCL_NO_REQUESTS, None, None).await?;
++        assert!(chats.get_index_for_id(DC_CHAT_ID_REQUESTS_LINK).is_none());
++        let chats = Chatlist::try_load(bob, DC_GCL_ARCHIVED_ONLY, None, None).await?;
++        assert!(chats.get_index_for_id(request).is_some());
++        let chats = Chatlist::try_load(bob, 0, Some("is:request"), None).await?;
++        assert_eq!(chats.len(), 0);
++        Ok(())
++    }
+ }
 diff --git a/src/constants.rs b/src/constants.rs
 index aed4650..20289a2 100644
 --- a/src/constants.rs
@@ -248,7 +421,7 @@ index aed4650..20289a2 100644
  pub const DC_CHAT_ID_LAST_SPECIAL: ChatId = ChatId::new(9);
  
 diff --git a/src/events/chatlist_events.rs b/src/events/chatlist_events.rs
-index eb22208..b953cc5 100644
+index eb22208..925b2c1 100644
 --- a/src/events/chatlist_events.rs
 +++ b/src/events/chatlist_events.rs
 @@ -3,6 +3,10 @@
@@ -262,3 +435,40 @@ index eb22208..b953cc5 100644
  }
  
  /// Chatlist item of a specific chat changed
+@@ -651,4 +655,36 @@ async fn test_reaction() -> Result<()> {
+ 
+         Ok(())
+     }
++
++    /// A new contact request refreshes the requests link (its counter changed)
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_new_request_updates_requests_link() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = tcm.alice().await;
++        let bob = tcm.bob().await;
++        let chat_id = alice.create_group_with_members("request", &[&bob]).await;
++        let sent = alice.send_text(chat_id, "hi").await;
++        bob.evtracker.clear_events();
++        bob.recv_msg(&sent).await;
++        wait_for_chatlist_specific_item(&bob, DC_CHAT_ID_REQUESTS_LINK).await;
++        Ok(())
++    }
++
++    /// Accepting a request moves it out of the requests link into the normal list
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn test_accept_request_updates_requests_link() -> Result<()> {
++        let mut tcm = TestContextManager::new();
++        let alice = tcm.alice().await;
++        let bob = tcm.bob().await;
++        let chat_id = alice.create_group_with_members("request", &[&bob]).await;
++        let request = bob
++            .recv_msg(&alice.send_text(chat_id, "hi").await)
++            .await
++            .chat_id;
++        bob.evtracker.clear_events();
++        request.accept(&bob).await?;
++        wait_for_chatlist(&bob).await;
++        wait_for_chatlist_specific_item(&bob, DC_CHAT_ID_REQUESTS_LINK).await;
++        Ok(())
++    }
+ }

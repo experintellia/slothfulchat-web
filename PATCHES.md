@@ -482,9 +482,11 @@ exists:
   non-contact keeps cloning and adding you to) no longer get their own rows
   in the chat list. A "Request" entry at the top, styled like the archive
   link and carrying the number of waiting requests, opens them in their own
-  view; group requests also stop raising notifications. Core gains a
-  `DC_GCL_NO_REQUESTS` chatlist flag, the `DC_CHAT_ID_REQUESTS_LINK` pseudo
-  chat and an `is:request` chatlist query. `core/0036`, `desktop/0091`
+  view; group requests also stop raising notifications. Archived requests
+  stay in the archive. Core gains a `DC_GCL_NO_REQUESTS` chatlist flag
+  (which also keeps requests out of a bare `is:unread` filter), the
+  `DC_CHAT_ID_REQUESTS_LINK` pseudo chat and an `is:request` chatlist query.
+  `core/0036`, `desktop/0091`
 
 - **Resizable chat-list sidebar** — a drag handle between the chat list and
   the chat view sets an explicit sidebar width (clamped so both panes stay

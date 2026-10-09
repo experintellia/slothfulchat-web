@@ -7,26 +7,32 @@ Subject: [PATCH 91/91] web-app: requests link in the chat list, quiet group
 Request the chat list with core's DC_GCL_NO_REQUESTS so contact requests
 no longer get their own rows. Core's requests link is rendered by the
 archive-link component (forum icon, "Request" label, the request count
-as its counter, no "mark all as read" menu); clicking it opens a
-Requests view that reuses the archive view's header (back button and
-title) and lists the chats via the `is:request` query. Keyboard
-next/previous chat skips every special chat ID, not only the archive
-link.
+as its counter and in its aria-label, no context menu); clicking it opens
+a Requests view that reuses the archive view's header (back button and
+title) and lists the chats via the `is:request` query. The unread filter
+does not apply inside that view.
+
+Opening a chat switches to the list it lives in, so a request opened
+from a notification shows in the Requests view and a normal chat opened
+from there returns to the normal list; this is keyed on the chat id, so
+accepting the open request stays in the Requests view. Keyboard
+next/previous chat and "select first chat" skip every special chat ID.
 
 Notifications for group contact requests are dropped in
-flushNotifications, so a cloned group earns no alert. 1:1 requests
-still notify: missing a real first message is worse than one ping.
+flushNotifications (one getBasicChatInfo per chat; a failed lookup no
+longer aborts the flush). 1:1 requests still notify: missing a real
+first message is worse than one ping.
 ---
- .../frontend/src/components/chat/ChatList.tsx | 26 ++++++++----
- .../src/components/chat/ChatListItem.tsx      | 42 ++++++++++++-------
+ .../frontend/src/components/chat/ChatList.tsx | 34 ++++++++-----
+ .../src/components/chat/ChatListItem.tsx      | 48 +++++++++++++------
  .../src/components/chat/ChatListItemRow.tsx   |  2 +-
- .../screens/MainScreen/ChatListHeader.tsx     |  8 ++--
- .../screens/MainScreen/MainScreen.tsx         | 13 +++++-
- .../src/system-integration/notifications.ts   | 13 +++++-
- 6 files changed, 75 insertions(+), 29 deletions(-)
+ .../screens/MainScreen/ChatListHeader.tsx     | 12 +++--
+ .../screens/MainScreen/MainScreen.tsx         | 21 +++++++-
+ .../src/system-integration/notifications.ts   | 19 +++++++-
+ 6 files changed, 105 insertions(+), 31 deletions(-)
 
 diff --git a/packages/frontend/src/components/chat/ChatList.tsx b/packages/frontend/src/components/chat/ChatList.tsx
-index f21eaed..35584e2 100644
+index f21eaed..ebea822 100644
 --- a/packages/frontend/src/components/chat/ChatList.tsx
 +++ b/packages/frontend/src/components/chat/ChatList.tsx
 @@ -191,6 +191,7 @@ export default function ChatList(props: {
@@ -37,7 +43,13 @@ index f21eaed..35584e2 100644
  }) {
    const accountId = selectedAccountId()
  
-@@ -208,7 +209,8 @@ export default function ChatList(props: {
+@@ -203,12 +204,13 @@ export default function ChatList(props: {
+   } = props
+   const isSearchActive = queryStr && queryStr !== ''
+   const showUnreadFilterDivider =
+-    props.unreadOnly && !isSearchActive && !showArchivedChats
++    props.unreadOnly && !isSearchActive && !showArchivedChats && !props.showRequests
+ 
    const { chatListIds, isChatLoaded, loadChats, chatCache } = useLogicChatPart(
      queryStr,
      showArchivedChats,
@@ -47,7 +59,20 @@ index f21eaed..35584e2 100644
    )
  
    const { openContextMenu, activeContextMenuChatIds } = useChatContextMenu()
-@@ -305,7 +307,7 @@ export default function ChatList(props: {
+@@ -294,7 +296,11 @@ export default function ChatList(props: {
+     queryStr,
+   ])
+ 
+-  const selectFirstChat = () => selectChat(accountId, chatListIds[0])
++  const selectFirstChat = () => {
++    // skip the requests/archive links on top
++    const id = chatListIds.find(id => id > C.DC_CHAT_ID_LAST_SPECIAL)
++    if (id) selectChat(accountId, id)
++  }
+ 
+   // KeyboardShortcuts ---------
+   useKeyBindingAction(KeybindAction.ChatList_ScrollToSelectedChat, () =>
+@@ -305,7 +311,7 @@ export default function ChatList(props: {
      if (activeChatId === null) return selectFirstChat()
      const activeChatIndex = chatListIds.indexOf(activeChatId)
      const newChatId = chatListIds[activeChatIndex + 1]
@@ -56,7 +81,7 @@ index f21eaed..35584e2 100644
        selectChat(accountId, newChatId)
      }
    })
-@@ -314,7 +316,7 @@ export default function ChatList(props: {
+@@ -314,7 +320,7 @@ export default function ChatList(props: {
      if (activeChatId === null) return selectFirstChat()
      const activeChatIndex = chatListIds.indexOf(activeChatId)
      const newChatId = chatListIds[activeChatIndex - 1]
@@ -65,7 +90,7 @@ index f21eaed..35584e2 100644
        selectChat(accountId, newChatId)
      }
    })
-@@ -892,19 +894,25 @@ export function useLogicVirtualChatList(
+@@ -892,19 +898,25 @@ export function useLogicVirtualChatList(
  function useLogicChatPart(
    queryStr: string | undefined,
    showArchivedChats: boolean,
@@ -91,14 +116,14 @@ index f21eaed..35584e2 100644
 -      : queryStr
 +  const query = showArchivedChats
 +    ? queryStr
-+    : [queryStr, unreadOnly && 'is:unread', showRequests && 'is:request']
-+        .filter(Boolean)
-+        .join(' ')
++    : showRequests
++      ? `${queryStr ?? ''} is:request`.trim()
++      : [queryStr, unreadOnly && 'is:unread'].filter(Boolean).join(' ')
  
    const { chatListIds } = useChatList(listFlags, query)
    const { isChatLoaded, loadChats, chatCache } =
 diff --git a/packages/frontend/src/components/chat/ChatListItem.tsx b/packages/frontend/src/components/chat/ChatListItem.tsx
-index 38fedad..de5bc06 100644
+index 38fedad..1188254 100644
 --- a/packages/frontend/src/components/chat/ChatListItem.tsx
 +++ b/packages/frontend/src/components/chat/ChatListItem.tsx
 @@ -233,20 +233,25 @@ function ChatListItemArchiveLink({
@@ -136,13 +161,19 @@ index 38fedad..de5bc06 100644
  
    const ref = useRef<HTMLButtonElement>(null)
  
-@@ -272,17 +277,23 @@ function ChatListItemArchiveLink({
+@@ -272,17 +277,29 @@ function ChatListItemArchiveLink({
          tabindexSetAsActiveElement()
          onFocus?.(e)
        }}
 -      onContextMenu={onContextMenu}
 -      aria-haspopup='menu'
-+      onContextMenu={isArchive ? onContextMenu : undefined}
++      // the counter is the number of requests, not of new messages
++      aria-label={
++        isArchive
++          ? undefined
++          : `${tx('chat_request_label')}: ${chatListItem.freshMessageCounter}`
++      }
++      onContextMenu={isArchive ? onContextMenu : e => e.preventDefault()}
 +      aria-haspopup={isArchive ? 'menu' : undefined}
        className={`chat-list-item archive-link-item ${tabindexClassName} ${
          isContextMenuActive ? 'context-menu-active' : ''
@@ -164,7 +195,7 @@ index 38fedad..de5bc06 100644
        </div>
        {/* 2 calls to achieve same output as above (one hidden, one visible) */}
        <FreshMessageCounter
-@@ -529,7 +540,10 @@ const ChatListItem = React.memo<ChatListItemProps>(props => {
+@@ -529,7 +546,10 @@ const ChatListItem = React.memo<ChatListItemProps>(props => {
      return <RegularChatListItem {...props} chat={chatListItem} />
    } else if (chatListItem.kind == 'Error') {
      return <ChatListItemError {...props} chatListItem={chatListItem} />
@@ -190,7 +221,7 @@ index a317137..a065ac9 100644
          // It has its own `onContextMenu` handler,
          // so here we don't need to do anything.
 diff --git a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
-index adf8f3c..392ee2d 100644
+index adf8f3c..dbff66c 100644
 --- a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
 @@ -15,6 +15,7 @@ import ProxyConfiguration from '../../dialogs/ProxyConfiguration'
@@ -218,12 +249,16 @@ index adf8f3c..392ee2d 100644
          <>
            <span data-no-drag-region>
              <Button
-@@ -82,11 +84,11 @@ export default function ChatListHeader({
+@@ -82,11 +84,15 @@ export default function ChatListHeader({
              </Button>
            </span>
            <div className={styles.archivedChatsTitle}>
 -            {tx('chat_archived_chats_title')}
-+            {tx(showArchivedChats ? 'chat_archived_chats_title' : 'chat_request_label')}
++            {tx(
++              showArchivedChats
++                ? 'chat_archived_chats_title'
++                : 'chat_request_label'
++            )}
            </div>
          </>
        )}
@@ -233,18 +268,27 @@ index adf8f3c..392ee2d 100644
            <SearchInput
              id='chat-list-search'
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index 6bc7536..65d3f7f 100644
+index 6bc7536..7b0cb18 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-@@ -55,6 +55,7 @@ export default function MainScreen({ accountId }: Props) {
+@@ -55,7 +55,16 @@ export default function MainScreen({ accountId }: Props) {
    const [queryChatId, setQueryChatId] = useState<null | number>(null)
    const [archivedChatsSelected, setArchivedChatsSelected] = useState(false)
    const [unreadOnly, setUnreadOnly] = useState(false)
 +  const [requestsSelected, setRequestsSelected] = useState(false)
    const { chatId, chatWithLinger, selectChat, unselectChat } = useChat()
++  // Show the list the opened chat lives in (e.g. a request opened from a
++  // notification). Keyed on the chat id, so accepting one stays in Requests.
++  useEffect(() => {
++    if (chatWithLinger && !chatWithLinger.archived) {
++      setRequestsSelected(chatWithLinger.isContactRequest)
++    }
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [chatWithLinger?.id])
    const { smallScreenMode } = useContext(ScreenContext)
  
-@@ -91,6 +92,10 @@ export default function MainScreen({ accountId }: Props) {
+   // Resizable chat list: an explicit width overrides the default 3:8 flex
+@@ -91,6 +100,10 @@ export default function MainScreen({ accountId }: Props) {
          setArchivedChatsSelected(true)
          return
        }
@@ -255,7 +299,7 @@ index 6bc7536..65d3f7f 100644
  
        accountId && selectChat(accountId, chatId)
      },
-@@ -286,6 +291,7 @@ export default function MainScreen({ accountId }: Props) {
+@@ -286,6 +299,7 @@ export default function MainScreen({ accountId }: Props) {
  
    const isSearchActive = queryStr.length > 0 || queryChatId !== null
    const showArchivedChats = !isSearchActive && archivedChatsSelected
@@ -263,7 +307,7 @@ index 6bc7536..65d3f7f 100644
  
    const lastUsedApps =
      lastUsedAppsFetch?.result?.ok && lastUsedAppsFetch.result.value.length > 0
-@@ -339,7 +345,11 @@ export default function MainScreen({ accountId }: Props) {
+@@ -339,7 +353,11 @@ export default function MainScreen({ accountId }: Props) {
            <ChatListHeader
              accountId={accountId}
              showArchivedChats={showArchivedChats}
@@ -276,7 +320,7 @@ index 6bc7536..65d3f7f 100644
              searchRef={searchRef}
              onSearchChange={handleSearchChange}
              onSearchClear={handleSearchClear}
-@@ -352,6 +362,7 @@ export default function MainScreen({ accountId }: Props) {
+@@ -352,6 +370,7 @@ export default function MainScreen({ accountId }: Props) {
              queryStr={queryStr}
              showArchivedChats={showArchivedChats}
              unreadOnly={unreadOnly}
@@ -285,10 +329,10 @@ index 6bc7536..65d3f7f 100644
              selectedChatId={chatId ?? null}
              queryChatId={queryChatId}
 diff --git a/packages/frontend/src/system-integration/notifications.ts b/packages/frontend/src/system-integration/notifications.ts
-index a3e640d..786c357 100644
+index a3e640d..94a9cf7 100644
 --- a/packages/frontend/src/system-integration/notifications.ts
 +++ b/packages/frontend/src/system-integration/notifications.ts
-@@ -332,9 +332,20 @@ async function flushNotifications(accountId: number) {
+@@ -332,9 +332,26 @@ async function flushNotifications(accountId: number) {
      // make it work even if there is nothing
      queuedNotifications[accountId] = []
    }
@@ -297,15 +341,21 @@ index a3e640d..786c357 100644
    queuedNotifications = []
  
 +  // Group invitations from non-contacts wait quietly behind the chat list's
-+  // Requests button: no alert, so cloning a group earns no attention.
-+  const chats = await Promise.all(
-+    notifications.map(n =>
-+      BackendRemote.rpc.getBasicChatInfo(accountId, n.chatId)
++  // requests link: no alert, so cloning a group earns no attention.
++  const quietChats = new Set(
++    await Promise.all(
++      [...new Set(notifications.map(n => n.chatId))].map(
++        id =>
++          BackendRemote.rpc
++            .getBasicChatInfo(accountId, id)
++            .then(c =>
++              c.isContactRequest && c.chatType === 'Group' ? id : null
++            )
++            .catch(() => null) // e.g. deleted meanwhile; let the flush go on
++      )
 +    )
 +  )
-+  notifications = notifications.filter(
-+    (_, i) => !(chats[i].isContactRequest && chats[i].chatType === 'Group')
-+  )
++  notifications = notifications.filter(n => !quietChats.has(n.chatId))
 +
    // filter out muted chats:
    const uniqueChats = [...new Set(notifications.map(n => n.chatId))]
