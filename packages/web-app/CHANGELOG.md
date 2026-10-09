@@ -1,5 +1,7 @@
 # Changelog
 
+- **New messages you see after switching back to the app are marked read**
+  right away, instead of staying unread until you reopen the chat.
 - **Videos get a proper player.** The controls now fade away while a video
   plays instead of covering the bottom of the picture, and the usual keyboard
   shortcuts work once you click the video. Videos no longer make the chat

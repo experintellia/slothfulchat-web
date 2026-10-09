@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Fri, 9 Oct 2026 23:46:09 +0000
+Subject: [PATCH 91/91] web-app: re-check unread messages in view when the tab
+ becomes visible
+
+The unread-message IntersectionObserver callback drops its entries
+while the document has no focus, and only a window 'focus' event
+re-observes them. When a tab or installed PWA comes back to the
+foreground, the observer delivers its pending entries in the first
+frame, which can be before the document has focus again; mobile
+browsers (iOS Safari standalone especially) may not fire 'focus' on
+resume at all. The message was then on screen but stayed unread until
+the chat was re-entered. Re-observe on 'visibilitychange' as well.
+---
+ .../src/components/message/MessageList.tsx         | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/packages/frontend/src/components/message/MessageList.tsx b/packages/frontend/src/components/message/MessageList.tsx
+index 7c3f8ca..8004bc8 100644
+--- a/packages/frontend/src/components/message/MessageList.tsx
++++ b/packages/frontend/src/components/message/MessageList.tsx
+@@ -216,9 +216,21 @@ export default function MessageList({
+   }, [unreadMessageInViewIntersectionObserver])
+ 
+   useEffect(() => {
++    // Also on `visibilitychange`: when a tab or PWA comes back, the observer
++    // delivers its pending entries in the first frame, often before the
++    // document has focus again, and mobile browsers may never fire `focus`.
+     window.addEventListener('focus', reInvokeAllUnreadObservations)
+-    return () =>
++    document.addEventListener(
++      'visibilitychange',
++      reInvokeAllUnreadObservations
++    )
++    return () => {
+       window.removeEventListener('focus', reInvokeAllUnreadObservations)
++      document.removeEventListener(
++        'visibilitychange',
++        reInvokeAllUnreadObservations
++      )
++    }
+   }, [reInvokeAllUnreadObservations])
+ 
+   useEffect(() => {

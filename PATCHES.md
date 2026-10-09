@@ -659,6 +659,12 @@ contribution intended.
   placeholder the "[Image – size]" tag doesn't count) — so "Copy Selection"
   still works on a caption-less image when the selection is elsewhere in the
   bubble, e.g. a quoted message's text. `desktop/0082`
+- A message that came in while the tab or PWA was in the background could stay
+  unread after you switched back and saw it, until you re-entered the chat.
+  The read-on-view observer skips entries while the document has no focus and
+  only re-checked on window `focus`, which can land after the observer's
+  first delivery or (on mobile) not fire at all; it now also re-checks on
+  `visibilitychange`. `desktop/0091`
 
 ## UI & mobile polish
 
