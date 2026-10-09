@@ -725,6 +725,12 @@ contribution intended.
   same window were lost; and the grouped "N new messages" notification counted
   messages from muted chats, which were only filtered out of the ungrouped
   path. `desktop/0093`
+- A message that came in while the tab or PWA was in the background could stay
+  unread after you switched back and saw it, until you re-entered the chat.
+  The read-on-view observer skips entries while the document has no focus and
+  only re-checked on window `focus`, which can land after the observer's
+  first delivery or (on mobile) not fire at all; it now also re-checks on
+  `visibilitychange`. `desktop/0096`
 
 ## UI & mobile polish
 
@@ -779,7 +785,7 @@ contribution intended.
   same Show more/less link as long message text. The link shows when the text
   actually overflows, measured rather than counted, so a long paragraph
   without line breaks gets it too. Checked by
-  `scripts/shot-profile-description.mjs`. `desktop/0091`
+  `scripts/shot-profile-description.mjs`. `desktop/0096`
 
 ## Different decisions than upstream
 
