@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 2 Oct 2026 22:37:58 +0000
-Subject: [PATCH 89/90] web-app: floating video mini player for scrolled-away
+Subject: [PATCH 89/91] web-app: floating video mini player for scrolled-away
  and chat-switched videos
 
 A playing chat video that scrolls out of view (an IntersectionObserver

@@ -1,0 +1,264 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Fri, 9 Oct 2026 15:24:27 +0000
+Subject: [PATCH 36/36] chatlist: hide contact requests behind a requests link
+
+Someone who is already in a group with you can keep creating lookalike
+copies of it and adding you. Each copy is a new contact request chat, so
+each one takes a row at the top of the chat list (and, being newly
+created, raises a notification), burying the real conversations.
+
+Add a DC_GCL_NO_REQUESTS chatlist flag. With it the normal chatlist
+leaves contact requests (blocked=2) out and, unless DC_GCL_NO_SPECIALS is
+set, puts the new DC_CHAT_ID_REQUESTS_LINK (8) pseudo chat on top when
+any exist, mirroring DC_CHAT_ID_ARCHIVED_LINK. The requests themselves
+are listed with a new `is:request` query keyword, handled like
+`is:unread` and composable with search text. The flag is ignored by the
+query and archive branches, so search still finds requests.
+
+JSON-RPC returns the link as ChatListItemFetchResult::RequestsLink, whose
+fresh_message_counter is the number of request chats (get_request_cnt).
+That count only changes when the set of chats changes, so
+emit_chatlist_changed also emits ChatlistItemChanged for the link.
+---
+ deltachat-ffi/deltachat.h                    |  2 +
+ deltachat-jsonrpc/src/api/types/chat_list.rs |  9 ++++
+ src/chat.rs                                  |  5 ++
+ src/chatlist.rs                              | 51 ++++++++++++++++++--
+ src/constants.rs                             |  3 ++
+ src/events/chatlist_events.rs                |  4 ++
+ 6 files changed, 69 insertions(+), 5 deletions(-)
+
+diff --git a/deltachat-ffi/deltachat.h b/deltachat-ffi/deltachat.h
+index daec469..552be54 100644
+--- a/deltachat-ffi/deltachat.h
++++ b/deltachat-ffi/deltachat.h
+@@ -848,6 +848,7 @@ int             dc_preconfigure_keypair        (dc_context_t* context, const cha
+ #define         DC_GCL_NO_SPECIALS           0x02
+ #define         DC_GCL_ADD_ALLDONE_HINT      0x04
+ #define         DC_GCL_FOR_FORWARDING        0x08
++#define         DC_GCL_NO_REQUESTS           0x10
+ 
+ 
+ /**
+@@ -3647,6 +3648,7 @@ char*            dc_chat_get_info_json       (dc_context_t* context, size_t chat
+ 
+ #define         DC_CHAT_ID_TRASH             3 // messages that should be deleted get this chat ID; the messages are deleted from the working thread later then. This is also needed as rfc724_mid should be preset as long as the message is not deleted on the server (otherwise it is downloaded again)
+ #define         DC_CHAT_ID_ARCHIVED_LINK     6 // only an indicator in a chatlist
++#define         DC_CHAT_ID_REQUESTS_LINK     8 // only an indicator in a chatlist, see DC_GCL_NO_REQUESTS
+ #define         DC_CHAT_ID_ALLDONE_HINT      7 // only an indicator in a chatlist
+ #define         DC_CHAT_ID_LAST_SPECIAL      9 // larger chat IDs are "real" chats, their messages are "real" messages
+ 
+diff --git a/deltachat-jsonrpc/src/api/types/chat_list.rs b/deltachat-jsonrpc/src/api/types/chat_list.rs
+index 615f004..a7a335d 100644
+--- a/deltachat-jsonrpc/src/api/types/chat_list.rs
++++ b/deltachat-jsonrpc/src/api/types/chat_list.rs
+@@ -74,6 +74,10 @@ pub enum ChatListItemFetchResult {
+     },
+     #[serde(rename_all = "camelCase")]
+     ArchiveLink { fresh_message_counter: usize },
++    /// Link to the contact requests hidden by `DC_GCL_NO_REQUESTS`;
++    /// `fresh_message_counter` is the number of requests.
++    #[serde(rename_all = "camelCase")]
++    RequestsLink { fresh_message_counter: usize },
+     #[serde(rename_all = "camelCase")]
+     Error { id: u32, error: String },
+ }
+@@ -83,6 +87,11 @@ pub(crate) async fn get_chat_list_item_by_id(
+     entry: u32,
+ ) -> Result<ChatListItemFetchResult> {
+     let chat_id = ChatId::new(entry);
++    if chat_id.is_requests_link() {
++        return Ok(ChatListItemFetchResult::RequestsLink {
++            fresh_message_counter: deltachat::chatlist::get_request_cnt(ctx).await?,
++        });
++    }
+     let fresh_message_counter = chat_id.get_fresh_msg_cnt(ctx).await?;
+ 
+     if chat_id.is_archived_link() {
+diff --git a/src/chat.rs b/src/chat.rs
+index 58ee0b3..d30ef11 100644
+--- a/src/chat.rs
++++ b/src/chat.rs
+@@ -170,6 +170,11 @@ pub fn is_archived_link(self) -> bool {
+         self == DC_CHAT_ID_ARCHIVED_LINK
+     }
+ 
++    /// Chat ID signifying there are contact requests hidden by `DC_GCL_NO_REQUESTS`.
++    pub fn is_requests_link(self) -> bool {
++        self == crate::constants::DC_CHAT_ID_REQUESTS_LINK
++    }
++
+     /// Virtual chat ID signalling there are **only** archived chats.
+     ///
+     /// This can be included in the chatlist if the
+diff --git a/src/chatlist.rs b/src/chatlist.rs
+index 0563ea7..456fd2a 100644
+--- a/src/chatlist.rs
++++ b/src/chatlist.rs
+@@ -5,8 +5,8 @@
+ 
+ use crate::chat::{Chat, ChatId, ChatVisibility, update_special_chat_names};
+ use crate::constants::{
+-    Blocked, Chattype, DC_CHAT_ID_ALLDONE_HINT, DC_CHAT_ID_ARCHIVED_LINK, DC_GCL_ADD_ALLDONE_HINT,
+-    DC_GCL_ARCHIVED_ONLY, DC_GCL_FOR_FORWARDING, DC_GCL_NO_SPECIALS,
++    Blocked, Chattype, DC_CHAT_ID_ALLDONE_HINT, DC_CHAT_ID_ARCHIVED_LINK, DC_CHAT_ID_REQUESTS_LINK, DC_GCL_ADD_ALLDONE_HINT,
++    DC_GCL_ARCHIVED_ONLY, DC_GCL_FOR_FORWARDING, DC_GCL_NO_REQUESTS, DC_GCL_NO_SPECIALS,
+ };
+ use crate::contact::{Contact, ContactId};
+ use crate::context::Context;
+@@ -20,6 +20,8 @@
+ /// Regex to find out if a query should filter by unread messages.
+ pub static IS_UNREAD_FILTER: LazyLock<regex::Regex> =
+     LazyLock::new(|| regex::Regex::new(r"\bis:unread\b").unwrap());
++static IS_REQUEST_FILTER: LazyLock<regex::Regex> =
++    LazyLock::new(|| regex::Regex::new(r"\bis:request\b").unwrap());
+ 
+ /// An object representing a single chatlist in memory.
+ ///
+@@ -83,10 +85,14 @@ impl Chatlist {
+     ///   not needed when DC_GCL_ARCHIVED_ONLY is already set)
+     /// - if the flag DC_GCL_ADD_ALLDONE_HINT is set, DC_CHAT_ID_ALLDONE_HINT
+     ///   is added as needed.
++    /// - if the flag DC_GCL_NO_REQUESTS is set, contact requests are left out
++    ///   and, unless DC_GCL_NO_SPECIALS is set, DC_CHAT_ID_REQUESTS_LINK is put
++    ///   on top if there are any; list them with the `is:request` query.
+     ///
+     /// `query`: An optional query for filtering the list. Only chats matching this query
+     /// are returned. When `is:unread` is contained in the query, the chatlist is
+     /// filtered such that only chats with unread messages show up.
++    /// When `is:request` is contained in the query, only contact requests show up.
+     ///
+     /// `query_contact_id`: An optional contact ID for filtering the list. Only chats including this contact ID
+     /// are returned.
+@@ -100,6 +106,7 @@ pub async fn try_load(
+         let flag_for_forwarding = 0 != listflags & DC_GCL_FOR_FORWARDING;
+         let flag_no_specials = 0 != listflags & DC_GCL_NO_SPECIALS;
+         let flag_add_alldone_hint = 0 != listflags & DC_GCL_ADD_ALLDONE_HINT;
++        let flag_no_requests = 0 != listflags & DC_GCL_NO_REQUESTS;
+ 
+         let process_row = |row: &rusqlite::Row| {
+             let chat_id: ChatId = row.get(0)?;
+@@ -178,6 +185,8 @@ pub async fn try_load(
+             ensure!(!query.is_empty(), "query mustn't be empty");
+             let only_unread = IS_UNREAD_FILTER.find(&query).is_some();
+             query = IS_UNREAD_FILTER.replace(&query, "").trim().to_string();
++            let only_requests = IS_REQUEST_FILTER.find(&query).is_some();
++            query = IS_REQUEST_FILTER.replace(&query, "").trim().to_string();
+ 
+             // allow searching over special names that may change at any time
+             // when the ui calls set_stock_translation()
+@@ -203,9 +212,10 @@ pub async fn try_load(
+                    AND c.blocked!=1
+                    AND IFNULL(c.name_normalized,c.name) LIKE ?3
+                    AND (NOT ?4 OR EXISTS (SELECT 1 FROM msgs m WHERE m.chat_id = c.id AND m.state == ?5 AND hidden=0))
++                   AND (NOT ?6 OR c.blocked=?7)
+                  GROUP BY c.id
+                  ORDER BY IFNULL(NULLIF(m.timestamp,0),c.created_timestamp) DESC, m.id DESC;",
+-                    (MessageState::OutDraft, skip_id, str_like_cmd, only_unread, MessageState::InFresh),
++                    (MessageState::OutDraft, skip_id, str_like_cmd, only_unread, MessageState::InFresh, only_requests, Blocked::Request),
+                     process_row,
+                 )
+                 .await?
+@@ -276,11 +286,11 @@ pub async fn try_load(
+                                       AND (hidden=0 OR state=?)
+                                       ORDER BY timestamp DESC, id DESC LIMIT 1)
+                      WHERE c.id>9 AND c.id!=?
+-                       AND (c.blocked=0 OR c.blocked=2)
++                       AND (c.blocked=0 OR (c.blocked=2 AND NOT ?))
+                        AND NOT c.archived=?
+                      GROUP BY c.id
+                      ORDER BY c.id=0 DESC, c.archived=? DESC, IFNULL(NULLIF(m.timestamp,0),c.created_timestamp) DESC, m.id DESC;",
+-                    (MessageState::OutDraft, skip_id, ChatVisibility::Archived, ChatVisibility::Pinned),
++                    (MessageState::OutDraft, skip_id, flag_no_requests, ChatVisibility::Archived, ChatVisibility::Pinned),
+                     process_row,
+                 ).await?
+             };
+@@ -290,6 +300,9 @@ pub async fn try_load(
+                 }
+                 ids.insert(0, (DC_CHAT_ID_ARCHIVED_LINK, None));
+             }
++            if !flag_no_specials && flag_no_requests && get_request_cnt(context).await? > 0 {
++                ids.insert(0, (DC_CHAT_ID_REQUESTS_LINK, None));
++            }
+             ids
+         };
+ 
+@@ -446,6 +459,17 @@ pub async fn get_archived_cnt(context: &Context) -> Result<usize> {
+     Ok(count)
+ }
+ 
++/// Returns the number of contact requests, see `DC_CHAT_ID_REQUESTS_LINK`.
++pub async fn get_request_cnt(context: &Context) -> Result<usize> {
++    context
++        .sql
++        .count(
++            "SELECT COUNT(*) FROM chats WHERE id>9 AND blocked=?;",
++            (Blocked::Request,),
++        )
++        .await
++}
++
+ /// Gets the last message of a chat, the message that would also be displayed in the ChatList
+ /// Used for passing to `deltachat::chatlist::Chatlist::get_summary2`
+ pub async fn get_last_message_for_chat(
+@@ -539,6 +563,23 @@ async fn test_try_load() -> Result<()> {
+             .unwrap();
+         assert_eq!(chats.len(), 1);
+ 
++        // alice's group is a contact request: hidden by DC_GCL_NO_REQUESTS, listed by is:request
++        let request_id = chats.get_chat_id(0)?;
++        let chats = Chatlist::try_load(bob, 0, None, None).await?;
++        assert_eq!(chats.len(), 4);
++        let chats = Chatlist::try_load(bob, DC_GCL_NO_REQUESTS, None, None).await?;
++        assert_eq!(chats.len(), 4);
++        assert_eq!(chats.get_chat_id(0)?, DC_CHAT_ID_REQUESTS_LINK);
++        assert!(chats.get_index_for_id(request_id).is_none());
++        assert_eq!(get_request_cnt(bob).await?, 1);
++        let flags = DC_GCL_NO_REQUESTS | DC_GCL_NO_SPECIALS;
++        assert_eq!(Chatlist::try_load(bob, flags, None, None).await?.len(), 3);
++        let chats = Chatlist::try_load(bob, 0, Some("is:request"), None).await?;
++        assert_eq!(chats.len(), 1);
++        assert_eq!(chats.get_chat_id(0)?, request_id);
++        let chats = Chatlist::try_load(bob, 0, Some("b is:request"), None).await?;
++        assert_eq!(chats.len(), 0);
++
+         let chats = Chatlist::try_load(bob, DC_GCL_ARCHIVED_ONLY, None, None)
+             .await
+             .unwrap();
+diff --git a/src/constants.rs b/src/constants.rs
+index aed4650..20289a2 100644
+--- a/src/constants.rs
++++ b/src/constants.rs
+@@ -56,6 +56,7 @@ pub enum MediaQuality {
+ pub const DC_GCL_NO_SPECIALS: usize = 0x02;
+ pub const DC_GCL_ADD_ALLDONE_HINT: usize = 0x04;
+ pub const DC_GCL_FOR_FORWARDING: usize = 0x08;
++pub const DC_GCL_NO_REQUESTS: usize = 0x10;
+ 
+ pub const DC_GCL_ADD_SELF: u32 = 0x02;
+ pub const DC_GCL_ADDRESS: u32 = 0x04;
+@@ -76,6 +77,8 @@ pub enum MediaQuality {
+ pub const DC_CHAT_ID_ARCHIVED_LINK: ChatId = ChatId::new(6);
+ /// only an indicator in a chatlist
+ pub const DC_CHAT_ID_ALLDONE_HINT: ChatId = ChatId::new(7);
++/// Virtual chat ID linking to the contact requests hidden by `DC_GCL_NO_REQUESTS`.
++pub const DC_CHAT_ID_REQUESTS_LINK: ChatId = ChatId::new(8);
+ /// larger chat IDs are "real" chats, their messages are "real" messages.
+ pub const DC_CHAT_ID_LAST_SPECIAL: ChatId = ChatId::new(9);
+ 
+diff --git a/src/events/chatlist_events.rs b/src/events/chatlist_events.rs
+index eb22208..b953cc5 100644
+--- a/src/events/chatlist_events.rs
++++ b/src/events/chatlist_events.rs
+@@ -3,6 +3,10 @@
+ /// order or content of chatlist changes (chat ids, not the actual chatlist item)
+ pub(crate) fn emit_chatlist_changed(context: &Context) {
+     context.emit_event(EventType::ChatlistChanged);
++    // ponytail: the requests link's count can only change with the chat set,
++    // so refresh it on every ChatlistChanged; a dedicated emit per
++    // accept/block/create site would be tighter but touches many callers.
++    emit_chatlist_item_changed(context, crate::constants::DC_CHAT_ID_REQUESTS_LINK);
+ }
+ 
+ /// Chatlist item of a specific chat changed
