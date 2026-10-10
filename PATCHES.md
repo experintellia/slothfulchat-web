@@ -708,6 +708,12 @@ contribution intended.
 - Settings that only exist in this fork are marked with a small sloth
   badge (tooltip explains it's not an upstream Delta Chat setting).
   `desktop/0054`
+- Long bios and group/channel descriptions (a bot listing every command in
+  its bio) are clamped to 8 lines in the profile and group dialogs, with the
+  same Show more/less link as long message text. The link shows when the text
+  actually overflows, measured rather than counted, so a long paragraph
+  without line breaks gets it too. Checked by
+  `scripts/shot-profile-description.mjs`. `desktop/0091`
 
 ## Different decisions than upstream
 

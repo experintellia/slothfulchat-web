@@ -1,0 +1,155 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sat, 10 Oct 2026 16:53:02 +0000
+Subject: [PATCH 91/91] web-app: clamp long bios and group descriptions with a
+ show more toggle
+
+A contact's bio and a group/channel description render through the shared
+ProfileInfoHeader (View Profile, View Group, mailing list profile). Bots
+like Hermes list every command in their bio, which pushes the rest of the
+profile dialog far down. Clamp the text to 8 lines with CSS line-clamp and
+add the same "Show more"/"Show less" link as long message text
+(desktop/0071), reusing its translation keys.
+
+Unlike messages, the toggle is driven by measuring overflow
+(scrollHeight > clientHeight), not a line-count heuristic: a single long
+paragraph wraps past 8 lines without containing a newline. The
+measurement runs in a ResizeObserver because Dialog calls showModal() in
+a useEffect that runs after this component mounts, so a mount-time
+measurement sees a display:none dialog and reads 0. It only runs while
+the text is clamped, so expanding doesn't remove the "Show less" link.
+
+The expanded state is reset whenever the text changes: a description
+edited, or a status updated by an event, starts folded again instead of
+leaving "Show less" under a now-short text or a text coming back
+expanded without its link. Inside the clamp, a little inline padding
+(offset by a negative margin) keeps room for the focus ring of a link
+at the start of a line, which overflow: hidden would cut off (every
+/command in a bot's bio).
+---
+ .../components/ProfileInfoHeader/index.tsx    | 52 ++++++++++++++++++-
+ .../ProfileInfoHeader/styles.module.scss      | 27 ++++++++++
+ 2 files changed, 77 insertions(+), 2 deletions(-)
+
+diff --git a/packages/frontend/src/components/ProfileInfoHeader/index.tsx b/packages/frontend/src/components/ProfileInfoHeader/index.tsx
+index a8ed840..54e4127 100644
+--- a/packages/frontend/src/components/ProfileInfoHeader/index.tsx
++++ b/packages/frontend/src/components/ProfileInfoHeader/index.tsx
+@@ -1,7 +1,9 @@
+-import React from 'react'
++import React, { useEffect, useRef, useState } from 'react'
++import classNames from 'classnames'
+ 
+ import { Avatar, ClickForFullscreenAvatarWrapper } from '../Avatar'
+ import { parseAndRenderMessage } from '../message/MessageParser'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
+ 
+ import styles from './styles.module.scss'
+ 
+@@ -27,6 +29,34 @@ export default function ProfileInfoHeader({
+   subtitle,
+   disableFullscreen,
+ }: Props) {
++  const tx = useTranslationFunction()
++  const descriptionRef = useRef<HTMLParagraphElement>(null)
++  // Expanded only for the text it was expanded on: once the text changes
++  // (edited, or updated by an event) it starts folded again, so a stale
++  // "Show less" can't linger under it, nor a text come back expanded with no
++  // link. Reset during render, React's pattern for state tied to a prop.
++  const [expandedText, setExpandedText] = useState<string>()
++  if (expandedText !== undefined && expandedText !== description) {
++    setExpandedText(undefined)
++  }
++  const expanded = expandedText !== undefined
++  const [overflows, setOverflows] = useState(false)
++
++  // Measure instead of guessing from line count: a bio or group description
++  // (e.g. a bot listing all its commands) can wrap. A ResizeObserver rather
++  // than a mount-time measurement, because the dialog is still closed
++  // (display: none) when this first renders. Only measured while clamped,
++  // so expanding doesn't hide the "Show less" button again.
++  useEffect(() => {
++    const el = descriptionRef.current
++    if (!el || expanded) return
++    const ro = new ResizeObserver(() =>
++      setOverflows(el.scrollHeight > el.clientHeight)
++    )
++    ro.observe(el)
++    return () => ro.disconnect()
++  }, [description, expanded])
++
+   return (
+     <div className={styles.profileInfoHeader}>
+       <ClickForFullscreenAvatarWrapper
+@@ -47,10 +77,28 @@ export default function ProfileInfoHeader({
+         </p>
+         {subtitle}
+         {description && (
+-          <p className={styles.description} data-testid='profile-description'>
++          <p
++            ref={descriptionRef}
++            className={classNames(styles.description, {
++              [styles.clamped]: !expanded,
++            })}
++            data-testid='profile-description'
++          >
+             {parseAndRenderMessage(description, false, 0)}
+           </p>
+         )}
++        {description && overflows && (
++          <button
++            type='button'
++            className={styles.showMore}
++            onClick={() => setExpandedText(expanded ? undefined : description)}
++            aria-expanded={expanded}
++          >
++            {expanded
++              ? tx('message_text_show_less')
++              : tx('message_text_show_more')}
++          </button>
++        )}
+       </div>
+     </div>
+   )
+diff --git a/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss b/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss
+index 98fb064..8bb65da 100644
+--- a/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss
++++ b/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss
+@@ -1,3 +1,5 @@
++@use '../../../scss/mixins';
++
+ .profileInfoHeader {
+   display: flex;
+   flex-direction: column;
+@@ -27,6 +29,31 @@
+   word-break: break-word;
+ }
+ 
++.clamped {
++  display: -webkit-box;
++  -webkit-line-clamp: 8;
++  line-clamp: 8;
++  -webkit-box-orient: vertical;
++  overflow: hidden;
++  // room for the focus ring of a link at a line start, which overflow: hidden
++  // would cut off; the negative margin keeps the text where it was
++  padding-inline: 3px;
++  margin-inline: -3px;
++}
++
++// same look as the message text's show more/less toggle (.show-more in
++// scss/message/_message.scss)
++.showMore {
++  @include mixins.button-reset;
++
++  align-self: flex-start;
++  // pull it up under the text, and give back the gap the paragraph's bottom
++  // margin used to leave before whatever follows
++  margin: -0.5em 0 0.5em;
++  color: var(--colorPrimary);
++  cursor: pointer;
++}
++
+ .address {
+   color: #565656;
+   margin-top: 0.25rem;
