@@ -1398,11 +1398,12 @@ class BrowserRuntime {
       icon,
       tag: `${accountId}.${chatId}.${messageId}`,
     })
-    notification.onclick = this.notificationCB.bind(this, {
-      accountId,
-      chatId,
-      msgId: messageId,
-    })
+    notification.onclick = () => {
+      // Chrome doesn't focus the tab on a page notification's click; without
+      // focus the opened chat's messages aren't marked read either.
+      window.focus()
+      this.notificationCB({ accountId, chatId, msgId: messageId })
+    }
     if (!this.activeNotifications[accountId]) {
       this.activeNotifications[accountId] = {}
     }
