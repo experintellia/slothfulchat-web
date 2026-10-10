@@ -18,13 +18,19 @@ measurement runs in a ResizeObserver because Dialog calls showModal() in
 a useEffect that runs after this component mounts, so a mount-time
 measurement sees a display:none dialog and reads 0. It only runs while
 the text is clamped, so expanding doesn't remove the "Show less" link.
+
+The expanded state is kept per text: a description edited, or a status
+updated by an event, while expanded starts folded again instead of
+leaving "Show less" under a now-short text. Inside the clamp, a link's
+focus ring is drawn inset, since overflow: hidden would cut it off for a
+link at the start of a line (every /command in a bot's bio).
 ---
- .../components/ProfileInfoHeader/index.tsx    | 44 ++++++++++++++++++-
- .../ProfileInfoHeader/styles.module.scss      | 23 ++++++++++
- 2 files changed, 65 insertions(+), 2 deletions(-)
+ .../components/ProfileInfoHeader/index.tsx    | 47 ++++++++++++++++++-
+ .../ProfileInfoHeader/styles.module.scss      | 28 +++++++++++
+ 2 files changed, 73 insertions(+), 2 deletions(-)
 
 diff --git a/packages/frontend/src/components/ProfileInfoHeader/index.tsx b/packages/frontend/src/components/ProfileInfoHeader/index.tsx
-index a8ed840..afa456d 100644
+index a8ed840..8e92429 100644
 --- a/packages/frontend/src/components/ProfileInfoHeader/index.tsx
 +++ b/packages/frontend/src/components/ProfileInfoHeader/index.tsx
 @@ -1,7 +1,9 @@
@@ -38,13 +44,16 @@ index a8ed840..afa456d 100644
  
  import styles from './styles.module.scss'
  
-@@ -27,6 +29,26 @@ export default function ProfileInfoHeader({
+@@ -27,6 +29,29 @@ export default function ProfileInfoHeader({
    subtitle,
    disableFullscreen,
  }: Props) {
 +  const tx = useTranslationFunction()
 +  const descriptionRef = useRef<HTMLParagraphElement>(null)
-+  const [expanded, setExpanded] = useState(false)
++  // Expanded only for the text it was expanded on: an edited or updated text
++  // starts folded again, so a stale "Show less" can't linger under it.
++  const [expandedText, setExpandedText] = useState<string>()
++  const expanded = expandedText === description
 +  const [overflows, setOverflows] = useState(false)
 +
 +  // Measure instead of guessing from line count: a bio or group description
@@ -65,7 +74,7 @@ index a8ed840..afa456d 100644
    return (
      <div className={styles.profileInfoHeader}>
        <ClickForFullscreenAvatarWrapper
-@@ -47,10 +69,28 @@ export default function ProfileInfoHeader({
+@@ -47,10 +72,28 @@ export default function ProfileInfoHeader({
          </p>
          {subtitle}
          {description && (
@@ -84,7 +93,7 @@ index a8ed840..afa456d 100644
 +          <button
 +            type='button'
 +            className={styles.showMore}
-+            onClick={() => setExpanded(e => !e)}
++            onClick={() => setExpandedText(expanded ? undefined : description)}
 +            aria-expanded={expanded}
 +          >
 +            {expanded
@@ -96,7 +105,7 @@ index a8ed840..afa456d 100644
      </div>
    )
 diff --git a/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss b/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss
-index 98fb064..e7a7f4f 100644
+index 98fb064..d992664 100644
 --- a/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss
 +++ b/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss
 @@ -1,3 +1,5 @@
@@ -105,7 +114,7 @@ index 98fb064..e7a7f4f 100644
  .profileInfoHeader {
    display: flex;
    flex-direction: column;
-@@ -27,6 +29,27 @@
+@@ -27,6 +29,32 @@
    word-break: break-word;
  }
  
@@ -115,6 +124,11 @@ index 98fb064..e7a7f4f 100644
 +  line-clamp: 8;
 +  -webkit-box-orient: vertical;
 +  overflow: hidden;
++
++  // overflow: hidden would cut off the focus ring of a link at a line start
++  a:focus-visible {
++    outline-offset: -2px;
++  }
 +}
 +
 +// same look as the message text's show more/less toggle (.show-more in
