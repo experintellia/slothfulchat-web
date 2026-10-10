@@ -12,6 +12,11 @@ a Requests view that reuses the archive view's header (back button and
 title) and lists the chats via the `is:request` query. The unread filter
 does not apply inside that view.
 
+The bundle runs the published @deltachat/jsonrpc-client, which predates
+core/0036, so DC_GCL_NO_REQUESTS, DC_CHAT_ID_REQUESTS_LINK and the
+RequestsLink item type are defined in ChatListHelpers rather than read
+from `C` (where they would be undefined at runtime).
+
 Opening a chat switches to the list it lives in, so a request opened
 from a notification shows in the Requests view and a normal chat opened
 from there returns to the normal list; this is keyed on the chat id, so
@@ -23,19 +28,33 @@ flushNotifications (one getBasicChatInfo per chat; a failed lookup no
 longer aborts the flush). 1:1 requests still notify: missing a real
 first message is worse than one ping.
 ---
- .../frontend/src/components/chat/ChatList.tsx | 34 ++++++++-----
- .../src/components/chat/ChatListItem.tsx      | 48 +++++++++++++------
+ .../frontend/src/components/chat/ChatList.tsx | 40 +++++++++-----
+ .../src/components/chat/ChatListHelpers.tsx   | 11 ++++
+ .../src/components/chat/ChatListItem.tsx      | 54 +++++++++++++------
  .../src/components/chat/ChatListItemRow.tsx   |  2 +-
  .../screens/MainScreen/ChatListHeader.tsx     | 12 +++--
- .../screens/MainScreen/MainScreen.tsx         | 21 +++++++-
- .../src/system-integration/notifications.ts   | 19 +++++++-
- 6 files changed, 105 insertions(+), 31 deletions(-)
+ .../screens/MainScreen/MainScreen.tsx         | 22 +++++++-
+ .../src/system-integration/notifications.ts   | 19 ++++++-
+ 7 files changed, 125 insertions(+), 35 deletions(-)
 
 diff --git a/packages/frontend/src/components/chat/ChatList.tsx b/packages/frontend/src/components/chat/ChatList.tsx
-index f21eaed..ebea822 100644
+index f21eaed..9bb5ac5 100644
 --- a/packages/frontend/src/components/chat/ChatList.tsx
 +++ b/packages/frontend/src/components/chat/ChatList.tsx
-@@ -191,6 +191,7 @@ export default function ChatList(props: {
+@@ -20,7 +20,11 @@ import InfiniteLoader from 'react-window-infinite-loader'
+ 
+ import { useLazyLoadedContacts } from '../contact/ContactList'
+ import { useChatContextMenu } from './ChatContextMenu'
+-import { useMessageResultIds, useChatList } from './ChatListHelpers'
++import {
++  useMessageResultIds,
++  useChatList,
++  DC_GCL_NO_REQUESTS,
++} from './ChatListHelpers'
+ import {
+   ChatListItemRowChat,
+   ChatListItemRowContact,
+@@ -191,6 +195,7 @@ export default function ChatList(props: {
    onExitSearch?: () => void
    onChatClick: (chatId: number) => void
    unreadOnly?: boolean
@@ -43,7 +62,7 @@ index f21eaed..ebea822 100644
  }) {
    const accountId = selectedAccountId()
  
-@@ -203,12 +204,13 @@ export default function ChatList(props: {
+@@ -203,12 +208,13 @@ export default function ChatList(props: {
    } = props
    const isSearchActive = queryStr && queryStr !== ''
    const showUnreadFilterDivider =
@@ -59,7 +78,7 @@ index f21eaed..ebea822 100644
    )
  
    const { openContextMenu, activeContextMenuChatIds } = useChatContextMenu()
-@@ -294,7 +296,11 @@ export default function ChatList(props: {
+@@ -294,7 +300,11 @@ export default function ChatList(props: {
      queryStr,
    ])
  
@@ -72,7 +91,7 @@ index f21eaed..ebea822 100644
  
    // KeyboardShortcuts ---------
    useKeyBindingAction(KeybindAction.ChatList_ScrollToSelectedChat, () =>
-@@ -305,7 +311,7 @@ export default function ChatList(props: {
+@@ -305,7 +315,7 @@ export default function ChatList(props: {
      if (activeChatId === null) return selectFirstChat()
      const activeChatIndex = chatListIds.indexOf(activeChatId)
      const newChatId = chatListIds[activeChatIndex + 1]
@@ -81,7 +100,7 @@ index f21eaed..ebea822 100644
        selectChat(accountId, newChatId)
      }
    })
-@@ -314,7 +320,7 @@ export default function ChatList(props: {
+@@ -314,7 +324,7 @@ export default function ChatList(props: {
      if (activeChatId === null) return selectFirstChat()
      const activeChatIndex = chatListIds.indexOf(activeChatId)
      const newChatId = chatListIds[activeChatIndex - 1]
@@ -90,7 +109,7 @@ index f21eaed..ebea822 100644
        selectChat(accountId, newChatId)
      }
    })
-@@ -892,19 +898,25 @@ export function useLogicVirtualChatList(
+@@ -892,19 +902,25 @@ export function useLogicVirtualChatList(
  function useLogicChatPart(
    queryStr: string | undefined,
    showArchivedChats: boolean,
@@ -104,7 +123,7 @@ index f21eaed..ebea822 100644
 -    showArchivedChats && queryStr?.length === 0 ? C.DC_GCL_ARCHIVED_ONLY : 0
 +    showArchivedChats && queryStr?.length === 0
 +      ? C.DC_GCL_ARCHIVED_ONLY
-+      : C.DC_GCL_NO_REQUESTS
++      : DC_GCL_NO_REQUESTS
  
    // Filter to unread chats via core's `is:unread` chatlist query, composed with
    // any typed search text. Note `isSearchActive` still keys off the raw
@@ -122,17 +141,50 @@ index f21eaed..ebea822 100644
  
    const { chatListIds } = useChatList(listFlags, query)
    const { isChatLoaded, loadChats, chatCache } =
+diff --git a/packages/frontend/src/components/chat/ChatListHelpers.tsx b/packages/frontend/src/components/chat/ChatListHelpers.tsx
+index 3343921..4ef099b 100644
+--- a/packages/frontend/src/components/chat/ChatListHelpers.tsx
++++ b/packages/frontend/src/components/chat/ChatListHelpers.tsx
+@@ -8,6 +8,17 @@ import asyncThrottle from '@jcoreio/async-throttle'
+ 
+ const log = getLogger('renderer/helpers/ChatList')
+ 
++// core/0036's requests link. The bundle runs the published
++// @deltachat/jsonrpc-client pinned in this workspace's catalog, which predates
++// these, so `C.DC_GCL_NO_REQUESTS` would be undefined at runtime: define them
++// here (same pattern as the widened events in useDownloadProgress).
++export const DC_GCL_NO_REQUESTS = 0x10
++export const DC_CHAT_ID_REQUESTS_LINK = 8
++export type RequestsLinkItem = {
++  kind: 'RequestsLink'
++  freshMessageCounter: number
++}
++
+ export function debounceWithInit<ARGS extends Array<any>>(
+   fn: (...args: ARGS) => void,
+   delay_ms: number
 diff --git a/packages/frontend/src/components/chat/ChatListItem.tsx b/packages/frontend/src/components/chat/ChatListItem.tsx
-index 38fedad..1188254 100644
+index 38fedad..bb6f68a 100644
 --- a/packages/frontend/src/components/chat/ChatListItem.tsx
 +++ b/packages/frontend/src/components/chat/ChatListItem.tsx
-@@ -233,20 +233,25 @@ function ChatListItemArchiveLink({
+@@ -17,6 +17,7 @@ import { parseAndRenderMessage } from '../message/MessageParser'
+ import { useRovingTabindex } from '../../contexts/RovingTabindex'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import { shouldHideDeliveryStatus } from '../message/messageFunctions'
++import type { RequestsLinkItem } from './ChatListHelpers'
+ 
+ const log = getLogger('renderer/chatlist/item')
+ 
+@@ -232,21 +233,26 @@ function ChatListItemArchiveLink({
+   onClick: (event: React.MouseEvent) => void
    onKeyDown?: React.KeyboardEventHandler
    onFocus?: (event: React.FocusEvent) => void
-   chatListItem: Type.ChatListItemFetchResult & {
+-  chatListItem: Type.ChatListItemFetchResult & {
 -    kind: 'ArchiveLink'
-+    kind: 'ArchiveLink' | 'RequestsLink'
-   }
+-  }
++  chatListItem:
++    | (Type.ChatListItemFetchResult & { kind: 'ArchiveLink' })
++    | RequestsLinkItem
  } & Required<
    Pick<React.HTMLAttributes<HTMLDivElement>, 'aria-setsize' | 'aria-posinset'>
  >) {
@@ -161,7 +213,7 @@ index 38fedad..1188254 100644
  
    const ref = useRef<HTMLButtonElement>(null)
  
-@@ -272,17 +277,29 @@ function ChatListItemArchiveLink({
+@@ -272,17 +278,29 @@ function ChatListItemArchiveLink({
          tabindexSetAsActiveElement()
          onFocus?.(e)
        }}
@@ -195,20 +247,23 @@ index 38fedad..1188254 100644
        </div>
        {/* 2 calls to achieve same output as above (one hidden, one visible) */}
        <FreshMessageCounter
-@@ -529,7 +546,10 @@ const ChatListItem = React.memo<ChatListItemProps>(props => {
+@@ -529,10 +547,12 @@ const ChatListItem = React.memo<ChatListItemProps>(props => {
      return <RegularChatListItem {...props} chat={chatListItem} />
    } else if (chatListItem.kind == 'Error') {
      return <ChatListItemError {...props} chatListItem={chatListItem} />
 -  } else if (chatListItem.kind == 'ArchiveLink') {
-+  } else if (
-+    chatListItem.kind == 'ArchiveLink' ||
-+    chatListItem.kind == 'RequestsLink'
-+  ) {
++  }
++  const link = chatListItem as Type.ChatListItemFetchResult | RequestsLinkItem
++  if (link.kind == 'ArchiveLink' || link.kind == 'RequestsLink') {
      return (
        <ChatListItemArchiveLink
-         chatListItem={chatListItem}
+-        chatListItem={chatListItem}
++        chatListItem={link}
+         onClick={props.onClick}
+         onFocus={props.onFocus}
+         onKeyDown={props.onKeyDown}
 diff --git a/packages/frontend/src/components/chat/ChatListItemRow.tsx b/packages/frontend/src/components/chat/ChatListItemRow.tsx
-index a317137..a065ac9 100644
+index a317137..2fc8186 100644
 --- a/packages/frontend/src/components/chat/ChatListItemRow.tsx
 +++ b/packages/frontend/src/components/chat/ChatListItemRow.tsx
 @@ -158,7 +158,7 @@ export const ChatListItemRowChat = React.memo<{
@@ -216,7 +271,7 @@ index a317137..a065ac9 100644
          return
        }
 -      if (chat.kind === 'ArchiveLink') {
-+      if (chat.kind === 'ArchiveLink' || chat.kind === 'RequestsLink') {
++      if (chat.kind !== 'ChatListItem') {
          // This is a special case, not so much of a "chat list item".
          // It has its own `onContextMenu` handler,
          // so here we don't need to do anything.
@@ -268,10 +323,18 @@ index adf8f3c..dbff66c 100644
            <SearchInput
              id='chat-list-search'
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index 6bc7536..7b0cb18 100644
+index 6bc7536..9026f19 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-@@ -55,7 +55,16 @@ export default function MainScreen({ accountId }: Props) {
+@@ -10,6 +10,7 @@ import React, {
+ import { C } from '@deltachat/jsonrpc-client'
+ 
+ import ChatList from '../../chat/ChatList'
++import { DC_CHAT_ID_REQUESTS_LINK } from '../../chat/ChatListHelpers'
+ import ConnectivityToast from '../../ConnectivityToast'
+ import SettingsStoreInstance from '../../../stores/settings'
+ import { BackendRemote, onDCEvent } from '../../../backend-com'
+@@ -55,7 +56,16 @@ export default function MainScreen({ accountId }: Props) {
    const [queryChatId, setQueryChatId] = useState<null | number>(null)
    const [archivedChatsSelected, setArchivedChatsSelected] = useState(false)
    const [unreadOnly, setUnreadOnly] = useState(false)
@@ -288,18 +351,18 @@ index 6bc7536..7b0cb18 100644
    const { smallScreenMode } = useContext(ScreenContext)
  
    // Resizable chat list: an explicit width overrides the default 3:8 flex
-@@ -91,6 +100,10 @@ export default function MainScreen({ accountId }: Props) {
+@@ -91,6 +101,10 @@ export default function MainScreen({ accountId }: Props) {
          setArchivedChatsSelected(true)
          return
        }
-+      if (chatId === C.DC_CHAT_ID_REQUESTS_LINK) {
++      if (chatId === DC_CHAT_ID_REQUESTS_LINK) {
 +        setRequestsSelected(true)
 +        return
 +      }
  
        accountId && selectChat(accountId, chatId)
      },
-@@ -286,6 +299,7 @@ export default function MainScreen({ accountId }: Props) {
+@@ -286,6 +300,7 @@ export default function MainScreen({ accountId }: Props) {
  
    const isSearchActive = queryStr.length > 0 || queryChatId !== null
    const showArchivedChats = !isSearchActive && archivedChatsSelected
@@ -307,7 +370,7 @@ index 6bc7536..7b0cb18 100644
  
    const lastUsedApps =
      lastUsedAppsFetch?.result?.ok && lastUsedAppsFetch.result.value.length > 0
-@@ -339,7 +353,11 @@ export default function MainScreen({ accountId }: Props) {
+@@ -339,7 +354,11 @@ export default function MainScreen({ accountId }: Props) {
            <ChatListHeader
              accountId={accountId}
              showArchivedChats={showArchivedChats}
@@ -320,7 +383,7 @@ index 6bc7536..7b0cb18 100644
              searchRef={searchRef}
              onSearchChange={handleSearchChange}
              onSearchClear={handleSearchClear}
-@@ -352,6 +370,7 @@ export default function MainScreen({ accountId }: Props) {
+@@ -352,6 +371,7 @@ export default function MainScreen({ accountId }: Props) {
              queryStr={queryStr}
              showArchivedChats={showArchivedChats}
              unreadOnly={unreadOnly}
