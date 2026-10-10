@@ -712,7 +712,8 @@ contribution intended.
   its bio) are clamped to 8 lines in the profile and group dialogs, with the
   same Show more/less link as long message text. The link shows when the text
   actually overflows, measured rather than counted, so a long paragraph
-  without line breaks gets it too. `desktop/0091`
+  without line breaks gets it too. Checked by
+  `scripts/shot-profile-description.mjs`. `desktop/0091`
 
 ## Different decisions than upstream
 
