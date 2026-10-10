@@ -1,5 +1,10 @@
 # Changelog
 
+- **Spelling and grammar checking with LanguageTool.** Turn it on in
+  Settings → Experimental and pick languagetool.org (free, or your Premium
+  account) or your own LanguageTool server; mistakes get underlined and a tap
+  shows suggestions. Off by default, because your draft is sent to that
+  server — run your own to keep it on your machine.
 - **Videos get a proper player.** The controls now fade away while a video
   plays instead of covering the bottom of the picture, and the usual keyboard
   shortcuts work once you click the video. Videos no longer make the chat

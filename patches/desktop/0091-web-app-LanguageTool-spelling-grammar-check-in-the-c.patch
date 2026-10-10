@@ -1,0 +1,931 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sat, 10 Oct 2026 18:16:12 +0000
+Subject: [PATCH 91/91] web-app: LanguageTool spelling & grammar check in the
+ composer
+
+The desktop targets ship with Chromium spellcheck off (Electron has no
+local hunspell dictionary, see target-electron windows/main.ts), and a
+browser grammar add-on can't reach into an Electron/Tauri window. So the
+composer gets its own LanguageTool integration, like the LibreOffice
+extension or the Obsidian community plugin, built on plain fetch so it
+works the same on browser, Electron and Tauri.
+
+Settings -> Experimental -> Composer: a "LanguageTool spelling & grammar"
+switch (off by default -- the draft leaves the device, outside the E2E
+encryption) and a "LanguageTool server" row, shown while off too so a
+self-hosted server can be set up before anything is sent. Its dialog picks
+languagetool.org (free; or Premium with username + API key, which switches
+to api.languagetoolplus.com) or an own server URL (http://host:8081, /v2
+and /v2/check suffixes accepted), with a "Check connection" button that
+runs a test sentence and shows the error otherwise (CORS / --allow-origin
+being the usual one).
+
+Composer: 1s after typing stops the draft is POSTed form-encoded to
+/v2/check with language=auto (a CORS simple request, so a self-hosted
+server needs no OPTIONS handling); the previous request is aborted on the
+next edit. Issues are underlined (red: misspelling, amber: everything
+else) in a transparent, click-through copy of the text laid over the
+textarea -- a textarea can't style parts of its own text and the CSS
+Highlight API can't reach inside one. The copy mirrors the textarea's box
+and font metrics (re-measured by a ResizeObserver) and its scrollTop.
+Between checks, results are remapped onto the edited text by a common
+prefix/suffix diff: matches before the edit keep their offset, matches
+after it shift, and a match is dropped once the edit reaches it or the
+character next to it (remapMatches, covered by languageTool.test.ts).
+Clicking/tapping or arrowing into an underline opens a card above the
+composer (CompletionMenu's slot and look) with the message, up to five
+replacements and Ignore (per session); typing closes it, so it never pops
+up mid-sentence. It doesn't own any keys, so Enter still sends; Tab
+reaches its buttons. Native spellcheck is off while LanguageTool is on, to
+avoid two sets of squiggles.
+
+CSP: Electron's main.html and Tauri's connect-src allow
+http(s)://*:*/v2/check -- any host/port, pinned to that one path, the
+same pattern the web edition uses for /unfurl.
+
+selectCompletion now goes through the new replaceRange(), which the card
+also uses.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../frontend/scss/composer/_composer.scss     |  41 +++
+ .../Settings/ExperimentalFeatures.tsx         |  21 ++
+ .../Settings/LanguageToolDialog.tsx           | 153 +++++++++++
+ .../src/components/composer/Composer.tsx      |   9 +
+ .../composer/ComposerMessageInput.tsx         |  33 ++-
+ .../src/components/composer/LanguageTool.tsx  | 238 ++++++++++++++++++
+ .../components/composer/languageToolCheck.ts  | 112 +++++++++
+ .../frontend/src/tests/languageTool.test.ts   |  64 +++++
+ packages/frontend/static/main.html            |   5 +-
+ packages/shared/shared-types.d.ts             |   7 +
+ packages/shared/state.ts                      |   4 +
+ .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
+ 12 files changed, 681 insertions(+), 9 deletions(-)
+ create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
+ create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
+ create mode 100644 packages/frontend/src/components/composer/languageToolCheck.ts
+ create mode 100644 packages/frontend/src/tests/languageTool.test.ts
+
+diff --git a/packages/frontend/scss/composer/_composer.scss b/packages/frontend/scss/composer/_composer.scss
+index b24bd54..23c950f 100644
+--- a/packages/frontend/scss/composer/_composer.scss
++++ b/packages/frontend/scss/composer/_composer.scss
+@@ -190,3 +190,44 @@
+     }
+   }
+ }
++
++// LanguageTool (LanguageTool.tsx): the draft is copied into a transparent,
++// click-through layer laid over the textarea; only the underlines show.
++.language-tool-layer {
++  position: absolute;
++  box-sizing: border-box;
++  overflow: hidden;
++  pointer-events: none;
++  user-select: none;
++  white-space: pre-wrap;
++  overflow-wrap: break-word;
++  color: transparent;
++}
++
++.language-tool-issue {
++  text-decoration: underline wavy #f0a020;
++  text-decoration-skip-ink: none;
++
++  &.misspelling {
++    text-decoration-color: #e53935;
++  }
++}
++
++.language-tool-card {
++  padding: 8px 12px;
++
++  .language-tool-message {
++    margin-bottom: 8px;
++  }
++
++  .language-tool-actions {
++    display: flex;
++    flex-wrap: wrap;
++    gap: 6px;
++
++    & > button {
++      font-size: 14px;
++      padding: 4px 10px;
++    }
++  }
++}
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index 6573050..6c51323 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -26,6 +26,9 @@ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { DeltaInput } from '../Login-Styles'
+ import SettingsSelector from './SettingsSelector'
+ import { defaultAppStoreBaseUrl } from '@deltachat-desktop/shared/state'
++import LanguageToolDialog, {
++  languageToolServerLabel,
++} from './LanguageToolDialog'
+ 
+ const log = getLogger('ExperimentalFeatures')
+ 
+@@ -83,6 +86,24 @@ export function ExperimentalFeatures() {
+         description='When your message contains a link and has no image, offer to attach a preview card. Off by default; turn on to be prompted.'
+         forkAdded
+       />
++      <DesktopSettingsSwitch
++        settingsKey='languageTool'
++        label='LanguageTool spelling & grammar'
++        description='Underline spelling, grammar and style issues as you type, and suggest fixes. Your draft is sent to the server below, outside the end-to-end encryption; run your own server to keep it on your machine. Off by default.'
++        forkAdded
++      />
++      {/* shown while off too, so a self-hosted server can be set up before
++          the first draft goes anywhere */}
++      <SettingsSelector
++        onClick={() => openDialog(LanguageToolDialog)}
++        currentValue={
++          settingsStore
++            ? languageToolServerLabel(settingsStore.desktopSettings)
++            : undefined
++        }
++      >
++        LanguageTool server
++      </SettingsSelector>
+       <DesktopSettingsSwitch
+         settingsKey='voiceRecordingOriginalAudio'
+         label='Record without noise filtering'
+diff --git a/packages/frontend/src/components/Settings/LanguageToolDialog.tsx b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
+new file mode 100644
+index 0000000..37af582
+--- /dev/null
++++ b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
+@@ -0,0 +1,153 @@
++import React, { useState } from 'react'
++
++import SettingsStoreInstance, { useSettingsStore } from '../../stores/settings'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
++import Dialog, {
++  DialogBody,
++  DialogContent,
++  DialogHeader,
++  OkCancelFooterAction,
++} from '../Dialog'
++import { DeltaInput } from '../Login-Styles'
++import Radio from '../Radio'
++import RadioGroup from '../RadioGroup'
++import Button from '../Button'
++import { ltCheck, type LtConfig } from '../composer/languageToolCheck'
++
++import type { DialogProps } from '../../contexts/DialogContext'
++import type { DesktopSettingsType } from '@deltachat-desktop/shared/shared-types'
++
++/** One line for the settings row: which server the drafts go to. */
++export function languageToolServerLabel(s: DesktopSettingsType): string {
++  if (s.languageToolServer) {
++    return s.languageToolServer
++  }
++  return s.languageToolUsername && s.languageToolApiKey
++    ? 'languagetool.org (Premium)'
++    : 'languagetool.org'
++}
++
++const isHttpUrl = (url: string) => {
++  try {
++    return /^https?:$/.test(new URL(url).protocol)
++  } catch {
++    return false
++  }
++}
++
++/** Pick languagetool.org (optionally with a Premium account) or a
++ * self-hosted server, like the Obsidian LanguageTool plugin. */
++export default function LanguageToolDialog({ onClose }: DialogProps) {
++  const tx = useTranslationFunction()
++  const settings = useSettingsStore()[0]?.desktopSettings
++  const [mode, setMode] = useState(
++    settings?.languageToolServer ? 'server' : 'account'
++  )
++  const [server, setServer] = useState(settings?.languageToolServer ?? '')
++  const [username, setUsername] = useState(settings?.languageToolUsername ?? '')
++  const [apiKey, setApiKey] = useState(settings?.languageToolApiKey ?? '')
++  const [status, setStatus] = useState('')
++
++  const config: LtConfig =
++    mode === 'server'
++      ? { server: server.trim() }
++      : { username: username.trim(), apiKey: apiKey.trim() }
++  const valid = mode !== 'server' || isHttpUrl(server.trim())
++
++  const save = async () => {
++    const set = SettingsStoreInstance.effect.setDesktopSetting
++    await set('languageToolServer', config.server || undefined)
++    await set('languageToolUsername', username.trim() || undefined)
++    await set('languageToolApiKey', apiKey.trim() || undefined)
++    onClose()
++  }
++
++  const check = () => {
++    setStatus('Checking…')
++    ltCheck(config, 'This are a test.').then(
++      matches =>
++        setStatus(
++          `Works: found ${matches.length} issue(s) in a test sentence.`
++        ),
++      (err: Error) =>
++        setStatus(
++          `Failed: ${err.message}. Check the address, and that a self-hosted ` +
++            'server allows this app (LanguageTool --allow-origin).'
++        )
++    )
++  }
++
++  return (
++    <Dialog onClose={onClose}>
++      <DialogHeader title='LanguageTool' onClose={onClose} />
++      <DialogBody>
++        <DialogContent>
++          <RadioGroup
++            name='language-tool-mode'
++            selectedValue={mode}
++            onChange={value => {
++              setMode(value)
++              setStatus('')
++            }}
++          >
++            <Radio
++              value='account'
++              label='languagetool.org'
++              subtitle='Free, or with your Premium account'
++            />
++            <Radio
++              value='server'
++              label='Own server'
++              subtitle='A LanguageTool server you run yourself'
++            />
++          </RadioGroup>
++          <br />
++          {mode === 'account' ? (
++            <>
++              <DeltaInput
++                label='Username (email), optional'
++                value={username}
++                type='email'
++                onChange={e => setUsername(e.target.value)}
++              />
++              <DeltaInput
++                label='API key, optional'
++                value={apiKey}
++                type='password'
++                onChange={e => setApiKey(e.target.value)}
++              />
++              <p>
++                Premium users find the API key on languagetool.org under Account
++                → Access tokens. Leave both empty for the free service.
++              </p>
++            </>
++          ) : (
++            <>
++              <DeltaInput
++                label='Server address'
++                value={server}
++                type='url'
++                placeholder='http://localhost:8081'
++                onChange={e => setServer(e.target.value)}
++              />
++              <p>
++                Start the server with <code>--allow-origin</code> so this app
++                may use it. Use https unless the server runs on this computer.
++              </p>
++            </>
++          )}
++          <Button onClick={check} disabled={!valid}>
++            Check connection
++          </Button>
++          {status && <p role='status'>{status}</p>}
++        </DialogContent>
++      </DialogBody>
++      <OkCancelFooterAction
++        onCancel={onClose}
++        onOk={save}
++        disableOK={!valid}
++        confirmLabel={tx('save')}
++      />
++    </Dialog>
++  )
++}
+diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
+index 58d5982..5c30e98 100644
+--- a/packages/frontend/src/components/composer/Composer.tsx
++++ b/packages/frontend/src/components/composer/Composer.tsx
+@@ -151,6 +151,13 @@ const Composer = forwardRef<
+   )
+ 
+   const settingsStore = useSettingsStore()[0]
++  const languageTool = settingsStore?.desktopSettings.languageTool
++    ? {
++        server: settingsStore.desktopSettings.languageToolServer,
++        username: settingsStore.desktopSettings.languageToolUsername,
++        apiKey: settingsStore.desktopSettings.languageToolApiKey,
++      }
++    : null
+ 
+   // `/`-completion for DM chats whose contact lists `/commands` in their bio.
+   const dmContactId =
+@@ -866,6 +873,7 @@ const Composer = forwardRef<
+                   settingsStore?.desktopSettings.experimentalCompletionMenu ===
+                   true
+                 }
++                languageTool={languageTool}
+                 botCommands={botCommands}
+                 loadingDraft={draftIsLoading}
+                 sendMessageOrEditRequest={
+@@ -893,6 +901,7 @@ const Composer = forwardRef<
+                   settingsStore?.desktopSettings.experimentalCompletionMenu ===
+                   true
+                 }
++                languageTool={languageTool}
+                 loadingDraft={false}
+                 sendMessageOrEditRequest={
+                   messageEditing.doSendEditRequest ?? (() => {})
+diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
+index b561f5d..fede18e 100644
+--- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
++++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
+@@ -11,6 +11,8 @@ import {
+   createBotCommandProvider,
+   type BotCommand,
+ } from './completion/botCommandProvider'
++import { LanguageTool } from './LanguageTool'
++import type { LtConfig } from './languageToolCheck'
+ 
+ import type {
+   ActiveToken,
+@@ -57,6 +59,8 @@ type ComposerMessageInputProps = {
+   completionMenu?: boolean
+   /** `/commands` parsed from the DM contact's bio, for the `/` completion menu. */
+   botCommands?: BotCommand[]
++  /** LanguageTool spelling/grammar check; null/undefined = off. */
++  languageTool?: LtConfig | null
+   onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
+   // used to show/hide send button
+   onChange: (text: string) => void
+@@ -99,6 +103,7 @@ export default class ComposerMessageInput extends React.Component<
+     this.onCaretMove = this.onCaretMove.bind(this)
+     this.selectCompletion = this.selectCompletion.bind(this)
+     this.closeCompletion = this.closeCompletion.bind(this)
++    this.replaceRange = this.replaceRange.bind(this)
+ 
+     this.textareaRef = React.createRef()
+     this.focus = this.focus.bind(this)
+@@ -268,17 +273,20 @@ export default class ComposerMessageInput extends React.Component<
+     if (!token) {
+       return
+     }
+-    const text = this.props.text
+     // trailing space so typing can continue (and the menu doesn't reopen on
+     // the finished token); skip it if whitespace already follows
+-    const value = /^\s/.test(text.slice(token.end))
++    const value = /^\s/.test(this.props.text.slice(token.end))
+       ? item.value
+       : item.value + ' '
+-    const updated = text.slice(0, token.start) + value + text.slice(token.end)
+-    // reuse the existing caret-restore path (componentDidUpdate)
+-    this.setCursorPosition = token.start + value.length
+     this.closeCompletion()
+-    this.props.onChange(updated)
++    this.replaceRange(token.start, token.end, value)
++  }
++
++  replaceRange(start: number, end: number, value: string) {
++    const text = this.props.text
++    // reuse the existing caret-restore path (componentDidUpdate)
++    this.setCursorPosition = start + value.length
++    this.props.onChange(text.slice(0, start) + value + text.slice(end))
+   }
+ 
+   /** Handle the keys the open menu owns. Returns true if the event was consumed. */
+@@ -479,9 +487,20 @@ export default class ComposerMessageInput extends React.Component<
+                   ? 'rtl'
+                   : 'auto' /* auto is based on content but defaults to ltr */
+               }
+-              spellCheck={true}
++              // LanguageTool checks spelling too; two sets of squiggles is noise
++              spellCheck={!this.props.languageTool}
+               aria-keyshortcuts='Control+M'
+             />
++            {this.props.languageTool && (
++              <LanguageTool
++                {...this.props.languageTool}
++                text={this.props.text}
++                dir={writingDirection === 'rtl' ? 'rtl' : 'auto'}
++                textareaRef={this.textareaRef}
++                hideCard={completion.open}
++                onReplace={this.replaceRange}
++              />
++            )}
+           </>
+         )}
+       </I18nContext.Consumer>
+diff --git a/packages/frontend/src/components/composer/LanguageTool.tsx b/packages/frontend/src/components/composer/LanguageTool.tsx
+new file mode 100644
+index 0000000..ac45578b
+--- /dev/null
++++ b/packages/frontend/src/components/composer/LanguageTool.tsx
+@@ -0,0 +1,238 @@
++import React, {
++  useCallback,
++  useEffect,
++  useLayoutEffect,
++  useRef,
++  useState,
++} from 'react'
++
++import { getLogger } from '@deltachat-desktop/shared/logger'
++import Button from '../Button'
++import {
++  ltCheck,
++  remapMatches,
++  type LtConfig,
++  type LtMatch,
++} from './languageToolCheck'
++
++const log = getLogger('renderer/composer/LanguageTool')
++
++const CHECK_DELAY_MS = 1000
++
++type Props = LtConfig & {
++  text: string
++  /** the textarea's dir attribute */
++  dir: string
++  textareaRef: React.RefObject<HTMLTextAreaElement | null>
++  /** keep the suggestion card closed, e.g. while the completion menu is open */
++  hideCard: boolean
++  onReplace: (start: number, end: number, value: string) => void
++}
++
++/** Copy of the textarea's text box, so the overlay wraps lines identically. */
++function measure(el: HTMLTextAreaElement): React.CSSProperties {
++  const cs = getComputedStyle(el)
++  return {
++    top: el.offsetTop + el.clientTop,
++    left: el.offsetLeft + el.clientLeft,
++    width: el.clientWidth,
++    height: el.clientHeight,
++    fontFamily: cs.fontFamily,
++    fontSize: cs.fontSize,
++    fontWeight: cs.fontWeight,
++    fontStyle: cs.fontStyle,
++    lineHeight: cs.lineHeight,
++    letterSpacing: cs.letterSpacing,
++    wordSpacing: cs.wordSpacing,
++    tabSize: cs.tabSize,
++    textAlign: cs.textAlign as React.CSSProperties['textAlign'],
++    paddingTop: cs.paddingTop,
++    paddingRight: cs.paddingRight,
++    paddingBottom: cs.paddingBottom,
++    paddingLeft: cs.paddingLeft,
++  }
++}
++
++/**
++ * LanguageTool underlines for the composer textarea, plus a suggestion card
++ * while the caret sits in a flagged span. The underlines live in a
++ * transparent, click-through copy of the text laid exactly over the textarea
++ * (a textarea can't style parts of its own text, and the CSS Highlight API
++ * can't reach inside one).
++ */
++export function LanguageTool({
++  server,
++  username,
++  apiKey,
++  text,
++  dir,
++  textareaRef,
++  hideCard,
++  onReplace,
++}: Props) {
++  const [checked, setChecked] = useState<{ text: string; matches: LtMatch[] }>({
++    text: '',
++    matches: [],
++  })
++  const [box, setBox] = useState<React.CSSProperties | null>(null)
++  const [caret, setCaret] = useState<number | null>(null)
++  // ponytail: per-session ignore list; persist it if people ask
++  const [ignored, setIgnored] = useState<Set<string>>(() => new Set())
++  const layerRef = useRef<HTMLDivElement>(null)
++  const cardRef = useRef<HTMLDivElement>(null)
++
++  useEffect(() => {
++    if (!text.trim()) {
++      return
++    }
++    const abort = new AbortController()
++    const timer = setTimeout(() => {
++      ltCheck({ server, username, apiKey }, text, abort.signal).then(
++        matches => setChecked({ text, matches }),
++        err => abort.signal.aborted || log.warn('check failed', err)
++      )
++    }, CHECK_DELAY_MS)
++    return () => {
++      clearTimeout(timer)
++      abort.abort()
++    }
++  }, [text, server, username, apiKey])
++
++  // The card follows deliberate caret moves (click/tap, arrow keys) and closes
++  // on typing, so it never pops up mid-sentence.
++  const updateCaret = useCallback(
++    (e: Event) => {
++      const el = textareaRef.current
++      if (
++        !el ||
++        (e.type === 'keyup' &&
++          !/^(Arrow|Home|End|Page)/.test((e as KeyboardEvent).key)) ||
++        // tabbing into the card must not close it
++        (e.type === 'blur' &&
++          cardRef.current?.contains((e as FocusEvent).relatedTarget as Node))
++      ) {
++        return
++      }
++      setCaret(
++        (e.type === 'click' || e.type === 'keyup') &&
++          el.selectionStart === el.selectionEnd
++          ? el.selectionStart
++          : null
++      )
++    },
++    [textareaRef]
++  )
++
++  useEffect(() => {
++    const el = textareaRef.current
++    if (!el) {
++      return
++    }
++    const syncScroll = () => {
++      if (layerRef.current) layerRef.current.scrollTop = el.scrollTop
++    }
++    const resize = new ResizeObserver(() => setBox(measure(el)))
++    resize.observe(el)
++    const caretEvents = ['input', 'keyup', 'click', 'blur'] as const
++    caretEvents.forEach(t => el.addEventListener(t, updateCaret))
++    el.addEventListener('scroll', syncScroll)
++    return () => {
++      resize.disconnect()
++      caretEvents.forEach(t => el.removeEventListener(t, updateCaret))
++      el.removeEventListener('scroll', syncScroll)
++    }
++  }, [textareaRef, updateCaret])
++
++  useLayoutEffect(() => {
++    if (layerRef.current && textareaRef.current) {
++      layerRef.current.scrollTop = textareaRef.current.scrollTop
++    }
++  })
++
++  const matches = remapMatches(checked.matches, checked.text, text).filter(
++    m => !ignored.has(m.key)
++  )
++
++  const parts: React.ReactNode[] = []
++  let pos = 0
++  for (const m of matches) {
++    if (m.offset < pos) continue // overlapping match, first one wins
++    parts.push(
++      text.slice(pos, m.offset),
++      <span
++        key={m.offset}
++        className={
++          'language-tool-issue' +
++          (m.issueType === 'misspelling' ? ' misspelling' : '')
++        }
++      >
++        {text.slice(m.offset, m.offset + m.length)}
++      </span>
++    )
++    pos = m.offset + m.length
++  }
++  // the trailing space gives a trailing newline its line, as in the textarea
++  parts.push(text.slice(pos) + ' ')
++
++  const active =
++    hideCard || caret === null
++      ? undefined
++      : matches.find(m => m.offset <= caret && caret <= m.offset + m.length)
++
++  return (
++    <>
++      {box && (
++        <div
++          className='language-tool-layer'
++          style={box}
++          dir={dir}
++          ref={layerRef}
++          aria-hidden
++        >
++          {parts}
++        </div>
++      )}
++      {active && (
++        <div
++          className='completion-menu language-tool-card'
++          role='group'
++          aria-label='LanguageTool suggestion'
++          ref={cardRef}
++          // mousedown (not click) keeps the textarea focused, as in CompletionMenu
++          onMouseDown={e => e.preventDefault()}
++          onBlur={e => {
++            const to = e.relatedTarget as Node | null
++            if (!cardRef.current?.contains(to) && to !== textareaRef.current) {
++              setCaret(null)
++            }
++          }}
++        >
++          <div className='language-tool-message'>{active.message}</div>
++          <div className='language-tool-actions'>
++            {active.replacements.map(r => (
++              <Button
++                key={r}
++                styling='primary'
++                onClick={() => {
++                  onReplace(active.offset, active.offset + active.length, r)
++                  textareaRef.current?.focus()
++                  setCaret(null) // the old caret offset is stale now
++                }}
++              >
++                {r || '(remove)'}
++              </Button>
++            ))}
++            <Button
++              onClick={() => {
++                setIgnored(prev => new Set(prev).add(active.key))
++                textareaRef.current?.focus()
++              }}
++            >
++              Ignore
++            </Button>
++          </div>
++        </div>
++      )}
++    </>
++  )
++}
+diff --git a/packages/frontend/src/components/composer/languageToolCheck.ts b/packages/frontend/src/components/composer/languageToolCheck.ts
+new file mode 100644
+index 0000000..867183f
+--- /dev/null
++++ b/packages/frontend/src/components/composer/languageToolCheck.ts
+@@ -0,0 +1,112 @@
++// LanguageTool (https://languagetool.org) spelling/grammar check for the
++// composer: the HTTP API call and remapping results onto edited text. Plain
++// fetch, so it works the same on browser, Electron and Tauri — the desktop
++// targets ship with Chromium spellcheck off (no local hunspell dictionary).
++
++export type LtConfig = {
++  /** self-hosted server base URL; unset = languagetool.org */
++  server?: string
++  /** languagetool.org Premium: account email + API key; unset = free API */
++  username?: string
++  apiKey?: string
++}
++
++export type LtMatch = {
++  offset: number
++  length: number
++  message: string
++  replacements: string[]
++  /** LanguageTool's rule.issueType, e.g. 'misspelling', 'grammar', 'style' */
++  issueType: string
++  /** rule id + flagged text, what "Ignore" remembers */
++  key: string
++}
++
++export function ltCheckUrl(cfg: LtConfig): string {
++  if (cfg.server) {
++    // accept http://host:8081, …/v2 and …/v2/check alike
++    return (
++      cfg.server.replace(/\/+$/, '').replace(/\/v2(\/check)?$/, '') +
++      '/v2/check'
++    )
++  }
++  return cfg.username && cfg.apiKey
++    ? 'https://api.languagetoolplus.com/v2/check'
++    : 'https://api.languagetool.org/v2/check'
++}
++
++// ponytail: language=auto only. Detection can misfire on very short
++// messages; add a language picker (or preferredVariants from the UI locale)
++// if that shows up in practice.
++export async function ltCheck(
++  cfg: LtConfig,
++  text: string,
++  signal?: AbortSignal
++): Promise<LtMatch[]> {
++  const body = new URLSearchParams({ text, language: 'auto' })
++  if (!cfg.server && cfg.username && cfg.apiKey) {
++    body.set('username', cfg.username)
++    body.set('apiKey', cfg.apiKey)
++  }
++  // form-encoded POST is a CORS "simple request": no preflight, so a
++  // self-hosted server only needs --allow-origin, not OPTIONS handling
++  const res = await fetch(ltCheckUrl(cfg), { method: 'POST', body, signal })
++  if (!res.ok) {
++    throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
++  }
++  const { matches } = await res.json()
++  return (matches as any[]).map(m => ({
++    offset: m.offset,
++    length: m.length,
++    message: m.message,
++    replacements: (m.replacements as { value: string }[])
++      .slice(0, 5)
++      .map(r => r.value),
++    issueType: m.rule?.issueType ?? '',
++    key: `${m.rule?.id}:${text.slice(m.offset, m.offset + m.length)}`,
++  }))
++}
++
++/** Carry matches computed for `from` over to `to`, so underlines don't flicker
++ * while typing: matches before the edited span keep their offset, matches
++ * after it shift, and a match is dropped (until the next check) once the edit
++ * reaches it or the character right next to it. */
++export function remapMatches(
++  matches: LtMatch[],
++  from: string,
++  to: string
++): LtMatch[] {
++  if (from === to) {
++    return matches
++  }
++  const max = Math.min(from.length, to.length)
++  let prefix = 0
++  while (prefix < max && from[prefix] === to[prefix]) prefix++
++  let suffix = 0
++  while (
++    suffix < max - prefix &&
++    from[from.length - 1 - suffix] === to[to.length - 1 - suffix]
++  )
++    suffix++
++  const editEnd = from.length - suffix
++  const delta = to.length - from.length
++  // the flagged text plus one character either side
++  const around = (s: string, offset: number, length: number) =>
++    s.slice(Math.max(0, offset - 1), offset + length + 1)
++  const kept: LtMatch[] = []
++  for (const m of matches) {
++    const offset =
++      m.offset + m.length <= prefix
++        ? m.offset
++        : m.offset >= editEnd
++          ? m.offset + delta
++          : -1
++    if (
++      offset >= 0 &&
++      around(from, m.offset, m.length) === around(to, offset, m.length)
++    ) {
++      kept.push({ ...m, offset })
++    }
++  }
++  return kept
++}
+diff --git a/packages/frontend/src/tests/languageTool.test.ts b/packages/frontend/src/tests/languageTool.test.ts
+new file mode 100644
+index 0000000..3b0ee5a
+--- /dev/null
++++ b/packages/frontend/src/tests/languageTool.test.ts
+@@ -0,0 +1,64 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import {
++  ltCheckUrl,
++  remapMatches,
++  type LtMatch,
++} from '../components/composer/languageToolCheck.js'
++
++const match = (offset: number, length: number): LtMatch => ({
++  offset,
++  length,
++  message: '',
++  replacements: [],
++  issueType: 'misspelling',
++  key: String(offset),
++})
++const offsets = (ms: LtMatch[]) => ms.map(m => m.offset)
++
++describe('ltCheckUrl', () => {
++  it('picks the free, premium or self-hosted endpoint', () => {
++    expect(ltCheckUrl({})).to.equal('https://api.languagetool.org/v2/check')
++    expect(ltCheckUrl({ username: 'a@b.c', apiKey: 'k' })).to.equal(
++      'https://api.languagetoolplus.com/v2/check'
++    )
++    for (const server of [
++      'http://localhost:8081',
++      'http://localhost:8081/',
++      'http://localhost:8081/v2',
++      'http://localhost:8081/v2/check',
++    ]) {
++      expect(ltCheckUrl({ server, apiKey: 'ignored' })).to.equal(
++        'http://localhost:8081/v2/check'
++      )
++    }
++  })
++})
++
++describe('remapMatches', () => {
++  // "teh" at 0, "wrod" at 8
++  const from = 'teh big wrod here'
++  const ms = [match(0, 3), match(8, 4)]
++
++  it('keeps everything when the text is unchanged', () => {
++    expect(remapMatches(ms, from, from)).to.equal(ms)
++  })
++
++  it('shifts matches after an edit and keeps those before it', () => {
++    expect(offsets(remapMatches(ms, from, 'teh very big wrod here'))).to.eql([
++      0, 13,
++    ])
++    expect(offsets(remapMatches(ms, from, 'teh wrod here'))).to.eql([0, 4])
++    expect(offsets(remapMatches(ms, from, from + ' and more'))).to.eql([0, 8])
++  })
++
++  it('drops matches the edit touches', () => {
++    // typing inside, right after, or right before a flagged word changes it
++    expect(offsets(remapMatches(ms, from, 'tehx big wrod here'))).to.eql([9])
++    expect(offsets(remapMatches(ms, from, 'teh big xwrod here'))).to.eql([0])
++    expect(offsets(remapMatches(ms, from, 'teh big wrodx here'))).to.eql([0])
++    expect(offsets(remapMatches(ms, from, 'the big word here'))).to.eql([])
++    expect(remapMatches(ms, from, '')).to.eql([])
++  })
++})
+diff --git a/packages/frontend/static/main.html b/packages/frontend/static/main.html
+index b3b3a9f..ee6a895 100644
+--- a/packages/frontend/static/main.html
++++ b/packages/frontend/static/main.html
+@@ -8,6 +8,9 @@
+       * style-src 'unsafe-inline' is need for theming and for the virtual list,
+       See https://github.com/deltachat/deltachat-desktop/issues/2105.
+       * worker-src blob: is needed for mapbox afaik.
++      * connect-src */v2/check: the LanguageTool API (composer spell/grammar
++        check, off by default), on languagetool.org or a self-hosted server
++        at any host/port, pinned to that one path.
+     -->
+     <meta
+       http-equiv="Content-Security-Policy"
+@@ -19,7 +22,7 @@
+                    child-src blob: ;
+                    img-src 'self' data: blob: file: webxdc-icon: ;
+                    media-src 'self' file: ;
+-                   connect-src 'self'"
++                   connect-src 'self' http://*:*/v2/check https://*:*/v2/check"
+     />
+     <link rel="stylesheet" href="./fonts/fonts.css" />
+     <link rel="stylesheet" href="./main.css" />
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index 4c65163..2f121aa 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -47,6 +47,13 @@ export interface DesktopSettingsType {
+   experimentalCompletionMenu: boolean
+   /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
+   experimentalUnreadReadTime: boolean
++  /** webapp: LanguageTool spelling/grammar check in the composer. Off by default: it sends the draft to the server below. */
++  languageTool: boolean
++  /** webapp: self-hosted LanguageTool server URL, e.g. http://localhost:8081. undefined = languagetool.org */
++  languageToolServer: string | undefined
++  /** webapp: languagetool.org Premium account email + API key. undefined = the free API */
++  languageToolUsername: string | undefined
++  languageToolApiKey: string | undefined
+   /** webapp: expose voice-message sender/chat/avatar in the OS media session (lock screen). Off by default (privacy: suppressed metadata otherwise). Shown in Settings -> Notifications, next to showNotificationContent. */
+   voiceMessageMediaSessionDetails: boolean
+   /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Toggled from the recorder UI, applies to the next recording. */
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index fa8889f..7025258 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -18,6 +18,10 @@ export function getDefaultState(): DesktopSettingsType {
+     stripTrackingLinks: true,
+     experimentalCompletionMenu: true,
+     experimentalUnreadReadTime: false,
++    languageTool: false,
++    languageToolServer: undefined,
++    languageToolUsername: undefined,
++    languageToolApiKey: undefined,
+     voiceMessageMediaSessionDetails: false,
+     voiceRecordingOriginalAudio: false,
+     voiceRecordingDeviceId: undefined,
+diff --git a/packages/target-tauri/src-tauri/tauri.conf.json5 b/packages/target-tauri/src-tauri/tauri.conf.json5
+index 5219048..74a1098 100644
+--- a/packages/target-tauri/src-tauri/tauri.conf.json5
++++ b/packages/target-tauri/src-tauri/tauri.conf.json5
+@@ -14,7 +14,8 @@
+       // The CSP will be further adjusted in `run()`, see `context.config_mut()`.
+       "csp": {
+         "default-src": "none",
+-        "connect-src": "'self' ipc:",
++        // */v2/check: the LanguageTool API (composer spell/grammar check).
++        "connect-src": "'self' ipc: http://*:*/v2/check https://*:*/v2/check",
+         // The sha-256 values are for
+         // - `emoji-mart-awesome`.
+         // - `react-zoom-pan-pinch`'s TransformComponent (2nd and 3rd entries).
