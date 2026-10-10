@@ -211,9 +211,11 @@ try {
   await checkLong('SlothfulChat Testers', 'view-group-dialog', '02-group')
 
   // A text replaced while expanded (edited, or updated by an event) starts
-  // folded again: no "Show less" left under the now-short text.
+  // folded again: no "Show less" left under the now-short text, and the long
+  // text, once back, is folded with its "Show more" again.
   const replaced = await openDialog('SlothfulChat Testers', 'view-group-dialog')
   await link(replaced).click()
+  await replaced.getByRole('button', { name: 'Show less' }).waitFor()
   await rpc('setChatDescription', aliceId, testersId, SHORT_DESCRIPTION)
   await replaced
     .getByTestId('profile-description')
@@ -221,6 +223,11 @@ try {
     .waitFor({ timeout: 10_000 })
   await link(replaced).waitFor({ state: 'detached', timeout: 5_000 })
   console.log('OK: replaced while expanded: the new short text has no link')
+  await rpc('setChatDescription', aliceId, testersId, TESTERS_DESCRIPTION)
+  await replaced
+    .getByRole('button', { name: 'Show more' })
+    .waitFor({ timeout: 10_000 })
+  console.log('OK: switched back: the long text returns folded with "Show more"')
   await closeDialog(replaced)
 
   const short = await openDialog('Book Club', 'view-group-dialog')
