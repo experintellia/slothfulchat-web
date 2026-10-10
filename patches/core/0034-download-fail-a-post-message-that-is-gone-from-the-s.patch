@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 13 Aug 2026 23:43:20 +0000
-Subject: [PATCH 34/35] download: fail a post-message that is gone from the
+Subject: [PATCH 34/36] download: fail a post-message that is gone from the
  server
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

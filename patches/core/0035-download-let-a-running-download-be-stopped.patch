@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 2 Oct 2026 00:37:43 +0000
-Subject: [PATCH 35/35] download: let a running download be stopped
+Subject: [PATCH 35/36] download: let a running download be stopped
 
 abort_download(msg_id) dequeues an in-progress download and puts the
 message back to Available, so the download button returns. It is one
