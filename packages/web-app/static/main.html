@@ -32,6 +32,10 @@
       the page can't fetch any other URL: a guardrail against accidentally
       reaching a CDN, and it rules out a lazy exfil bucket at some other path.
       `:*` is a wildcard port — needed as the local bridge is on :8641.)
+      http://*:*/v2/check and https://*:*/v2/check are the LanguageTool API
+      (composer spelling/grammar check, off by default) — languagetool.org or
+      a self-hosted server at any host/port, pinned to that one path the same
+      way.
       The raw.githubusercontent.com URL is pinned to the exact relay-directory
       JSON the onboarding relay picker fetches (patches/desktop/0039,
       chatmail-relays-mirror) — one non-bridge URL, nothing else on that host.
@@ -67,7 +71,7 @@
                    child-src 'self' blob: ;
                    img-src 'self' data: blob: file: webxdc-icon: ;
                    media-src 'self' file: blob: ;
-                   connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl https://raw.githubusercontent.com/experintellia/chatmail-relays-mirror/refs/heads/data/relays.json"
+                   connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl http://*:*/v2/check https://*:*/v2/check https://raw.githubusercontent.com/experintellia/chatmail-relays-mirror/refs/heads/data/relays.json"
     />
     <!-- Clickjacking guard, before the first stylesheet so a refusal aborts
          them too. Only a header can express frame-ancestors (see the CSP note
