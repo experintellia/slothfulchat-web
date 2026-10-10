@@ -1,0 +1,5 @@
+# Entries two branches both add at the top merge without a conflict. Local
+# `git merge` only (e.g. main into a PR branch); GitHub's merge button ignores it.
+# ponytail: union keeps both sides' lines, so an entry both sides edited ends up
+# twice. Fine for an add-only bullet list; check the result if one was edited.
+packages/*/CHANGELOG.md merge=union
