@@ -508,7 +508,7 @@ exists:
   stay in the archive. Core gains a `DC_GCL_NO_REQUESTS` chatlist flag
   (which also keeps requests out of a bare `is:unread` filter), the
   `DC_CHAT_ID_REQUESTS_LINK` pseudo chat and an `is:request` chatlist query.
-  `core/0036`, `desktop/0093`
+  `core/0036`, `desktop/0094`
 
 - **Resizable chat-list sidebar** — a drag handle between the chat list and
   the chat view sets an explicit sidebar width (clamped so both panes stay

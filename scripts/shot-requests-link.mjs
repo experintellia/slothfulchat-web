@@ -1,4 +1,4 @@
-// Screenshot + self-check harness for the requests link (desktop/0093,
+// Screenshot + self-check harness for the requests link (desktop/0094,
 // core/0036) — runs FULLY OFFLINE like scripts/shot-download-placeholder.mjs:
 // an in-process mock madmail server provides three webimap accounts.
 //

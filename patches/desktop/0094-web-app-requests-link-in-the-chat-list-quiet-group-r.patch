@@ -425,7 +425,7 @@ index 6bc7536059269c87f8437c7ceeb7426ecae7dc38..9026f19f215cbba3c22f2af30b51c8f1
              selectedChatId={chatId ?? null}
              queryChatId={queryChatId}
 diff --git a/packages/frontend/src/system-integration/notifications.ts b/packages/frontend/src/system-integration/notifications.ts
-index a3e640de0317fd9b3cffcca0839e3f0532369dbe..94a9cf7459d624c4d58a5699861f761c8360979f 100644
+index 2b2be36eabc2085db9bd256b644b4c1273c9d82e..f488e4b6a084928d40b4a735ec76720577a38322 100644
 --- a/packages/frontend/src/system-integration/notifications.ts
 +++ b/packages/frontend/src/system-integration/notifications.ts
 @@ -332,9 +332,26 @@ async function flushNotifications(accountId: number) {
@@ -434,7 +434,7 @@ index a3e640de0317fd9b3cffcca0839e3f0532369dbe..94a9cf7459d624c4d58a5699861f761c
    }
 -  const notifications = [...queuedNotifications[accountId]]
 +  let notifications = [...queuedNotifications[accountId]]
-   queuedNotifications = []
+   queuedNotifications[accountId] = []
  
 +  // Group invitations from non-contacts wait quietly behind the chat list's
 +  // requests link: no alert, so cloning a group earns no attention.
