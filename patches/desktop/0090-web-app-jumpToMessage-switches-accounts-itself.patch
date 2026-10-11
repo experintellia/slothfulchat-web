@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 3 Oct 2026 01:37:56 +0000
-Subject: [PATCH 90/90] web-app: jumpToMessage switches accounts itself
+Subject: [PATCH 90/91] web-app: jumpToMessage switches accounts itself
 
 useMessage().jumpToMessage now handles a message in another account:
 it saves the target chat as that account's last chat, selects the
