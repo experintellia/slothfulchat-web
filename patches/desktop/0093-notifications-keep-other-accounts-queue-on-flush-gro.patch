@@ -15,13 +15,22 @@ the unfiltered list, so messages from muted chats were counted in the
 single-chat group). The limit comparison already used the filtered
 count, so a batch of only muted messages now shows nothing, as intended.
 ---
- packages/frontend/src/system-integration/notifications.ts | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
+ packages/frontend/src/system-integration/notifications.ts | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/packages/frontend/src/system-integration/notifications.ts b/packages/frontend/src/system-integration/notifications.ts
-index a3e640de0317fd9b3cffcca0839e3f0532369dbe..1fb3ff8dd4d025564b8f9292bae9c20739e60269 100644
+index a3e640de0317fd9b3cffcca0839e3f0532369dbe..2b2be36eabc2085db9bd256b644b4c1273c9d82e 100644
 --- a/packages/frontend/src/system-integration/notifications.ts
 +++ b/packages/frontend/src/system-integration/notifications.ts
+@@ -74,7 +74,7 @@ type QueuedNotification = {
+   contactId?: number // for reactions
+ }
+ 
+-let queuedNotifications: {
++const queuedNotifications: {
+   [accountId: number]: QueuedNotification[]
+ } = {}
+ 
 @@ -333,7 +333,7 @@ async function flushNotifications(accountId: number) {
      queuedNotifications[accountId] = []
    }
