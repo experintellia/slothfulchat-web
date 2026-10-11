@@ -8,8 +8,14 @@
 // chat list shows one "Requests" entry on top carrying the count; clicking it
 // opens the Requests view with the clones.
 //
-// Accepting every request then leaves the Requests view showing its empty
-// note. Shots go to .cache/requests-shots/. It also asserts what the shots show, so
+// It also drives the side paths: Ctrl+PageDown with no chat open must open
+// a real chat, not the link; the unread filter hides requests and the link;
+// Accept and Delete in the request bar move one out of Requests and drop the
+// count while the view stays open; and accepting the rest leaves the view
+// showing its empty note. Shots go to .cache/requests-shots/.
+//
+// Not covered: notifications. Webimap accounts (what the mock serves) never
+// get core's IncomingMsgBunch, which is what flushes queued notifications. It also asserts what the shots show, so
 // it doubles as the runnable check for the requests link UI.
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
@@ -152,6 +158,36 @@ try {
     'no clone rows in the chat list'
   )
   await shot('01-chat-list')
+  const chatName = page.locator('.navbar-chat-name')
+
+  // 1b. Keyboard: "next chat" with nothing open must skip the link (id 8)
+  // and open the first real chat; "previous chat" must not go back onto it.
+  expect((await chatName.count()) === 0, 'no chat open yet')
+  await page.keyboard.press('Control+PageDown')
+  await chatName.first().waitFor({ timeout: 30_000 })
+  const firstName = (await chatName.first().innerText()).split('\n')[0].trim()
+  expect(
+    firstName !== '' && !/rsvd|Requests/.test(firstName),
+    `Ctrl+PageDown opened a real chat ("${firstName}"), not the link`
+  )
+  await page.keyboard.press('Control+PageUp')
+  await page.waitForTimeout(800)
+  expect(
+    (await chatName.first().innerText()).split('\n')[0].trim() === firstName,
+    'Ctrl+PageUp from the first chat stays put'
+  )
+
+  // 1c. The unread filter keeps requests (and the link) out; off brings it back.
+  const unreadToggle = page.getByRole('button', { name: 'Unread' })
+  await unreadToggle.click()
+  await link.waitFor({ state: 'detached', timeout: 30_000 })
+  expect(
+    (await items.filter({ hasText: 'Weekend Crew' }).count()) === 0,
+    'unread filter: no link, no clone rows'
+  )
+  await unreadToggle.click()
+  await link.waitFor({ state: 'visible', timeout: 30_000 })
+  expect(true, 'unread filter off: link is back')
 
   // 2. The Requests view.
   await link.click()
@@ -175,9 +211,50 @@ try {
   await link.waitFor({ state: 'visible', timeout: 30_000 })
   await shot('04-back-to-chats')
 
-  // 5. Accept them all from inside the Requests view: it says it's empty.
+  // 5. Accept one from the UI: it leaves Requests, the view stays open.
+  const clones = items.filter({ hasText: 'Weekend Crew' })
   await link.click()
-  await items.filter({ hasText: 'Weekend Crew' }).first().waitFor()
+  await clones.nth(CLONES - 1).waitFor()
+  await clones.first().click()
+  await page.locator('.contact-request-button.accept').click()
+  await clones.nth(CLONES - 2).waitFor()
+  await page.waitForTimeout(800)
+  expect(
+    (await clones.count()) === CLONES - 1,
+    `UI accept: ${CLONES - 1} requests left`
+  )
+  expect(
+    (await page.getByText('Requests', { exact: true }).count()) > 0,
+    'UI accept: still in the Requests view'
+  )
+
+  // 6. Delete one from the UI (groups ask for confirmation).
+  await clones.first().click()
+  await page.locator('.contact-request-button.delete').click()
+  await page.getByTestId('confirm').click()
+  await page.waitForTimeout(1500)
+  expect(
+    (await clones.count()) === CLONES - 2,
+    `UI delete: ${CLONES - 2} requests left`
+  )
+
+  // 7. Back in the chats: the count dropped, the accepted clone is a chat.
+  await page.locator('.backButton').first().click()
+  await link.waitFor({ state: 'visible', timeout: 30_000 })
+  await page.waitForTimeout(800)
+  expect(
+    (await link.getAttribute('aria-label')) === `Requests: ${CLONES - 2}`,
+    `link reads "Requests: ${CLONES - 2}"`
+  )
+  expect(
+    (await clones.count()) === 1,
+    'the accepted clone is now a normal chat'
+  )
+  await shot('05-after-accept-and-delete')
+
+  // 8. Accept the rest from inside the Requests view: it says it's empty.
+  await link.click()
+  await clones.first().waitFor()
   for (const id of await rpc('getChatlistEntries', bobId, 0, 'is:request', null)) {
     await rpc('acceptChat', bobId, id)
   }
@@ -185,7 +262,7 @@ try {
     .getByText('No requests.', { exact: false })
     .waitFor({ timeout: 30_000 })
   expect(true, 'empty Requests view says so')
-  await shot('05-requests-empty')
+  await shot('06-requests-empty')
 
   console.log('PASS: the requests link renders as expected')
 } catch (err) {
