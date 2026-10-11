@@ -211,11 +211,12 @@ export function patchCsp(html, origin, relayDirectory = '') {
   // — that's what analyticsOrigin() produces
   const isBareOrigin = t => /^https?:\/\/[^/]+\/?$/.test(t)
   // strip a previously-injected relay-directory URL: a path-scoped http(s) URL
-  // that is NOT the link-preview unfurl wildcard. The default mirror, a custom
-  // directory, and the historical markdown pin all match this — so a stale one
-  // (markdown, or another instance's) is replaced rather than accumulated.
+  // that is NOT one of the any-host wildcards (link-preview unfurl,
+  // LanguageTool). The default mirror, a custom directory, and the historical
+  // markdown pin all match this — so a stale one (markdown, or another
+  // instance's) is replaced rather than accumulated.
   const isManagedRelay = t =>
-    /^https?:\/\/[^/]+\/.+/.test(t) && !t.includes('*:*/unfurl')
+    /^https?:\/\/[^/]+\/.+/.test(t) && !t.includes('*:*/')
   const relayPin = relayDirectoryPin(relayDirectory)
   return html.replace(/connect-src 'self'([^;"]*)/, (_m, body) => {
     const kept = body

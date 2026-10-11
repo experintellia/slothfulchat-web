@@ -305,10 +305,10 @@ test('normalizeRelayDirectory: rejects multi-token / injecting values', () => {
 
 test('patchCsp: relay-directory pin — default, custom, off; analytics coexists', () => {
   const base = `<meta content="default-src 'none';
-                   connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl https://old.example/stale.json" />`
+                   connect-src 'self' ws: wss: data: blob: http://*:*/unfurl https://*:*/unfurl http://*:*/v2/check https://*:*/v2/check https://old.example/stale.json" />`
   // unset → default mirror pinned, stale relay pin dropped, unfurl preserved
   const def = patchCsp(base, '', '')
-  ok(def.includes(`https://*:*/unfurl ${DEFAULT_RELAY_DIRECTORY_URL}"`))
+  ok(def.includes(`https://*:*/v2/check ${DEFAULT_RELAY_DIRECTORY_URL}"`))
   ok(!def.includes('old.example'))
   ok(def.includes('https://*:*/unfurl'))
 
@@ -320,7 +320,11 @@ test('patchCsp: relay-directory pin — default, custom, off; analytics coexists
   // off → no relay pin at all
   const off = patchCsp(base, '', 'off')
   ok(!off.includes('relays.json'))
-  ok(off.includes(`http://*:*/unfurl https://*:*/unfurl"`))
+  ok(
+    off.includes(
+      `http://*:*/unfurl https://*:*/unfurl http://*:*/v2/check https://*:*/v2/check"`
+    )
+  )
 
   // analytics origin and relay pin coexist
   const both = patchCsp(base, 'https://plausible.io', '')

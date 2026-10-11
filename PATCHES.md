@@ -424,6 +424,27 @@ exists:
   refreshed while it stays open). No menu when the contact lists no commands.
   `desktop/0084`
 
+- **LanguageTool spelling & grammar check** — the composer can check the draft
+  with [LanguageTool](https://languagetool.org), like the LibreOffice
+  extension or the Obsidian plugin. Needed because the desktop targets run
+  with Chromium spellcheck off (no local hunspell dictionary in Electron) and
+  a browser add-on can't reach into an Electron/Tauri window; plain `fetch`
+  works on all three. Settings → Experimental → Composer has the switch (off
+  by default: the draft leaves the device, outside the E2E encryption) and a
+  server dialog: languagetool.org (free, or Premium username + API key) or an
+  own server URL, with a "Check connection" test. Issues are underlined in a
+  transparent, click-through copy of the text laid over the textarea (a
+  textarea can't style parts of its own text), coloured like LanguageTool's
+  own UI (red spelling, blue style, amber the rest); clicking or arrowing into
+  one opens a suggestion card pointing at that word, with the issue category,
+  the explanation, replacement chips and Ignore. Results are carried across
+  edits by a prefix/suffix diff so underlines don't flicker while typing. The
+  profile bio and group descriptions get the same check (opt-in per field, so
+  the proxy-URL field never does). While it is on, those fields opt out of the
+  browser's spellcheck and the LanguageTool browser add-on; while it is off
+  they behave exactly as before. The CSPs allow `http(s)://*:*/v2/check` — any
+  host/port, that one path, like `/unfurl`. `desktop/0092`
+
 - **Emoji style picker** — an "Emoji style" picker under Settings →
   Appearance (browser edition only) chooses which emoji font the app renders
   with, previewing each set in its own face; the emoji-mart composer picker
