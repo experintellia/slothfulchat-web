@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 9 Jul 2026 22:22:17 +0000
-Subject: [PATCH 24/92] web-app: hide unknown git ref, add hover hint for
- commit message
+Subject: [PATCH] web-app: hide unknown git ref, add hover hint for commit
+ message
 
 The DC Desktop "git: unknown" line was always unknown for this fork's
 build (gatherBuildInfo can't read GIT_REF outside a normal checkout) and
@@ -17,7 +17,7 @@ native title tooltip on hover, instead of always displaying it inline.
  2 files changed, 18 insertions(+), 12 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index afbc941..5b13676 100644
+index afbc9418abab9b17a11ab5d9d9d493be2733167f..5b136768aa57d019e8fe5293452b9d5e09672cfd 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
 @@ -33,7 +33,8 @@ export default function About({ onClose }: DialogProps) {
@@ -64,7 +64,7 @@ index afbc941..5b13676 100644
                  </>
                )}
 diff --git a/packages/frontend/src/components/dialogs/About/styles.module.scss b/packages/frontend/src/components/dialogs/About/styles.module.scss
-index f3bd3a8..df20489 100644
+index f3bd3a89cf5fbb621f1f94a8ace0f1aabf62d310..df20489d11fa6bf91d2b12449a808c8d7f393a01 100644
 --- a/packages/frontend/src/components/dialogs/About/styles.module.scss
 +++ b/packages/frontend/src/components/dialogs/About/styles.module.scss
 @@ -14,5 +14,10 @@

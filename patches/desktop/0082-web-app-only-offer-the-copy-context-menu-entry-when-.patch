@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 20 Aug 2026 13:45:35 +0000
-Subject: [PATCH 82/92] web-app: only offer the copy context-menu entry when
- there is something to copy
+Subject: [PATCH] web-app: only offer the copy context-menu entry when there is
+ something to copy
 
 The context menu's copy entry ("Copy Text"/"Copy Selection"/"Copy Email")
 was gated on `text !== ''`. But the caller passes `text: text || undefined`,
@@ -27,7 +27,7 @@ dead code.
  1 file changed, 13 insertions(+), 7 deletions(-)
 
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 9ebcadb..ac2645c 100644
+index 9ebcadb657afb62f29da8273ae95226ab2e7df84..ac2645c545784c199532c61215a2c2962a075058 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -301,7 +301,7 @@ function buildContextMenu(

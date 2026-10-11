@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 10 Jul 2026 16:38:13 +0000
-Subject: [PATCH 34/92] web-app: suppress the native context menu where the app
- owns one
+Subject: [PATCH] web-app: suppress the native context menu where the app owns
+ one
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -36,7 +36,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  2 files changed, 14 insertions(+), 1 deletion(-)
 
 diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
-index 19fbda5..85f2b38 100644
+index 19fbda5c2cb99910c57b6000e39a610afa58c96b..85f2b388c7216502468b7400f1259ecd2578448f 100644
 --- a/packages/frontend/src/components/ChatView/ChatView.tsx
 +++ b/packages/frontend/src/components/ChatView/ChatView.tsx
 @@ -389,6 +389,12 @@ function AppIcon({ accountId, app }: { accountId: number; app: T.Message }) {
@@ -61,7 +61,7 @@ index 19fbda5..85f2b38 100644
      </Button>
    )
 diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
-index 60d6f43..5a93f1c 100644
+index 60d6f435258f8b4ca6a862bfd87c570f7d6e39dd..5a93f1c7d66db21edcd761d76795be7646d7a401 100644
 --- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
 +++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
 @@ -326,6 +326,14 @@ export function useChatContextMenu(): {

@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sun, 2 Aug 2026 10:39:42 +0000
-Subject: [PATCH 71/92] web-app: clamp long message text with CSS, add show
- more/less toggle
+Subject: [PATCH] web-app: clamp long message text with CSS, add show more/less
+ toggle
 
 Core no longer truncates long message text when writing to the database, so
 the full text now reaches the UI. Clamp it visually instead: CSS
@@ -28,7 +28,7 @@ this codebase is done.
  3 files changed, 53 insertions(+), 2 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 898bac5..1b737f4 100644
+index 898bac5ea6dfbd666105602e01690fa339f284f7..1b737f4b7ab3494330cef309d87ef40984b7130a 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -163,5 +163,11 @@
@@ -44,7 +44,7 @@ index 898bac5..1b737f4 100644
    }
  }
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index 40ecad8..d2c58bd 100644
+index 40ecad8c2cb27eb104ca3c43fa5b825cb5b98301..d2c58bdb11ceb847746b1eff26e8d67022c197e3 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
 @@ -131,6 +131,14 @@ $info-text-max-width: 400px;
@@ -73,7 +73,7 @@ index 40ecad8..d2c58bd 100644
  
      border: none;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 5920895..6cd9f5a 100644
+index 59208950f3fc4687836a364e31a03018db3bbff9..6cd9f5a16ac1e4148b1646deb4c182794c0ef224 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -549,6 +549,21 @@ function buildMultiselectContextMenu(

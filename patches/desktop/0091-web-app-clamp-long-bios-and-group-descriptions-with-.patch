@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 10 Oct 2026 16:53:02 +0000
-Subject: [PATCH 91/92] web-app: clamp long bios and group descriptions with a
- show more toggle
+Subject: [PATCH] web-app: clamp long bios and group descriptions with a show
+ more toggle
 
 A contact's bio and a group/channel description render through the shared
 ProfileInfoHeader (View Profile, View Group, mailing list profile). Bots
@@ -32,7 +32,7 @@ at the start of a line, which overflow: hidden would cut off (every
  2 files changed, 77 insertions(+), 2 deletions(-)
 
 diff --git a/packages/frontend/src/components/ProfileInfoHeader/index.tsx b/packages/frontend/src/components/ProfileInfoHeader/index.tsx
-index a8ed840..54e4127 100644
+index a8ed840bdc0c99058c1d93b5f1d2159b7743f024..54e41275e87714aa099d2ad4d344e2b48bfa2f3e 100644
 --- a/packages/frontend/src/components/ProfileInfoHeader/index.tsx
 +++ b/packages/frontend/src/components/ProfileInfoHeader/index.tsx
 @@ -1,7 +1,9 @@
@@ -112,7 +112,7 @@ index a8ed840..54e4127 100644
      </div>
    )
 diff --git a/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss b/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss
-index 98fb064..8bb65da 100644
+index 98fb06483b31ad0af52fe65a0725d7ee97108464..8bb65da0b9e9c2769f93421abd73f73f52663381 100644
 --- a/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss
 +++ b/packages/frontend/src/components/ProfileInfoHeader/styles.module.scss
 @@ -1,3 +1,5 @@

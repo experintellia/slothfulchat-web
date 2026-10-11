@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 7 Jul 2026 22:52:15 +0000
-Subject: [PATCH 10/35] wasm: HTTP via browser fetch()
+Subject: [PATCH] wasm: HTTP via browser fetch()
 
 Replace the http_wasm.rs stubs with a fetch()-backed implementation.
 The browser owns TLS/redirects/caching; requests are subject to CORS
@@ -15,7 +15,7 @@ reports back over a oneshot channel, like ws_tcp.
  3 files changed, 301 insertions(+), 23 deletions(-)
 
 diff --git a/Cargo.lock b/Cargo.lock
-index a5493ca..b840b94 100644
+index a5493caefab1568ff12f4015e0554f141b2b9f94..b840b9472df635f07906955cfcd2fedbe7199461 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -2,6 +2,18 @@
@@ -259,7 +259,7 @@ index a5493ca..b840b94 100644
  
  [[package]]
 diff --git a/Cargo.toml b/Cargo.toml
-index 489250a..adb8ad9 100644
+index 489250ad1d33f308df803e072b8e4d1b5d6f5593..adb8ad9fad566c162f12102afccba34d8b0b25c4 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -135,7 +135,9 @@ js-sys = "0.3"
@@ -273,7 +273,7 @@ index 489250a..adb8ad9 100644
  
  [dev-dependencies]
 diff --git a/src/net/http_wasm.rs b/src/net/http_wasm.rs
-index 2319619..24520a0 100644
+index 2319619dbe160dad075e7b7c6b1b0cdbe566655a..24520a04bf0f80491522b5c9f6d28049a80dba9e 100644
 --- a/src/net/http_wasm.rs
 +++ b/src/net/http_wasm.rs
 @@ -1,11 +1,15 @@

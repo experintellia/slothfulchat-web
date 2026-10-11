@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 8 Jul 2026 14:13:11 +0000
-Subject: [PATCH 12/92] web-app: fix camera selection in QR reader (Android
- Chromium)
+Subject: [PATCH] web-app: fix camera selection in QR reader (Android Chromium)
 
 Selecting a camera did nothing on multi-camera devices: the selected
 deviceId was passed as a soft constraint together with an always-on
@@ -25,7 +24,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  1 file changed, 32 insertions(+), 22 deletions(-)
 
 diff --git a/packages/frontend/src/components/QrReader/index.tsx b/packages/frontend/src/components/QrReader/index.tsx
-index 3b175a7..53dec8a 100644
+index 3b175a7dd8c829c63d22a26d0d1a228cf59fbe99..53dec8aac403794eb36ca25e9c12df6936d4df41 100644
 --- a/packages/frontend/src/components/QrReader/index.tsx
 +++ b/packages/frontend/src/components/QrReader/index.tsx
 @@ -93,24 +93,22 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(

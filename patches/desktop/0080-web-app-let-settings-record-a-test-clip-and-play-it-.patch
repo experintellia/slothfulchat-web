@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 13 Aug 2026 13:09:32 +0000
-Subject: [PATCH 80/92] web-app: let settings record a test clip and play it
- back
+Subject: [PATCH] web-app: let settings record a test clip and play it back
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -37,7 +36,7 @@ Refs #179
  create mode 100644 packages/frontend/src/components/Settings/MicrophoneTest.tsx
 
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index b2d9337..6573050 100644
+index b2d9337c0f9aa5b08f1c83ffb17244ca6250bf61..6573050374cfe174e923d97cde3f2ddb341f4677 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -1,10 +1,11 @@
@@ -80,7 +79,7 @@ index b2d9337..6573050 100644
        <DesktopSettingsSwitch
 diff --git a/packages/frontend/src/components/Settings/MicrophoneTest.tsx b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
 new file mode 100644
-index 0000000..7d974a7
+index 0000000000000000000000000000000000000000..7d974a795ea64f5efa463e93a210e0f6f4690c70
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
 @@ -0,0 +1,242 @@
@@ -327,7 +326,7 @@ index 0000000..7d974a7
 +  )
 +}
 diff --git a/packages/frontend/src/components/Settings/styles.module.scss b/packages/frontend/src/components/Settings/styles.module.scss
-index 49c82df..39c0fd2 100644
+index 49c82dfee9ddfb35525ccaf7ebdf7fb0ebad5c79..39c0fd204d1f09fe52365f0bdf40ed4fb2b6a308 100644
 --- a/packages/frontend/src/components/Settings/styles.module.scss
 +++ b/packages/frontend/src/components/Settings/styles.module.scss
 @@ -170,6 +170,14 @@ $settingsHeight: 40px;

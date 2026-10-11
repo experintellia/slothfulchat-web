@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 8 Aug 2026 12:23:06 +0000
-Subject: [PATCH 76/92] web-app: long-press context menus and touch reordering
- on phones
+Subject: [PATCH] web-app: long-press context menus and touch reordering on
+ phones
 
 Long-pressing a profile in the account sidebar did nothing on any
 phone, for different reasons per platform.
@@ -68,7 +68,7 @@ gesture via pointerType if that ever matters.
  create mode 100644 packages/frontend/src/utils/longPressContextMenu.ts
 
 diff --git a/packages/frontend/scss/_global.scss b/packages/frontend/scss/_global.scss
-index 3e827e0..becab06 100644
+index 3e827e0ca35a64947ac6c094f363501b2c295bc8..becab06553e9d8220a627e5826ae837807552752 100644
 --- a/packages/frontend/scss/_global.scss
 +++ b/packages/frontend/scss/_global.scss
 @@ -73,6 +73,15 @@ button {
@@ -88,7 +88,7 @@ index 3e827e0..becab06 100644
  button:disabled {
    cursor: default;
 diff --git a/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx b/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
-index d9acfd6..6c7efbe 100644
+index d9acfd6f5f3c10e933add98ff7b9eca6fc1a04bb..6c7efbec8b5c4ce45f058f4e1ce1a965bc0aa724 100644
 --- a/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
 +++ b/packages/frontend/src/components/AccountListSidebar/AccountListSidebar.tsx
 @@ -36,6 +36,7 @@ import AlertDialog from '../dialogs/AlertDialog'
@@ -127,7 +127,7 @@ index d9acfd6..6c7efbe 100644
                      [styles.dragging]: draggedAccountId === id,
                      [styles.dragOverTop]:
 diff --git a/packages/frontend/src/components/attachment/galleryAttachment.tsx b/packages/frontend/src/components/attachment/galleryAttachment.tsx
-index e0f5e84..ebcd063 100644
+index e0f5e8499c932ef778d50372eb0712983d77f584..ebcd063d2ca7fba1351a58a7adb9bcbef6886578 100644
 --- a/packages/frontend/src/components/attachment/galleryAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/galleryAttachment.tsx
 @@ -30,6 +30,7 @@ import { useRovingTabindex } from '../../contexts/RovingTabindex'
@@ -157,7 +157,7 @@ index e0f5e84..ebcd063 100644
              file ? ev => dragAttachmentOut(file, fileName, ev) : undefined
            }
 diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
-index ca9c68d..206d090 100644
+index ca9c68d6f9456cf32cd28a5bfedff75e568c508b..206d0909719b61961eef3fa12ac3fae2c9d0f5a2 100644
 --- a/packages/frontend/src/components/attachment/messageAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
 @@ -28,6 +28,7 @@ import { BackendRemote } from '../../backend-com'
@@ -187,7 +187,7 @@ index ca9c68d..206d090 100644
            title={fileMime || 'null'}
          >
 diff --git a/packages/frontend/src/hooks/useAccountDragAndDrop.ts b/packages/frontend/src/hooks/useAccountDragAndDrop.ts
-index 8b1d2ed..6de506a 100644
+index 8b1d2ed82b7f66cbd28da2757625fd3cb132bfac..6de506a67ff185e175047e3138d49874492ee9d4 100644
 --- a/packages/frontend/src/hooks/useAccountDragAndDrop.ts
 +++ b/packages/frontend/src/hooks/useAccountDragAndDrop.ts
 @@ -1,6 +1,7 @@
@@ -490,7 +490,7 @@ index 8b1d2ed..6de506a 100644
    }
  }
 diff --git a/packages/frontend/src/main.tsx b/packages/frontend/src/main.tsx
-index 4f23488..320a832 100644
+index 4f234885c95577cc694b710c97876fc939e2a071..320a832496192133dba02f9c2b3093bfc40e8fc8 100644
 --- a/packages/frontend/src/main.tsx
 +++ b/packages/frontend/src/main.tsx
 @@ -10,6 +10,7 @@ import {
@@ -511,7 +511,7 @@ index 4f23488..320a832 100644
        throw new Error('No element with ID root in the DOM. Cannot continue')
 diff --git a/packages/frontend/src/tests/accountOrder.test.ts b/packages/frontend/src/tests/accountOrder.test.ts
 new file mode 100644
-index 0000000..970aac8
+index 0000000000000000000000000000000000000000..970aac83e64a24737a22320315395ca262ac65a5
 --- /dev/null
 +++ b/packages/frontend/src/tests/accountOrder.test.ts
 @@ -0,0 +1,39 @@
@@ -556,7 +556,7 @@ index 0000000..970aac8
 +})
 diff --git a/packages/frontend/src/utils/accountOrder.ts b/packages/frontend/src/utils/accountOrder.ts
 new file mode 100644
-index 0000000..8b62aed
+index 0000000000000000000000000000000000000000..8b62aedb0e294addde7b0a260d9fcd993f3a5174
 --- /dev/null
 +++ b/packages/frontend/src/utils/accountOrder.ts
 @@ -0,0 +1,41 @@
@@ -603,7 +603,7 @@ index 0000000..8b62aed
 +}
 diff --git a/packages/frontend/src/utils/isCoarsePointer.ts b/packages/frontend/src/utils/isCoarsePointer.ts
 new file mode 100644
-index 0000000..d3f61ad
+index 0000000000000000000000000000000000000000..d3f61adbba1a7ca422116b916708d849a824bf48
 --- /dev/null
 +++ b/packages/frontend/src/utils/isCoarsePointer.ts
 @@ -0,0 +1,19 @@
@@ -628,7 +628,7 @@ index 0000000..d3f61ad
 +}
 diff --git a/packages/frontend/src/utils/longPressContextMenu.ts b/packages/frontend/src/utils/longPressContextMenu.ts
 new file mode 100644
-index 0000000..3c624f5
+index 0000000000000000000000000000000000000000..3c624f547156d4260c521698d3023e8b8ee5a7fb
 --- /dev/null
 +++ b/packages/frontend/src/utils/longPressContextMenu.ts
 @@ -0,0 +1,165 @@

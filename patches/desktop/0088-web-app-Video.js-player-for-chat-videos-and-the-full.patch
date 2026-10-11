@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 2 Oct 2026 20:02:09 +0000
-Subject: [PATCH 88/92] web-app: Video.js player for chat videos and the
- fullscreen viewer
+Subject: [PATCH] web-app: Video.js player for chat videos and the fullscreen
+ viewer
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -65,7 +65,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/components/attachment/VideoPlayer.tsx
 
 diff --git a/packages/frontend/package.json b/packages/frontend/package.json
-index b43f0ff..e143f94 100644
+index b43f0ff5989c90660b50aaa9dd81cabe66808f3b..e143f941e6a2157239c132fa17664f79068efb53 100644
 --- a/packages/frontend/package.json
 +++ b/packages/frontend/package.json
 @@ -30,6 +30,7 @@
@@ -77,7 +77,7 @@ index b43f0ff..e143f94 100644
      "debounce": "^1.2.1",
      "emoji-mart-awesome": "3.0.0",
 diff --git a/packages/frontend/scss/gallery/_attachment-view.scss b/packages/frontend/scss/gallery/_attachment-view.scss
-index ebe85c1..db7d860 100644
+index ebe85c19d598567ad2d8f7c9ef45ef3032d38aff..db7d8606d0cd2a9311a75e0f1808e531384c0e06 100644
 --- a/packages/frontend/scss/gallery/_attachment-view.scss
 +++ b/packages/frontend/scss/gallery/_attachment-view.scss
 @@ -15,6 +15,15 @@
@@ -117,7 +117,7 @@ index ebe85c1..db7d860 100644
 +  opacity: 0;
 +}
 diff --git a/packages/frontend/scss/message/_message-attachment.scss b/packages/frontend/scss/message/_message-attachment.scss
-index 7a3d610..af80545 100644
+index 7a3d6102211899cf15662e2d56194c6f570cfc56..af80545c82d46cc3a560b42ed559963a4e2be966 100644
 --- a/packages/frontend/scss/message/_message-attachment.scss
 +++ b/packages/frontend/scss/message/_message-attachment.scss
 @@ -60,11 +60,17 @@
@@ -140,7 +140,7 @@ index 7a3d610..af80545 100644
    }
  
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index 7b22e08..770ebc9 100644
+index 7b22e087bc4689a7753405916eb2e46d73b320ba..770ebc9da4dcb8abea2690093989532dccc3a436 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
 @@ -375,6 +375,37 @@ $info-text-max-width: 400px;
@@ -183,7 +183,7 @@ index 7b22e08..770ebc9 100644
      background-color: transparent !important;
 diff --git a/packages/frontend/src/components/attachment/VideoPlayer.tsx b/packages/frontend/src/components/attachment/VideoPlayer.tsx
 new file mode 100644
-index 0000000..35e6f8f
+index 0000000000000000000000000000000000000000..35e6f8fcffcb2e9c5f6b2baee7e00b48702f09bf
 --- /dev/null
 +++ b/packages/frontend/src/components/attachment/VideoPlayer.tsx
 @@ -0,0 +1,201 @@
@@ -389,7 +389,7 @@ index 0000000..35e6f8f
 +  )
 +}
 diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
-index 206d090..b5ab463 100644
+index 206d0909719b61961eef3fa12ac3fae2c9d0f5a2..b5ab46390466199b3d51cb1348e6a3a82178d87e 100644
 --- a/packages/frontend/src/components/attachment/messageAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
 @@ -19,6 +19,7 @@ import useDialog from '../../hooks/dialog/useDialog'
@@ -440,7 +440,7 @@ index 206d090..b5ab463 100644
        </div>
      )
 diff --git a/packages/frontend/src/components/dialogs/FullscreenMedia.tsx b/packages/frontend/src/components/dialogs/FullscreenMedia.tsx
-index 314ccf9..f9b8562 100644
+index 314ccf944d0009629fd65adbcfeab927cf9af554..f9b8562ae5fd8fe30d65d0c2a6dd11d377755b62 100644
 --- a/packages/frontend/src/components/dialogs/FullscreenMedia.tsx
 +++ b/packages/frontend/src/components/dialogs/FullscreenMedia.tsx
 @@ -19,6 +19,7 @@ import { useZoomKeyboardShortcuts } from '../../hooks/useZoomKeyboardShortcuts'
@@ -481,7 +481,7 @@ index 314ccf9..f9b8562 100644
        ev.stopPropagation()
        if (left) {
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index f46f8df..a02b2f6 100644
+index f46f8df2c0f5d5b2e84156b62ea8e478d77d9bcc..a02b2f6689d03f6132a25090bdd06cbdd31a2a6f 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -894,6 +894,11 @@ export default function Message(props: {
@@ -497,7 +497,7 @@ index f46f8df..a02b2f6 100644
          (e.target instanceof HTMLMediaElement ||
            // The experimental custom audio controls' seek bar
 diff --git a/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx b/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
-index 5ef1c94..b935b89 100644
+index 5ef1c94e0bbdc2035e16bcad31907c2ded5e6432..b935b896a99115e1e1aebae9f7e386f8f36e766c 100644
 --- a/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
 +++ b/packages/frontend/src/contexts/MediaPlayerMutexContext.tsx
 @@ -38,7 +38,8 @@ export type MediaPlayerMutexContextValue = {
@@ -511,7 +511,7 @@ index 5ef1c94..b935b89 100644
  // Clear a remembered voice-message position once it plays to its natural end —
  // on the singleton, so it fires even if the bubble unmounted mid-play (playback
 diff --git a/packages/frontend/src/keybindings.ts b/packages/frontend/src/keybindings.ts
-index f31674b..9056d70 100644
+index f31674ba7c84c613c77476703267ab48243a865b..9056d7092989296862fe5cc4b566a17d7dea62f6 100644
 --- a/packages/frontend/src/keybindings.ts
 +++ b/packages/frontend/src/keybindings.ts
 @@ -293,6 +293,8 @@ export function keyDownEvent2Action(
@@ -524,7 +524,7 @@ index f31674b..9056d70 100644
        ev.code !== 'Space' &&
        ev.code !== 'Enter' &&
 diff --git a/packages/frontend/src/types.d.ts b/packages/frontend/src/types.d.ts
-index 32664c4..87475e2 100644
+index 32664c4e0934124f52f7bcc6a97780c06c63fd6b..87475e285b6f2c2eb75047a03314fe16712fa01d 100644
 --- a/packages/frontend/src/types.d.ts
 +++ b/packages/frontend/src/types.d.ts
 @@ -15,6 +15,7 @@ declare module 'moment/min/locales'
@@ -536,7 +536,7 @@ index 32664c4..87475e2 100644
  type todo = any
  
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index 1817bc4..66c6ad8 100644
+index 1817bc4a8f9bc8d47fce91e003c700cb52560178..66c6ad8bcfb4c649ab9edeb4267ca696da7fa623 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
 @@ -156,6 +156,9 @@ importers:

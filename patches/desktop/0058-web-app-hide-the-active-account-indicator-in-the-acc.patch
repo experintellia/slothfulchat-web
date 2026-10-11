@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 21 Jul 2026 11:53:18 +0000
-Subject: [PATCH 58/92] web-app: hide the active-account indicator in the
- account drag image
+Subject: [PATCH] web-app: hide the active-account indicator in the account
+ drag image
 
 The browser's drag ghost is a snapshot of the dragged <li>, which
 includes the white active/hover indicator (the .avatar::before bar).
@@ -14,7 +14,7 @@ so the ghost shows just the avatar.
  1 file changed, 6 insertions(+)
 
 diff --git a/packages/frontend/src/hooks/useAccountDragAndDrop.ts b/packages/frontend/src/hooks/useAccountDragAndDrop.ts
-index e8aee41..8b1d2ed 100644
+index e8aee417186a76ef8173015eb9fb2a246d87e422..8b1d2ed82b7f66cbd28da2757625fd3cb132bfac 100644
 --- a/packages/frontend/src/hooks/useAccountDragAndDrop.ts
 +++ b/packages/frontend/src/hooks/useAccountDragAndDrop.ts
 @@ -31,6 +31,12 @@ export function useAccountDragAndDrop(

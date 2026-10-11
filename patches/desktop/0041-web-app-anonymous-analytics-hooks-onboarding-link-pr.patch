@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 11 Jul 2026 14:39:33 +0000
-Subject: [PATCH 41/92] web-app: anonymous analytics hooks (onboarding, link
- preview, community)
+Subject: [PATCH] web-app: anonymous analytics hooks (onboarding, link preview,
+ community)
 
 Call window.__slothfulTrack (set by our runtime.js in the browser edition):
 - WelcomeScreen: top-of-funnel 'welcome' onboarding step.
@@ -16,7 +16,7 @@ All no-op on other targets and when analytics is disabled.
  3 files changed, 16 insertions(+)
 
 diff --git a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
-index 144b0ce..5054c2d 100644
+index 144b0ce8389357a2ff1f0834987d0f9b05348704..5054c2da25930346bb3be57a4e681c7ae6c28a4e 100644
 --- a/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
 +++ b/packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
 @@ -206,6 +206,8 @@ export function useLinkPreview(params: Params): UseLinkPreview {
@@ -47,7 +47,7 @@ index 144b0ce..5054c2d 100644
        dismissedRef.current = url
      }
 diff --git a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
-index 259404e..5d4a2e9 100644
+index 259404e4354acd5696b1d287c30b67d3e61fe5c7..5d4a2e94b2595252e3bdec8aa6c7be8a422dbdd8 100644
 --- a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 +++ b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 @@ -49,6 +49,8 @@ function ChannelSourceItem({
@@ -60,7 +60,7 @@ index 259404e..5d4a2e9 100644
            onClose()
          }}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/index.tsx b/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
-index be9b1d3..0aa222f 100644
+index be9b1d300210260cd0c97338dc2a83d3a685f542..0aa222ffc3a10251eaefaea3553109f3aa02a2d7 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
 @@ -31,6 +31,14 @@ export default function WelcomeScreen({ selectedAccountId, ...props }: Props) {

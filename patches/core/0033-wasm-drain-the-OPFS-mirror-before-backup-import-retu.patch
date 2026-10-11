@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 11 Aug 2026 23:31:02 +0000
-Subject: [PATCH 33/35] wasm: drain the OPFS mirror before backup import
- returns
+Subject: [PATCH] wasm: drain the OPFS mirror before backup import returns
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -46,7 +45,7 @@ should stay upstreamable.
  1 file changed, 71 insertions(+), 2 deletions(-)
 
 diff --git a/src/imex.rs b/src/imex.rs
-index 4f2927f..531539d 100644
+index 4f2927fd1f795d6717192eb6c83e4815d5e1bba8..531539dda278128c90d53d57c38611330fc249af 100644
 --- a/src/imex.rs
 +++ b/src/imex.rs
 @@ -247,6 +247,36 @@ pub(crate) async fn import_backup_stream<R: tokio::io::AsyncRead + Unpin>(

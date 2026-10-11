@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 15 Jul 2026 02:25:41 +0000
-Subject: [PATCH 46/92] web-app: composer completion menu (:emoji: now,
- mentions later)
+Subject: [PATCH] web-app: composer completion menu (:emoji: now, mentions
+ later)
 
 A scrollable, keyboard-navigable menu that pops up over the composer and
 completes what you're typing. First consumer is :colon-emoji: completion;
@@ -45,7 +45,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
 diff --git a/packages/frontend/scss/composer/_completion-menu.scss b/packages/frontend/scss/composer/_completion-menu.scss
 new file mode 100644
-index 0000000..130faa3
+index 0000000000000000000000000000000000000000..130faa3a96a1fa28be595d4c61938552719d64b8
 --- /dev/null
 +++ b/packages/frontend/scss/composer/_completion-menu.scss
 @@ -0,0 +1,53 @@
@@ -103,7 +103,7 @@ index 0000000..130faa3
 +  }
 +}
 diff --git a/packages/frontend/scss/composer/_composer.scss b/packages/frontend/scss/composer/_composer.scss
-index aa19e1b..b24bd54 100644
+index aa19e1b74a45284a458355f866bbb7ab63f7341c..b24bd54a81b2f29f14c011e56068e34b76b100d3 100644
 --- a/packages/frontend/scss/composer/_composer.scss
 +++ b/packages/frontend/scss/composer/_composer.scss
 @@ -64,6 +64,10 @@
@@ -118,7 +118,7 @@ index aa19e1b..b24bd54 100644
      .attachment-button,
      .emoji-button {
 diff --git a/packages/frontend/scss/manifest.scss b/packages/frontend/scss/manifest.scss
-index e766317..b55d0eb 100644
+index e76631775c08af4a7b8e90c4e0620bd40e7c3b00..b55d0ebbc49ccae193d25e9e2fd25fe2cad931a9 100644
 --- a/packages/frontend/scss/manifest.scss
 +++ b/packages/frontend/scss/manifest.scss
 @@ -18,6 +18,7 @@
@@ -130,7 +130,7 @@ index e766317..b55d0eb 100644
  // Contact
  @use 'contact/_contact-list';
 diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
-index 0dca79d..1a8576c 100644
+index 0dca79d9ac7a293bd95e623d83e023863379ba11..1a8576cf31767c3658d95996c3542bd569671a12 100644
 --- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 +++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 @@ -4,12 +4,38 @@ import { ActionEmitter, KeybindAction } from '../../keybindings'
@@ -443,7 +443,7 @@ index 0dca79d..1a8576c 100644
      )
 diff --git a/packages/frontend/src/components/composer/completion/CompletionMenu.tsx b/packages/frontend/src/components/composer/completion/CompletionMenu.tsx
 new file mode 100644
-index 0000000..6af6517
+index 0000000000000000000000000000000000000000..6af6517db20558ee325da69b404e326f82f6d11d
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/completion/CompletionMenu.tsx
 @@ -0,0 +1,64 @@
@@ -513,7 +513,7 @@ index 0000000..6af6517
 +}
 diff --git a/packages/frontend/src/components/composer/completion/emojiProvider.ts b/packages/frontend/src/components/composer/completion/emojiProvider.ts
 new file mode 100644
-index 0000000..be07e66
+index 0000000000000000000000000000000000000000..be07e669b6ee8ed0e9ccfbded259f4ae9e5b1f77
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/completion/emojiProvider.ts
 @@ -0,0 +1,73 @@
@@ -592,7 +592,7 @@ index 0000000..be07e66
 +}
 diff --git a/packages/frontend/src/components/composer/completion/findActiveToken.ts b/packages/frontend/src/components/composer/completion/findActiveToken.ts
 new file mode 100644
-index 0000000..558df3b
+index 0000000000000000000000000000000000000000..558df3bdbac7e3962a306c27511571bc41cbbbbf
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/completion/findActiveToken.ts
 @@ -0,0 +1,31 @@
@@ -629,7 +629,7 @@ index 0000000..558df3b
 +}
 diff --git a/packages/frontend/src/components/composer/completion/types.ts b/packages/frontend/src/components/composer/completion/types.ts
 new file mode 100644
-index 0000000..7b6a2a3
+index 0000000000000000000000000000000000000000..7b6a2a35eb23dc48b1746a169b7a2aaeba7db744
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/completion/types.ts
 @@ -0,0 +1,31 @@
@@ -666,7 +666,7 @@ index 0000000..7b6a2a3
 +}
 diff --git a/packages/frontend/src/tests/completion.test.ts b/packages/frontend/src/tests/completion.test.ts
 new file mode 100644
-index 0000000..39a5f97
+index 0000000000000000000000000000000000000000..39a5f97568ae91d34ce987adedcf4a68bdd1b1a3
 --- /dev/null
 +++ b/packages/frontend/src/tests/completion.test.ts
 @@ -0,0 +1,65 @@

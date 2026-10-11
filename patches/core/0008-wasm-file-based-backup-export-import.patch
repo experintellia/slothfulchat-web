@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 7 Jul 2026 09:21:38 +0000
-Subject: [PATCH 08/35] wasm: file-based backup export/import
+Subject: [PATCH] wasm: file-based backup export/import
 
 - tar streaming via vendored astral-tokio-tar fork whose tokio dep is
   the tokio-wasm-shim facade (memfs-backed fs on wasm)
@@ -20,7 +20,7 @@ Subject: [PATCH 08/35] wasm: file-based backup export/import
  6 files changed, 180 insertions(+), 54 deletions(-)
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 04697b5..a5493ca 100644
+index 04697b57101667f994cfda5eb18d992c86ddb526..a5493caefab1568ff12f4015e0554f141b2b9f94 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -195,16 +195,14 @@ dependencies = [
@@ -97,7 +97,7 @@ index 04697b5..a5493ca 100644
  [[package]]
  name = "rayon"
 diff --git a/Cargo.toml b/Cargo.toml
-index 75281633..489250a 100644
+index 75281633f59d7b8dbea4f1853e76568213907db3..489250ad1d33f308df803e072b8e4d1b5d6f5593 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -105,8 +105,10 @@ uuid = { version = "1", features = ["serde", "v4"] }
@@ -119,7 +119,7 @@ index 75281633..489250a 100644
 +# fork that routes tokio through the tokio-wasm-shim facade so tar works on wasm32
 +astral-tokio-tar = { path = "../../vendor-crates/astral-tokio-tar" }
 diff --git a/src/imex.rs b/src/imex.rs
-index 3e901ed..7f44379 100644
+index 3e901edc21e5dd25058cf5135c58099d4c340ce9..7f44379ffade483787dba5cc8e506827dde62e86 100644
 --- a/src/imex.rs
 +++ b/src/imex.rs
 @@ -11,7 +11,6 @@
@@ -299,7 +299,7 @@ index 3e901ed..7f44379 100644
      context: &Context,
      dest: &Path,
 diff --git a/src/scheduler.rs b/src/scheduler.rs
-index 4c81caa..a2324ae 100644
+index 4c81caa194925c35d718face6a33df419ccd0666..a2324ae9a691272b74086f08c27de986f4d9bdfa 100644
 --- a/src/scheduler.rs
 +++ b/src/scheduler.rs
 @@ -753,25 +753,43 @@ pub(crate) async fn stop(self, context: &Context) {
@@ -362,7 +362,7 @@ index 4c81caa..a2324ae 100644
          // Abort tasks, then await them to ensure the `Future` is dropped.
          // Just aborting the task may keep resources such as `Context` clone
 diff --git a/src/sql.rs b/src/sql.rs
-index 9dab4c7..1789da4 100644
+index 9dab4c708cce5b8358111f3227fa790555e07883..1789da41c009fa3dcb036545f3b314d830542002 100644
 --- a/src/sql.rs
 +++ b/src/sql.rs
 @@ -123,6 +123,48 @@ pub(crate) async fn close(&self) {
@@ -415,7 +415,7 @@ index 9dab4c7..1789da4 100644
          let path_str = path
              .to_str()
 diff --git a/src/tools.rs b/src/tools.rs
-index 4640cef..f2984f7 100644
+index 4640cefd3c67da5f0367124320e0b7710aa3e0ef..f2984f7844f632da8f2a0a7c8236631464099615 100644
 --- a/src/tools.rs
 +++ b/src/tools.rs
 @@ -425,7 +425,11 @@ pub(crate) fn new(path: PathBuf) -> Self {

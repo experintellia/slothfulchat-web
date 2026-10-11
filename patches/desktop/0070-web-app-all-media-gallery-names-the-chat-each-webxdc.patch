@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 1 Aug 2026 23:18:44 +0000
-Subject: [PATCH 70/92] web-app: all-media gallery names the chat each webxdc
- app came from
+Subject: [PATCH] web-app: all-media gallery names the chat each webxdc app
+ came from
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -43,7 +43,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  3 files changed, 95 insertions(+), 8 deletions(-)
 
 diff --git a/packages/frontend/scss/gallery/_media-attachment.scss b/packages/frontend/scss/gallery/_media-attachment.scss
-index edb2bf6..bbe5f56 100644
+index edb2bf633c1108acc042a8ab4e9a28e3712e2f74..bbe5f56b0befee9c547a7832cb99bbab68af52c6 100644
 --- a/packages/frontend/scss/gallery/_media-attachment.scss
 +++ b/packages/frontend/scss/gallery/_media-attachment.scss
 @@ -204,23 +204,54 @@
@@ -133,7 +133,7 @@ index edb2bf6..bbe5f56 100644
      }
      .name {
 diff --git a/packages/frontend/src/components/Gallery.tsx b/packages/frontend/src/components/Gallery.tsx
-index f9c891d..f73a52f 100644
+index f9c891db1994597f88d454ab031933a6fb74e24e..f73a52fcd2d87777692d791962e23ac987796a28 100644
 --- a/packages/frontend/src/components/Gallery.tsx
 +++ b/packages/frontend/src/components/Gallery.tsx
 @@ -406,6 +406,7 @@ export default class Gallery extends Component<
@@ -193,7 +193,7 @@ index f9c891d..f73a52f 100644
      </div>
    )
 diff --git a/packages/frontend/src/components/attachment/galleryAttachment.tsx b/packages/frontend/src/components/attachment/galleryAttachment.tsx
-index 5e21ff9..e0f5e84 100644
+index 5e21ff935e1da44b04b0ae79d9a4df51489dfd76..e0f5e8499c932ef778d50372eb0712983d77f584 100644
 --- a/packages/frontend/src/components/attachment/galleryAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/galleryAttachment.tsx
 @@ -19,6 +19,7 @@ import useTranslationFunction from '../../hooks/useTranslationFunction'

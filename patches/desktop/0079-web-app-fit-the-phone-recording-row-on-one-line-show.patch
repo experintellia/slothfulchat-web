@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 13 Aug 2026 13:06:57 +0000
-Subject: [PATCH 79/92] web-app: fit the phone recording row on one line, show
- the meter again
+Subject: [PATCH] web-app: fit the phone recording row on one line, show the
+ meter again
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -31,7 +31,7 @@ the recording.
  1 file changed, 10 insertions(+), 16 deletions(-)
 
 diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
-index f0e2739..560a6dc 100644
+index f0e2739e307e43be7b00f782b0698b96aae2d996..560a6dc64f71e367ce02659ad6f03d123525dc0f 100644
 --- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
 +++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
 @@ -158,22 +158,6 @@

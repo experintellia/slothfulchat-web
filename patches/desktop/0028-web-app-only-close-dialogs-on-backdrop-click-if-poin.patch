@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 10 Jul 2026 01:41:15 +0000
-Subject: [PATCH 28/92] web-app: only close dialogs on backdrop click if
- pointerdown started there
+Subject: [PATCH] web-app: only close dialogs on backdrop click if pointerdown
+ started there
 
 The outside-click-to-close check ran on click, which fires wherever the
 pointer is released: starting a text selection inside a dialog input and
@@ -15,7 +15,7 @@ click land there, matching how native dialogs behave.
  1 file changed, 25 insertions(+), 8 deletions(-)
 
 diff --git a/packages/frontend/src/components/Dialog/Dialog.tsx b/packages/frontend/src/components/Dialog/Dialog.tsx
-index d89b22a..ebb9b23 100644
+index d89b22a191f39a8d82c8384c23a31809cf3e86e3..ebb9b23a6066f1f5b6dbb23f6e46d872705ac09b 100644
 --- a/packages/frontend/src/components/Dialog/Dialog.tsx
 +++ b/packages/frontend/src/components/Dialog/Dialog.tsx
 @@ -53,6 +53,29 @@ const Dialog = React.memo<Props>(

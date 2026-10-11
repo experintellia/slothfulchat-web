@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 1 Aug 2026 16:58:23 +0000
-Subject: [PATCH 23/35] pre-message: video thumbnails from the UI's poster
- sidecar
+Subject: [PATCH] pre-message: video thumbnails from the UI's poster sidecar
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -37,7 +36,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  4 files changed, 94 insertions(+), 5 deletions(-)
 
 diff --git a/src/blob.rs b/src/blob.rs
-index 5cf5c2e..cd0e145 100644
+index 5cf5c2e97741f5d76d646dfad53375c461573a24..cd0e145a1010cf610e29d7712335b2c2c0909230 100644
 --- a/src/blob.rs
 +++ b/src/blob.rs
 @@ -725,6 +725,20 @@ fn encode_img(
@@ -62,7 +61,7 @@ index 5cf5c2e..cd0e145 100644
  ///
  /// `bytes` may be any image the `image` crate can guess (in-memory, so it also works for the
 diff --git a/src/download/post_msg_metadata.rs b/src/download/post_msg_metadata.rs
-index 98bb696..8d46cd3 100644
+index 98bb696d6d95bcfed9fb3d8611448a61e121b4a9..8d46cd387aa93c0bf33b49a1df0e1268627415e3 100644
 --- a/src/download/post_msg_metadata.rs
 +++ b/src/download/post_msg_metadata.rs
 @@ -2,6 +2,7 @@
@@ -142,7 +141,7 @@ index 98bb696..8d46cd3 100644
      #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
      async fn test_build_from_corrupt_image_msg() -> Result<()> {
 diff --git a/src/sql.rs b/src/sql.rs
-index 12e507f..406d7c5 100644
+index 12e507fe970937ac0ce00b4151ac074d346ee193..406d7c56d5dccfa3c09b46a9b25405b37dc57285 100644
 --- a/src/sql.rs
 +++ b/src/sql.rs
 @@ -1087,7 +1087,11 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
@@ -159,7 +158,7 @@ index 12e507f..406d7c5 100644
                          continue;
                      }
 diff --git a/src/sql/sql_tests.rs b/src/sql/sql_tests.rs
-index 944932b..4914dd6 100644
+index 944932b948bc3e35ec187f058fd849dd5bb86a42..4914dd653e9131e2245bc7f45e9f5e3ed86a2f42 100644
 --- a/src/sql/sql_tests.rs
 +++ b/src/sql/sql_tests.rs
 @@ -1,5 +1,5 @@

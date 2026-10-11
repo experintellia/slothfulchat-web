@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 4 Aug 2026 22:04:50 +0000
-Subject: [PATCH 30/35] device-chat: drop the upstream welcome image
+Subject: [PATCH] device-chat: drop the upstream welcome image
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -19,7 +19,7 @@ of the jpg from the wasm bundle.
  1 file changed, 3 insertions(+), 9 deletions(-)
 
 diff --git a/src/stock_str.rs b/src/stock_str.rs
-index 75f87db..b71bcfb 100644
+index 75f87dbe81a9c42a32db9a6c0ca534680745ad89..b71bcfb2597ce68080599764c5341fe2949dbb45 100644
 --- a/src/stock_str.rs
 +++ b/src/stock_str.rs
 @@ -9,13 +9,11 @@

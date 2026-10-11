@@ -1,9 +1,9 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 6 Jul 2026 00:57:11 +0000
-Subject: [PATCH 04/35] =?UTF-8?q?wasm:=20fs=20shim=20integration=20?=
- =?UTF-8?q?=E2=80=94=20path=5Fexists,=20ReadDir=20stream,=20no=20lockfile,?=
- =?UTF-8?q?=20tar=20stubs?=
+Subject: [PATCH] =?UTF-8?q?wasm:=20fs=20shim=20integration=20=E2=80=94=20p?=
+ =?UTF-8?q?ath=5Fexists,=20ReadDir=20stream,=20no=20lockfile,=20tar=20stub?=
+ =?UTF-8?q?s?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -24,7 +24,7 @@ Content-Transfer-Encoding: 8bit
  5 files changed, 73 insertions(+), 17 deletions(-)
 
 diff --git a/src/accounts.rs b/src/accounts.rs
-index c825c2d..0a8e9f7 100644
+index c825c2d15e36ea530935a1235bfc020098cf6186..0a8e9f7378fc8bf57759ddeb741427a0b714356d 100644
 --- a/src/accounts.rs
 +++ b/src/accounts.rs
 @@ -87,12 +87,12 @@ fn get_id(&self) -> u32 {
@@ -104,7 +104,7 @@ index c825c2d..0a8e9f7 100644
              !self
                  .lock_task
 diff --git a/src/blob.rs b/src/blob.rs
-index a60ebe6..20267a9 100644
+index a60ebe65c7794f593a03d4d74bc75fd95e03ae74..20267a9133affe0b7636b2f156ec3eaf44c67406 100644
 --- a/src/blob.rs
 +++ b/src/blob.rs
 @@ -14,6 +14,7 @@
@@ -130,7 +130,7 @@ index a60ebe6..20267a9 100644
                  match entry {
                      Ok(entry) => Some(entry),
 diff --git a/src/context.rs b/src/context.rs
-index 3b94c4e..9f31e0c 100644
+index 3b94c4e0270b694c34d4289a60cb4ee021549c20..9f31e0caa4290d859e13c5a1eab5ee5b1735d2bf 100644
 --- a/src/context.rs
 +++ b/src/context.rs
 @@ -402,7 +402,7 @@ pub async fn new_closed(
@@ -143,7 +143,7 @@ index 3b94c4e..9f31e0c 100644
          }
          let context = Context::with_blobdir(
 diff --git a/src/imex.rs b/src/imex.rs
-index e93c98a..3e901ed 100644
+index e93c98a357822e28c44758cf22b333904efda31b..3e901edc21e5dd25058cf5135c58099d4c340ce9 100644
 --- a/src/imex.rs
 +++ b/src/imex.rs
 @@ -11,6 +11,7 @@
@@ -222,7 +222,7 @@ index e93c98a..3e901ed 100644
      context: &'a Context,
      temp_db_path: &Path,
 diff --git a/src/tools.rs b/src/tools.rs
-index cfa3178..bd1939b 100644
+index cfa31781aa45327b5dab30537b509f0df1be19a4..bd1939b4c690a17f65c6244184bf24a304b015f1 100644
 --- a/src/tools.rs
 +++ b/src/tools.rs
 @@ -355,7 +355,7 @@ pub(crate) async fn get_filebytes(context: &Context, path: &Path) -> Result<u64>

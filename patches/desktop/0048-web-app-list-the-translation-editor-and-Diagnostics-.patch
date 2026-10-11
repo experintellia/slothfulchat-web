@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 16 Jul 2026 02:54:51 +0000
-Subject: [PATCH 48/92] web-app: list the translation editor and Diagnostics
+Subject: [PATCH] web-app: list the translation editor and Diagnostics
  shortcuts in the keyboard shortcuts cheat sheet
 
 Ctrl/Cmd+Shift+L opens the in-app translation editor and Ctrl/Cmd+Shift+D the
@@ -14,7 +14,7 @@ these fork-only tools.
  1 file changed, 12 insertions(+)
 
 diff --git a/packages/frontend/src/components/KeyboardShortcutHint.tsx b/packages/frontend/src/components/KeyboardShortcutHint.tsx
-index 7da2c37..0d4a1ed 100644
+index 7da2c372066ec698726383e4e98a04637ee48304..0d4a1ed5c28f0181692c3a18f86c7a6bde7ea4aa 100644
 --- a/packages/frontend/src/components/KeyboardShortcutHint.tsx
 +++ b/packages/frontend/src/components/KeyboardShortcutHint.tsx
 @@ -202,6 +202,18 @@ export function getKeybindings(

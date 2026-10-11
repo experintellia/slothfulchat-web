@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 13 Aug 2026 13:06:22 +0000
-Subject: [PATCH 78/92] web-app: move "original audio" out of the recorder into
+Subject: [PATCH] web-app: move "original audio" out of the recorder into
  settings
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -38,7 +38,7 @@ Refs #179
  4 files changed, 6 insertions(+), 77 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 169a8e9..7405e25 100644
+index 169a8e92ab8e1fe50e67f1c3e93ca64444a99362..7405e250c46134efd5d81263cad5323ea1808e0a 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -146,18 +146,6 @@
@@ -61,7 +61,7 @@ index 169a8e9..7405e25 100644
      "message": "Select microphone"
    },
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-index 75b50db..0ff0d4b 100644
+index 75b50db0f20ee69e54a2b8cc203a274a4443c618..0ff0d4b258fb839965b8dc1e9e41898722a5cc6c 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 +++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 @@ -20,10 +20,8 @@ import { IconButton } from '../Icon'
@@ -158,7 +158,7 @@ index 75b50db..0ff0d4b 100644
            real flex group under 500px so cancel/ok wrap TOGETHER instead of
            stranding ok alone on the next line. */}
 diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
-index 0ae60f3..f0e2739 100644
+index 0ae60f3abb6c6a91dab293a8bb038c9e7ba09022..f0e2739e307e43be7b00f782b0698b96aae2d996 100644
 --- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
 +++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
 @@ -198,29 +198,6 @@
@@ -192,7 +192,7 @@ index 0ae60f3..f0e2739 100644
  // Anchored to `.lower-bar` (position: relative), like the completion menu.
  .holdHints {
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 3704aa8..b2d9337 100644
+index 3704aa87c23e40196d6e1da6186660f03b576fae..b2d9337c0f9aa5b08f1c83ffb17244ca6250bf61 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -80,6 +80,12 @@ export function ExperimentalFeatures() {

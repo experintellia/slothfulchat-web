@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 23 Jul 2026 01:48:04 +0000
-Subject: [PATCH 22/35] pre-message: real mimetype and thumbnail preview in
- metadata
+Subject: [PATCH] pre-message: real mimetype and thumbnail preview in metadata
 
 Extend the encrypted Chat-Post-Message-Metadata header so a large-attachment
 placeholder can show a real MIME type and a small preview before the
@@ -53,7 +52,7 @@ Claude-Session: https://claude.ai/code/session_01H5HKJjKcW28vSxtrox5dcV
  9 files changed, 553 insertions(+), 24 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
-index 2b37fb5..b589893 100644
+index 2b37fb507df66daf8a8e86fd5f0b9a196c055ba2..b589893e4125e58636ba3d61eec6ee2002a45a72 100644
 --- a/deltachat-jsonrpc/src/api/types/message.rs
 +++ b/deltachat-jsonrpc/src/api/types/message.rs
 @@ -48,6 +48,10 @@ pub struct MessageObject {
@@ -76,7 +75,7 @@ index 2b37fb5..b589893 100644
                  .get_state()
                  .to_u32()
 diff --git a/src/blob.rs b/src/blob.rs
-index a0c4e15..5cf5c2e 100644
+index a0c4e15dd1a75d0d85e10f01e3245b0f28f38a04..5cf5c2e97741f5d76d646dfad53375c461573a24 100644
 --- a/src/blob.rs
 +++ b/src/blob.rs
 @@ -725,6 +725,43 @@ fn encode_img(
@@ -124,7 +123,7 @@ index a0c4e15..5cf5c2e 100644
      context: &Context,
      img: &DynamicImage,
 diff --git a/src/download/post_msg_metadata.rs b/src/download/post_msg_metadata.rs
-index 705a71a..98bb696 100644
+index 705a71a710406adda2feef9d169210e36bcdee94..98bb696d6d95bcfed9fb3d8611448a61e121b4a9 100644
 --- a/src/download/post_msg_metadata.rs
 +++ b/src/download/post_msg_metadata.rs
 @@ -23,6 +23,12 @@ pub struct PostMsgMetadata {
@@ -608,7 +607,7 @@ index 705a71a..98bb696 100644
          );
  
 diff --git a/src/imap.rs b/src/imap.rs
-index d780f9f..a84ef69 100644
+index d780f9fa88033ea6c4921413791d72f751247b2c..a84ef699673d945d85b28b6e80390c501b1f6521 100644
 --- a/src/imap.rs
 +++ b/src/imap.rs
 @@ -1276,7 +1276,10 @@ pub(crate) async fn fetch_many_msgs(
@@ -624,7 +623,7 @@ index d780f9f..a84ef69 100644
                  // If there was an error receiving the message, show a device message:
                  let received_msg = match res {
 diff --git a/src/message.rs b/src/message.rs
-index 677b75e..4bbd12b 100644
+index 677b75e698dce1f16a44ff6af0df937d4ed743cd..4bbd12ba4ac6373781b0c22330a49da2a87ce6ac 100644
 --- a/src/message.rs
 +++ b/src/message.rs
 @@ -899,8 +899,7 @@ pub async fn get_filebytes(&self, context: &Context) -> Result<Option<u64>> {
@@ -638,7 +637,7 @@ index 677b75e..4bbd12b 100644
              return self
                  .param
 diff --git a/src/receive_imf.rs b/src/receive_imf.rs
-index c91cdea..6e51913 100644
+index c91cdea22bbfffb0eed178ff687f5f582e625124..6e51913ca8ecd63564379ac553d4a68736e3b9ec 100644
 --- a/src/receive_imf.rs
 +++ b/src/receive_imf.rs
 @@ -2165,18 +2165,25 @@ async fn add_parts(
@@ -673,7 +672,7 @@ index c91cdea..6e51913 100644
              .sql
              .call_write(|conn| {
 diff --git a/src/sql.rs b/src/sql.rs
-index 5c6ec77..12e507f 100644
+index 5c6ec77b05eacc83815cd0da56cdbf24e4bb5547..12e507fe970937ac0ce00b4151ac074d346ee193 100644
 --- a/src/sql.rs
 +++ b/src/sql.rs
 @@ -972,7 +972,9 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
@@ -688,7 +687,7 @@ index 5c6ec77..12e507f 100644
      )
      .await?;
 diff --git a/src/tests/pre_messages/receiving.rs b/src/tests/pre_messages/receiving.rs
-index 7a2586e..0f612af 100644
+index 7a2586e2cb9759dad0009edff1d4364c8716d86a..0f612af7571cc7b2d82add83b84222fd6fe3e398 100644
 --- a/src/tests/pre_messages/receiving.rs
 +++ b/src/tests/pre_messages/receiving.rs
 @@ -1,4 +1,6 @@
@@ -839,7 +838,7 @@ index 7a2586e..0f612af 100644
 +    Ok(())
 +}
 diff --git a/src/tests/pre_messages/util.rs b/src/tests/pre_messages/util.rs
-index 3e26384..d9f7319 100644
+index 3e26384c0d109f8f2309229729c55828836e0a4f..d9f7319bc98ca1c98c54d6bdb7ef9767f97bffe4 100644
 --- a/src/tests/pre_messages/util.rs
 +++ b/src/tests/pre_messages/util.rs
 @@ -63,7 +63,17 @@ pub async fn send_large_image_message<'a>(

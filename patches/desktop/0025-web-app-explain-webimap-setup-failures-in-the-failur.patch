@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 10 Jul 2026 22:57:40 +0000
-Subject: [PATCH 25/92] web-app: explain webimap setup failures in the failure
- alert, not up front
+Subject: [PATCH] web-app: explain webimap setup failures in the failure alert,
+ not up front
 
 Replaces the pre-flight reachability/CORS probe in the madmail-server
 dialog. The probe tried to disambiguate a failed cross-origin fetch
@@ -27,7 +27,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  1 file changed, 29 insertions(+)
 
 diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
-index 15785bb..1aabccd 100644
+index 15785bbc70f43637eef9e9cb99faed30cd0748f9..1aabccd89bf8fb50ef85686a95843fe56c75c2c4 100644
 --- a/packages/frontend/src/hooks/useInstantOnboarding.ts
 +++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
 @@ -138,6 +138,35 @@ export default function useInstantOnboarding(): InstantOnboarding {

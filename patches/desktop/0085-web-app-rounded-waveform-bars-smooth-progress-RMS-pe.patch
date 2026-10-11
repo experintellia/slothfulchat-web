@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 2 Oct 2026 00:44:47 +0000
-Subject: [PATCH 85/92] web-app: rounded waveform bars, smooth progress, RMS
- peaks
+Subject: [PATCH] web-app: rounded waveform bars, smooth progress, RMS peaks
 
 Loud voice messages drew as solid blocks: bucketPeaks kept the loudest
 sample per bucket (max-abs), and a phone mic with automatic gain touches
@@ -32,7 +31,7 @@ add a rAF loop while playing if the sweep looks steppy.
  4 files changed, 112 insertions(+), 27 deletions(-)
 
 diff --git a/packages/frontend/src/components/AudioPlayer/Waveform.tsx b/packages/frontend/src/components/AudioPlayer/Waveform.tsx
-index 15aa4be..17f15a2 100644
+index 15aa4bee0ebb61bdfed7f2c372293ef88248ad18..17f15a2a18f87804656687258f5e2c0398891dd4 100644
 --- a/packages/frontend/src/components/AudioPlayer/Waveform.tsx
 +++ b/packages/frontend/src/components/AudioPlayer/Waveform.tsx
 @@ -3,15 +3,21 @@ import React, { useEffect, useRef } from 'react'
@@ -124,7 +123,7 @@ index 15aa4be..17f15a2 100644
  
  /** Canvas that redraws `peaks` at `progress` whenever either changes. */
 diff --git a/packages/frontend/src/components/AudioPlayer/peaks.ts b/packages/frontend/src/components/AudioPlayer/peaks.ts
-index 47fdfae..94bd48b 100644
+index 47fdfaee22bc91637e89ccbf18703b170065ea20..94bd48b1cd3484967a23f4ce33c4deeb05ebf8a6 100644
 --- a/packages/frontend/src/components/AudioPlayer/peaks.ts
 +++ b/packages/frontend/src/components/AudioPlayer/peaks.ts
 @@ -3,10 +3,10 @@
@@ -150,7 +149,7 @@ index 47fdfae..94bd48b 100644
  const CACHE_MAX = 100
  
 diff --git a/packages/frontend/src/components/AudioPlayer/utils.ts b/packages/frontend/src/components/AudioPlayer/utils.ts
-index 0aae0ee..23c52c6 100644
+index 0aae0ee0c8698f61d3335538005bb4e32f6cb283..23c52c6774d5f3e7ff062188c22703e40cf0449c 100644
 --- a/packages/frontend/src/components/AudioPlayer/utils.ts
 +++ b/packages/frontend/src/components/AudioPlayer/utils.ts
 @@ -24,8 +24,11 @@ export function nextPlaybackRate(rate: number): number {
@@ -198,7 +197,7 @@ index 0aae0ee..23c52c6 100644
    return peaks
  }
 diff --git a/packages/frontend/src/tests/audioPlayer.test.ts b/packages/frontend/src/tests/audioPlayer.test.ts
-index 270eb02..34906c8 100644
+index 270eb0265c5ebcd988e857b9939e0f8521efc293..34906c8dc7e86ac43e81362bf64c5dd58f28efb4 100644
 --- a/packages/frontend/src/tests/audioPlayer.test.ts
 +++ b/packages/frontend/src/tests/audioPlayer.test.ts
 @@ -175,19 +175,56 @@ describe('GlobalVoiceMessagePlayer / clampSeek', () => {

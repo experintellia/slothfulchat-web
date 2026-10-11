@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 23 Jul 2026 02:27:26 +0000
-Subject: [PATCH 20/35] event: add DownloadProgress for chunked message
- downloads
+Subject: [PATCH] event: add DownloadProgress for chunked message downloads
 
 Reports permille progress (1..=999, 1000 = done) while a large message
 is being downloaded from the server in chunks. Modeled on ImexProgress.
@@ -16,7 +15,7 @@ Claude-Session: https://claude.ai/code/session_019DhvV6wm3aXyrgHHXaefxw
  3 files changed, 33 insertions(+), 2 deletions(-)
 
 diff --git a/deltachat-ffi/src/lib.rs b/deltachat-ffi/src/lib.rs
-index abea9eb..adcf7f7 100644
+index abea9ebbafc35051ec80a6fef9114e38e8194e1f..adcf7f75cdfef75a3f416b9295dcaba74ed03b4e 100644
 --- a/deltachat-ffi/src/lib.rs
 +++ b/deltachat-ffi/src/lib.rs
 @@ -537,6 +537,7 @@ fn spawn_configure(ctx: Context) {
@@ -58,7 +57,7 @@ index abea9eb..adcf7f7 100644
          EventType::IncomingCall {
              place_call_info, ..
 diff --git a/deltachat-jsonrpc/src/api/types/events.rs b/deltachat-jsonrpc/src/api/types/events.rs
-index 64ab1a3..16f4ee7 100644
+index 64ab1a3a42b4e34b74bf4a7e0eff3e7d363df22d..16f4ee7d8691108f78b2d281a354de07cf3604c4 100644
 --- a/deltachat-jsonrpc/src/api/types/events.rs
 +++ b/deltachat-jsonrpc/src/api/types/events.rs
 @@ -296,6 +296,16 @@ pub enum EventType {
@@ -90,7 +89,7 @@ index 64ab1a3..16f4ee7 100644
                  path: path.to_str().unwrap_or_default().to_owned(),
              },
 diff --git a/src/events/payload.rs b/src/events/payload.rs
-index 8300f02..8e88e92 100644
+index 8300f02b1c8a0001b2ebe581a9c4d10640829702..8e88e92a78533713013d15e676b87732b5ebe10b 100644
 --- a/src/events/payload.rs
 +++ b/src/events/payload.rs
 @@ -265,6 +265,17 @@ pub enum EventType {

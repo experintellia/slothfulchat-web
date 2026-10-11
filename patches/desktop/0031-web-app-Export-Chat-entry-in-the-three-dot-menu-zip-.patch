@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 10 Jul 2026 01:05:26 +0000
-Subject: [PATCH 31/92] web-app: Export Chat entry in the three-dot menu (zip
- built fork-side)
+Subject: [PATCH] web-app: Export Chat entry in the three-dot menu (zip built
+ fork-side)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -30,7 +30,7 @@ strings live in _untranslated_en.json.
  create mode 100644 packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 8d24c02..64a2fb6 100644
+index 8d24c02effd657d311521ff9122bea22c7ca273c..64a2fb6549ce13a71dce0e67a403441bd9c12a10 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -1,4 +1,10 @@
@@ -45,7 +45,7 @@ index 8d24c02..64a2fb6 100644
      "message": "Type"
    },
 diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
-index ec54fd2..60d6f43 100644
+index ec54fd20028c6eb6967a8e9012df0e0f68d7f6db..60d6f435258f8b4ca6a862bfd87c570f7d6e39dd 100644
 --- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
 +++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
 @@ -15,6 +15,7 @@ import useOpenViewGroupDialog from '../../hooks/dialog/useOpenViewGroupDialog'
@@ -82,7 +82,7 @@ index ec54fd2..60d6f43 100644
          (chatListItems.some(c => c.freshMessageCounter > 0)
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 new file mode 100644
-index 0000000..c8e871d
+index 0000000000000000000000000000000000000000..c8e871d33f56b8930ac217eb64b72da1469d00fa
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 @@ -0,0 +1,113 @@

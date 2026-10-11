@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 10 Oct 2026 18:16:12 +0000
-Subject: [PATCH 92/92] web-app: LanguageTool spelling & grammar check in the
+Subject: [PATCH] web-app: LanguageTool spelling & grammar check in the
  composer
 
 The desktop targets ship with Chromium spellcheck off (Electron has no
@@ -114,7 +114,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/packages/frontend/scss/composer/_language-tool.scss b/packages/frontend/scss/composer/_language-tool.scss
 new file mode 100644
-index 0000000..729f811
+index 0000000000000000000000000000000000000000..729f8113c09b74bca5ecf628e1ed17d91727f139
 --- /dev/null
 +++ b/packages/frontend/scss/composer/_language-tool.scss
 @@ -0,0 +1,153 @@
@@ -272,7 +272,7 @@ index 0000000..729f811
 +  }
 +}
 diff --git a/packages/frontend/scss/manifest.scss b/packages/frontend/scss/manifest.scss
-index 99294f1..14f5141 100644
+index 99294f1a2d241d0a44587307984a445148ae2f66..14f5141368e95609f1f19de894af5738f2b183dc 100644
 --- a/packages/frontend/scss/manifest.scss
 +++ b/packages/frontend/scss/manifest.scss
 @@ -19,6 +19,7 @@
@@ -284,7 +284,7 @@ index 99294f1..14f5141 100644
  // Contact
  @use 'contact/_contact-list';
 diff --git a/packages/frontend/src/components/Login-Styles.tsx b/packages/frontend/src/components/Login-Styles.tsx
-index 2103c66..2bdab54 100644
+index 2103c668a83b3d77c0f073fc40d2af952996b848..2bdab54c834fde4415eb2d43bd59cb49ccb3d374 100644
 --- a/packages/frontend/src/components/Login-Styles.tsx
 +++ b/packages/frontend/src/components/Login-Styles.tsx
 @@ -1,4 +1,8 @@
@@ -334,7 +334,7 @@ index 2103c66..2bdab54 100644
      )
    }
 diff --git a/packages/frontend/src/components/Settings/EmojiSetSelector.tsx b/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
-index 0d7da17..4083945 100644
+index 0d7da17eae0be4d2522429206e89050fdda47302..4083945fe1ee6813d7513712c79ee1d167223f5d 100644
 --- a/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
 +++ b/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
 @@ -1,7 +1,7 @@
@@ -363,7 +363,7 @@ index 0d7da17..4083945 100644
        <div
          role='radiogroup'
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 6573050..86b1ca0 100644
+index 6573050374cfe174e923d97cde3f2ddb341f4677..86b1ca0535c636438baa1436cd00e8abbab1a512 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -26,6 +26,9 @@ import { getLogger } from '@deltachat-desktop/shared/logger'
@@ -404,7 +404,7 @@ index 6573050..86b1ca0 100644
          label='Record without noise filtering'
 diff --git a/packages/frontend/src/components/Settings/LanguageToolDialog.tsx b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
 new file mode 100644
-index 0000000..7080eae
+index 0000000000000000000000000000000000000000..7080eae95096de6e6c9b44710b3853de1bc375f1
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
 @@ -0,0 +1,158 @@
@@ -567,7 +567,7 @@ index 0000000..7080eae
 +  )
 +}
 diff --git a/packages/frontend/src/components/Settings/SettingsSelector.tsx b/packages/frontend/src/components/Settings/SettingsSelector.tsx
-index 3fdd38d..3862fd5 100644
+index 3fdd38db2f5821d6e93b185312649bffab9b6d3c..3862fd5e36fb50366a237c6fb64ad60105c163e4 100644
 --- a/packages/frontend/src/components/Settings/SettingsSelector.tsx
 +++ b/packages/frontend/src/components/Settings/SettingsSelector.tsx
 @@ -4,15 +4,18 @@ import type { PropsWithChildren } from 'react'
@@ -603,7 +603,7 @@ index 3fdd38d..3862fd5 100644
            <div className={styles.settingsRowDescription}>{description}</div>
          )}
 diff --git a/packages/frontend/src/components/Settings/SettingsSwitch.tsx b/packages/frontend/src/components/Settings/SettingsSwitch.tsx
-index d71b3a3..5589023 100644
+index d71b3a31c6c2956183367044026b123abc5d4f2a..55890232e243be4f47b3987bc463cba875f48daa 100644
 --- a/packages/frontend/src/components/Settings/SettingsSwitch.tsx
 +++ b/packages/frontend/src/components/Settings/SettingsSwitch.tsx
 @@ -15,6 +15,20 @@ type Props = {
@@ -646,7 +646,7 @@ index d71b3a3..5589023 100644
          {description && (
            <div
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index 58d5982..c747e1a 100644
+index 58d59822b279829edd0634729a7eacedd985c800..c747e1a9a6446bec14577ffc6ea0d7e79ce84719 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
 @@ -13,6 +13,7 @@ import { extension } from 'mime-types'
@@ -683,7 +683,7 @@ index 58d5982..c747e1a 100644
                  sendMessageOrEditRequest={
                    messageEditing.doSendEditRequest ?? (() => {})
 diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
-index b561f5d..7a0cc38 100644
+index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..7a0cc38bc866a8634afd845ab2169bf4ee058b4d 100644
 --- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 +++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 @@ -11,6 +11,8 @@ import {
@@ -730,7 +730,7 @@ index b561f5d..7a0cc38 100644
        </I18nContext.Consumer>
 diff --git a/packages/frontend/src/components/composer/LanguageTool.tsx b/packages/frontend/src/components/composer/LanguageTool.tsx
 new file mode 100644
-index 0000000..18d8e03
+index 0000000000000000000000000000000000000000..18d8e03885c38e9fe397443581117c96bcdb05bf
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/LanguageTool.tsx
 @@ -0,0 +1,324 @@
@@ -1060,7 +1060,7 @@ index 0000000..18d8e03
 +}
 diff --git a/packages/frontend/src/components/composer/languageToolCheck.ts b/packages/frontend/src/components/composer/languageToolCheck.ts
 new file mode 100644
-index 0000000..5fb49a6
+index 0000000000000000000000000000000000000000..5fb49a601d46b777c4e8c9b1f6f01bd69b0df1aa
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/languageToolCheck.ts
 @@ -0,0 +1,141 @@
@@ -1206,7 +1206,7 @@ index 0000000..5fb49a6
 +  return kept
 +}
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index 4fba516..1301478 100644
+index 4fba516699801e2862dfcf1337dc2ddeb0dfcb6d..1301478dcd4465dd48c6aec5680516f2af37e879 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 @@ -1047,6 +1047,7 @@ export const ChatSettingsSetNameAndProfileImage = ({
@@ -1218,7 +1218,7 @@ index 4fba516..1301478 100644
            onChange={ev => setDescription(ev.target.value)}
          />
 diff --git a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
-index 505a87f..b0b7e2d 100644
+index 505a87fa28180cc40aa6fe9ddc41944e7b7a48da..b0b7e2d6518f4ae9d1791bc309a79c8912c05f28 100644
 --- a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 +++ b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 @@ -121,6 +121,7 @@ function EditProfileDialogInner({
@@ -1230,7 +1230,7 @@ index 505a87f..b0b7e2d 100644
                onChange={(
                  event: React.FormEvent<HTMLElement> &
 diff --git a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
-index 6a7ad0d..bb45855 100644
+index 6a7ad0dbfee72213041c44151dd7a210eeefbbf3..bb45855f8b6c471a47526379e379ead7bfe411df 100644
 --- a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
 +++ b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
 @@ -718,6 +718,7 @@ export function EditGroupNameDialog({
@@ -1243,7 +1243,7 @@ index 6a7ad0d..bb45855 100644
                  event: React.FormEvent<HTMLElement> &
 diff --git a/packages/frontend/src/tests/languageTool.test.ts b/packages/frontend/src/tests/languageTool.test.ts
 new file mode 100644
-index 0000000..13225c2
+index 0000000000000000000000000000000000000000..13225c2a28043738a2abe741bb66ab0740f14225
 --- /dev/null
 +++ b/packages/frontend/src/tests/languageTool.test.ts
 @@ -0,0 +1,89 @@
@@ -1337,7 +1337,7 @@ index 0000000..13225c2
 +  })
 +})
 diff --git a/packages/frontend/static/main.html b/packages/frontend/static/main.html
-index b3b3a9f..ee6a895 100644
+index b3b3a9f095b8b58b9405702e8fee122bf1490483..ee6a895360aaf45794f38a01ecf39f26195b7fb7 100644
 --- a/packages/frontend/static/main.html
 +++ b/packages/frontend/static/main.html
 @@ -8,6 +8,9 @@
@@ -1360,7 +1360,7 @@ index b3b3a9f..ee6a895 100644
      <link rel="stylesheet" href="./fonts/fonts.css" />
      <link rel="stylesheet" href="./main.css" />
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 4c65163..2f121aa 100644
+index 4c6516306c169bbbbc1591731a48ee9833f5a209..2f121aa26dfb282495600a44f52ec8551b5d812e 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -47,6 +47,13 @@ export interface DesktopSettingsType {
@@ -1378,7 +1378,7 @@ index 4c65163..2f121aa 100644
    voiceMessageMediaSessionDetails: boolean
    /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Toggled from the recorder UI, applies to the next recording. */
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index fa8889f..7025258 100644
+index fa8889f2f2fc98e0bc4ef3ebb5b5741b1132f5c0..7025258e9a39795143d51e2b91d18f743625c9b3 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -18,6 +18,10 @@ export function getDefaultState(): DesktopSettingsType {
@@ -1393,7 +1393,7 @@ index fa8889f..7025258 100644
      voiceRecordingOriginalAudio: false,
      voiceRecordingDeviceId: undefined,
 diff --git a/packages/target-tauri/src-tauri/tauri.conf.json5 b/packages/target-tauri/src-tauri/tauri.conf.json5
-index 5219048..74a1098 100644
+index 5219048e346ad8bfb79cf157d66e35ceccd28f65..74a1098376d82541978fcdd91c331226aa721ca9 100644
 --- a/packages/target-tauri/src-tauri/tauri.conf.json5
 +++ b/packages/target-tauri/src-tauri/tauri.conf.json5
 @@ -14,7 +14,8 @@

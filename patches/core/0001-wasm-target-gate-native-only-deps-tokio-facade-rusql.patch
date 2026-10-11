@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 6 Jul 2026 00:57:11 +0000
-Subject: [PATCH 01/35] wasm: target-gate native-only deps, tokio facade,
- rusqlite 0.40
+Subject: [PATCH] wasm: target-gate native-only deps, tokio facade, rusqlite
+ 0.40
 
 - tokio -> tokio-wasm-shim facade (real tokio on native, browser shims on
   wasm32); Cargo requires one canonical source per dep name across targets
@@ -20,7 +20,7 @@ Subject: [PATCH 01/35] wasm: target-gate native-only deps, tokio facade,
  3 files changed, 40 insertions(+), 17 deletions(-)
 
 diff --git a/.cargo/config.toml b/.cargo/config.toml
-index e2e5fa9..e443b86 100644
+index e2e5fa90e2dc79647fe8aa162eda34b641296071..e443b86fd7affea124a97b64d21f5d9113d4ccda 100644
 --- a/.cargo/config.toml
 +++ b/.cargo/config.toml
 @@ -9,3 +9,6 @@
@@ -31,7 +31,7 @@ index e2e5fa9..e443b86 100644
 +[target.wasm32-unknown-unknown]
 +rustflags = ["--cfg", 'getrandom_backend="wasm_js"']
 diff --git a/Cargo.toml b/Cargo.toml
-index e4eba3b..0a75276 100644
+index e4eba3b68d3fb480bf4e0c892a487671fc732c44..0a752768c8f793d89a7a72bd15fae533c72f7918 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -45,9 +45,7 @@ anyhow = { workspace = true }
@@ -150,7 +150,7 @@ index e4eba3b..0a75276 100644
 +# path is relative to the build/ worktree in the slothfulchat-web repo
 +async-imap = { path = "../../vendor-crates/async-imap" }
 diff --git a/deltachat-jsonrpc/Cargo.toml b/deltachat-jsonrpc/Cargo.toml
-index 7dd46bc..a41392a 100644
+index 7dd46bcb5227907a23ced506497d29219c64fe2f..a41392aa92cf1545e2610c83fac2fbe7f8b73304 100644
 --- a/deltachat-jsonrpc/Cargo.toml
 +++ b/deltachat-jsonrpc/Cargo.toml
 @@ -17,12 +17,13 @@ async-channel = { workspace = true }

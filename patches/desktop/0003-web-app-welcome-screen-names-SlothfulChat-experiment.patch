@@ -1,15 +1,15 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 7 Jul 2026 17:21:57 +0000
-Subject: [PATCH 03/92] web-app: welcome screen names SlothfulChat +
- experimental note + source link
+Subject: [PATCH] web-app: welcome screen names SlothfulChat + experimental
+ note + source link
 
 ---
  .../screens/WelcomeScreen/OnboardingScreen.tsx    | 15 +++++++++------
  1 file changed, 9 insertions(+), 6 deletions(-)
 
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
-index b44acb7..176c35f 100644
+index b44acb723809bb9adbcf684cb23af2d219bc9c61..176c35f06fccf6625235ce06fe9532930cdb61ec 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 @@ -5,6 +5,7 @@ import Button from '../../Button'

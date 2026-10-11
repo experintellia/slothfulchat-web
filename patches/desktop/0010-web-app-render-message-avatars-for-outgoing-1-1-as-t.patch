@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 8 Jul 2026 00:52:07 +0000
-Subject: [PATCH 10/92] web-app: render message avatars for outgoing/1:1 as
- themeable .extra
+Subject: [PATCH] web-app: render message avatars for outgoing/1:1 as themeable
+ .extra
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -20,7 +20,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  2 files changed, 22 insertions(+), 11 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index 3ebe85f..a5d349d 100644
+index 3ebe85f759f4faacdd19a357ba8f5bc6a0ac19b9..a5d349d020464f5b4bb0e5153927a63848c6c8bd 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
 @@ -30,6 +30,11 @@ $info-text-max-width: 400px;
@@ -36,7 +36,7 @@ index 3ebe85f..a5d349d 100644
      bottom: 0px;
      position: static;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index ae973e3..bd24649 100644
+index ae973e3ee60d21edecbec524de5366b93619a344..bd2464902144405d7ba61d8b26229e7d70db1f40 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -79,10 +79,14 @@ const Avatar = ({
