@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 1 Oct 2026 20:06:37 +0000
-Subject: [PATCH 83/91] web-app: say why a download failed and what to do about
- it
+Subject: [PATCH] web-app: say why a download failed and what to do about it
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -33,7 +32,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 41 insertions(+), 10 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 7405e25..ea3bd34 100644
+index 7405e250c46134efd5d81263cad5323ea1808e0a..ea3bd3495d11960d8078e88117e4cbcb7ccd4a81 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -166,5 +166,14 @@
@@ -52,7 +51,7 @@ index 7405e25..ea3bd34 100644
    }
  }
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-index 73525b8..b4691ab 100644
+index 73525b8c220eef70f69c51e25086809cc7c6cccd..b4691aba852cf20861c28ea6eec962bfa645da9a 100644
 --- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 @@ -1,6 +1,6 @@
@@ -134,7 +133,7 @@ index 73525b8..b4691ab 100644
        </div>
      </div>
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index ac2645c..f108098 100644
+index ac2645c545784c199532c61215a2c2962a075058..f1080982f4c2cb1f44f17afbfe6d363c0c43da8b 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -48,6 +48,7 @@ import InvalidUnencryptedMailDialog from '../dialogs/InvalidUnencryptedMail'

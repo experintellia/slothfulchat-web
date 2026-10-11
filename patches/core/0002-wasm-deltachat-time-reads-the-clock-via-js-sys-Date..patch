@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 6 Jul 2026 00:57:11 +0000
-Subject: [PATCH 02/35] wasm: deltachat-time reads the clock via js-sys
- Date.now()
+Subject: [PATCH] wasm: deltachat-time reads the clock via js-sys Date.now()
 
 SystemTime::now() panics on wasm32-unknown-unknown; UNIX_EPOCH + Duration
 from the JS clock does not.
@@ -12,7 +11,7 @@ from the JS clock does not.
  2 files changed, 15 insertions(+), 1 deletion(-)
 
 diff --git a/deltachat-time/Cargo.toml b/deltachat-time/Cargo.toml
-index a2931d7..7055fb9 100644
+index a2931d7263b496997c354a61a65809332159a534..7055fb9851434f4f08cb035e33ed2469ddcece2f 100644
 --- a/deltachat-time/Cargo.toml
 +++ b/deltachat-time/Cargo.toml
 @@ -6,3 +6,6 @@ edition = "2021"
@@ -23,7 +22,7 @@ index a2931d7..7055fb9 100644
 +[target.'cfg(target_arch = "wasm32")'.dependencies]
 +js-sys = "0.3"
 diff --git a/deltachat-time/src/lib.rs b/deltachat-time/src/lib.rs
-index b3b8b2a..a40a75f 100644
+index b3b8b2a219d1ac8002c1d73102c6b546b27bc11b..a40a75f0b672a9474aa0ef46ce75fc0f753b5bae 100644
 --- a/deltachat-time/src/lib.rs
 +++ b/deltachat-time/src/lib.rs
 @@ -13,7 +13,18 @@ impl SystemTimeTools {

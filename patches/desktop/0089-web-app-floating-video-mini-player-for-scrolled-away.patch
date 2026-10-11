@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 2 Oct 2026 22:37:58 +0000
-Subject: [PATCH 89/91] web-app: floating video mini player for scrolled-away
- and chat-switched videos
+Subject: [PATCH] web-app: floating video mini player for scrolled-away and
+ chat-switched videos
 
 A playing chat video that scrolls out of view (an IntersectionObserver
 on the bubble: < 30% visible) or whose bubble unmounts (chat switch)
@@ -55,7 +55,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/components/VideoMiniPlayer/styles.module.scss
 
 diff --git a/packages/frontend/src/ScreenController.tsx b/packages/frontend/src/ScreenController.tsx
-index 393034c..0082e51 100644
+index 393034c9b40983790190e5aa46cc3fdb207d69e6..0082e5171782af29c02f8cabe82f4d82939062aa 100644
 --- a/packages/frontend/src/ScreenController.tsx
 +++ b/packages/frontend/src/ScreenController.tsx
 @@ -29,6 +29,7 @@ import { InstantOnboardingProvider } from './contexts/InstantOnboardingContext'
@@ -119,7 +119,7 @@ index 393034c..0082e51 100644
                </ContextMenuProvider>
 diff --git a/packages/frontend/src/components/VideoMiniPlayer/index.tsx b/packages/frontend/src/components/VideoMiniPlayer/index.tsx
 new file mode 100644
-index 0000000..5780e6d
+index 0000000000000000000000000000000000000000..5780e6dab0f9a2c3d4bdb4322e6cfd86c2d1e0ab
 --- /dev/null
 +++ b/packages/frontend/src/components/VideoMiniPlayer/index.tsx
 @@ -0,0 +1,238 @@
@@ -363,7 +363,7 @@ index 0000000..5780e6d
 +}
 diff --git a/packages/frontend/src/components/VideoMiniPlayer/styles.module.scss b/packages/frontend/src/components/VideoMiniPlayer/styles.module.scss
 new file mode 100644
-index 0000000..f9db7c7
+index 0000000000000000000000000000000000000000..f9db7c7c9497a2eb9ca34f441761c0b3923a04c3
 --- /dev/null
 +++ b/packages/frontend/src/components/VideoMiniPlayer/styles.module.scss
 @@ -0,0 +1,64 @@
@@ -432,7 +432,7 @@ index 0000000..f9db7c7
 +  }
 +}
 diff --git a/packages/frontend/src/components/attachment/VideoPlayer.tsx b/packages/frontend/src/components/attachment/VideoPlayer.tsx
-index 35e6f8f..ff00b77 100644
+index 35e6f8fcffcb2e9c5f6b2baee7e00b48702f09bf..ff00b77e0fa32020c19021f5f382948cfa9aec21 100644
 --- a/packages/frontend/src/components/attachment/VideoPlayer.tsx
 +++ b/packages/frontend/src/components/attachment/VideoPlayer.tsx
 @@ -1,4 +1,11 @@
@@ -588,7 +588,7 @@ index 35e6f8f..ff00b77 100644
        </VjsPlayer>
      </I18nContext.Provider>
 diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
-index b5ab463..44fb2ad 100644
+index b5ab46390466199b3d51cb1348e6a3a82178d87e..44fb2ad631397503c3cc78995270caf6850f0d00 100644
 --- a/packages/frontend/src/components/attachment/messageAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
 @@ -239,6 +239,7 @@ export default function Attachment({

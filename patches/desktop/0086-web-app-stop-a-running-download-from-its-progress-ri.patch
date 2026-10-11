@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 2 Oct 2026 00:37:43 +0000
-Subject: [PATCH 86/91] web-app: stop a running download from its progress ring
+Subject: [PATCH] web-app: stop a running download from its progress ring
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -17,7 +17,7 @@ before the first percentage arrives; the arc keeps showing progress.
  4 files changed, 104 insertions(+), 14 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index ea3bd34..2f6785a 100644
+index ea3bd3495d11960d8078e88117e4cbcb7ccd4a81..2f6785ad3440eefda8cdf9604a6be8e8c52c5a42 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -175,5 +175,8 @@
@@ -30,7 +30,7 @@ index ea3bd34..2f6785a 100644
    }
  }
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
-index 0d3ba43..91ff2e5 100644
+index 0d3ba43fd0a0a0cded69accbb7a635cf88fad05a..91ff2e518e1b070561c70203a648cb84a5aa219f 100644
 --- a/packages/frontend/scss/message/_message-download-placeholder.scss
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
 @@ -260,8 +260,48 @@
@@ -83,7 +83,7 @@ index 0d3ba43..91ff2e5 100644
        stroke: rgba(255, 255, 255, 0.4);
        opacity: 1;
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-index b4691ab..e8553f4 100644
+index b4691aba852cf20861c28ea6eec962bfa645da9a..e8553f49a5d3adfc6a7ad9040627f08923828181 100644
 --- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 @@ -26,21 +26,27 @@ const RING_R = 16
@@ -204,7 +204,7 @@ index b4691ab..e8553f4 100644
          <CircleDownloadButton
            messageId={message.id}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index f108098..b32107f 100644
+index f1080982f4c2cb1f44f17afbfe6d363c0c43da8b..b32107fb4d2604d27965d2fcb73696a977ac0300 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -1121,6 +1121,17 @@ export default function Message(props: {

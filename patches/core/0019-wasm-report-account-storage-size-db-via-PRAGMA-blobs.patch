@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 23 Jul 2026 19:28:34 +0000
-Subject: [PATCH 19/35] wasm: report account storage size (db via PRAGMA +
- blobs via tokio::fs)
+Subject: [PATCH] wasm: report account storage size (db via PRAGMA + blobs via
+ tokio::fs)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -23,7 +23,7 @@ native path is unchanged.
  2 files changed, 49 insertions(+), 5 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
-index ab91000..8281447 100644
+index ab910004b33fa9a3a2cef971115e4799e04b9fe2..8281447d2f7dcfd21b587154d85b8e20193792e9 100644
 --- a/deltachat-jsonrpc/src/api.rs
 +++ b/deltachat-jsonrpc/src/api.rs
 @@ -35,7 +35,9 @@
@@ -61,7 +61,7 @@ index ab91000..8281447 100644
  
      /// Returns provider for the given domain.
 diff --git a/src/storage_usage.rs b/src/storage_usage.rs
-index a2283bf..84d0264 100644
+index a2283bf563c8d47c5352502f60ad0ae0469f868c..84d0264668b7f854092f2a51d460919cce196d08 100644
 --- a/src/storage_usage.rs
 +++ b/src/storage_usage.rs
 @@ -132,3 +132,37 @@ pub fn get_blobdir_storage_usage(ctx: &Context) -> u64 {

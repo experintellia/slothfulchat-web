@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 6 Aug 2026 22:51:19 +0000
-Subject: [PATCH 75/91] web-app: match the audio download placeholder to the
- custom player
+Subject: [PATCH] web-app: match the audio download placeholder to the custom
+ player
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -59,7 +59,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  2 files changed, 61 insertions(+), 46 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
-index fb2417d..0d3ba43 100644
+index fb2417d18d7cd71b572c9e836a0eee7bac411a63..0d3ba43fd0a0a0cded69accbb7a635cf88fad05a 100644
 --- a/packages/frontend/scss/message/_message-download-placeholder.scss
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
 @@ -66,31 +66,30 @@
@@ -128,7 +128,7 @@ index fb2417d..0d3ba43 100644
      .download-progress-circle {
        flex-shrink: 0;
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-index 6402583..73525b8 100644
+index 64025839222c93a33b7c6a50d4160fd7ff792866..73525b8c220eef70f69c51e25086809cc7c6cccd 100644
 --- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 @@ -9,8 +9,10 @@ import { formatDuration } from '../dialogs/MessageDetail/BasicMessageInfo'

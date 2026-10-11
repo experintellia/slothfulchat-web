@@ -1,9 +1,9 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 1 Aug 2026 17:28:37 +0000
-Subject: [PATCH 68/91] =?UTF-8?q?web-app:=20recording=20polish=20=E2=80=94?=
- =?UTF-8?q?=20pause/resume,=20preview,=20gestures,=20original=20audio,=20m?=
- =?UTF-8?q?ic=20picker?=
+Subject: [PATCH] =?UTF-8?q?web-app:=20recording=20polish=20=E2=80=94=20pau?=
+ =?UTF-8?q?se/resume,=20preview,=20gestures,=20original=20audio,=20mic=20p?=
+ =?UTF-8?q?icker?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -94,7 +94,7 @@ unit suite.
  create mode 100644 packages/frontend/src/tests/audioRecorder.test.ts
 
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-index 2b0ec22..63d3880 100644
+index 2b0ec223896a241711f68ff29f0125316c409afb..63d388092f4387282024418f78cafe43005f5f68 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 +++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 @@ -1,4 +1,10 @@
@@ -916,7 +916,7 @@ index 2b0ec22..63d3880 100644
 +  )
  }
 diff --git a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
-index 2e3e079..9ba7f21 100644
+index 2e3e0799afc3d2027014cacfcf453fa8ac152351..9ba7f21fea765d06703a0baad68c09b019f5e5b6 100644
 --- a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
 +++ b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
 @@ -11,6 +11,11 @@ interface MicRecorderConfig {
@@ -1119,7 +1119,7 @@ index 2e3e079..9ba7f21 100644
     * @return {number}
 diff --git a/packages/frontend/src/components/AudioRecorder/recorderLogic.ts b/packages/frontend/src/components/AudioRecorder/recorderLogic.ts
 new file mode 100644
-index 0000000..3bbb997
+index 0000000000000000000000000000000000000000..3bbb9979b4209f216364f651447e8a49f5bccf6f
 --- /dev/null
 +++ b/packages/frontend/src/components/AudioRecorder/recorderLogic.ts
 @@ -0,0 +1,159 @@
@@ -1283,7 +1283,7 @@ index 0000000..3bbb997
 +  return [{ quietSinceMs: quietSince }, nowMs - quietSince >= SILENCE_HOLD_MS]
 +}
 diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
-index 32e5919..576489f 100644
+index 32e59194781f3ba01a788b9c3f896e38e123c418..576489f8c961ad9675490beb33de887c8489e9c8 100644
 --- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
 +++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
 @@ -1,3 +1,13 @@
@@ -1593,7 +1593,7 @@ index 32e5919..576489f 100644
  }
 diff --git a/packages/frontend/src/tests/audioRecorder.test.ts b/packages/frontend/src/tests/audioRecorder.test.ts
 new file mode 100644
-index 0000000..854c674
+index 0000000000000000000000000000000000000000..854c6746fa4ad2d6e6e714070c2dd4ec17330502
 --- /dev/null
 +++ b/packages/frontend/src/tests/audioRecorder.test.ts
 @@ -0,0 +1,172 @@

@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 20 Jul 2026 18:16:56 +0000
-Subject: [PATCH 56/91] web-app: render group/contact invite links as a card
- with a View button
+Subject: [PATCH] web-app: render group/contact invite links as a card with a
+ View button
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -65,7 +65,7 @@ since textContent has no CSS awareness and would mangle wider selections.
  create mode 100644 packages/frontend/src/utils/inviteLink.ts
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index fe3dfc4..9e26381 100644
+index fe3dfc4b363263965c36e1c60ec8af7dd1f6adcc..9e2638185e2eb94de2b9645b02cffe068ff59b37 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -112,5 +112,17 @@
@@ -87,7 +87,7 @@ index fe3dfc4..9e26381 100644
    }
  }
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index a5d349d..40ecad8 100644
+index a5d349d020464f5b4bb0e5153927a63848c6c8bd..40ecad8c2cb27eb104ca3c43fa5b825cb5b98301 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
 @@ -641,6 +641,92 @@ $info-text-max-width: 400px;
@@ -184,7 +184,7 @@ index a5d349d..40ecad8 100644
     have an appereance like the rest of text in there */
  .quoted-text > a {
 diff --git a/packages/frontend/src/components/dialogs/PublicBots/index.tsx b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
-index ef081ff..7dc586b 100644
+index ef081ffef8ad0b042cef1569bd2d1f6934a00644..7dc586b0b1fd556bdd5a2d6a8af2f69ddc45819b 100644
 --- a/packages/frontend/src/components/dialogs/PublicBots/index.tsx
 +++ b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
 @@ -20,6 +20,7 @@ import useProcessQR, { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
@@ -214,7 +214,7 @@ index ef081ff..7dc586b 100644
  function parseBotsJson(base64: string): {
    bots: BotEntry[]
 diff --git a/packages/frontend/src/components/message/Link.tsx b/packages/frontend/src/components/message/Link.tsx
-index cd138a0..a952441 100644
+index cd138a0bf38ec7499708de8b72fbcf39ff31809b..a952441ff8459c1982a62385715ff10f3c532912 100644
 --- a/packages/frontend/src/components/message/Link.tsx
 +++ b/packages/frontend/src/components/message/Link.tsx
 @@ -14,6 +14,9 @@ import useProcessQr from '../../hooks/useProcessQr'
@@ -288,7 +288,7 @@ index cd138a0..a952441 100644
      <a
        href={asciiUrl}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 65171d5..877772c 100644
+index 65171d5ea8c2e9b7428fb7304d6f681d9cf777bc..877772c2035e35e395e47982304d342a943a677b 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -218,6 +218,45 @@ const ForwardedTitle = ({
@@ -361,7 +361,7 @@ index 65171d5..877772c 100644
          message,
 diff --git a/packages/frontend/src/tests/inviteLink.test.ts b/packages/frontend/src/tests/inviteLink.test.ts
 new file mode 100644
-index 0000000..759d096
+index 0000000000000000000000000000000000000000..759d0962cad61f0588d362bd82d48f2e663ec9ac
 --- /dev/null
 +++ b/packages/frontend/src/tests/inviteLink.test.ts
 @@ -0,0 +1,86 @@
@@ -453,7 +453,7 @@ index 0000000..759d096
 +})
 diff --git a/packages/frontend/src/utils/colorFromString.ts b/packages/frontend/src/utils/colorFromString.ts
 new file mode 100644
-index 0000000..206199c
+index 0000000000000000000000000000000000000000..206199cd79208bf884648bd5572bfed5d8b933ce
 --- /dev/null
 +++ b/packages/frontend/src/utils/colorFromString.ts
 @@ -0,0 +1,12 @@
@@ -471,7 +471,7 @@ index 0000000..206199c
 +}
 diff --git a/packages/frontend/src/utils/inviteLink.ts b/packages/frontend/src/utils/inviteLink.ts
 new file mode 100644
-index 0000000..ea08e1d
+index 0000000000000000000000000000000000000000..ea08e1d290fd36950b60768afa375f43517a89ce
 --- /dev/null
 +++ b/packages/frontend/src/utils/inviteLink.ts
 @@ -0,0 +1,75 @@

@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 11 Aug 2026 23:17:21 +0000
-Subject: [PATCH 32/35] wasm: seed new account databases from a pre-migrated
- template
+Subject: [PATCH] wasm: seed new account databases from a pre-migrated template
 
 Creating an account replays every migration past the baseline schema,
 each in its own transaction, so each one commits WAL frames through
@@ -21,7 +20,7 @@ just migrates the (remaining) way as before.
  1 file changed, 41 insertions(+)
 
 diff --git a/src/sql.rs b/src/sql.rs
-index 406d7c5..6ffa5f1 100644
+index 406d7c56d5dccfa3c09b46a9b25405b37dc57285..6ffa5f1a9dabdb9cb8972c0fe3ef26fd272064d7 100644
 --- a/src/sql.rs
 +++ b/src/sql.rs
 @@ -90,6 +90,33 @@ pub async fn check_passphrase(&self, passphrase: String) -> Result<bool> {

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 3 Oct 2026 01:37:56 +0000
-Subject: [PATCH 90/91] web-app: jumpToMessage switches accounts itself
+Subject: [PATCH] web-app: jumpToMessage switches accounts itself
 
 useMessage().jumpToMessage now handles a message in another account:
 it saves the target chat as that account's last chat, selects the
@@ -30,7 +30,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  5 files changed, 58 insertions(+), 96 deletions(-)
 
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
-index d6a6da1..e949e41 100644
+index d6a6da1f7840604fef5a694bbb69640a7686e2ac..e949e4172bca713ac279f72517411862693afceb 100644
 --- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
 +++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
 @@ -14,23 +14,16 @@ import { useSettingsStore } from '../../stores/settings'
@@ -104,7 +104,7 @@ index d6a6da1..e949e41 100644
  
    const onClose = () => {
 diff --git a/packages/frontend/src/components/VideoMiniPlayer/index.tsx b/packages/frontend/src/components/VideoMiniPlayer/index.tsx
-index 5780e6d..78b06e3 100644
+index 5780e6dab0f9a2c3d4bdb4322e6cfd86c2d1e0ab..78b06e34f999a90f95f041e61d7dc6111872f7a3 100644
 --- a/packages/frontend/src/components/VideoMiniPlayer/index.tsx
 +++ b/packages/frontend/src/components/VideoMiniPlayer/index.tsx
 @@ -108,9 +108,6 @@ function VideoMiniPlayer({
@@ -155,7 +155,7 @@ index 5780e6d..78b06e3 100644
          </div>
        </VideoPlayer>
 diff --git a/packages/frontend/src/components/dialogs/CommandPalette/index.tsx b/packages/frontend/src/components/dialogs/CommandPalette/index.tsx
-index 1898860..5525ac4 100644
+index 18988603c7e7e11da71f2a479a9c3a1ecdcbf72e..5525ac4d4b297b4355566def8ca383e22cbd6fd0 100644
 --- a/packages/frontend/src/components/dialogs/CommandPalette/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CommandPalette/index.tsx
 @@ -132,34 +132,15 @@ export default function CommandPalette({ mode = 'search', onClose }: Props) {
@@ -203,7 +203,7 @@ index 1898860..5525ac4 100644
          if (scopeAccountId === currentAccountId) {
            await createChatByContactId(scopeAccountId, contactId)
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index 5c77d5f..6bc7536 100644
+index 5c77d5f8bef2fe7f42dfcd49a03eb38ba0f6ccee..6bc7536059269c87f8437c7ceeb7426ecae7dc38 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 @@ -307,7 +307,7 @@ export default function MainScreen({ accountId }: Props) {
@@ -225,7 +225,7 @@ index 5c77d5f..6bc7536 100644
        {!smallScreenMode && (
          <div
 diff --git a/packages/frontend/src/hooks/chat/useMessage.ts b/packages/frontend/src/hooks/chat/useMessage.ts
-index 4d28cc4..5de8754 100644
+index 4d28cc4e06c644e495d25d9b36e537042efec56c..5de8754cd827934fa572138ae0e52d3b5560de62 100644
 --- a/packages/frontend/src/hooks/chat/useMessage.ts
 +++ b/packages/frontend/src/hooks/chat/useMessage.ts
 @@ -3,6 +3,7 @@ import mimeTypes from 'mime-types'

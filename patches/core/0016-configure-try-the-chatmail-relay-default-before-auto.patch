@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sun, 12 Jul 2026 12:00:00 +0000
-Subject: [PATCH 16/35] configure: try the chatmail relay default before
- autoconfig
+Subject: [PATCH] configure: try the chatmail relay default before autoconfig
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -30,7 +29,7 @@ the eventual WebSocket-transport relays.
  create mode 100644 src/configure/chatmail_default.rs
 
 diff --git a/src/configure.rs b/src/configure.rs
-index 33da10d..3a7efa5 100644
+index 33da10d442c1431f13d6c68f66db07eb38602c4e..3a7efa5366a4c49d16204895ab637a63403b8221 100644
 --- a/src/configure.rs
 +++ b/src/configure.rs
 @@ -11,6 +11,7 @@
@@ -88,7 +87,7 @@ index 33da10d..3a7efa5 100644
          .await;
 diff --git a/src/configure/chatmail_default.rs b/src/configure/chatmail_default.rs
 new file mode 100644
-index 0000000..79940db
+index 0000000000000000000000000000000000000000..79940db566d50da33c10dfb5840e225e631d5315
 --- /dev/null
 +++ b/src/configure/chatmail_default.rs
 @@ -0,0 +1,124 @@

@@ -87,6 +87,17 @@ jobs:
                      -not -path '*/node_modules/*' -not -path '*/dist/*')
           exit $fail
 
+      # Two PRs that each add patch NNNN merge without a conflict (the file
+      # names differ), then apply in an order neither was tested in; for core,
+      # mark-fork-api.mjs also credits both commits to one number. #273 and
+      # #274 both took desktop/0088 this way. Running update-patches.sh alone
+      # doesn't fix it: it keeps the name order, which can put the PR's patch
+      # before main's and rewrite main's.
+      - name: No duplicate patch numbers
+        run: |
+          dups=$(for d in patches/core patches/desktop; do ls "$d" | grep '\.patch$' | cut -c1-4 | sort | uniq -d | sed "s|^|$d/|"; done)
+          [ -z "$dups" ] || { echo "::error::duplicate patch numbers:" $dups "- give this PR's patch the next free number after main's, run scripts/apply-patches.sh and scripts/update-patches.sh, and fix the numbers in PATCHES.md"; exit 1; }
+
       # dependency-free node:test suites for pure logic (config templating,
       # release-asset pinning/digest/size caps, the analytics pre-notice gate,
       # translation-editor serialization, blob response headers, the OPFS

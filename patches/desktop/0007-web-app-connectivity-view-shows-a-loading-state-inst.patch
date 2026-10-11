@@ -1,15 +1,15 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 7 Jul 2026 21:51:07 +0000
-Subject: [PATCH 07/91] web-app: connectivity view shows a loading state
- instead of a blank iframe
+Subject: [PATCH] web-app: connectivity view shows a loading state instead of a
+ blank iframe
 
 ---
  .../components/dialogs/ConnectivityDialog.tsx | 43 +++++++++++++------
  1 file changed, 31 insertions(+), 12 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
-index 8a3746d..aa12862 100644
+index 8a3746d2be3a02ccfbe0a8b4f19adf796851d4ae..aa12862150586ddd1e48af13572a688cd413a40d 100644
 --- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 +++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 @@ -24,6 +24,7 @@ export default function ConnectivityDialog({ onClose }: DialogProps) {

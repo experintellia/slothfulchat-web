@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 3 Oct 2026 00:32:55 +0000
-Subject: [PATCH 87/91] web-app: reactions bar inside the message context menu
+Subject: [PATCH] web-app: reactions bar inside the message context menu
 
 Reacting took two steps (right-click, "React", then a separate bar) or a
 hover icon. Signal and Telegram put the reactions on top of the message
@@ -72,7 +72,7 @@ menu.
  13 files changed, 334 insertions(+), 155 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index d2c58bd..7b22e08 100644
+index d2c58bdb11ceb847746b1eff26e8d67022c197e3..7b22e087bc4689a7753405916eb2e46d73b320ba 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
 @@ -13,6 +13,27 @@ $info-text-max-width: 400px;
@@ -104,7 +104,7 @@ index d2c58bd..7b22e08 100644
  .message {
    position: relative;
 diff --git a/packages/frontend/scss/misc/_context_menu.scss b/packages/frontend/scss/misc/_context_menu.scss
-index 3a1a5c8..8ff9af1 100644
+index 3a1a5c8ee1166c23054366143145fea407ec3ae7..8ff9af11e9a17f91789f6846df441714e190b859 100644
 --- a/packages/frontend/scss/misc/_context_menu.scss
 +++ b/packages/frontend/scss/misc/_context_menu.scss
 @@ -3,6 +3,8 @@
@@ -159,7 +159,7 @@ index 3a1a5c8..8ff9af1 100644
 +  }
 +}
 diff --git a/packages/frontend/src/components/AbsolutePositioningHelper/index.tsx b/packages/frontend/src/components/AbsolutePositioningHelper/index.tsx
-index c425116..bed4f65 100644
+index c425116c37438819fead05f261e1c41c8fb9cbee..bed4f65f93bce45acef9a677d278c5a48997ba7f 100644
 --- a/packages/frontend/src/components/AbsolutePositioningHelper/index.tsx
 +++ b/packages/frontend/src/components/AbsolutePositioningHelper/index.tsx
 @@ -108,17 +108,17 @@ export default function AbsolutePositioningHelper(props: Props) {
@@ -186,7 +186,7 @@ index c425116..bed4f65 100644
        className={styles.absolutePositioningHelper}
        ref={ref}
 diff --git a/packages/frontend/src/components/ContextMenu.tsx b/packages/frontend/src/components/ContextMenu.tsx
-index a1f3b55..6b8e819 100644
+index a1f3b55c951559f0cb046cf69416d4f2ec484c4e..6b8e8193116122eb10015a767cd2de5e644f0794 100644
 --- a/packages/frontend/src/components/ContextMenu.tsx
 +++ b/packages/frontend/src/components/ContextMenu.tsx
 @@ -9,6 +9,7 @@ import React, {
@@ -458,7 +458,7 @@ index a1f3b55..6b8e819 100644
    return (
      <div>
 diff --git a/packages/frontend/src/components/KeyboardShortcutHint.tsx b/packages/frontend/src/components/KeyboardShortcutHint.tsx
-index 0d4a1ed..79d4027 100644
+index 0d4a1ed5c28f0181692c3a18f86c7a6bde7ea4aa..79d402768c3a8f626d4781fd79b0f90870d00a7e 100644
 --- a/packages/frontend/src/components/KeyboardShortcutHint.tsx
 +++ b/packages/frontend/src/components/KeyboardShortcutHint.tsx
 @@ -258,6 +258,10 @@ export function getKeybindings(
@@ -473,7 +473,7 @@ index 0d4a1ed..79d4027 100644
    ]
  }
 diff --git a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx b/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
-index f2331b6..695008e 100644
+index f2331b6f63c455a346c5a9b78f85c3d663c2f68c..695008e1953090f3e0ae4f2e33e7521cae8ebecf 100644
 --- a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
 +++ b/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
 @@ -22,6 +22,13 @@ type Props = {
@@ -549,7 +549,7 @@ index f2331b6..695008e 100644
  
    const isMyReactionDefault = myReaction
 diff --git a/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx b/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
-index 0456b32..2a1dac8 100644
+index 0456b32e36cb8f768bcdce53b036e5ed746b87d4..2a1dac86091f24ccba0b22c2b2e91af4905b643a 100644
 --- a/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
 +++ b/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
 @@ -1,4 +1,4 @@
@@ -623,7 +623,7 @@ index 0456b32..2a1dac8 100644
            </OutsideClickHelper>
          )}
 diff --git a/packages/frontend/src/components/ReactionsBar/index.ts b/packages/frontend/src/components/ReactionsBar/index.ts
-index 331b182..f743704 100644
+index 331b182926cae48f88ddce45e9b386e837b7ac2c..f7437048d39fe3c93018c0a0c3223d490668d952 100644
 --- a/packages/frontend/src/components/ReactionsBar/index.ts
 +++ b/packages/frontend/src/components/ReactionsBar/index.ts
 @@ -1,5 +1,8 @@
@@ -645,7 +645,7 @@ index 331b182..f743704 100644
    useReactionsBar,
  }
 diff --git a/packages/frontend/src/components/ReactionsBar/styles.module.scss b/packages/frontend/src/components/ReactionsBar/styles.module.scss
-index 72fe1c9..130a43d 100644
+index 72fe1c942bf717477fa66ebda6a4b4fa8a36161d..130a43d41c188724d692fc02d4192fd4b5965d08 100644
 --- a/packages/frontend/src/components/ReactionsBar/styles.module.scss
 +++ b/packages/frontend/src/components/ReactionsBar/styles.module.scss
 @@ -69,6 +69,18 @@
@@ -668,7 +668,7 @@ index 72fe1c9..130a43d 100644
    background-color: rgb(120, 120, 120);
  }
 diff --git a/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts b/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts
-index fd313fb..b8465b5 100644
+index fd313fb48ce39403558c7cb529e2e4d61894a535..b8465b5da6ab0c63299826425694ec52dcbaf11d 100644
 --- a/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts
 +++ b/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts
 @@ -11,7 +11,7 @@ type UseReactionsBar = Pick<
@@ -692,7 +692,7 @@ index fd313fb..b8465b5 100644
      reactions &&
      C.DC_CONTACT_ID_SELF in reactions.reactionsByContact &&
 diff --git a/packages/frontend/src/components/ShortcutMenu/index.tsx b/packages/frontend/src/components/ShortcutMenu/index.tsx
-index a70e1f2..25658ed 100644
+index a70e1f288c55d31b241cd36b3f0a915db94f6a9f..25658eda007ee77d57e60a948bc81d3e9fb3ea70 100644
 --- a/packages/frontend/src/components/ShortcutMenu/index.tsx
 +++ b/packages/frontend/src/components/ShortcutMenu/index.tsx
 @@ -1,7 +1,6 @@
@@ -784,7 +784,7 @@ index a70e1f2..25658ed 100644
        tabIndex={props.tabIndex}
      >
 diff --git a/packages/frontend/src/components/ShortcutMenu/styles.module.scss b/packages/frontend/src/components/ShortcutMenu/styles.module.scss
-index 146bfda..8e7e0fc 100644
+index 146bfda2ca2515c7bb22cb82018fe2cc940d4aaa..8e7e0fcc8042f908cf4473dfdf9cd11c48199852 100644
 --- a/packages/frontend/src/components/ShortcutMenu/styles.module.scss
 +++ b/packages/frontend/src/components/ShortcutMenu/styles.module.scss
 @@ -1,53 +1,41 @@
@@ -878,7 +878,7 @@ index 146bfda..8e7e0fc 100644
    border-radius: 100%;
    height: 40px;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index b32107f..f46f8df 100644
+index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478d77d9bcc 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -40,7 +40,11 @@ import useOpenViewProfileDialog from '../../hooks/dialog/useOpenViewProfileDialo

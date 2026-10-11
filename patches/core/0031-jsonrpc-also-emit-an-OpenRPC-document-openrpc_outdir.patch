@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 6 Aug 2026 22:19:24 +0000
-Subject: [PATCH 31/35] jsonrpc: also emit an OpenRPC document (openrpc_outdir)
+Subject: [PATCH] jsonrpc: also emit an OpenRPC document (openrpc_outdir)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -26,7 +26,7 @@ transcribed from it.
  1 file changed, 5 insertions(+), 1 deletion(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
-index 8281447..a409878 100644
+index 8281447d2f7dcfd21b587154d85b8e20193792e9..a4098780282e5111e5679f1e10569b9065b878b3 100644
 --- a/deltachat-jsonrpc/src/api.rs
 +++ b/deltachat-jsonrpc/src/api.rs
 @@ -159,7 +159,11 @@ async fn inner_get_backup_qr(&self, account_id: u32) -> Result<Qr> {

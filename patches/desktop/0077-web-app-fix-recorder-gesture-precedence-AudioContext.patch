@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 12 Aug 2026 13:49:31 +0000
-Subject: [PATCH 77/91] web-app: fix recorder gesture precedence, AudioContext
- leak, phone margins
+Subject: [PATCH] web-app: fix recorder gesture precedence, AudioContext leak,
+ phone margins
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -45,7 +45,7 @@ after it landed.
  3 files changed, 23 insertions(+), 6 deletions(-)
 
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-index 63d3880..75b50db 100644
+index 63d388092f4387282024418f78cafe43005f5f68..75b50db0f20ee69e54a2b8cc203a274a4443c618 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 +++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 @@ -483,7 +483,11 @@ export const AudioRecorder = ({
@@ -62,7 +62,7 @@ index 63d3880..75b50db 100644
          active = false
          cleanup()
 diff --git a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
-index 9ba7f21..f1e2500 100644
+index 9ba7f21fea765d06703a0baad68c09b019f5e5b6..f1e25007ba75a1c4b64919edbf0e72144af178a4 100644
 --- a/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
 +++ b/packages/frontend/src/components/AudioRecorder/MicRecorder.ts
 @@ -192,6 +192,16 @@ class MicRecorder {
@@ -83,7 +83,7 @@ index 9ba7f21..f1e2500 100644
          })
      })
 diff --git a/packages/frontend/src/components/AudioRecorder/styles.module.scss b/packages/frontend/src/components/AudioRecorder/styles.module.scss
-index 576489f..0ae60f3 100644
+index 576489f8c961ad9675490beb33de887c8489e9c8..0ae60f3abb6c6a91dab293a8bb038c9e7ba09022 100644
 --- a/packages/frontend/src/components/AudioRecorder/styles.module.scss
 +++ b/packages/frontend/src/components/AudioRecorder/styles.module.scss
 @@ -374,13 +374,16 @@

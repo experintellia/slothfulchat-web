@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 2 Oct 2026 00:37:43 +0000
-Subject: [PATCH 35/35] download: let a running download be stopped
+Subject: [PATCH] download: let a running download be stopped
 
 abort_download(msg_id) dequeues an in-progress download and puts the
 message back to Available, so the download button returns. It is one
@@ -23,7 +23,7 @@ interrupted and still completes. Exposed over JSON-RPC as abort_download.
  2 files changed, 284 insertions(+), 30 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
-index a409878..52547ec 100644
+index a4098780282e5111e5679f1e10569b9065b878b3..52547ecaa6382fef043e936c5bba93c520b6078f 100644
 --- a/deltachat-jsonrpc/src/api.rs
 +++ b/deltachat-jsonrpc/src/api.rs
 @@ -1616,6 +1616,14 @@ async fn download_full_message(&self, account_id: u32, message_id: u32) -> Resul
@@ -42,7 +42,7 @@ index a409878..52547ec 100644
      /// Searching can be done globally (chat_id=None) or in a specified chat only (chat_id set).
      ///
 diff --git a/src/download.rs b/src/download.rs
-index 32ef52f..f342921 100644
+index 32ef52f23e839e126d1ba0ae8b99f7b54c4d8b83..f3429218924b746f3ebce7fdf790fe9526100304 100644
 --- a/src/download.rs
 +++ b/src/download.rs
 @@ -105,6 +105,46 @@ pub async fn download_full(self, context: &Context) -> Result<()> {

@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 20 Jul 2026 00:46:12 +0000
-Subject: [PATCH 50/91] web-app: add relays from list, contact scan or typed
- domain in Transports dialog
+Subject: [PATCH] web-app: add relays from list, contact scan or typed domain
+ in Transports dialog
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -53,7 +53,7 @@ Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
 
 diff --git a/packages/frontend/src/components/dialogs/Transports/contactRelays.ts b/packages/frontend/src/components/dialogs/Transports/contactRelays.ts
 new file mode 100644
-index 0000000..87f51f3
+index 0000000000000000000000000000000000000000..87f51f3798d021ba140b388766893d0d8c931c0c
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/Transports/contactRelays.ts
 @@ -0,0 +1,42 @@
@@ -100,7 +100,7 @@ index 0000000..87f51f3
 +  )
 +}
 diff --git a/packages/frontend/src/components/dialogs/Transports/index.tsx b/packages/frontend/src/components/dialogs/Transports/index.tsx
-index 3f6386b..1ed9630 100644
+index 3f6386b9c75d4243fe7c9dd8b744642a22fde447..1ed96300e3a8656f51f95f2696f0fc2e799e4d4b 100644
 --- a/packages/frontend/src/components/dialogs/Transports/index.tsx
 +++ b/packages/frontend/src/components/dialogs/Transports/index.tsx
 @@ -1,4 +1,4 @@
@@ -246,7 +246,7 @@ index 3f6386b..1ed9630 100644
      </Dialog>
    )
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
-index 120289c..c793640 100644
+index 120289cdda126cb7f854a005ee850726c57cd008..c793640519a37fb079a5fc16dc5d1a6277c51989 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 @@ -18,8 +18,16 @@ type Props = {
@@ -460,7 +460,7 @@ index 120289c..c793640 100644
              <button
                type='button'
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
-index 1654f40..70c7b25 100644
+index 1654f4006fb8907fcf0ed1edfb42f1a551736b93..70c7b254b6291ad84544985f25f7af5cc99cff10 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 @@ -292,6 +292,48 @@
@@ -531,7 +531,7 @@ index 1654f40..70c7b25 100644
  
  .relayDialogCustomInput {
 diff --git a/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts b/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
-index 6f011df..a979b8f 100644
+index 6f011dfe094d415829e352fa9d20a0ec796bc481..a979b8f62cb91d71b7f8d90ef48794d89eaacb2d 100644
 --- a/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
 +++ b/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
 @@ -26,7 +26,7 @@ export default function useAddTransportDialog(): AddTransportDialogFn {
@@ -545,7 +545,7 @@ index 6f011df..a979b8f 100644
            '\n\nNote if using multi-device:\nbefore changing or adding transports make sure all other devices have at least version 2.33.0 installed. Otherwise they will run out of sync.'
 diff --git a/packages/frontend/src/tests/contactRelays.test.ts b/packages/frontend/src/tests/contactRelays.test.ts
 new file mode 100644
-index 0000000..a9db017
+index 0000000000000000000000000000000000000000..a9db017934cbece1835bc47b0ea30b4fbfdfa28e
 --- /dev/null
 +++ b/packages/frontend/src/tests/contactRelays.test.ts
 @@ -0,0 +1,66 @@

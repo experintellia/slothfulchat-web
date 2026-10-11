@@ -1,9 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 1 Aug 2026 17:29:03 +0000
-Subject: [PATCH 69/91] =?UTF-8?q?web-app:=20global=20voice=20player=20?=
- =?UTF-8?q?=E2=80=94=20custom=20mini-player,=20Media=20Session,=20mobile?=
- =?UTF-8?q?=20strip?=
+Subject: [PATCH] =?UTF-8?q?web-app:=20global=20voice=20player=20=E2=80=94?=
+ =?UTF-8?q?=20custom=20mini-player,=20Media=20Session,=20mobile=20strip?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -94,7 +93,7 @@ suite (lands here because it imports mediaSession.ts).
  create mode 100644 packages/frontend/src/tests/audioPlayer.test.ts
 
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
-index 49a037c..d6a6da1 100644
+index 49a037ccd9e990b006c125247da3fb7b3e482294..d6a6da1f7840604fef5a694bbb69640a7686e2ac 100644
 --- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
 +++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
 @@ -1,50 +1,503 @@
@@ -635,7 +634,7 @@ index 49a037c..d6a6da1 100644
 +}
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts b/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
 new file mode 100644
-index 0000000..c695897
+index 0000000000000000000000000000000000000000..c695897bb0dbc2b3a3ba3b18fed8940bce69e232
 --- /dev/null
 +++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/mediaSession.ts
 @@ -0,0 +1,72 @@
@@ -712,7 +711,7 @@ index 0000000..c695897
 +  return next
 +}
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
-index 9b4893c..7b78384 100644
+index 9b4893c814a0d00ee9740e89de89f93564a39a83..7b783842d90b977ec5d6b7c717ad3fc80d20c012 100644
 --- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
 +++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/styles.module.scss
 @@ -41,3 +41,135 @@
@@ -852,7 +851,7 @@ index 9b4893c..7b78384 100644
 +  }
 +}
 diff --git a/packages/frontend/src/components/Settings/Notifications.tsx b/packages/frontend/src/components/Settings/Notifications.tsx
-index b29ea71..3f65684 100644
+index b29ea71e1039633088cb1962bcd76448b1146322..3f6568473bd1799d5dbd7c19db129b1f55889593 100644
 --- a/packages/frontend/src/components/Settings/Notifications.tsx
 +++ b/packages/frontend/src/components/Settings/Notifications.tsx
 @@ -118,6 +118,12 @@ export default function Notifications({ desktopSettings }: Props) {
@@ -869,7 +868,7 @@ index b29ea71..3f65684 100644
          settingsKey='notifications'
          label={tx('pref_notifications_explain')}
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index c0c8ac5..5c77d5f 100644
+index c0c8ac59909486fa4433234841b170fbdc80180b..5c77d5f8bef2fe7f42dfcd49a03eb38ba0f6ccee 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 @@ -298,6 +298,16 @@ export default function MainScreen({ accountId }: Props) {
@@ -899,7 +898,7 @@ index c0c8ac5..5c77d5f 100644
        {!smallScreenMode && (
          <div
 diff --git a/packages/frontend/src/components/screens/MainScreen/styles.module.scss b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
-index ecb6180..821e9bc 100644
+index ecb61801bc2e495b961ff69b8a00e309f4f2d1da..821e9bc365a1b1ef92d3609d0d275c522b432b42 100644
 --- a/packages/frontend/src/components/screens/MainScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
 @@ -14,6 +14,25 @@
@@ -930,7 +929,7 @@ index ecb6180..821e9bc 100644
    flex-direction: column;
 diff --git a/packages/frontend/src/tests/audioPlayer.test.ts b/packages/frontend/src/tests/audioPlayer.test.ts
 new file mode 100644
-index 0000000..270eb02
+index 0000000000000000000000000000000000000000..270eb0265c5ebcd988e857b9939e0f8521efc293
 --- /dev/null
 +++ b/packages/frontend/src/tests/audioPlayer.test.ts
 @@ -0,0 +1,193 @@

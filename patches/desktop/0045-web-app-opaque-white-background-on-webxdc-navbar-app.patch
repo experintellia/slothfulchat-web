@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 15 Jul 2026 02:07:50 +0000
-Subject: [PATCH 45/91] web-app: opaque white background on webxdc navbar app
- icons
+Subject: [PATCH] web-app: opaque white background on webxdc navbar app icons
 
 The last-used-app icons shown in a chat's title bar are app-supplied,
 untrusted images. A transparent icon could be crafted to impersonate a
@@ -17,7 +16,7 @@ navbar buttons.
  1 file changed, 9 insertions(+)
 
 diff --git a/packages/frontend/src/components/ChatView/styles.module.scss b/packages/frontend/src/components/ChatView/styles.module.scss
-index 28e5e10..00b2179 100644
+index 28e5e10456d92b85fb2a58ee8253b7b0be62bad0..00b21791f7a7c52518d26f5efe5ebe16437b3fbe 100644
 --- a/packages/frontend/src/components/ChatView/styles.module.scss
 +++ b/packages/frontend/src/components/ChatView/styles.module.scss
 @@ -96,6 +96,15 @@

@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sun, 12 Jul 2026 14:36:43 +0000
-Subject: [PATCH 39/91] web-app: relay picker on instant onboarding from the
- chatmail relay directory
+Subject: [PATCH] web-app: relay picker on instant onboarding from the chatmail
+ relay directory
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -56,7 +56,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/tests/relayDirectory.test.ts
 
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
-index 58ab5d8..1407c26 100644
+index 58ab5d86d32572eaa4c9ad4a3325a1ab3f46bc11..1407c267366bcceb7349d317713b4d4687721121 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
 @@ -3,6 +3,7 @@ import React, { useContext, useEffect, useState } from 'react'
@@ -80,7 +80,7 @@ index 58ab5d8..1407c26 100644
                  {welcomeQr?.qr.kind === 'login' && (
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
 new file mode 100644
-index 0000000..9346294
+index 0000000000000000000000000000000000000000..9346294487a107bc26c1bad2e8061ca77dd30780
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
 @@ -0,0 +1,95 @@
@@ -181,7 +181,7 @@ index 0000000..9346294
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 new file mode 100644
-index 0000000..120289c
+index 0000000000000000000000000000000000000000..120289cdda126cb7f854a005ee850726c57cd008
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 @@ -0,0 +1,238 @@
@@ -424,7 +424,7 @@ index 0000000..120289c
 +  )
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-index de5acd9..f5438b4 100644
+index de5acd99db378fbac3821190d16bd44138cd874d..f5438b4d09b4256d1ac781c395bd0d38641735a9 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
 @@ -36,21 +36,26 @@ function extractLinkFromQrCode(qrWithUrl: QrWithUrl<AccountQr>) {
@@ -468,7 +468,7 @@ index de5acd9..f5438b4 100644
      <>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
 new file mode 100644
-index 0000000..a37fe2e
+index 0000000000000000000000000000000000000000..a37fe2ea36d996ce1baf9b8b7f492bd498d747a4
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
 @@ -0,0 +1,290 @@
@@ -764,7 +764,7 @@ index 0000000..a37fe2e
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
 new file mode 100644
-index 0000000..5df9372
+index 0000000000000000000000000000000000000000..5df93720c5fe657fbbf16b3365f75f1eb3a652ed
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectoryParse.ts
 @@ -0,0 +1,51 @@
@@ -820,7 +820,7 @@ index 0000000..5df9372
 +  return found
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
-index 438b76a..1654f40 100644
+index 438b76adceba3de61eedd51f485402bf953f7a16..1654f4006fb8907fcf0ed1edfb42f1a551736b93 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 @@ -78,3 +78,267 @@
@@ -1092,7 +1092,7 @@ index 438b76a..1654f40 100644
 +  padding: 6px 8px;
 +}
 diff --git a/packages/frontend/src/contexts/InstantOnboardingContext.tsx b/packages/frontend/src/contexts/InstantOnboardingContext.tsx
-index 9c2fc6e..a92312f 100644
+index 9c2fc6e2957eb7c7af51f516ba44dbbba3a93285..a92312f69d22da0b2348816baf1c1cb325afae8f 100644
 --- a/packages/frontend/src/contexts/InstantOnboardingContext.tsx
 +++ b/packages/frontend/src/contexts/InstantOnboardingContext.tsx
 @@ -24,6 +24,11 @@ type InstantOnboardingContextValue = {
@@ -1129,7 +1129,7 @@ index 9c2fc6e..a92312f 100644
  
    return (
 diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
-index 17d65c0..6c95d72 100644
+index 17d65c0f8fee3c4b5d500a5429770cc9f467b253..6c95d7208c6186caa91bea5ccdc177815e00d4bd 100644
 --- a/packages/frontend/src/hooks/useInstantOnboarding.ts
 +++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
 @@ -6,6 +6,7 @@ import { ConfigureProgressDialog } from '../components/dialogs/ConfigureProgress
@@ -1201,7 +1201,7 @@ index 17d65c0..6c95d72 100644
  }
 diff --git a/packages/frontend/src/tests/relayDirectory.test.ts b/packages/frontend/src/tests/relayDirectory.test.ts
 new file mode 100644
-index 0000000..7c8d38f
+index 0000000000000000000000000000000000000000..7c8d38f4e6aedd64ccc262c9950b01140e5bb53a
 --- /dev/null
 +++ b/packages/frontend/src/tests/relayDirectory.test.ts
 @@ -0,0 +1,102 @@

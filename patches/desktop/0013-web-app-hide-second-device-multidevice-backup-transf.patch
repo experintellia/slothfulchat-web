@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 8 Jul 2026 19:44:33 +0000
-Subject: [PATCH 13/91] web-app: hide second-device (multidevice backup
- transfer) UI
+Subject: [PATCH] web-app: hide second-device (multidevice backup transfer) UI
 
 iroh isn't included in the wasm build (doesn't work locally with
 browsers yet), so backup transfer via QR/second-device can't function.
@@ -14,7 +13,7 @@ and the settings 'Add Second Device' item.
  2 files changed, 24 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 749b5af..2c59081 100644
+index 749b5afe283dcb9a60d9072355e9067108e5ca55..2c5908172debe30f4d86f51fa774b5a9de08e736 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
 @@ -1,7 +1,6 @@
@@ -42,7 +41,7 @@ index 749b5af..2c59081 100644
          <SettingsIconButton
            icon='code-tags'
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
-index b00fbf2..8317b9d 100644
+index b00fbf2267707cc7a0d057cb642ee41db429dfdb..8317b9d9015cc8eaf648636919a1562130127dc2 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
 @@ -16,7 +16,6 @@ import { runtime } from '@deltachat-desktop/runtime-interface'

@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 8 Jul 2026 12:17:27 +0000
-Subject: [PATCH 11/35] webimap transport: madmail HTTP mail access next to
- IMAP/SMTP
+Subject: [PATCH] webimap transport: madmail HTTP mail access next to IMAP/SMTP
 
 Adds a transport variant that speaks madmail's webimap/websmtp REST API
 (github.com/themadorg/madmail, TDD 10-webimap) instead of IMAP/SMTP.
@@ -67,7 +66,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  create mode 100644 src/webimap.rs
 
 diff --git a/Cargo.toml b/Cargo.toml
-index adb8ad9..4106fde 100644
+index adb8ad9fad566c162f12102afccba34d8b0b25c4..4106fde890d6d1e0153972420813c11e1d45ad66 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -137,7 +137,7 @@ tokio-util = { workspace = true, features = ["compat"] }
@@ -80,7 +79,7 @@ index adb8ad9..4106fde 100644
  
  [dev-dependencies]
 diff --git a/deltachat-ffi/src/lot.rs b/deltachat-ffi/src/lot.rs
-index 1c8c0af..f5440f6 100644
+index 1c8c0af5b9d61934a2a30549f2a9a1360ccc38b2..f5440f65f37eb36def9c4b5d1463f8fdc518150b 100644
 --- a/deltachat-ffi/src/lot.rs
 +++ b/deltachat-ffi/src/lot.rs
 @@ -49,7 +49,7 @@ pub fn get_text1(&self) -> Option<Cow<'_, str>> {
@@ -93,7 +92,7 @@ index 1c8c0af..f5440f6 100644
                  Qr::BackupTooNew { .. } => None,
                  Qr::Proxy { host, port, .. } => Some(Cow::Owned(format!("{host}:{port}"))),
 diff --git a/deltachat-jsonrpc/src/api/types/login_param.rs b/deltachat-jsonrpc/src/api/types/login_param.rs
-index 1112e6a..0bb6745 100644
+index 1112e6a39b2fa50118f346bbafd02b6bfd06090b..0bb67457bd1caccb43cff6025f9fe5eb819b62b3 100644
 --- a/deltachat-jsonrpc/src/api/types/login_param.rs
 +++ b/deltachat-jsonrpc/src/api/types/login_param.rs
 @@ -70,6 +70,11 @@ pub struct EnteredLoginParam {
@@ -125,7 +124,7 @@ index 1112e6a..0bb6745 100644
      }
  }
 diff --git a/deltachat-jsonrpc/src/api/types/qr.rs b/deltachat-jsonrpc/src/api/types/qr.rs
-index 4bf55f3..184fc88 100644
+index 4bf55f398a48e212adbfe444dd3ed32ecdd2f376..184fc88a3b990177fe8d813c1c9a631277375b46 100644
 --- a/deltachat-jsonrpc/src/api/types/qr.rs
 +++ b/deltachat-jsonrpc/src/api/types/qr.rs
 @@ -82,6 +82,9 @@ pub enum QrObject {
@@ -148,7 +147,7 @@ index 4bf55f3..184fc88 100644
                  ref node_addr,
                  auth_token,
 diff --git a/src/configure.rs b/src/configure.rs
-index 54fc172..33da10d 100644
+index 54fc172b847e8604fe7bacb5d26616b0e87d9156..33da10d442c1431f13d6c68f66db07eb38602c4e 100644
 --- a/src/configure.rs
 +++ b/src/configure.rs
 @@ -40,7 +40,7 @@
@@ -350,7 +349,7 @@ index 54fc172..33da10d 100644
      progress!(ctx, 910);
  
 diff --git a/src/lib.rs b/src/lib.rs
-index 8146ed5..f30aa4f 100644
+index 8146ed57349f0f3844c96a5a91c4aec1ef209b48..f30aa4faa3a33c378387d39e94b529d3e90ef2e3 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -97,6 +97,7 @@
@@ -362,7 +361,7 @@ index 8146ed5..f30aa4f 100644
  #[macro_use]
  mod dehtml;
 diff --git a/src/login_param.rs b/src/login_param.rs
-index 1b80c3f..3306314 100644
+index 1b80c3fe34203a7448c97e2190b19592777032de..3306314bf566dee56a20000b1a48c45010b250c3 100644
 --- a/src/login_param.rs
 +++ b/src/login_param.rs
 @@ -145,6 +145,11 @@ pub struct EnteredLoginParam {
@@ -394,7 +393,7 @@ index 1b80c3f..3306314 100644
          param.save_legacy(&t).await?;
          assert_eq!(
 diff --git a/src/net/http.rs b/src/net/http.rs
-index 1922be7..c814980 100644
+index 1922be7a3ff5dded54d12fc1a1adeb31b252e759..c8149809920964afb6d553d21f46ece585dabd43 100644
 --- a/src/net/http.rs
 +++ b/src/net/http.rs
 @@ -1,6 +1,8 @@
@@ -485,7 +484,7 @@ index 1922be7..c814980 100644
  fn http_url_cache_timestamps(url: &str, mimetype: Option<&str>) -> (i64, i64) {
      let now = time();
 diff --git a/src/net/http_wasm.rs b/src/net/http_wasm.rs
-index 24520a0..0ceacc1 100644
+index 24520a04bf0f80491522b5c9f6d28049a80dba9e..0ceacc172069bd4587f7673c7edb9165000266a6 100644
 --- a/src/net/http_wasm.rs
 +++ b/src/net/http_wasm.rs
 @@ -4,6 +4,8 @@
@@ -703,7 +702,7 @@ index 24520a0..0ceacc1 100644
      .await?;
      Ok(resp.body.into())
 diff --git a/src/qr.rs b/src/qr.rs
-index 981087c..7f61888 100644
+index 981087c11d7d8a7228fd27c626fb7322551cffeb..7f6188805f68b697bd4fdba791a4a0c5fabe8f1c 100644
 --- a/src/qr.rs
 +++ b/src/qr.rs
 @@ -27,6 +27,7 @@
@@ -872,7 +871,7 @@ index 981087c..7f61888 100644
  /// "DCACCOUNT:" and "DCLOGIN:" QR codes configure `context`, but I/O mustn't be started for such QR
  /// codes, consider using [`Context::add_transport_from_qr`] which also restarts I/O.
 diff --git a/src/qr/dclogin_scheme.rs b/src/qr/dclogin_scheme.rs
-index 5e17951..5e02962 100644
+index 5e179513cdcd9663e18f50d8ae0e7cdc6efa7036..5e0296254ff643507a8a1d5149835f405c9cbce5 100644
 --- a/src/qr/dclogin_scheme.rs
 +++ b/src/qr/dclogin_scheme.rs
 @@ -197,6 +197,7 @@ pub(crate) fn login_param_from_login_qr(
@@ -884,7 +883,7 @@ index 5e17951..5e02962 100644
              Ok(param)
          }
 diff --git a/src/qr/qr_tests.rs b/src/qr/qr_tests.rs
-index 71c631f..883c019 100644
+index 71c631f908c699fbe84cf270f5b6f887088602f0..883c0193575dff5cdfa810209409c46f43825e65 100644
 --- a/src/qr/qr_tests.rs
 +++ b/src/qr/qr_tests.rs
 @@ -731,7 +731,8 @@ async fn test_decode_account() -> Result<()> {
@@ -942,7 +941,7 @@ index 71c631f..883c019 100644
  /// We should not suggest trying to configure an account in this case.
  /// Such links may be created by copy-paste error or because of incorrect parsing.
 diff --git a/src/scheduler.rs b/src/scheduler.rs
-index a2324ae..b9cee99 100644
+index a2324ae9a691272b74086f08c27de986f4d9bdfa..b9cee9912b547fc859a7de35ac9a367ff33cfa0a 100644
 --- a/src/scheduler.rs
 +++ b/src/scheduler.rs
 @@ -641,7 +641,18 @@ pub async fn start(ctx: &Context) -> Result<Self> {
@@ -977,7 +976,7 @@ index a2324ae..b9cee99 100644
 +    pub(crate) stop_token: CancellationToken,
  }
 diff --git a/src/smtp.rs b/src/smtp.rs
-index de53df7..f88a9d2 100644
+index de53df70c5a9fa5e640541bb930877633067615d..f88a9d29811e8bc93d4e91ea64e9ec18efa1a18f 100644
 --- a/src/smtp.rs
 +++ b/src/smtp.rs
 @@ -92,6 +92,11 @@ pub async fn connect_configured(&mut self, context: &Context) -> Result<()> {
@@ -1068,7 +1067,7 @@ index de53df7..f88a9d2 100644
  }
  
 diff --git a/src/transport.rs b/src/transport.rs
-index 97d5f5b..1dccfca 100644
+index 97d5f5b02d693f5fdb70c73fad947123925fe393..1dccfcae006d943f133ba41e2ca9133f80e688f0 100644
 --- a/src/transport.rs
 +++ b/src/transport.rs
 @@ -202,6 +202,10 @@ pub(crate) struct ConfiguredLoginParam {
@@ -1116,7 +1115,7 @@ index 97d5f5b..1dccfca 100644
      }
  }
 diff --git a/src/transport/transport_tests.rs b/src/transport/transport_tests.rs
-index b06cea9..294a39e 100644
+index b06cea9185d61eaccf0da9fa98b5e037c9d0eed2..294a39e7050efb5ff46a082af81f7e2508784443 100644
 --- a/src/transport/transport_tests.rs
 +++ b/src/transport/transport_tests.rs
 @@ -50,13 +50,14 @@ async fn test_save_load_login_param() -> Result<()> {
@@ -1153,7 +1152,7 @@ index b06cea9..294a39e 100644
  
 diff --git a/src/webimap.rs b/src/webimap.rs
 new file mode 100644
-index 0000000..3a96148
+index 0000000000000000000000000000000000000000..3a96148f1ce3cc4828a828ba6f369e5b9c5b5f6f
 --- /dev/null
 +++ b/src/webimap.rs
 @@ -0,0 +1,364 @@

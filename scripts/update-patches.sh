@@ -10,10 +10,13 @@ update() {
   local base
   base=$(git -C "$sub" rev-parse HEAD)
   rm -f "$root/patches/$name"/*.patch
-  # core.abbrev is pinned: git auto-scales it from the object count, so a shallow
-  # submodule clone would rewrite the `index <sha>..<sha>` line of every patch and
-  # bury a one-patch change in hundreds of lines of churn. `git am` ignores it.
-  git -c core.abbrev=7 -C "$root/build/$name" format-patch --zero-commit --no-signature -o "$root/patches/$name" "$base" >/dev/null
+  # Only a patch's own commit may change its file, or a one-patch change touches
+  # every file and any two open PRs conflict on all of them.
+  # --no-numbered: no [PATCH NN/MM] counter, which changes whenever a patch is
+  #   added or dropped. Apply order comes from the NNNN- file names.
+  # --full-index: abbreviated `index <sha>..<sha>` hashes get longer when they turn
+  #   ambiguous, which depends on how much history the clone has.
+  git -C "$root/build/$name" format-patch --no-numbered --full-index --zero-commit --no-signature -o "$root/patches/$name" "$base" >/dev/null
   # Authorship in the stack is throwaway; format-patch bakes in whatever git
   # identity the worktree commit happened to use, which has leaked real email
   # addresses. Pin the From: header (first one = the mail header) to a dummy.

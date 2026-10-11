@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 23 Jul 2026 01:40:02 +0000
-Subject: [PATCH 64/91] web-app: styled download-on-demand placeholders (type,
+Subject: [PATCH] web-app: styled download-on-demand placeholders (type,
  thumbnail, size)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -58,7 +58,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/utils/downloadPlaceholder.ts
 
 diff --git a/packages/frontend/scss/manifest.scss b/packages/frontend/scss/manifest.scss
-index b55d0eb..99294f1 100644
+index b55d0ebbc49ccae193d25e9e2fd25fe2cad931a9..99294f1a2d241d0a44587307984a445148ae2f66 100644
 --- a/packages/frontend/scss/manifest.scss
 +++ b/packages/frontend/scss/manifest.scss
 @@ -48,6 +48,7 @@
@@ -71,7 +71,7 @@ index b55d0eb..99294f1 100644
  @use 'misc/_avatar.scss';
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
 new file mode 100644
-index 0000000..fb2417d
+index 0000000000000000000000000000000000000000..fb2417d18d7cd71b572c9e836a0eee7bac411a63
 --- /dev/null
 +++ b/packages/frontend/scss/message/_message-download-placeholder.scss
 @@ -0,0 +1,287 @@
@@ -363,7 +363,7 @@ index 0000000..fb2417d
 +  }
 +}
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
-index 5d3432a..b6e27a6 100644
+index 5d3432a69a2ae27c4b647437b25750cd0d6f0255..b6e27a62a1879eef2daaab7681b3cdd0cff2a725 100644
 --- a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 @@ -13,7 +13,7 @@ import useOpenViewProfileDialog from '../../../hooks/dialog/useOpenViewProfileDi
@@ -377,7 +377,7 @@ index 5d3432a..b6e27a6 100644
    const minutes = Math.floor(totalSeconds / 60) % 60
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 new file mode 100644
-index 0000000..6402583
+index 0000000000000000000000000000000000000000..64025839222c93a33b7c6a50d4160fd7ff792866
 --- /dev/null
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 @@ -0,0 +1,303 @@
@@ -685,7 +685,7 @@ index 0000000..6402583
 +  )
 +}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 4e50db2..551ce7e 100644
+index 4e50db2120e7f5b7958d2b729c4cb8cd294ffe14..551ce7ea5a5865dbdbf554eeaa0b82ba696591ca 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -47,6 +47,10 @@ import ShortcutMenu from '../ShortcutMenu'
@@ -866,7 +866,7 @@ index 4e50db2..551ce7e 100644
              />
 diff --git a/packages/frontend/src/tests/placeholderCaption.test.ts b/packages/frontend/src/tests/placeholderCaption.test.ts
 new file mode 100644
-index 0000000..783ad54
+index 0000000000000000000000000000000000000000..783ad54e2f4272c29c93f0c607118b90162b1acf
 --- /dev/null
 +++ b/packages/frontend/src/tests/placeholderCaption.test.ts
 @@ -0,0 +1,32 @@
@@ -904,7 +904,7 @@ index 0000000..783ad54
 +})
 diff --git a/packages/frontend/src/utils/downloadPlaceholder.ts b/packages/frontend/src/utils/downloadPlaceholder.ts
 new file mode 100644
-index 0000000..af8be77
+index 0000000000000000000000000000000000000000..af8be77d3dea75bb9c6f6d5e860023e657cf95c3
 --- /dev/null
 +++ b/packages/frontend/src/utils/downloadPlaceholder.ts
 @@ -0,0 +1,33 @@

@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 13 Aug 2026 23:43:20 +0000
-Subject: [PATCH 34/35] download: fail a post-message that is gone from the
- server
+Subject: [PATCH] download: fail a post-message that is gone from the server
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -83,7 +82,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  2 files changed, 368 insertions(+), 25 deletions(-)
 
 diff --git a/src/download.rs b/src/download.rs
-index fb971c0..32ef52f 100644
+index fb971c045b98d13e09562ca64a6508d35c4967f5..32ef52f23e839e126d1ba0ae8b99f7b54c4d8b83 100644
 --- a/src/download.rs
 +++ b/src/download.rs
 @@ -95,7 +95,7 @@ pub async fn download_full(self, context: &Context) -> Result<()> {
@@ -543,7 +542,7 @@ index fb971c0..32ef52f 100644
      /// reordering) show up as a mismatch against this pattern.
      fn fake_message(len: usize) -> Vec<u8> {
 diff --git a/src/webimap.rs b/src/webimap.rs
-index ced1beb..7e5fa9c 100644
+index ced1beb59c1f42e5e7d3bc049fb1e4121dea0b78..7e5fa9cea3583824eb6b77ceb6d6d6496d455650 100644
 --- a/src/webimap.rs
 +++ b/src/webimap.rs
 @@ -281,6 +281,10 @@ async fn fetch_idle(

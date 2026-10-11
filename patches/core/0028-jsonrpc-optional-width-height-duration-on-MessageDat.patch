@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sun, 2 Aug 2026 10:06:28 +0000
-Subject: [PATCH 28/35] jsonrpc: optional width/height/duration on MessageData
+Subject: [PATCH] jsonrpc: optional width/height/duration on MessageData
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -32,7 +32,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  1 file changed, 20 insertions(+)
 
 diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
-index 8884765..92b75f6 100644
+index 88847652e5db7cc868eba7ec4812a879260d2b6c..92b75f68892b243fb774eb0cc135521fd0d9cb50 100644
 --- a/deltachat-jsonrpc/src/api/types/message.rs
 +++ b/deltachat-jsonrpc/src/api/types/message.rs
 @@ -623,6 +623,20 @@ pub struct MessageData {

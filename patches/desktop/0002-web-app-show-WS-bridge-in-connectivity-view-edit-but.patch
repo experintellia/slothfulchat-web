@@ -1,15 +1,14 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 7 Jul 2026 16:54:50 +0000
-Subject: [PATCH 02/91] web-app: show WS bridge in connectivity view + edit
- button
+Subject: [PATCH] web-app: show WS bridge in connectivity view + edit button
 
 ---
  .../components/dialogs/ConnectivityDialog.tsx   | 17 +++++++++++++++++
  1 file changed, 17 insertions(+)
 
 diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
-index b1f29e7..8a3746d 100644
+index b1f29e74bbb3d74937a8b4daafd2b5a9ac3a9732..8a3746d2be3a02ccfbe0a8b4f19adf796851d4ae 100644
 --- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 +++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 @@ -72,11 +72,28 @@ function ConnectivityDialogInner() {

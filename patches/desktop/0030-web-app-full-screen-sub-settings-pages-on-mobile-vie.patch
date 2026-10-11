@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 10 Jul 2026 11:48:16 +0000
-Subject: [PATCH 30/91] web-app: full-screen sub settings pages on mobile
- viewports
+Subject: [PATCH] web-app: full-screen sub settings pages on mobile viewports
 
 The big-dialogs-fullscreen patch made the settings root dialog go edge to
 edge on phones, but every page it opens on top still rendered as a small
@@ -20,7 +19,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 16 insertions(+), 3 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 2c59081..7c6a6ae 100644
+index 2c5908172debe30f4d86f51fa774b5a9de08e736..7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
 @@ -146,7 +146,12 @@ function SettingsSectionDialog(
@@ -38,7 +37,7 @@ index 2c59081..7c6a6ae 100644
          <>
            <DialogHeader title={tx('pref_chats')} {...commonHeaderProps} />
 diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
-index 3ec99b6..d9c3b18 100644
+index 3ec99b6f5c5791025cbb753c8a3ecf09cc26a049..d9c3b182aaeea3ee944f2369bbc20028a83cd294 100644
 --- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 +++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 @@ -16,7 +16,11 @@ export default function ConnectivityDialog({ onClose }: DialogProps) {
@@ -55,7 +54,7 @@ index 3ec99b6..d9c3b18 100644
        <ConnectivityDialogInner />
      </Dialog>
 diff --git a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
-index 9835fd5..505a87f 100644
+index 9835fd5fbece52f31c57e9a4ff3e21ec2c7ea6f0..505a87fa28180cc40aa6fe9ddc41944e7b7a48da 100644
 --- a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 +++ b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 @@ -32,7 +32,11 @@ export default function EditProfileDialog({ onClose, ...props }: Props) {

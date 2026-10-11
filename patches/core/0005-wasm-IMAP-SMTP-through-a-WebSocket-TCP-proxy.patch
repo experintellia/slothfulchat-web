@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 6 Jul 2026 22:34:43 +0000
-Subject: [PATCH 05/35] wasm: IMAP/SMTP through a WebSocket-TCP proxy
+Subject: [PATCH] wasm: IMAP/SMTP through a WebSocket-TCP proxy
 
 Browsers cannot open TCP sockets, so on wasm32 connect_tcp_inner tunnels
 through a local WS proxy (src/net/ws_tcp.rs): ws_stream_wasm -> duplex
@@ -20,7 +20,7 @@ SystemTime::now which panics on wasm32-unknown-unknown).
  create mode 100644 src/net/ws_tcp.rs
 
 diff --git a/Cargo.lock b/Cargo.lock
-index a17aa17..04697b5 100644
+index a17aa174647a2ab7adcb7b4ad76ad1e795018356..04697b57101667f994cfda5eb18d992c86ddb526 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -272,8 +272,6 @@ dependencies = [
@@ -360,7 +360,7 @@ index a17aa17..04697b5 100644
   "js-sys",
   "wasm-bindgen",
 diff --git a/Cargo.toml b/Cargo.toml
-index 0a75276..75281633 100644
+index 0a752768c8f793d89a7a72bd15fae533c72f7918..75281633f59d7b8dbea4f1853e76568213907db3 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -120,13 +120,21 @@ tokio-stream = { version = "0.1.17", features = ["fs"] }
@@ -386,7 +386,7 @@ index 0a75276..75281633 100644
  [dev-dependencies]
  anyhow = { workspace = true, features = ["backtrace"] } # Enable `backtrace` feature in tests.
 diff --git a/src/net.rs b/src/net.rs
-index 254a1ac..93bf951 100644
+index 254a1ac684db21e9deed2af0b7ca4f83f7a81e69..93bf951a6db99a49cdc85b95bf3900dcf0d01100 100644
 --- a/src/net.rs
 +++ b/src/net.rs
 @@ -5,9 +5,11 @@
@@ -442,7 +442,7 @@ index 254a1ac..93bf951 100644
      context: &Context,
      host: &str,
 diff --git a/src/net/dns.rs b/src/net/dns.rs
-index f4e6bec..b6bf59c 100644
+index f4e6bec11b42c52366d7e5c72f7a4bc1a9b75d8a..b6bf59cd0a2a4b48e6d5277a612b6487bce0982a 100644
 --- a/src/net/dns.rs
 +++ b/src/net/dns.rs
 @@ -45,6 +45,7 @@
@@ -478,7 +478,7 @@ index f4e6bec..b6bf59c 100644
      hostname: &str,
 diff --git a/src/net/ws_tcp.rs b/src/net/ws_tcp.rs
 new file mode 100644
-index 0000000..eab5f2e
+index 0000000000000000000000000000000000000000..eab5f2edc59219e20c30901d05a2cd792b7b3cc6
 --- /dev/null
 +++ b/src/net/ws_tcp.rs
 @@ -0,0 +1,147 @@

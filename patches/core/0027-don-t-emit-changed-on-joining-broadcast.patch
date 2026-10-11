@@ -1,14 +1,14 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 17 Jan 2026 16:26:58 +0100
-Subject: [PATCH 27/35] don't emit changed on joining broadcast
+Subject: [PATCH] don't emit changed on joining broadcast
 
 ---
  src/securejoin/bob.rs | 3 ++-
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/src/securejoin/bob.rs b/src/securejoin/bob.rs
-index 52b545e..29ec3a2 100644
+index 52b545e2faeb12f3aca379c7d198fd43e708853c..29ec3a27356430fd2b4d04d027dc2d09ef11a1a0 100644
 --- a/src/securejoin/bob.rs
 +++ b/src/securejoin/bob.rs
 @@ -285,7 +285,8 @@ pub(super) async fn handle_auth_required_or_pubkey(

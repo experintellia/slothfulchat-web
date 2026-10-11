@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Tue, 14 Jul 2026 12:25:58 +0000
-Subject: [PATCH 44/91] web-app: un-gate the call button + WhoCanCallMe setting
- for the browser runtime
+Subject: [PATCH] web-app: un-gate the call button + WhoCanCallMe setting for
+ the browser runtime
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -23,7 +23,7 @@ target check, so the browser build can expose the privacy setting.
  2 files changed, 11 insertions(+), 6 deletions(-)
 
 diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
-index 85f2b38..ad239c0 100644
+index 85f2b388c7216502468b7400f1259ecd2578448f..ad239c0d0ea6ff41ed153731037997c3f79e33bf 100644
 --- a/packages/frontend/src/components/ChatView/ChatView.tsx
 +++ b/packages/frontend/src/components/ChatView/ChatView.tsx
 @@ -321,9 +321,11 @@ function ChatNavButtons({
@@ -42,7 +42,7 @@ index 85f2b38..ad239c0 100644
          chat.isEncrypted &&
          // Core only allows placing calls in chats of type "single"
 diff --git a/packages/frontend/src/components/Settings/Notifications.tsx b/packages/frontend/src/components/Settings/Notifications.tsx
-index ab90726..b29ea71 100644
+index ab9072696f3a6919d52473d4fd91d9afdac1be06..b29ea71e1039633088cb1962bcd76448b1146322 100644
 --- a/packages/frontend/src/components/Settings/Notifications.tsx
 +++ b/packages/frontend/src/components/Settings/Notifications.tsx
 @@ -85,9 +85,12 @@ export default function Notifications({ desktopSettings }: Props) {

@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Fri, 10 Jul 2026 19:15:47 +0000
-Subject: [PATCH 36/91] web-app: chat export confirm dialog (exclusions + date
- range)
+Subject: [PATCH] web-app: chat export confirm dialog (exclusions + date range)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -23,7 +22,7 @@ New strings live in _untranslated_en.json.
  2 files changed, 73 insertions(+), 12 deletions(-)
 
 diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 4ab7816..fe3dfc4 100644
+index 4ab7816b373aa19fe61456f4f8b036e7a55954ae..fe3dfc4b363263965c36e1c60ec8af7dd1f6adcc 100644
 --- a/_locales/_untranslated_en.json
 +++ b/_locales/_untranslated_en.json
 @@ -1,4 +1,16 @@
@@ -44,7 +43,7 @@ index 4ab7816..fe3dfc4 100644
      "message": "Export Chat"
    },
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
-index c8e871d..d6d25d0 100644
+index c8e871d33f56b8930ac217eb64b72da1469d00fa..d6d25d068756d98cc24bc3b60bfe071b16924099 100644
 --- a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 @@ -1,4 +1,4 @@

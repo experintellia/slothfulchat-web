@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 27 Aug 2026 12:59:19 +0000
-Subject: [PATCH 84/91] web-app: DM composer suggests /bot commands from the
+Subject: [PATCH] web-app: DM composer suggests /bot commands from the
  contact's bio
 
 Reuses the :emoji: completion menu's generic CompletionProvider
@@ -25,7 +25,7 @@ row can show more than a glyph.
  create mode 100644 packages/frontend/src/components/composer/completion/botCommandProvider.ts
 
 diff --git a/packages/frontend/scss/composer/_completion-menu.scss b/packages/frontend/scss/composer/_completion-menu.scss
-index 130faa3..cad4f00 100644
+index 130faa3a96a1fa28be595d4c61938552719d64b8..cad4f00e8cf47972f81a1b81c075cd05d0c507e9 100644
 --- a/packages/frontend/scss/composer/_completion-menu.scss
 +++ b/packages/frontend/scss/composer/_completion-menu.scss
 @@ -15,7 +15,11 @@
@@ -79,7 +79,7 @@ index 130faa3..cad4f00 100644
    }
  }
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index 0977055..58d5982 100644
+index 097705511fd37227f20ad08672e8d035231bdd97..58d59822b279829edd0634729a7eacedd985c800 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
 @@ -13,6 +13,7 @@ import { extension } from 'mime-types'
@@ -130,7 +130,7 @@ index 0977055..58d5982 100644
                  sendMessageOrEditRequest={
                    (!messageEditing.isEditingModeActive
 diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
-index cb9d28a..b561f5d 100644
+index cb9d28ae4267efb7138312e12ca24f166f8df640..b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c 100644
 --- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 +++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 @@ -7,6 +7,10 @@ import { I18nContext } from '../../contexts/I18nContext'
@@ -235,7 +235,7 @@ index cb9d28a..b561f5d 100644
                  active={completion.active}
                  onSelect={this.selectCompletion}
 diff --git a/packages/frontend/src/components/composer/completion/CompletionMenu.tsx b/packages/frontend/src/components/composer/completion/CompletionMenu.tsx
-index 6af6517..4b37f24 100644
+index 6af6517db20558ee325da69b404e326f82f6d11d..4b37f2488c1594cfb099dd84645f34074b75e9d4 100644
 --- a/packages/frontend/src/components/composer/completion/CompletionMenu.tsx
 +++ b/packages/frontend/src/components/composer/completion/CompletionMenu.tsx
 @@ -57,6 +57,11 @@ export function CompletionMenu({
@@ -252,7 +252,7 @@ index 6af6517..4b37f24 100644
      </div>
 diff --git a/packages/frontend/src/components/composer/completion/botCommandProvider.ts b/packages/frontend/src/components/composer/completion/botCommandProvider.ts
 new file mode 100644
-index 0000000..2a5388c
+index 0000000000000000000000000000000000000000..2a5388c1df6c2c116f073b6cd5f1db02ab4fd63b
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/completion/botCommandProvider.ts
 @@ -0,0 +1,51 @@
@@ -308,7 +308,7 @@ index 0000000..2a5388c
 +  }
 +}
 diff --git a/packages/frontend/src/components/composer/completion/types.ts b/packages/frontend/src/components/composer/completion/types.ts
-index 7b6a2a3..33a3573 100644
+index 7b6a2a35eb23dc48b1746a169b7a2aaeba7db744..33a3573a3baab51700b3494efad883f30f27332d 100644
 --- a/packages/frontend/src/components/composer/completion/types.ts
 +++ b/packages/frontend/src/components/composer/completion/types.ts
 @@ -10,6 +10,8 @@ export type CompletionItem = {
@@ -321,7 +321,7 @@ index 7b6a2a3..33a3573 100644
  
  export type CompletionProvider = {
 diff --git a/packages/frontend/src/tests/completion.test.ts b/packages/frontend/src/tests/completion.test.ts
-index 39a5f97..55ecbe8 100644
+index 39a5f97568ae91d34ce987adedcf4a68bdd1b1a3..55ecbe8441e214681d47d0920ffd0da8126b1ebf 100644
 --- a/packages/frontend/src/tests/completion.test.ts
 +++ b/packages/frontend/src/tests/completion.test.ts
 @@ -3,6 +3,10 @@ import { describe, it } from 'mocha'

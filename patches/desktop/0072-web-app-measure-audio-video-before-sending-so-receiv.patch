@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sun, 2 Aug 2026 10:11:59 +0000
-Subject: [PATCH 72/91] web-app: measure audio/video before sending so
- receivers see the length
+Subject: [PATCH] web-app: measure audio/video before sending so receivers see
+ the length
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -53,7 +53,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/utils/mediaMetadata.ts
 
 diff --git a/packages/frontend/src/components/message/MessageListAndComposer.tsx b/packages/frontend/src/components/message/MessageListAndComposer.tsx
-index 219c344..8ca2c10 100644
+index 219c344f3d43a3ec9093f067456f56505131d5cb..8ca2c10f974c92a7e74edabdaa82186b594f0f17 100644
 --- a/packages/frontend/src/components/message/MessageListAndComposer.tsx
 +++ b/packages/frontend/src/components/message/MessageListAndComposer.tsx
 @@ -176,7 +176,11 @@ export default function MessageListAndComposer({ accountId, chat }: Props) {
@@ -70,7 +70,7 @@ index 219c344..8ca2c10 100644
                filename: file.parsed.name + file.parsed.ext,
                viewtype: msgViewType,
 diff --git a/packages/frontend/src/hooks/chat/useMessage.ts b/packages/frontend/src/hooks/chat/useMessage.ts
-index 523d1ed..4d28cc4 100644
+index 523d1ed9895871f497ab259b1eebf862920037a4..4d28cc4e06c644e495d25d9b36e537042efec56c 100644
 --- a/packages/frontend/src/hooks/chat/useMessage.ts
 +++ b/packages/frontend/src/hooks/chat/useMessage.ts
 @@ -1,9 +1,12 @@
@@ -162,7 +162,7 @@ index 523d1ed..4d28cc4 100644
        notifyWebxdcMessageSent(accountId, chatId, message)
 diff --git a/packages/frontend/src/utils/mediaMetadata.ts b/packages/frontend/src/utils/mediaMetadata.ts
 new file mode 100644
-index 0000000..f9301f0
+index 0000000000000000000000000000000000000000..f9301f0a200a7a8cfdf3e120c8df96f2ca308829
 --- /dev/null
 +++ b/packages/frontend/src/utils/mediaMetadata.ts
 @@ -0,0 +1,104 @@
@@ -271,7 +271,7 @@ index 0000000..f9301f0
 +  return el.duration
 +}
 diff --git a/packages/frontend/src/utils/videoPoster.ts b/packages/frontend/src/utils/videoPoster.ts
-index c066833..52af6c7 100644
+index c066833a760e9bf2897d1cb16b481b226c598e57..52af6c798164f1a3b4a1ef177f1a31ab68b4b1a3 100644
 --- a/packages/frontend/src/utils/videoPoster.ts
 +++ b/packages/frontend/src/utils/videoPoster.ts
 @@ -1,4 +1,5 @@

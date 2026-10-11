@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 9 Jul 2026 14:59:39 +0000
-Subject: [PATCH 19/91] web-app: full-screen big dialogs on mobile viewports
+Subject: [PATCH] web-app: full-screen big dialogs on mobile viewports
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -31,7 +31,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  8 files changed, 105 insertions(+), 5 deletions(-)
 
 diff --git a/packages/frontend/scss/dialogs/_qr-code.scss b/packages/frontend/scss/dialogs/_qr-code.scss
-index 604d2df..eaa0427 100644
+index 604d2dfea9d85a7d0191941f82598ca149cc011a..eaa0427e15580ef320cf5f454c1e9e1bb056304d 100644
 --- a/packages/frontend/scss/dialogs/_qr-code.scss
 +++ b/packages/frontend/scss/dialogs/_qr-code.scss
 @@ -1,4 +1,5 @@
@@ -64,7 +64,7 @@ index 604d2df..eaa0427 100644
  
  .copy-link-icon {
 diff --git a/packages/frontend/src/components/Dialog/styles.module.scss b/packages/frontend/src/components/Dialog/styles.module.scss
-index 3eeed1a..f6da590 100644
+index 3eeed1a83f358bdacd13f7fd0ba24e02b9219040..f6da5903bf9916047d3a7d8ab19fc6727b362674 100644
 --- a/packages/frontend/src/components/Dialog/styles.module.scss
 +++ b/packages/frontend/src/components/Dialog/styles.module.scss
 @@ -45,6 +45,53 @@ $paddingVertical: 20px;
@@ -122,7 +122,7 @@ index 3eeed1a..f6da590 100644
    width: 100%;
    align-items: center;
 diff --git a/packages/frontend/src/components/QrReader/styles.module.scss b/packages/frontend/src/components/QrReader/styles.module.scss
-index c423a78..d43ad0b 100644
+index c423a781c26066b9b0e1a5b59c808e68d7415cdf..d43ad0b19fbafe86b668b2bbeb99ed51a9db1249 100644
 --- a/packages/frontend/src/components/QrReader/styles.module.scss
 +++ b/packages/frontend/src/components/QrReader/styles.module.scss
 @@ -1,7 +1,19 @@
@@ -159,7 +159,7 @@ index c423a78..d43ad0b 100644
      background-color: gray;
    }
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 614c2c3..e0b771b 100644
+index 614c2c3d8f24ebfbe9cb0ef1fc6cfd5f5669c7e1..e0b771b76095c6da2a4ca8bc22b158eb5615eb9c 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
 @@ -45,6 +45,7 @@ export default function About({ onClose }: DialogProps) {
@@ -171,7 +171,7 @@ index 614c2c3..e0b771b 100644
        <DialogBody>
          <DialogContent>
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index b20726b..4121343 100644
+index b20726be583f97b9453206647e84dbe77f9be3f5..41213436d874059504485102da88b717bd0fee95 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 @@ -116,7 +116,7 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
@@ -214,7 +214,7 @@ index b20726b..4121343 100644
        <form onSubmit={submitForm}>
          <DialogBody>
 diff --git a/packages/frontend/src/components/dialogs/MediaView/index.tsx b/packages/frontend/src/components/dialogs/MediaView/index.tsx
-index 2c17308..378b39c 100644
+index 2c17308e7bcbd7e7981438c569d7f8aee0bccd06..378b39c47919481cbe320c0487dce1cbbcd417db 100644
 --- a/packages/frontend/src/components/dialogs/MediaView/index.tsx
 +++ b/packages/frontend/src/components/dialogs/MediaView/index.tsx
 @@ -18,7 +18,11 @@ export default function MediaView(
@@ -231,7 +231,7 @@ index 2c17308..378b39c 100644
        <DialogBody className={styles.mediaViewDialogBody}>
          <Gallery chatId={chatId} />
 diff --git a/packages/frontend/src/components/dialogs/QrCode.tsx b/packages/frontend/src/components/dialogs/QrCode.tsx
-index 2a278f1..7859f2c 100644
+index 2a278f1e02cc966794aeb40549e2d074649fb678..7859f2c66158cf380ac54ba6d762f971a028cba8 100644
 --- a/packages/frontend/src/components/dialogs/QrCode.tsx
 +++ b/packages/frontend/src/components/dialogs/QrCode.tsx
 @@ -292,7 +292,7 @@ export function QrCodeScanQrInner({
@@ -244,7 +244,7 @@ index 2a278f1..7859f2c 100644
            onScanSuccess={handleScan}
            onError={handleError}
 diff --git a/packages/frontend/src/components/dialogs/ViewProfile/index.tsx b/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
-index 2fca890..d5ab9c0 100644
+index 2fca89070235f952cc49def39af9804de13b259d..d5ab9c0526a3de0a0630a6b936662f0a14367266 100644
 --- a/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
 +++ b/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
 @@ -89,6 +89,7 @@ export default function ViewProfile(

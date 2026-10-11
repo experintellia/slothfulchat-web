@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 6 Aug 2026 22:38:56 +0000
-Subject: [PATCH 74/91] web-app: copy text from a multi-message selection
+Subject: [PATCH] web-app: copy text from a multi-message selection
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -54,7 +54,7 @@ keyboard handler filter those.
  create mode 100644 packages/frontend/src/utils/copyMessages.ts
 
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 6cd9f5a..9ebcadb 100644
+index 6cd9f5a16ac1e4148b1646deb4c182794c0ef224..9ebcadb657afb62f29da8273ae95226ab2e7df84 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -64,6 +64,7 @@ import type { PrivateReply } from '../../hooks/chat/usePrivateReply'
@@ -183,7 +183,7 @@ index 6cd9f5a..9ebcadb 100644
            chat,
          })
 diff --git a/packages/frontend/src/components/message/focusAndMultiselect.tsx b/packages/frontend/src/components/message/focusAndMultiselect.tsx
-index af71bb7..348cf1a 100644
+index af71bb7dcf4382ff9d91956a023d47b4a6cb5d3d..348cf1a15540107d3c87cbff7d137a298e6f02bd 100644
 --- a/packages/frontend/src/components/message/focusAndMultiselect.tsx
 +++ b/packages/frontend/src/components/message/focusAndMultiselect.tsx
 @@ -13,6 +13,10 @@ type MessageMultiselectContextValue = ReturnType<
@@ -216,7 +216,7 @@ index af71bb7..348cf1a 100644
  export function useMessageFocusAndMultiselect(
 diff --git a/packages/frontend/src/tests/copyMessages.test.ts b/packages/frontend/src/tests/copyMessages.test.ts
 new file mode 100644
-index 0000000..e0c3d89
+index 0000000000000000000000000000000000000000..e0c3d89581eefff7a21db4c849843ffe443d6638
 --- /dev/null
 +++ b/packages/frontend/src/tests/copyMessages.test.ts
 @@ -0,0 +1,43 @@
@@ -265,7 +265,7 @@ index 0000000..e0c3d89
 +})
 diff --git a/packages/frontend/src/utils/copyMessages.ts b/packages/frontend/src/utils/copyMessages.ts
 new file mode 100644
-index 0000000..acd5856
+index 0000000000000000000000000000000000000000..acd5856e8f2323d59f505f7075ad9cca048ddbd8
 --- /dev/null
 +++ b/packages/frontend/src/utils/copyMessages.ts
 @@ -0,0 +1,32 @@
@@ -302,7 +302,7 @@ index 0000000..acd5856
 +    .join('\n')
 +}
 diff --git a/packages/runtime/runtime.ts b/packages/runtime/runtime.ts
-index ff03f45..f4d2933 100644
+index ff03f4509343a9e074375c210bdaac5f9a1b3488..f4d29334a66dbdae68282bb3fd5a24b5104da462 100644
 --- a/packages/runtime/runtime.ts
 +++ b/packages/runtime/runtime.ts
 @@ -101,7 +101,12 @@ export interface Runtime {
@@ -320,7 +320,7 @@ index ff03f45..f4d2933 100644
    getAppPath(name: RuntimeAppPath): Promise<string>
    openMapsWebxdc(accountId: number, chatId?: number): void
 diff --git a/packages/target-browser/runtime-browser/runtime.ts b/packages/target-browser/runtime-browser/runtime.ts
-index a031932..061d133 100644
+index a031932f2de9d09821b2cd4159ca939d4a8afdcc..061d133e34fda10d34bb4470b18205d7b69f883e 100644
 --- a/packages/target-browser/runtime-browser/runtime.ts
 +++ b/packages/target-browser/runtime-browser/runtime.ts
 @@ -589,8 +589,15 @@ class BrowserRuntime implements Runtime {
@@ -342,7 +342,7 @@ index a031932..061d133 100644
    async writeClipboardImage(path: string): Promise<void> {
      try {
 diff --git a/packages/target-electron/runtime-electron/runtime.ts b/packages/target-electron/runtime-electron/runtime.ts
-index cd4cf5f..9dc1e92 100644
+index cd4cf5f51bd0f1a9c88eb28918aabdbfca417536..9dc1e92105b50a0f5b221afe3f8fd0af379e019f 100644
 --- a/packages/target-electron/runtime-electron/runtime.ts
 +++ b/packages/target-electron/runtime-electron/runtime.ts
 @@ -338,8 +338,8 @@ class ElectronRuntime implements Runtime {
@@ -357,7 +357,7 @@ index cd4cf5f..9dc1e92 100644
    writeClipboardImage(path: string): Promise<void> {
      return ipcBackend.invoke('electron.clipboard.writeImage', path)
 diff --git a/packages/target-tauri/runtime-tauri/runtime.ts b/packages/target-tauri/runtime-tauri/runtime.ts
-index a5c47be..2af841a 100644
+index a5c47beaa1f5a17616e044dfea2aa4b7ece7a650..2af841abe56904ff59dc4f3f694f41de1d6e146a 100644
 --- a/packages/target-tauri/runtime-tauri/runtime.ts
 +++ b/packages/target-tauri/runtime-tauri/runtime.ts
 @@ -491,8 +491,8 @@ class TauriRuntime implements Runtime {

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Wed, 14 Jan 2026 18:59:28 +0100
-Subject: [PATCH 25/35] fix: add `ChatlistItemChanged` event to
+Subject: [PATCH] fix: add `ChatlistItemChanged` event to
  `on_archived_chats_maybe_noticed`
 
 Also fixes duplicated events when marking archived link as noticed.
@@ -10,7 +10,7 @@ Also fixes duplicated events when marking archived link as noticed.
  1 file changed, 7 insertions(+), 2 deletions(-)
 
 diff --git a/src/chat.rs b/src/chat.rs
-index f2d4080..58ee0b3 100644
+index f2d4080391080f74dddc53f73da3fc799689fc2b..58ee0b3b095d26ecd8994bf0531f0e6f8e12d8ba 100644
 --- a/src/chat.rs
 +++ b/src/chat.rs
 @@ -3297,7 +3297,10 @@ pub async fn marknoticed_chat(context: &Context, chat_id: ChatId) -> Result<()>
