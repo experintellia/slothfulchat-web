@@ -12,6 +12,11 @@
   commands in its bio no longer pushes the rest of its profile off-screen;
   bios and group or channel descriptions show 8 lines with a "Show more" link,
   like long messages.
+- **Requests wait behind one entry at the top of the chat list.** Messages
+  and group invitations from people you haven't accepted no longer get rows
+  of their own, and group invitations no longer pop up notifications, so
+  someone who keeps cloning a group and re-adding you can't bury your real
+  chats anymore.
 - **Videos get a proper player.** The controls now fade away while a video
   plays instead of covering the bottom of the picture, and the usual keyboard
   shortcuts work once you click the video. Videos no longer make the chat
