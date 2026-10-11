@@ -47,11 +47,18 @@ same pattern the web edition uses for /unfurl.
 selectCompletion now goes through the new replaceRange(), which the card
 also uses.
 
+SettingsSelector takes forkAdded like SettingsSwitch, so the server row
+gets the sloth badge too; the badge markup (until now copied into
+SettingsSwitch and EmojiSetSelector) is one exported ForkBadge.
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  .../frontend/scss/composer/_composer.scss     |  41 +++
- .../Settings/ExperimentalFeatures.tsx         |  21 ++
+ .../components/Settings/EmojiSetSelector.tsx  |  11 +-
+ .../Settings/ExperimentalFeatures.tsx         |  22 ++
  .../Settings/LanguageToolDialog.tsx           | 153 +++++++++++
+ .../components/Settings/SettingsSelector.tsx  |  10 +-
+ .../components/Settings/SettingsSwitch.tsx    |  25 +-
  .../src/components/composer/Composer.tsx      |   9 +
  .../composer/ComposerMessageInput.tsx         |  33 ++-
  .../src/components/composer/LanguageTool.tsx  | 238 ++++++++++++++++++
@@ -61,7 +68,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  packages/shared/shared-types.d.ts             |   7 +
  packages/shared/state.ts                      |   4 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 12 files changed, 681 insertions(+), 9 deletions(-)
+ 15 files changed, 707 insertions(+), 30 deletions(-)
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
  create mode 100644 packages/frontend/src/components/composer/languageToolCheck.ts
@@ -116,8 +123,37 @@ index b24bd54..23c950f 100644
 +    }
 +  }
 +}
+diff --git a/packages/frontend/src/components/Settings/EmojiSetSelector.tsx b/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
+index 0d7da17..4083945 100644
+--- a/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
++++ b/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
+@@ -1,7 +1,7 @@
+ import React, { useState } from 'react'
+ 
+ import SettingsHeading from './SettingsHeading'
+-import styles from './styles.module.scss'
++import { ForkBadge } from './SettingsSwitch'
+ 
+ // SlothfulChat fork: emoji-set picker. The browser edition's runtime
+ // (packages/web-app/src/runtime.ts) exposes window.__slothfulchatEmoji and
+@@ -38,14 +38,7 @@ export default function EmojiSetSelector() {
+     <>
+       <SettingsHeading>
+         Emoji style
+-        <span
+-          className={styles.forkBadge}
+-          role='img'
+-          aria-label='SlothfulChat feature'
+-          title='Added by SlothfulChat — not part of upstream Delta Chat'
+-        >
+-          🦥
+-        </span>
++        <ForkBadge />
+       </SettingsHeading>
+       <div
+         role='radiogroup'
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 6573050..6c51323 100644
+index 6573050..86b1ca0 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -26,6 +26,9 @@ import { getLogger } from '@deltachat-desktop/shared/logger'
@@ -130,7 +166,7 @@ index 6573050..6c51323 100644
  
  const log = getLogger('ExperimentalFeatures')
  
-@@ -83,6 +86,24 @@ export function ExperimentalFeatures() {
+@@ -83,6 +86,25 @@ export function ExperimentalFeatures() {
          description='When your message contains a link and has no image, offer to attach a preview card. Off by default; turn on to be prompted.'
          forkAdded
        />
@@ -149,6 +185,7 @@ index 6573050..6c51323 100644
 +            ? languageToolServerLabel(settingsStore.desktopSettings)
 +            : undefined
 +        }
++        forkAdded
 +      >
 +        LanguageTool server
 +      </SettingsSelector>
@@ -314,6 +351,85 @@ index 0000000..37af582
 +    </Dialog>
 +  )
 +}
+diff --git a/packages/frontend/src/components/Settings/SettingsSelector.tsx b/packages/frontend/src/components/Settings/SettingsSelector.tsx
+index 3fdd38d..3862fd5 100644
+--- a/packages/frontend/src/components/Settings/SettingsSelector.tsx
++++ b/packages/frontend/src/components/Settings/SettingsSelector.tsx
+@@ -4,15 +4,18 @@ import type { PropsWithChildren } from 'react'
+ 
+ import styles from './styles.module.scss'
+ import classNames from 'classnames'
++import { ForkBadge } from './SettingsSwitch'
+ 
+ type Props = PropsWithChildren<{
+   onClick: () => void
+   currentValue?: string
+   description?: string
++  /** marks a setting added by the SlothfulChat fork with a small badge */
++  forkAdded?: boolean
+ }>
+ 
+ export default function SettingsSelector(props: Props) {
+-  const { onClick, currentValue, children, description } = props
++  const { onClick, currentValue, children, description, forkAdded } = props
+ 
+   return (
+     // TODO a11y: this component implements `<select>` functionality,
+@@ -23,7 +26,10 @@ export default function SettingsSelector(props: Props) {
+       onClick={onClick}
+     >
+       <div className={styles.settingsRowLeft}>
+-        <div className={styles.settingsRowLabel}>{children}</div>
++        <div className={styles.settingsRowLabel}>
++          {children}
++          {forkAdded && <ForkBadge />}
++        </div>
+         {description && (
+           <div className={styles.settingsRowDescription}>{description}</div>
+         )}
+diff --git a/packages/frontend/src/components/Settings/SettingsSwitch.tsx b/packages/frontend/src/components/Settings/SettingsSwitch.tsx
+index d71b3a3..5589023 100644
+--- a/packages/frontend/src/components/Settings/SettingsSwitch.tsx
++++ b/packages/frontend/src/components/Settings/SettingsSwitch.tsx
+@@ -15,6 +15,20 @@ type Props = {
+   forkAdded?: boolean
+ }
+ 
++/** small badge marking a setting added by the SlothfulChat fork */
++export function ForkBadge() {
++  return (
++    <span
++      className={styles.forkBadge}
++      role='img'
++      aria-label='SlothfulChat feature'
++      title='Added by SlothfulChat — not part of upstream Delta Chat'
++    >
++      🦥
++    </span>
++  )
++}
++
+ export default function SettingsSwitch({
+   description,
+   disabled = false,
+@@ -36,16 +50,7 @@ export default function SettingsSwitch({
+           })}
+         >
+           {label}
+-          {forkAdded && (
+-            <span
+-              className={styles.forkBadge}
+-              role='img'
+-              aria-label='SlothfulChat feature'
+-              title='Added by SlothfulChat — not part of upstream Delta Chat'
+-            >
+-              🦥
+-            </span>
+-          )}
++          {forkAdded && <ForkBadge />}
+         </span>
+         {description && (
+           <div
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
 index 58d5982..5c30e98 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
