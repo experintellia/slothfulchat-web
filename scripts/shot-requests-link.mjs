@@ -15,8 +15,10 @@
 // showing its empty note. Shots go to .cache/requests-shots/.
 //
 // Not covered: notifications. Webimap accounts (what the mock serves) never
-// get core's IncomingMsgBunch, which is what flushes queued notifications. It also asserts what the shots show, so
-// it doubles as the runnable check for the requests link UI.
+// get core's IncomingMsgBunch, which is what flushes queued notifications.
+//
+// It asserts what the shots show, so it doubles as the runnable check for
+// the requests link UI.
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/shot-requests-link.mjs
@@ -217,14 +219,15 @@ try {
   await clones.nth(CLONES - 1).waitFor()
   await clones.first().click()
   await page.locator('.contact-request-button.accept').click()
-  await clones.nth(CLONES - 2).waitFor()
-  await page.waitForTimeout(800)
-  expect(
-    (await clones.count()) === CLONES - 1,
-    `UI accept: ${CLONES - 1} requests left`
+  await until(
+    async () => (await clones.count()) === CLONES - 1,
+    'the accepted request to leave the list'
   )
+  expect(true, `UI accept: ${CLONES - 1} requests left`)
+  // In Requests the header has the back button and the link row is gone.
   expect(
-    (await page.getByText('Requests', { exact: true }).count()) > 0,
+    (await page.locator('.backButton').count()) > 0 &&
+      (await link.count()) === 0,
     'UI accept: still in the Requests view'
   )
 
@@ -232,20 +235,21 @@ try {
   await clones.first().click()
   await page.locator('.contact-request-button.delete').click()
   await page.getByTestId('confirm').click()
-  await page.waitForTimeout(1500)
-  expect(
-    (await clones.count()) === CLONES - 2,
-    `UI delete: ${CLONES - 2} requests left`
+  await until(
+    async () => (await clones.count()) === CLONES - 2,
+    'the deleted request to leave the list'
   )
+  expect(true, `UI delete: ${CLONES - 2} requests left`)
 
   // 7. Back in the chats: the count dropped, the accepted clone is a chat.
   await page.locator('.backButton').first().click()
-  await link.waitFor({ state: 'visible', timeout: 30_000 })
-  await page.waitForTimeout(800)
-  expect(
-    (await link.getAttribute('aria-label')) === `Requests: ${CLONES - 2}`,
-    `link reads "Requests: ${CLONES - 2}"`
+  await until(
+    async () =>
+      (await link.getAttribute('aria-label').catch(() => null)) ===
+      `Requests: ${CLONES - 2}`,
+    `the link to read "Requests: ${CLONES - 2}"`
   )
+  expect(true, `link reads "Requests: ${CLONES - 2}"`)
   expect(
     (await clones.count()) === 1,
     'the accepted clone is now a normal chat'
