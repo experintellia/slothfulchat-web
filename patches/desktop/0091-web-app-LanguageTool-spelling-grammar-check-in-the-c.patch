@@ -37,15 +37,28 @@ Clicking/tapping or arrowing into an underline opens a card above the
 composer (CompletionMenu's slot and look) with the message, up to five
 replacements and Ignore (per session); typing closes it, so it never pops
 up mid-sentence. It doesn't own any keys, so Enter still sends; Tab
-reaches its buttons. Native spellcheck is off while LanguageTool is on, to
-avoid two sets of squiggles.
+reaches its buttons. A replacement goes through setRangeText() plus an
+`input` event, so the field's own onChange takes it like typing and the
+caret lands after it -- no per-field plumbing. The overlay reserves 4px
+below the box (height and bottom padding alike, so the scroll range is
+unchanged) for the last line's wavy underline, which overshoots a tight
+line-height: normal line box.
+
+While LanguageTool is on, the field opts out of the browser's spellcheck
+(spellcheck=false) and of the LanguageTool browser add-on
+(data-lt-active=false), so there is one set of squiggles. While it is off
+nothing changes: the composer keeps spellcheck=true, the other fields keep
+the browser default, and an installed add-on works as before.
+
+The same check runs in the profile bio (EditProfileDialog), the group
+description (EditGroupNameDialog) and the new-group description
+(CreateChat): DeltaTextarea takes an opt-in `languageTool` prop rather
+than checking every DeltaTextarea, because the proxy dialog uses one for
+proxy URLs, which must not be sent anywhere.
 
 CSP: Electron's main.html and Tauri's connect-src allow
 http(s)://*:*/v2/check -- any host/port, pinned to that one path, the
 same pattern the web edition uses for /unfurl.
-
-selectCompletion now goes through the new replaceRange(), which the card
-also uses.
 
 SettingsSelector takes forkAdded like SettingsSwitch, so the server row
 gets the sloth badge too; the badge markup (until now copied into
@@ -54,21 +67,25 @@ SettingsSwitch and EmojiSetSelector) is one exported ForkBadge.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  .../frontend/scss/composer/_composer.scss     |  41 +++
+ .../frontend/src/components/Login-Styles.tsx  |  20 +-
  .../components/Settings/EmojiSetSelector.tsx  |  11 +-
  .../Settings/ExperimentalFeatures.tsx         |  22 ++
  .../Settings/LanguageToolDialog.tsx           | 153 +++++++++++
  .../components/Settings/SettingsSelector.tsx  |  10 +-
  .../components/Settings/SettingsSwitch.tsx    |  25 +-
- .../src/components/composer/Composer.tsx      |   9 +
- .../composer/ComposerMessageInput.tsx         |  33 ++-
- .../src/components/composer/LanguageTool.tsx  | 238 ++++++++++++++++++
- .../components/composer/languageToolCheck.ts  | 112 +++++++++
+ .../src/components/composer/Composer.tsx      |   5 +
+ .../composer/ComposerMessageInput.tsx         |  19 +-
+ .../src/components/composer/LanguageTool.tsx  | 251 ++++++++++++++++++
+ .../components/composer/languageToolCheck.ts  | 125 +++++++++
+ .../components/dialogs/CreateChat/index.tsx   |   1 +
+ .../dialogs/EditProfileDialog/index.tsx       |   1 +
+ .../components/dialogs/ViewGroup/index.tsx    |   1 +
  .../frontend/src/tests/languageTool.test.ts   |  64 +++++
  packages/frontend/static/main.html            |   5 +-
  packages/shared/shared-types.d.ts             |   7 +
  packages/shared/state.ts                      |   4 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 15 files changed, 707 insertions(+), 30 deletions(-)
+ 19 files changed, 743 insertions(+), 25 deletions(-)
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
  create mode 100644 packages/frontend/src/components/composer/languageToolCheck.ts
@@ -123,6 +140,56 @@ index b24bd54..23c950f 100644
 +    }
 +  }
 +}
+diff --git a/packages/frontend/src/components/Login-Styles.tsx b/packages/frontend/src/components/Login-Styles.tsx
+index 2103c66..2bdab54 100644
+--- a/packages/frontend/src/components/Login-Styles.tsx
++++ b/packages/frontend/src/components/Login-Styles.tsx
+@@ -1,4 +1,8 @@
+-import React, { ReactElement, useId } from 'react'
++import React, { ReactElement, useId, useRef } from 'react'
++
++import { useSettingsStore } from '../stores/settings'
++import { LanguageTool } from './composer/LanguageTool'
++import { languageToolConfig } from './composer/languageToolCheck'
+ 
+ export const DeltaSelect = React.memo(
+   (
+@@ -38,6 +42,9 @@ export const DeltaTextarea = React.memo(
+       value: any
+       placeholder?: string
+       disabled?: boolean
++      /** prose field: check it with LanguageTool while that setting is on
++       * (never for addresses/URLs, which must not leave the device) */
++      languageTool?: boolean
+       onChange: (
+         event: React.FormEvent<HTMLElement> &
+           React.ChangeEvent<HTMLTextAreaElement>
+@@ -46,6 +53,9 @@ export const DeltaTextarea = React.memo(
+   ) => {
+     const defaultId = useId()
+     const id = props.id ?? `delta-textarea-${defaultId}`
++    const textareaRef = useRef<HTMLTextAreaElement>(null)
++    const settings = useSettingsStore()[0]?.desktopSettings
++    const lt = props.languageTool && settings && languageToolConfig(settings)
+ 
+     const alwaysShowLabel = (props.label?.length ?? 0) > 0
+ 
+@@ -67,7 +77,15 @@ export const DeltaTextarea = React.memo(
+           placeholder={props.placeholder}
+           rows={5}
+           className={(props.value?.length ?? 0) === 0 ? 'isEmpty' : undefined}
++          ref={textareaRef}
++          // as in the composer: LanguageTool on = browser spellcheck and the
++          // LanguageTool browser add-on step aside; off = untouched
++          spellCheck={lt ? false : undefined}
++          data-lt-active={lt ? 'false' : undefined}
+         />
++        {lt && (
++          <LanguageTool {...lt} text={props.value} textareaRef={textareaRef} />
++        )}
+       </div>
+     )
+   }
 diff --git a/packages/frontend/src/components/Settings/EmojiSetSelector.tsx b/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
 index 0d7da17..4083945 100644
 --- a/packages/frontend/src/components/Settings/EmojiSetSelector.tsx
@@ -431,24 +498,27 @@ index d71b3a3..5589023 100644
          {description && (
            <div
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index 58d5982..5c30e98 100644
+index 58d5982..c747e1a 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
-@@ -151,6 +151,13 @@ const Composer = forwardRef<
+@@ -13,6 +13,7 @@ import { extension } from 'mime-types'
+ 
+ import MenuAttachment from './menuAttachment'
+ import ComposerMessageInput from './ComposerMessageInput'
++import { languageToolConfig } from './languageToolCheck'
+ import { parseBotCommandsFromStatus } from './completion/botCommandProvider'
+ import LinkPreviewGhost from './linkPreview/LinkPreviewGhost'
+ import ghostStyles from './linkPreview/styles.module.scss'
+@@ -151,6 +152,8 @@ const Composer = forwardRef<
    )
  
    const settingsStore = useSettingsStore()[0]
-+  const languageTool = settingsStore?.desktopSettings.languageTool
-+    ? {
-+        server: settingsStore.desktopSettings.languageToolServer,
-+        username: settingsStore.desktopSettings.languageToolUsername,
-+        apiKey: settingsStore.desktopSettings.languageToolApiKey,
-+      }
-+    : null
++  const languageTool =
++    settingsStore && languageToolConfig(settingsStore.desktopSettings)
  
    // `/`-completion for DM chats whose contact lists `/commands` in their bio.
    const dmContactId =
-@@ -866,6 +873,7 @@ const Composer = forwardRef<
+@@ -866,6 +869,7 @@ const Composer = forwardRef<
                    settingsStore?.desktopSettings.experimentalCompletionMenu ===
                    true
                  }
@@ -456,7 +526,7 @@ index 58d5982..5c30e98 100644
                  botCommands={botCommands}
                  loadingDraft={draftIsLoading}
                  sendMessageOrEditRequest={
-@@ -893,6 +901,7 @@ const Composer = forwardRef<
+@@ -893,6 +897,7 @@ const Composer = forwardRef<
                    settingsStore?.desktopSettings.experimentalCompletionMenu ===
                    true
                  }
@@ -465,7 +535,7 @@ index 58d5982..5c30e98 100644
                  sendMessageOrEditRequest={
                    messageEditing.doSendEditRequest ?? (() => {})
 diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
-index b561f5d..fede18e 100644
+index b561f5d..7a0cc38 100644
 --- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 +++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 @@ -11,6 +11,8 @@ import {
@@ -486,48 +556,16 @@ index b561f5d..fede18e 100644
    onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
    // used to show/hide send button
    onChange: (text: string) => void
-@@ -99,6 +103,7 @@ export default class ComposerMessageInput extends React.Component<
-     this.onCaretMove = this.onCaretMove.bind(this)
-     this.selectCompletion = this.selectCompletion.bind(this)
-     this.closeCompletion = this.closeCompletion.bind(this)
-+    this.replaceRange = this.replaceRange.bind(this)
- 
-     this.textareaRef = React.createRef()
-     this.focus = this.focus.bind(this)
-@@ -268,17 +273,20 @@ export default class ComposerMessageInput extends React.Component<
-     if (!token) {
-       return
-     }
--    const text = this.props.text
-     // trailing space so typing can continue (and the menu doesn't reopen on
-     // the finished token); skip it if whitespace already follows
--    const value = /^\s/.test(text.slice(token.end))
-+    const value = /^\s/.test(this.props.text.slice(token.end))
-       ? item.value
-       : item.value + ' '
--    const updated = text.slice(0, token.start) + value + text.slice(token.end)
--    // reuse the existing caret-restore path (componentDidUpdate)
--    this.setCursorPosition = token.start + value.length
-     this.closeCompletion()
--    this.props.onChange(updated)
-+    this.replaceRange(token.start, token.end, value)
-+  }
-+
-+  replaceRange(start: number, end: number, value: string) {
-+    const text = this.props.text
-+    // reuse the existing caret-restore path (componentDidUpdate)
-+    this.setCursorPosition = start + value.length
-+    this.props.onChange(text.slice(0, start) + value + text.slice(end))
-   }
- 
-   /** Handle the keys the open menu owns. Returns true if the event was consumed. */
-@@ -479,9 +487,20 @@ export default class ComposerMessageInput extends React.Component<
+@@ -479,9 +483,22 @@ export default class ComposerMessageInput extends React.Component<
                    ? 'rtl'
                    : 'auto' /* auto is based on content but defaults to ltr */
                }
 -              spellCheck={true}
-+              // LanguageTool checks spelling too; two sets of squiggles is noise
++              // While LanguageTool is on it checks spelling itself: keep the
++              // browser's spellcheck and the LanguageTool browser add-on out
++              // (two sets of squiggles). Off: both work as before.
 +              spellCheck={!this.props.languageTool}
++              data-lt-active={this.props.languageTool ? 'false' : undefined}
                aria-keyshortcuts='Control+M'
              />
 +            {this.props.languageTool && (
@@ -537,7 +575,6 @@ index b561f5d..fede18e 100644
 +                dir={writingDirection === 'rtl' ? 'rtl' : 'auto'}
 +                textareaRef={this.textareaRef}
 +                hideCard={completion.open}
-+                onReplace={this.replaceRange}
 +              />
 +            )}
            </>
@@ -545,10 +582,10 @@ index b561f5d..fede18e 100644
        </I18nContext.Consumer>
 diff --git a/packages/frontend/src/components/composer/LanguageTool.tsx b/packages/frontend/src/components/composer/LanguageTool.tsx
 new file mode 100644
-index 0000000..ac45578b
+index 0000000..0ded1e6
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/LanguageTool.tsx
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,251 @@
 +import React, {
 +  useCallback,
 +  useEffect,
@@ -573,12 +610,16 @@ index 0000000..ac45578b
 +type Props = LtConfig & {
 +  text: string
 +  /** the textarea's dir attribute */
-+  dir: string
++  dir?: string
 +  textareaRef: React.RefObject<HTMLTextAreaElement | null>
 +  /** keep the suggestion card closed, e.g. while the completion menu is open */
-+  hideCard: boolean
-+  onReplace: (start: number, end: number, value: string) => void
++  hideCard?: boolean
 +}
++
++// Room below the box for the last line's wavy underline, which overshoots a
++// tight (line-height: normal) line box. Added to height and padding alike, so
++// the scroll range stays the textarea's.
++const UNDERLINE_ROOM_PX = 4
 +
 +/** Copy of the textarea's text box, so the overlay wraps lines identically. */
 +function measure(el: HTMLTextAreaElement): React.CSSProperties {
@@ -587,7 +628,7 @@ index 0000000..ac45578b
 +    top: el.offsetTop + el.clientTop,
 +    left: el.offsetLeft + el.clientLeft,
 +    width: el.clientWidth,
-+    height: el.clientHeight,
++    height: el.clientHeight + UNDERLINE_ROOM_PX,
 +    fontFamily: cs.fontFamily,
 +    fontSize: cs.fontSize,
 +    fontWeight: cs.fontWeight,
@@ -599,7 +640,7 @@ index 0000000..ac45578b
 +    textAlign: cs.textAlign as React.CSSProperties['textAlign'],
 +    paddingTop: cs.paddingTop,
 +    paddingRight: cs.paddingRight,
-+    paddingBottom: cs.paddingBottom,
++    paddingBottom: `calc(${cs.paddingBottom} + ${UNDERLINE_ROOM_PX}px)`,
 +    paddingLeft: cs.paddingLeft,
 +  }
 +}
@@ -619,7 +660,6 @@ index 0000000..ac45578b
 +  dir,
 +  textareaRef,
 +  hideCard,
-+  onReplace,
 +}: Props) {
 +  const [checked, setChecked] = useState<{ text: string; matches: LtMatch[] }>({
 +    text: '',
@@ -765,8 +805,18 @@ index 0000000..ac45578b
 +                key={r}
 +                styling='primary'
 +                onClick={() => {
-+                  onReplace(active.offset, active.offset + active.length, r)
-+                  textareaRef.current?.focus()
++                  const el = textareaRef.current
++                  if (!el) return
++                  // edit the textarea and fire `input`, so the field's own
++                  // onChange takes it like typing (caret lands after it)
++                  el.setRangeText(
++                    r,
++                    active.offset,
++                    active.offset + active.length,
++                    'end'
++                  )
++                  el.dispatchEvent(new Event('input', { bubbles: true }))
++                  el.focus()
 +                  setCaret(null) // the old caret offset is stale now
 +                }}
 +              >
@@ -789,14 +839,16 @@ index 0000000..ac45578b
 +}
 diff --git a/packages/frontend/src/components/composer/languageToolCheck.ts b/packages/frontend/src/components/composer/languageToolCheck.ts
 new file mode 100644
-index 0000000..867183f
+index 0000000..4f3cf52
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/languageToolCheck.ts
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,125 @@
 +// LanguageTool (https://languagetool.org) spelling/grammar check for the
 +// composer: the HTTP API call and remapping results onto edited text. Plain
 +// fetch, so it works the same on browser, Electron and Tauri — the desktop
 +// targets ship with Chromium spellcheck off (no local hunspell dictionary).
++
++import type { DesktopSettingsType } from '@deltachat-desktop/shared/shared-types'
 +
 +export type LtConfig = {
 +  /** self-hosted server base URL; unset = languagetool.org */
@@ -815,6 +867,17 @@ index 0000000..867183f
 +  issueType: string
 +  /** rule id + flagged text, what "Ignore" remembers */
 +  key: string
++}
++
++/** The check config from the desktop settings, or null while it is off. */
++export function languageToolConfig(s: DesktopSettingsType): LtConfig | null {
++  return s.languageTool
++    ? {
++        server: s.languageToolServer,
++        username: s.languageToolUsername,
++        apiKey: s.languageToolApiKey,
++      }
++    : null
 +}
 +
 +export function ltCheckUrl(cfg: LtConfig): string {
@@ -905,6 +968,42 @@ index 0000000..867183f
 +  }
 +  return kept
 +}
+diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
+index 4fba516..1301478 100644
+--- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
++++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
+@@ -1047,6 +1047,7 @@ export const ChatSettingsSetNameAndProfileImage = ({
+       {setDescription !== undefined && (
+         <DeltaTextarea
+           placeholder={tx('chat_description')}
++          languageTool
+           value={description ?? ''}
+           onChange={ev => setDescription(ev.target.value)}
+         />
+diff --git a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
+index 505a87f..b0b7e2d 100644
+--- a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
++++ b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
+@@ -121,6 +121,7 @@ function EditProfileDialogInner({
+               key='status'
+               id='status'
+               placeholder={tx('pref_default_status_label')}
++              languageTool
+               value={selfstatus}
+               onChange={(
+                 event: React.FormEvent<HTMLElement> &
+diff --git a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
+index 6a7ad0d..bb45855 100644
+--- a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
++++ b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
+@@ -718,6 +718,7 @@ export function EditGroupNameDialog({
+             <DeltaTextarea
+               id='description'
+               placeholder={tx('chat_description')}
++              languageTool
+               value={groupDescription}
+               onChange={(
+                 event: React.FormEvent<HTMLElement> &
 diff --git a/packages/frontend/src/tests/languageTool.test.ts b/packages/frontend/src/tests/languageTool.test.ts
 new file mode 100644
 index 0000000..3b0ee5a

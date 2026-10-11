@@ -437,7 +437,10 @@ exists:
   textarea can't style parts of its own text); clicking or arrowing into one
   opens a suggestion card above the composer with replacements and Ignore.
   Results are carried across edits by a prefix/suffix diff so underlines don't
-  flicker while typing. The CSPs allow `http(s)://*:*/v2/check` — any
+  flicker while typing. The profile bio and group descriptions get the same
+  check (opt-in per field, so the proxy-URL field never does). While it is
+  on, those fields opt out of the browser's spellcheck and the LanguageTool
+  browser add-on; while it is off they behave exactly as before. The CSPs allow `http(s)://*:*/v2/check` — any
   host/port, that one path, like `/unfurl`. `desktop/0091`
 
 - **Emoji style picker** — an "Emoji style" picker under Settings →
