@@ -892,6 +892,10 @@ chatmail/core#5314 (#37).
 
 ## iOS fork (`patches/ios`, experimental)
 
+Deliberate differences from upstream iOS (what we added, changed, removed or
+declined, and how to treat upstream changes that touch them) are listed in
+[IOS-DIFFERENCES.md](IOS-DIFFERENCES.md). Check every upstream port against it.
+
 `vendor/deltachat-ios` is pinned at upstream `86b750af` (2026-07-20): the last
 iOS commit still on core v2.53.0 before upstream moved to 2.54.0. Our core pin
 is v2.53.0 + 45 commits, so that is the closest iOS state; the C header only
