@@ -4,6 +4,10 @@
   Settings → Experimental to get mistakes in messages, your bio and group
   descriptions underlined, with suggested fixes. Off by default, because your
   text goes to languagetool.org or a LanguageTool server you run yourself.
+- **Long bios and group descriptions fold away.** A bot that lists all its
+  commands in its bio no longer pushes the rest of its profile off-screen;
+  bios and group or channel descriptions show 8 lines with a "Show more" link,
+  like long messages.
 - **Videos get a proper player.** The controls now fade away while a video
   plays instead of covering the bottom of the picture, and the usual keyboard
   shortcuts work once you click the video. Videos no longer make the chat

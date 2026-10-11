@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 10 Oct 2026 18:16:12 +0000
-Subject: [PATCH 91/91] web-app: LanguageTool spelling & grammar check in the
+Subject: [PATCH 92/92] web-app: LanguageTool spelling & grammar check in the
  composer
 
 The desktop targets ship with Chromium spellcheck off (Electron has no
