@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 10 Oct 2026 16:53:02 +0000
-Subject: [PATCH 91/91] web-app: clamp long bios and group descriptions with a
+Subject: [PATCH 91/92] web-app: clamp long bios and group descriptions with a
  show more toggle
 
 A contact's bio and a group/channel description render through the shared
