@@ -1,11 +1,9 @@
 # Changelog
 
 - **Spelling and grammar checking with LanguageTool.** Turn it on in
-  Settings → Experimental and pick languagetool.org (free, or your Premium
-  account) or your own LanguageTool server; mistakes in messages, your bio
-  and group descriptions get underlined and a tap shows suggestions. Off by
-  default, because your text is sent to that server — run your own to keep it
-  on your machine. While it is on, the browser's own spellcheck steps aside.
+  Settings → Experimental to get mistakes in messages, your bio and group
+  descriptions underlined, with suggested fixes. Off by default, because your
+  text goes to languagetool.org or a LanguageTool server you run yourself.
 - **Videos get a proper player.** The controls now fade away while a video
   plays instead of covering the bottom of the picture, and the usual keyboard
   shortcuts work once you click the video. Videos no longer make the chat

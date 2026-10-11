@@ -15,20 +15,29 @@ Settings -> Experimental -> Composer: a "LanguageTool spelling & grammar"
 switch (off by default -- the draft leaves the device, outside the E2E
 encryption) and a "LanguageTool server" row, shown while off too so a
 self-hosted server can be set up before anything is sent. Its dialog picks
-languagetool.org (free; or Premium with username + API key, which switches
-to api.languagetoolplus.com) or an own server URL (http://host:8081, /v2
-and /v2/check suffixes accepted), with a "Check connection" button that
-runs a test sentence and shows the error otherwise (CORS / --allow-origin
-being the usual one).
+languagetool.org (free; or Premium with username + API key -- both or
+neither, since one alone would quietly fall back to the free API -- which
+switches to api.languagetoolplus.com) or an own server URL
+(http://host:8081, /v2 and /v2/check suffixes accepted). The server must
+sit at the root of its host: the CSPs only allow the /v2/check path, so a
+reverse-proxy sub-path (or a query/hash) is rejected in the dialog instead
+of failing later as "Failed to fetch"; the check URL is built with new
+URL(). A "Check connection" button runs a test sentence and shows the
+error otherwise (CORS / --allow-origin being the usual one); only the
+latest check may report, so a slow earlier one can't overwrite it.
 
 Composer: 1s after typing stops the draft is POSTed form-encoded to
 /v2/check with language=auto (a CORS simple request, so a self-hosted
 server needs no OPTIONS handling); the previous request is aborted on the
 next edit. Issues are underlined (red: misspelling, blue: style, amber:
-everything else, as in LanguageTool's own UI) in a transparent, click-through copy of the text laid over the
-textarea -- a textarea can't style parts of its own text and the CSS
-Highlight API can't reach inside one. The copy mirrors the textarea's box
-and font metrics (re-measured by a ResizeObserver) and its scrollTop.
+everything else, as in LanguageTool's own UI) in a transparent,
+click-through copy of the text laid over the textarea -- a textarea can't
+style parts of its own text and the CSS Highlight API can't reach inside
+one. The copy mirrors the textarea's box
+and font metrics and its scrollTop, re-synced (imperatively, no React
+state) after every render and on resize: the box also moves without
+resizing when something above the field changes height, e.g. the "enter a
+name" error line above the group description.
 Between checks, results are remapped onto the edited text by a common
 prefix/suffix diff: matches before the edit keep their offset, matches
 after it shift, and a match is dropped once the edit reaches it or the
@@ -40,10 +49,13 @@ category name (in the text's language, e.g. "Possible Typo"), the message,
 up to five replacements as chips (the first, likely one filled), a quiet
 Ignore (per session) and a close button. Card and overlay share a
 containing block, so the overlay span's offsets place the card directly.
-Typing closes it, so it never pops up mid-sentence. It doesn't own any keys, so Enter still sends; Tab
-reaches its buttons. A replacement goes through setRangeText() plus an
-`input` event, so the field's own onChange takes it like typing and the
-caret lands after it -- no per-field plumbing. The overlay reserves 4px
+Typing closes it, so it never pops up mid-sentence. It doesn't own any
+keys, so Enter still sends; Tab reaches its buttons. Of overlapping
+matches only the first is underlined, and the card only ever opens for an
+underlined one. A replacement goes through execCommand('insertText') --
+undoable with Ctrl+Z, and it fires `input` so the field's own onChange
+takes it like typing (setRangeText() plus a synthetic `input` is the
+fallback) -- no per-field plumbing. The overlay reserves 4px
 below the box (height and bottom padding alike, so the scroll range is
 unchanged) for the last line's wavy underline, which overshoots a tight
 line-height: normal line box.
@@ -78,22 +90,22 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../frontend/src/components/Login-Styles.tsx  |  20 +-
  .../components/Settings/EmojiSetSelector.tsx  |  11 +-
  .../Settings/ExperimentalFeatures.tsx         |  22 ++
- .../Settings/LanguageToolDialog.tsx           | 153 +++++++++
+ .../Settings/LanguageToolDialog.tsx           | 158 +++++++++
  .../components/Settings/SettingsSelector.tsx  |  10 +-
  .../components/Settings/SettingsSwitch.tsx    |  25 +-
  .../src/components/composer/Composer.tsx      |   5 +
  .../composer/ComposerMessageInput.tsx         |  19 +-
- .../src/components/composer/LanguageTool.tsx  | 314 ++++++++++++++++++
- .../components/composer/languageToolCheck.ts  | 128 +++++++
+ .../src/components/composer/LanguageTool.tsx  | 324 ++++++++++++++++++
+ .../components/composer/languageToolCheck.ts  | 141 ++++++++
  .../components/dialogs/CreateChat/index.tsx   |   1 +
  .../dialogs/EditProfileDialog/index.tsx       |   1 +
  .../components/dialogs/ViewGroup/index.tsx    |   1 +
- .../frontend/src/tests/languageTool.test.ts   |  65 ++++
+ .../frontend/src/tests/languageTool.test.ts   |  89 +++++
  packages/frontend/static/main.html            |   5 +-
  packages/shared/shared-types.d.ts             |   7 +
  packages/shared/state.ts                      |   4 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 20 files changed, 923 insertions(+), 25 deletions(-)
+ 20 files changed, 975 insertions(+), 25 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
@@ -392,11 +404,11 @@ index 6573050..86b1ca0 100644
          label='Record without noise filtering'
 diff --git a/packages/frontend/src/components/Settings/LanguageToolDialog.tsx b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
 new file mode 100644
-index 0000000..37af582
+index 0000000..7080eae
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
-@@ -0,0 +1,153 @@
-+import React, { useState } from 'react'
+@@ -0,0 +1,158 @@
++import React, { useRef, useState } from 'react'
 +
 +import SettingsStoreInstance, { useSettingsStore } from '../../stores/settings'
 +import useTranslationFunction from '../../hooks/useTranslationFunction'
@@ -410,7 +422,11 @@ index 0000000..37af582
 +import Radio from '../Radio'
 +import RadioGroup from '../RadioGroup'
 +import Button from '../Button'
-+import { ltCheck, type LtConfig } from '../composer/languageToolCheck'
++import {
++  isLtServerUrl,
++  ltCheck,
++  type LtConfig,
++} from '../composer/languageToolCheck'
 +
 +import type { DialogProps } from '../../contexts/DialogContext'
 +import type { DesktopSettingsType } from '@deltachat-desktop/shared/shared-types'
@@ -425,14 +441,6 @@ index 0000000..37af582
 +    : 'languagetool.org'
 +}
 +
-+const isHttpUrl = (url: string) => {
-+  try {
-+    return /^https?:$/.test(new URL(url).protocol)
-+  } catch {
-+    return false
-+  }
-+}
-+
 +/** Pick languagetool.org (optionally with a Premium account) or a
 + * self-hosted server, like the Obsidian LanguageTool plugin. */
 +export default function LanguageToolDialog({ onClose }: DialogProps) {
@@ -445,12 +453,18 @@ index 0000000..37af582
 +  const [username, setUsername] = useState(settings?.languageToolUsername ?? '')
 +  const [apiKey, setApiKey] = useState(settings?.languageToolApiKey ?? '')
 +  const [status, setStatus] = useState('')
++  // only the latest "Check connection" may report
++  const checkRun = useRef(0)
 +
 +  const config: LtConfig =
 +    mode === 'server'
 +      ? { server: server.trim() }
 +      : { username: username.trim(), apiKey: apiKey.trim() }
-+  const valid = mode !== 'server' || isHttpUrl(server.trim())
++  // Premium needs both; one alone would quietly fall back to the free API
++  const valid =
++    mode === 'server'
++      ? isLtServerUrl(server.trim())
++      : !username.trim() === !apiKey.trim()
 +
 +  const save = async () => {
 +    const set = SettingsStoreInstance.effect.setDesktopSetting
@@ -461,14 +475,14 @@ index 0000000..37af582
 +  }
 +
 +  const check = () => {
++    const run = ++checkRun.current
++    const report = (text: string) => run === checkRun.current && setStatus(text)
 +    setStatus('Checking…')
 +    ltCheck(config, 'This are a test.').then(
 +      matches =>
-+        setStatus(
-+          `Works: found ${matches.length} issue(s) in a test sentence.`
-+        ),
++        report(`Works: found ${matches.length} issue(s) in a test sentence.`),
 +      (err: Error) =>
-+        setStatus(
++        report(
 +          `Failed: ${err.message}. Check the address, and that a self-hosted ` +
 +            'server allows this app (LanguageTool --allow-origin).'
 +        )
@@ -485,6 +499,7 @@ index 0000000..37af582
 +            selectedValue={mode}
 +            onChange={value => {
 +              setMode(value)
++              checkRun.current++
 +              setStatus('')
 +            }}
 +          >
@@ -516,7 +531,8 @@ index 0000000..37af582
 +              />
 +              <p>
 +                Premium users find the API key on languagetool.org under Account
-+                → Access tokens. Leave both empty for the free service.
++                → Access tokens. Fill in both for Premium, or leave both empty
++                for the free service.
 +              </p>
 +            </>
 +          ) : (
@@ -529,8 +545,9 @@ index 0000000..37af582
 +                onChange={e => setServer(e.target.value)}
 +              />
 +              <p>
-+                Start the server with <code>--allow-origin</code> so this app
-+                may use it. Use https unless the server runs on this computer.
++                The server's root address, not a sub-path. Start it with{' '}
++                <code>--allow-origin</code> so this app may use it, and use
++                https unless it runs on this computer.
 +              </p>
 +            </>
 +          )}
@@ -713,10 +730,10 @@ index b561f5d..7a0cc38 100644
        </I18nContext.Consumer>
 diff --git a/packages/frontend/src/components/composer/LanguageTool.tsx b/packages/frontend/src/components/composer/LanguageTool.tsx
 new file mode 100644
-index 0000000..2145b6e
+index 0000000..18d8e03
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/LanguageTool.tsx
-@@ -0,0 +1,314 @@
+@@ -0,0 +1,324 @@
 +import React, {
 +  useCallback,
 +  useEffect,
@@ -792,14 +809,15 @@ index 0000000..2145b6e
 +  if (below) card.style.top = `${y + word.offsetHeight + 10}px`
 +}
 +
-+/** Copy of the textarea's text box, so the overlay wraps lines identically. */
-+function measure(el: HTMLTextAreaElement): React.CSSProperties {
++/** Lay the overlay exactly over the textarea's text box, with its font
++ * metrics and scroll offset, so it wraps lines identically. */
++function syncLayer(el: HTMLTextAreaElement, layer: HTMLElement) {
 +  const cs = getComputedStyle(el)
-+  return {
-+    top: el.offsetTop + el.clientTop,
-+    left: el.offsetLeft + el.clientLeft,
-+    width: el.clientWidth,
-+    height: el.clientHeight + UNDERLINE_ROOM_PX,
++  Object.assign(layer.style, {
++    top: `${el.offsetTop + el.clientTop}px`,
++    left: `${el.offsetLeft + el.clientLeft}px`,
++    width: `${el.clientWidth}px`,
++    height: `${el.clientHeight + UNDERLINE_ROOM_PX}px`,
 +    fontFamily: cs.fontFamily,
 +    fontSize: cs.fontSize,
 +    fontWeight: cs.fontWeight,
@@ -808,12 +826,13 @@ index 0000000..2145b6e
 +    letterSpacing: cs.letterSpacing,
 +    wordSpacing: cs.wordSpacing,
 +    tabSize: cs.tabSize,
-+    textAlign: cs.textAlign as React.CSSProperties['textAlign'],
++    textAlign: cs.textAlign,
 +    paddingTop: cs.paddingTop,
 +    paddingRight: cs.paddingRight,
 +    paddingBottom: `calc(${cs.paddingBottom} + ${UNDERLINE_ROOM_PX}px)`,
 +    paddingLeft: cs.paddingLeft,
-+  }
++  })
++  layer.scrollTop = el.scrollTop
 +}
 +
 +/**
@@ -836,7 +855,6 @@ index 0000000..2145b6e
 +    text: '',
 +    matches: [],
 +  })
-+  const [box, setBox] = useState<React.CSSProperties | null>(null)
 +  const [caret, setCaret] = useState<number | null>(null)
 +  // ponytail: per-session ignore list; persist it if people ask
 +  const [ignored, setIgnored] = useState<Set<string>>(() => new Set())
@@ -894,7 +912,9 @@ index 0000000..2145b6e
 +    const syncScroll = () => {
 +      if (layerRef.current) layerRef.current.scrollTop = el.scrollTop
 +    }
-+    const resize = new ResizeObserver(() => setBox(measure(el)))
++    const resize = new ResizeObserver(
++      () => layerRef.current && syncLayer(el, layerRef.current)
++    )
 +    resize.observe(el)
 +    const caretEvents = ['input', 'keyup', 'click', 'blur'] as const
 +    caretEvents.forEach(t => el.addEventListener(t, updateCaret))
@@ -906,18 +926,30 @@ index 0000000..2145b6e
 +    }
 +  }, [textareaRef, updateCaret])
 +
++  // After every render, not just on resize: the box also moves when
++  // something above the field changes height (an error line appearing) and
++  // re-fonts on an emoji-style switch, neither of which resizes the textarea.
 +  useLayoutEffect(() => {
-+    if (layerRef.current && textareaRef.current) {
-+      layerRef.current.scrollTop = textareaRef.current.scrollTop
++    const el = textareaRef.current
++    if (el && layerRef.current) {
++      syncLayer(el, layerRef.current)
 +    }
 +    if (cardRef.current && layerRef.current && wordRef.current) {
 +      placeCard(cardRef.current, layerRef.current, wordRef.current)
 +    }
 +  })
 +
-+  const matches = remapMatches(checked.matches, checked.text, text).filter(
-+    m => !ignored.has(m.key)
-+  )
++  // overlapping matches: the first one wins, the rest get no underline
++  const matches: LtMatch[] = []
++  for (const m of remapMatches(checked.matches, checked.text, text)) {
++    const last = matches[matches.length - 1]
++    if (
++      !ignored.has(m.key) &&
++      (!last || m.offset >= last.offset + last.length)
++    ) {
++      matches.push(m)
++    }
++  }
 +
 +  const active =
 +    hideCard || caret === null
@@ -927,7 +959,6 @@ index 0000000..2145b6e
 +  const parts: React.ReactNode[] = []
 +  let pos = 0
 +  for (const m of matches) {
-+    if (m.offset < pos) continue // overlapping match, first one wins
 +    parts.push(
 +      text.slice(pos, m.offset),
 +      <span
@@ -946,27 +977,23 @@ index 0000000..2145b6e
 +  const replace = (m: LtMatch, value: string) => {
 +    const el = textareaRef.current
 +    if (!el) return
-+    // edit the textarea and fire `input`, so the field's own onChange takes
-+    // it like typing (caret lands after it)
-+    el.setRangeText(value, m.offset, m.offset + m.length, 'end')
-+    el.dispatchEvent(new Event('input', { bubbles: true }))
 +    el.focus()
++    el.setSelectionRange(m.offset, m.offset + m.length)
++    // insertText edits like typing: it lands on the undo stack (Ctrl+Z works)
++    // and fires `input`, so the field's own onChange takes it. setRangeText is
++    // the fallback where the deprecated-but-everywhere execCommand is missing.
++    if (!document.execCommand('insertText', false, value)) {
++      el.setRangeText(value, m.offset, m.offset + m.length, 'end')
++      el.dispatchEvent(new Event('input', { bubbles: true }))
++    }
 +    setCaret(null) // the old caret offset is stale now
 +  }
 +
 +  return (
 +    <>
-+      {box && (
-+        <div
-+          className='language-tool-layer'
-+          style={box}
-+          dir={dir}
-+          ref={layerRef}
-+          aria-hidden
-+        >
-+          {parts}
-+        </div>
-+      )}
++      <div className='language-tool-layer' dir={dir} ref={layerRef} aria-hidden>
++        {parts}
++      </div>
 +      {active && (
 +        <div
 +          className={`language-tool-card ${kind(active)}`}
@@ -1033,10 +1060,10 @@ index 0000000..2145b6e
 +}
 diff --git a/packages/frontend/src/components/composer/languageToolCheck.ts b/packages/frontend/src/components/composer/languageToolCheck.ts
 new file mode 100644
-index 0000000..ea084ff
+index 0000000..5fb49a6
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/languageToolCheck.ts
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,141 @@
 +// LanguageTool (https://languagetool.org) spelling/grammar check for the
 +// composer: the HTTP API call and remapping results onto edited text. Plain
 +// fetch, so it works the same on browser, Electron and Tauri — the desktop
@@ -1076,13 +1103,26 @@ index 0000000..ea084ff
 +    : null
 +}
 +
++/** A self-hosted server address the app can reach: http(s), at the root of
++ * its host (http://host:8081, …/v2 and …/v2/check alike). The CSPs only allow
++ * the path /v2/check, so a sub-path behind a reverse proxy can't work. */
++export function isLtServerUrl(server: string): boolean {
++  try {
++    const u = new URL(server)
++    return (
++      /^https?:$/.test(u.protocol) &&
++      /^\/(v2(\/check)?\/?)?$/.test(u.pathname) &&
++      !u.search &&
++      !u.hash
++    )
++  } catch {
++    return false
++  }
++}
++
 +export function ltCheckUrl(cfg: LtConfig): string {
 +  if (cfg.server) {
-+    // accept http://host:8081, …/v2 and …/v2/check alike
-+    return (
-+      cfg.server.replace(/\/+$/, '').replace(/\/v2(\/check)?$/, '') +
-+      '/v2/check'
-+    )
++    return new URL('/v2/check', cfg.server).href
 +  }
 +  return cfg.username && cfg.apiKey
 +    ? 'https://api.languagetoolplus.com/v2/check'
@@ -1203,14 +1243,15 @@ index 6a7ad0d..bb45855 100644
                  event: React.FormEvent<HTMLElement> &
 diff --git a/packages/frontend/src/tests/languageTool.test.ts b/packages/frontend/src/tests/languageTool.test.ts
 new file mode 100644
-index 0000000..5c98ee7
+index 0000000..13225c2
 --- /dev/null
 +++ b/packages/frontend/src/tests/languageTool.test.ts
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,89 @@
 +import { expect } from 'chai'
 +import { describe, it } from 'mocha'
 +
 +import {
++  isLtServerUrl,
 +  ltCheckUrl,
 +  remapMatches,
 +  type LtMatch,
@@ -1242,6 +1283,29 @@ index 0000000..5c98ee7
 +      expect(ltCheckUrl({ server, apiKey: 'ignored' })).to.equal(
 +        'http://localhost:8081/v2/check'
 +      )
++    }
++  })
++})
++
++describe('isLtServerUrl', () => {
++  it('takes a root http(s) address, rejects what the CSP would block', () => {
++    for (const ok of [
++      'http://localhost:8081',
++      'https://lt.example/',
++      'http://10.0.0.2:8010/v2',
++      'http://localhost:8081/v2/check',
++    ]) {
++      expect(isLtServerUrl(ok), ok).to.equal(true)
++    }
++    for (const bad of [
++      'localhost:8081',
++      'ftp://lt.example',
++      'https://example.com/languagetool',
++      'http://localhost:8081/?x=1',
++      'http://localhost:8081/#x',
++      '',
++    ]) {
++      expect(isLtServerUrl(bad), bad).to.equal(false)
 +    }
 +  })
 +})
