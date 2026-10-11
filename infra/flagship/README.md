@@ -71,6 +71,27 @@ break:
   distro default on Debian/Ubuntu.
 - **`caddy`** on `deploy`'s `PATH` — the gate runs `caddy adapt` and
   `caddy validate` unprivileged, from the same binary built in step (b).
+- **`flock`** (util-linux) and **`curl`** — the server-wide deploy lock and the
+  post-reload health check (below). Both are distro default; without them every
+  deploy fails closed rather than deploying unserialised or unchecked.
+
+Two things happen around every upload and delete, and both matter operationally:
+
+- **One lock for the whole box** (`/srv/slothfulchat/.deploy.lock`). Uploads and
+  deletes mutate one shared Caddy config, and the GitHub concurrency groups only
+  serialise per PR — so the gate serialises server-side instead, holding the
+  lock for the entire transaction. A deploy that waits more than 15 minutes for
+  it gives up rather than queueing forever.
+- **A health check before the rollback copy is dropped.** `caddy validate`
+  answers "does this config load", never "does this site serve": a slot whose
+  files never landed, whose directory `caddy` cannot read, or whose wildcard
+  cert never issued validates and reloads perfectly. So after the reload the
+  gate requests `https://<slot-host>/` — and, for the wildcard the bundle
+  claims, `https://deploy-health.webxdc.<slot-host>/` — against this box's own
+  listener, retrying for up to 3 minutes. Only then is the previous deployment
+  deleted; if it never answers, the previous deployment is restored and
+  reloaded. A first deploy of a new PR slot spends part of that window waiting
+  on DNS-01 issuance for the wildcard, which is expected.
 
 Install the gate script:
 
