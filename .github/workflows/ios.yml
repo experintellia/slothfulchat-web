@@ -91,9 +91,28 @@ jobs:
         run: set -o pipefail && $XCODEBUILD -destination "$DESTINATION" build-for-testing | xcbeautify --renderer github-actions
 
       - name: Unit tests
-        run: set -o pipefail && $XCODEBUILD -destination "$DESTINATION" test-without-building -skip-testing:DcTests/IntegrationTests | xcbeautify --renderer github-actions
+        run: set -o pipefail && $XCODEBUILD -destination "$DESTINATION" test-without-building -resultBundlePath "$RUNNER_TEMP/unit.xcresult" -skip-testing:DcTests/IntegrationTests | xcbeautify --renderer github-actions
 
       - name: Integration tests (mock madmail over webimap)
         run: |
           node ../../scripts/mock-madmail.mjs 8025 &
-          set -o pipefail && $XCODEBUILD -destination "$DESTINATION" test-without-building -only-testing:DcTests/IntegrationTests | xcbeautify --renderer github-actions
+          set -o pipefail && $XCODEBUILD -destination "$DESTINATION" test-without-building -resultBundlePath "$RUNNER_TEMP/integration.xcresult" -only-testing:DcTests/IntegrationTests | xcbeautify --renderer github-actions
+
+      # xcbeautify hides relaunches and retries; the result bundles don't.
+      - name: Test result summaries
+        if: always()
+        run: |
+          for r in unit integration; do
+            [ -d "$RUNNER_TEMP/$r.xcresult" ] || continue
+            echo "== $r"
+            xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/$r.xcresult" --compact
+            xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/$r.xcresult" --compact
+          done
+
+      - name: Upload result bundles
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-xcresults
+          path: ${{ runner.temp }}/*.xcresult
+          if-no-files-found: ignore
