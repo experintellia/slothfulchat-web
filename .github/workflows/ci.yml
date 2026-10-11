@@ -95,7 +95,7 @@ jobs:
       # before main's and rewrite main's.
       - name: No duplicate patch numbers
         run: |
-          dups=$(for d in patches/core patches/desktop; do ls "$d" | grep '\.patch$' | cut -c1-4 | sort | uniq -d | sed "s|^|$d/|"; done)
+          dups=$(for d in patches/*/; do ls "$d" | grep '\.patch$' | cut -c1-4 | sort | uniq -d | sed "s|^|$d|"; done)
           [ -z "$dups" ] || { echo "::error::duplicate patch numbers:" $dups "- give this PR's patch the next free number after main's, run scripts/apply-patches.sh and scripts/update-patches.sh, and fix the numbers in PATCHES.md"; exit 1; }
 
       # dependency-free node:test suites for pure logic (config templating,
