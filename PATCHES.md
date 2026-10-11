@@ -680,6 +680,11 @@ contribution intended.
   placeholder the "[Image – size]" tag doesn't count) — so "Copy Selection"
   still works on a caption-less image when the selection is elsewhere in the
   bubble, e.g. a quoted message's text. `desktop/0082`
+- Notification batching: flushing one account's queue cleared every
+  account's queue, so notifications for another account that arrived in the
+  same window were lost; and the grouped "N new messages" notification counted
+  messages from muted chats, which were only filtered out of the ungrouped
+  path. `desktop/0093`
 
 ## UI & mobile polish
 

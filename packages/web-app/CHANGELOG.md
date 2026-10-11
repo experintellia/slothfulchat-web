@@ -1,5 +1,9 @@
 # Changelog
 
+- **Notifications with several accounts no longer go missing.** New messages
+  for one account could be swallowed when another account's notifications
+  were shown at the same moment, and the "N new messages" summary no longer
+  counts messages from muted chats.
 - **Spelling and grammar checking with LanguageTool.** Turn it on in
   Settings → Experimental to get mistakes in messages, your bio and group
   descriptions underlined, with suggested fixes. Off by default, because your
