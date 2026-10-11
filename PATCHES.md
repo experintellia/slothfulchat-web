@@ -434,8 +434,10 @@ exists:
   server dialog: languagetool.org (free, or Premium username + API key) or an
   own server URL, with a "Check connection" test. Issues are underlined in a
   transparent, click-through copy of the text laid over the textarea (a
-  textarea can't style parts of its own text); clicking or arrowing into one
-  opens a suggestion card above the composer with replacements and Ignore.
+  textarea can't style parts of its own text), coloured like LanguageTool's
+  own UI (red spelling, blue style, amber the rest); clicking or arrowing into
+  one opens a suggestion card pointing at that word, with the issue category,
+  the explanation, replacement chips and Ignore.
   Results are carried across edits by a prefix/suffix diff so underlines don't
   flicker while typing. The profile bio and group descriptions get the same
   check (opt-in per field, so the proxy-URL field never does). While it is

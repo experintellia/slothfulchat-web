@@ -24,8 +24,8 @@ being the usual one).
 Composer: 1s after typing stops the draft is POSTed form-encoded to
 /v2/check with language=auto (a CORS simple request, so a self-hosted
 server needs no OPTIONS handling); the previous request is aborted on the
-next edit. Issues are underlined (red: misspelling, amber: everything
-else) in a transparent, click-through copy of the text laid over the
+next edit. Issues are underlined (red: misspelling, blue: style, amber:
+everything else, as in LanguageTool's own UI) in a transparent, click-through copy of the text laid over the
 textarea -- a textarea can't style parts of its own text and the CSS
 Highlight API can't reach inside one. The copy mirrors the textarea's box
 and font metrics (re-measured by a ResizeObserver) and its scrollTop.
@@ -33,10 +33,14 @@ Between checks, results are remapped onto the edited text by a common
 prefix/suffix diff: matches before the edit keep their offset, matches
 after it shift, and a match is dropped once the edit reaches it or the
 character next to it (remapMatches, covered by languageTool.test.ts).
-Clicking/tapping or arrowing into an underline opens a card above the
-composer (CompletionMenu's slot and look) with the message, up to five
-replacements and Ignore (per session); typing closes it, so it never pops
-up mid-sentence. It doesn't own any keys, so Enter still sends; Tab
+Clicking/tapping or arrowing into an underline opens a card anchored to
+that word: above it (below when that would leave the window), its pointer
+on the word, an accent bar in the issue's colour. It shows LanguageTool's
+category name (in the text's language, e.g. "Possible Typo"), the message,
+up to five replacements as chips (the first, likely one filled), a quiet
+Ignore (per session) and a close button. Card and overlay share a
+containing block, so the overlay span's offsets place the card directly.
+Typing closes it, so it never pops up mid-sentence. It doesn't own any keys, so Enter still sends; Tab
 reaches its buttons. A replacement goes through setRangeText() plus an
 `input` event, so the field's own onChange takes it like typing and the
 caret lands after it -- no per-field plumbing. The overlay reserves 4px
@@ -64,44 +68,65 @@ SettingsSelector takes forkAdded like SettingsSwitch, so the server row
 gets the sloth badge too; the badge markup (until now copied into
 SettingsSwitch and EmojiSetSelector) is one exported ForkBadge.
 
+Styles live in their own composer/_language-tool.scss, so the upstream
+_composer.scss is untouched.
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- .../frontend/scss/composer/_composer.scss     |  41 +++
+ .../scss/composer/_language-tool.scss         | 153 +++++++++
+ packages/frontend/scss/manifest.scss          |   1 +
  .../frontend/src/components/Login-Styles.tsx  |  20 +-
  .../components/Settings/EmojiSetSelector.tsx  |  11 +-
  .../Settings/ExperimentalFeatures.tsx         |  22 ++
- .../Settings/LanguageToolDialog.tsx           | 153 +++++++++++
+ .../Settings/LanguageToolDialog.tsx           | 153 +++++++++
  .../components/Settings/SettingsSelector.tsx  |  10 +-
  .../components/Settings/SettingsSwitch.tsx    |  25 +-
  .../src/components/composer/Composer.tsx      |   5 +
  .../composer/ComposerMessageInput.tsx         |  19 +-
- .../src/components/composer/LanguageTool.tsx  | 251 ++++++++++++++++++
- .../components/composer/languageToolCheck.ts  | 125 +++++++++
+ .../src/components/composer/LanguageTool.tsx  | 314 ++++++++++++++++++
+ .../components/composer/languageToolCheck.ts  | 128 +++++++
  .../components/dialogs/CreateChat/index.tsx   |   1 +
  .../dialogs/EditProfileDialog/index.tsx       |   1 +
  .../components/dialogs/ViewGroup/index.tsx    |   1 +
- .../frontend/src/tests/languageTool.test.ts   |  64 +++++
+ .../frontend/src/tests/languageTool.test.ts   |  65 ++++
  packages/frontend/static/main.html            |   5 +-
  packages/shared/shared-types.d.ts             |   7 +
  packages/shared/state.ts                      |   4 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 19 files changed, 743 insertions(+), 25 deletions(-)
+ 20 files changed, 923 insertions(+), 25 deletions(-)
+ create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
  create mode 100644 packages/frontend/src/components/composer/languageToolCheck.ts
  create mode 100644 packages/frontend/src/tests/languageTool.test.ts
 
-diff --git a/packages/frontend/scss/composer/_composer.scss b/packages/frontend/scss/composer/_composer.scss
-index b24bd54..23c950f 100644
---- a/packages/frontend/scss/composer/_composer.scss
-+++ b/packages/frontend/scss/composer/_composer.scss
-@@ -190,3 +190,44 @@
-     }
-   }
- }
+diff --git a/packages/frontend/scss/composer/_language-tool.scss b/packages/frontend/scss/composer/_language-tool.scss
+new file mode 100644
+index 0000000..729f811
+--- /dev/null
++++ b/packages/frontend/scss/composer/_language-tool.scss
+@@ -0,0 +1,153 @@
++@use 'sass:map';
++@use '../variables';
 +
-+// LanguageTool (LanguageTool.tsx): the draft is copied into a transparent,
-+// click-through layer laid over the textarea; only the underlines show.
++// LanguageTool (src/components/composer/LanguageTool.tsx).
++
++// Issue colours, shared by an underline and its card: red spelling, blue
++// style, amber everything else, as in LanguageTool's own UI.
++.language-tool-issue,
++.language-tool-card {
++  --lt-color: #f0a020;
++
++  &.misspelling {
++    --lt-color: #e53935;
++  }
++  &.style {
++    --lt-color: #3d8bfd;
++  }
++}
++
++// The draft copied into a transparent, click-through layer laid over the
++// textarea; only the underlines show.
 +.language-tool-layer {
 +  position: absolute;
 +  box-sizing: border-box;
@@ -114,32 +139,138 @@ index b24bd54..23c950f 100644
 +}
 +
 +.language-tool-issue {
-+  text-decoration: underline wavy #f0a020;
++  text-decoration: underline wavy var(--lt-color);
 +  text-decoration-skip-ink: none;
-+
-+  &.misspelling {
-+    text-decoration-color: #e53935;
-+  }
 +}
 +
++// The suggestion card, placed above the flagged word by placeCard().
 +.language-tool-card {
-+  padding: 8px 12px;
++  position: absolute;
++  z-index: map.get(variables.$z-index, emoji-sticker-picker);
++  box-sizing: border-box;
++  width: max-content;
++  min-width: 220px;
++  max-width: min(360px, calc(100% - 16px));
++  padding: 10px 12px 6px 16px;
 +
-+  .language-tool-message {
-+    margin-bottom: 8px;
++  background-color: var(--bgPrimary);
++  color: var(--textPrimary);
++  border: 1px solid var(--separatorColor);
++  border-radius: 10px;
++  // the accent bar in the issue's colour
++  box-shadow:
++    inset 4px 0 0 var(--lt-color),
++    0 8px 28px rgba(0, 0, 0, 0.28);
++  font-size: 14px;
++  line-height: 1.4;
++
++  .language-tool-card-head {
++    display: flex;
++    align-items: center;
++    gap: 8px;
 +  }
 +
-+  .language-tool-actions {
++  .language-tool-card-title {
++    flex: 1;
++    color: var(--lt-color);
++    font-size: 12px;
++    font-weight: 700;
++    letter-spacing: 0.04em;
++    text-transform: uppercase;
++  }
++
++  .language-tool-card-close {
++    margin: -4px -6px -4px 0;
++    padding: 6px;
++    opacity: 0.6;
++    &:hover {
++      opacity: 1;
++    }
++  }
++
++  .language-tool-card-message {
++    margin: 4px 0 10px;
++    color: color-mix(in srgb, var(--textPrimary) 80%, transparent);
++  }
++
++  .language-tool-card-suggestions {
 +    display: flex;
 +    flex-wrap: wrap;
 +    gap: 6px;
++    margin-bottom: 4px;
++  }
 +
-+    & > button {
-+      font-size: 14px;
-+      padding: 4px 10px;
++  // the first suggestion is the likely one: filled; the rest outlined
++  .language-tool-card-suggestion {
++    min-height: 32px;
++    padding: 4px 14px;
++    border: 1px solid color-mix(in srgb, var(--textPrimary) 25%, transparent);
++    border-radius: 999px;
++    background: none;
++    color: var(--textPrimary);
++    font: inherit;
++    font-weight: 600;
++    cursor: pointer;
++
++    &:hover {
++      background-color: color-mix(in srgb, var(--textPrimary) 8%, transparent);
++    }
++    &:first-child {
++      border-color: var(--buttonPrimaryBackground);
++      background-color: var(--buttonPrimaryBackground);
++      color: var(--buttonPrimaryText);
++      &:hover {
++        background-color: var(--buttonPrimaryHover);
++      }
 +    }
 +  }
++
++  .language-tool-card-ignore {
++    display: block;
++    margin: 2px 0 0 -6px;
++    padding: 6px;
++    border: none;
++    background: none;
++    color: color-mix(in srgb, var(--textPrimary) 60%, transparent);
++    font: inherit;
++    font-size: 13px;
++    cursor: pointer;
++    &:hover {
++      color: var(--textPrimary);
++      text-decoration: underline;
++    }
++  }
++
++  // pointer to the word: below the card, or above it when flipped
++  .language-tool-card-arrow {
++    position: absolute;
++    left: calc(var(--lt-arrow-x, 24px) - 6px);
++    bottom: -7px;
++    width: 12px;
++    height: 12px;
++    background-color: var(--bgPrimary);
++    border-right: 1px solid var(--separatorColor);
++    border-bottom: 1px solid var(--separatorColor);
++    transform: rotate(45deg);
++  }
++  &.below .language-tool-card-arrow {
++    top: -7px;
++    bottom: auto;
++    transform: rotate(225deg);
++  }
 +}
+diff --git a/packages/frontend/scss/manifest.scss b/packages/frontend/scss/manifest.scss
+index 99294f1..14f5141 100644
+--- a/packages/frontend/scss/manifest.scss
++++ b/packages/frontend/scss/manifest.scss
+@@ -19,6 +19,7 @@
+ @use 'composer/_composer';
+ @use 'composer/_emoji-sticker-picker';
+ @use 'composer/_completion-menu';
++@use 'composer/_language-tool';
+ 
+ // Contact
+ @use 'contact/_contact-list';
 diff --git a/packages/frontend/src/components/Login-Styles.tsx b/packages/frontend/src/components/Login-Styles.tsx
 index 2103c66..2bdab54 100644
 --- a/packages/frontend/src/components/Login-Styles.tsx
@@ -582,10 +713,10 @@ index b561f5d..7a0cc38 100644
        </I18nContext.Consumer>
 diff --git a/packages/frontend/src/components/composer/LanguageTool.tsx b/packages/frontend/src/components/composer/LanguageTool.tsx
 new file mode 100644
-index 0000000..0ded1e6
+index 0000000..2145b6e
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/LanguageTool.tsx
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,314 @@
 +import React, {
 +  useCallback,
 +  useEffect,
@@ -595,7 +726,7 @@ index 0000000..0ded1e6
 +} from 'react'
 +
 +import { getLogger } from '@deltachat-desktop/shared/logger'
-+import Button from '../Button'
++import { IconButton } from '../Icon'
 +import {
 +  ltCheck,
 +  remapMatches,
@@ -620,6 +751,46 @@ index 0000000..0ded1e6
 +// tight (line-height: normal) line box. Added to height and padding alike, so
 +// the scroll range stays the textarea's.
 +const UNDERLINE_ROOM_PX = 4
++
++/** Colour class shared by an underline and its card, as in LanguageTool's
++ * own UI: red spelling, blue style, amber everything else. */
++const kind = (m: LtMatch) =>
++  m.issueType === 'misspelling'
++    ? 'misspelling'
++    : m.issueType === 'style'
++      ? 'style'
++      : ''
++
++const fallbackTitle: Record<string, string> = {
++  misspelling: 'Spelling',
++  grammar: 'Grammar',
++  style: 'Style',
++}
++
++/** Put the card just above the flagged word (below it if that would leave
++ * the window), with its pointer on the word. Card and overlay share the same
++ * containing block, so the overlay's coordinates are the card's. */
++function placeCard(card: HTMLElement, layer: HTMLElement, word: HTMLElement) {
++  const box = card.offsetParent as HTMLElement | null
++  if (!box) return
++  const x = layer.offsetLeft + word.offsetLeft - layer.scrollLeft
++  const y = layer.offsetTop + word.offsetTop - layer.scrollTop
++  const left = Math.max(
++    8,
++    Math.min(x - 16, box.clientWidth - card.offsetWidth - 8)
++  )
++  // pointer at the word's middle, kept off the card's rounded corners
++  const arrow = Math.max(
++    14,
++    Math.min(x + word.offsetWidth / 2 - left, card.offsetWidth - 14)
++  )
++  card.style.left = `${left}px`
++  card.style.setProperty('--lt-arrow-x', `${arrow}px`)
++  card.style.top = `${y - card.offsetHeight - 10}px`
++  const below = card.getBoundingClientRect().top < 0
++  card.classList.toggle('below', below)
++  if (below) card.style.top = `${y + word.offsetHeight + 10}px`
++}
 +
 +/** Copy of the textarea's text box, so the overlay wraps lines identically. */
 +function measure(el: HTMLTextAreaElement): React.CSSProperties {
@@ -671,6 +842,7 @@ index 0000000..0ded1e6
 +  const [ignored, setIgnored] = useState<Set<string>>(() => new Set())
 +  const layerRef = useRef<HTMLDivElement>(null)
 +  const cardRef = useRef<HTMLDivElement>(null)
++  const wordRef = useRef<HTMLSpanElement>(null)
 +
 +  useEffect(() => {
 +    if (!text.trim()) {
@@ -738,11 +910,19 @@ index 0000000..0ded1e6
 +    if (layerRef.current && textareaRef.current) {
 +      layerRef.current.scrollTop = textareaRef.current.scrollTop
 +    }
++    if (cardRef.current && layerRef.current && wordRef.current) {
++      placeCard(cardRef.current, layerRef.current, wordRef.current)
++    }
 +  })
 +
 +  const matches = remapMatches(checked.matches, checked.text, text).filter(
 +    m => !ignored.has(m.key)
 +  )
++
++  const active =
++    hideCard || caret === null
++      ? undefined
++      : matches.find(m => m.offset <= caret && caret <= m.offset + m.length)
 +
 +  const parts: React.ReactNode[] = []
 +  let pos = 0
@@ -752,10 +932,8 @@ index 0000000..0ded1e6
 +      text.slice(pos, m.offset),
 +      <span
 +        key={m.offset}
-+        className={
-+          'language-tool-issue' +
-+          (m.issueType === 'misspelling' ? ' misspelling' : '')
-+        }
++        className={`language-tool-issue ${kind(m)}`}
++        ref={m === active ? wordRef : undefined}
 +      >
 +        {text.slice(m.offset, m.offset + m.length)}
 +      </span>
@@ -765,10 +943,16 @@ index 0000000..0ded1e6
 +  // the trailing space gives a trailing newline its line, as in the textarea
 +  parts.push(text.slice(pos) + ' ')
 +
-+  const active =
-+    hideCard || caret === null
-+      ? undefined
-+      : matches.find(m => m.offset <= caret && caret <= m.offset + m.length)
++  const replace = (m: LtMatch, value: string) => {
++    const el = textareaRef.current
++    if (!el) return
++    // edit the textarea and fire `input`, so the field's own onChange takes
++    // it like typing (caret lands after it)
++    el.setRangeText(value, m.offset, m.offset + m.length, 'end')
++    el.dispatchEvent(new Event('input', { bubbles: true }))
++    el.focus()
++    setCaret(null) // the old caret offset is stale now
++  }
 +
 +  return (
 +    <>
@@ -785,7 +969,7 @@ index 0000000..0ded1e6
 +      )}
 +      {active && (
 +        <div
-+          className='completion-menu language-tool-card'
++          className={`language-tool-card ${kind(active)}`}
 +          role='group'
 +          aria-label='LanguageTool suggestion'
 +          ref={cardRef}
@@ -798,40 +982,50 @@ index 0000000..0ded1e6
 +            }
 +          }}
 +        >
-+          <div className='language-tool-message'>{active.message}</div>
-+          <div className='language-tool-actions'>
-+            {active.replacements.map(r => (
-+              <Button
-+                key={r}
-+                styling='primary'
-+                onClick={() => {
-+                  const el = textareaRef.current
-+                  if (!el) return
-+                  // edit the textarea and fire `input`, so the field's own
-+                  // onChange takes it like typing (caret lands after it)
-+                  el.setRangeText(
-+                    r,
-+                    active.offset,
-+                    active.offset + active.length,
-+                    'end'
-+                  )
-+                  el.dispatchEvent(new Event('input', { bubbles: true }))
-+                  el.focus()
-+                  setCaret(null) // the old caret offset is stale now
-+                }}
-+              >
-+                {r || '(remove)'}
-+              </Button>
-+            ))}
-+            <Button
++          <div className='language-tool-card-head'>
++            <span className='language-tool-card-title'>
++              {active.category ||
++                fallbackTitle[active.issueType] ||
++                'Suggestion'}
++            </span>
++            <IconButton
++              icon='cross'
++              size={14}
++              coloring='currentColor'
++              aria-label='Close'
++              className='language-tool-card-close'
 +              onClick={() => {
-+                setIgnored(prev => new Set(prev).add(active.key))
++                setCaret(null)
 +                textareaRef.current?.focus()
 +              }}
-+            >
-+              Ignore
-+            </Button>
++            />
 +          </div>
++          <p className='language-tool-card-message'>{active.message}</p>
++          {active.replacements.length > 0 && (
++            <div className='language-tool-card-suggestions'>
++              {active.replacements.map(r => (
++                <button
++                  type='button'
++                  key={r}
++                  className='language-tool-card-suggestion'
++                  onClick={() => replace(active, r)}
++                >
++                  {r || 'Remove'}
++                </button>
++              ))}
++            </div>
++          )}
++          <button
++            type='button'
++            className='language-tool-card-ignore'
++            onClick={() => {
++              setIgnored(prev => new Set(prev).add(active.key))
++              textareaRef.current?.focus()
++            }}
++          >
++            Ignore
++          </button>
++          <span className='language-tool-card-arrow' aria-hidden />
 +        </div>
 +      )}
 +    </>
@@ -839,10 +1033,10 @@ index 0000000..0ded1e6
 +}
 diff --git a/packages/frontend/src/components/composer/languageToolCheck.ts b/packages/frontend/src/components/composer/languageToolCheck.ts
 new file mode 100644
-index 0000000..4f3cf52
+index 0000000..ea084ff
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/languageToolCheck.ts
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,128 @@
 +// LanguageTool (https://languagetool.org) spelling/grammar check for the
 +// composer: the HTTP API call and remapping results onto edited text. Plain
 +// fetch, so it works the same on browser, Electron and Tauri — the desktop
@@ -865,6 +1059,8 @@ index 0000000..4f3cf52
 +  replacements: string[]
 +  /** LanguageTool's rule.issueType, e.g. 'misspelling', 'grammar', 'style' */
 +  issueType: string
++  /** the rule's category, e.g. "Possible Typo", "Grammar" (in the text's language) */
++  category: string
 +  /** rule id + flagged text, what "Ignore" remembers */
 +  key: string
 +}
@@ -921,6 +1117,7 @@ index 0000000..4f3cf52
 +      .slice(0, 5)
 +      .map(r => r.value),
 +    issueType: m.rule?.issueType ?? '',
++    category: m.rule?.category?.name ?? '',
 +    key: `${m.rule?.id}:${text.slice(m.offset, m.offset + m.length)}`,
 +  }))
 +}
@@ -1006,10 +1203,10 @@ index 6a7ad0d..bb45855 100644
                  event: React.FormEvent<HTMLElement> &
 diff --git a/packages/frontend/src/tests/languageTool.test.ts b/packages/frontend/src/tests/languageTool.test.ts
 new file mode 100644
-index 0000000..3b0ee5a
+index 0000000..5c98ee7
 --- /dev/null
 +++ b/packages/frontend/src/tests/languageTool.test.ts
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,65 @@
 +import { expect } from 'chai'
 +import { describe, it } from 'mocha'
 +
@@ -1025,6 +1222,7 @@ index 0000000..3b0ee5a
 +  message: '',
 +  replacements: [],
 +  issueType: 'misspelling',
++  category: '',
 +  key: String(offset),
 +})
 +const offsets = (ms: LtMatch[]) => ms.map(m => m.offset)
