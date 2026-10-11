@@ -5,10 +5,11 @@
 // Bob has a real conversation with Alice (accepted). Mallory, whom Bob has
 // never accepted, then keeps cloning a "Weekend Crew" group and adding Bob.
 // Each clone is a contact request, so instead of five lookalike rows Bob's
-// chat list shows one "Request" entry on top carrying the count; clicking it
+// chat list shows one "Requests" entry on top carrying the count; clicking it
 // opens the Requests view with the clones.
 //
-// Shots go to .cache/requests-shots/. It also asserts what the shots show, so
+// Accepting every request then leaves the Requests view showing its empty
+// note. Shots go to .cache/requests-shots/. It also asserts what the shots show, so
 // it doubles as the runnable check for the requests link UI.
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
@@ -127,7 +128,7 @@ try {
 
   const items = page.locator('.chat-list .chat-list-item')
   const link = page.locator('.chat-list .archive-link-item', {
-    hasText: 'Request',
+    hasText: 'Requests',
   })
   const shot = async name => {
     await page.waitForTimeout(800)
@@ -143,8 +144,8 @@ try {
   await link.waitFor({ state: 'visible', timeout: 60_000 })
   await page.locator('.chat-list-item', { hasText: 'Alice' }).first().waitFor()
   expect(
-    (await link.getAttribute('aria-label')) === `Request: ${CLONES}`,
-    `link reads "Request: ${CLONES}"`
+    (await link.getAttribute('aria-label')) === `Requests: ${CLONES}`,
+    `link reads "Requests: ${CLONES}"`
   )
   expect(
     (await items.filter({ hasText: 'Weekend Crew' }).count()) === 0,
@@ -173,6 +174,18 @@ try {
   await page.locator('.backButton').first().click()
   await link.waitFor({ state: 'visible', timeout: 30_000 })
   await shot('04-back-to-chats')
+
+  // 5. Accept them all from inside the Requests view: it says it's empty.
+  await link.click()
+  await items.filter({ hasText: 'Weekend Crew' }).first().waitFor()
+  for (const id of await rpc('getChatlistEntries', bobId, 0, 'is:request', null)) {
+    await rpc('acceptChat', bobId, id)
+  }
+  await page
+    .getByText('No requests.', { exact: false })
+    .waitFor({ timeout: 30_000 })
+  expect(true, 'empty Requests view says so')
+  await shot('05-requests-empty')
 
   console.log('PASS: the requests link renders as expected')
 } catch (err) {

@@ -501,9 +501,10 @@ exists:
 
 - **Requests link in the chat list** — contact requests (including groups a
   non-contact keeps cloning and adding you to) no longer get their own rows
-  in the chat list. A "Request" entry at the top, styled like the archive
+  in the chat list. A "Requests" entry at the top, styled like the archive
   link and carrying the number of waiting requests, opens them in their own
-  view; group requests also stop raising notifications. Archived requests
+  view (which says so once it is empty); group requests also stop raising
+  notifications. Archived requests
   stay in the archive. Core gains a `DC_GCL_NO_REQUESTS` chatlist flag
   (which also keeps requests out of a bare `is:unread` filter), the
   `DC_CHAT_ID_REQUESTS_LINK` pseudo chat and an `is:request` chatlist query.
