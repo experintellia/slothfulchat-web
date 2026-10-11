@@ -1,19 +1,24 @@
 // Self-check for the shipped self-hosting webserver config (SELFHOSTING.md).
 // Runs a REAL caddy against packages/web-app/caddy/{Caddyfile.example,
-// routes.caddy} with only the "# <- edit" values substituted, because the thing
-// it checks is silent when it breaks — it needs a live server to see:
+// routes.caddy} with only the "# <- edit" values substituted, because both
+// things below are silent when they break — they need a live server to see:
 //
-// The frame policy. `frame-ancestors 'none'` everywhere, EXCEPT
-// html-email.html, which the mobile/PWA HTML-mail viewer loads in a same-origin
-// iframe of that very origin (ensureHtmlEmailDialog in runtime.ts; desktop gets
-// a popup, so this only breaks on phones). The two header blocks must stay
-// disjoint: caddy sorts a path-matched `header` ahead of an unmatched one, so
-// writing the second as an "override" of a site-wide default silently leaves
-// 'none' in place.
+//  1. The frame policy. `frame-ancestors 'none'` everywhere, EXCEPT
+//     html-email.html, which the mobile/PWA HTML-mail viewer loads in a
+//     same-origin iframe of that very origin (ensureHtmlEmailDialog in
+//     runtime.ts; desktop gets a popup, so this only breaks on phones). The two
+//     header blocks must stay disjoint: caddy sorts a path-matched `header`
+//     ahead of an unmatched one, so writing the second as an "override" of a
+//     site-wide default silently leaves 'none' in place.
+//  2. The /bridge route strips its prefix. The bridge reads the FIRST path
+//     segment as the endpoint kind (/dns/<host>, /tcp/<ip>/<port>), so a proxy
+//     that forwards /bridge/dns/... upgrades the WebSocket and then fails every
+//     operation. The upstream here is a stub that echoes the path it received —
+//     the path is the entire bug.
 //
 // Run:  node scripts/test-selfhost-caddy.mjs   (needs caddy in PATH)
 import assert from 'node:assert'
-import { get } from 'node:http'
+import { createServer, get } from 'node:http'
 import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -22,6 +27,7 @@ import { fileURLToPath } from 'node:url'
 
 const caddyDir = fileURLToPath(new URL('../packages/web-app/caddy/', import.meta.url))
 const PORT = Number(process.env.PORT ?? 8644)
+const STUB_PORT = PORT + 1
 const HOST = `app.localhost:${PORT}`
 
 const G = mkdtempSync(join(tmpdir(), 'selfhost-caddy-'))
@@ -37,7 +43,11 @@ writeFileSync(
     readFileSync(join(caddyDir, 'Caddyfile.example'), 'utf8')
       .replaceAll('example.com', HOST)
       .replaceAll('/srv/slothfulchat/dist', join(G, 'web'))
+      .replaceAll('127.0.0.1:8641', `127.0.0.1:${STUB_PORT}`)
 )
+
+const stub = createServer((req, res) => res.end(`STUB ${req.url}`))
+stub.listen(STUB_PORT, '127.0.0.1')
 
 const caddy = spawn('caddy', ['run', '--config', join(G, 'Caddyfile'), '--adapter', 'caddyfile'], {
   cwd: G,
@@ -83,9 +93,17 @@ try {
   assert.equal(viewer.headers['x-content-type-options'], 'nosniff')
   assert.equal(viewer.headers['referrer-policy'], 'no-referrer')
 
-  console.log('PASS: frame policy per route')
+  const bridge = await fetchPath('/bridge/dns/localhost')
+  assert.equal(
+    bridge.body,
+    'STUB /dns/localhost',
+    `bridge route must strip the /bridge prefix (got ${JSON.stringify(bridge.body)})`
+  )
+
+  console.log('PASS: frame policy per route, /bridge prefix stripped')
 } finally {
   done = true
   caddy.kill()
+  stub.close()
   rmSync(G, { recursive: true, force: true })
 }

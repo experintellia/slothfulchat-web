@@ -48,3 +48,24 @@
 }
 
 import routes.caddy example.com /srv/slothfulchat/dist # <- edit: your domain + dist path
+
+# The WS→TCP bridge (packages/ws-tcp-proxy) behind TLS, as
+# wss://example.com/bridge — the URL SLOTHFUL_DEFAULT_PROXY points at. Delete
+# this block if you run no bridge, or reach it under a different name.
+#
+# `handle_path` STRIPS the matched prefix before proxying, and that is the whole
+# point: the bridge reads the FIRST path segment as the endpoint kind
+# (/dns/<host>, /tcp/<ip>/<port>), so a proxy that forwards /bridge/dns/... to it
+# completes the WebSocket handshake and then fails every single operation.
+#
+# The path sits in the site address because routes.caddy already owns the bare
+# {domain} block and a second block with the same address is an "ambiguous site
+# definition". Caddy warns that a path in a site address is deprecated — the
+# warning is harmless, it still matches and strips (checked by
+# scripts/test-selfhost-caddy.mjs).
+# <- edit (next line): your domain
+example.com/bridge/* {
+	handle_path /bridge/* {
+		reverse_proxy 127.0.0.1:8641 # <- edit if the bridge isn't on this host
+	}
+}
