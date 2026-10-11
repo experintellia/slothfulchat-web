@@ -925,53 +925,10 @@ the wasm-only ones are compiled out on native.
 
 ### Still to port to iOS
 
-Web-app features and fixes worth re-implementing in Swift. Ordered roughly
-by value for the effort (S/M/L).
-
-- [ ] Clamp long message text behind "Show more". Needed as soon as
-      `core/0024` ships: long texts now arrive in full instead of as HTML
-      behind "Show full message". `desktop/0071` · S/M · `TextMessageCell`
-- [ ] Voice playback at 1×/1.5×/2×, remembering the position and moving on
-      to the next message. `desktop/0067`, `0069` · S · `AudioController`
-- [ ] Unread-only chat list filter (core's `is:unread`). `desktop/0059` · S
-- [ ] Clamp long bios and group descriptions. `desktop/0091` · S ·
-      `ProfileViewController`
-- [ ] Strip tracking parameters when a link is opened, plus a chip on paste.
-      `desktop/0051` · S/M
-- [ ] Fork identity: SlothfulChat name and icon, About screen, welcome and
-      "what's new" device messages. `desktop/0003`, `0006`, `0016`, `0022`,
-      `0073`, `0081` · S/M
-- [ ] Invite links rendered as cards. `desktop/0056` · M
-- [ ] Relay picker on instant onboarding, with a configurable default relay
-      (iOS hardcodes nine.testrun.org), and adding a relay from the list.
-      `desktop/0035`, `0039`, `0050` · M
-- [ ] New Chat community entries: Public Bots directory and Public Channels.
-      `desktop/0032` · M
-- [ ] Voice waveform; recorder with hold-to-record, slide to cancel or lock,
-      and preview. `desktop/0067`, `0068`, `0077`, `0078`, `0085` · M/L
-- [ ] `/command` suggestions from a bot's bio. `desktop/0084` · M
-- [ ] Animated `.tgs` stickers via Lottie. `core/0014`, `desktop/0026` · L ·
-      new dependency. Until then, show `.tgs` as a file: `core/0014` makes
-      them stickers that `ImageTextCell` can't draw.
-- [ ] Small iOS hooks for features the patched core already has:
-  - live download percentage: `DC_EVENT_DOWNLOAD_PROGRESS`, `core/0020`,
-    `0021`
-  - stopping a download: JSON-RPC `abort_download`, `core/0035`
-  - why a download failed: `core/0034`
-  - rich download placeholders: `core/0022`
-  - writing the video poster sidecar: `core/0023`
-  - setting duration on sent media: `dc_msg_set_duration`, counterpart of
-    `core/0028`
-  - manual webimap login: `core/0011`
-- [ ] Gate "Share" and "Copy" on placeholders until the download is done.
-      With `core/0022`, `dc_msg_get_file` returns the 128 px preview there.
-- Later or maybe: Export Chat (`desktop/0031`), sender-side link previews
-  (`desktop/0038`; wait for core), time-to-read badge (`desktop/0049`).
-- Already in upstream iOS: reactions in the context menu, copying several
-  messages, Message Info on failure, native calls, the HTML mail viewer.
-- Not needed on iOS: the wasm/browser port (`core/0001`–`0010`, `0029`,
-  `0032`), the WS bridge, PWA/hosted-instance plumbing, browser layout fixes,
-  emoji completion and fonts, and Video.js.
+The checklist of web-app features and core hooks to bring to iOS (and iOS
+features to bring back to the web app) is tracked in
+[#288](https://github.com/experintellia/slothfulchat-web/issues/288) under
+"Cross-platform parity". AGENTS.md has the rule that keeps it current.
 
 Before shipping a build to devices:
 - run core's own `cargo test`, because native behaviour changes (downloads,
