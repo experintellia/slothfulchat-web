@@ -1,5 +1,9 @@
 # Changelog
 
+- **Reply threads (experimental).** Turn on "Reply threads" in
+  Settings → Experimental to see how many replies a message has next to its
+  time; click it to read just that conversation, as a list or a tree, and
+  reply without losing your place in the chat.
 - **Notifications with several accounts no longer go missing.** New messages
   for one account could be swallowed when another account's notifications
   were shown at the same moment, and the "N new messages" summary no longer
