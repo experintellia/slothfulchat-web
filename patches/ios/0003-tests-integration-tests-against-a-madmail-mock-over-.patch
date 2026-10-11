@@ -1,0 +1,245 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sun, 11 Oct 2026 03:04:59 +0000
+Subject: [PATCH 3/3] tests: integration tests against a madmail mock over
+ webimap
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+DcTests/IntegrationTests drives the real UI controllers inside the
+hosted test app, between real accounts on scripts/mock-madmail.mjs
+(slothfulchat-web), reached at 127.0.0.1:8025 (MADMAIL_PORT overrides)
+over plain HTTP through our core's webimap transport:
+
+- onboarding: InstantOnboardingViewController with a
+  `webimapaccount:` QR — type a name, tap "create", wait until the
+  profile is configured on the mock
+- send + receive: text typed into ChatViewController's composer and
+  sent the way the paper-plane button does (draft.send()), received by
+  the second account; then a reply lands in the first account's chat
+- screenshot drop: an opaque snapshot of the chat window, dropped onto
+  the composer through its real UIDropInteraction with a fake
+  UIDropSession, gets staged as an image draft, sent, and received
+
+Accounts are paired via vCards (keys included, no handshake) and are
+tracked by id and removed when the suite ends, instead of being
+flagged ui.ios.test_account, so DcTests' own cleanup can't delete
+them mid-run.
+
+PatchedCoreTests (offline, runs with the unit tests) checks that the
+linked core parses `webimapaccount:` — upstream core does not, so a
+pass proves the app links our patched core.
+
+ChatViewController.draft goes from private to internal so the test can
+type into the composer; it is the model the SwiftUI input bar binds to.
+
+No network: everything talks to the local mock, so CI stays offline
+and deterministic.
+---
+ DcTests/IntegrationTests.swift              | 182 ++++++++++++++++++++
+ deltachat-ios/Chat/ChatViewController.swift |   2 +-
+ 2 files changed, 183 insertions(+), 1 deletion(-)
+ create mode 100644 DcTests/IntegrationTests.swift
+
+diff --git a/DcTests/IntegrationTests.swift b/DcTests/IntegrationTests.swift
+new file mode 100644
+index 0000000..b6ad9a1
+--- /dev/null
++++ b/DcTests/IntegrationTests.swift
+@@ -0,0 +1,182 @@
++import Testing
++import UIKit
++import DcCore
++@testable import deltachat_ios
++
++/// slothfulchat: end-to-end tests against a madmail mock on the host
++/// (`node scripts/mock-madmail.mjs 8025` in slothfulchat-web), reached over
++/// plain HTTP through our core's webimap transport. Upstream core has no
++/// webimap, so passing these also proves the app links our patched core.
++///
++/// Accounts are tracked by id and removed in deinit rather than flagged
++/// `ui.ios.test_account`, so DcTests' cleanup can't delete them mid-test.
++@Suite(.serialized) @MainActor final class IntegrationTests {
++    static let qr = "webimapaccount:127.0.0.1:\(ProcessInfo.processInfo.environment["MADMAIL_PORT"] ?? "8025")"
++
++    private var accountIds: [Int] = []
++    private var windows: [UIWindow] = []
++
++    deinit {
++        let ids = accountIds, windows = windows
++        Task { @MainActor in
++            windows.forEach { $0.isHidden = true }
++            ids.forEach { _ = DcAccounts.shared.remove(id: $0) }
++        }
++    }
++
++    @Test func onboardingCreatesAWebimapProfile() async throws {
++        let id = DcAccounts.shared.add()
++        accountIds.append(id)
++        #expect(DcAccounts.shared.select(id: id))
++        let context = DcAccounts.shared.get(id: id)
++
++        let onboarding = InstantOnboardingViewController(dcAccounts: DcAccounts.shared, qrCodeData: Self.qr)
++        show(UINavigationController(rootViewController: onboarding))
++        let view = try #require(onboarding.contentView)
++        view.nameTextField.text = "Alice"
++        NotificationCenter.default.post(name: UITextField.textDidChangeNotification, object: view.nameTextField)
++        #expect(view.agreeButton.isEnabled)
++        view.agreeButton.sendActions(for: .touchUpInside)
++
++        try await waitFor("the profile to be configured", timeout: 60) { context.isConfigured() }
++        #expect(context.getConfig("configured_addr")?.hasSuffix("@webimap.example") == true)
++    }
++
++    @Test func sendAndReceiveThroughTheComposer() async throws {
++        let (alice, bob, aliceChat, bobChat) = try pair()
++        let chat = ChatViewController(dcContext: alice, chatId: aliceChat)
++        show(UINavigationController(rootViewController: chat))
++
++        // what typing and tapping the paper plane does
++        let ping = "ping \(UUID().uuidString)"
++        chat.draft.text = ping
++        chat.draft.send()
++        try await waitFor("bob to receive the ping") { Self.texts(bob, bobChat).contains(ping) }
++
++        let pong = "pong \(UUID().uuidString)"
++        bob.sendTextInChat(id: bobChat, message: pong)
++        try await waitFor("alice to receive the pong") { Self.texts(alice, aliceChat).contains(pong) }
++    }
++
++    @Test func droppedScreenshotIsSent() async throws {
++        let (alice, bob, aliceChat, bobChat) = try pair()
++        let chat = ChatViewController(dcContext: alice, chatId: aliceChat)
++        let window = show(UINavigationController(rootViewController: chat))
++        try await waitFor("the composer") { Self.dropInteraction(in: chat.view) != nil }
++        let interaction = try #require(Self.dropInteraction(in: chat.view))
++
++        // opaque, so it can't pass for a sticker (those skip the composer)
++        let format = UIGraphicsImageRendererFormat()
++        format.opaque = true
++        let screenshot = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
++            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
++        }
++        let session = FakeDropSession(items: [UIDragItem(itemProvider: NSItemProvider(object: screenshot))])
++        #expect(interaction.delegate?.dropInteraction?(interaction, canHandle: session) == true)
++        interaction.delegate?.dropInteraction?(interaction, performDrop: session)
++
++        try await waitFor("the screenshot to be staged in the composer") { chat.draft.viewType == DC_MSG_IMAGE }
++        chat.draft.send()
++        try await waitFor("bob to receive the screenshot") {
++            bob.getChatMsgs(chatId: bobChat, flags: 0).contains { bob.getMessage(id: $0).type == DC_MSG_IMAGE }
++        }
++    }
++
++    // MARK: - helpers
++
++    /// Two webimap profiles that know each other's keys (via vCards, no
++    /// handshake) and each have an accepted chat with the other.
++    private func pair() throws -> (DcContext, DcContext, Int, Int) {
++        let alice = try account("Alice"), bob = try account("Bob")
++        let aliceChat = alice.createChatByContactId(contactId: try importVcard(of: bob, into: alice))
++        let bobChat = bob.createChatByContactId(contactId: try importVcard(of: alice, into: bob))
++        return (alice, bob, aliceChat, bobChat)
++    }
++
++    private func account(_ name: String) throws -> DcContext {
++        let id = DcAccounts.shared.add()
++        accountIds.append(id)
++        let context = DcAccounts.shared.get(id: id)
++        context.displayname = name
++        // creates the account on the mock, configures and starts I/O
++        _ = try context.addTransportFromQr(qrCode: Self.qr)
++        try #require(context.isConfigured())
++        return context
++    }
++
++    private func importVcard(of from: DcContext, into to: DcContext) throws -> Int {
++        let vcard = try #require(from.makeVCard(contactIds: [Int(DC_CONTACT_ID_SELF)]))
++        let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).vcf")
++        try vcard.write(to: file)
++        return try #require(to.importVcard(path: file.path)?.first)
++    }
++
++    @discardableResult
++    private func show(_ root: UIViewController) -> UIWindow {
++        let window = UIWindow(frame: UIScreen.main.bounds)
++        window.rootViewController = root
++        window.windowLevel = .alert
++        window.makeKeyAndVisible()
++        windows.append(window)
++        return window
++    }
++
++    private static func texts(_ context: DcContext, _ chatId: Int) -> [String] {
++        context.getChatMsgs(chatId: chatId, flags: 0).compactMap { context.getMessage(id: $0).text }
++    }
++
++    /// The composer's drop target (not the table view's own drop interaction).
++    private static func dropInteraction(in view: UIView) -> UIDropInteraction? {
++        view.interactions.lazy.compactMap { $0 as? UIDropInteraction }.first { $0.delegate is ChatDropInteraction }
++            ?? view.subviews.lazy.compactMap(dropInteraction(in:)).first
++    }
++
++    struct Timeout: Error, CustomStringConvertible { let description: String }
++
++    private func waitFor(_ what: String, timeout: Double = 30, _ condition: () -> Bool) async throws {
++        let deadline = Date().addingTimeInterval(timeout)
++        while !condition() {
++            guard Date() < deadline else { throw Timeout(description: "timed out after \(Int(timeout))s waiting for \(what)") }
++            try await Task.sleep(seconds: 0.2)
++        }
++    }
++}
++
++/// What UIKit hands a drop delegate when something is dragged onto the
++/// composer; enough of it for ChatDropInteraction.
++private final class FakeDropSession: NSObject, UIDropSession {
++    let items: [UIDragItem]
++    let progress = Progress()
++    var progressIndicatorStyle: UIDropSessionProgressIndicatorStyle = .none
++    var localDragSession: UIDragSession? { nil }
++    var allowsMoveOperation: Bool { false }
++    var isRestrictedToDraggingApplication: Bool { false }
++
++    init(items: [UIDragItem]) { self.items = items }
++
++    func location(in view: UIView) -> CGPoint { CGPoint(x: view.bounds.midX, y: view.bounds.midY) }
++
++    func hasItemsConforming(toTypeIdentifiers typeIdentifiers: [String]) -> Bool {
++        items.contains { item in typeIdentifiers.contains(where: item.itemProvider.hasItemConformingToTypeIdentifier) }
++    }
++
++    func canLoadObjects(ofClass aClass: NSItemProviderReading.Type) -> Bool {
++        items.contains { $0.itemProvider.canLoadObject(ofClass: aClass) }
++    }
++
++    // ponytail: only text drops load objects; implement this when a test drops text
++    func loadObjects(ofClass aClass: NSItemProviderReading.Type, completion: @escaping ([NSItemProviderReading]) -> Void) -> Progress {
++        completion([])
++        return progress
++    }
++}
++
++/// Offline proof that the app links our patched core (runs with the unit
++/// tests): upstream's QR parser doesn't know `webimapaccount:`.
++struct PatchedCoreTests {
++    @Test @MainActor func coreKnowsWebimapAccounts() {
++        let qr = DcAccounts.shared.getSelected().checkQR(qrCode: "webimapaccount:127.0.0.1:8025")
++        #expect(qr.state == DC_QR_ACCOUNT)
++        #expect(qr.text1 == "127.0.0.1:8025")
++    }
++}
+diff --git a/deltachat-ios/Chat/ChatViewController.swift b/deltachat-ios/Chat/ChatViewController.swift
+index ed4f0e3..edcd0d8 100644
+--- a/deltachat-ios/Chat/ChatViewController.swift
++++ b/deltachat-ios/Chat/ChatViewController.swift
+@@ -20,7 +20,7 @@ class ChatViewController: UIViewController, UITableViewDelegate, UITableViewData
+     private var isDraggingScrollView = false
+     private var quoteReturnMessageIds: [Int] = []
+ 
+-    private lazy var draft: DraftModel = {
++    lazy var draft: DraftModel = { // slothfulchat: internal, DcTests type into the composer
+         return DraftModel(dcContext: dcContext, chatId: chatId)
+     }()
+ 

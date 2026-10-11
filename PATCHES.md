@@ -1,8 +1,9 @@
 # What we changed compared to upstream
 
-The vendored upstreams (`vendor/core` = chatmail core, `vendor/deltachat-desktop`)
-are never modified in place — every change lives as a `git format-patch` file
-under `patches/core` and `patches/desktop`. This file is the human-readable
+The vendored upstreams (`vendor/core` = chatmail core, `vendor/deltachat-desktop`,
+and the experimental iOS fork's `vendor/deltachat-ios`) are never modified in
+place — every change lives as a `git format-patch` file under `patches/core`,
+`patches/desktop` and `patches/ios`. This file is the human-readable
 summary of that patch stack: what we changed and why, without reading diffs.
 
 Each entry references its patch file by directory and number, e.g. `core/1004`
@@ -888,3 +889,89 @@ Chat while staying protocol-compatible with it; where ArcaneChat (or a
 closed upstream PR) already designed something well, planned features borrow
 that shape — e.g. the map POI API (#36) and per-account disabling modeled on
 chatmail/core#5314 (#37).
+
+## iOS fork (`patches/ios`, experimental)
+
+`vendor/deltachat-ios` is pinned at upstream `86b750af` (2026-07-20): the last
+iOS commit still on core v2.53.0 before upstream moved to 2.54.0. Our core pin
+is v2.53.0 + 45 commits, so that is the closest iOS state; the C header only
+gained additive changes in between. The iOS code is MPL-2.0, which permits the
+fork as long as our changes to those files stay MPL-2.0 and public.
+
+The app links **our patched core**, not iOS's own core submodule:
+`apply-patches` replaces `build/ios/deltachat-ios/libraries/deltachat-core-rust`
+with a symlink to `build/core`. So every core patch above reaches iOS too, and
+the wasm-only ones are compiled out on native.
+
+- **App identifiers** — `chat.delta` → `chat.slothful` for the bundle IDs, the
+  app group and keychain group, the deeplink URL scheme and the Darwin
+  notification names. The fork installs next to Delta Chat instead of
+  replacing it, and the two never talk to each other. The Apple team ID is
+  still upstream's, so device builds need ours. `ios/0001`
+- **Build against our core** — Rust 1.97.0 instead of 1.91.1, because our
+  rusqlite bump needs `cfg_select!`. cargo is handed the symlink's real path,
+  because our core's `../../` path dependencies would otherwise resolve inside
+  `build/ios`. `ios/0002`
+- **Integration tests** — the real onboarding screen, the chat composer
+  (send and receive) and a screenshot dropped onto the composer, run against
+  `scripts/mock-madmail.mjs` through our webimap transport, fully offline. A
+  unit test checks that the linked core understands `webimapaccount:`, which
+  proves it is ours. `.github/workflows/ios.yml` runs these on macOS whenever
+  the iOS or core patches change, and on every push to main. `ios/0003`
+
+### Still to port to iOS
+
+Web-app features and fixes worth re-implementing in Swift. Ordered roughly
+by value for the effort (S/M/L).
+
+- [ ] Clamp long message text behind "Show more". Needed as soon as
+      `core/0024` ships: long texts now arrive in full instead of as HTML
+      behind "Show full message". `desktop/0071` · S/M · `TextMessageCell`
+- [ ] Voice playback at 1×/1.5×/2×, remembering the position and moving on
+      to the next message. `desktop/0067`, `0069` · S · `AudioController`
+- [ ] Unread-only chat list filter (core's `is:unread`). `desktop/0059` · S
+- [ ] Clamp long bios and group descriptions. `desktop/0091` · S ·
+      `ProfileViewController`
+- [ ] Strip tracking parameters when a link is opened, plus a chip on paste.
+      `desktop/0051` · S/M
+- [ ] Fork identity: SlothfulChat name and icon, About screen, welcome and
+      "what's new" device messages. `desktop/0003`, `0006`, `0016`, `0022`,
+      `0073`, `0081` · S/M
+- [ ] Invite links rendered as cards. `desktop/0056` · M
+- [ ] Relay picker on instant onboarding, with a configurable default relay
+      (iOS hardcodes nine.testrun.org), and adding a relay from the list.
+      `desktop/0035`, `0039`, `0050` · M
+- [ ] New Chat community entries: Public Bots directory and Public Channels.
+      `desktop/0032` · M
+- [ ] Voice waveform; recorder with hold-to-record, slide to cancel or lock,
+      and preview. `desktop/0067`, `0068`, `0077`, `0078`, `0085` · M/L
+- [ ] `/command` suggestions from a bot's bio. `desktop/0084` · M
+- [ ] Animated `.tgs` stickers via Lottie. `core/0014`, `desktop/0026` · L ·
+      new dependency. Until then, show `.tgs` as a file: `core/0014` makes
+      them stickers that `ImageTextCell` can't draw.
+- [ ] Small iOS hooks for features the patched core already has:
+  - live download percentage: `DC_EVENT_DOWNLOAD_PROGRESS`, `core/0020`,
+    `0021`
+  - stopping a download: JSON-RPC `abort_download`, `core/0035`
+  - why a download failed: `core/0034`
+  - rich download placeholders: `core/0022`
+  - writing the video poster sidecar: `core/0023`
+  - setting duration on sent media: `dc_msg_set_duration`, counterpart of
+    `core/0028`
+  - manual webimap login: `core/0011`
+- [ ] Gate "Share" and "Copy" on placeholders until the download is done.
+      With `core/0022`, `dc_msg_get_file` returns the 128 px preview there.
+- Later or maybe: Export Chat (`desktop/0031`), sender-side link previews
+  (`desktop/0038`; wait for core), time-to-read badge (`desktop/0049`).
+- Already in upstream iOS: reactions in the context menu, copying several
+  messages, Message Info on failure, native calls, the HTML mail viewer.
+- Not needed on iOS: the wasm/browser port (`core/0001`–`0010`, `0029`,
+  `0032`), the WS bridge, PWA/hosted-instance plumbing, browser layout fixes,
+  emoji completion and fonts, and Video.js.
+
+Before shipping a build to devices:
+- run core's own `cargo test`, because native behaviour changes (downloads,
+  HTTP, crypto) are otherwise only exercised here;
+- set our Apple team ID;
+- set up our own push, because Delta Chat's notification proxy can't reach a
+  different APNs topic.

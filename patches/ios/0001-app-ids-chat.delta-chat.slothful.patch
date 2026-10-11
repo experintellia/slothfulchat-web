@@ -1,0 +1,518 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sun, 11 Oct 2026 02:57:51 +0000
+Subject: [PATCH 1/3] app ids: chat.delta -> chat.slothful
+
+Every reverse-DNS identifier the app owns moves to the slothful.chat
+namespace, so the fork installs next to Delta Chat instead of replacing
+it, and the two never talk to each other's processes:
+
+- bundle IDs of the app and all extensions/targets (chat.slothful,
+  .DcShare, .DcNotificationService, .DcWidget, .Clip, .DcTests,
+  .DcCore) and the app clip's parent-application identifier
+- app group + shared keychain group (group.chat.slothful.ios) in all
+  entitlements and in the Swift constants that open the shared
+  container, UserDefaults suite and keychain
+- the chat.slothful.deeplink URL scheme (widget, share extension, app
+  clip -> app); with both apps installed the old scheme would route to
+  whichever registered last
+- Darwin notification names between app and notification service;
+  these are system-wide, so the old names would cross-talk with an
+  installed Delta Chat
+- CFBundleURLName labels, os_log subsystem, a dispatch queue label
+
+Not changed: DEVELOPMENT_TEAM / KeychainManager.teamId still name
+upstream's Apple team; device builds need our own team ID there.
+Simulator builds and tests do not sign, so they are unaffected.
+Associated domains (applinks:i.delta.chat) are left as is; they can't
+verify for our team, so universal links just won't open this app.
+
+DcTests/AppIdentifierTests checks the bundle ID and the deeplink
+scheme of the running host app.
+---
+ DcAppClip/AppClipApp.swift                    |  4 ++--
+ DcAppClip/DcAppClip.entitlements              |  4 ++--
+ DcCore/DcCore.xcodeproj/project.pbxproj       |  4 ++--
+ DcCore/DcCore/DC/Logger.swift                 |  2 +-
+ .../Extensions/UserDefaults+Extensions.swift  |  2 +-
+ .../Helper/DarwinNotificationCenter.swift     |  8 +++----
+ DcCore/DcCore/Helper/DatabaseHelper.swift     |  2 +-
+ DcCore/DcCore/Helper/KeychainManager.swift    |  2 +-
+ .../DcNotificationService.entitlements        |  4 ++--
+ DcShare/Controller/ShareViewController.swift  |  2 +-
+ DcShare/DcShare.entitlements                  |  4 ++--
+ DcTests/AppIdentifierTests.swift              | 17 +++++++++++++
+ DcWidget/WidgetProvider.swift                 |  4 ++--
+ deltachat-ios.xcodeproj/project.pbxproj       | 24 +++++++++----------
+ deltachat-ios/AppDelegate.swift               |  2 +-
+ deltachat-ios/Calls/PiPFrameProcessor.swift   |  2 +-
+ .../Coordinator/AppCoordinator.swift          |  8 +++----
+ deltachat-ios/DC/DcAccount.swift              |  2 +-
+ deltachat-ios/Info.plist                      | 10 ++++----
+ deltachat-ios/deltachat-ios.entitlements      |  4 ++--
+ 20 files changed, 64 insertions(+), 47 deletions(-)
+ create mode 100644 DcTests/AppIdentifierTests.swift
+
+diff --git a/DcAppClip/AppClipApp.swift b/DcAppClip/AppClipApp.swift
+index b5d3475..870ae04 100644
+--- a/DcAppClip/AppClipApp.swift
++++ b/DcAppClip/AppClipApp.swift
+@@ -1,7 +1,7 @@
+ import SwiftUI
+ 
+ 
+-let appDeeplinkUrl = URL(string: "chat.delta.deeplink://")!
++let appDeeplinkUrl = URL(string: "chat.slothful.deeplink://")!
+ let appstoreUrl = URL(string: "https://apps.apple.com/app/delta-chat/id1459523234")!
+ 
+ @main
+@@ -58,7 +58,7 @@ struct AppClipApp: App {
+             .padding(.vertical, 50)
+             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { userActivity in
+                 guard let link = userActivity.webpageURL?.absoluteString else { return }
+-                UserDefaults(suiteName: "group.chat.delta.ios")?.set(link, forKey: "appClipInviteLink")
++                UserDefaults(suiteName: "group.chat.slothful.ios")?.set(link, forKey: "appClipInviteLink")
+                 inviteLink = link
+                 openURL(appDeeplinkUrl) { mainAppInstalled = $0 }
+             }
+diff --git a/DcAppClip/DcAppClip.entitlements b/DcAppClip/DcAppClip.entitlements
+index 9c0973d..8fb0afe 100644
+--- a/DcAppClip/DcAppClip.entitlements
++++ b/DcAppClip/DcAppClip.entitlements
+@@ -8,11 +8,11 @@
+ 	</array>
+ 	<key>com.apple.developer.parent-application-identifiers</key>
+ 	<array>
+-		<string>$(AppIdentifierPrefix)chat.delta</string>
++		<string>$(AppIdentifierPrefix)chat.slothful</string>
+ 	</array>
+ 	<key>com.apple.security.application-groups</key>
+ 	<array>
+-		<string>group.chat.delta.ios</string>
++		<string>group.chat.slothful.ios</string>
+ 	</array>
+ </dict>
+ </plist>
+diff --git a/DcCore/DcCore.xcodeproj/project.pbxproj b/DcCore/DcCore.xcodeproj/project.pbxproj
+index abec088..b5e85c9 100644
+--- a/DcCore/DcCore.xcodeproj/project.pbxproj
++++ b/DcCore/DcCore.xcodeproj/project.pbxproj
+@@ -510,7 +510,7 @@
+ 					"$(PROJECT_DIR)/../deltachat-ios/libraries/deltachat-core-rust/deltachat-ffi",
+ 					"$(PROJECT_DIR)/../deltachat-ios/libraries",
+ 				);
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.DcCore;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.DcCore;
+ 				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+ 				SKIP_INSTALL = YES;
+ 				SWIFT_OBJC_BRIDGING_HEADER = "";
+@@ -545,7 +545,7 @@
+ 					"$(PROJECT_DIR)/../deltachat-ios/libraries/deltachat-core-rust/deltachat-ffi",
+ 					"$(PROJECT_DIR)/../deltachat-ios/libraries",
+ 				);
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.DcCore;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.DcCore;
+ 				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+ 				SKIP_INSTALL = YES;
+ 				SWIFT_OBJC_BRIDGING_HEADER = "";
+diff --git a/DcCore/DcCore/DC/Logger.swift b/DcCore/DcCore/DC/Logger.swift
+index c81dc44..4eb16bb 100644
+--- a/DcCore/DcCore/DC/Logger.swift
++++ b/DcCore/DcCore/DC/Logger.swift
+@@ -8,7 +8,7 @@ public func getDcLogger() -> DcLogger {
+ }
+ 
+ public class DcLogger {
+-    public static let subsystem = "chat.delta"
++    public static let subsystem = "chat.slothful"
+     static let category = "deltachat"
+     let osLog: Logger
+ 
+diff --git a/DcCore/DcCore/Extensions/UserDefaults+Extensions.swift b/DcCore/DcCore/Extensions/UserDefaults+Extensions.swift
+index f42aa12..ae3959f 100644
+--- a/DcCore/DcCore/Extensions/UserDefaults+Extensions.swift
++++ b/DcCore/DcCore/Extensions/UserDefaults+Extensions.swift
+@@ -11,7 +11,7 @@ public extension UserDefaults {
+     static var defaultAppPickerUrlString = "https://webxdc.org/apps/"
+ 
+     static var shared: UserDefaults? {
+-        return UserDefaults(suiteName: "group.chat.delta.ios")
++        return UserDefaults(suiteName: "group.chat.slothful.ios")
+     }
+ 
+     static var mainIoRunning: Bool {
+diff --git a/DcCore/DcCore/Helper/DarwinNotificationCenter.swift b/DcCore/DcCore/Helper/DarwinNotificationCenter.swift
+index 6e96b78..9d42e41 100644
+--- a/DcCore/DcCore/Helper/DarwinNotificationCenter.swift
++++ b/DcCore/DcCore/Helper/DarwinNotificationCenter.swift
+@@ -8,10 +8,10 @@ import notify
+ 
+     var name: String {
+         switch self {
+-        case .appRunningQuestion: "chat.delta.app_running_question"
+-        case .appRunningConfirmation: "chat.delta.app_running_confirmation"
+-        case .nseFetchingQuestion: "chat.delta.nse_fetching_question"
+-        case .nseFetchingConfirmation: "chat.delta.nse_fetching_confirmation"
++        case .appRunningQuestion: "chat.slothful.app_running_question"
++        case .appRunningConfirmation: "chat.slothful.app_running_confirmation"
++        case .nseFetchingQuestion: "chat.slothful.nse_fetching_question"
++        case .nseFetchingConfirmation: "chat.slothful.nse_fetching_confirmation"
+         }
+     }
+ }
+diff --git a/DcCore/DcCore/Helper/DatabaseHelper.swift b/DcCore/DcCore/Helper/DatabaseHelper.swift
+index 4188f18..090f55d 100644
+--- a/DcCore/DcCore/Helper/DatabaseHelper.swift
++++ b/DcCore/DcCore/Helper/DatabaseHelper.swift
+@@ -3,7 +3,7 @@ public class DatabaseHelper {
+ 
+     /// The application group identifier defines a group of apps or extensions that have access to a shared container.
+     /// The ID is created in the apple developer portal and can be changed there.
+-    static let applicationGroupIdentifier = "group.chat.delta.ios"
++    static let applicationGroupIdentifier = "group.chat.slothful.ios"
+ 
+     public init() {}
+ 
+diff --git a/DcCore/DcCore/Helper/KeychainManager.swift b/DcCore/DcCore/Helper/KeychainManager.swift
+index 1947411..97bbb5a 100644
+--- a/DcCore/DcCore/Helper/KeychainManager.swift
++++ b/DcCore/DcCore/Helper/KeychainManager.swift
+@@ -13,7 +13,7 @@ public class KeychainManager {
+     // It is required as a prefix for the shared keychain identifier, but not straight forward to access programmatically,
+     // so we're hardcoding it here
+     private static let teamId = "8Y86453UA8"
+-    private static let sharedKeychainGroup = "\(KcM.teamId).group.chat.delta.ios"
++    private static let sharedKeychainGroup = "\(KcM.teamId).group.chat.slothful.ios"
+ 
+     public static func getAccountSecret(accountID: Int) throws -> String {
+         do {
+diff --git a/DcNotificationService/DcNotificationService.entitlements b/DcNotificationService/DcNotificationService.entitlements
+index dc3bfd9..4fee400 100644
+--- a/DcNotificationService/DcNotificationService.entitlements
++++ b/DcNotificationService/DcNotificationService.entitlements
+@@ -4,11 +4,11 @@
+ <dict>
+ 	<key>com.apple.security.application-groups</key>
+ 	<array>
+-		<string>group.chat.delta.ios</string>
++		<string>group.chat.slothful.ios</string>
+ 	</array>
+ 	<key>keychain-access-groups</key>
+ 	<array>
+-		<string>$(AppIdentifierPrefix)group.chat.delta.ios</string>
++		<string>$(AppIdentifierPrefix)group.chat.slothful.ios</string>
+ 	</array>
+ 	<key>com.apple.developer.usernotifications.filtering</key>
+ 	<true/>
+diff --git a/DcShare/Controller/ShareViewController.swift b/DcShare/Controller/ShareViewController.swift
+index a45c965..9045cc4 100644
+--- a/DcShare/Controller/ShareViewController.swift
++++ b/DcShare/Controller/ShareViewController.swift
+@@ -28,7 +28,7 @@ class ShareViewController: UIViewController {
+                 if let jsonData = try? JSONEncoder().encode(attachments),
+                    let json = String(data: jsonData, encoding: .utf8),
+                    let jsonUrlEncoded = json.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+-                   var url = URL(string: "chat.delta.deeplink://share?data=\(jsonUrlEncoded)") {
++                   var url = URL(string: "chat.slothful.deeplink://share?data=\(jsonUrlEncoded)") {
+                     
+                     // Add direct share parameters to deeplink
+                     if let intent = extensionContext?.intent as? INSendMessageIntent,
+diff --git a/DcShare/DcShare.entitlements b/DcShare/DcShare.entitlements
+index 849391a..c9a4320 100644
+--- a/DcShare/DcShare.entitlements
++++ b/DcShare/DcShare.entitlements
+@@ -4,11 +4,11 @@
+ <dict>
+ 	<key>com.apple.security.application-groups</key>
+ 	<array>
+-		<string>group.chat.delta.ios</string>
++		<string>group.chat.slothful.ios</string>
+ 	</array>
+ 	<key>keychain-access-groups</key>
+ 	<array>
+-		<string>$(AppIdentifierPrefix)group.chat.delta.ios</string>
++		<string>$(AppIdentifierPrefix)group.chat.slothful.ios</string>
+ 	</array>
+ </dict>
+ </plist>
+diff --git a/DcTests/AppIdentifierTests.swift b/DcTests/AppIdentifierTests.swift
+new file mode 100644
+index 0000000..40b8f75
+--- /dev/null
++++ b/DcTests/AppIdentifierTests.swift
+@@ -0,0 +1,17 @@
++import Testing
++import Foundation
++
++/// slothfulchat: guards the app identifier rename (chat.delta -> chat.slothful),
++/// so a rebase that silently reintroduces an upstream ID fails here.
++struct AppIdentifierTests {
++    @Test func bundleIdentifierIsOurs() {
++        #expect(Bundle.main.bundleIdentifier == "chat.slothful")
++    }
++
++    @Test func deeplinkSchemeIsOurs() {
++        let types = Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]] ?? []
++        let schemes = types.flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] }
++        #expect(schemes.contains("chat.slothful.deeplink"))
++        #expect(!schemes.contains("chat.delta.deeplink"))
++    }
++}
+diff --git a/DcWidget/WidgetProvider.swift b/DcWidget/WidgetProvider.swift
+index 0ed39a7..85626ce 100644
+--- a/DcWidget/WidgetProvider.swift
++++ b/DcWidget/WidgetProvider.swift
+@@ -129,7 +129,7 @@ struct ChatShortcut: Identifiable, Hashable {
+ 
+     var url: URL {
+         var urlComponents = URLComponents()
+-        urlComponents.scheme = "chat.delta.deeplink"
++        urlComponents.scheme = "chat.slothful.deeplink"
+         urlComponents.host = "chat"
+         urlComponents.queryItems = [
+             URLQueryItem(name: "chatId", value: "\(chatId)"),
+@@ -152,7 +152,7 @@ struct AppShortcut: Identifiable, Hashable {
+ 
+     var url: URL {
+         var urlComponents = URLComponents()
+-        urlComponents.scheme = "chat.delta.deeplink"
++        urlComponents.scheme = "chat.slothful.deeplink"
+         urlComponents.host = "webxdc"
+         urlComponents.queryItems = [
+             URLQueryItem(name: "msgId", value: "\(messageId)"),
+diff --git a/deltachat-ios.xcodeproj/project.pbxproj b/deltachat-ios.xcodeproj/project.pbxproj
+index 72b749e..8115bee 100644
+--- a/deltachat-ios.xcodeproj/project.pbxproj
++++ b/deltachat-ios.xcodeproj/project.pbxproj
+@@ -2180,7 +2180,7 @@
+ 					"-iframework",
+ 					"\"${PODS_CONFIGURATION_BUILD_DIR}/SDWebImageWebPCoder\"",
+ 				);
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.DcShare;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.DcShare;
+ 				PRODUCT_NAME = "Delta Chat";
+ 				SKIP_INSTALL = YES;
+ 				SWIFT_VERSION = 5.5;
+@@ -2222,7 +2222,7 @@
+ 					"-iframework",
+ 					"\"${PODS_CONFIGURATION_BUILD_DIR}/SDWebImageWebPCoder\"",
+ 				);
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.DcShare;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.DcShare;
+ 				PRODUCT_NAME = "Delta Chat";
+ 				SKIP_INSTALL = YES;
+ 				SWIFT_VERSION = 5.5;
+@@ -2248,7 +2248,7 @@
+ 				MARKETING_VERSION = 1.0;
+ 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+ 				MTL_FAST_MATH = YES;
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.DcTests;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.DcTests;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+ 				SWIFT_EMIT_LOC_STRINGS = NO;
+@@ -2275,7 +2275,7 @@
+ 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+ 				MARKETING_VERSION = 1.0;
+ 				MTL_FAST_MATH = YES;
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.DcTests;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.DcTests;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SWIFT_EMIT_LOC_STRINGS = NO;
+ 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+@@ -2470,7 +2470,7 @@
+ 					"\"${PODS_CONFIGURATION_BUILD_DIR}/ReachabilitySwift\"",
+ 				);
+ 				OTHER_LDFLAGS = "$(inherited)";
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				PROVISIONING_PROFILE_SPECIFIER = "";
+ 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+@@ -2538,7 +2538,7 @@
+ 					"\"${PODS_CONFIGURATION_BUILD_DIR}/ReachabilitySwift\"",
+ 				);
+ 				OTHER_LDFLAGS = "$(inherited)";
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				PROVISIONING_PROFILE_SPECIFIER = "";
+ 				TARGETED_DEVICE_FAMILY = "1,2";
+@@ -2570,7 +2570,7 @@
+ 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+ 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+ 				MTL_FAST_MATH = YES;
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.DcNotificationService;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.DcNotificationService;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SKIP_INSTALL = YES;
+ 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+@@ -2603,7 +2603,7 @@
+ 				);
+ 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+ 				MTL_FAST_MATH = YES;
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.DcNotificationService;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.DcNotificationService;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SKIP_INSTALL = YES;
+ 				SWIFT_EMIT_LOC_STRINGS = YES;
+@@ -2638,7 +2638,7 @@
+ 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+ 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+ 				MTL_FAST_MATH = YES;
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.DcWidget;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.DcWidget;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SKIP_INSTALL = YES;
+ 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+@@ -2673,7 +2673,7 @@
+ 				);
+ 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+ 				MTL_FAST_MATH = YES;
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.DcWidget;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.DcWidget;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SKIP_INSTALL = YES;
+ 				SWIFT_EMIT_LOC_STRINGS = YES;
+@@ -2705,7 +2705,7 @@
+ 				);
+ 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+ 				MTL_FAST_MATH = YES;
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.Clip;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.Clip;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+ 				SWIFT_EMIT_LOC_STRINGS = YES;
+@@ -2736,7 +2736,7 @@
+ 					"@executable_path/Frameworks",
+ 				);
+ 				MTL_FAST_MATH = YES;
+-				PRODUCT_BUNDLE_IDENTIFIER = chat.delta.Clip;
++				PRODUCT_BUNDLE_IDENTIFIER = chat.slothful.Clip;
+ 				PRODUCT_NAME = "$(TARGET_NAME)";
+ 				SWIFT_EMIT_LOC_STRINGS = YES;
+ 				SWIFT_VERSION = 5.5;
+diff --git a/deltachat-ios/AppDelegate.swift b/deltachat-ios/AppDelegate.swift
+index 6b57706..5589fc0 100644
+--- a/deltachat-ios/AppDelegate.swift
++++ b/deltachat-ios/AppDelegate.swift
+@@ -237,7 +237,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
+             return true
+         case "mailto":
+             return appCoordinator.handleMailtoURL(url)
+-        case "chat.delta.deeplink":
++        case "chat.slothful.deeplink":
+             return appCoordinator.handleDeepLinkURL(url)
+         default:
+             return false
+diff --git a/deltachat-ios/Calls/PiPFrameProcessor.swift b/deltachat-ios/Calls/PiPFrameProcessor.swift
+index 98fe3d2..59c26f0 100644
+--- a/deltachat-ios/Calls/PiPFrameProcessor.swift
++++ b/deltachat-ios/Calls/PiPFrameProcessor.swift
+@@ -4,7 +4,7 @@ import WebRTC
+ class PiPFrameProcessor: NSObject, RTCVideoRenderer {
+     private weak var displayLayer: AVSampleBufferDisplayLayer?
+     private let maxFrameRate: Int32 = 25
+-    private let processingQueue = DispatchQueue(label: "chat.delta.rtc.frame_processing", qos: .userInteractive)
++    private let processingQueue = DispatchQueue(label: "chat.slothful.rtc.frame_processing", qos: .userInteractive)
+     private var nextFrame: RTCVideoFrame?
+     private var isProcessing = false
+     private var rotation: RTCVideoRotation = ._0
+diff --git a/deltachat-ios/Coordinator/AppCoordinator.swift b/deltachat-ios/Coordinator/AppCoordinator.swift
+index 558ce8a..8e76c7c 100644
+--- a/deltachat-ios/Coordinator/AppCoordinator.swift
++++ b/deltachat-ios/Coordinator/AppCoordinator.swift
+@@ -119,11 +119,11 @@ class AppCoordinator: NSObject {
+     }
+ 
+     func handleDeepLinkURL(_ url: URL) -> Bool {
+-        if url.absoluteString.starts(with: "chat.delta.deeplink://webxdc?") {
++        if url.absoluteString.starts(with: "chat.slothful.deeplink://webxdc?") {
+             return handleWebxdcDeeplink(url: url)
+-        } else if url.absoluteString.starts(with: "chat.delta.deeplink://chat?") {
++        } else if url.absoluteString.starts(with: "chat.slothful.deeplink://chat?") {
+             return handleOpenChatDeeplink(url: url)
+-        } else if url.absoluteString.starts(with: "chat.delta.deeplink://share?") {
++        } else if url.absoluteString.starts(with: "chat.slothful.deeplink://share?") {
+             return handleShareDeeplink(url: url)
+         } else {
+             return false
+@@ -141,7 +141,7 @@ class AppCoordinator: NSObject {
+         let chatId = Int(parameters["chatId"] ?? "-1") ?? -1
+         let messageId = Int(parameters["msgId"] ?? "-1") ?? -1
+ 
+-        if !"\(url)".starts(with: "chat.delta.deeplink://webxdc?") ||
++        if !"\(url)".starts(with: "chat.slothful.deeplink://webxdc?") ||
+            messageId == -1 ||
+            chatId == -1 ||
+            accountId == -1 {
+diff --git a/deltachat-ios/DC/DcAccount.swift b/deltachat-ios/DC/DcAccount.swift
+index 8e51c02..85ae0c3 100644
+--- a/deltachat-ios/DC/DcAccount.swift
++++ b/deltachat-ios/DC/DcAccount.swift
+@@ -21,7 +21,7 @@ public class DcAccounts {
+ 
+     /// The application group identifier defines a group of apps or extensions that have access to a shared container.
+     /// The ID is created in the apple developer portal and can be changed there.
+-    let applicationGroupIdentifier = "group.chat.delta.ios"
++    let applicationGroupIdentifier = "group.chat.slothful.ios"
+     var accountsPointer: OpaquePointer?
+     var rpcPointer: OpaquePointer?
+     public var fetchSemaphore: DispatchSemaphore?
+diff --git a/deltachat-ios/Info.plist b/deltachat-ios/Info.plist
+index 23fa256..1e021b8 100644
+--- a/deltachat-ios/Info.plist
++++ b/deltachat-ios/Info.plist
+@@ -24,10 +24,10 @@
+ 			<key>CFBundleTypeRole</key>
+ 			<string>Editor</string>
+ 			<key>CFBundleURLName</key>
+-			<string>chat.delta.qr</string>
++			<string>chat.slothful.qr</string>
+ 			<key>CFBundleURLSchemes</key>
+ 			<array>
+-				<string>chat.delta</string>
++				<string>chat.slothful</string>
+ 				<string>openpgp4fpr</string>
+ 				<string>dcaccount</string>
+ 				<string>dclogin</string>
+@@ -37,7 +37,7 @@
+ 			<key>CFBundleTypeRole</key>
+ 			<string>Editor</string>
+ 			<key>CFBundleURLName</key>
+-			<string>chat.delta.mailto</string>
++			<string>chat.slothful.mailto</string>
+ 			<key>CFBundleURLSchemes</key>
+ 			<array>
+ 				<string>mailto</string>
+@@ -47,10 +47,10 @@
+ 			<key>CFBundleTypeRole</key>
+ 			<string>Editor</string>
+ 			<key>CFBundleURLName</key>
+-			<string>chat.delta.deeplink</string>
++			<string>chat.slothful.deeplink</string>
+ 			<key>CFBundleURLSchemes</key>
+ 			<array>
+-				<string>chat.delta.deeplink</string>
++				<string>chat.slothful.deeplink</string>
+ 			</array>
+ 		</dict>
+ 	</array>
+diff --git a/deltachat-ios/deltachat-ios.entitlements b/deltachat-ios/deltachat-ios.entitlements
+index 1e81e94..1390314 100644
+--- a/deltachat-ios/deltachat-ios.entitlements
++++ b/deltachat-ios/deltachat-ios.entitlements
+@@ -18,11 +18,11 @@
+ 	<true/>
+ 	<key>com.apple.security.application-groups</key>
+ 	<array>
+-		<string>group.chat.delta.ios</string>
++		<string>group.chat.slothful.ios</string>
+ 	</array>
+ 	<key>keychain-access-groups</key>
+ 	<array>
+-		<string>$(AppIdentifierPrefix)group.chat.delta.ios</string>
++		<string>$(AppIdentifierPrefix)group.chat.slothful.ios</string>
+ 	</array>
+ </dict>
+ </plist>

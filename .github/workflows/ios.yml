@@ -1,0 +1,99 @@
+# iOS: build the deltachat-ios fork (vendor/deltachat-ios + patches/ios)
+# against OUR patched core (build/core, linked in by apply-patches) and run its
+# tests in the simulator.
+#
+#   unit        — upstream's DcTests plus ours (offline, fake accounts),
+#                 including a check that the linked core is the patched one
+#   integration — onboarding, send + receive through the composer, and a
+#                 screenshot dropped onto the composer, between real accounts
+#                 on scripts/mock-madmail.mjs. The app reaches the mock over
+#                 our core's webimap transport, which upstream core lacks, so
+#                 this is offline AND proves the patched core is in the app.
+#
+# macOS minutes are slow, so this runs only when the iOS or core patch stacks
+# (or what they apply to) change, plus on every push to main.
+
+name: iOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - patches/ios/**
+      - patches/core/**
+      - vendor/deltachat-ios
+      - vendor/core
+      - scripts/apply-patches.sh
+      - scripts/mock-madmail.mjs
+      - .github/workflows/ios.yml
+  workflow_dispatch:
+
+# Same policy as ci.yml: supersede PR runs, let main runs finish.
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Upstream's CI at the pinned commit: macos-15 + Xcode 26.1 + this simulator.
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      DESTINATION: platform=iOS Simulator,name=iPhone SE (3rd generation),OS=18.6
+      XCODEBUILD: xcodebuild -workspace deltachat-ios.xcworkspace -scheme deltachat-ios
+    defaults:
+      run:
+        working-directory: build/ios
+    steps:
+      # Not recursive: vendor/deltachat-ios's own core submodule is never used.
+      - name: Checkout (with submodules)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Apply patch stacks (git am needs an identity)
+        working-directory: .
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@slothfulchat.invalid
+          scripts/apply-patches.sh
+
+      - name: Select Xcode 26.1
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.1.app/Contents/Developer
+          xcrun simctl list runtimes
+
+      # build-core.sh runs `cargo +$(cat rust-toolchain) lipo`; patches/ios
+      # pins the toolchain our patched core needs.
+      - name: Install Rust toolchain + cargo-lipo
+        run: |
+          rustup toolchain install "$(cat rust-toolchain)" --profile minimal
+          cargo install cargo-lipo
+
+      # main saves, PRs restore (as in ci.yml: PR-written caches are unreadable
+      # by other PRs and only evict main's).
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: build/core
+          key: ${{ hashFiles('build/ios/rust-toolchain') }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+
+      - name: Install CocoaPods dependencies
+        run: pod install
+
+      - name: Build app + tests (includes the patched core)
+        run: set -o pipefail && $XCODEBUILD -destination "$DESTINATION" build-for-testing | xcbeautify --renderer github-actions
+
+      - name: Unit tests
+        run: set -o pipefail && $XCODEBUILD -destination "$DESTINATION" test-without-building -skip-testing:DcTests/IntegrationTests | xcbeautify --renderer github-actions
+
+      - name: Integration tests (mock madmail over webimap)
+        run: |
+          node ../../scripts/mock-madmail.mjs 8025 &
+          set -o pipefail && $XCODEBUILD -destination "$DESTINATION" test-without-building -only-testing:DcTests/IntegrationTests | xcbeautify --renderer github-actions

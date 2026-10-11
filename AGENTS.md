@@ -62,9 +62,9 @@ Cold-start gotchas, in order. Each one cost real time to rediscover:
 
 1. **Submodule + patches first.** `build/core` is throwaway and not checked in.
    `git submodule update --init vendor/core && scripts/apply-patches.sh`.
-   (apply-patches also tries the `desktop` worktree — it needs
-   `vendor/deltachat-desktop` inited too; `build:wasm` doesn't, so a desktop
-   failure there is fine.)
+   (apply-patches also builds the `desktop` and `ios` worktrees — they need
+   `vendor/deltachat-desktop` and `vendor/deltachat-ios` inited too;
+   `build:wasm` doesn't, so a failure after `core:` there is fine.)
 2. **Toolchain = a dated nightly** (auto-selected via `rust/rust-toolchain.toml`,
    which names e.g. `nightly-2026-08-01` so every build gets the same compiler;
    pinned `rusqlite` uses the nightly-only `cfg_select!` macro, so stable fails
