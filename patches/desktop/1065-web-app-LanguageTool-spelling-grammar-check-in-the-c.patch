@@ -3,6 +3,9 @@ From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 10 Oct 2026 18:16:12 +0000
 Subject: [PATCH] web-app: LanguageTool spelling & grammar check in the
  composer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 The desktop targets ship with Chromium spellcheck off (Electron has no
 local hunspell dictionary, see target-electron windows/main.ts), and a
@@ -24,7 +27,10 @@ reverse-proxy sub-path (or a query/hash) is rejected in the dialog instead
 of failing later as "Failed to fetch"; the check URL is built with new
 URL(). A "Check connection" button runs a test sentence and shows the
 error otherwise (CORS / --allow-origin being the usual one); only the
-latest check may report, so a slow earlier one can't overwrite it.
+latest check may report, so a slow earlier one can't overwrite it. With
+no server saved, the address starts out as http://localhost:8081,
+languagetool-server's default port, so one on this computer needs no
+typing.
 
 Composer: 1s after typing stops the draft is POSTed form-encoded to
 /v2/check with language=auto (a CORS simple request, so a self-hosted
@@ -66,6 +72,21 @@ While LanguageTool is on, the field opts out of the browser's spellcheck
 nothing changes: the composer keeps spellcheck=true, the other fields keep
 the browser default, and an installed add-on works as before.
 
+Because of that opt-out a failing check must not be silent: while the
+last check failed, a small red filled error icon (Material's, inline:
+../Icon only has outlined ones) sits in the field's top right corner,
+clear of the resize grip (placed after every render, like the overlay),
+its tooltip and
+label naming the error; clicking it opens the server dialog. It goes away
+with the next check that works. Being in the field, it shows inside the
+bio and group dialogs too, where an app toast would sit behind the modal.
+The Connectivity view
+gets a LanguageTool line while the check is on, under the browser
+edition's bridge line: the server, a "Change…" button opening the server
+dialog (as the bridge line's opens its own), and a live test check's
+result ("working" or "not working: <error>"), which turns back to
+"checking…" while a changed server is being tried.
+
 The same check runs in the profile bio (EditProfileDialog), the group
 description (EditGroupNameDialog) and the new-group description
 (CreateChat): DeltaTextarea takes an opt-in `languageTool` prop rather
@@ -85,18 +106,19 @@ _composer.scss is untouched.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- .../scss/composer/_language-tool.scss         | 153 +++++++++
+ .../scss/composer/_language-tool.scss         | 164 ++++++++
  packages/frontend/scss/manifest.scss          |   1 +
  .../frontend/src/components/Login-Styles.tsx  |  20 +-
  .../components/Settings/EmojiSetSelector.tsx  |  11 +-
  .../Settings/ExperimentalFeatures.tsx         |  22 ++
- .../Settings/LanguageToolDialog.tsx           | 158 +++++++++
+ .../Settings/LanguageToolDialog.tsx           | 160 ++++++++
  .../components/Settings/SettingsSelector.tsx  |  10 +-
  .../components/Settings/SettingsSwitch.tsx    |  25 +-
  .../src/components/composer/Composer.tsx      |   5 +
  .../composer/ComposerMessageInput.tsx         |  19 +-
- .../src/components/composer/LanguageTool.tsx  | 324 ++++++++++++++++++
- .../components/composer/languageToolCheck.ts  | 141 ++++++++
+ .../src/components/composer/LanguageTool.tsx  | 374 ++++++++++++++++++
+ .../components/composer/languageToolCheck.ts  | 141 +++++++
+ .../components/dialogs/ConnectivityDialog.tsx |  56 +++
  .../components/dialogs/CreateChat/index.tsx   |   1 +
  .../dialogs/EditProfileDialog/index.tsx       |   1 +
  .../components/dialogs/ViewGroup/index.tsx    |   1 +
@@ -105,7 +127,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  packages/shared/shared-types.d.ts             |   7 +
  packages/shared/state.ts                      |   4 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 20 files changed, 975 insertions(+), 25 deletions(-)
+ 21 files changed, 1094 insertions(+), 25 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
@@ -114,10 +136,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 diff --git a/packages/frontend/scss/composer/_language-tool.scss b/packages/frontend/scss/composer/_language-tool.scss
 new file mode 100644
-index 0000000000000000000000000000000000000000..729f8113c09b74bca5ecf628e1ed17d91727f139
+index 0000000000000000000000000000000000000000..36753a893afa8ce8e2229ddc779ad85699a558f8
 --- /dev/null
 +++ b/packages/frontend/scss/composer/_language-tool.scss
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,164 @@
 +@use 'sass:map';
 +@use '../variables';
 +
@@ -153,6 +175,17 @@ index 0000000000000000000000000000000000000000..729f8113c09b74bca5ecf628e1ed17d9
 +.language-tool-issue {
 +  text-decoration: underline wavy var(--lt-color);
 +  text-decoration-skip-ink: none;
++}
++
++// Shown in the field's corner while checks fail; placed after every render.
++.language-tool-failed {
++  position: absolute;
++  display: flex;
++  padding: 0;
++  border: none;
++  background: none;
++  color: #e53935;
++  cursor: pointer;
 +}
 +
 +// The suggestion card, placed above the flagged word by placeCard().
@@ -404,10 +437,10 @@ index 6573050374cfe174e923d97cde3f2ddb341f4677..86b1ca0535c636438baa1436cd00e8ab
          label='Record without noise filtering'
 diff --git a/packages/frontend/src/components/Settings/LanguageToolDialog.tsx b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..7080eae95096de6e6c9b44710b3853de1bc375f1
+index 0000000000000000000000000000000000000000..0bdabd5716bdba78c98183724633ef3a5b719c1a
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,160 @@
 +import React, { useRef, useState } from 'react'
 +
 +import SettingsStoreInstance, { useSettingsStore } from '../../stores/settings'
@@ -449,7 +482,10 @@ index 0000000000000000000000000000000000000000..7080eae95096de6e6c9b44710b3853de
 +  const [mode, setMode] = useState(
 +    settings?.languageToolServer ? 'server' : 'account'
 +  )
-+  const [server, setServer] = useState(settings?.languageToolServer ?? '')
++  // languagetool-server's default port, so one on this computer needs no typing
++  const [server, setServer] = useState(
++    settings?.languageToolServer ?? 'http://localhost:8081'
++  )
 +  const [username, setUsername] = useState(settings?.languageToolUsername ?? '')
 +  const [apiKey, setApiKey] = useState(settings?.languageToolApiKey ?? '')
 +  const [status, setStatus] = useState('')
@@ -541,7 +577,6 @@ index 0000000000000000000000000000000000000000..7080eae95096de6e6c9b44710b3853de
 +                label='Server address'
 +                value={server}
 +                type='url'
-+                placeholder='http://localhost:8081'
 +                onChange={e => setServer(e.target.value)}
 +              />
 +              <p>
@@ -730,10 +765,10 @@ index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..7a0cc38bc866a8634afd845ab2169bf4
        </I18nContext.Consumer>
 diff --git a/packages/frontend/src/components/composer/LanguageTool.tsx b/packages/frontend/src/components/composer/LanguageTool.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..18d8e03885c38e9fe397443581117c96bcdb05bf
+index 0000000000000000000000000000000000000000..82d49dd12bd43a618a9a59051c1641a6d9ea3339
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/LanguageTool.tsx
-@@ -0,0 +1,324 @@
+@@ -0,0 +1,374 @@
 +import React, {
 +  useCallback,
 +  useEffect,
@@ -744,6 +779,8 @@ index 0000000000000000000000000000000000000000..18d8e03885c38e9fe397443581117c96
 +
 +import { getLogger } from '@deltachat-desktop/shared/logger'
 +import { IconButton } from '../Icon'
++import useDialog from '../../hooks/dialog/useDialog'
++import LanguageToolDialog from '../Settings/LanguageToolDialog'
 +import {
 +  ltCheck,
 +  remapMatches,
@@ -768,6 +805,9 @@ index 0000000000000000000000000000000000000000..18d8e03885c38e9fe397443581117c96
 +// tight (line-height: normal) line box. Added to height and padding alike, so
 +// the scroll range stays the textarea's.
 +const UNDERLINE_ROOM_PX = 4
++
++// Room the failure icon leaves at the field's right edge for the resize grip.
++const RESIZE_GRIP_PX = 16
 +
 +/** Colour class shared by an underline and its card, as in LanguageTool's
 + * own UI: red spelling, blue style, amber everything else. */
@@ -861,6 +901,10 @@ index 0000000000000000000000000000000000000000..18d8e03885c38e9fe397443581117c96
 +  const layerRef = useRef<HTMLDivElement>(null)
 +  const cardRef = useRef<HTMLDivElement>(null)
 +  const wordRef = useRef<HTMLSpanElement>(null)
++  // the last check's error, until one works again
++  const [failed, setFailed] = useState<string | null>(null)
++  const failedRef = useRef<HTMLButtonElement>(null)
++  const { openDialog } = useDialog()
 +
 +  useEffect(() => {
 +    if (!text.trim()) {
@@ -869,8 +913,17 @@ index 0000000000000000000000000000000000000000..18d8e03885c38e9fe397443581117c96
 +    const abort = new AbortController()
 +    const timer = setTimeout(() => {
 +      ltCheck({ server, username, apiKey }, text, abort.signal).then(
-+        matches => setChecked({ text, matches }),
-+        err => abort.signal.aborted || log.warn('check failed', err)
++        matches => {
++          setFailed(null)
++          setChecked({ text, matches })
++        },
++        (err: Error) => {
++          if (abort.signal.aborted) return
++          log.warn('check failed', err)
++          // the field opted out of the browser's spellcheck, so show why
++          // nothing gets underlined instead of failing silently
++          setFailed(err.message)
++        }
 +      )
 +    }, CHECK_DELAY_MS)
 +    return () => {
@@ -931,8 +984,20 @@ index 0000000000000000000000000000000000000000..18d8e03885c38e9fe397443581117c96
 +  // re-fonts on an emoji-style switch, neither of which resizes the textarea.
 +  useLayoutEffect(() => {
 +    const el = textareaRef.current
-+    if (el && layerRef.current) {
-+      syncLayer(el, layerRef.current)
++    const layer = layerRef.current
++    if (el && layer) {
++      syncLayer(el, layer)
++    }
++    // the failure icon sits in the field's top right corner, clear of the
++    // textarea's resize grip
++    if (layer && failedRef.current) {
++      failedRef.current.style.top = `${layer.offsetTop + 2}px`
++      failedRef.current.style.left = `${
++        layer.offsetLeft +
++        layer.offsetWidth -
++        failedRef.current.offsetWidth -
++        RESIZE_GRIP_PX
++      }px`
 +    }
 +    if (cardRef.current && layerRef.current && wordRef.current) {
 +      placeCard(cardRef.current, layerRef.current, wordRef.current)
@@ -994,6 +1059,26 @@ index 0000000000000000000000000000000000000000..18d8e03885c38e9fe397443581117c96
 +      <div className='language-tool-layer' dir={dir} ref={layerRef} aria-hidden>
 +        {parts}
 +      </div>
++      {failed && (
++        <button
++          type='button'
++          ref={failedRef}
++          className='language-tool-failed'
++          aria-label={`LanguageTool couldn't check this text: ${failed}`}
++          title={`LanguageTool couldn't check this text: ${failed}. Click to check the server.`}
++          // mousedown (not click) keeps the textarea focused
++          onMouseDown={e => e.preventDefault()}
++          onClick={() => openDialog(LanguageToolDialog)}
++        >
++          {/* Material's filled "error" icon; ../Icon only has outlined ones */}
++          <svg viewBox='0 0 24 24' width={16} height={16} aria-hidden>
++            <path
++              fill='currentColor'
++              d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z'
++            />
++          </svg>
++        </button>
++      )}
 +      {active && (
 +        <div
 +          className={`language-tool-card ${kind(active)}`}
@@ -1205,6 +1290,87 @@ index 0000000000000000000000000000000000000000..5fb49a601d46b777c4e8c9b1f6f01bd6
 +  }
 +  return kept
 +}
+diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+index d9c3b182aaeea3ee944f2369bbc20028a83cd294..f770910f3e6c20c63e3540fce0383854bba3dc79 100644
+--- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
++++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+@@ -5,6 +5,12 @@ import { BackendRemote, onDCEvent } from '../../backend-com'
+ import { selectedAccountId } from '../../ScreenController'
+ import Dialog, { DialogBody, DialogContent, DialogHeader } from '../Dialog'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
++import { useSettingsStore } from '../../stores/settings'
++import { languageToolConfig, ltCheck } from '../composer/languageToolCheck'
++import LanguageToolDialog, {
++  languageToolServerLabel,
++} from '../Settings/LanguageToolDialog'
++import useDialog from '../../hooks/dialog/useDialog'
+ 
+ import type { DialogProps } from '../../contexts/DialogContext'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+@@ -96,6 +102,7 @@ function ConnectivityDialogInner() {
+           />
+         )}
+         <BrowserBridgeInfo />
++        <LanguageToolInfo />
+       </DialogContent>
+     </DialogBody>
+   )
+@@ -124,6 +131,55 @@ function BrowserBridgeInfo() {
+   )
+ }
+ 
++/** slothfulchat: while LanguageTool is on, whether its server answers a test
++ * check, so fields that stay un-underlined have an explanation here, and a
++ * way to the server dialog. */
++function LanguageToolInfo() {
++  const { openDialog } = useDialog()
++  const settings = useSettingsStore()[0]?.desktopSettings
++  const config = settings && languageToolConfig(settings)
++  const on = !!config
++  const { server, username, apiKey } = config || {}
++  // the result of the check for one config: true when it works, else the
++  // error; a result for an older config (changed via "Change…") is stale
++  const key = JSON.stringify([server, username, apiKey])
++  const [checked, setChecked] = useState<{ key: string; ok: true | string }>()
++  const status = checked?.key === key ? checked.ok : null
++
++  useEffect(() => {
++    if (!on) return
++    const abort = new AbortController()
++    ltCheck(
++      { server, username, apiKey },
++      'This are a test.',
++      abort.signal
++    ).then(
++      () => setChecked({ key, ok: true }),
++      (err: Error) =>
++        abort.signal.aborted || setChecked({ key, ok: err.message })
++    )
++    return () => abort.abort()
++  }, [on, key, server, username, apiKey])
++
++  if (!settings || !config) return null
++  return (
++    <div style={{ marginTop: '8px', fontSize: '13px' }}>
++      LanguageTool: <code>{languageToolServerLabel(settings)}</code>{' '}
++      {/* before the status, which can be a long error */}
++      <button type='button' onClick={() => openDialog(LanguageToolDialog)}>
++        Change…
++      </button>{' '}
++      {status === null ? (
++        'checking…'
++      ) : status === true ? (
++        '✓ working'
++      ) : (
++        <span style={{ color: '#c0392b' }}>⚠ not working: {status}</span>
++      )}
++    </div>
++  )
++}
++
+ async function getConnectivityHTML(
+   stylesToInject?: string | undefined
+ ): Promise<string> {
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 index 4fba516699801e2862dfcf1337dc2ddeb0dfcb6d..1301478dcd4465dd48c6aec5680516f2af37e879 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
