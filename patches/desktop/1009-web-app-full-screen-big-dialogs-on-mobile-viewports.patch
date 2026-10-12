@@ -14,15 +14,15 @@ Keyed on each dialog's `data-testid` (attribute selectors stay global in
 CSS modules), so no prop needs threading through <Dialog> and
 <DialogWithHeader>: dialogs that already carry a testid need no diff at
 all, the anonymous ones get a one-line `dataTestid`. The selector list
-also pre-names dialogs that later patches opt in (connectivity, edit
-profile, settings sections, public bots/channels) — unmatched attribute
+also pre-names dialogs opted in further down (connectivity, edit
+profile, settings sections) and by desktop/1018 (public bots/channels) — unmatched attribute
 selectors are inert, and those patches then stay one-liners too.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 
 web-app: full-screen sub settings pages on mobile viewports
 
-The big-dialogs-fullscreen patch made the settings root dialog go edge to
+The above made the settings root dialog go edge to
 edge on phones, but every page it opens on top still rendered as a small
 floating dialog: the four settings sections (chats & media, notifications,
 appearance, advanced), the connectivity view and the profile editor. Give

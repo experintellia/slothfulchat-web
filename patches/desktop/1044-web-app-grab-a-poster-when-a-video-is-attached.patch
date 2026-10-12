@@ -7,7 +7,7 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 Gives large videos a preview on their download-on-demand placeholder. Core
-reads a `<blob>-preview.jpg` sidecar for that (see the core patch); this writes
+reads a `<blob>-preview.jpg` sidecar for that (see core/1016); this writes
 it, because a browser already ships a decoder for every video it can play,
 while core's wasm sits in a worker with no DOM.
 
@@ -57,7 +57,7 @@ poster grab above shares this module.
   and skipped entirely when a caller already knows the duration.
   The three fields are widened locally, the way backend-com already widens
   `DownloadProgress`: this workspace typechecks against the published
-  @deltachat/jsonrpc-client, which predates our core patch.
+  @deltachat/jsonrpc-client, which predates core/1018.
 
 Images are left to core on purpose: it measures them after any re-encoding, so
 doing it here would be a slower way to get the same numbers, or a wrong one.

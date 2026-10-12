@@ -50,8 +50,8 @@ Full e2e in a headless browser (`node scripts/test-networking.mjs`): two fresh a
 **Cost update: 7 patches, ~2100 patch lines total** (M3 added 3 patches / 477 insertions). Still well under the ~20-patch stop/go gate.
 
 ### Porting log
-- **WS→TCP tunnel** (`src/net/ws_tcp.rs`, patch 0005): `ws_stream_wasm` gives a `!Send` JS WebSocket; bridged to core's `Send`-bounded `SessionStream` via `tokio::io::duplex` + `spawn_local` pump + oneshot — zero relaxation of core's trait bounds, async-imap/async-smtp code paths untouched. DNS goes through the proxy's `/dns/{host}` endpoint so the `SocketAddr`-based connect flow stays intact.
-- **The wasm time minefield** (patches 0005/0006 + vendored forks): `std::time::{SystemTime,Instant}::now()` abort on wasm32-unknown-unknown, and they lurk in dependencies, surfacing one panic at a time at runtime:
+- **WS→TCP tunnel** (`src/net/ws_tcp.rs`, `core/1004`): `ws_stream_wasm` gives a `!Send` JS WebSocket; bridged to core's `Send`-bounded `SessionStream` via `tokio::io::duplex` + `spawn_local` pump + oneshot — zero relaxation of core's trait bounds, async-imap/async-smtp code paths untouched. DNS goes through the proxy's `/dns/{host}` endpoint so the `SocketAddr`-based connect flow stays intact.
+- **The wasm time minefield** (`core/1004`, `core/1005` + vendored forks): `std::time::{SystemTime,Instant}::now()` abort on wasm32-unknown-unknown, and they lurk in dependencies, surfacing one panic at a time at runtime:
   - rustls cert validation (`UnixTime::now()` in the handshake) → custom `TimeProvider` on the JS clock via `ClientConfig::builder_with_details`
   - core's `tools::Time::now()` call sites → wasm-safe `tools::time_now()`
   - `deltachat-ratelimit` → `deltachat_time::SystemTimeTools::now()`
@@ -76,7 +76,7 @@ The upstream deltachat-desktop browser-edition frontend (`bundle.js` byte-identi
 - `packages/web-app` = assemble script (copies upstream dist + locales, overlays our `main.html` copy with CSP loosened for wasm/workers + PWA manifest) + our Runtime (~fork of upstream's runtime-browser): transport → `WasmDeltaChat`, settings → localStorage, locales/themes → static fetches, temp files & file dialogs → core memfs via the fs side-channel, `/ws/backend` → no-op.
 - **Blob display**: `transformBlobURL` is sync and feeds `<img src>`, so `/blobs/…` must be fetchable — a service worker intercepts it and round-trips to the page, which `fsRead`s the core worker's memfs. Same SW serves `/download-backup/…`.
 - **Backup export**: the frontend passes destination `'<BROWSER>'` (upstream's node server rewrote it). Our runtime wraps the transport's `_send` and rewrites it to a memfs dir — 10 lines, bundle untouched.
-- **Core-side IMEX** (patch 0008): tar streaming works on wasm via a vendored astral-tokio-tar whose tokio is our facade (memfs-backed); `Sql::import` on wasm swaps DB bytes in the VFS instead of `sqlcipher_export()` (encrypted backups stay unsupported on wasm).
+- **Core-side IMEX** (`core/1007`): tar streaming works on wasm via a vendored astral-tokio-tar whose tokio is our facade (memfs-backed); `Sql::import` on wasm swaps DB bytes in the VFS instead of `sqlcipher_export()` (encrypted backups stay unsupported on wasm).
 - **Instant onboarding: partially works.** `DCACCOUNT:` has two forms (qr.rs:827-856): the bare-domain form (`dcaccount:nine.testrun.org`) needs NO HTTP — core generates random credentials locally and chatmail auto-creates the mailbox on first IMAP login → works on wasm. The https-URL form (`DCACCOUNT:https://…/new`, what real QR invites and the UI's "Create new profile" button use) POSTs via the HTTP module, which is still stubbed on wasm → fails. Classic addr+password login works. Also upstream quirk: `useInstantOnboarding` never resets after the first account, so the second add-account lands on the instant-onboarding screen.
 - Key import/export UI was removed upstream in v2.53 — nothing to wire.
 - PWA: manifest + service worker present (installable shape); offline app-shell added 2026-07-08 (see "Offline app shell" section below).
@@ -92,7 +92,7 @@ The upstream deltachat-desktop browser-edition frontend (`bundle.js` byte-identi
 ### Porting log
 - **SQLite → OPFS**: the sahpool VFS lives in the companion crate `sqlite-wasm-vfs` 0.2 (not sqlite-wasm-rs itself). Installed as the default VFS at core init (`OpfsSAHPoolCfgBuilder`, capacity 32); DB bytes land in opaque pool files under `.opfs-sahpool/` — synchronous-durable via sync access handles, dedicated-worker requirement already met, no COOP/COEP needed.
 - **Blob memfs → OPFS mirror** (shim `opfs.rs`): hydrate the memfs from OPFS `memfs/` at boot, then a dirty-path FIFO flusher write-through. No double storage: DB files never touch the memfs (rusqlite goes straight through the sahpool VFS).
-- **Gotcha (patch 0009)**: the M4 backup-import byte swap was hardwired to the memory VFS — with sahpool as default it silently targeted the wrong VFS; now dispatches to whichever VFS is default.
+- **Gotcha (`core/1007`)**: the M4 backup-import byte swap was hardwired to the memory VFS — with sahpool as default it silently targeted the wrong VFS; now dispatches to whichever VFS is default.
 - Limitations (prototype-acceptable): async blob flush can lose last-moment writes on tab close (DB itself is sync-durable); single tab only (sahpool handles are exclusive); ~~removed accounts orphan their pool slot; fixed pool capacity 32~~ (FIXED, see below).
 
 ### Pool-slot leak fixed (2026-07-12): post-#75 boot CANTOPEN
@@ -171,11 +171,11 @@ e2e message roundtrip, whitelist self-check).
   `slothfulchat.proxyUrl` localStorage key (an installed PWA launches without
   query params, so `?proxy=` alone wasn't enough); `?proxy=` still wins when
   present (test harnesses). Empty input resets to the default.
-- **Desktop patch 0002**: Connectivity view (Settings → Connectivity) shows
+- **`desktop/1001`**: Connectivity view (Settings → Connectivity) shows
   which bridge is in use + a "Change…" button opening the bridge dialog, via a
   `window.__slothfulchatBridge` hook set by runtime.js (browser-target-gated,
   renders nothing elsewhere). Patch count: **9 core / 2 desktop.**
-- **Desktop patch 0003**: welcome screen replaces the Delta Chat logo with
+- **`desktop/1002`**: welcome screen replaces the Delta Chat logo with
   "SlothfulChat", a one-sentence experimental/may-be-buggy disclaimer, and a
   source-code link. Patch count: **9 core / 3 desktop.**
 
@@ -224,7 +224,7 @@ e2e message roundtrip, whitelist self-check).
   `<dialog>` ("not implemented (yet) in this browser edition") linking
   issue #2 (separate-origin sandboxed host design). Running apps stays
   descoped — the icon/dialog work is UI surface only.
-- **Desktop patch 0007**: connectivity view shows a centered "Loading…"
+- **`desktop/1001`**: connectivity view shows a centered "Loading…"
   instead of a blank iframe while `getConnectivityHtml` is pending — on a
   busy single-threaded wasm core the RPC can take a while, and an empty
   srcDoc iframe paints as a white box (the reported "white connectivity
@@ -362,13 +362,13 @@ Added [madmail](https://github.com/themadorg/madmail)'s
 [WebIMAP/WebSMTP](https://github.com/themadorg/madmail/blob/main/docs/TDD/10-webimap.md)
 as a transport variant next to IMAP/SMTP — the first transport that needs **no
 WS→TCP bridge**: mail flows over plain HTTPS `fetch()` from the worker
-(building on core patch 0010's fetch client, which landed independently).
+(building on `core/1008`'s fetch client, which landed independently).
 Activated by a `webimap: bool` on the login params (advanced toggle in the
 login form), the `webimapaccount:host[:port]` QR scheme (instant onboarding via
 `POST /new`), or the welcome-screen madmail dialog. Patch count: **11 core /
 11 desktop.**
 
-- **Core patch 0011** — the transport (`src/webimap.rs`). Receive is a REST
+- **`core/1009`** — the transport (`src/webimap.rs`). Receive is a REST
   long-poll loop (`GET /webimap/messages?wait=60` *is* the idle — no WebSocket
   in v1), each new uid fetched raw → `receive_imf` → `DELETE` (a failed DELETE
   errors the round so the 30s backoff engages instead of hot-looping). Send
@@ -377,7 +377,7 @@ login form), the `webimapaccount:host[:port]` QR scheme (instant onboarding via
   of an authenticated `GET /webimap/mailboxes`. The scheduler reuses the whole
   `ImapConnectionState`/SchedBox plumbing — the only branch is which loop gets
   spawned — so interrupts, stop and the connectivity view work unchanged.
-  Extends patch 0010's `request()` with a timeout (native `tokio::time::timeout`,
+  Extends `core/1008`'s `request()` with a timeout (native `tokio::time::timeout`,
   wasm AbortController + wasmtimer race) and `follow_redirects` (webimap passes
   RequestRedirect::Error so X-Email/X-Password never follow a redirect).
 - **QR host validation**: `webimapaccount:` payloads are parsed with `url::Url`

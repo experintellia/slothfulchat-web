@@ -72,7 +72,7 @@ proxy UI); everything browser-specific lives in our own files:
   the `themes.json` scan auto-registers them — adding or changing a theme
   never touches `patches/`. Underscore-prefixed files are skipped, a `dev_`
   filename prefix hides a theme from the picker (see upstream
-  `docs/THEMES.md`). One exception to "no patches": desktop patch 0010
+  `docs/THEMES.md`). One exception to "no patches": `desktop/1003`
   renders hidden `.author-avatar.extra` elements on outgoing/1:1 messages
   (behavior-neutral for stock themes) so the Rocket theme can opt into
   Rocket.Chat-style avatars on every message. Iterate visually with
