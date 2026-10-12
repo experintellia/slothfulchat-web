@@ -31,7 +31,11 @@ stage running the same `xcaddy build ...` line, copied into `FROM caddy`.)
 DNS wildcards match **multiple** labels (RFC 4592), so `*.preview` also resolves
 `pr-123.preview…`, `<slug>.webxdc.pr-123.preview…`, etc. — one record covers the
 whole preview tree. (TLS certs match exactly one label, RFC 6125, so certs are
-still per-name — that's Caddy's job, not DNS's.)
+still per-name — that's Caddy's job, not DNS's.) Every `pr-N` host shares one
+`*.preview` wildcard cert (`auto_https prefer_wildcard` in the Caddyfile), so a
+new preview costs one Let's Encrypt cert, its `*.webxdc.pr-N` wildcard, out of
+the 50 new certs per registered domain per week. Caddy gets it when the preview
+is first deployed, not on first visit, and reuses it for every later push.
 
 Cloudflare caveat: these wildcards must be **DNS-only / grey-cloud**. Proxied
 (orange-cloud) wildcards are one level only (Universal SSL) and would also

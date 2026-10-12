@@ -6,6 +6,12 @@
 #   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 {
 	# email acme@slothful.chat   # <- edit (ACME account for expiry notices)
+	# Every pr-N host is served under the one *.preview wildcard below instead
+	# of a cert of its own. Let's Encrypt issues 50 new certs per registered
+	# domain per week, and a new preview took two (its host and its
+	# *.webxdc. wildcard); now it takes one, the *.webxdc. wildcard, which a
+	# wildcard cert can't cover (it matches exactly one label).
+	auto_https prefer_wildcard
 }
 
 # (wildcard_tls) — cert config for the *.webxdc.* wildcard labels that
@@ -32,6 +38,15 @@
 # Uncomment once next has been deployed at least once — otherwise caddy fails
 # to load on this missing import file on a fresh server.
 # import /srv/slothfulchat/next/dist/caddy/routes.caddy next.slothful.chat /srv/slothfulchat/next/dist
+
+# The shared cert for every pr-<n> host (auto_https prefer_wildcard above). Each
+# preview's own site block still serves its name; this one only answers names no
+# slot claims (a deleted preview) with a 404 instead of a TLS error. If previews
+# run on another domain (the PREVIEW_DOMAIN repo variable), name that one here.
+*.preview.slothful.chat {
+	import wildcard_tls
+	respond 404
+}
 
 # PR previews — one site.caddy per pr-<n>, written server-side by
 # deploy-preview.sh. The glob targets */site.caddy specifically, so a permanent

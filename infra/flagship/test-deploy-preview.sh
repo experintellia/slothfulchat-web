@@ -35,6 +35,10 @@ cat >"$G/Caddyfile" <<EOF
 	# no certs in the self-test
 }
 # NEXT_IMPORT import $G/srv/next/dist/caddy/routes.caddy next.slothful.chat $G/srv/next/dist
+*.preview.slothful.chat {
+	import wildcard_tls
+	respond 404
+}
 import $G/srv/previews/*/site.caddy
 EOF
 
