@@ -3,7 +3,9 @@
 # Workflow: edit in build/<name>, git commit there (one commit per logical patch), run this.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-root=$(pwd)
+root=$(pwd -P)
+tmproot=$(mktemp -d)
+trap 'rm -rf "$tmproot"' EXIT
 
 update() {
   local name=$1 sub=$2
@@ -30,15 +32,18 @@ update() {
     fi
   done
   (( fixes < 1000 )) || { echo "$name: more than 999 upstream-fix commits" >&2; exit 1; }
-  local tmp
-  tmp=$(mktemp -d)
+  local tmp=$tmproot/$name
+  mkdir "$tmp"
   # Only a patch's own commit may change its file, or a one-patch change touches
   # every file and any two open PRs conflict on all of them.
   # --no-numbered: no [PATCH NN/MM] counter, which changes whenever a patch is
   #   added or dropped. Apply order comes from the NNNN- file names.
   # --full-index: abbreviated `index <sha>..<sha>` hashes get longer when they turn
   #   ambiguous, which depends on how much history the clone has.
-  local fmt=(format-patch --no-numbered --full-index --zero-commit --no-signature -o "$tmp")
+  # --no-cover-letter, --suffix and --filename-max-length pin settings a user's
+  #   git config could change; the file names are how numbers are matched.
+  local fmt=(format-patch --no-numbered --full-index --zero-commit --no-signature
+    --no-cover-letter --suffix=.patch --filename-max-length=64 -o "$tmp")
   local split=$base
   if (( fixes )); then
     split=${commits[$((fixes - 1))]}
@@ -49,11 +54,15 @@ update() {
   fi
   local plan from to
   plan=$(node "$root/scripts/patch-numbers.mjs" "$root/patches/$name" "$tmp")
+  local made planned
+  made=$(find "$tmp" -type f | wc -l)
+  planned=$(grep -c . <<<"$plan" || true)
+  (( made == planned )) || { echo "$name: numbered $planned of $made patches; nothing changed" >&2; exit 1; }
+  mkdir -p "$root/patches/$name"
   rm -f "$root/patches/$name"/*.patch
   while IFS=$'\t' read -r from to; do
     if [[ -n $from ]]; then mv "$tmp/$from" "$root/patches/$name/$to"; fi
   done <<<"$plan"
-  rmdir "$tmp"
   # Authorship in the stack is throwaway; format-patch bakes in whatever git
   # identity the worktree commit happened to use, which has leaked real email
   # addresses. Pin the From: header (first one = the mail header) to a dummy.

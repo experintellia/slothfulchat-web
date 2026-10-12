@@ -17,11 +17,12 @@ first range by carrying a `Patch-Range: upstream-fix` trailer and sitting below
 every other commit.
 
 **Numbers are permanent.** `scripts/update-patches.sh` keeps each patch's number
-(matched by its subject) whenever it regenerates the stack: a removed or folded
-patch leaves a gap, and a new patch takes the next free number after the one
-before it, which at the end of a range is always available. When there is no
-free number (a patch inserted between two consecutive ones, or a reorder), it
-stops; `RENUMBER=1 scripts/update-patches.sh` then numbers by position, and the
+whenever it regenerates the stack, matching it by subject, or by its diff when
+only the subject was reworded. A removed or folded patch leaves a gap, and a new
+patch takes the next free number after the one before it; a number the old stack
+used is never handed to a different patch. When there is no free number (a
+patch inserted between two consecutive ones, or a reorder), it stops;
+`RENUMBER=1 scripts/update-patches.sh` then numbers by position, and the
 references here and in `docs/` need updating by hand. CI fails on any
 `core/NNNN` or `desktop/NNNN` that names no patch file
 (`scripts/check-patch-refs.mjs`), so a reference to a removed patch can't go

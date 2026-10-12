@@ -9,7 +9,8 @@ import { readdirSync, readFileSync } from 'node:fs'
 const SKIP = [/(^|\/)CHANGELOG\.md$/, /^scripts\/mark-fork-api\.test\.mjs$/]
 const stacks = readdirSync('patches', { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)
 const exist = new Map(stacks.map((s) => [s, new Set(readdirSync(`patches/${s}`).map((f) => f.slice(0, 4)))]))
-const ref = new RegExp(`\\b(${stacks.join('|')})/(\\d{4})\\b`, 'g')
+// Bare `core/1004` or `patches/core/1004`, not a path like `chatmail/core/1234`.
+const ref = new RegExp(`(?:(?<=patches/)|(?<![\\w./-]))(${stacks.join('|')})/(\\d{4})\\b`, 'g')
 
 let bad = 0
 for (const file of execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0')) {

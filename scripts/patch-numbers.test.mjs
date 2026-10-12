@@ -32,9 +32,19 @@ test('a new patch in the middle takes a free number, or stops', () => {
   assert.equal(nums(assignNumbers(tight, out([], ['a', 'x', 'c']), { renumber: true })), '1000 1001 1002')
 })
 
-test('a reworded subject keeps its slot', () => {
-  const old = ['1000-a.patch', '1001-b.patch', '1002-c.patch']
-  assert.equal(nums(assignNumbers(old, out([], ['a', 'b2', 'c']))), '1000 1001 1002')
+test('a reworded subject keeps its number, matched by its diff', () => {
+  const old = ['1000-a.patch', '1005-b.patch', '1006-c.patch']
+  const ids = { oldIds: new Map([['1005-b.patch', 'id-b']]), newIds: new Map([['1001-b2.patch', 'id-b']]) }
+  assert.equal(nums(assignNumbers(old, out([], ['a', 'b2', 'c']), ids)), '1000 1005 1006')
+})
+
+test("a removed patch's number is never handed to a new one", () => {
+  const tight = ['1000-a.patch', '1001-b.patch', '1002-c.patch']
+  assert.throws(() => assignNumbers(tight, out([], ['a', 'x', 'c'])), /no free number for x/)
+  const roomy = ['1000-a.patch', '1001-b.patch', '1005-c.patch']
+  assert.equal(nums(assignNumbers(roomy, out([], ['a', 'x', 'c']))), '1000 1002 1005')
+  const tail = ['1000-a.patch', '1001-b.patch']
+  assert.equal(nums(assignNumbers(tail, out([], ['a', 'x']))), '1000 1002')
 })
 
 test('a reorder renumbers only the moved patch', () => {
