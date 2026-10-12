@@ -3,6 +3,9 @@ From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 10 Oct 2026 18:16:12 +0000
 Subject: [PATCH] web-app: LanguageTool spelling & grammar check in the
  composer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 The desktop targets ship with Chromium spellcheck off (Electron has no
 local hunspell dictionary, see target-electron windows/main.ts), and a
@@ -75,8 +78,10 @@ the host, the error and where to test the connection. Later failures stay
 quiet until a check works again; the flag is module-level, so the composer
 and the dialog fields share one warning per outage. The Connectivity view
 gets a LanguageTool line while the check is on, under the browser
-edition's bridge line: the server, and a live test check's result
-("working" or "not working: <error>").
+edition's bridge line: the server, a "Change…" button opening the server
+dialog (as the bridge line's opens its own), and a live test check's
+result ("working" or "not working: <error>"), which turns back to
+"checking…" while a changed server is being tried.
 
 The same check runs in the profile bio (EditProfileDialog), the group
 description (EditGroupNameDialog) and the new-group description
@@ -109,7 +114,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../composer/ComposerMessageInput.tsx         |  19 +-
  .../src/components/composer/LanguageTool.tsx  | 352 ++++++++++++++++++
  .../components/composer/languageToolCheck.ts  | 141 +++++++
- .../components/dialogs/ConnectivityDialog.tsx |  43 +++
+ .../components/dialogs/ConnectivityDialog.tsx |  56 +++
  .../components/dialogs/CreateChat/index.tsx   |   1 +
  .../dialogs/EditProfileDialog/index.tsx       |   1 +
  .../components/dialogs/ViewGroup/index.tsx    |   1 +
@@ -118,7 +123,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  packages/shared/shared-types.d.ts             |   7 +
  packages/shared/state.ts                      |   4 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 21 files changed, 1048 insertions(+), 25 deletions(-)
+ 21 files changed, 1061 insertions(+), 25 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
@@ -1249,20 +1254,23 @@ index 0000000000000000000000000000000000000000..5fb49a601d46b777c4e8c9b1f6f01bd6
 +  return kept
 +}
 diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
-index d9c3b182aaeea3ee944f2369bbc20028a83cd294..7e63ea93417d2c3931cb0000b56befb252980431 100644
+index d9c3b182aaeea3ee944f2369bbc20028a83cd294..f770910f3e6c20c63e3540fce0383854bba3dc79 100644
 --- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 +++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
-@@ -5,6 +5,9 @@ import { BackendRemote, onDCEvent } from '../../backend-com'
+@@ -5,6 +5,12 @@ import { BackendRemote, onDCEvent } from '../../backend-com'
  import { selectedAccountId } from '../../ScreenController'
  import Dialog, { DialogBody, DialogContent, DialogHeader } from '../Dialog'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
 +import { useSettingsStore } from '../../stores/settings'
 +import { languageToolConfig, ltCheck } from '../composer/languageToolCheck'
-+import { languageToolServerLabel } from '../Settings/LanguageToolDialog'
++import LanguageToolDialog, {
++  languageToolServerLabel,
++} from '../Settings/LanguageToolDialog'
++import useDialog from '../../hooks/dialog/useDialog'
  
  import type { DialogProps } from '../../contexts/DialogContext'
  import { runtime } from '@deltachat-desktop/runtime-interface'
-@@ -96,6 +99,7 @@ function ConnectivityDialogInner() {
+@@ -96,6 +102,7 @@ function ConnectivityDialogInner() {
            />
          )}
          <BrowserBridgeInfo />
@@ -1270,19 +1278,24 @@ index d9c3b182aaeea3ee944f2369bbc20028a83cd294..7e63ea93417d2c3931cb0000b56befb2
        </DialogContent>
      </DialogBody>
    )
-@@ -124,6 +128,45 @@ function BrowserBridgeInfo() {
+@@ -124,6 +131,55 @@ function BrowserBridgeInfo() {
    )
  }
  
 +/** slothfulchat: while LanguageTool is on, whether its server answers a test
-+ * check, so fields that stay un-underlined have an explanation here. */
++ * check, so fields that stay un-underlined have an explanation here, and a
++ * way to the server dialog. */
 +function LanguageToolInfo() {
++  const { openDialog } = useDialog()
 +  const settings = useSettingsStore()[0]?.desktopSettings
 +  const config = settings && languageToolConfig(settings)
 +  const on = !!config
 +  const { server, username, apiKey } = config || {}
-+  // null while checking, true when it works, else the error
-+  const [status, setStatus] = useState<null | true | string>(null)
++  // the result of the check for one config: true when it works, else the
++  // error; a result for an older config (changed via "Change…") is stale
++  const key = JSON.stringify([server, username, apiKey])
++  const [checked, setChecked] = useState<{ key: string; ok: true | string }>()
++  const status = checked?.key === key ? checked.ok : null
 +
 +  useEffect(() => {
 +    if (!on) return
@@ -1292,16 +1305,21 @@ index d9c3b182aaeea3ee944f2369bbc20028a83cd294..7e63ea93417d2c3931cb0000b56befb2
 +      'This are a test.',
 +      abort.signal
 +    ).then(
-+      () => setStatus(true),
-+      (err: Error) => abort.signal.aborted || setStatus(err.message)
++      () => setChecked({ key, ok: true }),
++      (err: Error) =>
++        abort.signal.aborted || setChecked({ key, ok: err.message })
 +    )
 +    return () => abort.abort()
-+  }, [on, server, username, apiKey])
++  }, [on, key, server, username, apiKey])
 +
 +  if (!settings || !config) return null
 +  return (
 +    <div style={{ marginTop: '8px', fontSize: '13px' }}>
 +      LanguageTool: <code>{languageToolServerLabel(settings)}</code>{' '}
++      {/* before the status, which can be a long error */}
++      <button type='button' onClick={() => openDialog(LanguageToolDialog)}>
++        Change…
++      </button>{' '}
 +      {status === null ? (
 +        'checking…'
 +      ) : status === true ? (
