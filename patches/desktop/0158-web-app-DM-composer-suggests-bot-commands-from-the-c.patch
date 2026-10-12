@@ -5,7 +5,7 @@ Subject: [PATCH] web-app: DM composer suggests /bot commands from the
  contact's bio
 
 Reuses the :emoji: completion menu's generic CompletionProvider
-machinery (patch 0049) with a new trigger: typing `/` in a DM chat
+machinery (desktop/0129) with a new trigger: typing `/` in a DM chat
 opens the same menu, populated from any /commands the contact's bio
 lists. Parsing reuses the existing botcommand linkify tokenizer
 (the one that already turns /commands in messages and status text

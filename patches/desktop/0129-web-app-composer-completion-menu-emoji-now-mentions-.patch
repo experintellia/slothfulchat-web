@@ -28,9 +28,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
 web-app: gate the composer completion menu behind an experimental setting
 
-The :emoji: completion menu (patch 0049) now only activates when the new
-`experimentalCompletionMenu` desktop setting is on. Off by default, opt in
-under Settings -> Advanced -> Experimental features.
+The :emoji: completion menu only activates while the
+`experimentalCompletionMenu` desktop setting is on. It is on by default and
+can be switched off under Settings -> Advanced -> Experimental features; a
+saved "off" choice is respected.
 
 Mirrors the existing off-by-default `linkPreviewSuggestions` flag: one key in
 DesktopSettingsType + getDefaultState(), one DesktopSettingsSwitch, and the
@@ -39,16 +40,6 @@ gate is an early return in refreshCompletion() -- the only path that opens the
 menu -- so detection, key ownership, and rendering are all inert when off.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
-
-web-app: enable the emoji completion menu by default
-
-The :emoji: completion menu has proven itself; flip the
-experimentalCompletionMenu default to true so everyone gets it without
-digging through Settings -> Experimental features. The switch stays
-there for anyone who wants it off, and a previously saved "off" choice
-is respected as before -- only the default for fresh profiles changes.
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
  .../scss/composer/_completion-menu.scss       |  53 ++++
  .../frontend/scss/composer/_composer.scss     |   4 +

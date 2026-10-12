@@ -146,7 +146,7 @@ Refs #179
 
 web-app: fit the phone recording row on one line, show the meter again
 
-The 0074 phone layout wrapped the recorder onto two rows and both were
+The phone layout above wrapped the recorder onto two rows and both were
 mostly empty: row 1 held pause/mic/timer then a wide gap before the
 picker, row 2 held ~200px of gap before Cancel/OK. The gap was the level
 meter, which the `max-width: 400px` block hid while its container kept

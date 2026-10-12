@@ -8,7 +8,7 @@ Content-Transfer-Encoding: 8bit
 
 Core gives a post-message that no relay has yet ten minutes before failing
 it, because its sender may still be uploading a large attachment
-(core/0034). The UI cannot see why a download failed, but the message's
+(core/0124). The UI cannot see why a download failed, but the message's
 age says which cause is likely, and a bare "download failed" helped with
 neither:
 

@@ -12,10 +12,16 @@ update() {
   # Upstream bug fixes (a `Patch-Range: upstream-fix` trailer) go first and take
   # 0001-0099; everything else starts at 0100, so adding a fix never renumbers
   # the patches after it. Checked before anything is deleted.
-  local commits=() c fixes=0
-  mapfile -t commits < <(git -C "$wt" rev-list --reverse "$base..HEAD")
+  local list commits=() c body fixes=0
+  # A plain assignment, so a missing worktree stops the script here: set -e
+  # doesn't see a failure inside < <(...).
+  list=$(git -C "$wt" rev-list --reverse "$base..HEAD")
+  [[ -z $list ]] || mapfile -t commits <<<"$list"
   for c in "${commits[@]}"; do
-    if [[ $(git -C "$wt" log -1 --format='%(trailers:key=Patch-Range,valueonly)' "$c") == upstream-fix ]]; then
+    body=$(git -C "$wt" log -1 --format=%B "$c")
+    # Anywhere in the message, any case: a fix whose trailer went unrecognised
+    # would become 0100 and silently renumber everything after it.
+    if grep -qiE '^Patch-Range:[[:space:]]*upstream-fix[[:space:]]*$' <<<"$body"; then
       [[ ${commits[$fixes]} == "$c" ]] || {
         echo "$name: upstream-fix commit $c comes after a non-fix commit; move it below them" >&2
         exit 1
@@ -43,7 +49,9 @@ update() {
   # Authorship in the stack is throwaway; format-patch bakes in whatever git
   # identity the worktree commit happened to use, which has leaked real email
   # addresses. Pin the From: header (first one = the mail header) to a dummy.
-  sed -i '0,/^From: /s/^From: .*/From: slothfulchat <patches@slothfulchat.invalid>/' "$root/patches/$name"/*.patch
+  if (( ${#commits[@]} )); then
+    sed -i '0,/^From: /s/^From: .*/From: slothfulchat <patches@slothfulchat.invalid>/' "$root/patches/$name"/*.patch
+  fi
   echo "$name: $(ls "$root/patches/$name" | wc -l) patch(es)"
 }
 

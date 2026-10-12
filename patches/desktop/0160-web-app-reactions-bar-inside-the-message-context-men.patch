@@ -51,7 +51,7 @@ is positioned and focused afresh.
 Phones: a long press anywhere on a message opens the menu. On coarse
 pointers nothing in a bubble is selectable: iOS otherwise starts its own
 text selection ~500ms into the press and cancels the touch, and with it
-0079's long-press fallback, so the menu never opened on iPhone. "Copy
+desktop/0154's long-press fallback, so the menu never opened on iPhone. "Copy
 Text" copies the message, as in other messengers. Message links get
 -webkit-touch-callout: none so iOS's preview sheet doesn't cover the
 menu.

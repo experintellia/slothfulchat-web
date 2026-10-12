@@ -1,10 +1,13 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Thu, 23 Jul 2026 02:27:26 +0000
-Subject: [PATCH] event: add DownloadProgress for chunked message downloads
+Subject: [PATCH] imap: download large messages in resumable chunks via partial
+ FETCH
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
+
+event: add DownloadProgress for chunked message downloads
 
 Reports permille progress (1..=999, 1000 = done) while a large message
 is being downloaded from the server in chunks. Modeled on ImexProgress.
