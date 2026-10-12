@@ -73,8 +73,10 @@ nothing changes: the composer keeps spellcheck=true, the other fields keep
 the browser default, and an installed add-on works as before.
 
 Because of that opt-out a failing check must not be silent: while the
-last check failed, a small red info icon sits in the field's top right
-corner (placed after every render, like the overlay), its tooltip and
+last check failed, a small red filled error icon (Material's, inline:
+../Icon only has outlined ones) sits in the field's top right corner,
+clear of the resize grip (placed after every render, like the overlay),
+its tooltip and
 label naming the error; clicking it opens the server dialog. It goes away
 with the next check that works. Being in the field, it shows inside the
 bio and group dialogs too, where an app toast would sit behind the modal.
@@ -114,7 +116,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../components/Settings/SettingsSwitch.tsx    |  25 +-
  .../src/components/composer/Composer.tsx      |   5 +
  .../composer/ComposerMessageInput.tsx         |  19 +-
- .../src/components/composer/LanguageTool.tsx  | 361 ++++++++++++++++++
+ .../src/components/composer/LanguageTool.tsx  | 374 ++++++++++++++++++
  .../components/composer/languageToolCheck.ts  | 141 +++++++
  .../components/dialogs/ConnectivityDialog.tsx |  56 +++
  .../components/dialogs/CreateChat/index.tsx   |   1 +
@@ -125,7 +127,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  packages/shared/shared-types.d.ts             |   7 +
  packages/shared/state.ts                      |   4 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 21 files changed, 1081 insertions(+), 25 deletions(-)
+ 21 files changed, 1094 insertions(+), 25 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
@@ -763,10 +765,10 @@ index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..7a0cc38bc866a8634afd845ab2169bf4
        </I18nContext.Consumer>
 diff --git a/packages/frontend/src/components/composer/LanguageTool.tsx b/packages/frontend/src/components/composer/LanguageTool.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..c92c70a5af1c378b7038e3c3b73222f18d9ac60b
+index 0000000000000000000000000000000000000000..82d49dd12bd43a618a9a59051c1641a6d9ea3339
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/LanguageTool.tsx
-@@ -0,0 +1,361 @@
+@@ -0,0 +1,374 @@
 +import React, {
 +  useCallback,
 +  useEffect,
@@ -776,7 +778,7 @@ index 0000000000000000000000000000000000000000..c92c70a5af1c378b7038e3c3b73222f1
 +} from 'react'
 +
 +import { getLogger } from '@deltachat-desktop/shared/logger'
-+import Icon, { IconButton } from '../Icon'
++import { IconButton } from '../Icon'
 +import useDialog from '../../hooks/dialog/useDialog'
 +import LanguageToolDialog from '../Settings/LanguageToolDialog'
 +import {
@@ -803,6 +805,9 @@ index 0000000000000000000000000000000000000000..c92c70a5af1c378b7038e3c3b73222f1
 +// tight (line-height: normal) line box. Added to height and padding alike, so
 +// the scroll range stays the textarea's.
 +const UNDERLINE_ROOM_PX = 4
++
++// Room the failure icon leaves at the field's right edge for the resize grip.
++const RESIZE_GRIP_PX = 16
 +
 +/** Colour class shared by an underline and its card, as in LanguageTool's
 + * own UI: red spelling, blue style, amber everything else. */
@@ -983,11 +988,15 @@ index 0000000000000000000000000000000000000000..c92c70a5af1c378b7038e3c3b73222f1
 +    if (el && layer) {
 +      syncLayer(el, layer)
 +    }
-+    // the failure icon sits in the field's top right corner
++    // the failure icon sits in the field's top right corner, clear of the
++    // textarea's resize grip
 +    if (layer && failedRef.current) {
 +      failedRef.current.style.top = `${layer.offsetTop + 2}px`
 +      failedRef.current.style.left = `${
-+        layer.offsetLeft + layer.offsetWidth - failedRef.current.offsetWidth - 2
++        layer.offsetLeft +
++        layer.offsetWidth -
++        failedRef.current.offsetWidth -
++        RESIZE_GRIP_PX
 +      }px`
 +    }
 +    if (cardRef.current && layerRef.current && wordRef.current) {
@@ -1061,7 +1070,13 @@ index 0000000000000000000000000000000000000000..c92c70a5af1c378b7038e3c3b73222f1
 +          onMouseDown={e => e.preventDefault()}
 +          onClick={() => openDialog(LanguageToolDialog)}
 +        >
-+          <Icon icon='info' size={16} coloring='currentColor' />
++          {/* Material's filled "error" icon; ../Icon only has outlined ones */}
++          <svg viewBox='0 0 24 24' width={16} height={16} aria-hidden>
++            <path
++              fill='currentColor'
++              d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z'
++            />
++          </svg>
 +        </button>
 +      )}
 +      {active && (
