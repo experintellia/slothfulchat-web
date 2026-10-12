@@ -106,7 +106,7 @@ type in composer ──▶ detect first URL (debounced)
 ```
 
 **Why no direct browser fetch.** In this browser/wasm build the core's HTTP is
-the browser's `fetch()` (`patches/core/0010`), which is CORS-bound — virtually
+the browser's `fetch()` (`patches/core/0108`), which is CORS-bound — virtually
 every real site blocks cross-origin reads of its HTML, so a direct-first attempt
 almost always fails. Worse, a blocked cross-origin GET still *reaches* the site
 (the browser blocks the response, not the request), so it just double-fetches
@@ -143,7 +143,7 @@ opening the link would); the **message recipient still never contacts the URL**.
 
 ## Delivery in two increments
 
-### Increment 1 — desktop UI patch (`patches/desktop/0038`)
+### Increment 1 — desktop UI patch (`patches/desktop/0122`)
 
 Everything user-visible; works immediately on CORS-permissive sites; the unfurl
 fallback path is wired but simply behaves as "fetch failed" until increment 2
@@ -198,7 +198,7 @@ Wiring in **`Composer.tsx`**: derive the current URL from `draftState.text` in
   become an open web-preview fetcher, so there you opt in with `UNFURL=1`
   (`UNFURL=1`/`UNFURL=0` overrides either way). Self-check:
   `scripts/test-unfurl.mjs` (offline, in CI).
-- **Frontend** (`patches/desktop/0038`) — `generate.ts`'s fallback derives the
+- **Frontend** (`patches/desktop/0122`) — `generate.ts`'s fallback derives the
   unfurl endpoint from the **already-configured bridge URL** (`?proxy=` /
   `slothfulchat.proxyUrl` / default, swapping `ws→http`, `wss→https`) — there
   is no separate config. A local bridge previews CORS-blocked links out of the

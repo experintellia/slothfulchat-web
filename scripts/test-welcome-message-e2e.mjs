@@ -1,5 +1,5 @@
-// E2E check for the SlothfulChat welcome device message (desktop/0073) and the
-// dropped upstream welcome image (core/0029) — runs FULLY OFFLINE. One webimap
+// E2E check for the SlothfulChat welcome device message (desktop/0151) and the
+// dropped upstream welcome image (core/0120) — runs FULLY OFFLINE. One webimap
 // account is created through the real onboarding UI against an in-process mock
 // madmail server (trimmed from scripts/test-sidebar-resize-e2e.mjs) — that path
 // enters the main screen without going through selectAccount(), which is what
@@ -154,7 +154,7 @@ try {
   }
   console.log(`OK: added after core's welcome message (index ${welcomeIndex})`)
 
-  // core/0029: the Delta Chat branded welcome image is gone
+  // core/0120: the Delta Chat branded welcome image is gone
   const image = msgs.find((m) => m.viewType === 'Image')
   if (image) {
     throw new Error(`FAIL: device chat still carries an image message (${image.fileName})`)

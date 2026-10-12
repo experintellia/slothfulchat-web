@@ -135,7 +135,7 @@ DESCOPED.md.
 User-facing cleanup after the feasibility verdict; the "0 desktop patches" count
 above was true at M5 and is now historical:
 
-- **First desktop patch** (`patches/desktop/0001`): About dialog gets a "what
+- **First desktop patch** (`patches/desktop/0100`): About dialog gets a "what
   this is" blurb (unofficial experiment, chatmail core in WASM, ported with an
   AI coding agent, not affiliated with Delta Chat) and the **unimplemented
   proxy UI is removed** (Settings → Advanced button, instant-onboarding 3-dot
@@ -573,7 +573,7 @@ Permissions-Policy and call-analytics work also slated for M5:
   Rather than add a second desktop patch (docs/calls.md's structure section
   calls for "**exactly one** thin patch" un-gating the call entry points),
   folded the one-line `|| target === 'browser'` gate widening into the
-  *existing* `patches/desktop/0044-*` commit (`build/desktop`: edit +
+  *existing* `patches/desktop/0128-*` commit (`build/desktop`: edit +
   `git commit --amend`, then `scripts/update-patches.sh`) — patch count stays
   at 47 (core stays at 16), and the patch now touches `ChatView.tsx` +
   `Notifications.tsx`, both one-line target-check widenings for the same
@@ -665,7 +665,7 @@ are the same ones `INTEROP.md`/M0 already nailed down from upstream
   account (same fix as `test-web-app-imex.mjs`'s restore-from-backup step).
   The call itself is driven through the **real UI** both ways: the
   `ChatView` call button's context menu (`Call` → `Audio Call`, un-gated by
-  `patches/desktop/0044-*` for `target === 'browser'`) places it; the
+  `patches/desktop/0128-*` for `target === 'browser'`) places it; the
   `IncomingCallRing`'s `Accept` button (`packages/calls/ui`) answers it.
 - **M4's detached-popup preference is real and had to be handled, not
   ignored.** `CallManager.startOutgoingCall`/`acceptCurrent` both call

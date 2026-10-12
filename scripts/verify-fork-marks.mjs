@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Fail the build if the 🦥 fork marks did not survive into the documentation.
 //
-// They already didn't, once, and silently: `patches/core/0031` reformatted
+// They already didn't, once, and silently: `patches/core/0121` reformatted
 // `#[rpc(all_positional, ts_outdir = …)]` into a four-line attribute, the
 // marker's backwards attribute scan stopped recognising it, and every RPC
 // method quietly lost its mark while the type marks kept working — so the

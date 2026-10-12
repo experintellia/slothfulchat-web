@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sun, 11 Oct 2026 21:38:16 +0000
+Subject: [PATCH] notifications: keep other accounts' queue on flush, group
+ only unmuted
+
+flushNotifications(accountId) reset the whole `queuedNotifications`
+object (keyed by account) instead of just this account's queue, so
+notifications queued for account B were dropped whenever account A's
+IncomingMsgBunch flushed first.
+
+When the batch exceeded notificationLimit, showGroupedNotification got
+the unfiltered list, so messages from muted chats were counted in the
+"N new messages in M chats" notification (and could pick the chat for a
+single-chat group). The limit comparison already used the filtered
+count, so a batch of only muted messages now shows nothing, as intended.
+
+Patch-Range: upstream-fix
+---
+ packages/frontend/src/system-integration/notifications.ts | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/packages/frontend/src/system-integration/notifications.ts b/packages/frontend/src/system-integration/notifications.ts
+index a3e640de0317fd9b3cffcca0839e3f0532369dbe..2b2be36eabc2085db9bd256b644b4c1273c9d82e 100644
+--- a/packages/frontend/src/system-integration/notifications.ts
++++ b/packages/frontend/src/system-integration/notifications.ts
+@@ -74,7 +74,7 @@ type QueuedNotification = {
+   contactId?: number // for reactions
+ }
+ 
+-let queuedNotifications: {
++const queuedNotifications: {
+   [accountId: number]: QueuedNotification[]
+ } = {}
+ 
+@@ -333,7 +333,7 @@ async function flushNotifications(accountId: number) {
+     queuedNotifications[accountId] = []
+   }
+   const notifications = [...queuedNotifications[accountId]]
+-  queuedNotifications = []
++  queuedNotifications[accountId] = []
+ 
+   // filter out muted chats:
+   const uniqueChats = [...new Set(notifications.map(n => n.chatId))]
+@@ -388,7 +388,7 @@ async function flushNotifications(accountId: number) {
+   ).filter(notification => notification !== null)
+ 
+   if (filteredNotifications.length > notificationLimit) {
+-    showGroupedNotification(accountId, notifications)
++    showGroupedNotification(accountId, filteredNotifications)
+   } else {
+     for (const {
+       chatId,

@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Tue, 7 Jul 2026 23:58:49 +0000
+Subject: [PATCH] web-app: don't crash ClickableLink render when no account is
+ selected
+
+selectedAccountId() throws when window.__selectedAccountId is undefined.
+Canceling account creation unselects the account while the welcome screen
+(with its ClickableLinks) is still mounted, so the next render crashed with
+'no context selected'. Only resolve the account id at click time, where it
+is actually needed (mailto: handling).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Patch-Range: upstream-fix
+---
+ packages/frontend/src/components/helpers/ClickableLink.tsx | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/packages/frontend/src/components/helpers/ClickableLink.tsx b/packages/frontend/src/components/helpers/ClickableLink.tsx
+index e177847457144dad852417c7d798e0468b714edd..c26e21348a4ab6e15ce5c4d092bb3cd2eab783c1 100644
+--- a/packages/frontend/src/components/helpers/ClickableLink.tsx
++++ b/packages/frontend/src/components/helpers/ClickableLink.tsx
+@@ -8,18 +8,17 @@ import { selectedAccountId } from '../../ScreenController'
+ import type { PropsWithChildren } from 'react'
+ 
+ /**
+- * Note: requires that an account is selected to be rendered.
++ * Note: requires that an account is selected when clicked.
+  */
+ export function ClickableLink({
+   href,
+   children,
+ }: PropsWithChildren<{ href: string }>) {
+   const openLinkSafely = useOpenLinkSafely()
+-  const accountId = selectedAccountId()
+ 
+   const onClick = (event: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => {
+     event.preventDefault()
+-    openLinkSafely(accountId, href)
++    openLinkSafely(selectedAccountId(), href)
+   }
+ 
+   return (

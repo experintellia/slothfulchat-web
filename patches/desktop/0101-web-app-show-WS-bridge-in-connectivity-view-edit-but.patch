@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Tue, 7 Jul 2026 16:54:50 +0000
+Subject: [PATCH] web-app: show WS bridge in connectivity view + edit button
+
+web-app: connectivity view shows a loading state instead of a blank iframe
+---
+ .../components/dialogs/ConnectivityDialog.tsx | 60 +++++++++++++++----
+ 1 file changed, 48 insertions(+), 12 deletions(-)
+
+diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+index b1f29e74bbb3d74937a8b4daafd2b5a9ac3a9732..aa12862150586ddd1e48af13572a688cd413a40d 100644
+--- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
++++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
+@@ -24,6 +24,7 @@ export default function ConnectivityDialog({ onClose }: DialogProps) {
+ }
+ 
+ function ConnectivityDialogInner() {
++  const tx = useTranslationFunction()
+   const accountId = selectedAccountId()
+   const [connectivityHTML, setConnectivityHTML] = useState('')
+ 
+@@ -60,23 +61,58 @@ function ConnectivityDialogInner() {
+   return (
+     <DialogBody>
+       <DialogContent>
+-        <iframe
+-          style={{
+-            border: 0,
+-            height: '620px',
+-            width: '100%',
+-            maxHeight: '76vh',
+-            backgroundColor: bgColor,
+-            color: textColor,
+-          }}
+-          srcDoc={connectivityHTML}
+-          sandbox={''}
+-        />
++        {connectivityHTML === '' ? (
++          // getConnectivityHtml can take a while on a busy (single-threaded
++          // wasm) core; an empty srcDoc iframe renders as a blank white box,
++          // so show an explicit loading state instead
++          <div
++            style={{
++              height: '620px',
++              width: '100%',
++              maxHeight: '76vh',
++              display: 'flex',
++              alignItems: 'center',
++              justifyContent: 'center',
++            }}
++          >
++            {tx('loading')}
++          </div>
++        ) : (
++          <iframe
++            style={{
++              border: 0,
++              height: '620px',
++              width: '100%',
++              maxHeight: '76vh',
++              backgroundColor: bgColor,
++              color: textColor,
++            }}
++            srcDoc={connectivityHTML}
++            sandbox={''}
++          />
++        )}
++        <BrowserBridgeInfo />
+       </DialogContent>
+     </DialogBody>
+   )
+ }
+ 
++/** slothfulchat: the browser edition tunnels IMAP/SMTP through a WS→TCP
++ * bridge (window.__slothfulchatBridge is set by its runtime.js). Show which
++ * bridge is in use and let the user open the edit dialog from here. */
++function BrowserBridgeInfo() {
++  const bridge = (window as any).__slothfulchatBridge
++  if (runtime.getRuntimeInfo().target !== 'browser' || !bridge) return null
++  return (
++    <div style={{ marginTop: '8px', fontSize: '13px' }}>
++      Bridge: <code>{bridge.url()}</code>{' '}
++      <button type='button' onClick={() => bridge.openDialog()}>
++        Change…
++      </button>
++    </div>
++  )
++}
++
+ async function getConnectivityHTML(
+   stylesToInject?: string | undefined
+ ): Promise<string> {
