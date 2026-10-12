@@ -560,6 +560,9 @@ export const precacheSkip = f =>
   // precached — so the offline shell never carries every set's font. The tiny
   // emoji-fonts.css (just @font-face rules, no glyph data) stays precached.
   f.startsWith('fonts/emoji-sets/') ||
+  // Harper grammar checker (~15 MB wasm): opt-in the same way, fetched only
+  // once a user turns it on, then runtime-cached (sw-cache.ts shellRole)
+  f.startsWith('harper/') ||
   ['.nojekyll', 'sw-precache.js', 'blobs-sw.js'].includes(f)
 
 /** Content-hashes [path, bytes] entries into the sw-precache.js source.

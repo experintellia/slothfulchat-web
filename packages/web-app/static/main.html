@@ -36,6 +36,9 @@
       (composer spelling/grammar check, off by default) — languagetool.org or
       a self-hosted server at any host/port, pinned to that one path the same
       way.
+      The Harper grammar checker needs no CSP entry of its own: it is served
+      from 'self' (harper/), lints in a blob: worker and runs wasm, all of
+      which the policy below already allows.
       The raw.githubusercontent.com URL is pinned to the exact relay-directory
       JSON the onboarding relay picker fetches (patches/desktop/1023,
       chatmail-relays-mirror) — one non-bridge URL, nothing else on that host.

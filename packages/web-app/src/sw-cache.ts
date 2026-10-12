@@ -53,8 +53,9 @@ export function shellRole(
   const file = pathname.slice(scopePath.length)
   // manifest keys are scope-relative paths (base-path agnostic, like the blob routes)
   if (Object.prototype.hasOwnProperty.call(manifest, file)) return 'precache'
-  // the one asset family deliberately kept out of the precache to be fetched on
-  // demand instead — opt-in emoji fonts (instance-config.mjs precacheSkip)
-  if (file.startsWith('fonts/emoji-sets/')) return 'runtime'
+  // the asset families deliberately kept out of the precache to be fetched on
+  // demand instead — opt-in emoji fonts and the opt-in Harper grammar checker
+  // (instance-config.mjs precacheSkip)
+  if (file.startsWith('fonts/emoji-sets/') || file.startsWith('harper/')) return 'runtime'
   return isNavigate ? 'shell' : null
 }

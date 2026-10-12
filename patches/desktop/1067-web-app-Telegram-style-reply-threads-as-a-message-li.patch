@@ -512,7 +512,7 @@ index a3d7bba947071787a97438eb187e30f4eeb34485..e86224ed9968a2a4b6c7ea9da81e9531
  
  type IconColoring =
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 86b1ca0535c636438baa1436cd00e8abbab1a512..a4c7628083a1b33dccab6dbca31a898571761422 100644
+index bec970fc0551645a5acee1d974f56ff933d41d8f..cc431cfabe557c0d47b21f9049fa7caad1853fe5 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -127,6 +127,12 @@ export function ExperimentalFeatures() {
@@ -1719,7 +1719,7 @@ index 0000000000000000000000000000000000000000..993e93f552bfdaa39d12e5cb584a9633
 +  return { order, depth }
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 2f121aa26dfb282495600a44f52ec8551b5d812e..600ba83363e4df873bf86883ecee8153e61bfd93 100644
+index 98bbb5bf1bcb38ed3ffcfc1e7b9f50bf0b7029d1..b11b9d7cdb8a246bbd0cc9c1e5cf8c776cd69e89 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -47,6 +47,8 @@ export interface DesktopSettingsType {
@@ -1728,11 +1728,11 @@ index 2f121aa26dfb282495600a44f52ec8551b5d812e..600ba83363e4df873bf86883ecee8153
    experimentalUnreadReadTime: boolean
 +  /** webapp: Telegram-style reply threads (reply badge, thread mode in the message list). Off by default (experimental). */
 +  experimentalReplyThreads: boolean
-   /** webapp: LanguageTool spelling/grammar check in the composer. Off by default: it sends the draft to the server below. */
-   languageTool: boolean
-   /** webapp: self-hosted LanguageTool server URL, e.g. http://localhost:8081. undefined = languagetool.org */
+   /** webapp: spelling/grammar check in the composer. Off by default. */
+   grammarCheck: boolean
+   /** webapp: which checker: Harper (English only, runs on this device) or LanguageTool (sends the draft to the server below) */
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 7025258e9a39795143d51e2b91d18f743625c9b3..ca7292104fed819b75e16b99e9f372b02d7e687a 100644
+index 840cbdf0ef641d5072c5a0a611da071c3bb2a90c..efe6b51aa9c95d088f39bc49beceaf73b924dd49 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -18,6 +18,7 @@ export function getDefaultState(): DesktopSettingsType {
@@ -1740,6 +1740,6 @@ index 7025258e9a39795143d51e2b91d18f743625c9b3..ca7292104fed819b75e16b99e9f372b0
      experimentalCompletionMenu: true,
      experimentalUnreadReadTime: false,
 +    experimentalReplyThreads: false,
-     languageTool: false,
+     grammarCheck: false,
+     grammarCheckEngine: 'harper',
      languageToolServer: undefined,
-     languageToolUsername: undefined,
