@@ -90,20 +90,26 @@ jobs:
       # Two PRs that each add patch NNNN merge without a conflict (the file
       # names differ), then apply in an order neither was tested in; for core,
       # mark-fork-api.mjs also credits both commits to one number. #273 and
-      # #274 both took desktop/0088 this way. Running update-patches.sh alone
-      # doesn't fix it: it keeps the name order, which can put the PR's patch
-      # before main's and rewrite main's.
+      # #274 both took desktop patch number 0088 this way. Running
+      # update-patches.sh alone doesn't fix it: it keeps the name order, which
+      # can put the PR's patch before main's.
       - name: No duplicate patch numbers
         run: |
           dups=$(for d in patches/*/; do ls "$d" | grep '\.patch$' | cut -c1-4 | sort | uniq -d | sed "s|^|$d|"; done)
-          [ -z "$dups" ] || { echo "::error::duplicate patch numbers:" $dups "- give this PR's patch the next free number after main's, run scripts/apply-patches.sh and scripts/update-patches.sh, and fix the numbers in PATCHES.md"; exit 1; }
+          [ -z "$dups" ] || { echo "::error::duplicate patch numbers:" $dups "- give this PR's patch the next free number in its range after main's (0001-0999 for upstream fixes, 1000+ for everything else), run scripts/apply-patches.sh and scripts/update-patches.sh, and fix the numbers in PATCHES.md"; exit 1; }
+
+      # Patch numbers are permanent (scripts/patch-numbers.mjs), so a
+      # reference to a missing one means its patch was removed or folded.
+      - name: No dangling patch references
+        run: node scripts/check-patch-refs.mjs
 
       # dependency-free node:test suites for pure logic (config templating,
       # release-asset pinning/digest/size caps, the analytics pre-notice gate,
       # translation-editor serialization, blob response headers, the OPFS
       # lock-wait deadline, the OpenRPC viewer's $ref inlining, keeping the
       # api-docs React out of the app bundle, the release workflow's npm
-      # staging loop — which otherwise only ever runs on a tag)
+      # staging loop — which otherwise only ever runs on a tag, permanent
+      # patch numbering)
       - name: Unit-test pure helpers
         run: >-
           node --test
@@ -125,6 +131,7 @@ jobs:
           scripts/harness.test.mjs
           scripts/mark-fork-api.test.mjs
           scripts/release-stage-loop.test.mjs
+          scripts/patch-numbers.test.mjs
 
       # packages/calls engine/ + bridge/ (docs/calls.md M0+): dependency-free —
       # Node's built-in type-stripping test runner needs no pnpm install, only

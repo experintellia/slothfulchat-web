@@ -1,0 +1,250 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Tue, 7 Jul 2026 15:36:37 +0000
+Subject: [PATCH] web-app: about 'what this is' + hide unimplemented proxy UI
+
+web-app: link Imprint page from the About dialog
+
+web-app: buttonify About dialog links with settings-style buttons
+
+Replace the plain text links and footer actions in the About dialog with
+SettingsIconButton rows, matching the Settings view. The links group
+(SlothfulChat on GitHub, Delta Chat website) carries an open_in_new
+indicator to signal they leave the app; Changelog and Imprint (both
+local pages served alongside the app) and Help/View Log do not. Adds
+buttons for the SlothfulChat GitHub repo and the changelog viewer we
+ship at /changelog/, replacing the old link to GitHub releases.
+---
+ .../src/components/Settings/Advanced.tsx      | 15 ----
+ .../src/components/dialogs/About/index.tsx    | 88 ++++++++++++++-----
+ .../WelcomeScreen/InstantOnboardingScreen.tsx | 42 ---------
+ 3 files changed, 64 insertions(+), 81 deletions(-)
+
+diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
+index 96699ecdc6586d27a16846671909837f596c2da0..15e418e7e2239a0b0f5941ba27d85212e399e4b3 100644
+--- a/packages/frontend/src/components/Settings/Advanced.tsx
++++ b/packages/frontend/src/components/Settings/Advanced.tsx
+@@ -11,7 +11,6 @@ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import CoreSettingsSwitch from './CoreSettingsSwitch'
+ import DesktopSettingsSwitch from './DesktopSettingsSwitch'
+ import { AutostartState } from '@deltachat-desktop/shared/shared-types'
+-import ProxyConfiguration from '../dialogs/ProxyConfiguration'
+ import { selectedAccountId } from '../../ScreenController'
+ import TransportsDialog from '../dialogs/Transports'
+ import { LogDialog } from '../dialogs/Log'
+@@ -27,12 +26,6 @@ const log = getLogger('renderer/settings/advanced')
+ export default function Advanced({ onClose }: Props) {
+   const tx = useTranslationFunction()
+   const { openDialog } = useDialog()
+-  const openProxySettings = () => {
+-    openDialog(ProxyConfiguration, {
+-      accountId: selectedAccountId(),
+-      configured: true,
+-    })
+-  }
+   const confirmDisableMultiDevice = async (
+     newValue: boolean // (true => multi-device enabled)
+   ): Promise<boolean> => {
+@@ -76,14 +69,6 @@ export default function Advanced({ onClose }: Props) {
+       >
+         {tx('transports')}
+       </SettingsButton>
+-      <SettingsButton
+-        onClick={() => {
+-          openProxySettings()
+-        }}
+-        dataTestid='open-proxy-settings'
+-      >
+-        {tx('proxy_settings')}
+-      </SettingsButton>
+       <CoreSettingsSwitch
+         label={tx('pref_multidevice')}
+         settingsKey='bcc_self'
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index fb81947daa1383ede4e31a58491a4847fa4355aa..f7911abe211b8894421c3a0ab53e9ce900f081b8 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -1,22 +1,19 @@
+ import React, { useEffect } from 'react'
+ 
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+-import {
+-  DialogBody,
+-  DialogContent,
+-  DialogFooter,
+-  DialogWithHeader,
+-  FooterActionButton,
+-  FooterActions,
+-} from '../../Dialog'
++import { DialogBody, DialogContent, DialogWithHeader } from '../../Dialog'
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+ import useDialog from '../../../hooks/dialog/useDialog'
+ import { LogDialog } from '../Log'
++import SettingsIconButton from '../../Settings/SettingsIconButton'
++import SettingsSeparator from '../../Settings/SettingsSeparator'
+ 
+ import styles from './styles.module.scss'
+ 
+ import type { DialogProps } from '../../../contexts/DialogContext'
+-import { ClickableLink } from '../../helpers/ClickableLink'
++
++const GITHUB_URL = 'https://github.com/experintellia/slothfulchat-web'
++const DELTA_CHAT_URL = 'https://delta.chat'
+ 
+ export default function About({ onClose }: DialogProps) {
+   const tx = useTranslationFunction()
+@@ -63,24 +60,67 @@ export default function About({ onClose }: DialogProps) {
+                 </>
+               )}
+             </div>
+-            <div>
+-              <ClickableLink href={'https://delta.chat'}>
+-                {'https://delta.chat'}
+-              </ClickableLink>
+-            </div>
++            <p style={{ marginTop: 16, textAlign: 'left', fontSize: 13 }}>
++              <b>slothfulchat-web</b> is an unofficial experiment. It runs Delta
++              Chat's chatmail core — the same core behind the Delta Chat
++              messenger — compiled to WebAssembly, running entirely in your
++              browser. The port to WASM was done with an AI coding agent. Not
++              affiliated with Delta Chat. A WS→TCP bridge is required to send
++              and receive.
++            </p>
+           </div>
+         </DialogContent>
++        <SettingsSeparator />
++        <SettingsIconButton
++          icon='code-tags'
++          isLink
++          onClick={() => runtime.openLink(GITHUB_URL)}
++          dataTestid='about-github'
++        >
++          {'SlothfulChat on GitHub'}
++        </SettingsIconButton>
++        <SettingsIconButton
++          icon='sell'
++          onClick={() =>
++            runtime.openLink(new URL('changelog/', document.baseURI).href)
++          }
++          dataTestid='about-changelog'
++        >
++          {'Changelog'}
++        </SettingsIconButton>
++        <SettingsIconButton
++          icon='chat_bubble'
++          isLink
++          onClick={() => runtime.openLink(DELTA_CHAT_URL)}
++          dataTestid='about-delta-chat'
++        >
++          {'Delta Chat website'}
++        </SettingsIconButton>
++        <SettingsIconButton
++          icon='info'
++          onClick={() =>
++            runtime.openLink(new URL('imprint.html', document.baseURI).href)
++          }
++          dataTestid='about-imprint'
++        >
++          {'Imprint'}
++        </SettingsIconButton>
++        <SettingsSeparator />
++        <SettingsIconButton
++          icon='question_mark'
++          onClick={() => runtime.openHelpWindow()}
++          dataTestid='about-help'
++        >
++          {tx('menu_help')}
++        </SettingsIconButton>
++        <SettingsIconButton
++          icon='visibility'
++          onClick={viewLog}
++          dataTestid='about-view-log'
++        >
++          {tx('pref_view_log')}
++        </SettingsIconButton>
+       </DialogBody>
+-      <DialogFooter>
+-        <FooterActions align='spaceBetween'>
+-          <FooterActionButton onClick={() => runtime.openHelpWindow()}>
+-            {tx('menu_help')}
+-          </FooterActionButton>
+-          <FooterActionButton onClick={viewLog}>
+-            {tx('pref_view_log')}
+-          </FooterActionButton>
+-        </FooterActions>
+-      </DialogFooter>
+     </DialogWithHeader>
+   )
+ }
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+index 030556968ad30c83475f7ecdb127677fa8110e30..58ab5d86d32572eaa4c9ad4a3325a1ab3f46bc11 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+@@ -18,36 +18,11 @@ import useDialog from '../../../hooks/dialog/useDialog'
+ import UseOtherServerDialog from './UseOtherServerDialog'
+ import { BackendRemote } from '../../../backend-com'
+ 
+-import { ContextMenuContext } from '../../../contexts/ContextMenuContext'
+-import { mouseEventToPosition } from '../../../utils/mouseEventToPosition'
+-import { OpenDialog } from '../../../contexts/DialogContext'
+-import ProxyConfiguration from '../../dialogs/ProxyConfiguration'
+-import { selectedAccountId } from '../../../ScreenController'
+-import { TranslationKey } from '@deltachat-desktop/shared/translationKeyType'
+-
+ type Props = {
+   onCancel: () => void
+   selectedAccountId: number
+ }
+ 
+-function buildContextMenu(
+-  openDialog: OpenDialog,
+-  tx: (key: TranslationKey) => string
+-) {
+-  return [
+-    {
+-      label: tx('proxy_use_proxy'),
+-      action: () => {
+-        openDialog(ProxyConfiguration, {
+-          accountId: selectedAccountId(),
+-          configured: false,
+-        })
+-      },
+-      dataTestid: 'proxy-context-menu-item',
+-    },
+-  ]
+-}
+-
+ /**
+  * Sub component of WelcomeScreen to set a Displayname to create an account
+  * or open a dialog with some options to use another server
+@@ -76,22 +51,6 @@ export default function InstantOnboardingScreen({
+   const [profilePicture, setProfilePicture] = useState<string | null>(null)
+   const [showMissingNameError, setShowMissingNameError] = useState(false)
+ 
+-  const { openContextMenu } = useContext(ContextMenuContext)
+-
+-  const showMenu = (
+-    event: React.MouseEvent<
+-      HTMLDivElement | HTMLAnchorElement | HTMLLIElement,
+-      MouseEvent
+-    >
+-  ) => {
+-    const items = buildContextMenu(openDialog, tx)
+-
+-    openContextMenu({
+-      ...mouseEventToPosition(event),
+-      items,
+-    })
+-  }
+-
+   useEffect(() => {
+     ;(async () => {
+       const { displayname, selfavatar } =
+@@ -185,7 +144,6 @@ export default function InstantOnboardingScreen({
+     <>
+       <DialogHeader
+         onClickBack={onClickBack}
+-        onContextMenuClick={showMenu}
+         title={tx('instant_onboarding_title')}
+       />
+       <DialogBody className={styles.welcomeScreenBody}>

@@ -237,7 +237,7 @@ div.group-image-wrapper div.group-image-edit-button {
   }
 }
 
-/* Rocket.Chat shows an avatar on every message. Our desktop patch 0010
+/* Rocket.Chat shows an avatar on every message. Our desktop/1003
    renders the real .author-avatar (profile photo, or initial block in the
    contact's color) on every message, tagging the cases upstream used to omit
    (outgoing, 1:1) with `.extra` — hidden by base CSS, opted into here. */

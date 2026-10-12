@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Wed, 8 Jul 2026 23:01:12 +0000
+Subject: [PATCH] web-app: show the slothfulchat-web source commit in the About
+ dialog
+
+Surfaces which commit + message a deployed instance was built from,
+next to the existing (devmode-only) upstream git ref. Baked in by
+assemble.mjs/customize.mjs via window.__slothfulConfig; unset (and
+hidden) for the Electron/Tauri targets, which don't define it.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ .../frontend/src/components/dialogs/About/index.tsx  | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
+index 105c89b66eda7a7c06c87dfd8ccee088846ccf47..5b0dc9e26b68e230c5461d88bc25ef963c48f9e3 100644
+--- a/packages/frontend/src/components/dialogs/About/index.tsx
++++ b/packages/frontend/src/components/dialogs/About/index.tsx
+@@ -57,6 +57,18 @@ export default function About({ onClose }: DialogProps) {
+                   <small>git: {GIT_REF}</small>
+                 </>
+               )}
++              {(window as any).__slothfulConfig?.commitHash && (
++                <>
++                  <br />
++                  <small>
++                    slothfulchat-web:{' '}
++                    {(window as any).__slothfulConfig.commitHash}
++                    {(window as any).__slothfulConfig.commitMessage
++                      ? ` — ${(window as any).__slothfulConfig.commitMessage}`
++                      : ''}
++                  </small>
++                </>
++              )}
+             </div>
+             <p style={{ marginTop: 16, textAlign: 'left', fontSize: 13 }}>
+               <b>slothfulchat-web</b> is an unofficial experiment. It runs Delta

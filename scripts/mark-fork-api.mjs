@@ -234,7 +234,7 @@ export function markSource(source, forkLines) {
 /**
  * 1-based line -> patch label, for every line one of our patches wrote.
  *
- * `-w` so that rustfmt reindenting an upstream line — what `core/0019` does to
+ * `-w` so that rustfmt reindenting an upstream line — what `core/1014` does to
  * `get_dbfile().metadata()` by wrapping it in a `#[cfg]` — leaves it upstream's.
  */
 export function blameFork(repo, file, labels) {

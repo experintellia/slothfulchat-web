@@ -1,5 +1,5 @@
 // Screenshot + self-check harness for the clamped bio / group description
-// (desktop/0091) — runs FULLY OFFLINE like scripts/shot-download-placeholder.mjs:
+// (desktop/1064) — runs FULLY OFFLINE like scripts/shot-download-placeholder.mjs:
 // an in-process mock madmail server provides two webimap accounts.
 //
 // "Hermes" is a bot whose bio lists all its commands; Alice imports its vCard,
