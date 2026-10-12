@@ -48,19 +48,22 @@ try {
   await page.waitForFunction(() => window.__coreSystemInfo, null, {
     timeout: 120_000,
   })
-  const id = await rpc('addAccount')
+  // configure the empty profile the app booted with, so it opens on reload
+  await page.waitForFunction(() => window.__selectedAccountId, null, { timeout: 60_000 })
+  const id = await page.evaluate(() => window.__selectedAccountId)
   await rpc('addTransportFromQr', id, `webimapaccount:127.0.0.1:${mock.port}`)
   await rpc('setConfig', id, 'displayname', 'Alice')
   await rpc('startIo', id)
   await rpc('createChatByContactId', id, 1) // Saved Messages
+  // configured through the rpc escape hatch: the UI only sees it after a reload
   await page.reload()
   await page.locator('#new-chat-button').waitFor({ state: 'visible', timeout: 120_000 })
 
   // pick the checker first (dialog), then switch it on
   await page.getByTestId('open-settings-button').click()
   await page.getByText('Experimental Features').click()
-  await page.getByText('Checker', { exact: true }).click()
-  const dialog = page.locator('dialog').filter({ hasText: 'Grammar & spelling checker' })
+  await page.getByText(/^Checker/).click()
+  const dialog = page.locator('dialog').filter({ hasText: 'LanguageTool self-hosted' })
   for (const label of ['Harper', 'LanguageTool cloud', 'LanguageTool self-hosted']) {
     await dialog.getByText(label, { exact: true }).waitFor()
   }
@@ -75,7 +78,7 @@ try {
   await dialog.screenshot({ path: `${SHOTS}/dialog.png` })
   await dialog.getByRole('button', { name: 'Save' }).click()
   expect(harperRequests.length === 0, 'nothing of Harper loaded while the checker is off')
-  await page.getByText('Grammar & spelling checker', { exact: true }).click()
+  await page.getByText(/^Grammar & spelling checker/).click()
   await page.screenshot({ path: `${SHOTS}/settings.png` })
   await page.keyboard.press('Escape')
 

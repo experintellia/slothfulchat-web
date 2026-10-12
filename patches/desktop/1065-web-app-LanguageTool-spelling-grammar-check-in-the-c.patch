@@ -132,7 +132,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../src/components/composer/Composer.tsx      |   5 +
  .../composer/ComposerMessageInput.tsx         |  19 +-
  .../src/components/composer/LanguageTool.tsx  | 375 ++++++++++++++++++
- .../components/composer/languageToolCheck.ts  | 235 +++++++++++
+ .../components/composer/languageToolCheck.ts  | 237 +++++++++++
  .../components/dialogs/ConnectivityDialog.tsx |  56 +++
  .../components/dialogs/CreateChat/index.tsx   |   1 +
  .../dialogs/EditProfileDialog/index.tsx       |   1 +
@@ -142,7 +142,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  packages/shared/shared-types.d.ts             |   9 +
  packages/shared/state.ts                      |   5 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 21 files changed, 1260 insertions(+), 25 deletions(-)
+ 21 files changed, 1262 insertions(+), 25 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
@@ -452,7 +452,7 @@ index 6573050374cfe174e923d97cde3f2ddb341f4677..bec970fc0551645a5acee1d974f56ff9
          label='Record without noise filtering'
 diff --git a/packages/frontend/src/components/Settings/LanguageToolDialog.tsx b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..31550af1bb0da713358f170d46d1a45aa42b6099
+index 0000000000000000000000000000000000000000..b06d28b7f9deefc97a1ca2b29a34ace37faebacc
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
 @@ -0,0 +1,188 @@
@@ -481,7 +481,7 @@ index 0000000000000000000000000000000000000000..31550af1bb0da713358f170d46d1a45a
 +
 +/** One line for the settings row: which checker, and where drafts go. */
 +export function languageToolServerLabel(s: DesktopSettingsType): string {
-+  if (s.grammarCheckEngine === 'harper') {
++  if (s.grammarCheckEngine !== 'languagetool') {
 +    return 'Harper (on this device)'
 +  }
 +  if (s.languageToolServer) {
@@ -1189,10 +1189,10 @@ index 0000000000000000000000000000000000000000..cb387d0fa9f778b4d26bba9d4ef15e6f
 +}
 diff --git a/packages/frontend/src/components/composer/languageToolCheck.ts b/packages/frontend/src/components/composer/languageToolCheck.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..da8d7098e343866719e2890e8130283bc2dcd489
+index 0000000000000000000000000000000000000000..64bdba757ad5b05e504f888c24e508fd50aa7203
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/languageToolCheck.ts
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,237 @@
 +// Spelling/grammar check for the composer: Harper (https://writewithharper.com,
 +// English only, wasm on this device) or LanguageTool (https://languagetool.org,
 +// HTTP API), and remapping results onto edited text. LanguageTool is plain
@@ -1229,7 +1229,9 @@ index 0000000000000000000000000000000000000000..da8d7098e343866719e2890e8130283b
 +  if (!s.grammarCheck) {
 +    return null
 +  }
-+  return s.grammarCheckEngine === 'harper'
++  // unset counts as Harper: the default, and the web-app's own settings
++  // defaults (runtime.ts) don't carry it
++  return s.grammarCheckEngine !== 'languagetool'
 +    ? { harper: true }
 +    : {
 +        server: s.languageToolServer,
