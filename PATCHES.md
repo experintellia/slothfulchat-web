@@ -456,8 +456,11 @@ exists:
   profile bio and group descriptions get the same check (opt-in per field, so
   the proxy-URL field never does). While it is on, those fields opt out of the
   browser's spellcheck and the LanguageTool browser add-on; while it is off
-  they behave exactly as before. The CSPs allow `http(s)://*:*/v2/check` — any
-  host/port, that one path, like `/unfurl`. `desktop/1065`
+  they behave exactly as before. A server that is down or silent can't slow
+  typing: a check gives up after 10 s (more for long text, up to 35 s), and
+  after a failure the next one waits 5 s, doubling to 1 min, until one works.
+  The CSPs allow `http(s)://*:*/v2/check` — any host/port, that one path, like
+  `/unfurl`. `desktop/1065`
 
 - **Emoji style picker** — an "Emoji style" picker under Settings →
   Appearance (browser edition only) chooses which emoji font the app renders
