@@ -106,28 +106,28 @@ _composer.scss is untouched.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- .../scss/composer/_language-tool.scss         | 164 ++++++++
+ .../scss/composer/_language-tool.scss         | 164 +++++++
  packages/frontend/scss/manifest.scss          |   1 +
  .../frontend/src/components/Login-Styles.tsx  |  20 +-
  .../components/Settings/EmojiSetSelector.tsx  |  11 +-
  .../Settings/ExperimentalFeatures.tsx         |  22 +
- .../Settings/LanguageToolDialog.tsx           | 160 ++++++++
+ .../Settings/LanguageToolDialog.tsx           | 160 +++++++
  .../components/Settings/SettingsSelector.tsx  |  10 +-
  .../components/Settings/SettingsSwitch.tsx    |  25 +-
  .../src/components/composer/Composer.tsx      |   5 +
  .../composer/ComposerMessageInput.tsx         |  19 +-
- .../src/components/composer/LanguageTool.tsx  | 388 ++++++++++++++++++
- .../components/composer/languageToolCheck.ts  | 190 +++++++++
+ .../src/components/composer/LanguageTool.tsx  | 403 ++++++++++++++++++
+ .../components/composer/languageToolCheck.ts  | 192 +++++++++
  .../components/dialogs/ConnectivityDialog.tsx |  56 +++
  .../components/dialogs/CreateChat/index.tsx   |   1 +
  .../dialogs/EditProfileDialog/index.tsx       |   1 +
  .../components/dialogs/ViewGroup/index.tsx    |   1 +
- .../frontend/src/tests/languageTool.test.ts   | 134 ++++++
+ .../frontend/src/tests/languageTool.test.ts   | 136 ++++++
  packages/frontend/static/main.html            |   5 +-
  packages/shared/shared-types.d.ts             |   7 +
  packages/shared/state.ts                      |   4 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 21 files changed, 1202 insertions(+), 25 deletions(-)
+ 21 files changed, 1221 insertions(+), 25 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
@@ -765,10 +765,10 @@ index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..7a0cc38bc866a8634afd845ab2169bf4
        </I18nContext.Consumer>
 diff --git a/packages/frontend/src/components/composer/LanguageTool.tsx b/packages/frontend/src/components/composer/LanguageTool.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..5da1c61a925a129fea19c8894aeab58ca5205b65
+index 0000000000000000000000000000000000000000..886d1b19f6b7a70e487c291d3ade968fa66ec0af
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/LanguageTool.tsx
-@@ -0,0 +1,388 @@
+@@ -0,0 +1,403 @@
 +import React, {
 +  useCallback,
 +  useEffect,
@@ -925,35 +925,51 @@ index 0000000000000000000000000000000000000000..5da1c61a925a129fea19c8894aeab58c
 +  const failedRef = useRef<HTMLButtonElement>(null)
 +  const { openDialog } = useDialog()
 +
++  // One check at a time, and typing doesn't abort it: an aborted check never
++  // reaches its timeout, so a server that never answers would dodge the
++  // backoff (and the failure icon) for as long as the user kept typing. A
++  // late result is remapped onto the newer text like any other; the next
++  // check starts once it settles. Only a config change or unmount aborts.
++  const [pending, setPending] = useState(false)
++  const attempted = useRef('')
++  const abortRef = useRef<AbortController | null>(null)
 +  useEffect(() => {
-+    if (!text.trim()) {
++    const abort = new AbortController()
++    abortRef.current = abort
++    return () => abort.abort()
++  }, [server, username, apiKey])
++
++  useEffect(() => {
++    const attempt = JSON.stringify([text, server, username, apiKey])
++    if (!text.trim() || pending || attempt === attempted.current) {
 +      return
 +    }
 +    const cfg = { server, username, apiKey }
-+    const abort = new AbortController()
++    const abort = abortRef.current!
 +    // while the server fails, wait out its backoff instead of asking again
 +    // after every pause in typing
 +    const delay = Math.max(CHECK_DELAY_MS, ltRetryIn(cfg))
 +    const timer = setTimeout(() => {
-+      ltCheck(cfg, text, abort.signal).then(
-+        matches => {
-+          setFailed(null)
-+          setChecked({ text, matches })
-+        },
-+        (err: Error) => {
-+          if (abort.signal.aborted) return
-+          log.warn('check failed', err)
-+          // the field opted out of the browser's spellcheck, so show why
-+          // nothing gets underlined instead of failing silently
-+          setFailed(err.message)
-+        }
-+      )
++      attempted.current = attempt
++      setPending(true)
++      ltCheck(cfg, text, abort.signal)
++        .then(
++          matches => {
++            setFailed(null)
++            setChecked({ text, matches })
++          },
++          (err: Error) => {
++            if (abort.signal.aborted) return
++            log.warn('check failed', err)
++            // the field opted out of the browser's spellcheck, so show why
++            // nothing gets underlined instead of failing silently
++            setFailed(err.message)
++          }
++        )
++        .finally(() => setPending(false))
 +    }, delay)
-+    return () => {
-+      clearTimeout(timer)
-+      abort.abort()
-+    }
-+  }, [text, server, username, apiKey])
++    return () => clearTimeout(timer)
++  }, [text, server, username, apiKey, pending])
 +
 +  // The card follows deliberate caret moves (click/tap, arrow keys) and closes
 +  // on typing, so it never pops up mid-sentence.
@@ -990,8 +1006,7 @@ index 0000000000000000000000000000000000000000..5da1c61a925a129fea19c8894aeab58c
 +    }
 +    const resize = new ResizeObserver(
 +      () =>
-+        layerRef.current &&
-+        syncLayer(el, layerRef.current, failedRef.current)
++        layerRef.current && syncLayer(el, layerRef.current, failedRef.current)
 +    )
 +    resize.observe(el)
 +    const caretEvents = ['input', 'keyup', 'click', 'blur'] as const
@@ -1159,10 +1174,10 @@ index 0000000000000000000000000000000000000000..5da1c61a925a129fea19c8894aeab58c
 +}
 diff --git a/packages/frontend/src/components/composer/languageToolCheck.ts b/packages/frontend/src/components/composer/languageToolCheck.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..288382c13a3ca7fc24ce64aab7c4e70593f1ea8b
+index 0000000000000000000000000000000000000000..dcfcaf580dc24ac65a433384ad12d5ec35641cfe
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/languageToolCheck.ts
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,192 @@
 +// LanguageTool (https://languagetool.org) spelling/grammar check for the
 +// composer: the HTTP API call and remapping results onto edited text. Plain
 +// fetch, so it works the same on browser, Electron and Tauri — the desktop
@@ -1240,8 +1255,9 @@ index 0000000000000000000000000000000000000000..288382c13a3ca7fc24ce64aab7c4e705
 +const RETRY_MIN_MS = 5_000
 +const RETRY_MAX_MS = 60_000
 +let backoff = { key: '', wait: 0, until: 0 }
++// unset and '' alike: the dialog passes '', the saved settings undefined
 +const configKey = (cfg: LtConfig) =>
-+  JSON.stringify([cfg.server, cfg.username, cfg.apiKey])
++  JSON.stringify([cfg.server || '', cfg.username || '', cfg.apiKey || ''])
 +
 +/** How long a check for `cfg` should wait because the last one failed. */
 +export function ltRetryIn(cfg: LtConfig, now = Date.now()): number {
@@ -1286,8 +1302,7 @@ index 0000000000000000000000000000000000000000..288382c13a3ca7fc24ce64aab7c4e705
 +      throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
 +    }
 +    const { matches } = await res.json()
-+    noteResult(cfg, true)
-+    return (matches as any[]).map(m => ({
++    const result = (matches as any[]).map(m => ({
 +      offset: m.offset,
 +      length: m.length,
 +      message: m.message,
@@ -1298,6 +1313,8 @@ index 0000000000000000000000000000000000000000..288382c13a3ca7fc24ce64aab7c4e705
 +      category: m.rule?.category?.name ?? '',
 +      key: `${m.rule?.id}:${text.slice(m.offset, m.offset + m.length)}`,
 +    }))
++    noteResult(cfg, true)
++    return result
 +  } catch (err) {
 +    if (signal?.aborted) throw err // the caller moved on, not a failure
 +    noteResult(cfg, false)
@@ -1472,10 +1489,10 @@ index 6a7ad0dbfee72213041c44151dd7a210eeefbbf3..bb45855f8b6c471a47526379e379ead7
                  event: React.FormEvent<HTMLElement> &
 diff --git a/packages/frontend/src/tests/languageTool.test.ts b/packages/frontend/src/tests/languageTool.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..e65c0183d9ae21e83ff59616c065cd854b6ed1b3
+index 0000000000000000000000000000000000000000..ad3c8397520010a5090e4731d883f9392ddcf483
 --- /dev/null
 +++ b/packages/frontend/src/tests/languageTool.test.ts
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,136 @@
 +import { expect } from 'chai'
 +import { after, describe, it } from 'mocha'
 +
@@ -1595,6 +1612,8 @@ index 0000000000000000000000000000000000000000..e65c0183d9ae21e83ff59616c065cd85
 +    expect(ltRetryIn(cfg)).to.be.within(9000, 10000)
 +    // another server isn't held back by this one
 +    expect(ltRetryIn({})).to.equal(0)
++    // the dialog's '' fields are the saved settings' unset ones
++    expect(ltRetryIn({ ...cfg, username: '', apiKey: '' })).to.be.above(0)
 +    globalThis.fetch = async () => new Response('{"matches":[]}')
 +    await ltCheck(cfg, 'x')
 +    expect(ltRetryIn(cfg)).to.equal(0)
