@@ -10,8 +10,8 @@ update() {
   local base wt=$root/build/$name
   base=$(git -C "$sub" rev-parse HEAD)
   # Upstream bug fixes (a `Patch-Range: upstream-fix` trailer) go first and take
-  # 0001-0099; everything else starts at 0100, so adding a fix never renumbers
-  # the patches after it. Checked before anything is deleted.
+  # 0001-0999; everything else is 1000 and up. Numbers are permanent: see
+  # scripts/patch-numbers.mjs. Everything is checked before anything is deleted.
   local list commits=() c body fixes=0
   # A plain assignment, so a missing worktree stops the script here: set -e
   # doesn't see a failure inside < <(...).
@@ -20,7 +20,7 @@ update() {
   for c in "${commits[@]}"; do
     body=$(git -C "$wt" log -1 --format=%B "$c")
     # Anywhere in the message, any case: a fix whose trailer went unrecognised
-    # would become 0100 and silently renumber everything after it.
+    # would leave the fix range and take a number in the 1000s.
     if grep -qiE '^Patch-Range:[[:space:]]*upstream-fix[[:space:]]*$' <<<"$body"; then
       [[ ${commits[$fixes]} == "$c" ]] || {
         echo "$name: upstream-fix commit $c comes after a non-fix commit; move it below them" >&2
@@ -29,23 +29,31 @@ update() {
       fixes=$((fixes + 1))
     fi
   done
-  (( fixes < 100 )) || { echo "$name: more than 99 upstream-fix commits" >&2; exit 1; }
-  rm -f "$root/patches/$name"/*.patch
+  (( fixes < 1000 )) || { echo "$name: more than 999 upstream-fix commits" >&2; exit 1; }
+  local tmp
+  tmp=$(mktemp -d)
   # Only a patch's own commit may change its file, or a one-patch change touches
   # every file and any two open PRs conflict on all of them.
   # --no-numbered: no [PATCH NN/MM] counter, which changes whenever a patch is
   #   added or dropped. Apply order comes from the NNNN- file names.
   # --full-index: abbreviated `index <sha>..<sha>` hashes get longer when they turn
   #   ambiguous, which depends on how much history the clone has.
-  local fmt=(format-patch --no-numbered --full-index --zero-commit --no-signature -o "$root/patches/$name")
+  local fmt=(format-patch --no-numbered --full-index --zero-commit --no-signature -o "$tmp")
   local split=$base
   if (( fixes )); then
     split=${commits[$((fixes - 1))]}
     git -C "$wt" "${fmt[@]}" "$base..$split" >/dev/null
   fi
   if (( fixes < ${#commits[@]} )); then
-    git -C "$wt" "${fmt[@]}" --start-number=100 "$split..HEAD" >/dev/null
+    git -C "$wt" "${fmt[@]}" --start-number=1000 "$split..HEAD" >/dev/null
   fi
+  local plan from to
+  plan=$(node "$root/scripts/patch-numbers.mjs" "$root/patches/$name" "$tmp")
+  rm -f "$root/patches/$name"/*.patch
+  while IFS=$'\t' read -r from to; do
+    if [[ -n $from ]]; then mv "$tmp/$from" "$root/patches/$name/$to"; fi
+  done <<<"$plan"
+  rmdir "$tmp"
   # Authorship in the stack is throwaway; format-patch bakes in whatever git
   # identity the worktree commit happened to use, which has leaked real email
   # addresses. Pin the From: header (first one = the mail header) to a dummy.

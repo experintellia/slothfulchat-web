@@ -45,7 +45,7 @@ ignore = [
   #   rustls-webpki 0.103.13 <- rustls 0.23.41 <- tokio-rustls <- deltachat
   #
   # IMAP/SMTP TLS terminates inside the core on rustls 0.23.41 (patch
-  # core/0102 routes the wasm non-strict branch to wrap_rustls too), so the
+  # core/1002 routes the wasm non-strict branch to wrap_rustls too), so the
   # verifier that actually validates mail-server certificates is 0.103.13 —
   # at or above every patched range below (0.103.10 / .12 / .12 / .13).
   #
@@ -101,7 +101,7 @@ ignore = [
   # NOT a fix for either: target-gating iroh out of the wasm build. Cargo.lock
   # is target-independent, so a `cfg(not(target_arch = "wasm32"))` dep stays in
   # it and `cargo audit --file` still reports it — shadowsocks is gated exactly
-  # that way by patch core/0100 and is still in the lock. Gating iroh is worth
+  # that way by patch core/1000 and is still in the lock. Gating iroh is worth
   # doing for what we ship (issue #236), but it would only move these two ids
   # from this section up into the "absent from the wasm32 graph" one.
   #

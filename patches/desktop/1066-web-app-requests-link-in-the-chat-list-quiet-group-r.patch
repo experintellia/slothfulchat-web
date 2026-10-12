@@ -15,7 +15,7 @@ accepting the last request, it says so instead of showing a blank list.
 no plural of chat_request_label upstream.
 
 The bundle runs the published @deltachat/jsonrpc-client, which predates
-core/0125, so DC_GCL_NO_REQUESTS, DC_CHAT_ID_REQUESTS_LINK and the
+core/1025, so DC_GCL_NO_REQUESTS, DC_CHAT_ID_REQUESTS_LINK and the
 RequestsLink item type are defined in ChatListHelpers rather than read
 from `C` (where they would be undefined at runtime).
 
@@ -177,14 +177,14 @@ index f21eaeda8a707f52b72522221c9d9b921d064b1e..5f6b1201225fe4d8e6dfadc630fdd545
    const { chatListIds } = useChatList(listFlags, query)
    const { isChatLoaded, loadChats, chatCache } =
 diff --git a/packages/frontend/src/components/chat/ChatListHelpers.tsx b/packages/frontend/src/components/chat/ChatListHelpers.tsx
-index 33439210eb48ed469ee59bd4aee18d62df17e22b..17914679d22c87774828f03c2c0c36d0acfe7076 100644
+index 33439210eb48ed469ee59bd4aee18d62df17e22b..fc0416e38d1e9fa420680ac0708d292ff7337513 100644
 --- a/packages/frontend/src/components/chat/ChatListHelpers.tsx
 +++ b/packages/frontend/src/components/chat/ChatListHelpers.tsx
 @@ -8,6 +8,17 @@ import asyncThrottle from '@jcoreio/async-throttle'
  
  const log = getLogger('renderer/helpers/ChatList')
  
-+// core/0125's requests link. The bundle runs the published
++// core/1025's requests link. The bundle runs the published
 +// @deltachat/jsonrpc-client pinned in this workspace's catalog, which predates
 +// these, so `C.DC_GCL_NO_REQUESTS` would be undefined at runtime: define them
 +// here (same pattern as the widened events in useDownloadProgress).

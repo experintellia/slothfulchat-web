@@ -139,7 +139,7 @@ with a stable label that says what you would hear rather than naming
 the three DSP terms.
 
 Drops the pill, the now-dead honored-readback state in the recorder (no
-surface left to show it — a following patch gives it one in settings),
+surface left to show it — the mic test below gives it one in settings),
 and the four locale strings that went with it.
 
 Refs #179
@@ -153,7 +153,7 @@ meter, which the `max-width: 400px` block hid while its container kept
 `flex: 1` — so a phone recording showed no level feedback at all, and
 the space it would have used sat empty one row below.
 
-With the original-audio pill gone (previous patch) the only thing still
+With the original-audio pill gone (above) the only thing still
 forcing the wrap is the fixed `width: 85px` on Cancel/OK, ~20px more
 than either label needs. Dropping it leaves pause+mic+timer+meter+
 picker+cancel+ok at roughly 353px of a 380px content box, so the row

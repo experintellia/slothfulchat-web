@@ -66,7 +66,7 @@ pnpm --filter @slothfulchat/web-app assemble
 It warns and skips the whole block — the esbuild call included — unless BOTH
 `build/core`'s typedoc output and its `generated/openrpc.json` are there, so
 `pnpm assemble` on its own never requires a cargo build. Both, because typedoc
-needs no cargo: a `build/core` documented before `patches/core/0121` has one and
+needs no cargo: a `build/core` documented before `patches/core/1021` has one and
 not the other. The tree is excluded from the service worker precache
 (`precacheSkip` matches the `api-docs/` prefix, so subdirectories are covered;
 that is what keeps the ~1.4 MB `viewer.js` out of the offline app shell).

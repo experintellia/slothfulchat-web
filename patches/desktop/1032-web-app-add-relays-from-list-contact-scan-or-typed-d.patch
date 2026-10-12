@@ -246,7 +246,7 @@ index 3f6386b9c75d4243fe7c9dd8b744642a22fde447..1ed96300e3a8656f51f95f2696f0fc2e
      </Dialog>
    )
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
-index 9b1532b54a8f8b3b509a415d21d8bdabdbce6ca6..9e45ef2a4f72166c5e782ae145689e51e88e0ff8 100644
+index 509b69162d8b32bab314c1e1668d134385403073..33bc7e5b28764446e9569c4dbd50e178ac94342e 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 @@ -18,8 +18,16 @@ type Props = {

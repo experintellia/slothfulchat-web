@@ -7,10 +7,10 @@ MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-The download-on-demand placeholder for audio/voice (desktop/0143) mimics
+The download-on-demand placeholder for audio/voice (desktop/1043) mimics
 the native <audio controls> bar: a pill with a circular download button
 where play sits, the duration, a fake track and the size. Since
-desktop/0146 that is only half the story — with
+desktop/1046 that is only half the story — with
 experimentalAudioPlayerControls on, the downloaded message renders as the
 custom player instead (full-width waveform on top, elapsed/total time and
 a speed pill beneath), so the card visibly changed shape the moment the

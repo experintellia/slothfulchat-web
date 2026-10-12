@@ -9,7 +9,7 @@ ProfileInfoHeader (View Profile, View Group, mailing list profile). Bots
 like Hermes list every command in their bio, which pushes the rest of the
 profile dialog far down. Clamp the text to 8 lines with CSS line-clamp and
 add the same "Show more"/"Show less" link as long message text
-(desktop/0150), reusing its translation keys.
+(desktop/1050), reusing its translation keys.
 
 Unlike messages, the toggle is driven by measuring overflow
 (scrollHeight > clientHeight), not a line-count heuristic: a single long

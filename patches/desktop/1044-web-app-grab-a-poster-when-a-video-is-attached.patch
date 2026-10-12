@@ -30,7 +30,7 @@ Core measures images itself at send time, but it has no audio or video decoder,
 and on wasm it runs in a Web Worker with no DOM — so `Param::Duration` was never
 set on anything we send, `mimefactory` never wrote a `Chat-Duration` header, and
 `PostMsgMetadata` carried `duration: None`. The visible result was our own
-download-on-demand placeholder (desktop/0143) rendering its "–:––" fallback for
+download-on-demand placeholder (desktop/1043) rendering its "–:––" fallback for
 voice messages *we* had just recorded, and every other client showing nothing.
 A video's pixel size is derived by nobody at all, so those placeholders could
 not even reserve the right shape.

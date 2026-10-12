@@ -80,7 +80,7 @@ index 58ab5d86d32572eaa4c9ad4a3325a1ab3f46bc11..1407c267366bcceb7349d317713b4d46
                  {welcomeQr?.qr.kind === 'login' && (
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..39a01d743ed884a6c5f023c2818f1fd5e0eeb0c5
+index 0000000000000000000000000000000000000000..5cb5ecf495a39f5a3cb7ec386308641828a6d68a
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
 @@ -0,0 +1,95 @@
@@ -92,7 +92,7 @@ index 0000000000000000000000000000000000000000..39a01d743ed884a6c5f023c2818f1fd5
 +import { defaultRelayHost, fetchRelayDirectory } from './relayDirectory'
 +import styles from './styles.module.scss'
 +
-+// English is hardcoded here (like the rest of patch desktop/0123) so the relay
++// English is hardcoded here (like the rest of patch desktop/1023) so the relay
 +// picker stays a self-contained patch and doesn't have to touch every locale
 +// file. See PATCHES.md.
 +
@@ -181,7 +181,7 @@ index 0000000000000000000000000000000000000000..39a01d743ed884a6c5f023c2818f1fd5
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..9b1532b54a8f8b3b509a415d21d8bdabdbce6ca6
+index 0000000000000000000000000000000000000000..509b69162d8b32bab314c1e1668d134385403073
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 @@ -0,0 +1,238 @@
@@ -195,7 +195,7 @@ index 0000000000000000000000000000000000000000..9b1532b54a8f8b3b509a415d21d8bdab
 +import type { DialogProps } from '../../../contexts/DialogContext'
 +import type { RelayProbe } from './relayDirectory'
 +
-+// English is hardcoded here (like the rest of patch desktop/0123) so the relay
++// English is hardcoded here (like the rest of patch desktop/1023) so the relay
 +// picker stays a self-contained patch and doesn't have to touch every locale
 +// file. See PATCHES.md.
 +

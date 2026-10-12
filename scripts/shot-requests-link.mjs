@@ -1,5 +1,5 @@
-// Screenshot + self-check harness for the requests link (desktop/0166,
-// core/0125) — runs FULLY OFFLINE like scripts/shot-download-placeholder.mjs:
+// Screenshot + self-check harness for the requests link (desktop/1066,
+// core/1025) — runs FULLY OFFLINE like scripts/shot-download-placeholder.mjs:
 // an in-process mock madmail server provides three webimap accounts.
 //
 // Bob has a real conversation with Alice (accepted). Mallory, whom Bob has
