@@ -26,7 +26,8 @@ URL(). A "Check connection" button runs a test sentence and shows the
 error otherwise (CORS / --allow-origin being the usual one); only the
 latest check may report, so a slow earlier one can't overwrite it. With
 no server saved, the address starts out as http://localhost:8081,
-languagetool-server's default, so one on this computer needs no typing.
+languagetool-server's default port, so one on this computer needs no
+typing.
 
 Composer: 1s after typing stops the draft is POSTed form-encoded to
 /v2/check with language=auto (a CORS simple request, so a self-hosted
@@ -92,7 +93,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../frontend/src/components/Login-Styles.tsx  |  20 +-
  .../components/Settings/EmojiSetSelector.tsx  |  11 +-
  .../Settings/ExperimentalFeatures.tsx         |  22 ++
- .../Settings/LanguageToolDialog.tsx           | 164 +++++++++
+ .../Settings/LanguageToolDialog.tsx           | 160 +++++++++
  .../components/Settings/SettingsSelector.tsx  |  10 +-
  .../components/Settings/SettingsSwitch.tsx    |  25 +-
  .../src/components/composer/Composer.tsx      |   5 +
@@ -107,7 +108,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  packages/shared/shared-types.d.ts             |   7 +
  packages/shared/state.ts                      |   4 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 20 files changed, 981 insertions(+), 25 deletions(-)
+ 20 files changed, 977 insertions(+), 25 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
@@ -406,10 +407,10 @@ index 6573050374cfe174e923d97cde3f2ddb341f4677..86b1ca0535c636438baa1436cd00e8ab
          label='Record without noise filtering'
 diff --git a/packages/frontend/src/components/Settings/LanguageToolDialog.tsx b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..aa2afee63be7ba6df8fc2a176b51b3ab5706007b
+index 0000000000000000000000000000000000000000..0bdabd5716bdba78c98183724633ef3a5b719c1a
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,160 @@
 +import React, { useRef, useState } from 'react'
 +
 +import SettingsStoreInstance, { useSettingsStore } from '../../stores/settings'
@@ -433,10 +434,6 @@ index 0000000000000000000000000000000000000000..aa2afee63be7ba6df8fc2a176b51b3ab
 +import type { DialogProps } from '../../contexts/DialogContext'
 +import type { DesktopSettingsType } from '@deltachat-desktop/shared/shared-types'
 +
-+// languagetool-server's default port, prefilled so a server on this computer
-+// needs no typing
-+const LOCAL_SERVER = 'http://localhost:8081'
-+
 +/** One line for the settings row: which server the drafts go to. */
 +export function languageToolServerLabel(s: DesktopSettingsType): string {
 +  if (s.languageToolServer) {
@@ -455,8 +452,9 @@ index 0000000000000000000000000000000000000000..aa2afee63be7ba6df8fc2a176b51b3ab
 +  const [mode, setMode] = useState(
 +    settings?.languageToolServer ? 'server' : 'account'
 +  )
++  // languagetool-server's default port, so one on this computer needs no typing
 +  const [server, setServer] = useState(
-+    settings?.languageToolServer ?? LOCAL_SERVER
++    settings?.languageToolServer ?? 'http://localhost:8081'
 +  )
 +  const [username, setUsername] = useState(settings?.languageToolUsername ?? '')
 +  const [apiKey, setApiKey] = useState(settings?.languageToolApiKey ?? '')
@@ -549,7 +547,6 @@ index 0000000000000000000000000000000000000000..aa2afee63be7ba6df8fc2a176b51b3ab
 +                label='Server address'
 +                value={server}
 +                type='url'
-+                placeholder={LOCAL_SERVER}
 +                onChange={e => setServer(e.target.value)}
 +              />
 +              <p>
