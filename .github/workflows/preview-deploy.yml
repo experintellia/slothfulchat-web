@@ -86,8 +86,13 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      # wasm-opt off: it is ~5.5 min of this ~9 min job, on every PR push, for a
+      # throwaway preview. deploy-next.yml still ships and smokes the optimized
+      # wasm on every merge, so a wasm-opt-only breakage surfaces there.
       - name: Build web-app dist/
         uses: ./.github/actions/build-web-app
+        with:
+          wasm-opt: 'false'
 
       # include-hidden-files is load-bearing: assemble writes dist/.nojekyll,
       # and upload-artifact drops dotfiles by default.

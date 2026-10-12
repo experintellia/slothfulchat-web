@@ -40,10 +40,10 @@
 name: Build web-app
 description: Toolchains + patched core + wasm + assembled dist for the standalone web-app.
 
-# Both inputs default to the deploy behaviour, so publish-npm.yml,
-# deploy-next.yml and preview-deploy.yml pass neither. ci.yml turns both off:
-# it needs a functional build, not a shippable one, and the two passes it skips
-# are the slowest in the job.
+# Both inputs default to the deploy behaviour, so publish-npm.yml and
+# deploy-next.yml pass neither. ci.yml turns both off: it needs a functional
+# build, not a shippable one, and the two passes it skips are the slowest in
+# the job. preview-deploy.yml turns only wasm-opt off (see there).
 inputs:
   wasm-opt:
     description: >-
