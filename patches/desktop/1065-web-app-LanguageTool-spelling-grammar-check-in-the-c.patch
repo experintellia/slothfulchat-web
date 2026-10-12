@@ -1526,7 +1526,7 @@ index b3b3a9f095b8b58b9405702e8fee122bf1490483..ee6a895360aaf45794f38a01ecf39f26
      <link rel="stylesheet" href="./fonts/fonts.css" />
      <link rel="stylesheet" href="./main.css" />
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 4c6516306c169bbbbc1591731a48ee9833f5a209..2f121aa26dfb282495600a44f52ec8551b5d812e 100644
+index f16da9295efcbdc6d909e6235fc583f86947a066..0d6beb697d3ec143741918fef0cd79bcfbe341f7 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -47,6 +47,13 @@ export interface DesktopSettingsType {
@@ -1542,7 +1542,7 @@ index 4c6516306c169bbbbc1591731a48ee9833f5a209..2f121aa26dfb282495600a44f52ec855
 +  languageToolApiKey: string | undefined
    /** webapp: expose voice-message sender/chat/avatar in the OS media session (lock screen). Off by default (privacy: suppressed metadata otherwise). Shown in Settings -> Notifications, next to showNotificationContent. */
    voiceMessageMediaSessionDetails: boolean
-   /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Toggled from the recorder UI, applies to the next recording. */
+   /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Switched in Settings -> Experimental -> Composer, applies to the next recording. */
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
 index fa8889f2f2fc98e0bc4ef3ebb5b5741b1132f5c0..7025258e9a39795143d51e2b91d18f743625c9b3 100644
 --- a/packages/shared/state.ts

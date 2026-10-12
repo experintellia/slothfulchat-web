@@ -1719,7 +1719,7 @@ index 0000000000000000000000000000000000000000..993e93f552bfdaa39d12e5cb584a9633
 +  return { order, depth }
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 2f121aa26dfb282495600a44f52ec8551b5d812e..600ba83363e4df873bf86883ecee8153e61bfd93 100644
+index 0d6beb697d3ec143741918fef0cd79bcfbe341f7..b876bb689cb1dd97f44a880fc1356c907f03a8c6 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -47,6 +47,8 @@ export interface DesktopSettingsType {
