@@ -25,6 +25,9 @@ try {
   // dev build without assemble: no precache, runtime caching still works
 }
 const MANIFEST: Record<string, string> = sw.__PRECACHE ?? {} // path -> content hash
+// opt-in assets (instance-config.mjs lazyAsset), path -> content hash: never
+// precached, fetched on first use, then cache-first like the precache
+const LAZY: Record<string, string> = sw.__LAZY ?? {}
 const scopePath = new URL(sw.registration.scope).pathname
 // scope-qualified name: caches are per origin, so a sibling deploy of this app
 // under another base path must not be mistaken for a stale copy of ours
@@ -210,7 +213,18 @@ sw.addEventListener('install', (event: any) =>
       // offline is degraded. That failure is silent, so keep it inspectable
       // via caches.match('./__sw-install-errors__').
       await cache.put('./__sw-install-errors__', new Response(JSON.stringify(errors)))
-      await cache.put(MANIFEST_KEY, new Response(JSON.stringify(MANIFEST)))
+      // opt-in assets this user already fetched: carry the unchanged ones over,
+      // or activate would delete them with the old cache and e.g. Harper's
+      // 15 MB would be downloaded again after every deploy. Best-effort: one
+      // missing just gets fetched again on its next use.
+      if (oldCache && oldCache !== cache) {
+        for (const [file, hash] of Object.entries(LAZY)) {
+          const reuse = oldManifest[file] === hash && (await oldCache.match(file))
+          if (reuse) await cache.put(file, reuse)
+        }
+      }
+      // with the lazy hashes, so the next install can tell which still match
+      await cache.put(MANIFEST_KEY, new Response(JSON.stringify({ ...MANIFEST, ...LAZY })))
       sw.skipWaiting()
     })()
   )
@@ -249,10 +263,10 @@ async function serveShell(event: any, role: string): Promise<Response> {
   const cached =
     role === 'precache'
       ? await cache.match(request, { ignoreSearch: true })
-      : role === 'runtime'
+      : role === 'runtime' || role === 'lazy'
         ? await cache.match(request)
         : undefined
-  if (cached && role === 'precache') {
+  if (cached && (role === 'precache' || role === 'lazy')) {
     // content-versioned: never refetched at runtime, updates only arrive via a
     // new manifest (whole-deploy consistency, no per-file version skew)
     return cached
@@ -261,7 +275,9 @@ async function serveShell(event: any, role: string): Promise<Response> {
     // only the enumerated runtime routes are cached on the fly: manifest
     // entries must stay exactly the bytes their install hashed, and everything
     // else on the origin is not ours to store
-    if (res.status === 200 && role === 'runtime') cache.put(request, res.clone())
+    // ponytail: a lazy file isn't hashed on the way in like the precache (that
+    // would hold 15 MB in memory); one caught mid-deploy stays until it changes
+    if (res.status === 200 && (role === 'runtime' || role === 'lazy')) cache.put(request, res.clone())
     return res
   })
   if (cached) {
@@ -305,7 +321,7 @@ sw.addEventListener('fetch', (event: any) => {
     if (isBlobRoute(url.pathname)) return
     // and only take over what is ours to serve — a same-origin URL outside the
     // app's own files goes to the network untouched (sw-cache.ts)
-    const role = shellRole(url.pathname, scopePath, MANIFEST, event.request.mode === 'navigate')
+    const role = shellRole(url.pathname, scopePath, MANIFEST, event.request.mode === 'navigate', LAZY)
     // Range requests (media seeking) need 206 semantics the cache can't give
     if (role && !event.request.headers.has('range')) {
       event.respondWith(serveShell(event, role))

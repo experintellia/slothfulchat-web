@@ -539,6 +539,18 @@ Operator and legal notice: see the <a href="./imprint.html">imprint</a>.</p>
 
 // --- sw-precache.js (offline app-shell manifest, see sw-manifest.mjs) ---
 
+/** Opt-in assets: never precached, so nobody downloads what they never turn
+ * on, but hashed into sw-precache.js's __LAZY. The SW fetches one on first
+ * use, then serves it cache-first and carries it across updates while its hash
+ * is unchanged, instead of re-downloading it after every deploy.
+ *  - Emoji-set fonts: only the set a user actually picks should ever be
+ *    fetched, so the offline shell never carries every set's font. The tiny
+ *    emoji-fonts.css (just @font-face rules, no glyph data) stays precached.
+ *  - The Harper grammar checker (~15 MB wasm), fetched once a user turns it
+ *    on with Harper picked. */
+export const lazyAsset = f =>
+  (f.startsWith('fonts/emoji-sets/') || f.startsWith('harper/')) && !f.endsWith('.map')
+
 // the SW machinery itself is never precached: the browser manages blobs-sw.js
 // updates, and sw-precache.js describes the cache rather than living in it
 export const precacheSkip = f =>
@@ -555,27 +567,27 @@ export const precacheSkip = f =>
   // webxdc origins, not the app origin).
   f.startsWith('caddy/') ||
   f === 'webxdc-test.html' ||
-  // Emoji-set fonts are opt-in: only the set a user actually picks should ever
-  // be fetched, and it's runtime-cached on first use (blobs-sw.ts) rather than
-  // precached — so the offline shell never carries every set's font. The tiny
-  // emoji-fonts.css (just @font-face rules, no glyph data) stays precached.
-  f.startsWith('fonts/emoji-sets/') ||
-  // Harper grammar checker (~15 MB wasm): opt-in the same way, fetched only
-  // once a user turns it on, then runtime-cached (sw-cache.ts shellRole)
-  f.startsWith('harper/') ||
+  lazyAsset(f) ||
   ['.nojekyll', 'sw-precache.js', 'blobs-sw.js'].includes(f)
 
-/** Content-hashes [path, bytes] entries into the sw-precache.js source.
- * Applies precacheSkip itself (callers may still pre-filter to skip I/O). */
+/** Content-hashes [path, bytes] entries into the sw-precache.js source: the
+ * precache manifest, plus the hashes of the lazyAsset files (__LAZY).
+ * Applies precacheSkip itself (callers may still pre-filter to skip I/O, but
+ * must keep the lazyAsset files). */
 export function buildPrecache(entries) {
   const manifest = {}
-  const included = [...entries].filter(([file]) => !precacheSkip(file))
-  for (const [file, bytes] of included.sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+  const lazy = {}
+  for (const [file, bytes] of [...entries].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const into = lazyAsset(file) ? lazy : precacheSkip(file) ? null : manifest
     // blobs-sw.ts recomputes this over what it downloads and refuses an entry
     // that disagrees, so the two must stay the same function
-    manifest[file] = createHash('sha1').update(bytes).digest('hex').slice(0, 16)
+    if (into) into[file] = createHash('sha1').update(bytes).digest('hex').slice(0, 16)
   }
-  const version = createHash('sha1').update(JSON.stringify(manifest)).digest('hex').slice(0, 12)
-  const js = `self.__PRECACHE_VERSION=${JSON.stringify(version)}\nself.__PRECACHE=${JSON.stringify(manifest)}\n`
+  // lazy files count too: the SW serves them cache-first, so a changed one
+  // needs a new cache (version), or its old bytes would be served on
+  const version = createHash('sha1').update(JSON.stringify([manifest, lazy])).digest('hex').slice(0, 12)
+  const js =
+    `self.__PRECACHE_VERSION=${JSON.stringify(version)}\nself.__PRECACHE=${JSON.stringify(manifest)}\n` +
+    `self.__LAZY=${JSON.stringify(lazy)}\n`
   return { js, version, count: Object.keys(manifest).length }
 }

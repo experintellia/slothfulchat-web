@@ -7,6 +7,7 @@ import {
   DEFAULT_RELAY_DIRECTORY_URL,
   analyticsOrigin,
   buildConfig,
+  buildPrecache,
   imprintHtml,
   normalizeRelayDirectory,
   parsePublicBridges,
@@ -421,4 +422,24 @@ test('every supported SLOTHFUL_* var is forwarded by the build/deploy/customize 
       if (!skip.includes(v)) ok(text.includes(v), `${file} does not pass through ${v}`)
     }
   }
+})
+
+test('buildPrecache: opt-in assets get hashes apart from the precache', () => {
+  const run = harper => {
+    const ctx = {}
+    new Function('self', buildPrecache([
+      ['main.html', 'shell'],
+      ['harper/harper_wasm_bg.wasm', harper],
+      ['harper/index.js.map', 'x'],
+      ['blobs-sw.js', 'sw'],
+    ]).js)(ctx)
+    return ctx
+  }
+  const a = run('wasm 1')
+  deepStrictEqual(Object.keys(a.__PRECACHE), ['main.html'])
+  deepStrictEqual(Object.keys(a.__LAZY), ['harper/harper_wasm_bg.wasm'])
+  // a new Harper needs a new cache, or the SW would serve the old one on
+  const b = run('wasm 2')
+  ok(a.__PRECACHE_VERSION !== b.__PRECACHE_VERSION)
+  strictEqual(a.__PRECACHE['main.html'], b.__PRECACHE['main.html'])
 })

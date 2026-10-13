@@ -97,7 +97,7 @@ await cp(videojsLocales, join(dist, 'videojs-locales'), {
 const harper = join(here, 'node_modules/harper.js/dist')
 await cp(harper, join(dist, 'harper'), {
   recursive: true,
-  filter: f => f === harper || /^((index|binary|BinaryModule-\w+)\.js|harper_wasm_bg\.wasm)$/.test(basename(f)),
+  filter: f => f === harper || /^((index|BinaryModule-\w+)\.js|harper_wasm_bg\.wasm)$/.test(basename(f)),
 })
 await mkdir(join(dist, 'locales'))
 for (const file of await readdir(locales)) {

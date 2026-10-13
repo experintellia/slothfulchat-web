@@ -9,14 +9,14 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { buildPrecache, precacheSkip } from './instance-config.mjs'
+import { buildPrecache, lazyAsset, precacheSkip } from './instance-config.mjs'
 
 const dist = resolve(process.argv[2] ?? fileURLToPath(new URL('./dist', import.meta.url)))
 
 const files = (await readdir(dist, { recursive: true, withFileTypes: true }))
   .filter(e => e.isFile())
   .map(e => join(e.parentPath, e.name).slice(dist.length + 1))
-  .filter(f => !precacheSkip(f))
+  .filter(f => !precacheSkip(f) || lazyAsset(f))
 
 const entries = []
 for (const file of files) entries.push([file, await readFile(join(dist, file))])

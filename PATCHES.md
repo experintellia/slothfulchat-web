@@ -449,9 +449,9 @@ exists:
   nothing leaves the device), LanguageTool cloud (free, or Premium username +
   API key) or a self-hosted LanguageTool URL, with a "Check connection" test.
   Harper's `harper.js` is not bundled: the web-app serves it in `harper/`
-  (out of the SW precache, runtime-cached on first use) and the frontend
-  imports it — and its ~15 MB wasm — only once the check is on with Harper
-  picked; it lints in a worker. Electron/Tauri don't serve `harper/`, so
+  (out of the SW precache; cached on first use and kept across updates) and
+  the frontend imports it — and its ~15 MB wasm — only once the check is on
+  with Harper picked; it lints in a worker. Electron/Tauri don't serve `harper/`, so
   there only LanguageTool works. Issues are underlined in a
   transparent, click-through copy of the text laid over the textarea (a
   textarea can't style parts of its own text), coloured like LanguageTool's
