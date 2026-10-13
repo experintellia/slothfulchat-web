@@ -516,6 +516,13 @@ jobs:
       - name: E2E test — long bio and group description clamp
         run: node scripts/shot-profile-description.mjs
 
+      # clickable reactions e2e (fully offline, mock madmail, three accounts):
+      # clicking someone else's pill joins it, again takes it back, a click in
+      # the hover card does nothing; Message Info lists who reacted. Also
+      # writes the shots.
+      - name: E2E test — clickable reactions
+        run: node scripts/shot-reactions.mjs
+
       # unfurl service self-check (fully offline): metadata + inline image,
       # SSRF guards (the non-global address table, private-IP / literal-IP
       # refusal), size cap, absolute deadline vs. a slow drip, rate limit.

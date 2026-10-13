@@ -23,6 +23,8 @@
 //      text, padding, link (CDP touches, which headless chromium answers
 //      with no native long-press menu, like iOS — so the 0079 fallback is
 //      what's tested)
+//   4b'. (desktop/1068) a reaction pill toggles that reaction; Message Info
+//      lists the reactions at its end
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/test-context-menu-e2e.mjs
@@ -293,6 +295,28 @@ try {
     await page.waitForTimeout(100)
   }
   check((await myReaction()) === '❤️', 'clicking ❤️ reacts and closes the menu')
+
+  // 4b'. (desktop/1068) "More Info" behind the pills opens Message Info with
+  //      the reactions listed at its end; clicking a pill toggles that reaction
+  await bubble.getByRole('button', { name: 'More Info' }).focus()
+  await page.keyboard.press('Enter') // the pills sit on top of it for the mouse
+  const info = page.locator('dialog', { hasText: 'Message Info' })
+  await info.waitFor({ state: 'visible', timeout: 10_000 })
+  await info.locator('ul', { hasText: '❤️' }).waitFor({ state: 'visible', timeout: 10_000 })
+  check(
+    (await info.locator('strong').last().textContent()) === 'Reactions',
+    'Message Info ends with a Reactions section listing ❤️'
+  )
+  await page.keyboard.press('Escape')
+  await info.waitFor({ state: 'hidden' })
+  await bubble.getByText('❤️', { exact: true }).click()
+  for (let i = 0; i < 50 && (await myReaction()) !== undefined; i++) {
+    await page.waitForTimeout(100)
+  }
+  check((await myReaction()) === undefined, 'clicking my own reaction pill takes it back')
+  check(!(await info.isVisible()), '…without opening a dialog')
+  await rpc('sendReaction', aliceId, msgId, ['❤️']) // restore for what follows
+  await bubble.getByText('❤️', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
 
   // With room above and below, the menu opens right at the cursor and the
   // reactions sit above it (the app's message, higher up the list).
