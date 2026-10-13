@@ -39,6 +39,8 @@ export const isOwnCache = (name: string, scopePath: string): boolean =>
 /**
  * What the app shell handler may do with a same-origin GET:
  *   'precache' — a manifest file: served cache-only, matched with ignoreSearch
+ *   'lazy'     — an opt-in asset with a known hash (__LAZY): fetched on first
+ *                use, then served cache-first, exact-URL match
  *   'runtime'  — an enumerated static route: cached on fetch, exact-URL match
  *   'shell'    — an in-scope navigation: network, offline fallback to the shell
  *   null       — not ours: leave it to the network and cache nothing
@@ -47,14 +49,16 @@ export function shellRole(
   pathname: string,
   scopePath: string,
   manifest: Record<string, string>,
-  isNavigate: boolean
-): 'precache' | 'runtime' | 'shell' | null {
+  isNavigate: boolean,
+  lazy: Record<string, string> = {}
+): 'precache' | 'lazy' | 'runtime' | 'shell' | null {
   if (!pathname.startsWith(scopePath)) return null
   const file = pathname.slice(scopePath.length)
   // manifest keys are scope-relative paths (base-path agnostic, like the blob routes)
   if (Object.prototype.hasOwnProperty.call(manifest, file)) return 'precache'
-  // the one asset family deliberately kept out of the precache to be fetched on
-  // demand instead — opt-in emoji fonts (instance-config.mjs precacheSkip)
-  if (file.startsWith('fonts/emoji-sets/')) return 'runtime'
+  if (Object.prototype.hasOwnProperty.call(lazy, file)) return 'lazy'
+  // the opt-in asset families (instance-config.mjs lazyAsset) in a dev build
+  // without sw-precache.js, so without hashes: plain runtime caching
+  if (file.startsWith('fonts/emoji-sets/') || file.startsWith('harper/')) return 'runtime'
   return isNavigate ? 'shell' : null
 }

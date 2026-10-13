@@ -65,6 +65,15 @@ test('a co-hosted endpoint on the same origin is left to the network', () => {
 test('opt-in emoji fonts stay runtime-cacheable — they are left out of the manifest', () => {
   const font = '/slothfulchat-web/fonts/emoji-sets/twemoji.woff2'
   strictEqual(shellRole(font, SCOPE, MANIFEST, false), 'runtime')
+  // and so does the opt-in Harper grammar checker
+  strictEqual(shellRole('/slothfulchat-web/harper/harper_wasm_bg.wasm', SCOPE, MANIFEST, false), 'runtime')
+})
+
+test('opt-in assets with a known hash are served cache-first', () => {
+  const lazy = { 'harper/harper_wasm_bg.wasm': 'abc' }
+  strictEqual(shellRole('/slothfulchat-web/harper/harper_wasm_bg.wasm', SCOPE, MANIFEST, false, lazy), 'lazy')
+  // unhashed files under the same prefix stay plain runtime-cached
+  strictEqual(shellRole('/slothfulchat-web/harper/other.js', SCOPE, MANIFEST, false, lazy), 'runtime')
 })
 
 test('an in-scope navigation may fall back to the shell, without being cached', () => {

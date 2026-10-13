@@ -10,17 +10,18 @@ Content-Transfer-Encoding: 8bit
 The desktop targets ship with Chromium spellcheck off (Electron has no
 local hunspell dictionary, see target-electron windows/main.ts), and a
 browser grammar add-on can't reach into an Electron/Tauri window. So the
-composer gets its own LanguageTool integration, like the LibreOffice
-extension or the Obsidian community plugin, built on plain fetch so it
-works the same on browser, Electron and Tauri.
+composer gets its own grammar checker: Harper (writewithharper.com,
+English only, wasm on this device) or LanguageTool, like the LibreOffice
+extension or the Obsidian community plugin, over plain fetch, which works
+the same on browser, Electron and Tauri.
 
-Settings -> Experimental -> Composer: a "LanguageTool spelling & grammar"
-switch (off by default -- the draft leaves the device, outside the E2E
-encryption) and a "LanguageTool server" row, shown while off too so a
-self-hosted server can be set up before anything is sent. Its dialog picks
-languagetool.org (free; or Premium with username + API key -- both or
+Settings -> Experimental -> Composer: a "Grammar & spelling checker"
+switch (off by default) and a "Checker" row, shown while off too so the
+checker can be picked before anything is sent. Its dialog picks Harper
+(the default: nothing leaves the device), LanguageTool cloud
+(languagetool.org, free; or Premium with username + API key -- both or
 neither, since one alone would quietly fall back to the free API -- which
-switches to api.languagetoolplus.com) or an own server URL
+switches to api.languagetoolplus.com) or LanguageTool self-hosted
 (http://host:8081, /v2 and /v2/check suffixes accepted). The server must
 sit at the root of its host: the CSPs only allow the /v2/check path, so a
 reverse-proxy sub-path (or a query/hash) is rejected in the dialog instead
@@ -30,11 +31,27 @@ error otherwise (CORS / --allow-origin being the usual one); only the
 latest check may report, so a slow earlier one can't overwrite it. With
 no server saved, the address starts out as http://localhost:8081,
 languagetool-server's default port, so one on this computer needs no
-typing.
+typing. Picking Harper keeps the LanguageTool settings for switching back.
 
-Composer: 1s after typing stops the draft is POSTed form-encoded to
-/v2/check with language=auto (a CORS simple request, so a self-hosted
-server needs no OPTIONS handling); the previous request is aborted on the
+Harper is loaded only once the check is on with Harper picked: harper.js
+is imported at runtime from harper/ next to the app (the web-app serves it
+there, like videojs-locales/; it is not bundled), and its ~15 MB wasm only
+then. Its WorkerLinter lints in a worker, so typing never waits on it, and
+the one linter is shared by every field; a failed load (offline, say) is
+retried by a later check, under the same backoff as a dead LanguageTool
+server, which tracks Harper apart from LanguageTool cloud (both have no
+server, username or key). Its lints become the same matches as LanguageTool's (its spans
+are UTF-16 offsets already): Spelling/Typo red, style-like kinds blue, the
+rest amber; "insert after" suggestions become the flagged text plus the
+insertion, so the card's replace path stays one. The dialog has no
+"Check connection" for Harper (that would load it while it is off); the
+Connectivity view's test check covers it once it is on. Outside the
+web-app (Electron, Tauri) harper/ isn't served, so picking Harper there
+shows the failed-check icon.
+
+Composer: 1s after typing stops the draft is checked; for LanguageTool
+it is POSTed form-encoded to /v2/check with language=auto (a CORS simple
+request, so a self-hosted server needs no OPTIONS handling); the previous request is aborted on the
 next edit. Issues are underlined (red: misspelling, blue: style, amber:
 everything else, as in LanguageTool's own UI) in a transparent,
 click-through copy of the text laid over the textarea -- a textarea can't
@@ -66,7 +83,7 @@ below the box (height and bottom padding alike, so the scroll range is
 unchanged) for the last line's wavy underline, which overshoots a tight
 line-height: normal line box.
 
-While LanguageTool is on, the field opts out of the browser's spellcheck
+While the checker is on, the field opts out of the browser's spellcheck
 (spellcheck=false) and of the LanguageTool browser add-on
 (data-lt-active=false), so there is one set of squiggles. While it is off
 nothing changes: the composer keeps spellcheck=true, the other fields keep
@@ -81,7 +98,7 @@ label naming the error; clicking it opens the server dialog. It goes away
 with the next check that works. Being in the field, it shows inside the
 bio and group dialogs too, where an app toast would sit behind the modal.
 The Connectivity view
-gets a LanguageTool line while the check is on, under the browser
+gets a grammar-checker line while the check is on, under the browser
 edition's bridge line: the server, a "Change…" button opening the server
 dialog (as the bridge line's opens its own), and a live test check's
 result ("working" or "not working: <error>"), which turns back to
@@ -111,23 +128,23 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../frontend/src/components/Login-Styles.tsx  |  20 +-
  .../components/Settings/EmojiSetSelector.tsx  |  11 +-
  .../Settings/ExperimentalFeatures.tsx         |  22 +
- .../Settings/LanguageToolDialog.tsx           | 160 +++++++
+ .../Settings/LanguageToolDialog.tsx           | 191 +++++++++
  .../components/Settings/SettingsSelector.tsx  |  10 +-
  .../components/Settings/SettingsSwitch.tsx    |  25 +-
  .../src/components/composer/Composer.tsx      |   5 +
  .../composer/ComposerMessageInput.tsx         |  19 +-
- .../src/components/composer/LanguageTool.tsx  | 403 ++++++++++++++++++
- .../components/composer/languageToolCheck.ts  | 192 +++++++++
+ .../src/components/composer/LanguageTool.tsx  | 404 ++++++++++++++++++
+ .../components/composer/languageToolCheck.ts  | 313 ++++++++++++++
  .../components/dialogs/ConnectivityDialog.tsx |  56 +++
  .../components/dialogs/CreateChat/index.tsx   |   1 +
  .../dialogs/EditProfileDialog/index.tsx       |   1 +
  .../components/dialogs/ViewGroup/index.tsx    |   1 +
- .../frontend/src/tests/languageTool.test.ts   | 136 ++++++
+ .../frontend/src/tests/languageTool.test.ts   | 184 ++++++++
  packages/frontend/static/main.html            |   5 +-
- packages/shared/shared-types.d.ts             |   7 +
- packages/shared/state.ts                      |   4 +
+ packages/shared/shared-types.d.ts             |   9 +
+ packages/shared/state.ts                      |   5 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 21 files changed, 1221 insertions(+), 25 deletions(-)
+ 21 files changed, 1425 insertions(+), 25 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
@@ -317,7 +334,7 @@ index 99294f1a2d241d0a44587307984a445148ae2f66..14f5141368e95609f1f19de894af5738
  // Contact
  @use 'contact/_contact-list';
 diff --git a/packages/frontend/src/components/Login-Styles.tsx b/packages/frontend/src/components/Login-Styles.tsx
-index 2103c668a83b3d77c0f073fc40d2af952996b848..2bdab54c834fde4415eb2d43bd59cb49ccb3d374 100644
+index 2103c668a83b3d77c0f073fc40d2af952996b848..aa7571bb427ab6340afd825347e3fd323e973acb 100644
 --- a/packages/frontend/src/components/Login-Styles.tsx
 +++ b/packages/frontend/src/components/Login-Styles.tsx
 @@ -1,4 +1,8 @@
@@ -334,7 +351,7 @@ index 2103c668a83b3d77c0f073fc40d2af952996b848..2bdab54c834fde4415eb2d43bd59cb49
        value: any
        placeholder?: string
        disabled?: boolean
-+      /** prose field: check it with LanguageTool while that setting is on
++      /** prose field: check it with the grammar checker while that is on
 +       * (never for addresses/URLs, which must not leave the device) */
 +      languageTool?: boolean
        onChange: (
@@ -355,7 +372,7 @@ index 2103c668a83b3d77c0f073fc40d2af952996b848..2bdab54c834fde4415eb2d43bd59cb49
            rows={5}
            className={(props.value?.length ?? 0) === 0 ? 'isEmpty' : undefined}
 +          ref={textareaRef}
-+          // as in the composer: LanguageTool on = browser spellcheck and the
++          // as in the composer: checker on = browser spellcheck and the
 +          // LanguageTool browser add-on step aside; off = untouched
 +          spellCheck={lt ? false : undefined}
 +          data-lt-active={lt ? 'false' : undefined}
@@ -396,7 +413,7 @@ index 0d7da17eae0be4d2522429206e89050fdda47302..4083945fe1ee6813d7513712c79ee1d1
        <div
          role='radiogroup'
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 6573050374cfe174e923d97cde3f2ddb341f4677..86b1ca0535c636438baa1436cd00e8abbab1a512 100644
+index 6573050374cfe174e923d97cde3f2ddb341f4677..bec970fc0551645a5acee1d974f56ff933d41d8f 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -26,6 +26,9 @@ import { getLogger } from '@deltachat-desktop/shared/logger'
@@ -414,13 +431,13 @@ index 6573050374cfe174e923d97cde3f2ddb341f4677..86b1ca0535c636438baa1436cd00e8ab
          forkAdded
        />
 +      <DesktopSettingsSwitch
-+        settingsKey='languageTool'
-+        label='LanguageTool spelling & grammar'
-+        description='Underline spelling, grammar and style issues as you type, and suggest fixes. Your draft is sent to the server below, outside the end-to-end encryption; run your own server to keep it on your machine. Off by default.'
++        settingsKey='grammarCheck'
++        label='Grammar & spelling checker'
++        description='Underline spelling, grammar and style issues as you type, and suggest fixes. Harper checks English on this device; LanguageTool knows more languages but sends your draft to its server, outside the end-to-end encryption. Off by default.'
 +        forkAdded
 +      />
-+      {/* shown while off too, so a self-hosted server can be set up before
-+          the first draft goes anywhere */}
++      {/* shown while off too, so the checker can be picked before the first
++          draft goes anywhere */}
 +      <SettingsSelector
 +        onClick={() => openDialog(LanguageToolDialog)}
 +        currentValue={
@@ -430,17 +447,17 @@ index 6573050374cfe174e923d97cde3f2ddb341f4677..86b1ca0535c636438baa1436cd00e8ab
 +        }
 +        forkAdded
 +      >
-+        LanguageTool server
++        Checker
 +      </SettingsSelector>
        <DesktopSettingsSwitch
          settingsKey='voiceRecordingOriginalAudio'
          label='Record without noise filtering'
 diff --git a/packages/frontend/src/components/Settings/LanguageToolDialog.tsx b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..0bdabd5716bdba78c98183724633ef3a5b719c1a
+index 0000000000000000000000000000000000000000..1a212c4cb8f0698a2b71cfcfba929c8c2f639687
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,191 @@
 +import React, { useRef, useState } from 'react'
 +
 +import SettingsStoreInstance, { useSettingsStore } from '../../stores/settings'
@@ -464,8 +481,11 @@ index 0000000000000000000000000000000000000000..0bdabd5716bdba78c98183724633ef3a
 +import type { DialogProps } from '../../contexts/DialogContext'
 +import type { DesktopSettingsType } from '@deltachat-desktop/shared/shared-types'
 +
-+/** One line for the settings row: which server the drafts go to. */
++/** One line for the settings row: which checker, and where drafts go. */
 +export function languageToolServerLabel(s: DesktopSettingsType): string {
++  if (s.grammarCheckEngine !== 'languagetool') {
++    return 'Harper (on this device)'
++  }
 +  if (s.languageToolServer) {
 +    return s.languageToolServer
 +  }
@@ -474,13 +494,18 @@ index 0000000000000000000000000000000000000000..0bdabd5716bdba78c98183724633ef3a
 +    : 'languagetool.org'
 +}
 +
-+/** Pick languagetool.org (optionally with a Premium account) or a
-+ * self-hosted server, like the Obsidian LanguageTool plugin. */
++/** Pick the checker: Harper on this device, or LanguageTool on
++ * languagetool.org (optionally with a Premium account) or a self-hosted
++ * server, like the Obsidian LanguageTool plugin. */
 +export default function LanguageToolDialog({ onClose }: DialogProps) {
 +  const tx = useTranslationFunction()
 +  const settings = useSettingsStore()[0]?.desktopSettings
 +  const [mode, setMode] = useState(
-+    settings?.languageToolServer ? 'server' : 'account'
++    settings?.grammarCheckEngine !== 'languagetool'
++      ? 'harper'
++      : settings.languageToolServer
++        ? 'server'
++        : 'account'
 +  )
 +  // languagetool-server's default port, so one on this computer needs no typing
 +  const [server, setServer] = useState(
@@ -493,20 +518,29 @@ index 0000000000000000000000000000000000000000..0bdabd5716bdba78c98183724633ef3a
 +  const checkRun = useRef(0)
 +
 +  const config: LtConfig =
-+    mode === 'server'
-+      ? { server: server.trim() }
-+      : { username: username.trim(), apiKey: apiKey.trim() }
++    mode === 'harper'
++      ? { harper: true }
++      : mode === 'server'
++        ? { server: server.trim() }
++        : { username: username.trim(), apiKey: apiKey.trim() }
 +  // Premium needs both; one alone would quietly fall back to the free API
 +  const valid =
-+    mode === 'server'
++    mode === 'harper' ||
++    (mode === 'server'
 +      ? isLtServerUrl(server.trim())
-+      : !username.trim() === !apiKey.trim()
++      : !username.trim() === !apiKey.trim())
 +
 +  const save = async () => {
 +    const set = SettingsStoreInstance.effect.setDesktopSetting
-+    await set('languageToolServer', config.server || undefined)
-+    await set('languageToolUsername', username.trim() || undefined)
-+    await set('languageToolApiKey', apiKey.trim() || undefined)
++    // Harper: keep the LanguageTool settings for switching back
++    if (!config.harper) {
++      await set('languageToolServer', config.server || undefined)
++      await set('languageToolUsername', username.trim() || undefined)
++      await set('languageToolApiKey', apiKey.trim() || undefined)
++    }
++    // last: a live check (the Connectivity view) must not catch the engine
++    // switched but the server not yet saved, and test languagetool.org
++    await set('grammarCheckEngine', config.harper ? 'harper' : 'languagetool')
 +    onClose()
 +  }
 +
@@ -527,7 +561,7 @@ index 0000000000000000000000000000000000000000..0bdabd5716bdba78c98183724633ef3a
 +
 +  return (
 +    <Dialog onClose={onClose}>
-+      <DialogHeader title='LanguageTool' onClose={onClose} />
++      <DialogHeader title='Grammar & spelling checker' onClose={onClose} />
 +      <DialogBody>
 +        <DialogContent>
 +          <RadioGroup
@@ -540,18 +574,29 @@ index 0000000000000000000000000000000000000000..0bdabd5716bdba78c98183724633ef3a
 +            }}
 +          >
 +            <Radio
++              value='harper'
++              label='Harper'
++              subtitle='English only, runs on this device'
++            />
++            <Radio
 +              value='account'
-+              label='languagetool.org'
-+              subtitle='Free, or with your Premium account'
++              label='LanguageTool cloud'
++              subtitle='languagetool.org, free or with your Premium account'
 +            />
 +            <Radio
 +              value='server'
-+              label='Own server'
++              label='LanguageTool self-hosted'
 +              subtitle='A LanguageTool server you run yourself'
 +            />
 +          </RadioGroup>
 +          <br />
-+          {mode === 'account' ? (
++          {mode === 'harper' ? (
++            <p>
++              Your drafts never leave this device. Harper{' '}
++              <strong>checks English only</strong>. It comes from this app's own
++              server, downloaded once (about 15 MB) when the check first runs.
++            </p>
++          ) : mode === 'account' ? (
 +            <>
 +              <DeltaInput
 +                label='Username (email), optional'
@@ -586,9 +631,12 @@ index 0000000000000000000000000000000000000000..0bdabd5716bdba78c98183724633ef3a
 +              </p>
 +            </>
 +          )}
-+          <Button onClick={check} disabled={!valid}>
-+            Check connection
-+          </Button>
++          {/* not for Harper: it only loads once the check is on */}
++          {mode !== 'harper' && (
++            <Button onClick={check} disabled={!valid}>
++              Check connection
++            </Button>
++          )}
 +          {status && <p role='status'>{status}</p>}
 +        </DialogContent>
 +      </DialogBody>
@@ -718,7 +766,7 @@ index 58d59822b279829edd0634729a7eacedd985c800..c747e1a9a6446bec14577ffc6ea0d7e7
                  sendMessageOrEditRequest={
                    messageEditing.doSendEditRequest ?? (() => {})
 diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
-index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..7a0cc38bc866a8634afd845ab2169bf4ee058b4d 100644
+index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..e2d1d889c4589ea2bc7292ebdb239177ad5a2d06 100644
 --- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 +++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 @@ -11,6 +11,8 @@ import {
@@ -734,7 +782,7 @@ index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..7a0cc38bc866a8634afd845ab2169bf4
    completionMenu?: boolean
    /** `/commands` parsed from the DM contact's bio, for the `/` completion menu. */
    botCommands?: BotCommand[]
-+  /** LanguageTool spelling/grammar check; null/undefined = off. */
++  /** spelling/grammar check (Harper or LanguageTool); null/undefined = off. */
 +  languageTool?: LtConfig | null
    onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
    // used to show/hide send button
@@ -744,9 +792,9 @@ index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..7a0cc38bc866a8634afd845ab2169bf4
                    : 'auto' /* auto is based on content but defaults to ltr */
                }
 -              spellCheck={true}
-+              // While LanguageTool is on it checks spelling itself: keep the
-+              // browser's spellcheck and the LanguageTool browser add-on out
-+              // (two sets of squiggles). Off: both work as before.
++              // While the grammar checker is on it checks spelling itself:
++              // keep the browser's spellcheck and the LanguageTool browser
++              // add-on out (two sets of squiggles). Off: both work as before.
 +              spellCheck={!this.props.languageTool}
 +              data-lt-active={this.props.languageTool ? 'false' : undefined}
                aria-keyshortcuts='Control+M'
@@ -765,10 +813,10 @@ index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..7a0cc38bc866a8634afd845ab2169bf4
        </I18nContext.Consumer>
 diff --git a/packages/frontend/src/components/composer/LanguageTool.tsx b/packages/frontend/src/components/composer/LanguageTool.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..886d1b19f6b7a70e487c291d3ade968fa66ec0af
+index 0000000000000000000000000000000000000000..1362943e707c32b3e2ecc1f61923ca48d5ea4f24
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/LanguageTool.tsx
-@@ -0,0 +1,403 @@
+@@ -0,0 +1,404 @@
 +import React, {
 +  useCallback,
 +  useEffect,
@@ -895,13 +943,14 @@ index 0000000000000000000000000000000000000000..886d1b19f6b7a70e487c291d3ade968f
 +}
 +
 +/**
-+ * LanguageTool underlines for the composer textarea, plus a suggestion card
-+ * while the caret sits in a flagged span. The underlines live in a
-+ * transparent, click-through copy of the text laid exactly over the textarea
-+ * (a textarea can't style parts of its own text, and the CSS Highlight API
-+ * can't reach inside one).
++ * Grammar checker (Harper or LanguageTool) underlines for the composer
++ * textarea, plus a suggestion card while the caret sits in a flagged span.
++ * The underlines live in a transparent, click-through copy of the text laid
++ * exactly over the textarea (a textarea can't style parts of its own text,
++ * and the CSS Highlight API can't reach inside one).
 + */
 +export function LanguageTool({
++  harper,
 +  server,
 +  username,
 +  apiKey,
@@ -937,14 +986,14 @@ index 0000000000000000000000000000000000000000..886d1b19f6b7a70e487c291d3ade968f
 +    const abort = new AbortController()
 +    abortRef.current = abort
 +    return () => abort.abort()
-+  }, [server, username, apiKey])
++  }, [harper, server, username, apiKey])
 +
 +  useEffect(() => {
-+    const attempt = JSON.stringify([text, server, username, apiKey])
++    const attempt = JSON.stringify([text, harper, server, username, apiKey])
 +    if (!text.trim() || pending || attempt === attempted.current) {
 +      return
 +    }
-+    const cfg = { server, username, apiKey }
++    const cfg = { harper, server, username, apiKey }
 +    const abort = abortRef.current!
 +    // while the server fails, wait out its backoff instead of asking again
 +    // after every pause in typing
@@ -969,7 +1018,7 @@ index 0000000000000000000000000000000000000000..886d1b19f6b7a70e487c291d3ade968f
 +        .finally(() => setPending(false))
 +    }, delay)
 +    return () => clearTimeout(timer)
-+  }, [text, server, username, apiKey, pending])
++  }, [text, harper, server, username, apiKey, pending])
 +
 +  // The card follows deliberate caret moves (click/tap, arrow keys) and closes
 +  // on typing, so it never pops up mid-sentence.
@@ -1093,8 +1142,8 @@ index 0000000000000000000000000000000000000000..886d1b19f6b7a70e487c291d3ade968f
 +          type='button'
 +          ref={failedRef}
 +          className='language-tool-failed'
-+          aria-label={`LanguageTool couldn't check this text: ${failed}`}
-+          title={`LanguageTool couldn't check this text: ${failed}. Click to check the server.`}
++          aria-label={`The grammar checker couldn't check this text: ${failed}`}
++          title={`The grammar checker couldn't check this text: ${failed}. Click to check its settings.`}
 +          // mousedown (not click) keeps the textarea focused
 +          onMouseDown={e => e.preventDefault()}
 +          onClick={() => openDialog(LanguageToolDialog)}
@@ -1112,7 +1161,7 @@ index 0000000000000000000000000000000000000000..886d1b19f6b7a70e487c291d3ade968f
 +        <div
 +          className={`language-tool-card ${kind(active)}`}
 +          role='group'
-+          aria-label='LanguageTool suggestion'
++          aria-label='Grammar checker suggestion'
 +          ref={cardRef}
 +          // mousedown (not click) keeps the textarea focused, as in CompletionMenu
 +          onMouseDown={e => e.preventDefault()}
@@ -1174,18 +1223,21 @@ index 0000000000000000000000000000000000000000..886d1b19f6b7a70e487c291d3ade968f
 +}
 diff --git a/packages/frontend/src/components/composer/languageToolCheck.ts b/packages/frontend/src/components/composer/languageToolCheck.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..dcfcaf580dc24ac65a433384ad12d5ec35641cfe
+index 0000000000000000000000000000000000000000..cbb4a0c56549f097f301260c9982f788dfaa528c
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/languageToolCheck.ts
-@@ -0,0 +1,192 @@
-+// LanguageTool (https://languagetool.org) spelling/grammar check for the
-+// composer: the HTTP API call and remapping results onto edited text. Plain
+@@ -0,0 +1,313 @@
++// Spelling/grammar check for the composer: Harper (https://writewithharper.com,
++// English only, wasm on this device) or LanguageTool (https://languagetool.org,
++// HTTP API), and remapping results onto edited text. LanguageTool is plain
 +// fetch, so it works the same on browser, Electron and Tauri — the desktop
 +// targets ship with Chromium spellcheck off (no local hunspell dictionary).
 +
 +import type { DesktopSettingsType } from '@deltachat-desktop/shared/shared-types'
 +
 +export type LtConfig = {
++  /** check with Harper on this device instead of a LanguageTool server */
++  harper?: boolean
 +  /** self-hosted server base URL; unset = languagetool.org */
 +  server?: string
 +  /** languagetool.org Premium: account email + API key; unset = free API */
@@ -1208,13 +1260,18 @@ index 0000000000000000000000000000000000000000..dcfcaf580dc24ac65a433384ad12d5ec
 +
 +/** The check config from the desktop settings, or null while it is off. */
 +export function languageToolConfig(s: DesktopSettingsType): LtConfig | null {
-+  return s.languageTool
-+    ? {
++  if (!s.grammarCheck) {
++    return null
++  }
++  // unset counts as Harper: the default, and the web-app's own settings
++  // defaults (runtime.ts) don't carry it
++  return s.grammarCheckEngine !== 'languagetool'
++    ? { harper: true }
++    : {
 +        server: s.languageToolServer,
 +        username: s.languageToolUsername,
 +        apiKey: s.languageToolApiKey,
 +      }
-+    : null
 +}
 +
 +/** A self-hosted server address the app can reach: http(s), at the root of
@@ -1257,7 +1314,12 @@ index 0000000000000000000000000000000000000000..dcfcaf580dc24ac65a433384ad12d5ec
 +let backoff = { key: '', wait: 0, until: 0 }
 +// unset and '' alike: the dialog passes '', the saved settings undefined
 +const configKey = (cfg: LtConfig) =>
-+  JSON.stringify([cfg.server || '', cfg.username || '', cfg.apiKey || ''])
++  JSON.stringify([
++    !!cfg.harper,
++    cfg.server || '',
++    cfg.username || '',
++    cfg.apiKey || '',
++  ])
 +
 +/** How long a check for `cfg` should wait because the last one failed. */
 +export function ltRetryIn(cfg: LtConfig, now = Date.now()): number {
@@ -1279,6 +1341,21 @@ index 0000000000000000000000000000000000000000..dcfcaf580dc24ac65a433384ad12d5ec
 +  text: string,
 +  signal?: AbortSignal
 +): Promise<LtMatch[]> {
++  if (cfg.harper) {
++    try {
++      const linter = await harperLinter()
++      const lints = await linter.lint(text, { language: 'plaintext' })
++      // the worker can't be aborted; drop a result nobody waits for anymore
++      signal?.throwIfAborted()
++      noteResult(cfg, true)
++      return lints.map(harperMatch)
++    } catch (err) {
++      // a failed load (offline, say) backs off like a dead server, instead of
++      // asking for the ~15 MB again after every pause in typing
++      if (!signal?.aborted) noteResult(cfg, false)
++      throw err
++    }
++  }
 +  const body = new URLSearchParams({ text, language: 'auto' })
 +  if (!cfg.server && cfg.username && cfg.apiKey) {
 +    body.set('username', cfg.username)
@@ -1370,8 +1447,101 @@ index 0000000000000000000000000000000000000000..dcfcaf580dc24ac65a433384ad12d5ec
 +  }
 +  return kept
 +}
++
++// Minimal shape of the harper.js API used here (it's imported at runtime, so
++// its own typings aren't available).
++type HarperLint = {
++  span(): { start: number; end: number }
++  message(): string
++  lint_kind(): string
++  lint_kind_pretty(): string
++  get_problem_text(): string
++  suggestions(): { kind(): number; get_replacement_text(): string }[]
++}
++type HarperLinter = {
++  setup(): Promise<void>
++  lint(text: string, options: { language: 'plaintext' }): Promise<HarperLint[]>
++}
++
++let harper: Promise<HarperLinter> | undefined
++
++/** The shared Harper linter, loaded on first use only: harper.js plus its
++ * ~15 MB wasm are fetched only once the check is on with Harper selected. The
++ * web-app serves harper.js in harper/ (like videojs-locales/); it lints in a
++ * worker, so the composer never waits on it. */
++function harperLinter(): Promise<HarperLinter> {
++  harper ??= (async () => {
++    // full URL: relative to the app (subpath deployments), not to bundle.js
++    const url = (file: string) =>
++      new URL(`harper/${file}`, document.baseURI).href
++    const { WorkerLinter, createBinaryModuleFromUrl } = await import(
++      /* runtime, not bundled */ url('index.js')
++    )
++    // The wasm is fetched here rather than by the worker: a worker whose wasm
++    // fails to load (offline, a 404) never answers, so every lint would hang
++    // instead of failing. The worker then reads it from a blob: URL.
++    const res = await fetch(url('harper_wasm_bg.wasm'))
++    if (!res.ok) {
++      throw new Error(`Harper download failed: HTTP ${res.status}`)
++    }
++    const wasm = URL.createObjectURL(await res.blob())
++    try {
++      const linter: HarperLinter = new WorkerLinter({
++        binary: createBinaryModuleFromUrl(wasm, 'full'),
++      })
++      await linter.setup()
++      return linter
++    } finally {
++      URL.revokeObjectURL(wasm)
++    }
++  })()
++  // a failed load (offline, say) is retried by a later check
++  harper.catch(() => (harper = undefined))
++  return harper
++}
++
++const harperStyle = new Set([
++  'Enhancement',
++  'Readability',
++  'Redundancy',
++  'Repetition',
++  'Style',
++  'WordChoice',
++])
++
++/** A Harper lint as a match, coloured like LanguageTool's issue types. Its
++ * span is in UTF-16 units already, like a JS string's. */
++export function harperMatch(l: HarperLint): LtMatch {
++  const { start, end } = l.span()
++  const kind = l.lint_kind()
++  const problem = l.get_problem_text()
++  return {
++    offset: start,
++    length: end - start,
++    message: l.message(),
++    // SuggestionKind: 0 replace, 1 remove, 2 insert after the flagged text
++    replacements: l
++      .suggestions()
++      .slice(0, 5)
++      .map(r =>
++        r.kind() === 1
++          ? ''
++          : r.kind() === 2
++            ? problem + r.get_replacement_text()
++            : r.get_replacement_text()
++      ),
++    issueType:
++      kind === 'Spelling' || kind === 'Typo'
++        ? 'misspelling'
++        : harperStyle.has(kind)
++          ? 'style'
++          : 'grammar',
++    category: l.lint_kind_pretty(),
++    key: `harper:${kind}:${problem}`,
++  }
++}
 diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
-index d9c3b182aaeea3ee944f2369bbc20028a83cd294..f770910f3e6c20c63e3540fce0383854bba3dc79 100644
+index d9c3b182aaeea3ee944f2369bbc20028a83cd294..e0320d808faca2054f2700a616dd202a7bdbf161 100644
 --- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 +++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 @@ -5,6 +5,12 @@ import { BackendRemote, onDCEvent } from '../../backend-com'
@@ -1399,18 +1569,18 @@ index d9c3b182aaeea3ee944f2369bbc20028a83cd294..f770910f3e6c20c63e3540fce0383854
    )
  }
  
-+/** slothfulchat: while LanguageTool is on, whether its server answers a test
-+ * check, so fields that stay un-underlined have an explanation here, and a
-+ * way to the server dialog. */
++/** slothfulchat: while the grammar checker is on, whether it (Harper, or the
++ * LanguageTool server) answers a test check, so fields that stay
++ * un-underlined have an explanation here, and a way to the checker dialog. */
 +function LanguageToolInfo() {
 +  const { openDialog } = useDialog()
 +  const settings = useSettingsStore()[0]?.desktopSettings
 +  const config = settings && languageToolConfig(settings)
 +  const on = !!config
-+  const { server, username, apiKey } = config || {}
++  const { harper, server, username, apiKey } = config || {}
 +  // the result of the check for one config: true when it works, else the
 +  // error; a result for an older config (changed via "Change…") is stale
-+  const key = JSON.stringify([server, username, apiKey])
++  const key = JSON.stringify([harper, server, username, apiKey])
 +  const [checked, setChecked] = useState<{ key: string; ok: true | string }>()
 +  const status = checked?.key === key ? checked.ok : null
 +
@@ -1418,7 +1588,7 @@ index d9c3b182aaeea3ee944f2369bbc20028a83cd294..f770910f3e6c20c63e3540fce0383854
 +    if (!on) return
 +    const abort = new AbortController()
 +    ltCheck(
-+      { server, username, apiKey },
++      { harper, server, username, apiKey },
 +      'This are a test.',
 +      abort.signal
 +    ).then(
@@ -1427,12 +1597,12 @@ index d9c3b182aaeea3ee944f2369bbc20028a83cd294..f770910f3e6c20c63e3540fce0383854
 +        abort.signal.aborted || setChecked({ key, ok: err.message })
 +    )
 +    return () => abort.abort()
-+  }, [on, key, server, username, apiKey])
++  }, [on, key, harper, server, username, apiKey])
 +
 +  if (!settings || !config) return null
 +  return (
 +    <div style={{ marginTop: '8px', fontSize: '13px' }}>
-+      LanguageTool: <code>{languageToolServerLabel(settings)}</code>{' '}
++      Grammar checker: <code>{languageToolServerLabel(settings)}</code>{' '}
 +      {/* before the status, which can be a long error */}
 +      <button type='button' onClick={() => openDialog(LanguageToolDialog)}>
 +        Change…
@@ -1489,14 +1659,15 @@ index 6a7ad0dbfee72213041c44151dd7a210eeefbbf3..bb45855f8b6c471a47526379e379ead7
                  event: React.FormEvent<HTMLElement> &
 diff --git a/packages/frontend/src/tests/languageTool.test.ts b/packages/frontend/src/tests/languageTool.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..ad3c8397520010a5090e4731d883f9392ddcf483
+index 0000000000000000000000000000000000000000..e95a04b150a21348b2f762fbb749c1b4518fef36
 --- /dev/null
 +++ b/packages/frontend/src/tests/languageTool.test.ts
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,184 @@
 +import { expect } from 'chai'
 +import { after, describe, it } from 'mocha'
 +
 +import {
++  harperMatch,
 +  isLtServerUrl,
 +  ltCheck,
 +  ltCheckUrl,
@@ -1619,6 +1790,14 @@ index 0000000000000000000000000000000000000000..ad3c8397520010a5090e4731d883f939
 +    expect(ltRetryIn(cfg)).to.equal(0)
 +  })
 +
++  it('keeps Harper apart from LanguageTool cloud', async () => {
++    // both have no server, username or key
++    globalThis.fetch = () => Promise.reject(new TypeError('Failed to fetch'))
++    await ltCheck({}, 'x').catch(() => {})
++    expect(ltRetryIn({})).to.be.above(0)
++    expect(ltRetryIn({ harper: true })).to.equal(0)
++  })
++
 +  it("doesn't count a check the caller aborted", async () => {
 +    const abort = new AbortController()
 +    globalThis.fetch = () => {
@@ -1627,6 +1806,45 @@ index 0000000000000000000000000000000000000000..ad3c8397520010a5090e4731d883f939
 +    }
 +    await ltCheck(cfg, 'x', abort.signal).catch(() => {})
 +    expect(ltRetryIn(cfg)).to.equal(0)
++  })
++})
++
++describe('harperMatch', () => {
++  // a harper.js Lint, as far as harperMatch reads it
++  const lint = (kind: string, suggestions: [number, string][]) => ({
++    span: () => ({ start: 4, end: 7 }),
++    message: () => 'msg',
++    lint_kind: () => kind,
++    lint_kind_pretty: () => `${kind}!`,
++    get_problem_text: () => 'teh',
++    suggestions: () =>
++      suggestions.map(([k, t]) => ({
++        kind: () => k,
++        get_replacement_text: () => t,
++      })),
++  })
++
++  it('maps span, kind and the three suggestion kinds', () => {
++    expect(
++      harperMatch(
++        lint('Spelling', [
++          [0, 'the'],
++          [1, ''],
++          [2, ','],
++        ])
++      )
++    ).to.eql({
++      offset: 4,
++      length: 3,
++      message: 'msg',
++      // replace, remove, insert after the flagged text
++      replacements: ['the', '', 'teh,'],
++      issueType: 'misspelling',
++      category: 'Spelling!',
++      key: 'harper:Spelling:teh',
++    })
++    expect(harperMatch(lint('WordChoice', [])).issueType).to.equal('style')
++    expect(harperMatch(lint('Agreement', [])).issueType).to.equal('grammar')
 +  })
 +})
 diff --git a/packages/frontend/static/main.html b/packages/frontend/static/main.html
@@ -1653,15 +1871,17 @@ index b3b3a9f095b8b58b9405702e8fee122bf1490483..ee6a895360aaf45794f38a01ecf39f26
      <link rel="stylesheet" href="./fonts/fonts.css" />
      <link rel="stylesheet" href="./main.css" />
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index f16da9295efcbdc6d909e6235fc583f86947a066..0d6beb697d3ec143741918fef0cd79bcfbe341f7 100644
+index f16da9295efcbdc6d909e6235fc583f86947a066..c0a0aefdf2b2ea7f1989e7c54dcd9171026c43c0 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
-@@ -47,6 +47,13 @@ export interface DesktopSettingsType {
+@@ -47,6 +47,15 @@ export interface DesktopSettingsType {
    experimentalCompletionMenu: boolean
    /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
    experimentalUnreadReadTime: boolean
-+  /** webapp: LanguageTool spelling/grammar check in the composer. Off by default: it sends the draft to the server below. */
-+  languageTool: boolean
++  /** webapp: spelling/grammar check in the composer. Off by default. */
++  grammarCheck: boolean
++  /** webapp: which checker: Harper (English only, runs on this device) or LanguageTool (sends the draft to the server below) */
++  grammarCheckEngine: 'harper' | 'languagetool'
 +  /** webapp: self-hosted LanguageTool server URL, e.g. http://localhost:8081. undefined = languagetool.org */
 +  languageToolServer: string | undefined
 +  /** webapp: languagetool.org Premium account email + API key. undefined = the free API */
@@ -1671,14 +1891,15 @@ index f16da9295efcbdc6d909e6235fc583f86947a066..0d6beb697d3ec143741918fef0cd79bc
    voiceMessageMediaSessionDetails: boolean
    /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Switched in Settings -> Experimental -> Composer, applies to the next recording. */
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index fa8889f2f2fc98e0bc4ef3ebb5b5741b1132f5c0..7025258e9a39795143d51e2b91d18f743625c9b3 100644
+index fa8889f2f2fc98e0bc4ef3ebb5b5741b1132f5c0..840cbdf0ef641d5072c5a0a611da071c3bb2a90c 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
-@@ -18,6 +18,10 @@ export function getDefaultState(): DesktopSettingsType {
+@@ -18,6 +18,11 @@ export function getDefaultState(): DesktopSettingsType {
      stripTrackingLinks: true,
      experimentalCompletionMenu: true,
      experimentalUnreadReadTime: false,
-+    languageTool: false,
++    grammarCheck: false,
++    grammarCheckEngine: 'harper',
 +    languageToolServer: undefined,
 +    languageToolUsername: undefined,
 +    languageToolApiKey: undefined,

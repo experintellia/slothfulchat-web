@@ -89,6 +89,16 @@ await cp(videojsLocales, join(dist, 'videojs-locales'), {
   recursive: true,
   filter: f => f === videojsLocales || /^[a-z]{2}(-[A-Z]{2})?\.js$/.test(basename(f)),
 })
+// Harper grammar checker (harper.js), imported at runtime by the frontend's
+// grammar check only once it is on with Harper picked — never part of the
+// bundle, and kept out of the SW precache (instance-config precacheSkip): the
+// wasm is ~15 MB. Just the WorkerLinter module and its full binary; the dist's
+// slim and inlined variants (~55 MB) are never loaded.
+const harper = join(here, 'node_modules/harper.js/dist')
+await cp(harper, join(dist, 'harper'), {
+  recursive: true,
+  filter: f => f === harper || /^((index|BinaryModule-\w+)\.js|harper_wasm_bg\.wasm)$/.test(basename(f)),
+})
 await mkdir(join(dist, 'locales'))
 for (const file of await readdir(locales)) {
   if (file.endsWith('.json')) {

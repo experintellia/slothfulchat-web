@@ -297,7 +297,7 @@ exists:
   icon of a *read* outgoing message shows who has read it (avatar, name and a
   relative timestamp); hovering a single reaction lists just the people who
   reacted with that emoji, while the "+N" overflow pill lists the rest. Both
-  surface the info already in the Message Info / Reactions dialogs without a
+  surface the info already in the Message Info dialog without a
   click, sharing a new `PeopleHoverInfo` component (and an `xSmall` Avatar
   variant). `desktop/1019`
 - **Themeable avatars on all messages** — upstream renders avatars only for
@@ -438,15 +438,21 @@ exists:
   refreshed while it stays open). No menu when the contact lists no commands.
   `desktop/1058`
 
-- **LanguageTool spelling & grammar check** — the composer can check the draft
-  with [LanguageTool](https://languagetool.org), like the LibreOffice
+- **Grammar & spelling checker** — the composer can check the draft with
+  [Harper](https://writewithharper.com) (English only, wasm on this device)
+  or [LanguageTool](https://languagetool.org), like the LibreOffice
   extension or the Obsidian plugin. Needed because the desktop targets run
   with Chromium spellcheck off (no local hunspell dictionary in Electron) and
-  a browser add-on can't reach into an Electron/Tauri window; plain `fetch`
-  works on all three. Settings → Experimental → Composer has the switch (off
-  by default: the draft leaves the device, outside the E2E encryption) and a
-  server dialog: languagetool.org (free, or Premium username + API key) or an
-  own server URL, with a "Check connection" test. Issues are underlined in a
+  a browser add-on can't reach into an Electron/Tauri window; LanguageTool's
+  plain `fetch` works on all three. Settings → Experimental → Composer has
+  the switch (off by default) and a checker dialog: Harper (the default,
+  nothing leaves the device), LanguageTool cloud (free, or Premium username +
+  API key) or a self-hosted LanguageTool URL, with a "Check connection" test.
+  Harper's `harper.js` is not bundled: the web-app serves it in `harper/`
+  (out of the SW precache; cached on first use and kept across updates) and
+  the frontend imports it — and its ~15 MB wasm — only once the check is on
+  with Harper picked; it lints in a worker. Electron/Tauri don't serve `harper/`, so
+  there only LanguageTool works. Issues are underlined in a
   transparent, click-through copy of the text laid over the textarea (a
   textarea can't style parts of its own text), coloured like LanguageTool's
   own UI (red spelling, blue style, amber the rest); clicking or arrowing into
@@ -805,6 +811,11 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   phones a long press anywhere on a message opens the menu, so message
   text can't be selected there (iOS would otherwise take the press for a
   text selection); "Copy Text" copies it. `desktop/1060`
+- **Click a reaction to join it, no separate Reactions dialog** — clicking a
+  reaction pill under a message reacts with that emoji, or takes it back when
+  it's yours (upstream opens a who-reacted dialog). That list now sits at the
+  end of Message Info instead, next to read receipts; the "+N" pill opens it.
+  `desktop/1068`
 - **Branding** — the app calls itself SlothfulChat and uses its own icon in
   the About dialog and welcome screen, with explicit "experimental fork, not
   affiliated with Delta Chat" notices and a source-code link. Only
