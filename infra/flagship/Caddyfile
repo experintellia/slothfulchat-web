@@ -33,6 +33,27 @@
 # to load on this missing import file on a fresh server.
 # import /srv/slothfulchat/next/dist/caddy/routes.caddy next.slothful.chat /srv/slothfulchat/next/dist
 
+# One cert for every pr-<n> host. Caddy serves a name from a wildcard it manages
+# instead of getting it a cert of its own, so a new preview costs one Let's
+# Encrypt cert (its *.webxdc. wildcard, which this one can't cover: a wildcard
+# matches exactly one label) instead of two, out of 50 new certs per registered
+# domain per week. Each preview's own site block still serves its name; this
+# one only answers names no slot claims (a deleted preview) with a 404.
+#
+# It needs a working (wildcard_tls): with that empty, every pr-<n> host loses
+# HTTPS, not just the *.webxdc. names. On a live box, add it once *.webxdc.
+# certs are being issued, and expect existing previews to go without TLS from
+# the reload until the wildcard is issued (Caddy drops their own certs).
+#
+# The domain must be the one deploy-preview.sh puts its hosts under
+# (pr-<n>.preview.slothful.chat, or the PREVIEW_DOMAIN repo variable's). If
+# that is a registered domain itself, other one-label hosts on it (next, say)
+# move onto this wildcard too.
+*.preview.slothful.chat {
+	import wildcard_tls
+	respond 404
+}
+
 # PR previews — one site.caddy per pr-<n>, written server-side by
 # deploy-preview.sh. The glob targets */site.caddy specifically, so a permanent
 # comment-only previews/_keep/site.caddy (created at bring-up, see README.md)
