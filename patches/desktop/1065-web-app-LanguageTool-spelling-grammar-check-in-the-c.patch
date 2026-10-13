@@ -37,8 +37,10 @@ Harper is loaded only once the check is on with Harper picked: harper.js
 is imported at runtime from harper/ next to the app (the web-app serves it
 there, like videojs-locales/; it is not bundled), and its ~15 MB wasm only
 then. Its WorkerLinter lints in a worker, so typing never waits on it, and
-the one linter is shared by every field; a failed load is retried by the
-next check. Its lints become the same matches as LanguageTool's (its spans
+the one linter is shared by every field; a failed load (offline, say) is
+retried by a later check, under the same backoff as a dead LanguageTool
+server, which tracks Harper apart from LanguageTool cloud (both have no
+server, username or key). Its lints become the same matches as LanguageTool's (its spans
 are UTF-16 offsets already): Spelling/Typo red, style-like kinds blue, the
 rest amber; "insert after" suggestions become the flagged text plus the
 insertion, so the card's replace path stays one. The dialog has no
@@ -121,28 +123,28 @@ _composer.scss is untouched.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- .../scss/composer/_language-tool.scss         | 164 ++++++++
+ .../scss/composer/_language-tool.scss         | 164 +++++++
  packages/frontend/scss/manifest.scss          |   1 +
  .../frontend/src/components/Login-Styles.tsx  |  20 +-
  .../components/Settings/EmojiSetSelector.tsx  |  11 +-
  .../Settings/ExperimentalFeatures.tsx         |  22 +
- .../Settings/LanguageToolDialog.tsx           | 189 +++++++++
+ .../Settings/LanguageToolDialog.tsx           | 189 ++++++++
  .../components/Settings/SettingsSelector.tsx  |  10 +-
  .../components/Settings/SettingsSwitch.tsx    |  25 +-
  .../src/components/composer/Composer.tsx      |   5 +
  .../composer/ComposerMessageInput.tsx         |  19 +-
- .../src/components/composer/LanguageTool.tsx  | 375 ++++++++++++++++++
- .../components/composer/languageToolCheck.ts  | 237 +++++++++++
+ .../src/components/composer/LanguageTool.tsx  | 404 ++++++++++++++++++
+ .../components/composer/languageToolCheck.ts  | 298 +++++++++++++
  .../components/dialogs/ConnectivityDialog.tsx |  56 +++
  .../components/dialogs/CreateChat/index.tsx   |   1 +
  .../dialogs/EditProfileDialog/index.tsx       |   1 +
  .../components/dialogs/ViewGroup/index.tsx    |   1 +
- .../frontend/src/tests/languageTool.test.ts   | 129 ++++++
+ .../frontend/src/tests/languageTool.test.ts   | 184 ++++++++
  packages/frontend/static/main.html            |   5 +-
  packages/shared/shared-types.d.ts             |   9 +
  packages/shared/state.ts                      |   5 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 21 files changed, 1263 insertions(+), 25 deletions(-)
+ 21 files changed, 1408 insertions(+), 25 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
@@ -809,10 +811,10 @@ index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..e2d1d889c4589ea2bc7292ebdb239177
        </I18nContext.Consumer>
 diff --git a/packages/frontend/src/components/composer/LanguageTool.tsx b/packages/frontend/src/components/composer/LanguageTool.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..cb387d0fa9f778b4d26bba9d4ef15e6f2032c76b
+index 0000000000000000000000000000000000000000..1362943e707c32b3e2ecc1f61923ca48d5ea4f24
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/LanguageTool.tsx
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,404 @@
 +import React, {
 +  useCallback,
 +  useEffect,
@@ -827,6 +829,7 @@ index 0000000000000000000000000000000000000000..cb387d0fa9f778b4d26bba9d4ef15e6f
 +import LanguageToolDialog from '../Settings/LanguageToolDialog'
 +import {
 +  ltCheck,
++  ltRetryIn,
 +  remapMatches,
 +  type LtConfig,
 +  type LtMatch,
@@ -852,6 +855,8 @@ index 0000000000000000000000000000000000000000..cb387d0fa9f778b4d26bba9d4ef15e6f
 +
 +// Room the failure icon leaves at the field's right edge for the resize grip.
 +const RESIZE_GRIP_PX = 16
++// The failure icon's size (its svg; the button has no padding or border).
++const FAILED_ICON_PX = 16
 +
 +/** Colour class shared by an underline and its card, as in LanguageTool's
 + * own UI: red spelling, blue style, amber everything else. */
@@ -894,14 +899,24 @@ index 0000000000000000000000000000000000000000..cb387d0fa9f778b4d26bba9d4ef15e6f
 +}
 +
 +/** Lay the overlay exactly over the textarea's text box, with its font
-+ * metrics and scroll offset, so it wraps lines identically. */
-+function syncLayer(el: HTMLTextAreaElement, layer: HTMLElement) {
++ * metrics and scroll offset, so it wraps lines identically; the failure icon
++ * goes in its top right corner, clear of the textarea's resize grip. All
++ * reads happen before the writes: one layout per render, not one more for
++ * the icon. */
++function syncLayer(
++  el: HTMLTextAreaElement,
++  layer: HTMLElement,
++  failedIcon: HTMLElement | null
++) {
 +  const cs = getComputedStyle(el)
++  const top = el.offsetTop + el.clientTop
++  const left = el.offsetLeft + el.clientLeft
++  const { clientWidth, clientHeight, scrollTop } = el
 +  Object.assign(layer.style, {
-+    top: `${el.offsetTop + el.clientTop}px`,
-+    left: `${el.offsetLeft + el.clientLeft}px`,
-+    width: `${el.clientWidth}px`,
-+    height: `${el.clientHeight + UNDERLINE_ROOM_PX}px`,
++    top: `${top}px`,
++    left: `${left}px`,
++    width: `${clientWidth}px`,
++    height: `${clientHeight + UNDERLINE_ROOM_PX}px`,
 +    fontFamily: cs.fontFamily,
 +    fontSize: cs.fontSize,
 +    fontWeight: cs.fontWeight,
@@ -916,7 +931,13 @@ index 0000000000000000000000000000000000000000..cb387d0fa9f778b4d26bba9d4ef15e6f
 +    paddingBottom: `calc(${cs.paddingBottom} + ${UNDERLINE_ROOM_PX}px)`,
 +    paddingLeft: cs.paddingLeft,
 +  })
-+  layer.scrollTop = el.scrollTop
++  layer.scrollTop = scrollTop
++  if (failedIcon) {
++    failedIcon.style.top = `${top + 2}px`
++    failedIcon.style.left = `${
++      left + clientWidth - FAILED_ICON_PX - RESIZE_GRIP_PX
++    }px`
++  }
 +}
 +
 +/**
@@ -951,31 +972,51 @@ index 0000000000000000000000000000000000000000..cb387d0fa9f778b4d26bba9d4ef15e6f
 +  const failedRef = useRef<HTMLButtonElement>(null)
 +  const { openDialog } = useDialog()
 +
++  // One check at a time, and typing doesn't abort it: an aborted check never
++  // reaches its timeout, so a server that never answers would dodge the
++  // backoff (and the failure icon) for as long as the user kept typing. A
++  // late result is remapped onto the newer text like any other; the next
++  // check starts once it settles. Only a config change or unmount aborts.
++  const [pending, setPending] = useState(false)
++  const attempted = useRef('')
++  const abortRef = useRef<AbortController | null>(null)
 +  useEffect(() => {
-+    if (!text.trim()) {
++    const abort = new AbortController()
++    abortRef.current = abort
++    return () => abort.abort()
++  }, [harper, server, username, apiKey])
++
++  useEffect(() => {
++    const attempt = JSON.stringify([text, harper, server, username, apiKey])
++    if (!text.trim() || pending || attempt === attempted.current) {
 +      return
 +    }
-+    const abort = new AbortController()
++    const cfg = { harper, server, username, apiKey }
++    const abort = abortRef.current!
++    // while the server fails, wait out its backoff instead of asking again
++    // after every pause in typing
++    const delay = Math.max(CHECK_DELAY_MS, ltRetryIn(cfg))
 +    const timer = setTimeout(() => {
-+      ltCheck({ harper, server, username, apiKey }, text, abort.signal).then(
-+        matches => {
-+          setFailed(null)
-+          setChecked({ text, matches })
-+        },
-+        (err: Error) => {
-+          if (abort.signal.aborted) return
-+          log.warn('check failed', err)
-+          // the field opted out of the browser's spellcheck, so show why
-+          // nothing gets underlined instead of failing silently
-+          setFailed(err.message)
-+        }
-+      )
-+    }, CHECK_DELAY_MS)
-+    return () => {
-+      clearTimeout(timer)
-+      abort.abort()
-+    }
-+  }, [text, harper, server, username, apiKey])
++      attempted.current = attempt
++      setPending(true)
++      ltCheck(cfg, text, abort.signal)
++        .then(
++          matches => {
++            setFailed(null)
++            setChecked({ text, matches })
++          },
++          (err: Error) => {
++            if (abort.signal.aborted) return
++            log.warn('check failed', err)
++            // the field opted out of the browser's spellcheck, so show why
++            // nothing gets underlined instead of failing silently
++            setFailed(err.message)
++          }
++        )
++        .finally(() => setPending(false))
++    }, delay)
++    return () => clearTimeout(timer)
++  }, [text, harper, server, username, apiKey, pending])
 +
 +  // The card follows deliberate caret moves (click/tap, arrow keys) and closes
 +  // on typing, so it never pops up mid-sentence.
@@ -1011,7 +1052,8 @@ index 0000000000000000000000000000000000000000..cb387d0fa9f778b4d26bba9d4ef15e6f
 +      if (layerRef.current) layerRef.current.scrollTop = el.scrollTop
 +    }
 +    const resize = new ResizeObserver(
-+      () => layerRef.current && syncLayer(el, layerRef.current)
++      () =>
++        layerRef.current && syncLayer(el, layerRef.current, failedRef.current)
 +    )
 +    resize.observe(el)
 +    const caretEvents = ['input', 'keyup', 'click', 'blur'] as const
@@ -1031,18 +1073,7 @@ index 0000000000000000000000000000000000000000..cb387d0fa9f778b4d26bba9d4ef15e6f
 +    const el = textareaRef.current
 +    const layer = layerRef.current
 +    if (el && layer) {
-+      syncLayer(el, layer)
-+    }
-+    // the failure icon sits in the field's top right corner, clear of the
-+    // textarea's resize grip
-+    if (layer && failedRef.current) {
-+      failedRef.current.style.top = `${layer.offsetTop + 2}px`
-+      failedRef.current.style.left = `${
-+        layer.offsetLeft +
-+        layer.offsetWidth -
-+        failedRef.current.offsetWidth -
-+        RESIZE_GRIP_PX
-+      }px`
++      syncLayer(el, layer, failedRef.current)
 +    }
 +    if (cardRef.current && layerRef.current && wordRef.current) {
 +      placeCard(cardRef.current, layerRef.current, wordRef.current)
@@ -1190,10 +1221,10 @@ index 0000000000000000000000000000000000000000..cb387d0fa9f778b4d26bba9d4ef15e6f
 +}
 diff --git a/packages/frontend/src/components/composer/languageToolCheck.ts b/packages/frontend/src/components/composer/languageToolCheck.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..64bdba757ad5b05e504f888c24e508fd50aa7203
+index 0000000000000000000000000000000000000000..8231c4bbfbe283d19d86d2f38a6a7f1c87a68639
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/languageToolCheck.ts
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,298 @@
 +// Spelling/grammar check for the composer: Harper (https://writewithharper.com,
 +// English only, wasm on this device) or LanguageTool (https://languagetool.org,
 +// HTTP API), and remapping results onto edited text. LanguageTool is plain
@@ -1267,6 +1298,39 @@ index 0000000000000000000000000000000000000000..64bdba757ad5b05e504f888c24e508fd
 +    : 'https://api.languagetool.org/v2/check'
 +}
 +
++// A server that never answers (host down, packets dropped) would otherwise
++// leave a check hanging for minutes. Long text takes the server longer, so
++// the limit grows with it: 10 s, plus 1 s per 500 characters, up to 35 s.
++export const ltTimeoutMs = (text: string) =>
++  Math.min(10_000 + Math.floor(text.length / 500) * 1000, 35_000)
++
++// After a failed check the composer waits this long before asking the same
++// server again (doubling up to the max), so a dead server isn't hit on every
++// pause in typing. Shared by every checked field: they ask the same server.
++const RETRY_MIN_MS = 5_000
++const RETRY_MAX_MS = 60_000
++let backoff = { key: '', wait: 0, until: 0 }
++// unset and '' alike: the dialog passes '', the saved settings undefined
++const configKey = (cfg: LtConfig) =>
++  JSON.stringify([
++    !!cfg.harper,
++    cfg.server || '',
++    cfg.username || '',
++    cfg.apiKey || '',
++  ])
++
++/** How long a check for `cfg` should wait because the last one failed. */
++export function ltRetryIn(cfg: LtConfig, now = Date.now()): number {
++  return backoff.key === configKey(cfg) ? Math.max(0, backoff.until - now) : 0
++}
++
++function noteResult(cfg: LtConfig, ok: boolean, now = Date.now()) {
++  const key = configKey(cfg)
++  const prev = backoff.key === key ? backoff.wait : 0
++  const wait = ok ? 0 : Math.min(Math.max(prev * 2, RETRY_MIN_MS), RETRY_MAX_MS)
++  backoff = { key, wait, until: now + wait }
++}
++
 +// ponytail: language=auto only. Detection can misfire on very short
 +// messages; add a language picker (or preferredVariants from the UI locale)
 +// if that shows up in practice.
@@ -1276,38 +1340,66 @@ index 0000000000000000000000000000000000000000..64bdba757ad5b05e504f888c24e508fd
 +  signal?: AbortSignal
 +): Promise<LtMatch[]> {
 +  if (cfg.harper) {
-+    const lints = await (
-+      await harperLinter()
-+    ).lint(text, {
-+      language: 'plaintext',
-+    })
-+    // the worker can't be aborted; drop a result nobody waits for anymore
-+    signal?.throwIfAborted()
-+    return lints.map(harperMatch)
++    try {
++      const linter = await harperLinter()
++      const lints = await linter.lint(text, { language: 'plaintext' })
++      // the worker can't be aborted; drop a result nobody waits for anymore
++      signal?.throwIfAborted()
++      noteResult(cfg, true)
++      return lints.map(harperMatch)
++    } catch (err) {
++      // a failed load (offline, say) backs off like a dead server, instead of
++      // asking for the ~15 MB again after every pause in typing
++      if (!signal?.aborted) noteResult(cfg, false)
++      throw err
++    }
 +  }
 +  const body = new URLSearchParams({ text, language: 'auto' })
 +  if (!cfg.server && cfg.username && cfg.apiKey) {
 +    body.set('username', cfg.username)
 +    body.set('apiKey', cfg.apiKey)
 +  }
-+  // form-encoded POST is a CORS "simple request": no preflight, so a
-+  // self-hosted server only needs --allow-origin, not OPTIONS handling
-+  const res = await fetch(ltCheckUrl(cfg), { method: 'POST', body, signal })
-+  if (!res.ok) {
-+    throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
++  // by hand, not AbortSignal.any: that is too new for older WebKit (Tauri)
++  const abort = new AbortController()
++  const onAbort = () => abort.abort()
++  signal?.addEventListener('abort', onAbort)
++  const timeout = ltTimeoutMs(text)
++  const timer = setTimeout(onAbort, timeout)
++  try {
++    // form-encoded POST is a CORS "simple request": no preflight, so a
++    // self-hosted server only needs --allow-origin, not OPTIONS handling
++    const res = await fetch(ltCheckUrl(cfg), {
++      method: 'POST',
++      body,
++      signal: abort.signal,
++    })
++    if (!res.ok) {
++      throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
++    }
++    const { matches } = await res.json()
++    const result = (matches as any[]).map(m => ({
++      offset: m.offset,
++      length: m.length,
++      message: m.message,
++      replacements: (m.replacements as { value: string }[])
++        .slice(0, 5)
++        .map(r => r.value),
++      issueType: m.rule?.issueType ?? '',
++      category: m.rule?.category?.name ?? '',
++      key: `${m.rule?.id}:${text.slice(m.offset, m.offset + m.length)}`,
++    }))
++    noteResult(cfg, true)
++    return result
++  } catch (err) {
++    if (signal?.aborted) throw err // the caller moved on, not a failure
++    noteResult(cfg, false)
++    throw abort.signal.aborted
++      ? new Error(`no answer within ${timeout / 1000} s`)
++      : err
++  } finally {
++    clearTimeout(timer)
++    signal?.removeEventListener('abort', onAbort)
 +  }
-+  const { matches } = await res.json()
-+  return (matches as any[]).map(m => ({
-+    offset: m.offset,
-+    length: m.length,
-+    message: m.message,
-+    replacements: (m.replacements as { value: string }[])
-+      .slice(0, 5)
-+      .map(r => r.value),
-+    issueType: m.rule?.issueType ?? '',
-+    category: m.rule?.category?.name ?? '',
-+    key: `${m.rule?.id}:${text.slice(m.offset, m.offset + m.length)}`,
-+  }))
 +}
 +
 +/** Carry matches computed for `from` over to `to`, so underlines don't flicker
@@ -1550,17 +1642,20 @@ index 6a7ad0dbfee72213041c44151dd7a210eeefbbf3..bb45855f8b6c471a47526379e379ead7
                  event: React.FormEvent<HTMLElement> &
 diff --git a/packages/frontend/src/tests/languageTool.test.ts b/packages/frontend/src/tests/languageTool.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..9fa7c298d4ff2e54376aa8735cbf0e4b7007ccb0
+index 0000000000000000000000000000000000000000..e95a04b150a21348b2f762fbb749c1b4518fef36
 --- /dev/null
 +++ b/packages/frontend/src/tests/languageTool.test.ts
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,184 @@
 +import { expect } from 'chai'
-+import { describe, it } from 'mocha'
++import { after, describe, it } from 'mocha'
 +
 +import {
 +  harperMatch,
 +  isLtServerUrl,
++  ltCheck,
 +  ltCheckUrl,
++  ltRetryIn,
++  ltTimeoutMs,
 +  remapMatches,
 +  type LtMatch,
 +} from '../components/composer/languageToolCheck.js'
@@ -1642,6 +1737,58 @@ index 0000000000000000000000000000000000000000..9fa7c298d4ff2e54376aa8735cbf0e4b
 +    expect(offsets(remapMatches(ms, from, 'teh big wrodx here'))).to.eql([0])
 +    expect(offsets(remapMatches(ms, from, 'the big word here'))).to.eql([])
 +    expect(remapMatches(ms, from, '')).to.eql([])
++  })
++})
++
++describe('ltTimeoutMs', () => {
++  it('gives longer text more time, up to 35 s', () => {
++    expect(ltTimeoutMs('hi')).to.equal(10_000)
++    expect(ltTimeoutMs('x'.repeat(5000))).to.equal(20_000)
++    expect(ltTimeoutMs('x'.repeat(100_000))).to.equal(35_000)
++  })
++})
++
++describe('ltCheck backoff', () => {
++  const cfg = { server: 'http://backoff.test:8081' }
++  const realFetch = globalThis.fetch
++  after(() => {
++    globalThis.fetch = realFetch
++  })
++  const fail = () => {
++    globalThis.fetch = () => Promise.reject(new TypeError('Failed to fetch'))
++    return ltCheck(cfg, 'x').catch(() => {})
++  }
++
++  it('waits longer after each failure and clears on success', async () => {
++    await fail()
++    expect(ltRetryIn(cfg)).to.be.within(4000, 5000)
++    await fail()
++    expect(ltRetryIn(cfg)).to.be.within(9000, 10000)
++    // another server isn't held back by this one
++    expect(ltRetryIn({})).to.equal(0)
++    // the dialog's '' fields are the saved settings' unset ones
++    expect(ltRetryIn({ ...cfg, username: '', apiKey: '' })).to.be.above(0)
++    globalThis.fetch = async () => new Response('{"matches":[]}')
++    await ltCheck(cfg, 'x')
++    expect(ltRetryIn(cfg)).to.equal(0)
++  })
++
++  it('keeps Harper apart from LanguageTool cloud', async () => {
++    // both have no server, username or key
++    globalThis.fetch = () => Promise.reject(new TypeError('Failed to fetch'))
++    await ltCheck({}, 'x').catch(() => {})
++    expect(ltRetryIn({})).to.be.above(0)
++    expect(ltRetryIn({ harper: true })).to.equal(0)
++  })
++
++  it("doesn't count a check the caller aborted", async () => {
++    const abort = new AbortController()
++    globalThis.fetch = () => {
++      abort.abort()
++      return Promise.reject(new DOMException('aborted', 'AbortError'))
++    }
++    await ltCheck(cfg, 'x', abort.signal).catch(() => {})
++    expect(ltRetryIn(cfg)).to.equal(0)
 +  })
 +})
 +
