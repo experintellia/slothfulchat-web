@@ -21,7 +21,7 @@ upstream. The dialog passes along what only the frontend bundle knows:
 the hashed css-module class names the viewer reuses (message bubbles,
 footer, reactions) and a moment formatter in the user's locale for
 messages.txt and the filename. Cancel aborts an AbortSignal. New
-strings live in _untranslated_en.json.
+strings live in packages/web-app/fork-strings.json.
 
 web-app: chat export confirm dialog (exclusions + date range)
 
@@ -34,7 +34,7 @@ window.__slothfulExportChat as unix-second bounds; the fork-side
 exporter applies them to the viewer, messages.json, messages.txt and
 the bundled media alike.
 
-New strings live in _untranslated_en.json.
+New strings live in packages/web-app/fork-strings.json.
 ---
  .../src/components/chat/ChatContextMenu.tsx   |  11 ++
  .../components/dialogs/ExportChatToHtml.tsx   | 162 ++++++++++++++++++

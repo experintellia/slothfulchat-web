@@ -22,7 +22,7 @@ neither:
 The retry button stays in every case, for the rarer causes a retry does
 fix. One `DownloadFailedLabel` component replaces the four "download failed"
 spans in the download placeholder and the one in Message.tsx's plain
-fallback. The strings are fork-only and go into _untranslated_en.json.
+fallback. The strings are fork-only and go into packages/web-app/fork-strings.json.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---

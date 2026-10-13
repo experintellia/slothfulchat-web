@@ -280,7 +280,7 @@ jobs:
 
       # patches/ must be exactly what update-patches.sh writes from the stacks
       # the build just applied, so every branch merges the same bytes. An
-      # old-format, hand-edited or misnumbered patch file fails here.
+      # old-format or hand-edited patch file fails here.
       - name: Patch files are what update-patches.sh writes
         run: |
           scripts/update-patches.sh

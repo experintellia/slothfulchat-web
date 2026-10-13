@@ -19,7 +19,7 @@ The existing hasHtml "Show Full Message" button is untouched; it still
 covers real HTML mail and legacy truncated messages.
 
 Show more/less labels go through tx() with new keys in
-_locales/_untranslated_en.json, matching how every other fork-added label in
+packages/web-app/fork-strings.json, matching how every other fork-added label in
 this codebase is done.
 ---
  packages/frontend/scss/message/_message.scss  | 11 +++++-
