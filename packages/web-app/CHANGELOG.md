@@ -1,5 +1,8 @@
 # Changelog
 
+- **Click a reaction to react the same way.** Clicking a reaction under a
+  message adds that emoji as your reaction, or removes it if it's yours. Who
+  reacted with what is now listed at the end of Message Info.
 - **Reply threads (experimental).** Turn on "Reply threads" in
   Settings → Experimental to see how many replies a message has next to its
   time; click it to read just that conversation, as a list or a tree, and

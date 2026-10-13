@@ -297,7 +297,7 @@ exists:
   icon of a *read* outgoing message shows who has read it (avatar, name and a
   relative timestamp); hovering a single reaction lists just the people who
   reacted with that emoji, while the "+N" overflow pill lists the rest. Both
-  surface the info already in the Message Info / Reactions dialogs without a
+  surface the info already in the Message Info dialog without a
   click, sharing a new `PeopleHoverInfo` component (and an `xSmall` Avatar
   variant). `desktop/1019`
 - **Themeable avatars on all messages** — upstream renders avatars only for
@@ -811,6 +811,11 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   phones a long press anywhere on a message opens the menu, so message
   text can't be selected there (iOS would otherwise take the press for a
   text selection); "Copy Text" copies it. `desktop/1060`
+- **Click a reaction to join it, no separate Reactions dialog** — clicking a
+  reaction pill under a message reacts with that emoji, or takes it back when
+  it's yours (upstream opens a who-reacted dialog). That list now sits at the
+  end of Message Info instead, next to read receipts; the "+N" pill opens it.
+  `desktop/1068`
 - **Branding** — the app calls itself SlothfulChat and uses its own icon in
   the About dialog and welcome screen, with explicit "experimental fork, not
   affiliated with Delta Chat" notices and a source-code link. Only
