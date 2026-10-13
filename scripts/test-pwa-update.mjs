@@ -20,6 +20,9 @@
 //   7. old shell caches are deleted after activate (no storage leak)
 //   8. offline after the update: font + new css + every other manifest entry
 //      served from cache alone
+//   9. an opt-in asset fetched once (Harper's 15 MB wasm, instance-config
+//      lazyAsset) is carried across the update and served cache-first: no
+//      re-download after a deploy, no revalidation on use
 // Modeled on scripts/test-pwa-offline.mjs, but with no wasm-core boot: it
 // only exercises the service worker, so it is fast and OPFS-race-free.
 import { createServer } from 'node:http'
@@ -35,6 +38,7 @@ const dist = join(here, '../packages/web-app/dist')
 const swManifest = join(here, '../packages/web-app/sw-manifest.mjs')
 const PORT = Number(process.env.APP_PORT ?? 8646)
 const FONT = '/fonts/noto/emoji/NotoColorEmoji.ttf'
+const HARPER = '/harper/harper_wasm_bg.wasm'
 
 // fake deploy target: a throwaway copy of dist we can mutate between phases
 const root = await mkdtemp(join(tmpdir(), 'pwa-update-'))
@@ -112,6 +116,10 @@ try {
       f
     )
   assert(await cachedSomewhere(FONT), 'font precached on first install')
+  // opt-in, so not precached: the user "turns on Harper" and it is fetched
+  assert(!(await cachedSomewhere(HARPER)), 'opt-in Harper wasm not precached')
+  await page.evaluate(f => fetch('.' + f).then(r => r.arrayBuffer()), HARPER)
+  await until(() => cachedSomewhere(HARPER), 'Harper wasm cached on first use')
   const phase1 = hits.length
   const shellCaches = () =>
     page.evaluate(async () => (await caches.keys()).filter(k => k.startsWith('slothful-shell-')))
@@ -196,6 +204,11 @@ try {
   // activation deletes old shell caches (may lag activation: poll)
   await until(async () => (await shellCaches()).length === 1, 'old shell cache deleted')
   console.log('OK: exactly one shell cache after activate (old deploy cleaned up)')
+  await page.evaluate(f => fetch('.' + f).then(r => r.arrayBuffer()), HARPER)
+  assert(
+    !hits.slice(phase1).some(p => p === HARPER),
+    'opt-in Harper wasm carried across the update and served cache-first'
+  )
   assert(
     !(await page.evaluate(async () => !!(await caches.match('./__sw-update-failed__')))),
     'failure record died with the old cache (no stale nag after a good update)'

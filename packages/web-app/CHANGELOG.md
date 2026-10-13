@@ -8,10 +8,11 @@
   for one account could be swallowed when another account's notifications
   were shown at the same moment, and the "N new messages" summary no longer
   counts messages from muted chats.
-- **Spelling and grammar checking with LanguageTool.** Turn it on in
-  Settings → Experimental to get mistakes in messages, your bio and group
-  descriptions underlined, with suggested fixes. Off by default, because your
-  text goes to languagetool.org or a LanguageTool server you run yourself.
+- **Grammar and spelling checker.** Turn it on in Settings → Experimental
+  to get mistakes in messages, your bio and group descriptions underlined,
+  with suggested fixes. Pick Harper, which checks English right on your
+  device (a one-time ~15 MB download), or LanguageTool for more languages,
+  on languagetool.org or a server you run yourself — your text is sent there.
 - **Long bios and group descriptions fold away.** A bot that lists all its
   commands in its bio no longer pushes the rest of its profile off-screen;
   bios and group or channel descriptions show 8 lines with a "Show more" link,
