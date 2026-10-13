@@ -2,6 +2,10 @@
 # Regenerate patches/ from commits made in the build/ worktrees.
 # Workflow: edit in build/<name>, git commit there (one commit per logical patch), run this.
 set -euo pipefail
+# Write patches with git's defaults, not the runner's: a diff.context,
+# diff.algorithm or format.headers in someone's ~/.gitconfig rewrote up to every
+# patch file. Repo-local config of the build/ worktrees still applies.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 cd "$(dirname "$0")/.."
 root=$(pwd -P)
 tmproot=$(mktemp -d)

@@ -68,7 +68,6 @@ thread_show_as_tree, thread_show_as_list, thread_close.
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
- _locales/_untranslated_en.json                |  25 +++
  images/icons/account_tree.svg                 |   1 +
  images/icons/reply.svg                        |   1 +
  images/icons/thread.svg                       |   1 +
@@ -94,7 +93,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  .../frontend/src/utils/replyThreadLayout.ts   |  58 +++++++
  packages/shared/shared-types.d.ts             |   2 +
  packages/shared/state.ts                      |   1 +
- 26 files changed, 890 insertions(+), 61 deletions(-)
+ 25 files changed, 865 insertions(+), 61 deletions(-)
  create mode 100644 images/icons/account_tree.svg
  create mode 100644 images/icons/reply.svg
  create mode 100644 images/icons/thread.svg
@@ -103,41 +102,6 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/tests/replyThreadLayout.test.ts
  create mode 100644 packages/frontend/src/utils/replyThreadLayout.ts
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 01b18815e27ee9b7c60e97d45f8d85eb15dac39e..ed23b7b79dc42ee270085f18d59765e9ef4f781c 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -184,5 +184,30 @@
-   },
-   "requests_empty": {
-     "message": "No requests. Chats and group invitations from people you haven't accepted wait here."
-+  },
-+  "reply_thread": {
-+    "message": "Thread"
-+  },
-+  "n_replies": {
-+    "one": "%d reply",
-+    "other": "%d replies"
-+  },
-+  "thread_reply_needs_quote": {
-+    "message": "Reply to a message of this thread to send"
-+  },
-+  "thread_reply_to_latest": {
-+    "message": "Reply to latest"
-+  },
-+  "thread_show_as_tree": {
-+    "message": "Show as tree"
-+  },
-+  "thread_show_as_list": {
-+    "message": "Show as list"
-+  },
-+  "thread_close": {
-+    "message": "Back to chat"
-+  },
-+  "thread_show": {
-+    "message": "Show thread"
-   }
- }
 diff --git a/images/icons/account_tree.svg b/images/icons/account_tree.svg
 new file mode 100644
 index 0000000000000000000000000000000000000000..c8e9a9902517588111e2556c6231698607329bbb

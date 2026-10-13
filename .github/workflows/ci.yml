@@ -103,6 +103,16 @@ jobs:
       - name: No dangling patch references
         run: node scripts/check-patch-refs.mjs
 
+      # Fork strings go in packages/web-app/fork-strings.json, which assemble.mjs
+      # merges into _untranslated_en.json. Added by patches, they all landed in
+      # the same spot of that file, so any two PRs with new strings conflicted.
+      - name: No fork strings in desktop patches
+        run: |
+          if grep -l '^diff --git a/_locales/_untranslated_en.json ' patches/desktop/*.patch; then
+            echo "::error::these patches change _locales/_untranslated_en.json: put the strings in packages/web-app/fork-strings.json instead"
+            exit 1
+          fi
+
       # dependency-free node:test suites for pure logic (config templating,
       # release-asset pinning/digest/size caps, the analytics pre-notice gate,
       # translation-editor serialization, blob response headers, the OPFS
@@ -267,6 +277,18 @@ jobs:
         with:
           wasm-opt: 'false'
           production: 'false'
+
+      # patches/ must be exactly what update-patches.sh writes from the stacks
+      # the build just applied, so every branch merges the same bytes. An
+      # old-format, hand-edited or misnumbered patch file fails here.
+      - name: Patch files are what update-patches.sh writes
+        run: |
+          scripts/update-patches.sh
+          if [ -n "$(git status --porcelain -- patches)" ]; then
+            git status --short -- patches
+            echo "::error::patches/ differs from what scripts/update-patches.sh writes: run scripts/apply-patches.sh and scripts/update-patches.sh, then commit patches/"
+            exit 1
+          fi
 
       # ws-tcp bridge security guards (no browser, no wasm — only `ws`, so it
       # runs right after install and fails fast): the CHATMAIL_ALLOWLIST refuses

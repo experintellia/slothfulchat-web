@@ -20,30 +20,11 @@ delivery metadata.
 
 Adds the untranslated labels Type/Size/Resolution/Duration.
 ---
- _locales/_untranslated_en.json                |  9 ++
  .../MessageDetail/BasicMessageInfo.tsx        | 94 ++++++++++++++++++-
  .../dialogs/MessageDetail/styles.module.scss  | 25 +++++
  .../src/components/message/Message.tsx        | 12 +--
- 4 files changed, 128 insertions(+), 12 deletions(-)
+ 3 files changed, 119 insertions(+), 12 deletions(-)
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 4cbd935bfe07ce22d71af10d74750b240d358499..8d24c02effd657d311521ff9122bea22c7ca273c 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -1,4 +1,13 @@
- {
-+  "message_info_file_type": {
-+    "message": "Type"
-+  },
-+  "message_info_resolution": {
-+    "message": "Resolution"
-+  },
-+  "message_info_duration": {
-+    "message": "Duration"
-+  },
-   "command_palette_tab_to_search": {
-     "message": "Tab to search"
-   },
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 index ff0ec1325429678c94c868c7f361d94297d31c2a..5d3432a69a2ae27c4b647437b25750cd0d6f0255 100644
 --- a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx

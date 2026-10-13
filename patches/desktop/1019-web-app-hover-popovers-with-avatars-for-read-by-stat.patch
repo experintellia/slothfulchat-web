@@ -37,7 +37,6 @@ onto genuine `<li>`s no matter how specifically we scope our own class.
 Both share a new PeopleHoverInfo component (the hover trigger, the card
 shell, a lazy contacts-by-id fetch and a relative-time helper).
 ---
- _locales/_untranslated_en.json                |   3 +
  packages/frontend/scss/misc/_avatar.scss      |   7 +
  .../frontend/src/components/Avatar/index.tsx  |   5 +-
  .../src/components/PeopleHoverInfo/index.tsx  | 181 ++++++++++++++++++
@@ -45,24 +44,10 @@ shell, a lazy contacts-by-id fetch and a relative-time helper).
  .../src/components/Reactions/index.tsx        | 113 ++++++++++-
  .../components/Reactions/styles.module.scss   |  22 ++-
  .../components/message/MessageMetaData.tsx    | 125 +++++++++---
- 8 files changed, 514 insertions(+), 37 deletions(-)
+ 7 files changed, 511 insertions(+), 37 deletions(-)
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/index.tsx
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 1950bc6a2cac1abf06c0a2958bd2d154321108b9..fe3dfc4b363263965c36e1c60ec8af7dd1f6adcc 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -26,6 +26,9 @@
-   "message_info_duration": {
-     "message": "Duration"
-   },
-+  "reacted_with": {
-+    "message": "Reacted with %1$s"
-+  },
-   "command_palette_tab_to_search": {
-     "message": "Tab to search"
-   },
 diff --git a/packages/frontend/scss/misc/_avatar.scss b/packages/frontend/scss/misc/_avatar.scss
 index a8ad9fd17313267df69c7c7d3153a70b2cdc1fee..948ff4e7c8924446ef4bef99c70ae013888c3a8c 100644
 --- a/packages/frontend/scss/misc/_avatar.scss

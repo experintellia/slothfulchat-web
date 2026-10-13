@@ -13,24 +13,10 @@ is a keyboard-reachable separator (role=separator, ArrowLeft/ArrowRight
 resize in 16px steps, direction-aware for RTL). Hidden in small-screen
 mode where only one pane is visible anyway.
 ---
- _locales/_untranslated_en.json                |  3 +
  .../screens/MainScreen/MainScreen.tsx         | 71 ++++++++++++++++++-
  .../screens/MainScreen/styles.module.scss     | 17 +++++
- 3 files changed, 90 insertions(+), 1 deletion(-)
+ 2 files changed, 87 insertions(+), 1 deletion(-)
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 9e2638185e2eb94de2b9645b02cffe068ff59b37..ae030efa16815b49287abb6a9cdd71ccbb9cbfd4 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -124,5 +124,8 @@
-   },
-   "invite_link_view": {
-     "message": "View"
-+  },
-+  "resize_chat_list": {
-+    "message": "Resize chat list"
-   }
- }
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 index 1eb14a8cb57a2f04d88433b5dd84907055f40b76..c0c8ac59909486fa4433234841b170fbdc80180b 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx

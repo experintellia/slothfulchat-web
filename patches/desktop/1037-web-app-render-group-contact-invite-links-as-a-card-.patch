@@ -51,7 +51,6 @@ with an explicit override for the message-text underline rule; and
 getSelectedText only rewrites selections inside a single message's text,
 since textContent has no CSS awareness and would mangle wider selections.
 ---
- _locales/_untranslated_en.json                | 12 +++
  packages/frontend/scss/message/_message.scss  | 86 +++++++++++++++++++
  .../components/dialogs/PublicBots/index.tsx   | 12 +--
  .../frontend/src/components/message/Link.tsx  | 49 +++++++++++
@@ -59,33 +58,11 @@ since textContent has no CSS awareness and would mangle wider selections.
  .../frontend/src/tests/inviteLink.test.ts     | 86 +++++++++++++++++++
  .../frontend/src/utils/colorFromString.ts     | 12 +++
  packages/frontend/src/utils/inviteLink.ts     | 75 ++++++++++++++++
- 8 files changed, 366 insertions(+), 13 deletions(-)
+ 7 files changed, 354 insertions(+), 13 deletions(-)
  create mode 100644 packages/frontend/src/tests/inviteLink.test.ts
  create mode 100644 packages/frontend/src/utils/colorFromString.ts
  create mode 100644 packages/frontend/src/utils/inviteLink.ts
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index fe3dfc4b363263965c36e1c60ec8af7dd1f6adcc..9e2638185e2eb94de2b9645b02cffe068ff59b37 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -112,5 +112,17 @@
-   },
-   "webxdc_store_url_explain_2_desktop": {
-     "message": "This is different from the same feature on Android and iOS.\nThis must be the path containing the xdcget-lock.json file."
-+  },
-+  "invite_link_group": {
-+    "message": "Group invitation"
-+  },
-+  "invite_link_channel": {
-+    "message": "Channel invitation"
-+  },
-+  "invite_link_contact": {
-+    "message": "Contact invitation"
-+  },
-+  "invite_link_view": {
-+    "message": "View"
-   }
- }
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
 index a5d349d020464f5b4bb0e5153927a63848c6c8bd..40ecad8c2cb27eb104ca3c43fa5b825cb5b98301 100644
 --- a/packages/frontend/scss/message/_message.scss

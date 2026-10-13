@@ -30,7 +30,6 @@ flushNotifications (one getBasicChatInfo per chat; a failed lookup no
 longer aborts the flush). 1:1 requests still notify: missing a real
 first message is worse than one ping.
 ---
- _locales/_untranslated_en.json                |  6 +++
  .../frontend/src/components/chat/ChatList.tsx | 48 ++++++++++++-----
  .../src/components/chat/ChatListHelpers.tsx   | 11 ++++
  .../src/components/chat/ChatListItem.tsx      | 54 +++++++++++++------
@@ -38,24 +37,8 @@ first message is worse than one ping.
  .../screens/MainScreen/ChatListHeader.tsx     | 10 ++--
  .../screens/MainScreen/MainScreen.tsx         | 22 +++++++-
  .../src/system-integration/notifications.ts   | 19 ++++++-
- 8 files changed, 137 insertions(+), 35 deletions(-)
+ 7 files changed, 131 insertions(+), 35 deletions(-)
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 2f6785ad3440eefda8cdf9604a6be8e8c52c5a42..01b18815e27ee9b7c60e97d45f8d85eb15dac39e 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -178,5 +178,11 @@
-   },
-   "download_abort": {
-     "message": "Stop download"
-+  },
-+  "requests_title": {
-+    "message": "Requests"
-+  },
-+  "requests_empty": {
-+    "message": "No requests. Chats and group invitations from people you haven't accepted wait here."
-   }
- }
 diff --git a/packages/frontend/src/components/chat/ChatList.tsx b/packages/frontend/src/components/chat/ChatList.tsx
 index f21eaeda8a707f52b72522221c9d9b921d064b1e..5f6b1201225fe4d8e6dfadc630fdd5457a937776 100644
 --- a/packages/frontend/src/components/chat/ChatList.tsx

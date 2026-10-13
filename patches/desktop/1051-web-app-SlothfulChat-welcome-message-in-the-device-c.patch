@@ -29,30 +29,10 @@ New Chat is dropped when SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS hid that entry
 for the instance, so a self-hosted build never sends its users looking
 for something it doesn't ship.
 ---
- _locales/_untranslated_en.json             |  9 ++++++
  packages/frontend/src/ScreenController.tsx | 18 ++++++++++-
  packages/frontend/src/deviceMessages.ts    | 37 ++++++++++++++++++++++
- 3 files changed, 63 insertions(+), 1 deletion(-)
+ 2 files changed, 54 insertions(+), 1 deletion(-)
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 30116f4d2e4ac5266430dfacc95cf2dc9dcbb7c7..7405e250c46134efd5d81263cad5323ea1808e0a 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -157,5 +157,14 @@
-   },
-   "message_text_show_less": {
-     "message": "Show less"
-+  },
-+  "slothful_welcome_message": {
-+    "message": "🦥 A few things work differently here.\n\nSlothfulChat is an independent fork of Delta Chat — not directly affiliated with it, and not a repackaged copy. The most unusual part: it runs entirely in your web browser. The whole chat core is compiled to WebAssembly, so there is nothing to install and no server that holds your account — your messages, keys and files live in this browser, on this device. On a phone you can still add it to your home screen and use it like any other app.\n\nBecause your data lives in the browser, it can also vanish with it: clearing site data, a browser cleanup or private-browsing mode wipes everything. Please export a backup (Settings → Chats → Export Backup) and keep it somewhere safe — backups here are not encrypted, so guard the file like your private key.\n\nThis is also a prototyping ground for the developers: features land early, and some of them change or break. If something looks different from Delta Chat, that is usually on purpose."
-+  },
-+  "slothful_welcome_contact_developer": {
-+    "message": "Found a bug or something that feels wrong? Tell us directly — New Chat → \"Sloth (Slothful.chat Developer)\"."
-+  },
-+  "slothful_welcome_selfhost": {
-+    "message": "And it's yours to run: host your own instance, or fork it and change whatever you like 👉 https://github.com/experintellia/slothfulchat-web"
-   }
- }
 diff --git a/packages/frontend/src/ScreenController.tsx b/packages/frontend/src/ScreenController.tsx
 index 9157df1e03c6aed3554c778298742dd5e2d2ed99..393034c9b40983790190e5aa46cc3fdb207d69e6 100644
 --- a/packages/frontend/src/ScreenController.tsx

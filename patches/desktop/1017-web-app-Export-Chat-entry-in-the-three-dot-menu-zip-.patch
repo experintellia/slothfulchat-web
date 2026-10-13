@@ -36,39 +36,11 @@ the bundled media alike.
 
 New strings live in _untranslated_en.json.
 ---
- _locales/_untranslated_en.json                |  18 ++
  .../src/components/chat/ChatContextMenu.tsx   |  11 ++
  .../components/dialogs/ExportChatToHtml.tsx   | 162 ++++++++++++++++++
- 3 files changed, 191 insertions(+)
+ 2 files changed, 173 insertions(+)
  create mode 100644 packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 8d24c02effd657d311521ff9122bea22c7ca273c..1950bc6a2cac1abf06c0a2958bd2d154321108b9 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -1,4 +1,22 @@
- {
-+  "export_chat_explain": {
-+    "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
-+  },
-+  "export_chat_start_date": {
-+    "message": "From (optional)"
-+  },
-+  "export_chat_end_date": {
-+    "message": "Until (optional)"
-+  },
-+  "export_chat_start_button": {
-+    "message": "Export"
-+  },
-+  "menu_export_chat": {
-+    "message": "Export Chat"
-+  },
-+  "chat_exported_as_x": {
-+    "message": "Chat exported as %1$s"
-+  },
-   "message_info_file_type": {
-     "message": "Type"
-   },
 diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
 index a3be0976acbd468e7e78a9e42ec63d4bf787df3b..5a93f1c7d66db21edcd761d76795be7646d7a401 100644
 --- a/packages/frontend/src/components/chat/ChatContextMenu.tsx

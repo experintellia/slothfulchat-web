@@ -130,7 +130,6 @@ same look.
 ponytail: progress still updates on `timeupdate` (~4 Hz), not every frame;
 add a rAF loop while playing if the sweep looks steppy.
 ---
- _locales/_untranslated_en.json                |  36 ++
  images/icons/pause.svg                        |   1 +
  images/icons/play.svg                         |   1 +
  .../src/components/AudioPlayer/Waveform.tsx   | 104 +++++
@@ -147,7 +146,7 @@ add a rAF loop while playing if the sweep looks steppy.
  .../NextVoiceMessagePlayerContext.tsx         |  64 ++-
  packages/shared/shared-types.d.ts             |   6 +
  packages/shared/state.ts                      |   3 +
- 17 files changed, 1025 insertions(+), 43 deletions(-)
+ 16 files changed, 989 insertions(+), 43 deletions(-)
  create mode 100644 images/icons/pause.svg
  create mode 100644 images/icons/play.svg
  create mode 100644 packages/frontend/src/components/AudioPlayer/Waveform.tsx
@@ -155,52 +154,6 @@ add a rAF loop while playing if the sweep looks steppy.
  create mode 100644 packages/frontend/src/components/AudioPlayer/positionStore.ts
  create mode 100644 packages/frontend/src/components/AudioPlayer/utils.ts
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index ae030efa16815b49287abb6a9cdd71ccbb9cbfd4..898bac5ea6dfbd666105602e01690fa339f284f7 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -127,5 +127,41 @@
-   },
-   "resize_chat_list": {
-     "message": "Resize chat list"
-+  },
-+  "a11y_audio_seek": {
-+    "message": "Seek"
-+  },
-+  "a11y_playback_speed": {
-+    "message": "Playback speed: %1$s"
-+  },
-+  "pause_recording": {
-+    "message": "Pause recording"
-+  },
-+  "resume_recording": {
-+    "message": "Resume recording"
-+  },
-+  "record_again": {
-+    "message": "Record again"
-+  },
-+  "slide_up_to_lock": {
-+    "message": "Slide up to lock"
-+  },
-+  "original_audio": {
-+    "message": "Original audio"
-+  },
-+  "voice_quality": {
-+    "message": "Voice quality"
-+  },
-+  "original_audio_explain": {
-+    "message": "Record unprocessed audio (no noise suppression, echo cancellation or auto gain). Applies to the next recording."
-+  },
-+  "original_audio_not_supported": {
-+    "message": "Original audio is not supported by this browser or microphone"
-+  },
-+  "select_microphone": {
-+    "message": "Select microphone"
-+  },
-+  "recording_no_sound": {
-+    "message": "No sound — check your microphone"
-   }
- }
 diff --git a/images/icons/pause.svg b/images/icons/pause.svg
 new file mode 100644
 index 0000000000000000000000000000000000000000..dadf44a1cfccb56d37bb3fbb05b1c9478492e02d
