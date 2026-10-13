@@ -126,7 +126,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../frontend/src/components/Login-Styles.tsx  |  20 +-
  .../components/Settings/EmojiSetSelector.tsx  |  11 +-
  .../Settings/ExperimentalFeatures.tsx         |  22 +
- .../Settings/LanguageToolDialog.tsx           | 188 +++++++++
+ .../Settings/LanguageToolDialog.tsx           | 189 +++++++++
  .../components/Settings/SettingsSelector.tsx  |  10 +-
  .../components/Settings/SettingsSwitch.tsx    |  25 +-
  .../src/components/composer/Composer.tsx      |   5 +
@@ -142,7 +142,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  packages/shared/shared-types.d.ts             |   9 +
  packages/shared/state.ts                      |   5 +
  .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 21 files changed, 1262 insertions(+), 25 deletions(-)
+ 21 files changed, 1263 insertions(+), 25 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
@@ -452,10 +452,10 @@ index 6573050374cfe174e923d97cde3f2ddb341f4677..bec970fc0551645a5acee1d974f56ff9
          label='Record without noise filtering'
 diff --git a/packages/frontend/src/components/Settings/LanguageToolDialog.tsx b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..b06d28b7f9deefc97a1ca2b29a34ace37faebacc
+index 0000000000000000000000000000000000000000..d2e222231404149a226aaa5870556675342b1b3e
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,189 @@
 +import React, { useRef, useState } from 'react'
 +
 +import SettingsStoreInstance, { useSettingsStore } from '../../stores/settings'
@@ -588,8 +588,9 @@ index 0000000000000000000000000000000000000000..b06d28b7f9deefc97a1ca2b29a34ace3
 +          <br />
 +          {mode === 'harper' ? (
 +            <p>
-+              Your drafts never leave this device. Harper checks English only;
-+              it is downloaded once (about 15 MB) when the check first runs.
++              Your drafts never leave this device. Harper{' '}
++              <strong>checks English only</strong>. It comes from this app's own
++              server, downloaded once (about 15 MB) when the check first runs.
 +            </p>
 +          ) : mode === 'account' ? (
 +            <>

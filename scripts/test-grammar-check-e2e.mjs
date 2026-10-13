@@ -35,6 +35,12 @@ page.on('pageerror', e => console.error('[pageerror]', e.message))
 await freezeEval(page)
 const harperRequests = []
 page.on('request', r => r.url().includes('/harper/') && harperRequests.push(r.url()))
+// Harper is served by the app itself, never a CDN: no request may leave it
+const foreign = []
+page.on('request', r => {
+  const { protocol, hostname } = new URL(r.url())
+  if (/^https?:$/.test(protocol) && !['localhost', '127.0.0.1'].includes(hostname)) foreign.push(r.url())
+})
 const rpc = (method, ...args) =>
   page.evaluate(([m, a]) => window.exp.rpc[m](...a), [method, args])
 const expect = (cond, msg) => {
@@ -92,6 +98,7 @@ try {
   const issue = page.locator('.language-tool-issue', { hasText: 'tset' })
   await issue.waitFor({ timeout: 90_000 })
   expect(harperRequests.some(u => u.endsWith('.wasm')), 'Harper loaded once switched on')
+  expect(foreign.length === 0, `Harper came from the app's own server (foreign: ${foreign})`)
   await composer.click()
   await page.keyboard.press('End')
   for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowLeft')
