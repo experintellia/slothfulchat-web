@@ -15,18 +15,38 @@ click-through to the profile) now renders as a "Reactions" section at the
 end of the message info dialog, after read receipts and attachment details,
 so who-reacted and who-read live in one place.
 ---
- .../src/components/Reactions/index.tsx        | 27 +++++++++++-----
- .../components/Reactions/styles.module.scss   |  4 +--
- .../MessageDetail/BasicMessageInfo.tsx        | 14 +++++++++
+ .../src/components/PeopleHoverInfo/index.tsx  |  8 +++-
+ .../src/components/Reactions/index.tsx        | 40 +++++++++++++++----
+ .../components/Reactions/styles.module.scss   |  4 +-
+ .../MessageDetail/BasicMessageInfo.tsx        | 14 +++++++
  .../ReactionsList.module.scss}                |  3 +-
- .../ReactionsList.tsx}                        | 31 +++----------------
- .../src/components/message/Message.tsx        |  3 +-
- 6 files changed, 42 insertions(+), 40 deletions(-)
+ .../ReactionsList.tsx}                        | 31 ++------------
+ .../src/components/message/Message.tsx        |  4 +-
+ 7 files changed, 63 insertions(+), 41 deletions(-)
  rename packages/frontend/src/components/dialogs/{ReactionsDialog/styles.module.scss => MessageDetail/ReactionsList.module.scss} (94%)
  rename packages/frontend/src/components/dialogs/{ReactionsDialog/index.tsx => MessageDetail/ReactionsList.tsx} (81%)
 
+diff --git a/packages/frontend/src/components/PeopleHoverInfo/index.tsx b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
+index b4ff74629aa984a070942fa82397ed7bd08279dd..3ee863f8378e95fef8b153ea004972114858ccbe 100644
+--- a/packages/frontend/src/components/PeopleHoverInfo/index.tsx
++++ b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
+@@ -135,7 +135,13 @@ export function HoverInfoTrigger(props: {
+       onMouseLeave={() => setOpen(false)}
+       onFocus={() => setOpen(true)}
+       onBlur={() => setOpen(false)}
+-      onClick={props.onClick}
++      // A click inside the open card (a name, an avatar) is not a click on
++      // the trigger.
++      onClick={e => {
++        if (!anchorRef.current?.contains(e.target as Node)) {
++          props.onClick?.()
++        }
++      }}
+     >
+       {props.children}
+       {open && (
 diff --git a/packages/frontend/src/components/Reactions/index.tsx b/packages/frontend/src/components/Reactions/index.tsx
-index 1c9bc983b3282eadfbc971be2416c86286a915b4..f47ec10ccad4179322a70ca08b1fc1b139398753 100644
+index 1c9bc983b3282eadfbc971be2416c86286a915b4..773d813724b0d4c5959f9c1388cfdd62e46116fe 100644
 --- a/packages/frontend/src/components/Reactions/index.tsx
 +++ b/packages/frontend/src/components/Reactions/index.tsx
 @@ -2,7 +2,9 @@ import React, { useMemo } from 'react'
@@ -40,15 +60,25 @@ index 1c9bc983b3282eadfbc971be2416c86286a915b4..f47ec10ccad4179322a70ca08b1fc1b1
  import {
    HoverInfoTrigger,
    PeopleHoverCard,
-@@ -19,6 +21,7 @@ import useTranslationFunction from '../../hooks/useTranslationFunction'
+@@ -14,11 +16,17 @@ import styles from './styles.module.scss'
+ 
+ import type { T } from '@deltachat/jsonrpc-client'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
++import { getLogger } from '@deltachat-desktop/shared/logger'
++
++const log = getLogger('Reactions')
+ 
+ // Reactions are sorted by their frequencies in the core, that is, the
  // most used emojis come first in this list.
  
  type Props = {
 +  messageId: number
++  /** Whether the reactions bar would be offered here (`showReactionsUi`). */
++  canReact: boolean
    reactions: T.Reactions
    tabindexForInteractiveContents: -1 | 0
    messageWidth: number
-@@ -58,10 +61,18 @@ export default function Reactions(props: Props) {
+@@ -58,10 +66,26 @@ export default function Reactions(props: Props) {
      }
    }, [messageWidth, reactions])
  
@@ -61,17 +91,25 @@ index 1c9bc983b3282eadfbc971be2416c86286a915b4..f47ec10ccad4179322a70ca08b1fc1b1
 +  }
 +
 +  // Clicking a pill joins that reaction, or takes it back if it's ours.
++  // Where reacting isn't possible (can't send here, a saved copy) it shows
++  // who reacted instead.
 +  // ponytail: one reaction per contact, like the rest of the UI.
 +  const toggleReaction = (emoji: string, isFromSelf: boolean) => {
-+    BackendRemote.rpc.sendReaction(
-+      selectedAccountId(),
-+      props.messageId,
-+      isFromSelf ? [] : [emoji]
-+    )
++    if (!props.canReact) {
++      openMessageInfo()
++      return
++    }
++    BackendRemote.rpc
++      .sendReaction(
++        selectedAccountId(),
++        props.messageId,
++        isFromSelf ? [] : [emoji]
++      )
++      .catch(log.error)
    }
  
    // Emojis that don't fit and are collapsed into the "+N" pill.
-@@ -75,7 +86,7 @@ export default function Reactions(props: Props) {
+@@ -75,7 +99,7 @@ export default function Reactions(props: Props) {
              key={emoji}
              align='start'
              className={styles.emojiTrigger}
@@ -80,7 +118,7 @@ index 1c9bc983b3282eadfbc971be2416c86286a915b4..f47ec10ccad4179322a70ca08b1fc1b1
              card={
                <ReactorsHoverCard
                  reactionsByContact={reactionsByContact}
-@@ -99,7 +110,7 @@ export default function Reactions(props: Props) {
+@@ -99,7 +123,7 @@ export default function Reactions(props: Props) {
          <HoverInfoTrigger
            align='start'
            className={styles.emojiTrigger}
@@ -89,7 +127,7 @@ index 1c9bc983b3282eadfbc971be2416c86286a915b4..f47ec10ccad4179322a70ca08b1fc1b1
            card={
              <ReactorsHoverCard
                reactionsByContact={reactionsByContact}
-@@ -118,7 +129,7 @@ export default function Reactions(props: Props) {
+@@ -118,7 +142,7 @@ export default function Reactions(props: Props) {
          type='button'
          className={styles.openReactionsListDialogButton}
          aria-label={tx('more_info_desktop')}
@@ -228,10 +266,10 @@ index 5db62c002d3621dc79ba5e600e852edb7837e9de..1619fed29b2057d1341b3328e4390ddf
    const [contacts, setContacts] = useState<ContactWithReaction[]>([])
    const openViewProfileDialog = useOpenViewProfileDialog({ onAction: onClose })
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index a4ef84c2f10e0471ebc2ab5d2f93819ad7b0a47e..7819afc68e8ee538512c4e854d3fbab40de1c428 100644
+index a4ef84c2f10e0471ebc2ab5d2f93819ad7b0a47e..22e222cef62f3be8daa0acaa667d5c40451a4c6c 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -1386,12 +1386,13 @@ export default function Message(props: {
+@@ -1386,12 +1386,14 @@ export default function Message(props: {
              <div
                // TODO the "+1" count aria-live announcment is perhaps not great
                // out of context.
@@ -243,6 +281,7 @@ index a4ef84c2f10e0471ebc2ab5d2f93819ad7b0a47e..7819afc68e8ee538512c4e854d3fbab4
                {message.reactions && (
                  <Reactions
 +                  messageId={message.id}
++                  canReact={showReactionsUi(message, props.chat)}
                    reactions={message.reactions}
                    tabindexForInteractiveContents={
                      tabindexForInteractiveContents

@@ -109,8 +109,15 @@ try {
   await page.mouse.move(1000, 80)
   await shot('01-reactions')
 
-  // Clicking someone else's pill joins it; clicking it again takes it back.
   const mine = async () => (await reactionsOf())[1]?.[0]
+
+  // A click inside the hover card (who reacted) is not a click on the pill.
+  await thumbs.hover()
+  await bubble.getByText('Alice Weber').click()
+  await page.waitForTimeout(1500)
+  expect((await mine()) === undefined, 'clicking a name in the hover card does not react')
+
+  // Clicking someone else's pill joins it; clicking it again takes it back.
   await thumbs.click()
   await until(async () => (await mine()) === '👍', 'Bob joins 👍')
   expect(true, "clicking Alice's 👍 reacts 👍 as Bob")
