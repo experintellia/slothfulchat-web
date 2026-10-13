@@ -2,8 +2,7 @@ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sat, 1 Aug 2026 17:28:12 +0000
 Subject: [PATCH] =?UTF-8?q?web-app:=20custom=20voice-message=20player=20?=
- =?UTF-8?q?=E2=80=94=20controls,=20waveform,=20remembered=20position=20(on?=
- =?UTF-8?q?=20by=20default)?=
+ =?UTF-8?q?=E2=80=94=20controls,=20waveform,=20remembered=20position?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -16,15 +15,12 @@ produces the sound and drives auto-advance). The custom controls only
 drive the LOCAL muted element; the existing mirroring does the rest, so
 real `ended` events keep firing on the singleton.
 
-Controls (setting experimentalAudioPlayerControls, default ON — see
-"defaults" below): play/pause, seek bar, m:ss elapsed/total, and a pill
+Controls: play/pause, seek bar, m:ss elapsed/total, and a pill
 cycling 1x/1.5x/2x. The rate is global (MediaPlayerMutexContext
 playbackRate + setPlaybackRate); setPlaybackRate also sets
 defaultPlaybackRate on both elements because loading a new src resets
 playbackRate to defaultPlaybackRate (HTML media load algorithm), so the
-chosen rate survives track changes / auto-advance. One stable render
-tree: toggling the setting mid-playback must not remount the local
-<audio> at 0 (controls={!customControlsEnabled}, never a different tree).
+chosen rate survives track changes / auto-advance.
 Two-row layout: right of the play button the waveform takes the full
 width, a meta row below carries time (start) and the speed pill (end).
 Narrow viewports: bubbles claim min(70vw, 340px) — 78vw pushed the
@@ -36,18 +32,15 @@ failure silently keeps the plain range): peaks.ts getPeaks(src) =
 in-session bounded promise cache (~100 FIFO, keyed by the FRAGMENT-LESS
 URL, see identity below; no persistent cache — measure first, User
 Timing sc:waveform:* feeds the web-app Diagnostics "Waveform (ms)"
-section) -> fetch -> decodeAudioData on the main thread (a plain worker
-cannot construct an AudioContext, only the max-abs bucketing is
-offloaded) -> shared module worker, resolved relative to the document
-(new URL('waveform-worker.js', location.href)) so subpath deploys don't
-404. ~4s budget via Promise.race + fetch abort; a worker load error
-(async!) flips to a permanent null fallback and settles all pending
-callers — no hang, no leaked AudioBuffers. The canvas renders UNDER the
-range input, which stays THE interaction layer (drag guard, keyboard via
-a Message.tsx keydown carve-out, aria) but goes fully transparent;
-appearance:none collapses the input's intrinsic height, so the wrap
-reserves 32px explicitly (also prevents the bubble-geometry jump when
-peaks arrive).
+section) -> fetch -> decodeAudioData (which already decodes off the main
+thread) -> RMS bucketing of channel 0, one linear pass on the main
+thread. ~4s budget via Promise.race + fetch abort; any failure or
+timeout resolves null — no hang, no leaked AudioBuffers. The canvas
+renders UNDER the range input, which stays THE interaction layer (drag
+guard, keyboard via a Message.tsx keydown carve-out, aria) but goes
+fully transparent; appearance:none collapses the input's intrinsic
+height, so the wrap reserves 32px explicitly (also prevents the
+bubble-geometry jump when peaks arrive).
 
 Remembered position (positionStore.ts): localStorage map keyed by src,
 value {t, at}, capped ~300 oldest-pruned, every storage access
@@ -59,9 +52,8 @@ takeover cleanup saves the exact position BEFORE zeroing (the queued
 pause event would otherwise see 0) — but near-end counts as ended: on a
 natural end the local element can lag the singleton's `ended` by tens of
 ms, and saving duration-ε would resurrect the entry the singleton just
-cleared and make the next play end/auto-advance instantly. In custom
-mode a deactivated bubble KEEPS its shown position (display matches what
-replay will do); native mode zeroes like upstream.
+cleared and make the next play end/auto-advance instantly. A deactivated
+bubble KEEPS its shown position (display matches what replay will do).
 
 Singleton/bubble sync invariants (each direction fixed a real bug —
 KEEP ALL FOUR when resolving conflicts here):
@@ -71,7 +63,7 @@ KEEP ALL FOUR when resolving conflicts here):
 - singleton -> local on remount: a bubble (re)mounting while its message
   plays adopts the singleton's currentTime (>1s progress, local fresh
   <1s) — fixes 0:00-counting-up-while-sound-is-midway on profile/chat
-  switch (upstream #6378). Ungated: also fixes the native display.
+  switch (upstream #6378).
 - singleton 'seeked' -> local, delta-guarded (>0.5s): mini-player /
   media-session seeks must reach the bubble or its display desyncs and
   the two positionStore writers fight; the delta guard prevents
@@ -96,11 +88,8 @@ playNext() share one advanceOrStop() path; the sequential-playback
 staleness guard runs BEFORE the stop branch so a stale parked ended
 event can't stop an unrelated message.
 
-Defaults: flipped to on after four phases of polish; the switch stays in
-Settings -> Experimental features for the native controls. No migration
-needed and none shipped: the browser runtime persists only keys a user
-touched, so a stored `false` can only mean a deliberate opt-out — which
-is exactly what the fork's voice_player_disabled startup event counts.
+Always on: the native-controls fallback and its setting were retired
+after four phases of polish (#209).
 
 Pure helpers (formatAudioTime, nextPlaybackRate, drawBars) are
 unit-tested; positionStore via injectable storage + clock. The
@@ -1488,7 +1477,7 @@ index 4da058e9e4cf0416154a9a3f1253624f2cabe738..e27ce66a2c082a92c68bf3a23844cff4
      </NextVoiceMessagePlayerContext.Provider>
    )
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 00c76415d55c111fafbc54e203e1fb05ed1eef1f..4c6516306c169bbbbc1591731a48ee9833f5a209 100644
+index 00c76415d55c111fafbc54e203e1fb05ed1eef1f..f16da9295efcbdc6d909e6235fc583f86947a066 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -47,6 +47,12 @@ export interface DesktopSettingsType {
@@ -1497,7 +1486,7 @@ index 00c76415d55c111fafbc54e203e1fb05ed1eef1f..4c6516306c169bbbbc1591731a48ee98
    experimentalUnreadReadTime: boolean
 +  /** webapp: expose voice-message sender/chat/avatar in the OS media session (lock screen). Off by default (privacy: suppressed metadata otherwise). Shown in Settings -> Notifications, next to showNotificationContent. */
 +  voiceMessageMediaSessionDetails: boolean
-+  /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Toggled from the recorder UI, applies to the next recording. */
++  /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Switched in Settings -> Experimental -> Composer, applies to the next recording. */
 +  voiceRecordingOriginalAudio: boolean
 +  /** webapp: preferred microphone deviceId for voice recording, chosen from the recorder's mic picker. undefined = system default (the persistence setter only round-trips string|number|boolean|undefined). Reset if the device is gone. */
 +  voiceRecordingDeviceId: string | undefined

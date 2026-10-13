@@ -8,9 +8,7 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 The cross-chat playback part of the voice-messages epic (#120, #137),
-squashed from the incremental patch series. With
-experimentalAudioPlayerControls off, the native re-parented <audio> bar
-is byte-identical on every viewport.
+squashed from the incremental patch series.
 
 Mini-player (wide layout): instead of re-parenting the native singleton
 into the bar, the shared CustomAudioControls drive THE SINGLETON
@@ -27,22 +25,21 @@ lingering one — the bar must not attribute the playing message to the
 previous sender), and the chat sub-line shows only when it differs from
 the sender name (1:1 chats are named after the contact — "Bob / Bob").
 
-Media Session (guarded, only while a src plays and the setting is on):
-metadata is PRIVACY-SUPPRESSED by default — generic localized "Voice
-message", no artist/artwork — because it can land on a lock screen
-(forum 5423). voiceMessageMediaSessionDetails (default false) opts into
+Media Session (guarded, only while a src plays): metadata is
+PRIVACY-SUPPRESSED by default — generic localized "Voice message", no
+artist/artwork — because it can land on a lock screen (forum 5423).
+voiceMessageMediaSessionDetails (default false) opts into
 sender/chat/avatar; the setting lives in Settings -> Notifications right
-below "show notification content" (same privacy question; key unchanged,
-greyed out while the custom player is off). Handlers: play/pause,
-seekback/forward +-10s clamped, seekto, nexttrack -> the existing
-auto-advance (unregistered when there's no next). positionState on
-timeupdate/ratechange/durationchange, ~1Hz throttle, try-caught
+below "show notification content" (same privacy question). Handlers:
+play/pause, seekback/forward +-10s clamped, seekto, nexttrack -> the
+existing auto-advance (unregistered when there's no next). positionState
+on timeupdate/ratechange/durationchange, ~1Hz throttle, try-caught
 (setPositionState throws on non-finite duration), pushed immediately
 after a seek. The idle branch of useMediaSession MUST stay
 side-effect-free (KEEP when resolving conflicts): with the bar and the
 strip both mounted, crossing the breakpoint runs the newly-idle
-instance's setup AFTER the newly-active one's — clearing there wiped
-the fresh registration and killed lock-screen controls; only the
+instance's setup AFTER the newly-active one's — clearing there wiped the
+fresh registration and killed lock-screen controls; only the
 previously-active run's cleanup clears (all cleanups run before any
 setup).
 
@@ -68,14 +65,14 @@ topmost chat row. No strip in the DOM -> the rule matches nothing.
 Keep the strip as MainScreen's FIRST child — the ~ combinator depends
 on it (tab-order trade-off documented inline).
 
-One surface at a time: voicePlayerSurface(smallScreen, customControls,
-hasSrc) in mediaSession.ts is the single decision — none / native /
-strip / bar. Both mount points render GlobalVoiceMessagePlayer; the
-non-current one returns null AND keeps its hooks idle, so sender fetch,
-jump wiring and media-session registration never run twice. The strip is
-its own component so its ~4Hz timeupdate re-renders don't reach the
-player's fetch hooks; useAudioElementState is the extracted
-paused/time/duration subscription shared with CustomAudioControls.
+One surface at a time: voicePlayerSurface(smallScreen, hasSrc) in
+mediaSession.ts is the single decision — none / strip / bar. Both mount
+points render GlobalVoiceMessagePlayer; the non-current one returns null
+AND keeps its hooks idle, so sender fetch, jump wiring and media-session
+registration never run twice. The strip is its own component so its ~4Hz
+timeupdate re-renders don't reach the player's fetch hooks;
+useAudioElementState is the extracted paused/time/duration subscription
+shared with CustomAudioControls.
 
 Pure helpers (mediaSessionMetadata, clampSeek, voicePlayerSurface) plus
 the positionStore/utils cases are covered by the audioPlayer mocha

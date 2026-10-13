@@ -9,10 +9,7 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 The recorder part of the voice-messages epic (#120), squashed from the
-incremental patch series. Gated behind experimentalAudioPlayerControls
-(off = the previous recorder byte-identical: no picker/warning, no
-deviceId constraint, no SilenceDetector, the OFF path keeps the aborting
-1s NO_INPUT alert). The getUserMedia + ScriptProcessorNode -> real-time
+incremental patch series. The getUserMedia + ScriptProcessorNode -> real-time
 LAME MP3 pipeline is preserved (no MediaRecorder: iOS can't play
 Chrome's Opus/WebM).
 
