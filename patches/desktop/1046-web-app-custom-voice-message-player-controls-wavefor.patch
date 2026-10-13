@@ -32,15 +32,15 @@ failure silently keeps the plain range): peaks.ts getPeaks(src) =
 in-session bounded promise cache (~100 FIFO, keyed by the FRAGMENT-LESS
 URL, see identity below; no persistent cache — measure first, User
 Timing sc:waveform:* feeds the web-app Diagnostics "Waveform (ms)"
-section) -> fetch -> decodeAudioData (which already decodes off the
-main thread) -> RMS bucketing of channel 0, one linear pass on the main
-thread. ~4s budget via Promise.race + fetch abort; any failure or timeout
-resolves null — no hang, no leaked AudioBuffers. The canvas renders UNDER the
-range input, which stays THE interaction layer (drag guard, keyboard via
-a Message.tsx keydown carve-out, aria) but goes fully transparent;
-appearance:none collapses the input's intrinsic height, so the wrap
-reserves 32px explicitly (also prevents the bubble-geometry jump when
-peaks arrive).
+section) -> fetch -> decodeAudioData (which already decodes off the main
+thread) -> RMS bucketing of channel 0, one linear pass on the main
+thread. ~4s budget via Promise.race + fetch abort; any failure or
+timeout resolves null — no hang, no leaked AudioBuffers. The canvas
+renders UNDER the range input, which stays THE interaction layer (drag
+guard, keyboard via a Message.tsx keydown carve-out, aria) but goes
+fully transparent; appearance:none collapses the input's intrinsic
+height, so the wrap reserves 32px explicitly (also prevents the
+bubble-geometry jump when peaks arrive).
 
 Remembered position (positionStore.ts): localStorage map keyed by src,
 value {t, at}, capped ~300 oldest-pruned, every storage access
