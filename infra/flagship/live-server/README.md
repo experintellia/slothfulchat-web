@@ -9,6 +9,11 @@ files are that gate's source of truth, with nested webxdc hosts fixed:
 - `deploy-preview.sh` → `/usr/local/bin/deploy-preview.sh` (forced command)
 - `test-routes.sh` — offline check, run after any change: `bash test-routes.sh`
 
+The repo gate can now serve this domain too
+(`SLOTHFUL_PREVIEW_DOMAIN=lollolollol.lol SLOTHFUL_NEXT_HOST=next.lollolollol.lol`,
+see `../README.md` step e). Moving the server onto it, with its stricter
+bundle checks, retires this directory.
+
 ## What was broken
 
 The app opens a webxdc at `https://<app-id>.webxdc.pr-<n>.lollolollol.lol/`. The

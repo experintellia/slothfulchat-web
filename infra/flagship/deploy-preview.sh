@@ -37,11 +37,17 @@
 
 set -euo pipefail
 
-# Env overrides exist for the self-test only; sshd doesn't pass client env to
-# a forced command, so a CI caller can't reach them.
+# sshd doesn't pass client env to a forced command, so a CI caller can't reach
+# any of these overrides. The two paths exist for the self-test only.
 ROOT=${SLOTHFUL_DEPLOY_ROOT:-/srv/slothfulchat}
 PREVIEWS=$ROOT/previews
 CADDYFILE=${SLOTHFUL_DEPLOY_CADDYFILE:-/etc/caddy/Caddyfile}
+# Hostnames, for a server on another domain. The operator sets them in the
+# forced command itself (README step e), which CI can't touch either:
+#   command="SLOTHFUL_PREVIEW_DOMAIN=example.org SLOTHFUL_NEXT_HOST=next.example.org /usr/local/bin/deploy-preview.sh",restrict …
+# PREVIEW_DOMAIN must match the PREVIEW_DOMAIN repo Variable (preview-deploy.yml).
+PREVIEW_DOMAIN=${SLOTHFUL_PREVIEW_DOMAIN:-preview.slothful.chat}
+NEXT_HOST=${SLOTHFUL_NEXT_HOST:-next.slothful.chat}
 
 # Upload budget. A real dist/ is ~7 MB of static overlays + a ~10 MB
 # NotoColorEmoji.ttf + ~7 MB of emoji-set fonts + upstream's bundle + locales +
@@ -247,11 +253,11 @@ do_upload() {
 	if [ "$target" = next ]; then
 		name=next
 		parent=$ROOT
-		host=next.slothful.chat
+		host=$NEXT_HOST
 	elif [[ "$target" =~ ^[0-9]+$ ]]; then
 		name=pr-$target
 		parent=$PREVIEWS
-		host=pr-$target.preview.slothful.chat
+		host=pr-$target.$PREVIEW_DOMAIN
 	else
 		die "upload: invalid target '$target' (expected a number or 'next')"
 	fi

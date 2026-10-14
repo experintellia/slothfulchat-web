@@ -91,6 +91,15 @@ Add the deploy public key to `~deploy/.ssh/authorized_keys` as a forced command
 `restrict` drops pty/forwarding/agent; `command=` pins every invocation to the
 gate script regardless of what SSH_ORIGINAL_COMMAND asks for.
 
+On a domain other than slothful.chat, name the hosts in that same line, and set
+the `PREVIEW_DOMAIN` (and `SLOTHFUL_NEXT_INSTANCE_URL`) repo Variables to match
+in step (h):
+
+    command="SLOTHFUL_PREVIEW_DOMAIN=example.org SLOTHFUL_NEXT_HOST=next.example.org /usr/local/bin/deploy-preview.sh",restrict ssh-ed25519 AAAA…
+
+PR `<n>` is then served at `pr-<n>.example.org`. Replace `preview.slothful.chat`
+and `next.slothful.chat` in the Caddyfile the same way.
+
 Narrow sudoers — reload only (validate reads the config unprivileged, so it
 needs no sudo; just make sure `/etc/caddy/Caddyfile` and `/srv/slothfulchat` are
 readable by `deploy`):
