@@ -107,13 +107,15 @@ for (const file of await readdir(locales)) {
 }
 // The fork's English-only strings live in fork-strings.json, not in the desktop
 // patches: patches that each added keys to upstream's _untranslated_en.json
-// conflicted with each other. A key upstream also has means upstream took it.
+// conflicted with each other. A key upstream also has means upstream took it:
+// ours would override its translations in every language, so fail instead.
 const untranslatedPath = join(dist, 'locales/_untranslated_en.json')
 const untranslated = JSON.parse(await readFile(untranslatedPath, 'utf-8'))
+const english = JSON.parse(await readFile(join(dist, 'locales/en.json'), 'utf-8'))
 const forkStrings = JSON.parse(await readFile(join(here, 'fork-strings.json'), 'utf-8'))
-const taken = Object.keys(forkStrings).filter(key => key in untranslated)
+const taken = Object.keys(forkStrings).filter(key => key in untranslated || key in english)
 if (taken.length) {
-  throw new Error(`upstream's _untranslated_en.json now has ${taken.join(', ')}: drop them from fork-strings.json`)
+  throw new Error(`upstream's locales now have ${taken.join(', ')}: drop or rename them in fork-strings.json`)
 }
 await writeFile(untranslatedPath, JSON.stringify({ ...untranslated, ...forkStrings }, null, 2) + '\n')
 

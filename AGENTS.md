@@ -58,7 +58,7 @@ Not lazy about: understanding the problem (read it fully and trace the real flow
 
 # Fork strings go in packages/web-app/fork-strings.json
 
-New English-only UI strings go in `packages/web-app/fork-strings.json`, not into `_locales/_untranslated_en.json` through a desktop patch. `assemble.mjs` merges them into that file in `dist/`. CI rejects a patch that touches it, because every such patch appended to the same spot and any two of them conflicted.
+New English-only UI strings go in `packages/web-app/fork-strings.json`, not into `_locales/_untranslated_en.json` through a desktop patch. `assemble.mjs` merges them into that file in `dist/`. CI rejects a patch that touches it, because every such patch appended to the same spot and any two of them conflicted. Add new keys next to related ones rather than at the end: two PRs that both append still conflict over the trailing comma, just in a plain JSON file.
 
 # Building core-wasm (packages/core-wasm)
 
