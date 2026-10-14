@@ -104,7 +104,7 @@ index 04697b57101667f994cfda5eb18d992c86ddb526..a5493caefab1568ff12f4015e0554f14
  [[package]]
  name = "rayon"
 diff --git a/Cargo.toml b/Cargo.toml
-index 75281633f59d7b8dbea4f1853e76568213907db3..489250ad1d33f308df803e072b8e4d1b5d6f5593 100644
+index e7ef01fa49709d65739cd9ef7f771fac40b239fc..20aef82065854343a0808a3fb353b38e676bcad1 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -105,8 +105,10 @@ uuid = { version = "1", features = ["serde", "v4"] }
@@ -119,7 +119,7 @@ index 75281633f59d7b8dbea4f1853e76568213907db3..489250ad1d33f308df803e072b8e4d1b
  async-native-tls = { version = "0.6", default-features = false, features = ["runtime-tokio"] }
  async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio-fs"] }
  fast-socks5 = "1"
-@@ -242,3 +244,5 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+@@ -239,3 +241,5 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
  # fork that drops async-imap's unused tokio/net feature (breaks wasm32);
  # path is relative to the build/ worktree in the slothfulchat-web repo
  async-imap = { path = "../../vendor-crates/async-imap" }

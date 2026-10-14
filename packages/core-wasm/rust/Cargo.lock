@@ -1245,11 +1245,7 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
  "webpki-roots 0.26.11",
- "ws_stream_wasm",
 ]
 
 [[package]]
@@ -5881,13 +5877,16 @@ version = "1.0.0"
 dependencies = [
  "futures",
  "js-sys",
+ "serde_json",
  "sqlite-wasm-rs",
  "sqlite-wasm-vfs",
  "tokio",
+ "tokio-util",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasmtimer",
  "web-sys",
+ "ws_stream_wasm",
 ]
 
 [[package]]

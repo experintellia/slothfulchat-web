@@ -7,7 +7,7 @@
 //! - native: transparent re-export of real tokio (feature `full`)
 //! - wasm32: real tokio's `sync`/`io`/macros (which work on wasm) plus
 //!   browser implementations — time via `wasmtimer`, tasks on the JS event
-//!   loop, an in-memory `fs`, and compile-compatible `net` stubs.
+//!   loop, an in-memory `fs`, and `net` over a WebSocket proxy and `fetch()`.
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use tokio::*;

@@ -5,9 +5,8 @@ Status: **in progress** — M0 (interop spec + scaffold + un-gate patch), M1 (au
 > **✔ Resolved (investigated 2026-07 — no core patch, no CSP hosts needed).** An
 > earlier draft flagged `ice_servers()` as a blocker on the theory that it returns
 > `"[]"` on WASM because DNS is stubbed. That was a **misread**. `ice_servers()` →
-> `resolve_ice_servers()` → `dns.rs::lookup_host_with_cache` does **not** use the
-> stubbed `tokio::net::lookup_host` on wasm — `patches/core/1004` rewired `dns.rs`
-> (its `#[cfg(target_arch="wasm32")]` branch) to resolve through the WS-TCP proxy's
+> `resolve_ice_servers()` → `dns.rs::lookup_host_with_cache` → `tokio::net::lookup_host`,
+> which on wasm is tokio-wasm-shim's: it resolves through the WS-TCP proxy's
 > `/dns/{host}` endpoint, the same path IMAP/SMTP already use (and `imap.rs` falls
 > back to `create_fallback_ice_servers()` — `turn.delta.chat` — when the relay
 > advertises none). So `ice_servers()` returns real relay servers on the browser

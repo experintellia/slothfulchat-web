@@ -91,8 +91,9 @@ exists:
 - **Networking** — browsers can't open TCP sockets, so IMAP/SMTP tunnels
   through a local WebSocket→TCP proxy; TLS still terminates inside wasm, the
   proxy only ever sees ciphertext. HTTP requests go through the browser's
-  `fetch()`. SOCKS/shadowsocks proxying is stubbed out. `core/1002`,
-  `core/1004`, `core/1008`
+  `fetch()`. Both transports live in `crates/tokio-wasm-shim` (`tokio::net`);
+  the patches only wire core to them. SOCKS/shadowsocks proxying is stubbed
+  out. `core/1002`, `core/1004`, `core/1008`
 - **Backups** — file-based backup export/import reimplemented for the wasm
   VFS (sqlite-wasm-rs has no `sqlcipher_export`, so the database bytes are
   swapped at the VFS level; encrypted backups stay unsupported on wasm). The

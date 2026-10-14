@@ -15,11 +15,10 @@ need no WebSocket-TCP bridge for such accounts.
   timeout, follow_redirects) -> (status, Response) on both targets.
   Native: hyper via get_http_sender wrapped in tokio::time::timeout
   (hyper never follows redirects, so the flag is a no-op there). wasm:
-  the existing fetch() plumbing gains custom headers, an
+  maps onto tokio-wasm-shim's tokio::net::fetch (custom headers, an
   AbortController-backed timeout and RequestRedirect::Error for
   follow_redirects=false so credential headers are never re-sent to a
-  redirect target; the read_url*/post_* wrappers now route through it
-  with a 60s default timeout.
+  redirect target); read_url_blob now routes through it.
 - login_param/transport: new `webimap: bool` on EnteredLoginParam and
   ConfiguredLoginParam(-Json), serde-defaulted so both JSON DB columns
   and sync messages stay compatible without a migration.
@@ -74,7 +73,6 @@ the connectivity view (HTML), which kept saying "Connected":
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
- Cargo.toml                                    |   2 +-
  deltachat-ffi/src/lot.rs                      |   2 +-
  .../src/api/types/login_param.rs              |   7 +
  deltachat-jsonrpc/src/api/types/qr.rs         |   5 +-
@@ -82,7 +80,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  src/lib.rs                                    |   1 +
  src/login_param.rs                            |   7 +
  src/net/http.rs                               |  74 +++-
- src/net/http_wasm.rs                          | 135 +++++--
+ src/net/http_wasm.rs                          |  54 ++-
  src/qr.rs                                     |  98 +++++
  src/qr/dclogin_scheme.rs                      |   1 +
  src/qr/qr_tests.rs                            |  40 +-
@@ -92,22 +90,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  src/transport.rs                              |   9 +
  src/transport/transport_tests.rs              |   5 +-
  src/webimap.rs                                | 374 ++++++++++++++++++
- 18 files changed, 901 insertions(+), 110 deletions(-)
+ 17 files changed, 831 insertions(+), 97 deletions(-)
  create mode 100644 src/webimap.rs
 
-diff --git a/Cargo.toml b/Cargo.toml
-index adb8ad9fad566c162f12102afccba34d8b0b25c4..4106fde890d6d1e0153972420813c11e1d45ad66 100644
---- a/Cargo.toml
-+++ b/Cargo.toml
-@@ -137,7 +137,7 @@ tokio-util = { workspace = true, features = ["compat"] }
- uuid = { version = "1", features = ["js"] }
- wasm-bindgen = "0.2"
- wasm-bindgen-futures = "0.4"
--web-sys = { version = "0.3", features = ["Headers", "RequestInit", "Response", "WorkerGlobalScope"] }
-+web-sys = { version = "0.3", features = ["AbortController", "AbortSignal", "Headers", "RequestInit", "RequestRedirect", "Response", "WorkerGlobalScope"] }
- ws_stream_wasm = "0.7"
- 
- [dev-dependencies]
 diff --git a/deltachat-ffi/src/lot.rs b/deltachat-ffi/src/lot.rs
 index 1c8c0af5b9d61934a2a30549f2a9a1360ccc38b2..f5440f65f37eb36def9c4b5d1463f8fdc518150b 100644
 --- a/deltachat-ffi/src/lot.rs
@@ -514,131 +499,17 @@ index 1922be7a3ff5dded54d12fc1a1adeb31b252e759..c8149809920964afb6d553d21f46ece5
  fn http_url_cache_timestamps(url: &str, mimetype: Option<&str>) -> (i64, i64) {
      let now = time();
 diff --git a/src/net/http_wasm.rs b/src/net/http_wasm.rs
-index 24520a04bf0f80491522b5c9f6d28049a80dba9e..0ceacc172069bd4587f7673c7edb9165000266a6 100644
+index 1bb038716ec5a34bac5153e0f8afdfa4d09b525f..e66de01d286136b89f504cfd5b85f29432ebb63b 100644
 --- a/src/net/http_wasm.rs
 +++ b/src/net/http_wasm.rs
-@@ -4,6 +4,8 @@
- //! the connection: TLS, redirects and caching are handled by `fetch()`, and
- //! requests are subject to CORS.
- 
-+use std::time::Duration;
-+
- use anyhow::{Context as _, Result, anyhow, bail};
- use futures::channel::oneshot;
- use mime::Mime;
-@@ -13,6 +15,9 @@
- 
- use crate::context::Context;
- 
-+/// Default timeout for the `read_url*`/`post_*` wrappers.
-+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
-+
- /// HTTP(S) GET response.
- #[derive(Debug, Clone, PartialEq, Eq)]
- pub struct Response {
-@@ -43,37 +48,85 @@ fn js_str(v: JsValue) -> String {
- /// JS handles are `!Send` but our futures must be Send (yerpc), so the JS
- /// side runs in a `spawn_local` task and the result comes back over a
- /// oneshot channel — same pattern as `ws_tcp`.
-+///
-+/// Fails if no response arrived within `timeout`; the fetch is aborted
-+/// via an `AbortController` then (browser `fetch()` has no timeout of
-+/// its own).
-+///
-+/// With `follow_redirects` the browser follows redirects transparently
-+/// (its default); without it a redirect fails the request
-+/// (`RequestRedirect::Error`), so request headers such as credentials
-+/// are never re-sent to a redirect target.
- async fn fetch(
--    method: &'static str,
-+    method: &str,
-     url: &str,
-+    headers: &[(&str, &str)],
-     body: Option<String>,
--    content_type: Option<&'static str>,
-+    timeout: Duration,
-+    follow_redirects: bool,
- ) -> Result<FetchResponse> {
-+    let method = method.to_string();
-     let url = url.to_string();
-+    let headers: Vec<(String, String)> = headers
-+        .iter()
-+        .map(|(name, value)| (name.to_string(), value.to_string()))
-+        .collect();
-     let (tx, rx) = oneshot::channel();
-     wasm_bindgen_futures::spawn_local(async move {
--        let _ = tx.send(fetch_inner(method, &url, body, content_type).await);
-+        let controller = web_sys::AbortController::new().ok();
-+        let result = match tokio::time::timeout(
-+            timeout,
-+            fetch_inner(
-+                &method,
-+                &url,
-+                &headers,
-+                body,
-+                follow_redirects,
-+                controller.as_ref(),
-+            ),
-+        )
-+        .await
-+        {
-+            Ok(result) => result,
-+            Err(_elapsed) => {
-+                if let Some(controller) = &controller {
-+                    controller.abort();
-+                }
-+                Err("request timed out".to_string())
-+            }
-+        };
-+        let _ = tx.send(result.map_err(|e| format!("{method} {e}")));
-     });
-     rx.await
-         .map_err(|_| anyhow!("fetch task dropped"))?
--        .map_err(|e| anyhow!("fetch {method} {e}"))
-+        .map_err(|e| anyhow!("fetch {e}"))
- }
- 
- async fn fetch_inner(
-     method: &str,
-     url: &str,
-+    headers: &[(String, String)],
-     body: Option<String>,
--    content_type: Option<&str>,
-+    follow_redirects: bool,
-+    controller: Option<&web_sys::AbortController>,
- ) -> std::result::Result<FetchResponse, String> {
-     let init = web_sys::RequestInit::new();
-     init.set_method(method);
-+    if !follow_redirects {
-+        init.set_redirect(web_sys::RequestRedirect::Error);
-+    }
-+    if let Some(controller) = controller {
-+        init.set_signal(Some(&controller.signal()));
-+    }
-     if let Some(body) = &body {
-         init.set_body(&JsValue::from_str(body));
-     }
--    if let Some(ct) = content_type {
--        let headers = web_sys::Headers::new().map_err(js_str)?;
--        headers.append("content-type", ct).map_err(js_str)?;
--        init.set_headers(&headers);
-+    if !headers.is_empty() {
-+        let js_headers = web_sys::Headers::new().map_err(js_str)?;
-+        for (name, value) in headers {
-+            js_headers.append(name, value).map_err(js_str)?;
-+        }
-+        init.set_headers(&js_headers);
-     }
-     // The core always runs in a Web Worker; there is no `window` global.
-     let scope: web_sys::WorkerGlobalScope = js_sys::global().unchecked_into();
-@@ -100,6 +153,37 @@ fn ensure_https(url: &str) -> Result<()> {
+@@ -38,6 +38,37 @@ fn ensure_https(url: &str) -> Result<()> {
      Ok(())
  }
  
 +/// Performs a single HTTP request via `fetch()`.
 +///
 +/// Returns the status code and the response body instead of failing
-+/// on non-2xx responses. See [`fetch`] for `timeout` and
++/// on non-2xx responses. See `tokio::net::fetch` for `timeout` and
 +/// `follow_redirects` semantics.
 +pub(crate) async fn request(
 +    _context: &Context,
@@ -669,12 +540,12 @@ index 24520a04bf0f80491522b5c9f6d28049a80dba9e..0ceacc172069bd4587f7673c7edb9165
  /// Retrieves the text contents of URL using HTTP GET request.
  pub async fn read_url(context: &Context, url: &str) -> Result<String> {
      let response = read_url_blob(context, url).await?;
-@@ -123,25 +207,12 @@ pub(crate) async fn http_cache_cleanup(_context: &Context) -> Result<()> {
+@@ -61,25 +92,12 @@ pub(crate) async fn http_cache_cleanup(_context: &Context) -> Result<()> {
  }
  
  /// Retrieves the binary contents of URL using HTTP GET request.
 -pub async fn read_url_blob(_context: &Context, url: &str) -> Result<Response> {
--    let resp = fetch("GET", url, None, None).await?;
+-    let resp = fetch("GET", url, &[], None, DEFAULT_TIMEOUT, true).await?;
 -    if !resp.ok {
 -        bail!(
 -            "The server returned a non-successful response code: {}",
@@ -700,37 +571,6 @@ index 24520a04bf0f80491522b5c9f6d28049a80dba9e..0ceacc172069bd4587f7673c7edb9165
  }
  
  /// Retrieves the binary contents of URL using HTTP GET request.
-@@ -158,14 +229,16 @@ pub(crate) async fn read_url_blob_with_tls(
- /// Returns response text and whether request was successful.
- pub(crate) async fn post_empty(_context: &Context, url: &str) -> Result<(String, bool)> {
-     ensure_https(url)?;
--    let resp = fetch("POST", url, None, None).await?;
-+    let resp = fetch("POST", url, &[], None, DEFAULT_TIMEOUT, true).await?;
-     Ok((String::from_utf8_lossy(&resp.body).to_string(), resp.ok))
- }
- 
- /// Sends a POST request with given string as body.
- pub(crate) async fn post_string(_context: &Context, url: &str, body: String) -> Result<bool> {
-     ensure_https(url)?;
--    Ok(fetch("POST", url, Some(body), None).await?.ok)
-+    Ok(fetch("POST", url, &[], Some(body), DEFAULT_TIMEOUT, true)
-+        .await?
-+        .ok)
- }
- 
- /// Posts the given form to the URL.
-@@ -179,8 +252,10 @@ pub(crate) async fn post_form<T: Serialize + ?Sized>(
-     let resp = fetch(
-         "POST",
-         url,
-+        &[("content-type", "application/x-www-form-urlencoded")],
-         Some(body),
--        Some("application/x-www-form-urlencoded"),
-+        DEFAULT_TIMEOUT,
-+        true,
-     )
-     .await?;
-     Ok(resp.body.into())
 diff --git a/src/qr.rs b/src/qr.rs
 index 981087c11d7d8a7228fd27c626fb7322551cffeb..7f6188805f68b697bd4fdba791a4a0c5fabe8f1c 100644
 --- a/src/qr.rs
