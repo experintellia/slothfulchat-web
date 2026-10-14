@@ -188,7 +188,6 @@ path.
 
 Refs #179
 ---
- _locales/_untranslated_en.json                |  12 -
  .../AudioRecorder/AudioRecorder.tsx           | 656 ++++++++++++++++--
  .../components/AudioRecorder/MicRecorder.ts   | 157 ++++-
  .../components/AudioRecorder/recorderLogic.ts | 159 +++++
@@ -197,34 +196,11 @@ Refs #179
  .../components/Settings/MicrophoneTest.tsx    | 242 +++++++
  .../components/Settings/styles.module.scss    |   8 +
  .../frontend/src/tests/audioRecorder.test.ts  | 172 +++++
- 9 files changed, 1603 insertions(+), 78 deletions(-)
+ 8 files changed, 1603 insertions(+), 66 deletions(-)
  create mode 100644 packages/frontend/src/components/AudioRecorder/recorderLogic.ts
  create mode 100644 packages/frontend/src/components/Settings/MicrophoneTest.tsx
  create mode 100644 packages/frontend/src/tests/audioRecorder.test.ts
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 898bac5ea6dfbd666105602e01690fa339f284f7..ded99949e49cb1275fe89a2c739ec2befea513a7 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -146,18 +146,6 @@
-   "slide_up_to_lock": {
-     "message": "Slide up to lock"
-   },
--  "original_audio": {
--    "message": "Original audio"
--  },
--  "voice_quality": {
--    "message": "Voice quality"
--  },
--  "original_audio_explain": {
--    "message": "Record unprocessed audio (no noise suppression, echo cancellation or auto gain). Applies to the next recording."
--  },
--  "original_audio_not_supported": {
--    "message": "Original audio is not supported by this browser or microphone"
--  },
-   "select_microphone": {
-     "message": "Select microphone"
-   },
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e41898722a5cc6c 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx

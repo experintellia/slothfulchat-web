@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Tue, 13 Oct 2026 02:16:55 +0000
+Subject: [PATCH] web-app: type-check fork strings from
+ packages/web-app/fork-strings.json
+
+The fork's English strings live in packages/web-app/fork-strings.json,
+which assemble.mjs merges into dist/locales/_untranslated_en.json, not in
+_locales/_untranslated_en.json. TranslationKey is built from the locale
+files, so without this every tx('<fork key>') call is a type error
+(50 of them in check:types). Importing the fork file's keys as well
+keeps the type strict: an unknown key still fails.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ packages/shared/translationKeyType.d.ts | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/packages/shared/translationKeyType.d.ts b/packages/shared/translationKeyType.d.ts
+index 8496babc7c0654e1c833e80fbf8f31fbc5bbb0d2..edf4acf2b3a783ec1ac3ae656acf620b38a4a9ee 100644
+--- a/packages/shared/translationKeyType.d.ts
++++ b/packages/shared/translationKeyType.d.ts
+@@ -2,9 +2,13 @@
+ import type english from '../../_locales/en.json'
+ //@ts-ignore
+ import type untranslated from '../../_locales/_untranslated_en.json'
++// slothfulchat-web: the fork's strings live outside this tree and are merged
++// into _untranslated_en.json when dist/ is assembled.
++//@ts-ignore
++import type fork from '../../../../packages/web-app/fork-strings.json'
+ 
+ //@ts-ignore
+-export type TranslationKey = keyof typeof english | keyof typeof untranslated
++export type TranslationKey = keyof typeof english | keyof typeof untranslated | keyof typeof fork
+ 
+ // The ignore here is to make it optional,
+ // if the import fails (because resolveJsonModule=false) it should bring down everything with it.

@@ -105,6 +105,19 @@ for (const file of await readdir(locales)) {
     await cp(join(locales, file), join(dist, 'locales', file))
   }
 }
+// The fork's English-only strings live in fork-strings.json, not in the desktop
+// patches: patches that each added keys to upstream's _untranslated_en.json
+// conflicted with each other. A key upstream also has means upstream took it:
+// ours would override its translations in every language, so fail instead.
+const untranslatedPath = join(dist, 'locales/_untranslated_en.json')
+const untranslated = JSON.parse(await readFile(untranslatedPath, 'utf-8'))
+const english = JSON.parse(await readFile(join(dist, 'locales/en.json'), 'utf-8'))
+const forkStrings = JSON.parse(await readFile(join(here, 'fork-strings.json'), 'utf-8'))
+const taken = Object.keys(forkStrings).filter(key => key in untranslated || key in english)
+if (taken.length) {
+  throw new Error(`upstream's locales now have ${taken.join(', ')}: drop or rename them in fork-strings.json`)
+}
+await writeFile(untranslatedPath, JSON.stringify({ ...untranslated, ...forkStrings }, null, 2) + '\n')
 
 // Manifests for the in-app translation editor: _catalogue.json maps each
 // translatable locale (<code>.json, skipping the _-prefixed meta files like

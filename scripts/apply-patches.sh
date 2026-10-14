@@ -12,7 +12,9 @@ apply() {
   git -C "$sub" worktree add --detach "$root/build/$name" HEAD >/dev/null
   local patches=("$root/patches/$name"/*.patch)
   if [[ -e ${patches[0]} ]]; then
-    git -C "$root/build/$name" am "${patches[@]}"
+    # --whitespace=nowarn: a user's apply.whitespace=fix would quietly alter
+    # patches, and update-patches.sh would then write the altered version back.
+    git -C "$root/build/$name" am --whitespace=nowarn "${patches[@]}"
     echo "$name: applied ${#patches[@]} patch(es)"
   else
     echo "$name: no patches"

@@ -28,6 +28,14 @@ references here and in `docs/` need updating by hand. CI fails on any
 (`scripts/check-patch-refs.mjs`), so a reference to a removed patch can't go
 unnoticed.
 
+**Fork strings are not in the patches.** New English-only UI strings go in
+`packages/web-app/fork-strings.json`. `assemble.mjs` merges them into
+`dist/locales/_untranslated_en.json`, and fails if upstream gains a key with
+the same name. `desktop/1069` adds those keys to `TranslationKey` so `tx()`
+calls still type-check. Every patch that added strings appended them to the
+same spot in upstream's `_locales/_untranslated_en.json`, so any two PRs with
+new strings conflicted. CI now rejects a desktop patch that touches that file.
+
 > **Keeping this up to date:** refresh this file **on every release** (see
 > [RELEASING.md](RELEASING.md)). The routine: list `patches/core` and
 > `patches/desktop`, diff against the references here, and fold every new or

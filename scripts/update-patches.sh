@@ -2,6 +2,18 @@
 # Regenerate patches/ from commits made in the build/ worktrees.
 # Workflow: edit in build/<name>, git commit there (one commit per logical patch), run this.
 set -euo pipefail
+# Write patches with git's defaults, not the runner's: a diff.context,
+# diff.algorithm or format.headers in someone's ~/.gitconfig, or a diff= driver in
+# their global gitattributes, rewrote up to every patch file. safe.directory is
+# carried over, since git reads it only from global/system config and a
+# devcontainer checkout needs it. Repo-local config of build/ still applies.
+n=0
+while IFS= read -r dir; do
+  export "GIT_CONFIG_KEY_$n=safe.directory" "GIT_CONFIG_VALUE_$n=$dir"
+  n=$((n + 1))
+done < <(git config --system --get-all safe.directory || true; git config --global --get-all safe.directory || true)
+export "GIT_CONFIG_KEY_$n=core.attributesFile" "GIT_CONFIG_VALUE_$n=/dev/null" GIT_CONFIG_COUNT=$((n + 1))
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1
 cd "$(dirname "$0")/.."
 root=$(pwd -P)
 tmproot=$(mktemp -d)

@@ -69,6 +69,8 @@ first).
   - **Export JSON** — the same translatable changeset as raw JSON.
   - **Export experimental** — only the experimental keys you changed, as JSON.
     These don't belong in the translation catalogue, so they get their own file.
+    Its entries have the same shape as `packages/web-app/fork-strings.json`:
+    fork keys go there, upstream's experimental keys go upstream.
 
 ## Element inspector (🎯)
 

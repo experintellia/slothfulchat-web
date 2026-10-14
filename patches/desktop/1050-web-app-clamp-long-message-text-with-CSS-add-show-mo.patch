@@ -19,30 +19,13 @@ The existing hasHtml "Show Full Message" button is untouched; it still
 covers real HTML mail and legacy truncated messages.
 
 Show more/less labels go through tx() with new keys in
-_locales/_untranslated_en.json, matching how every other fork-added label in
+packages/web-app/fork-strings.json, matching how every other fork-added label in
 this codebase is done.
 ---
- _locales/_untranslated_en.json                |  6 +++
  packages/frontend/scss/message/_message.scss  | 11 +++++-
  .../src/components/message/Message.tsx        | 38 ++++++++++++++++++-
- 3 files changed, 53 insertions(+), 2 deletions(-)
+ 2 files changed, 47 insertions(+), 2 deletions(-)
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index ded99949e49cb1275fe89a2c739ec2befea513a7..30116f4d2e4ac5266430dfacc95cf2dc9dcbb7c7 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -151,5 +151,11 @@
-   },
-   "recording_no_sound": {
-     "message": "No sound — check your microphone"
-+  },
-+  "message_text_show_more": {
-+    "message": "Show more"
-+  },
-+  "message_text_show_less": {
-+    "message": "Show less"
-   }
- }
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
 index 40ecad8c2cb27eb104ca3c43fa5b825cb5b98301..d2c58bdb11ceb847746b1eff26e8d67022c197e3 100644
 --- a/packages/frontend/scss/message/_message.scss

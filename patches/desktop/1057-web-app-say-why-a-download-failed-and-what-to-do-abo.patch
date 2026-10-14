@@ -22,34 +22,14 @@ neither:
 The retry button stays in every case, for the rarer causes a retry does
 fix. One `DownloadFailedLabel` component replaces the four "download failed"
 spans in the download placeholder and the one in Message.tsx's plain
-fallback. The strings are fork-only and go into _untranslated_en.json.
+fallback. The strings are fork-only and go into packages/web-app/fork-strings.json.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- _locales/_untranslated_en.json                |  9 +++++
  .../message/DownloadOnDemandPlaceholder.tsx   | 37 +++++++++++++++----
  .../src/components/message/Message.tsx        |  5 +--
- 3 files changed, 41 insertions(+), 10 deletions(-)
+ 2 files changed, 32 insertions(+), 10 deletions(-)
 
-diff --git a/_locales/_untranslated_en.json b/_locales/_untranslated_en.json
-index 7405e250c46134efd5d81263cad5323ea1808e0a..ea3bd3495d11960d8078e88117e4cbcb7ccd4a81 100644
---- a/_locales/_untranslated_en.json
-+++ b/_locales/_untranslated_en.json
-@@ -166,5 +166,14 @@
-   },
-   "slothful_welcome_selfhost": {
-     "message": "And it's yours to run: host your own instance, or fork it and change whatever you like 👉 https://github.com/experintellia/slothfulchat-web"
-+  },
-+  "download_may_still_arrive": {
-+    "message": "May still be arriving — try again in a few minutes"
-+  },
-+  "download_not_on_relay_ask_sender": {
-+    "message": "Not found on your relay — ask the sender to send it again"
-+  },
-+  "download_not_on_relay_send_again": {
-+    "message": "Not found on your relay — send it again from your other device"
-   }
- }
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 index 73525b8c220eef70f69c51e25086809cc7c6cccd..b4691aba852cf20861c28ea6eec962bfa645da9a 100644
 --- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
