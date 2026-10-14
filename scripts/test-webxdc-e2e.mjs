@@ -27,6 +27,9 @@
 //      with a message instead of inflating on the chat app's thread (zip bomb)
 //  11. on a phone the app floats in the page, full screen, and the back
 //      gesture closes it
+//  12. fork-only: getMemberList lists both members under their per-app ids,
+//      and a member's avatar loads from the app's own origin — the archive's
+//      own __webxdc__/avatar/ entries are dropped
 //
 // CADDY=1 runs it all behind a real Caddy instead: the shipped routes.caddy and
 // Caddyfile.example with only the operator's edits, `tls internal`, on a
@@ -50,6 +53,7 @@ import { script, startServers } from './harness.mjs'
 import { startMockMadmail } from './mock-madmail.mjs'
 
 const PORT = Number(process.env.APP_PORT ?? 8684)
+const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
 const CADDY = process.env.CADDY === '1'
 const HOST = CADDY ? `chat.slothful.test:${PORT}` : `localhost:${PORT}`
 const APP = `${CADDY ? 'https' : 'http'}://${HOST}`
@@ -114,6 +118,7 @@ const COUNTER = storedZip({
     <h1>Shared Counter</h1><p class=me>Hi <b id=me></b> — taps are shared with the chat.</p>
     <div class=count id=count>0</div><button id=inc>+1</button><ul id=log></ul>
     <script src="webxdc.js"></script><script src="app.js"></script>`,
+  '__webxdc__/avatar/spoof.jpg': icon, // a real image: only the drop keeps it out
   'app.js': `document.getElementById('me').textContent = webxdc.selfName
     window.received = []
     webxdc.setUpdateListener(u => {
@@ -194,7 +199,7 @@ if (CADDY) {
 // the bridge only so the app doesn't toast "bridge not reachable" over the shots
 const { cleanup: stopServers, watchdog } = await startServers({
   app: CADDY ? undefined : PORT,
-  proxy: 8641,
+  proxy: PROXY_PORT,
   proxyStdio: 'pipe',
   settleMs: CADDY ? 2500 : 700,
   watchdogMs: 480_000,
@@ -269,7 +274,7 @@ const startApp = name => page.locator('.message .webxdc', { hasText: name }).get
 
 try {
   if (SHOTS) await mkdir(SHOTS, { recursive: true })
-  await page.goto(`${APP}/main.html`)
+  await page.goto(`${APP}/main.html?proxy=ws://localhost:${PROXY_PORT}`)
   await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
   if (CADDY) {
     const main = await caddyGet(HOST, '/main.html')
@@ -292,6 +297,11 @@ try {
   }
   const alice0 = await setup('Alice Sender')
   const bob0 = await setup('Bob Reader')
+  const avatar = await page.evaluate(
+    ([f, b64]) => window.exp.runtime.writeTempFileFromBase64(f, b64),
+    ['me.png', icon.toString('base64')]
+  )
+  await rpc('setConfig', bob0, 'selfavatar', avatar)
   const [bobContact] = await rpc('importVcardContents', alice0, await rpc('makeVcard', bob0, [1]))
   await rpc('importVcardContents', bob0, await rpc('makeVcard', alice0, [1]))
   const aliceChat = await rpc('createChatByContactId', alice0, bobContact)
@@ -379,6 +389,25 @@ try {
   await until('Alice\'s update shows in Bob\'s open app', () =>
     counter.evaluate(() => window.received.some(p => p.who === 'Alice Sender')))
   check(true, 'Alice\'s update arrives live in Bob\'s open app')
+
+  // 12. fork-only member list + avatars
+  const selfAddr = await counter.evaluate(() => webxdc.selfAddr)
+  const aliceAddr = (await rpc('getWebxdcInfo', alice, aliceCounter)).selfAddr
+  const members = await counter.evaluate(() => webxdc.getMemberList())
+  check(
+    members.length === 2 &&
+      members.some(([id, name]) => id === selfAddr && name === 'Bob Reader') &&
+      members.some(([id, name]) => id === aliceAddr && name === 'Alice Sender'),
+    `getMemberList: Bob as his selfAddr, Alice as hers (${JSON.stringify(members)})`
+  )
+  const loads = src =>
+    counter.evaluate(
+      s => new Promise(r => Object.assign(new Image(), { onload: e => r(e.target.naturalWidth > 0), onerror: () => r(false), src: s })),
+      src
+    )
+  check(await loads(`/__webxdc__/avatar/${selfAddr}.jpg`), 'Bob\'s avatar loads from the app\'s own origin')
+  check(!(await loads(`/__webxdc__/avatar/${aliceAddr}.jpg`)), 'Alice, without one, has no avatar file')
+  check(!(await loads('/__webxdc__/avatar/spoof.jpg')), 'the archive cannot plant avatars')
   await shot('3-app-window', counterWin)
 
   // 4. close + reopen

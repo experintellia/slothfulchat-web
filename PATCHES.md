@@ -153,6 +153,16 @@ exists:
   `runtime.openWebxdc` and friends; the switch is the one desktop patch, the
   realtime relay config the one core patch. See [WEBXDC.md](WEBXDC.md).
   `packages/web-app/src/webxdc*.ts`, `desktop/1070`, `core/1027`
+- **webxdc member list and avatars** (experimental, not in upstream) — ports
+  Simon Laux's unmerged core branch `simon/webxdc-memberlist-and-avatars`:
+  `get_webxdc_memberlist` returns `(user id, display name)` for each chat
+  member with a key plus self, the user id being the per-app hash `selfAddr`
+  already uses, and `get_webxdc_blob` serves `__webxdc__/avatar/<id>.jpg` as
+  that member's profile image, so contact ids never reach the app. One change
+  from the branch: self is named by its display name, not the localized "Me".
+  The app side exposes it as `webxdc.getMemberList()` and copies the avatars
+  into the app's origin at open. Upstream candidate once the API is agreed.
+  `core/1028`, `packages/web-app/src/webxdc*.ts`
 - **OpenRPC document for the JSON-RPC API** — one attribute. The
   `deltachat-jsonrpc` crate already enables yerpc's `openrpc` feature and
   every API type already derives `schemars::JsonSchema`, so the generator was

@@ -76,6 +76,8 @@ const SALT_KEY = 'ui.slothfulchat.webxdc_salt'
  * size up front and never grows past it, so this bounds what a zip bomb from a
  * chat partner can take — synchronously, on this thread. */
 const MAX_UNPACKED = 256 * 1024 * 1024
+/** core's virtual directory of member avatars, `<dir><userId>.jpg` */
+const AVATAR_DIR = '__webxdc__/avatar/'
 /** what core accepts per realtime message (peer_channels.rs) */
 const MAX_REALTIME = 128 * 1024
 /** requests one app may have waiting on the core: enough for any honest app
@@ -362,11 +364,25 @@ export class WebxdcManager {
       filter: f => {
         total += f.originalSize
         if (total > MAX_UNPACKED) throw new Error('it is larger than 256 MB unpacked')
-        // ours replaces the archive's, under every spelling of the name
-        return !f.name.endsWith('/') && xdcPath(f.name, false) !== 'webxdc.js'
+        // ours replace the archive's, under every spelling of the name
+        const path = xdcPath(f.name, false)
+        return !f.name.endsWith('/') && path !== 'webxdc.js' && !path?.startsWith(AVATAR_DIR)
       },
     })
     entries['webxdc.js'] = new TextEncoder().encode(shim)
+    // Fork-only member avatars (core/1028). ponytail: snapshotted at open, so a
+    // changed avatar or a new member shows after a reopen, and a big group
+    // fetches every avatar up front; serve them on demand (SW asks the bridge)
+    // if either bites.
+    const members = await this.rpc.getWebxdcMemberlist(p.accountId, msgId)
+    await Promise.all(
+      members.map(async ([id]) => {
+        const name = `${AVATAR_DIR}${id}.jpg`
+        // core errors for a member without an avatar: that file just isn't there
+        const b64 = await this.rpc.getWebxdcBlob(p.accountId, msgId, name).catch(() => null)
+        if (b64) entries[name] = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+      })
+    )
     // slice(): a stored (uncompressed) entry is a view into the whole archive,
     // and each needs a buffer of its own to be transferred
     return Object.entries(entries).map(([name, data]) => [name, data.slice().buffer as ArrayBuffer])
@@ -520,6 +536,8 @@ export class WebxdcManager {
       } else if (d.webxdc === 'sendUpdate') {
         if (typeof d.update !== 'string') throw new Error('update must be a JSON string')
         reply(await this.rpc.sendWebxdcStatusUpdate(accountId, msgId, d.update, ''))
+      } else if (d.webxdc === 'getMemberList') {
+        reply(await this.rpc.getWebxdcMemberlist(accountId, msgId))
       } else if (d.webxdc === 'sendToChat') {
         const f = d.file
         if (f != null && (typeof f.file_name !== 'string' || typeof f.file_content !== 'string')) {

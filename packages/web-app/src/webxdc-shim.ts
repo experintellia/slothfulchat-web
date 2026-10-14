@@ -131,6 +131,9 @@ export function webxdcShim(cfg: ShimConfig, w: any = window): void {
       onStatusUpdate()
       return ready
     },
+    // Fork-only, experimental (WEBXDC.md): [userId, displayName][] of the chat
+    // members, self included; a member's avatar is /__webxdc__/avatar/<userId>.jpg
+    getMemberList: () => call('getMemberList'),
     getAllUpdates() {
       console.error(
         'getAllUpdates is deprecated and will be removed in the future, it also returns an empty array now, so you really should use setUpdateListener instead.'

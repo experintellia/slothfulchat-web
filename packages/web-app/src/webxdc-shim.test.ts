@@ -94,6 +94,14 @@ test('a stale reply from before a reload cannot settle a new request', async () 
   assert.notEqual(before.sent[0].id, after.sent[0].id)
 })
 
+test('getMemberList asks the parent and resolves with its answer', async () => {
+  const { w, sent, reply } = frame()
+  const list = w.webxdc.getMemberList()
+  assert.deepEqual(sent, [{ webxdc: 'getMemberList', id: sent[0].id, origin: APP }])
+  reply(sent[0].id, [['abc', 'Alice']])
+  assert.deepEqual(await list, [['abc', 'Alice']])
+})
+
 test('sendToChat validates like upstream and posts base64', async () => {
   const { w, sent, reply } = frame()
   await assert.rejects(w.webxdc.sendToChat({}), /Invalid empty message/)
