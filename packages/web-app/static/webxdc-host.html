@@ -1,0 +1,13 @@
+<!doctype html>
+<!-- Bootstrap page of a webxdc origin <slug>.webxdc.<app-host> (WEBXDC.md):
+     the app frames it, posts the unzipped .xdc in, and this page hands over to
+     the app its service worker serves. Logic in src/webxdc-host.ts.
+     The CSP is as tight as the page allows, because the webxdc app that later
+     runs on this same origin can frame this page and script it: nothing here
+     may reach the network, or that would be the app's way out. -->
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>webxdc</title>
+<script src="/webxdc-host.js"></script>

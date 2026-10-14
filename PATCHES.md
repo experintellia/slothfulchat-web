@@ -93,6 +93,12 @@ exists:
   proxy only ever sees ciphertext. HTTP requests go through the browser's
   `fetch()`. SOCKS/shadowsocks proxying is stubbed out. `core/1002`,
   `core/1004`, `core/1008`
+- **Realtime relay** — iroh runs unmodified on wasm (relay-only, over the
+  browser's WebSocket), but webxdc realtime channels learn their relay from
+  IMAP METADATA, which the webimap transport doesn't have, so those accounts
+  were stuck on n0's public relays. A new `iroh_relay` config names the relay
+  and wins over METADATA; the offline realtime e2e test points it at a local
+  `iroh-relay`. `core/1027`
 - **Backups** — file-based backup export/import reimplemented for the wasm
   VFS (sqlite-wasm-rs has no `sqlcipher_export`, so the database bytes are
   swapped at the VFS level; encrypted backups stay unsupported on wasm). The
@@ -124,6 +130,29 @@ exists:
 
 ## New features
 
+- **webxdc apps run in the browser** — upstream's browser edition can't run
+  them at all. Each app instance gets its own origin,
+  `<salt>m<msgId>.webxdc.<app-host>`, so the browser's same-origin policy walls
+  it off from the chat (whose origin holds the whole database) and from every
+  other app. The origin serves three static files: a bootstrap page the app
+  posts the unzipped `.xdc` into, and a service worker that serves it from the
+  Cache API with Electron's webxdc CSP set on every response at serve time
+  (so the app can't plant a CSP-less document in its own cache). A second
+  `<meta>` CSP pins the chat app's `frame-src` to this host's webxdc origins,
+  which is what stops an app from navigating its own frame off-site with data
+  in the URL. `webxdc.js` is upstream's Electron preload over `postMessage`
+  instead of IPC (with its update-replay race fixed). On a desktop each app
+  gets a window of its own (an app window in an installed PWA, a popup in a
+  browser); on phones and tablets it floats in the page, full screen on a
+  phone, where the back gesture closes it. Realtime channels work over iroh's
+  relay-only browser transport. Links an app opens go through the chat app
+  (web links are shown and asked about first). A risk notice comes before the
+  first start of each app, and a "Warn before opening webxdc apps" switch in
+  Settings › Chats turns it off; deleting a message, chat or account wipes
+  the apps' storage from inside their origins. The frontend already drives
+  `runtime.openWebxdc` and friends; the switch is the one desktop patch, the
+  realtime relay config the one core patch. See [WEBXDC.md](WEBXDC.md).
+  `packages/web-app/src/webxdc*.ts`, `desktop/1070`, `core/1027`
 - **OpenRPC document for the JSON-RPC API** — one attribute. The
   `deltachat-jsonrpc` crate already enables yerpc's `openrpc` feature and
   every API type already derives `schemars::JsonSchema`, so the generator was
@@ -852,7 +881,7 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   transfer flow (iroh doesn't run in browsers yet), and the experimental
   "Enable Webxdc Devtools" switch (it only toggles Electron's DevTools on a
   webxdc iframe — a browser's built-in dev tools can't be gated by the app,
-  and webxdc apps don't run in this build anyway). `desktop/1000`,
+  and they inspect webxdc frames anyway). `desktop/1000`,
   `desktop/1005`, `desktop/1021`
 - **Long message text is stored in full** — core truncates message text to
   38 lines × 100 chars when writing `msgs.txt`, stashing the full body in
@@ -878,8 +907,9 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
 Deliberate omissions — postponed, not rejected. [DESCOPED.md](DESCOPED.md) has
 the full table with what re-enabling each one would take.
 
-- **webxdc apps** — not in upstream's browser edition either; needs a
-  sandboxed iframe host on a separate origin (planned, see issue #2).
+- **The webxdc maps integration** — webxdc apps run, realtime channels
+  included (see "New features"), but maps.xdc needs core's HTTP for its
+  tiles, which is stubbed; maps will be done differently anyway.
 - **Second-device / multi-device backup transfer** — the UI is hidden
   (`desktop/1005`) because it *cannot* work here: browser iroh is relay-only
   with no LAN connectivity, and Delta Chat's backup transfer is

@@ -2,8 +2,9 @@
 # which also starts serve.mjs on port 8643 for Caddy to proxy to.
 # Plain HTTP: browsers resolve any *.localhost (multi-label too) to loopback and
 # treat it as a secure context, so the app's SW registers without any certs.
-# Plain `pnpm serve` still works standalone — you just don't get the webxdc
-# subdomains without Caddy.
+# Plain `pnpm serve` needs none of this: serve.mjs answers webxdc origins
+# itself (http://<slug>.webxdc.localhost:8642). This harness exists to run the
+# shipped Caddy routes against a real Caddy.
 
 http://app.localhost:8642 {
 	# Parity with routes.caddy: the shipped config under /caddy/ is never served.
@@ -12,8 +13,14 @@ http://app.localhost:8642 {
 }
 
 http://*.webxdc.app.localhost:8642 {
-	# Mirror routes.caddy's webxdc block: every path serves the test page. We
-	# proxy to serve.mjs (rather than file_server) to reuse its MIME handling.
-	rewrite * /webxdc-test.html
-	reverse_proxy localhost:8643
+	# Mirror routes.caddy's webxdc block: only the three bootstrap files. We
+	# proxy to serve.mjs (rather than file_server) to reuse its MIME handling;
+	# it sees the original Host and applies the same rule itself.
+	@bootstrap path /webxdc-host.html /webxdc-host.js /webxdc-sw.js
+	handle @bootstrap {
+		reverse_proxy localhost:8643
+	}
+	handle {
+		respond 404
+	}
 }

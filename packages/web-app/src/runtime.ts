@@ -43,6 +43,7 @@ import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
 import { initChatExport } from './chat-export'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
+import { WebxdcManager, type OpenParams } from './webxdc'
 
 // earliest boot milestone we control: our runtime bundle has finished loading
 perf.boot('runtime-eval')
@@ -108,6 +109,8 @@ function getDefaultSettings() {
     hideNewChatSuggestions: false,
     publicBotsRemoteLoadConsent: false,
     stripTrackingLinks: true,
+    // the notice before each new webxdc app's first start (webxdc.ts)
+    webxdcWarning: true,
   }
 }
 
@@ -861,6 +864,24 @@ class BrowserRuntime {
     throw new Error('Method not implemented.')
   }
 
+  // webxdc apps (src/webxdc.ts). Getter, not a field: this.log is replaced in
+  // initialize(), and the manager must log through the real logger.
+  private _webxdc: WebxdcManager | undefined
+  private get webxdc(): WebxdcManager {
+    return (this._webxdc ??= new WebxdcManager({
+      getCore,
+      log: this.log,
+      iconURL: (accountId, msgId) => this.getWebxdcIconURL(accountId, msgId),
+      // the frontend's chat picker, as Electron's 'webxdc.sendToChat' IPC does
+      sendToChat: (file, text, accountId) => this._onWebxdcSendToChat?.(file, text, accountId),
+      persist: !throwawayRequested(),
+      warn: async () => (await this.getDesktopSettings()).webxdcWarning !== false,
+      // the HTML-mail viewer's link relay: app links to the frontend, web
+      // links down the safe-link path
+      openLink: (url, accountId) => this.openAppLink(url, accountId),
+    }))
+  }
+
   emitUIFullyReady(): void {
     perf.boot('ui-fully-ready')
     // The frontend has finished startup() and selected an account, so its
@@ -1119,17 +1140,21 @@ class BrowserRuntime {
     }
     tick()
   }
-  notifyWebxdcStatusUpdate(): void {
-    this.log.critical('Method not implemented.')
+  notifyWebxdcStatusUpdate(accountId: number, instanceId: number): void {
+    this.webxdc.statusUpdate(accountId, instanceId)
   }
-  notifyWebxdcRealtimeData(): void {
-    this.log.critical('Method not implemented.')
+  notifyWebxdcRealtimeData(accountId: number, instanceId: number, payload: number[]): void {
+    this.webxdc.realtimeData(accountId, instanceId, payload)
   }
-  notifyWebxdcMessageChanged(): void {
-    this.log.critical('Method not implemented.')
+  notifyWebxdcMessageChanged(accountId: number, instanceId: number): void {
+    this.webxdc
+      .messageChanged(accountId, instanceId)
+      .catch(err => this.log.warn('webxdc title refresh failed', err))
   }
-  notifyWebxdcInstanceDeleted(): void {
-    this.log.critical('Method not implemented.')
+  notifyWebxdcInstanceDeleted(accountId: number, instanceId: number | null): void {
+    this.webxdc
+      .instanceDeleted(accountId, instanceId)
+      .catch(err => this.log.warn('webxdc cleanup failed', err))
   }
   /**
    * Place an outgoing 1:1 call. `startWithCameraEnabled` is the upstream
@@ -1439,12 +1464,11 @@ class BrowserRuntime {
   setBadgeCounter(value: number): void {
     document.title = `${APP_NAME}${value ? `(${value})` : ''}`
   }
-  deleteWebxdcAccountData(_accountId: number): Promise<void> {
-    this.log.warn('deleteWebxdcAccountData method does not exist in browser.')
-    return Promise.resolve()
+  deleteWebxdcAccountData(accountId: number): Promise<void> {
+    return this.webxdc.deleteAccountData(accountId)
   }
   closeAllWebxdcInstances(): void {
-    this.log.critical('Method not implemented.')
+    this.webxdc.closeAll()
   }
   restartApp(): void {
     this.log.critical('Method not implemented.')
@@ -1460,8 +1484,8 @@ class BrowserRuntime {
     // the .xdc archive via get_webxdc_info + get_webxdc_blob
     return `${BASE}webxdc-icon/${accountId}/${msgId}`
   }
-  openWebxdc(): void {
-    showWebxdcNotImplementedDialog()
+  openWebxdc(msgId: number, params: OpenParams): void {
+    this.webxdc.open(msgId, params)
   }
   async openPath(path: string): Promise<string> {
     if (path.includes('dc.db-blobs')) {
@@ -2365,41 +2389,6 @@ function analyticsNoticeLine(): HTMLElement {
   link.onclick = () => void showAnalyticsInfoDialog()
   note.append(link)
   return note
-}
-
-const WEBXDC_ISSUE_URL =
-  'https://github.com/experintellia/slothfulchat-web/issues/2'
-
-/** Webxdc apps can't run yet in the wasm edition (needs a separate-origin
- * sandboxed host, see WEBXDC_ISSUE_URL). Native <dialog>+showModal() so it
- * lands above the app's own top-layer modals (same trick as the bridge
- * dialog). */
-function showWebxdcNotImplementedDialog() {
-  if (document.getElementById('sc-webxdc-dialog')) return
-  const [overlay, panel] = overlayCard('sc-webxdc-dialog')
-  overlay.onclose = () => overlay.remove()
-
-  const title = el('h2', {}, 'Webxdc apps')
-  const body = el(
-    'p',
-    {},
-    'Running webxdc apps is not implemented (yet) in this browser edition.'
-  )
-  const link = el('a', 'sc-link', 'Follow the GitHub issue →')
-  link.href = WEBXDC_ISSUE_URL
-  link.target = '_blank'
-  link.rel = 'noopener noreferrer'
-
-  const row = el('div', 'sc-row')
-  const closeBtn = scButton('Close', true)
-  closeBtn.onclick = () => overlay.remove()
-  row.append(closeBtn)
-  panel.append(title, body, link, row)
-  overlay.onclick = e => {
-    if (e.target === overlay) overlay.remove()
-  }
-  document.body.appendChild(overlay)
-  showOnTop(overlay)
 }
 
 // --- Native 1:1 calls -------------------------------------------------------

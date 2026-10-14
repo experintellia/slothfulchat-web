@@ -73,7 +73,11 @@ try {
   }
 
   const app = await fetchPath('/index.html')
-  assert.equal(app.headers['content-security-policy'], "frame-ancestors 'none'")
+  // frame-src: the header twin of the <meta> narrowing src/webxdc.ts adds
+  assert.equal(
+    app.headers['content-security-policy'],
+    `frame-ancestors 'none'; frame-src https://${HOST}/html-email.html https://*.webxdc.${HOST}`
+  )
   assert.equal(app.headers['x-frame-options'], 'DENY')
 
   const viewer = await fetchPath('/html-email.html')

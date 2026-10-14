@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Mon, 12 Oct 2026 02:47:06 +0000
+Subject: [PATCH] peer_channels: iroh_relay config names the realtime relay
+
+Webxdc realtime channels bind their iroh endpoint to the relay the
+server advertises in IMAP METADATA (/shared/vendor/deltachat/irohrelay),
+else to n0's public relays. The webimap transport has no METADATA, so a
+webimap account could only ever use n0's relays: no way to run against
+an operator's own relay, and no way to test offline against a local
+one.
+
+A new `iroh_relay` config, when set, takes precedence over the METADATA
+value. It is read once, when the endpoint is first bound (the first
+realtime call of the session), like the METADATA value already was.
+An unparseable URL fails that call instead of silently falling back to
+the public relays.
+---
+ src/config.rs        |  6 ++++++
+ src/peer_channels.rs | 17 ++++++++++-------
+ 2 files changed, 16 insertions(+), 7 deletions(-)
+
+diff --git a/src/config.rs b/src/config.rs
+index b55be91c6432c98ce35261d752536a1911294438..6fdb1b5bf3ba112b411a4ce42e56a838ce962899 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -445,6 +445,12 @@ pub enum Config {
+     #[strum(props(default = "1"))]
+     WebxdcRealtimeEnabled,
+ 
++    /// Iroh relay URL for webxdc realtime channels.
++    ///
++    /// Overrides the relay the server advertises in IMAP METADATA;
++    /// the only way to name one on transports without METADATA (webimap).
++    IrohRelay,
++
+     /// Last device token stored on the chatmail server.
+     ///
+     /// If it has not changed, we do not store
+diff --git a/src/peer_channels.rs b/src/peer_channels.rs
+index 0551fa815f5efea241ea98e72b85f57ac6541367..8e6c1f78902721e20c1908575662ba4e3aef0f27 100644
+--- a/src/peer_channels.rs
++++ b/src/peer_channels.rs
+@@ -238,13 +238,16 @@ async fn init_peer_channels(&self) -> Result<Iroh> {
+         let secret_key = SecretKey::generate(rand_old::rngs::OsRng);
+         let public_key = secret_key.public();
+ 
+-        let relay_mode = if let Some(relay_url) = self
+-            .metadata
+-            .read()
+-            .await
+-            .as_ref()
+-            .and_then(|conf| conf.iroh_relay.clone())
+-        {
++        let relay_url = match self.get_config(Config::IrohRelay).await? {
++            Some(url) => Some(Url::parse(&url).context("Invalid iroh_relay config")?),
++            None => self
++                .metadata
++                .read()
++                .await
++                .as_ref()
++                .and_then(|conf| conf.iroh_relay.clone()),
++        };
++        let relay_mode = if let Some(relay_url) = relay_url {
+             RelayMode::Custom(RelayUrl::from(relay_url).into())
+         } else {
+             // FIXME: this should be RelayMode::Disabled instead.

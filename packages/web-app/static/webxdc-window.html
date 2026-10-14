@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      A webxdc app's own window (WEBXDC.md, "Where an app runs"). Opened
+      same-origin by the chat app via window.open() on a desktop — an installed
+      PWA shows it as an app window, a browser as a popup — and filled entirely
+      from there (src/webxdc.ts): the app's sandboxed frame, its title and icon,
+      and a second <meta> CSP that pins frame-src to this host's webxdc origins.
+      No script of its own, so nothing here runs if anything else frames or
+      opens it; the chat app does all the talking with the app.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none';
+                   style-src 'unsafe-inline';
+                   img-src 'self';
+                   frame-src https: http://*.localhost:* ;
+                   base-uri 'none';
+                   form-action 'none'"
+    />
+    <title>webxdc</title>
+  </head>
+  <body></body>
+</html>

@@ -19,6 +19,12 @@
 // src/runtime.ts) — hence the parent-origin test rather than a flat "am I
 // framed". Deliberately NOT loaded by webxdc documents: a webxdc app is MEANT
 // to be framed by the app (WEBXDC.md), and it runs on its own origin anyway.
+// Same-origin framing is allowed for html-email.html ONLY, and only in an
+// unsandboxed frame: the app's frame-src has to admit 'self' for that viewer,
+// so a webxdc app can navigate its own frame onto this origin — and must find
+// nothing there that boots, the viewer included. (A webxdc frame's parent IS
+// the app, so the origin test alone would pass it; its sandbox attribute,
+// which the viewer's frame never has, gives it away.)
 ;(function () {
   // Testing the PARENT, not window.top, is what makes this correct when the
   // app frames a webxdc app (foreign origin) which then frames one of our
@@ -27,8 +33,14 @@
   // "parent is us" is exactly the legitimate case.
   // Reading a cross-origin location throws — that IS the signal. Anything else
   // going wrong leaves the page alone: a broken guard must not brick the app.
+  if (window.parent === window) return // not framed at all
   try {
-    if (window.parent.location.origin === window.location.origin) return
+    if (
+      window.parent.location.origin === window.location.origin &&
+      /\/html-email\.html$/.test(window.location.pathname) &&
+      !window.frameElement.hasAttribute('sandbox')
+    )
+      return
   } catch (e) {}
   // Abort the parse and every pending fetch (no stylesheets, no bundle, no
   // wasm), then replace the document with plain text: nothing clickable

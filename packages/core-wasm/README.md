@@ -92,5 +92,5 @@ pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/exampl
 - One tab at a time: with persistence on, the core holds an exclusive lock on
   its OPFS storage, so a second tab of the same app fails to start its core
   until the first is closed.
-- No sqlcipher; webxdc and iroh are descoped.
+- No sqlcipher. iroh runs relay-only, which is what webxdc realtime channels need; P2P backup transfer, which needs the LAN, does not work.
 - Always use release wasm builds; dev-profile wasm crashes the tab.

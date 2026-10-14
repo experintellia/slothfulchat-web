@@ -25,7 +25,14 @@
 	# one would run last and win — an "override" would silently be dead config.
 	@notmail not path /html-email.html
 	header @notmail {
-		Content-Security-Policy "frame-ancestors 'none'"
+		# frame-src: main.html's <meta> CSP has to admit any https: frame (the
+		# host is unknown at build time) and src/webxdc.ts narrows it at startup
+		# to this host's webxdc origins and the HTML-mail viewer, by its exact
+		# path. A header is the version no browser can skip, and it is the one
+		# thing keeping a webxdc app from navigating its own frame elsewhere
+		# with data in the URL — off-site, or to any other URL of this origin
+		# (WEBXDC.md "Security model").
+		Content-Security-Policy "frame-ancestors 'none'; frame-src https://{args[0]}/html-email.html https://*.webxdc.{args[0]}"
 		X-Frame-Options DENY
 	}
 	# The HTML-mail viewer is the one document of ours that gets framed: on
@@ -62,8 +69,17 @@
 		-Server
 	}
 	encode zstd gzip
-	# For now every path serves the isolation test page; becomes the webxdc
-	# bootstrap + wipe routes as the feature develops (see WEBXDC.md).
-	rewrite * /webxdc-test.html
-	file_server
+	# A webxdc origin has exactly three files of its own: the bootstrap page,
+	# its script and the app's service worker (src/webxdc-host.ts,
+	# src/webxdc-sw.ts). The app's files never touch the server — the page
+	# receives them from the chat app and its SW serves them — so everything
+	# else is a 404, and the rest of dist/ (the chat app itself) is never
+	# reachable on a webxdc origin.
+	@bootstrap path /webxdc-host.html /webxdc-host.js /webxdc-sw.js
+	handle @bootstrap {
+		file_server
+	}
+	handle {
+		respond 404
+	}
 }

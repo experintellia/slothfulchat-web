@@ -1,7 +1,8 @@
 // Webxdc dev harness: runs serve.mjs on 8643 and Caddy in front of it, so
 // http://app.localhost:8642 and http://*.webxdc.app.localhost:8642 both work
-// (the app plus per-origin webxdc test pages). `pnpm dev:webxdc` runs this.
-// Without Caddy, plain `pnpm serve` still serves the app (no webxdc subdomains).
+// through the shipped Caddy routes. `pnpm dev:webxdc` runs this. Plain
+// `pnpm serve` runs webxdc too (serve.mjs answers *.webxdc.localhost itself);
+// this is for checking Caddy's half.
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
@@ -33,7 +34,7 @@ caddy.on('error', (err) => {
 })
 
 console.log('app:      http://app.localhost:8642')
-console.log('xdc test: http://anything.webxdc.app.localhost:8642')
+console.log('webxdc:   http://<slug>.webxdc.app.localhost:8642 (opened from a chat)')
 
 const shutdown = () => {
   serve.kill()

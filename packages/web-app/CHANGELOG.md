@@ -1,5 +1,10 @@
 # Changelog
 
+- **Webxdc apps run.** Tap "Start" on an app in a chat and it opens in its
+  own window (full screen on a phone), walled off from your chats and from
+  other apps, with updates shared live — realtime games and tools included.
+  The server has to support it (see SELFHOSTING.md). You are warned before a
+  new app runs the first time; Settings › Chats can turn that off.
 - **Click a reaction to react the same way.** Clicking a reaction under a
   message adds that emoji as your reaction, or removes it if it's yours. Who
   reacted with what is now listed at the end of Message Info.

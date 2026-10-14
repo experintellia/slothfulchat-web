@@ -12,7 +12,10 @@
 // a parameter per caller.
 //
 // Self-check: node --test scripts/harness.test.mjs
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** Absolute path for a repo path written relative to scripts/. */
@@ -171,4 +174,26 @@ export async function assertDialogRendered(dialog, panelWidth, label) {
   if (box.height > view.height) fail(`card is ${box.height}px tall — taller than the screen`)
   const panelBg = await panel.evaluate(e => getComputedStyle(e).backgroundColor)
   if (alphaOf(panelBg) < 1) fail(`card background is ${panelBg} — the page shows through it`)
+}
+
+/** A local iroh relay (dev mode, plain http on 127.0.0.1) for the webxdc
+ * realtime tests — or null when the binary is missing. Same version as iroh in
+ * packages/core-wasm/rust/Cargo.lock:
+ *   cargo install iroh-relay --version 0.35.0 --features server --locked
+ * Accounts use it via the `iroh_relay` config (core/1027), set before their
+ * first realtime call. */
+export async function startIrohRelay(port, bin = process.env.IROH_RELAY_BIN ?? 'iroh-relay') {
+  if (spawnSync(bin, ['--help']).error) return null
+  const conf = join(await mkdtemp(join(tmpdir(), 'iroh-relay-')), 'relay.toml')
+  await writeFile(
+    conf,
+    `enable_relay = true\nhttp_bind_addr = "127.0.0.1:${port}"\n` +
+      'enable_stun = false\nenable_metrics = false\nenable_quic_addr_discovery = false\n'
+  )
+  const proc = spawn(bin, ['--dev', '--config-path', conf], { stdio: 'ignore' })
+  const url = `http://127.0.0.1:${port}`
+  for (let i = 0; i < 50 && !(await fetch(`${url}/ping`).then(r => r.ok, () => false)); i++) {
+    await new Promise(r => setTimeout(r, 200))
+  }
+  return { url, kill: () => proc.kill() }
 }

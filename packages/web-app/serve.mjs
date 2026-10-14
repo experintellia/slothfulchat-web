@@ -13,6 +13,7 @@ import { createServer } from 'node:http'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { HOST_FILES, appOriginOf } from './src/webxdc-origin.ts'
 
 const root = process.env.SERVE_ROOT ?? fileURLToPath(new URL('./dist', import.meta.url))
 const PORT = Number(process.env.PORT ?? 8642)
@@ -48,6 +49,16 @@ const server = createServer(async (req, res) => {
   try {
     let urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname)
     if (urlPath === '/') urlPath = `/${INDEX}`
+    // A webxdc origin (<slug>.webxdc.<host>, WEBXDC.md) serves its bootstrap
+    // files and nothing else, framed only by its app — as caddy/routes.caddy.
+    // Browsers resolve any *.localhost to loopback, so locally this is all it
+    // takes for http://localhost:8642 to get working webxdc origins.
+    const xdcApp = appOriginOf({ protocol: 'http:', host: req.headers.host ?? '' })
+    if (xdcApp) {
+      if (!HOST_FILES.includes(urlPath)) throw new Error('not a webxdc bootstrap file')
+      res.setHeader('content-security-policy', `frame-ancestors ${xdcApp}`)
+      res.setHeader('x-content-type-options', 'nosniff')
+    }
     // realpath before the check, so a symlink can't point out of the boundary;
     // it also 404s a missing file here rather than at readFile.
     const path = await realpath(normalize(join(root, urlPath)))

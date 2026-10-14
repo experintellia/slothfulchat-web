@@ -50,8 +50,8 @@ proxy UI); everything browser-specific lives in our own files:
   - **`.xdc` file handler** — an opened webxdc archive is read via `launchQueue`
     and forwarded into a chat with `onWebxdcSendToChat({file_name, file_content})`
     (base64 → `writeTempFileFromBase64`, the same contract electron/tauri use).
-    Running webxdc isn't supported in this edition, but sending one to a
-    recipient whose client can run it is. The accept key is
+    It lands in a chat as a message to send, as on desktop; tap "Start" there
+    to run it (WEBXDC.md). The accept key is
     `application/x-webxdc`, not a generic type: Linux associates by MIME, so
     Chromium copies that key into the installed app's `.desktop` `MimeType=`
     *and* installs a shared-mime-info glob (`*.xdc` → that type) via `xdg-mime`,

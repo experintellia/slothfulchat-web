@@ -48,6 +48,14 @@ export function el<K extends keyof HTMLElementTagNameMap>(
  * bridge dialog needed a JS restyle pass on every click because inline styles
  * cannot express `:hover` or "the selected card looks different".
  */
+/** A webxdc app's frame and its loading/failed cover — the floating window's
+ * and the app window's (webxdc.ts) */
+export const XDC_FRAME_CSS = `.sc-xdc-body{position:relative;flex:1;min-height:0;background:#fff}
+.sc-xdc-frame{display:block;width:100%;height:100%;border:none}
+.sc-xdc-status{display:none;position:absolute;inset:0;padding:16px;align-items:center;
+ justify-content:center;text-align:center;background:#1e1e1e;color:#bbb}
+.sc-xdc-loading .sc-xdc-status,.sc-xdc-failed .sc-xdc-status{display:flex}`
+
 const OVERLAY_CSS = `
 .sc-ov{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;
  margin:0;padding:0;border:none;display:flex;align-items:center;justify-content:center;
@@ -143,6 +151,27 @@ const OVERLAY_CSS = `
 .sc-input{box-sizing:border-box;width:100%;margin-top:6px;padding:8px 10px;
  border:1px solid #444;border-radius:6px;background:#161616;color:#eee;font-size:13px}
 .sc-input.sc-invalid{border-color:#e33}
+/* webxdc app windows (webxdc.ts): floating, draggable by the bar, resizable
+   at the corner. z-index under MUI's popovers (1300) and the top layer, so the
+   frontend's menus and dialogs — the send-to-chat picker an app opens — stay
+   above it. Full screen on a phone, where a window is just in the way. */
+.sc-xdc{position:fixed;z-index:1000;display:flex;flex-direction:column;min-width:240px;
+ min-height:200px;max-width:100vw;max-height:100dvh;overflow:hidden;resize:both;
+ border-radius:10px;background:#1e1e1e;box-shadow:0 8px 40px rgba(0,0,0,.45);
+ font:13px/1.4 system-ui,sans-serif}
+.sc-xdc[hidden]{display:none}
+.sc-xdc-bar{display:flex;align-items:center;gap:8px;flex-shrink:0;padding:6px 6px 6px 10px;
+ color:#eee;cursor:grab;user-select:none;touch-action:none}
+.sc-xdc-dragging .sc-xdc-bar{cursor:grabbing}
+.sc-xdc-dragging iframe{pointer-events:none}
+.sc-xdc-icon{width:20px;height:20px;border-radius:4px;flex-shrink:0}
+.sc-xdc-title{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.sc-xdc-btn{flex-shrink:0;width:28px;height:28px;border:none;border-radius:6px;
+ background:transparent;color:#ccc;font-size:15px;cursor:pointer}
+.sc-xdc-btn:hover,.sc-xdc-btn:focus-visible{background:#333;color:#fff}
+${XDC_FRAME_CSS}
+@media (max-width:600px){.sc-xdc{inset:0!important;width:auto!important;height:var(--sc-vvh,auto)!important;
+ border-radius:0;resize:none}.sc-xdc-bar{cursor:default}}
 `
 
 // On import rather than before each overlay: this module is only ever pulled
