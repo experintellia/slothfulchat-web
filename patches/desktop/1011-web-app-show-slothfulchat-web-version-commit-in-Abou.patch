@@ -1,14 +1,15 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
-Date: Thu, 9 Jul 2026 22:08:57 +0000
-Subject: [PATCH] web-app: show slothfulchat-web version+commit in About, real
- browser-log hint
+Date: Wed, 14 Oct 2026 05:36:06 +0000
+Subject: [PATCH] =?UTF-8?q?web-app:=20show=20slothfulchat-web=20version+co?=
+ =?UTF-8?q?mmit=20in=20About=20=E2=86=92=20View=20Log,=20real=20browser-lo?=
+ =?UTF-8?q?g=20hint?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
-The About dialog showed the full commit subject alongside the hash, which
-made that line wrap awkwardly; show just the slothfulchat-web version and
-short commit hash there instead, and move the fuller commit info (version,
-hash, message) into the Log dialog's dumped text so it's still available
-for debugging/support.
+Put the fuller slothfulchat-web build info (version, hash, commit message)
+into the Log dialog's dumped text so it's available for debugging/support.
 
 The Log dialog's [Log] section also always failed silently in the browser
 build: readCurrentLog()/getCurrentLogLocation() fetch a /log/current route
@@ -17,31 +18,9 @@ open the browser's dev console (or a remote-debugging session on
 iOS/Android) instead of a confusing fetch failure, until in-app log
 viewing is implemented for the browser build.
 ---
- .../src/components/dialogs/About/index.tsx    | 10 +++----
  .../src/components/dialogs/Log/index.tsx      | 30 ++++++++++++++++---
- 2 files changed, 31 insertions(+), 9 deletions(-)
+ 1 file changed, 26 insertions(+), 4 deletions(-)
 
-diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 2a048d7f953d75640457cf157b99493a0899687b..afbc9418abab9b17a11ab5d9d9d493be2733167f 100644
---- a/packages/frontend/src/components/dialogs/About/index.tsx
-+++ b/packages/frontend/src/components/dialogs/About/index.tsx
-@@ -62,11 +62,11 @@ export default function About({ onClose }: DialogProps) {
-                 <>
-                   <br />
-                   <small>
--                    slothfulchat-web:{' '}
--                    {(window as any).__slothfulConfig.commitHash}
--                    {(window as any).__slothfulConfig.commitMessage
--                      ? ` — ${(window as any).__slothfulConfig.commitMessage}`
--                      : ''}
-+                    slothfulchat-web
-+                    {(window as any).__slothfulConfig.version
-+                      ? ` v${(window as any).__slothfulConfig.version}`
-+                      : ''}{' '}
-+                    ({(window as any).__slothfulConfig.commitHash})
-                   </small>
-                 </>
-               )}
 diff --git a/packages/frontend/src/components/dialogs/Log/index.tsx b/packages/frontend/src/components/dialogs/Log/index.tsx
 index fab649eb72aeef3da4977ef2f8fdfd9f8f82286b..df6e38b2b6913fb4ec7e1319034ebbfe752918ee 100644
 --- a/packages/frontend/src/components/dialogs/Log/index.tsx

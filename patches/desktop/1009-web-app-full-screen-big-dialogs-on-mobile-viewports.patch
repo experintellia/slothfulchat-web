@@ -192,10 +192,10 @@ index 2c5908172debe30f4d86f51fa774b5a9de08e736..7c6a6ae64fdb80822a3fa35ce93af29b
          <>
            <DialogHeader title={tx('pref_chats')} {...commonHeaderProps} />
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 5b0dc9e26b68e230c5461d88bc25ef963c48f9e3..2a048d7f953d75640457cf157b99493a0899687b 100644
+index d4222f46cb8146d2dae1849ade048b767b2c8954..e0248c77e3c8112216066a4f0ed5eed7faf82823 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
-@@ -40,6 +40,7 @@ export default function About({ onClose }: DialogProps) {
+@@ -41,6 +41,7 @@ export default function About({ onClose }: DialogProps) {
        width={400}
        title={tx('global_menu_help_about_desktop')}
        onClose={onClose}

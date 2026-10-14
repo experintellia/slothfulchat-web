@@ -82,10 +82,10 @@ index 15e418e7e2239a0b0f5941ba27d85212e399e4b3..79669fa2bb7717f8ec61041f9e4d38bc
    const tx = useTranslationFunction()
  
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 5b136768aa57d019e8fe5293452b9d5e09672cfd..8ab9c1448db23befdba836a1072b9221cbaede08 100644
+index e0248c77e3c8112216066a4f0ed5eed7faf82823..249d7a04ca736a4f1aefa13b5f8e14665778cdeb 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
-@@ -118,6 +118,15 @@ export default function About({ onClose }: DialogProps) {
+@@ -124,6 +124,15 @@ export default function About({ onClose }: DialogProps) {
          >
            {'Imprint'}
          </SettingsIconButton>

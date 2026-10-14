@@ -314,7 +314,7 @@ exists:
   message. Pixel-identical for existing themes. `desktop/1003`
 - **Build info in the About dialog** — shows the slothfulchat-web version and
   source commit a deployed instance was built from, with the commit message
-  on hover. `desktop/1007`, `desktop/1011`, `desktop/1012`
+  on hover. `desktop/1007`, `desktop/1011`
 - **Stickers, including animated Lottie** — Telegram `.tgs` (gzipped Lottie)
   stickers render and send, alongside static ones. Core classifies `.tgs` as a
   sticker and honors the `Chat-Content: sticker` header for file-bearing parts;
