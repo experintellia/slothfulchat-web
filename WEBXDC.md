@@ -183,6 +183,35 @@ swarm forms is dropped (realtime is best effort by design), and two peers
 advertising at the very same moment can each drop the other's connection in
 iroh-gossip 0.35 — reopening the app recovers.
 
+## Fork-only APIs (experimental)
+
+**Not in upstream Delta Chat.** These come from Simon Laux's unmerged
+experiment (core `simon/webxdc-memberlist-and-avatars`, desktop
+`simon/webxdc-memberlist`) and may change or disappear. An app must
+feature-detect them and keep working without:
+
+```js
+if (window.webxdc.getMemberList) {
+  // [[userId, displayName], ...]: chat members with a known key, plus self
+  for (const [userId, name] of await webxdc.getMemberList()) {
+    const img = new Image()
+    img.src = `/__webxdc__/avatar/${userId}.jpg` // 404 when that member has none
+  }
+}
+```
+
+- `userId` is the hash `selfAddr` uses, so it is per app instance (it can't
+  be matched across apps or chats) and equals the `selfAddr` that member's
+  own device reports — status updates can be matched to members.
+- `displayName` is the name the user gave the contact, else the contact's own;
+  never the address. Self is the configured display name.
+- Avatars are put into the app's origin when it opens (`webxdc.ts`), so a
+  changed avatar or a new member shows after a reopen. Entries an archive
+  ships under `__webxdc__/avatar/` are dropped.
+
+Core side: `core/1028` (`getWebxdcMemberlist`, and the `__webxdc__/avatar/`
+virtual directory in `getWebxdcBlob`).
+
 ## DNS and TLS: multi-label vs one-label
 
 This distinction is repeatedly mis-remembered, so it is written down once here.
