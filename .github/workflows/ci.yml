@@ -133,6 +133,8 @@ jobs:
           packages/web-app/src/fatal-report.test.ts
           packages/web-app/src/emoji-sets.test.ts
           packages/web-app/src/temp-paths.test.ts
+          packages/web-app/src/webxdc-origin.test.ts
+          packages/web-app/src/webxdc-shim.test.ts
           packages/web-app/serve.test.mjs
           packages/web-app/api-docs/openrpc/deref.test.mjs
           packages/web-app/react-isolation.test.mjs
@@ -434,6 +436,80 @@ jobs:
       - name: Security check — clickjacking frame guard
         run: node scripts/test-frame-guard.mjs
 
+      # webxdc origin side (fully offline, no core boot): the bootstrap page +
+      # service worker every <slug>.webxdc.<host> serves, driven the way the
+      # app drives them and attacked from inside an app — CSP on every
+      # response (also on cache entries the app forged itself), no network,
+      # per-slug storage, no top-level use, frame-ancestors, a complete wipe.
+      - name: Security check — webxdc origin host + service worker
+        run: node scripts/test-webxdc-host.mjs
+
+      # webxdc e2e (offline, mock madmail, real wasm core, real UI): Alice
+      # sends Bob two apps; Bob starts them past the risk dialog, updates flow
+      # both ways and replay on reopen, apps can't see each other's storage,
+      # the app can't reach the chat app, the network, popups or top, and
+      # navigating its own frame off-site never reaches the server (the
+      # chat app's frame-src pin); deleting the message wipes its storage, and
+      # a host without webxdc origins gets the explanation dialog.
+      - name: E2E test — webxdc apps on their own origins
+        run: node scripts/test-webxdc-e2e.mjs
+
+      # Production's webserver, for the run below and the self-host config
+      # check: a stock Caddy built from source (GOTOOLCHAIN fetches the Go it
+      # needs), cached by version. The release binary pinned by sha256, like
+      # cargo-audit above, would skip the first build.
+      - name: Cache caddy
+        id: caddy
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/go/bin/caddy
+          key: caddy-2.10.2-${{ runner.os }}
+      - name: Install caddy
+        if: steps.caddy.outputs.cache-hit != 'true'
+        run: go install github.com/caddyserver/caddy/v2/cmd/caddy@v2.10.2
+
+      # The shipped Caddyfile.example + routes.caddy against a real caddy: the
+      # frame policy per path (html-email.html framable same-origin only).
+      - name: Security check — shipped Caddy config
+        run: PATH="$HOME/go/bin:$PATH" node scripts/test-selfhost-caddy.mjs
+
+      # The same webxdc e2e behind that Caddy, on a same-site https domain
+      # (chat.slothful.test + *.webxdc.chat.slothful.test, tls internal):
+      # production's routing and headers, and its cookies — which on localhost
+      # never exist (cross-site there): an app's cookies up to webxdc.<host>
+      # go with its wipe, the one above stays (WEBXDC.md, known gaps).
+      - name: E2E test — webxdc behind the shipped Caddy routes
+        run: CADDY=1 CADDY_BIN="$HOME/go/bin/caddy" node scripts/test-webxdc-e2e.mjs
+
+      # The realtime tests' local iroh relay (dev mode, plain http). Same
+      # version as iroh in packages/core-wasm/rust/Cargo.lock; built from
+      # crates.io once (~2.5 min) and cached by version.
+      # ponytail: cargo install + cache; n0's prebuilt musl release (pinned by
+      # sha256, like cargo-audit above) would skip the first build.
+      - name: Cache iroh-relay
+        id: iroh-relay
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/iroh-relay
+          key: iroh-relay-0.35.0-${{ runner.os }}
+      - name: Install iroh-relay
+        if: steps.iroh-relay.outputs.cache-hit != 'true'
+        run: cargo install iroh-relay --version 0.35.0 --features server --locked
+
+      # webxdc realtime (offline, mock madmail, local iroh relay, real wasm
+      # core): two accounts join a realtime channel, first over RPC, then as two
+      # apps through webxdc.joinRealtimeChannel; round trips byte-exact, leave
+      # stops delivery, latency printed.
+      - name: E2E test — webxdc realtime channels
+        run: node scripts/test-webxdc-realtime-e2e.mjs
+
+      # Real apps from the webxdc store (vendored in scripts/fixtures/webxdc/):
+      # webxdc-test exercises the whole API, Realtime Check pings between Alice
+      # and Bob. Known gaps (cookies on localhost, nested sandboxed frames) are
+      # reported, not failed.
+      - name: E2E test — webxdc store apps (webxdc-test, Realtime Check)
+        run: node scripts/test-webxdc-store-apps-e2e.mjs
+
       # HTML email viewer e2e (offline, mock madmail, real wasm core): one
       # account sends a message with crafted hostile HTML to a second; the
       # receiver's "Show Full Message…" button opens the viewer; asserts the
@@ -542,12 +618,10 @@ jobs:
       - name: Smoke test — pre-bundle boot-error screen
         run: node scripts/smoke-boot-error.mjs
 
-      # NOTE: scripts/test-read-time-e2e.mjs (estimated time-to-read badge) and
-      # scripts/test-webxdc-isolation.mjs (per-subdomain webxdc storage) are
-      # kept but NOT wired in: the first provisions a real chatmail account
-      # (nine.testrun.org/new) rather than a mock madmail server, and the second
-      # needs the `caddy` binary for the wildcard-subdomain harness. Both run
-      # locally; porting the first to mock madmail would make it CI-able.
+      # NOTE: scripts/test-read-time-e2e.mjs (estimated time-to-read badge) is
+      # kept but NOT wired in: it provisions a real chatmail account
+      # (nine.testrun.org/new) rather than a mock madmail server. It runs
+      # locally; porting it to mock madmail would make it CI-able.
 
       # NOTE: scripts/test-calls-e2e.mjs (loopback audio call) is intentionally
       # NOT wired in yet. It is designed to run offline in CI, but currently
@@ -563,4 +637,4 @@ jobs:
       # https://nine.testrun.org/new for a throwaway account and then talk real
       # IMAP/SMTP. Gating them would make every PR depend on a third-party relay
       # (and litter it with accounts). Run them locally, or point CHATMAIL_NEW
-      # at your own relay. (test-webxdc-isolation's reason is in the NOTE above.)
+      # at your own relay.

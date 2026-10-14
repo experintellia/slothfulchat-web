@@ -195,8 +195,8 @@ overlay fallback; no core-access breakage.
   same-origin, not iframes, so `camera; microphone; display-capture` default to
   `self`. The only WebRTC CSP knob is the binary `webrtc` directive (default
   `allow`), left off for now (barely implemented → "unrecognized directive"
-  warnings); to be added as `webrtc 'allow'` here + `webrtc 'block'` on the future
-  webxdc sandbox once it ships. `ice_servers()` resolves fine on WASM via the
+  warnings); to be added as `webrtc 'allow'` here; webxdc app documents already send
+  `webrtc 'block'` (WEBXDC.md). `ice_servers()` resolves fine on WASM via the
   WS-TCP proxy `/dns/` path — no core snag, no core patch.
 - Settings: expose `WhoCanCallMe`.
 - Relay UX (**decided**): **standard ICE** — direct-preferred with automatic relay

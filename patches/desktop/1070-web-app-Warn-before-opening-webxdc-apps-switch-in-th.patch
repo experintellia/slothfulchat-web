@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Mon, 12 Oct 2026 02:58:16 +0000
+Subject: [PATCH] web-app: Warn before opening webxdc apps switch in the Chats
+ settings
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The browser edition shows a security notice before a webxdc app runs for
+the first time on this device (slothfulchat-web's webxdc.ts). This adds the
+switch that turns it off for good — the notice itself points here. A
+desktop setting (webxdcWarning, on by default), read by the web runtime.
+---
+ packages/frontend/src/components/Settings/ChatsAndMedia.tsx | 6 ++++++
+ packages/shared/shared-types.d.ts                           | 2 ++
+ packages/shared/state.ts                                    | 1 +
+ 3 files changed, 9 insertions(+)
+
+diff --git a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
+index 3e76a2c458e5d678daae7219ece178ccfa8408c5..6f2c73958b7fa7aaaef3b4c2b3437d0ca1c2ce11 100644
+--- a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
++++ b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
+@@ -44,6 +44,12 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
+         description='Strips known tracking parameters (utm_*, YouTube si=, …) when you paste or open a link'
+         forkAdded
+       />
++      <DesktopSettingsSwitch
++        settingsKey='webxdcWarning'
++        label='Warn before opening webxdc apps'
++        description='Shows the security notice before an app runs for the first time on this device'
++        forkAdded
++      />
+       {/* When the whole instance hides the suggestions
+       (SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS), these toggles are moot —
+       hide them too. */}
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index 69d2e7284980e3535086226a6af883f6d3857b5f..480e26de0766a6443dee9a9e05d5b3738c136523 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -43,6 +43,8 @@ export interface DesktopSettingsType {
+   linkPreviewSuggestions: boolean
+   /** webapp: strip known tracking params (utm_*, YouTube si=, …) on paste and open. On by default. */
+   stripTrackingLinks: boolean
++  /** webapp: the security notice before a webxdc app's first start on this device. On by default. */
++  webxdcWarning: boolean
+   /** webapp: composer :emoji: completion menu. On by default. */
+   experimentalCompletionMenu: boolean
+   /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index efe6b51aa9c95d088f39bc49beceaf73b924dd49..33aeace1acb213ad3995d7285f4d4fd6c1814ae9 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -16,6 +16,7 @@ export function getDefaultState(): DesktopSettingsType {
+     enableOnDemandLocationStreaming: false,
+     linkPreviewSuggestions: false,
+     stripTrackingLinks: true,
++    webxdcWarning: true,
+     experimentalCompletionMenu: true,
+     experimentalUnreadReadTime: false,
+     experimentalReplyThreads: false,

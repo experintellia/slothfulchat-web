@@ -239,11 +239,14 @@ await cp(join(here, 'static/call-popup.html'), join(dist, 'call-popup.html'))
 await cp(join(here, 'static/html-email.html'), join(dist, 'html-email.html'))
 await writeFile(join(dist, '.nojekyll'), '')
 
-// Webxdc origin-isolation test page + the Caddy config that serves it. The
-// webserver config ships in the bundle so server routes stay version-locked
-// with the app they serve (see WEBXDC.md). Not app-shell assets — excluded
-// from the SW precache in instance-config.mjs's precacheSkip.
-await cp(join(here, 'static/webxdc-test.html'), join(dist, 'webxdc-test.html'))
+// Webxdc bootstrap page (its script and SW are esbuilt in `pnpm build`) + the
+// Caddy config that serves them. The webserver config ships in the bundle so
+// server routes stay version-locked with the app they serve (see WEBXDC.md).
+// Not app-shell assets — excluded from the SW precache in instance-config.mjs's
+// precacheSkip.
+await cp(join(here, 'static/webxdc-host.html'), join(dist, 'webxdc-host.html'))
+// a desktop app's own window, same origin as the app (webxdc.ts fills it)
+await cp(join(here, 'static/webxdc-window.html'), join(dist, 'webxdc-window.html'))
 await mkdir(join(dist, 'caddy'))
 for (const f of ['routes.caddy', 'Caddyfile.example']) {
   await cp(join(here, 'caddy', f), join(dist, 'caddy', f))

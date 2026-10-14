@@ -25,8 +25,11 @@
   // to the visible area while it's up so the height:100% chain shrinks.
   var vv = window.visualViewport
   function fit() {
-    document.documentElement.style.height =
-      vv.height < window.innerHeight - 1 ? vv.height + 'px' : ''
+    var h = vv.height < window.innerHeight - 1 ? vv.height + 'px' : ''
+    document.documentElement.style.height = h
+    // fixed elements don't follow that chain: a full-screen webxdc app
+    // (ui-shared.ts .sc-xdc) reads the visible height from here
+    document.documentElement.style.setProperty('--sc-vvh', h)
     window.scrollTo(0, 0)
   }
   vv.addEventListener('resize', fit)

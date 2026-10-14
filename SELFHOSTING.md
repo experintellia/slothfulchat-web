@@ -90,7 +90,7 @@ CloudFront + Lambda@Edge, or any reverse proxy — and have it add:
 
 | Header | Value | Why |
 |---|---|---|
-| `Content-Security-Policy` | `frame-ancestors 'none'` | The one directive `main.html`'s `<meta>` CSP cannot express. A second CSP header never relaxes the meta policy — policies are enforced independently. |
+| `Content-Security-Policy` | `frame-ancestors 'none'; frame-src https://<app-host>/html-email.html https://*.webxdc.<app-host>` | `frame-ancestors` is the one directive `main.html`'s `<meta>` CSP cannot express. `frame-src` repeats, as a header, the webxdc pin the app also adds at runtime ([WEBXDC.md](WEBXDC.md)). A second CSP header never relaxes the meta policy — policies are enforced independently. |
 | `X-Frame-Options` | `DENY` | Same job for browsers that predate `frame-ancestors`. |
 | `X-Content-Type-Options` | `nosniff` | Stops MIME sniffing turning an upload or a blob into script. |
 | `Referrer-Policy` | `no-referrer` | Chat URLs can carry invite/QR fragments; don't leak them onward. |
@@ -135,6 +135,24 @@ reports as unsupported. Turning it on takes three steps:
    ```
 
    Then `caddy run --config dist/caddy/Caddyfile.example`.
+
+**Give the chat a domain of its own.** Webxdc origins are subdomains of your
+app host, and cookies are shared per registrable domain: an app can set
+cookies for `example.com` from `chat.example.com`'s webxdc origins, which reach
+every other service under `example.com` (cookie tossing into your mail or
+login pages). Browsers give a page no way to stop that, and neither does a
+response header. If anything else under the same registrable domain uses
+cookies, serve the chat from a domain that hosts nothing else (WEBXDC.md,
+"Known gaps").
+
+**Realtime** (games and live tools in apps) needs nothing on your server: it
+runs over the iroh relay the user's chatmail server advertises, or n0's public
+relays. Browsers only reach `https://` relays.
+
+To check it: open a chat with a webxdc app and tap **Start**. If the app says
+"webxdc apps are not available here", `https://anything.webxdc.yourdomain/webxdc-host.html`
+should load a blank page with a `frame-ancestors https://yourdomain` header —
+if it doesn't, DNS or the certificate is the missing piece.
 
 The full design — the naming rule, the DNS-vs-TLS wildcard distinction, storage
 and deletion, and the flagship/preview deployment model — is in

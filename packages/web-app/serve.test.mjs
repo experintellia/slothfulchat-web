@@ -22,6 +22,7 @@ before(async () => {
   base = await mkdtemp(join(tmpdir(), 'serve-test-'))
   await mkdir(join(base, 'root'))
   await writeFile(join(base, 'root', 'index.html'), '<p>hi</p>')
+  await writeFile(join(base, 'root', 'webxdc-host.html'), 'host')
   await writeFile(join(base, 'outside.txt'), 'in boundary, outside root')
   await writeFile(join(base, 'secret.txt'), 'never served')
   await symlink(join(base, 'outside.txt'), join(base, 'root', 'linked.txt'))
@@ -56,9 +57,9 @@ after(async () => {
 // node:http with an explicit `path`, NOT fetch(): fetch resolves dot-segments
 // client-side per WHATWG URL, so `/../../etc/passwd` would leave as `/etc/passwd`
 // and the traversal cases would silently test nothing.
-const get = (path, port = PORT) =>
+const get = (path, port = PORT, host) =>
   new Promise((resolve, reject) => {
-    const req = request({ host: '127.0.0.1', port, path }, res => {
+    const req = request({ host: '127.0.0.1', port, path, headers: host ? { host } : {} }, res => {
       let body = ''
       res.setEncoding('utf8')
       res.on('data', c => (body += c))
@@ -142,4 +143,16 @@ test('a sibling sharing the boundary prefix is not inside it', async () => {
 
 test('404s a missing file', async () => {
   assert.equal((await get('/nope.txt')).status, 404)
+})
+
+test('a webxdc origin serves only its bootstrap files, framed only by its app', async () => {
+  const xdc = `k3m42.webxdc.localhost:${PORT}`
+  const res = await get('/webxdc-host.html', PORT, xdc)
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['content-security-policy'], `frame-ancestors http://localhost:${PORT}`)
+  // the app's own files exist on the app origin, never on a webxdc one
+  assert.equal((await get('/index.html', PORT, xdc)).status, 404)
+  assert.equal((await get('/', PORT, xdc)).status, 404)
+  // and the app origin is unaffected
+  assert.equal((await get('/index.html', PORT, `localhost:${PORT}`)).status, 200)
 })

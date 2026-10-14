@@ -563,10 +563,10 @@ export const precacheSkip = f =>
   // self-hoster serves it — it just isn't part of the offline app.
   f.startsWith('api-docs/') ||
   // webserver config ships in dist/ but isn't an app-shell asset; the webxdc
-  // test page must never be served from the app's SW cache (it belongs to the
-  // webxdc origins, not the app origin).
+  // bootstrap files must never be served from the app's SW cache (they belong
+  // to the webxdc origins, not the app origin).
   f.startsWith('caddy/') ||
-  f === 'webxdc-test.html' ||
+  f.startsWith('webxdc-') ||
   lazyAsset(f) ||
   ['.nojekyll', 'sw-precache.js', 'blobs-sw.js'].includes(f)
 

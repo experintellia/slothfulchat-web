@@ -7,7 +7,10 @@
 //     nothing left to trick a click onto,
 //   - the app framing its OWN html-email.html (same origin, what
 //     ensureHtmlEmailDialog does on phones/PWAs) still renders and still boots
-//     its module — the guard must not break the one legitimate frame we have.
+//     its module — the guard must not break the one legitimate frame we have,
+//   - but a SAME-origin frame of main.html / call-popup.html is refused too:
+//     that is a webxdc app navigating its window onto the app origin
+//     (WEBXDC.md, "Security model").
 // Self-sufficient like scripts/test-html-email.mjs: esbuilds html-email.ts,
 // copies the three static documents into a temp dir and serves only those. Two
 // origins come from two hostnames on one server (app./evil.localhost, both
@@ -36,6 +39,12 @@ for (const f of ['frame-guard.js', 'main.html', 'html-email.html', 'call-popup.h
   copyFileSync(join(webApp, 'static', f), join(dir, f))
 // The framing page. Absolute src, so it frames app.localhost whichever host
 // serves the framer — that difference is the whole experiment.
+// what a webxdc app's frame looks like after it navigated onto the app origin
+writeFileSync(
+  join(dir, 'frame-sandboxed-html-email.html'),
+  `<!doctype html><meta charset="utf-8"><title>framer</title>` +
+    `<iframe sandbox="allow-scripts allow-same-origin" src="${APP}/html-email.html"></iframe>`
+)
 for (const doc of ['main', 'html-email', 'call-popup'])
   writeFileSync(
     join(dir, `frame-${doc}.html`),
@@ -56,14 +65,14 @@ const check = (ok, name) => {
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
   // Chromium resolves *.localhost to loopback; the rule pins it (same as
-  // scripts/test-webxdc-isolation.mjs).
+  // scripts/test-webxdc-host.mjs).
   args: ['--host-resolver-rules=MAP *.localhost 127.0.0.1'],
 })
 const page = await browser.newPage()
 
 /** Load `framer` and report what survived inside its iframe. */
-const framed = async (framerOrigin, doc) => {
-  await page.goto(`${framerOrigin}/frame-${doc}.html`)
+const framed = async (framerOrigin, doc, framer = `frame-${doc}`) => {
+  await page.goto(`${framerOrigin}/${framer}.html`)
   const frame = page.frame({ url: u => u.pathname.endsWith(`/${doc}.html`) })
   if (!frame) return { missing: true }
   await page.waitForTimeout(300) // let the framed document settle
@@ -91,6 +100,15 @@ const legit = await framed(APP, 'html-email')
 check(legit.hasBody && !refused(legit), 'same-origin html-email.html frame still renders')
 check(legit.ids?.includes('subject'), 'same-origin html-email.html keeps its UI')
 check(legit.mailBooted, 'same-origin html-email.html still boots html-email.js')
+
+// A webxdc app's frame can be navigated onto the app origin (frame-src must
+// admit 'self' for the viewer above). Same origin, but not the viewer: refused.
+check(refused(await framed(APP, 'main')), 'same-origin frame of main.html is refused (webxdc frame navigating home)')
+check(refused(await framed(APP, 'call-popup')), 'same-origin frame of call-popup.html is refused')
+check(
+  refused(await framed(APP, 'html-email', 'frame-sandboxed-html-email')),
+  'a sandboxed same-origin frame of html-email.html (a webxdc frame gone home) is refused'
+)
 
 // Unframed is the normal case and must be untouched.
 await page.goto(`${APP}/main.html`)
