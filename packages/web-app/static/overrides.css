@@ -24,3 +24,18 @@
     margin: -10px -12px -10px 0;
   }
 }
+
+/* Second-device backup transfer can't work here: browser iroh is relay-only,
+ * and the transfer is LAN-restricted by design (DESCOPED.md). Hide its two
+ * entry points. Separate rules on purpose: a browser without :has() drops
+ * only the second one, not both. The Settings button has no stable hook of
+ * its own; the `devices` icon is also used by the audio recorder, hence the
+ * dialog scope. ponytail: unlike the patch this replaced, an upstream rename
+ * of the icon or test id makes the button reappear silently instead of
+ * failing the rebase; add a data-testid via patch if that ever bites. */
+[data-testid='second-device-button'] {
+  display: none;
+}
+[data-testid='settings-dialog'] button:has(> [style*='/devices.svg']) {
+  display: none;
+}

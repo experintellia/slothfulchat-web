@@ -131,10 +131,10 @@ index 5995b3e5e8e2284642f7fcf3650ad66f1a0553c9..f4a6b2ccc69ce690a7b4928c61c021f7
          <DesktopSettingsSwitch
            settingsKey='contentProtectionEnabled'
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 5bdf714da3b20be0b3a8fe2d37225a25c0c140fc..952c961ee1636b7c1c05bb3f2be9a2f729ddafd7 100644
+index 786ea5822eabe0d8c0e60450d4a6caf5f07dbeb1..bd9ef167abd229fd60c10fbb94eb93df2c3def28 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
-@@ -10,6 +10,7 @@ import Notifications from './Notifications'
+@@ -11,6 +11,7 @@ import Notifications from './Notifications'
  import About from '../dialogs/About'
  import Appearance from './Appearance'
  import Advanced from './Advanced'
@@ -142,7 +142,7 @@ index 5bdf714da3b20be0b3a8fe2d37225a25c0c140fc..952c961ee1636b7c1c05bb3f2be9a2f7
  import Profile from './Profile'
  import Dialog, { DialogBody, DialogHeader } from '../Dialog'
  import EditProfileDialog from '../dialogs/EditProfileDialog'
-@@ -27,12 +28,14 @@ type SettingsView =
+@@ -28,12 +29,14 @@ type SettingsView =
    | 'notifications'
    | 'appearance'
    | 'advanced'
@@ -157,7 +157,7 @@ index 5bdf714da3b20be0b3a8fe2d37225a25c0c140fc..952c961ee1636b7c1c05bb3f2be9a2f7
  }
  
  /**
-@@ -115,6 +118,13 @@ function SettingsNav({
+@@ -127,6 +130,13 @@ function SettingsNav({
        >
          {tx('menu_advanced')}
        </SettingsIconButton>
@@ -171,7 +171,7 @@ index 5bdf714da3b20be0b3a8fe2d37225a25c0c140fc..952c961ee1636b7c1c05bb3f2be9a2f7
        <SettingsSeparator />
        {!runtime.getRuntimeInfo().isMac && (
          <SettingsIconButton
-@@ -166,6 +176,7 @@ function SettingsSectionBody({
+@@ -178,6 +188,7 @@ function SettingsSectionBody({
          />
        )}
        {section === 'advanced' && <Advanced onClose={closeSettings} />}
