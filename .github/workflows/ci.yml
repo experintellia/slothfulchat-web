@@ -471,6 +471,14 @@ jobs:
       - name: E2E test — right-click menus
         run: node scripts/test-context-menu-e2e.mjs
 
+      # calendar e2e (fully offline, mock madmail): an .ics attachment becomes an
+      # event card in the chat and shows in the chat's calendar (not in Files),
+      # the all-chats calendar's sidebar hides a chat, and events made in the
+      # "New event" form and via attachment menu → Event (draft card) are sent
+      # and indexed by core.
+      - name: E2E test — calendar
+        run: node scripts/test-calendar-e2e.mjs
+
       # welcome device message e2e (fully offline, mock madmail): our message
       # lands in the device chat after core's own, the upstream welcome image
       # is gone, and the label keeps it from being added twice.
