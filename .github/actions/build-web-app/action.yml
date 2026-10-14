@@ -6,7 +6,8 @@
 #
 # Checkout is NOT part of this action — a composite action can't run before the
 # repo (and this file) is checked out, so callers must check out FIRST, with
-# submodules: recursive. Everything after checkout lives here.
+# submodules (not recursive: vendor/deltachat-ios's nested core submodule is
+# never used — build/ios links build/core). Everything after checkout lives here.
 #
 # The build order is load-bearing and NOT obvious — see the comments below.
 # It was derived empirically (a full clean build was run end-to-end); do not

@@ -26,6 +26,7 @@
 // Self-check: node --test scripts/mock-madmail.test.mjs
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 
 const readBody = req =>
   new Promise(resolve => {
@@ -65,6 +66,7 @@ const meta = (uid, raw) => ({
  *   post-message half of a large attachment (`Chat-Is-Post-Message`), leaving
  *   the recipient with the pre-message placeholder. Only
  *   shot-download-placeholder.mjs needs this.
+ * @param {number}  [options.port] Fixed port instead of an ephemeral one.
  * @returns {Promise<{
  *   server: import('node:http').Server,
  *   port: number,
@@ -78,6 +80,7 @@ const meta = (uid, raw) => ({
 export async function startMockMadmail({
   probes = false,
   holdPostMessages = false,
+  port = 0,
 } = {}) {
   const users = new Map()
   // phantom404Gets / delete404s only ever move when `probes` is on; they are
@@ -229,7 +232,7 @@ export async function startMockMadmail({
     json(res, 404, { error: 'not found' })
   })
 
-  await new Promise(r => server.listen(0, '127.0.0.1', r))
+  await new Promise(r => server.listen(port, '127.0.0.1', r))
 
   return {
     server,
@@ -252,4 +255,11 @@ export async function startMockMadmail({
       server.close()
     },
   }
+}
+
+// Standalone: `node scripts/mock-madmail.mjs [port]` — for clients outside this
+// process, e.g. the iOS integration tests running in the simulator.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { port } = await startMockMadmail({ port: Number(process.argv[2] ?? 0) })
+  console.log(`mock madmail listening on 127.0.0.1:${port}`)
 }

@@ -1,8 +1,9 @@
 # What we changed compared to upstream
 
-The vendored upstreams (`vendor/core` = chatmail core, `vendor/deltachat-desktop`)
-are never modified in place — every change lives as a `git format-patch` file
-under `patches/core` and `patches/desktop`. This file is the human-readable
+The vendored upstreams (`vendor/core` = chatmail core, `vendor/deltachat-desktop`,
+and the experimental iOS fork's `vendor/deltachat-ios`) are never modified in
+place — every change lives as a `git format-patch` file under `patches/core`,
+`patches/desktop` and `patches/ios`. This file is the human-readable
 summary of that patch stack: what we changed and why, without reading diffs.
 
 Each entry references its patch file by directory and number, e.g. `core/1004`
@@ -888,3 +889,50 @@ Chat while staying protocol-compatible with it; where ArcaneChat (or a
 closed upstream PR) already designed something well, planned features borrow
 that shape — e.g. the map POI API (#36) and per-account disabling modeled on
 chatmail/core#5314 (#37).
+
+## iOS fork (`patches/ios`, experimental)
+
+Deliberate differences from upstream iOS (what we added, changed, removed or
+declined, and how to treat upstream changes that touch them) are listed in
+[IOS-DIFFERENCES.md](IOS-DIFFERENCES.md). Check every upstream port against it.
+
+`vendor/deltachat-ios` is pinned at upstream `86b750af` (2026-07-20): the last
+iOS commit still on core v2.53.0 before upstream moved to 2.54.0. Our core pin
+is v2.53.0 + 45 commits, so that is the closest iOS state; the C header only
+gained additive changes in between. The iOS code is MPL-2.0, which permits the
+fork as long as our changes to those files stay MPL-2.0 and public.
+
+The app links **our patched core**, not iOS's own core submodule:
+`apply-patches` replaces `build/ios/deltachat-ios/libraries/deltachat-core-rust`
+with a symlink to `build/core`. So every core patch above reaches iOS too, and
+the wasm-only ones are compiled out on native.
+
+- **App identifiers** — `chat.delta` → `chat.slothful` for the bundle IDs, the
+  app group and keychain group, the deeplink URL scheme and the Darwin
+  notification names. The fork installs next to Delta Chat instead of
+  replacing it, and the two never talk to each other. The Apple team ID is
+  still upstream's, so device builds need ours. `ios/1000`
+- **Build against our core** — Rust 1.97.0 instead of 1.91.1, because our
+  rusqlite bump needs `cfg_select!`. cargo is handed the symlink's real path,
+  because our core's `../../` path dependencies would otherwise resolve inside
+  `build/ios`. `ios/1001`
+- **Integration tests** — the real onboarding screen, the chat composer
+  (send and receive) and a screenshot dropped onto the composer, run against
+  `scripts/mock-madmail.mjs` through our webimap transport, fully offline. A
+  unit test checks that the linked core understands `webimapaccount:`, which
+  proves it is ours. `.github/workflows/ios.yml` runs these on macOS whenever
+  the iOS or core patches change, and on every push to main. `ios/1002`
+
+### Still to port to iOS
+
+The checklist of web-app features and core hooks to bring to iOS (and iOS
+features to bring back to the web app) is tracked in
+[#288](https://github.com/experintellia/slothfulchat-web/issues/288) under
+"Cross-platform parity". AGENTS.md has the rule that keeps it current.
+
+Before shipping a build to devices:
+- run core's own `cargo test`, because native behaviour changes (downloads,
+  HTTP, crypto) are otherwise only exercised here;
+- set our Apple team ID;
+- set up our own push, because Delta Chat's notification proxy can't reach a
+  different APNs topic.

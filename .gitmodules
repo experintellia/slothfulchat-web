@@ -4,3 +4,6 @@
 [submodule "vendor/deltachat-desktop"]
 	path = vendor/deltachat-desktop
 	url = https://github.com/deltachat/deltachat-desktop
+[submodule "vendor/deltachat-ios"]
+	path = vendor/deltachat-ios
+	url = https://github.com/deltachat/deltachat-ios
