@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sun, 11 Oct 2026 03:04:59 +0000
-Subject: [PATCH 2/3] build: link our patched core (Rust 1.97.0, physical
- manifest path)
+Subject: [PATCH] build: link our patched core (Rust 1.97.0, physical manifest
+ path)
 
 The fork links slothfulchat-web's patched core: apply-patches swaps the
 never-inited deltachat-ios/libraries/deltachat-core-rust submodule for
@@ -24,14 +24,14 @@ build-core.sh still adds the iOS targets itself.
  2 files changed, 8 insertions(+), 4 deletions(-)
 
 diff --git a/rust-toolchain b/rust-toolchain
-index 8d39474..acbb747 100644
+index 8d3947429fa55cc2b69fbd1ce00edf35611cee43..acbb747ac540f47e8cb623aa6f7fe0126d639424 100644
 --- a/rust-toolchain
 +++ b/rust-toolchain
 @@ -1 +1 @@
 -1.91.1
 +1.97.0
 diff --git a/scripts/build-core.sh b/scripts/build-core.sh
-index 17f6180..a3f1936 100755
+index 17f618041ef0b9d80306f419e9cc3ee10798be6e..a3f1936c36a76eb856cda2abc4e21c1d120188d3 100755
 --- a/scripts/build-core.sh
 +++ b/scripts/build-core.sh
 @@ -6,6 +6,10 @@ export PATH="$HOME/.cargo/bin:$PATH"

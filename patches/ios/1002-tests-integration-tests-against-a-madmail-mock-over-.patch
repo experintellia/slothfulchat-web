@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sun, 11 Oct 2026 03:04:59 +0000
-Subject: [PATCH 3/3] tests: integration tests against a madmail mock over
- webimap
+Subject: [PATCH] tests: integration tests against a madmail mock over webimap
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -44,7 +43,7 @@ and deterministic.
 
 diff --git a/DcTests/IntegrationTests.swift b/DcTests/IntegrationTests.swift
 new file mode 100644
-index 0000000..b6ad9a1
+index 0000000000000000000000000000000000000000..b6ad9a100230514dd2c4c3bc976369aee5880ca8
 --- /dev/null
 +++ b/DcTests/IntegrationTests.swift
 @@ -0,0 +1,182 @@
@@ -231,7 +230,7 @@ index 0000000..b6ad9a1
 +    }
 +}
 diff --git a/deltachat-ios/Chat/ChatViewController.swift b/deltachat-ios/Chat/ChatViewController.swift
-index ed4f0e3..edcd0d8 100644
+index ed4f0e3b888afbf5a39c129ea327793a412a7df5..edcd0d87e6fc7dbd0649d8d44749a210aa1951fe 100644
 --- a/deltachat-ios/Chat/ChatViewController.swift
 +++ b/deltachat-ios/Chat/ChatViewController.swift
 @@ -20,7 +20,7 @@ class ChatViewController: UIViewController, UITableViewDelegate, UITableViewData

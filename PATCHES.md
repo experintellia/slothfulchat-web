@@ -911,17 +911,17 @@ the wasm-only ones are compiled out on native.
   app group and keychain group, the deeplink URL scheme and the Darwin
   notification names. The fork installs next to Delta Chat instead of
   replacing it, and the two never talk to each other. The Apple team ID is
-  still upstream's, so device builds need ours. `ios/0001`
+  still upstream's, so device builds need ours. `ios/1000`
 - **Build against our core** — Rust 1.97.0 instead of 1.91.1, because our
   rusqlite bump needs `cfg_select!`. cargo is handed the symlink's real path,
   because our core's `../../` path dependencies would otherwise resolve inside
-  `build/ios`. `ios/0002`
+  `build/ios`. `ios/1001`
 - **Integration tests** — the real onboarding screen, the chat composer
   (send and receive) and a screenshot dropped onto the composer, run against
   `scripts/mock-madmail.mjs` through our webimap transport, fully offline. A
   unit test checks that the linked core understands `webimapaccount:`, which
   proves it is ours. `.github/workflows/ios.yml` runs these on macOS whenever
-  the iOS or core patches change, and on every push to main. `ios/0003`
+  the iOS or core patches change, and on every push to main. `ios/1002`
 
 ### Still to port to iOS
 

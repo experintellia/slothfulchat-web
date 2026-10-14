@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: slothfulchat <patches@slothfulchat.invalid>
 Date: Sun, 11 Oct 2026 02:57:51 +0000
-Subject: [PATCH 1/3] app ids: chat.delta -> chat.slothful
+Subject: [PATCH] app ids: chat.delta -> chat.slothful
 
 Every reverse-DNS identifier the app owns moves to the slothful.chat
 namespace, so the fork installs next to Delta Chat instead of replacing
@@ -54,7 +54,7 @@ scheme of the running host app.
  create mode 100644 DcTests/AppIdentifierTests.swift
 
 diff --git a/DcAppClip/AppClipApp.swift b/DcAppClip/AppClipApp.swift
-index b5d3475..870ae04 100644
+index b5d3475cfb1bc4badd157dccb029fdba68f665a5..870ae045a881cdf5962b9af48440021aba3ac877 100644
 --- a/DcAppClip/AppClipApp.swift
 +++ b/DcAppClip/AppClipApp.swift
 @@ -1,7 +1,7 @@
@@ -76,7 +76,7 @@ index b5d3475..870ae04 100644
                  openURL(appDeeplinkUrl) { mainAppInstalled = $0 }
              }
 diff --git a/DcAppClip/DcAppClip.entitlements b/DcAppClip/DcAppClip.entitlements
-index 9c0973d..8fb0afe 100644
+index 9c0973d1688376c0199970309bd2a93035b9036f..8fb0afe9c427252c276f57cc881a1eb145d212fe 100644
 --- a/DcAppClip/DcAppClip.entitlements
 +++ b/DcAppClip/DcAppClip.entitlements
 @@ -8,11 +8,11 @@
@@ -94,7 +94,7 @@ index 9c0973d..8fb0afe 100644
  </dict>
  </plist>
 diff --git a/DcCore/DcCore.xcodeproj/project.pbxproj b/DcCore/DcCore.xcodeproj/project.pbxproj
-index abec088..b5e85c9 100644
+index abec088084cffba0a6ce1f9e092eef3f639c140f..b5e85c97e1c97ea6794af3e7b897b9d3e1c430aa 100644
 --- a/DcCore/DcCore.xcodeproj/project.pbxproj
 +++ b/DcCore/DcCore.xcodeproj/project.pbxproj
 @@ -510,7 +510,7 @@
@@ -116,7 +116,7 @@ index abec088..b5e85c9 100644
  				SKIP_INSTALL = YES;
  				SWIFT_OBJC_BRIDGING_HEADER = "";
 diff --git a/DcCore/DcCore/DC/Logger.swift b/DcCore/DcCore/DC/Logger.swift
-index c81dc44..4eb16bb 100644
+index c81dc4421eac462e6c64a81dde5e029523dff97e..4eb16bb5df9bb089661bc87105fbfefec67a7c13 100644
 --- a/DcCore/DcCore/DC/Logger.swift
 +++ b/DcCore/DcCore/DC/Logger.swift
 @@ -8,7 +8,7 @@ public func getDcLogger() -> DcLogger {
@@ -129,7 +129,7 @@ index c81dc44..4eb16bb 100644
      let osLog: Logger
  
 diff --git a/DcCore/DcCore/Extensions/UserDefaults+Extensions.swift b/DcCore/DcCore/Extensions/UserDefaults+Extensions.swift
-index f42aa12..ae3959f 100644
+index f42aa126cc654e0183857a91c248182ee2cdeb6a..ae3959f7cb11161c99976a2364d81d213c0954c7 100644
 --- a/DcCore/DcCore/Extensions/UserDefaults+Extensions.swift
 +++ b/DcCore/DcCore/Extensions/UserDefaults+Extensions.swift
 @@ -11,7 +11,7 @@ public extension UserDefaults {
@@ -142,7 +142,7 @@ index f42aa12..ae3959f 100644
  
      static var mainIoRunning: Bool {
 diff --git a/DcCore/DcCore/Helper/DarwinNotificationCenter.swift b/DcCore/DcCore/Helper/DarwinNotificationCenter.swift
-index 6e96b78..9d42e41 100644
+index 6e96b783c35804e4ad50d6660e35361136a6428a..9d42e4179a8af7e7570491eb65f1a8d9bed56e6b 100644
 --- a/DcCore/DcCore/Helper/DarwinNotificationCenter.swift
 +++ b/DcCore/DcCore/Helper/DarwinNotificationCenter.swift
 @@ -8,10 +8,10 @@ import notify
@@ -161,7 +161,7 @@ index 6e96b78..9d42e41 100644
      }
  }
 diff --git a/DcCore/DcCore/Helper/DatabaseHelper.swift b/DcCore/DcCore/Helper/DatabaseHelper.swift
-index 4188f18..090f55d 100644
+index 4188f18c8a85a81f24892517b10aaef0d31efbc0..090f55dea7d18e3b919762f7619b906f186588d8 100644
 --- a/DcCore/DcCore/Helper/DatabaseHelper.swift
 +++ b/DcCore/DcCore/Helper/DatabaseHelper.swift
 @@ -3,7 +3,7 @@ public class DatabaseHelper {
@@ -174,7 +174,7 @@ index 4188f18..090f55d 100644
      public init() {}
  
 diff --git a/DcCore/DcCore/Helper/KeychainManager.swift b/DcCore/DcCore/Helper/KeychainManager.swift
-index 1947411..97bbb5a 100644
+index 1947411f6d9910db860a4917339f3b329478ef54..97bbb5a8c07529918eb4b8815c1d40474b00e0a6 100644
 --- a/DcCore/DcCore/Helper/KeychainManager.swift
 +++ b/DcCore/DcCore/Helper/KeychainManager.swift
 @@ -13,7 +13,7 @@ public class KeychainManager {
@@ -187,7 +187,7 @@ index 1947411..97bbb5a 100644
      public static func getAccountSecret(accountID: Int) throws -> String {
          do {
 diff --git a/DcNotificationService/DcNotificationService.entitlements b/DcNotificationService/DcNotificationService.entitlements
-index dc3bfd9..4fee400 100644
+index dc3bfd97b1326f132e771e82285e08cee1ecfa1a..4fee400bd3c857af78251c297a4b98a126e1e1bb 100644
 --- a/DcNotificationService/DcNotificationService.entitlements
 +++ b/DcNotificationService/DcNotificationService.entitlements
 @@ -4,11 +4,11 @@
@@ -205,7 +205,7 @@ index dc3bfd9..4fee400 100644
  	<key>com.apple.developer.usernotifications.filtering</key>
  	<true/>
 diff --git a/DcShare/Controller/ShareViewController.swift b/DcShare/Controller/ShareViewController.swift
-index a45c965..9045cc4 100644
+index a45c965bce332ef4dd20f543cf7fc0f28970347f..9045cc472768e0b66a90af943170e1cf32e8702e 100644
 --- a/DcShare/Controller/ShareViewController.swift
 +++ b/DcShare/Controller/ShareViewController.swift
 @@ -28,7 +28,7 @@ class ShareViewController: UIViewController {
@@ -218,7 +218,7 @@ index a45c965..9045cc4 100644
                      // Add direct share parameters to deeplink
                      if let intent = extensionContext?.intent as? INSendMessageIntent,
 diff --git a/DcShare/DcShare.entitlements b/DcShare/DcShare.entitlements
-index 849391a..c9a4320 100644
+index 849391a7b08b06e6fb294101a18c13faf85f7985..c9a4320af32f7927d4c0e60f93382f2f2e3816a9 100644
 --- a/DcShare/DcShare.entitlements
 +++ b/DcShare/DcShare.entitlements
 @@ -4,11 +4,11 @@
@@ -237,7 +237,7 @@ index 849391a..c9a4320 100644
  </plist>
 diff --git a/DcTests/AppIdentifierTests.swift b/DcTests/AppIdentifierTests.swift
 new file mode 100644
-index 0000000..40b8f75
+index 0000000000000000000000000000000000000000..40b8f75813436e07c13cee672767ea5824832f4b
 --- /dev/null
 +++ b/DcTests/AppIdentifierTests.swift
 @@ -0,0 +1,17 @@
@@ -259,7 +259,7 @@ index 0000000..40b8f75
 +    }
 +}
 diff --git a/DcWidget/WidgetProvider.swift b/DcWidget/WidgetProvider.swift
-index 0ed39a7..85626ce 100644
+index 0ed39a77b93e79b5cf725af3d484af3f9b7e0f0b..85626cec4517e50de5a7db24fbd6aad5300568a5 100644
 --- a/DcWidget/WidgetProvider.swift
 +++ b/DcWidget/WidgetProvider.swift
 @@ -129,7 +129,7 @@ struct ChatShortcut: Identifiable, Hashable {
@@ -281,7 +281,7 @@ index 0ed39a7..85626ce 100644
          urlComponents.queryItems = [
              URLQueryItem(name: "msgId", value: "\(messageId)"),
 diff --git a/deltachat-ios.xcodeproj/project.pbxproj b/deltachat-ios.xcodeproj/project.pbxproj
-index 72b749e..8115bee 100644
+index 72b749e2513181e8d9c9ff359fba34cebb575538..8115bee6f4744348ba73bc5937ce536dff7f25d7 100644
 --- a/deltachat-ios.xcodeproj/project.pbxproj
 +++ b/deltachat-ios.xcodeproj/project.pbxproj
 @@ -2180,7 +2180,7 @@
@@ -393,7 +393,7 @@ index 72b749e..8115bee 100644
  				SWIFT_EMIT_LOC_STRINGS = YES;
  				SWIFT_VERSION = 5.5;
 diff --git a/deltachat-ios/AppDelegate.swift b/deltachat-ios/AppDelegate.swift
-index 6b57706..5589fc0 100644
+index 6b57706e837f118c7ec2e6ef77f1c8bead8050c7..5589fc047233f68305ffb371d3ac293ba3fc5b84 100644
 --- a/deltachat-ios/AppDelegate.swift
 +++ b/deltachat-ios/AppDelegate.swift
 @@ -237,7 +237,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
@@ -406,7 +406,7 @@ index 6b57706..5589fc0 100644
          default:
              return false
 diff --git a/deltachat-ios/Calls/PiPFrameProcessor.swift b/deltachat-ios/Calls/PiPFrameProcessor.swift
-index 98fe3d2..59c26f0 100644
+index 98fe3d2c4096cfce506052ec2a3d5a0d95eb5eaa..59c26f03beeae0bb3854fc5c5a9f446fe3883b68 100644
 --- a/deltachat-ios/Calls/PiPFrameProcessor.swift
 +++ b/deltachat-ios/Calls/PiPFrameProcessor.swift
 @@ -4,7 +4,7 @@ import WebRTC
@@ -419,7 +419,7 @@ index 98fe3d2..59c26f0 100644
      private var isProcessing = false
      private var rotation: RTCVideoRotation = ._0
 diff --git a/deltachat-ios/Coordinator/AppCoordinator.swift b/deltachat-ios/Coordinator/AppCoordinator.swift
-index 558ce8a..8e76c7c 100644
+index 558ce8ab5570ef6fdee6c0f5f51ce56fc3efdcd9..8e76c7c4abbafbc0fc8376c9085a31c8f2685706 100644
 --- a/deltachat-ios/Coordinator/AppCoordinator.swift
 +++ b/deltachat-ios/Coordinator/AppCoordinator.swift
 @@ -119,11 +119,11 @@ class AppCoordinator: NSObject {
@@ -447,7 +447,7 @@ index 558ce8a..8e76c7c 100644
             chatId == -1 ||
             accountId == -1 {
 diff --git a/deltachat-ios/DC/DcAccount.swift b/deltachat-ios/DC/DcAccount.swift
-index 8e51c02..85ae0c3 100644
+index 8e51c02df96b3f82a7dbf0ca5bb95c452c7c4884..85ae0c335232ba597ba493e9ef4a93a26cbfaaf7 100644
 --- a/deltachat-ios/DC/DcAccount.swift
 +++ b/deltachat-ios/DC/DcAccount.swift
 @@ -21,7 +21,7 @@ public class DcAccounts {
@@ -460,7 +460,7 @@ index 8e51c02..85ae0c3 100644
      var rpcPointer: OpaquePointer?
      public var fetchSemaphore: DispatchSemaphore?
 diff --git a/deltachat-ios/Info.plist b/deltachat-ios/Info.plist
-index 23fa256..1e021b8 100644
+index 23fa256a7bd2de7f3fbcf534c189a57ce5fa7733..1e021b8d8110aaa3e96b55ac0b72ef21694453de 100644
 --- a/deltachat-ios/Info.plist
 +++ b/deltachat-ios/Info.plist
 @@ -24,10 +24,10 @@
@@ -499,7 +499,7 @@ index 23fa256..1e021b8 100644
  		</dict>
  	</array>
 diff --git a/deltachat-ios/deltachat-ios.entitlements b/deltachat-ios/deltachat-ios.entitlements
-index 1e81e94..1390314 100644
+index 1e81e941c96d9c76bb8ea2d8b23ba620b774e5fe..139031401deb0d77246163f5ce44f95a20b1917d 100644
 --- a/deltachat-ios/deltachat-ios.entitlements
 +++ b/deltachat-ios/deltachat-ios.entitlements
 @@ -18,11 +18,11 @@
