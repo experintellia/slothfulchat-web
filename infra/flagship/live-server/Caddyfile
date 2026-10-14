@@ -1,0 +1,19 @@
+{
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+	}
+}
+*.lollolollol.lol {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+		resolvers 1.1.1.1
+	}
+	import /srv/slothfulchat/routes/*.caddy
+	handle {
+		respond "No deployment configured for this hostname." 404
+	}
+}
+# Site blocks must be imported at top level: *.lollolollol.lol cannot cover
+# the deeper per-preview webxdc hostnames or their TLS certificates.
+import /srv/slothfulchat/webxdc-sites/*.caddy

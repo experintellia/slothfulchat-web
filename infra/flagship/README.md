@@ -6,7 +6,8 @@ nothing here is on the critical path for shipping the app.
 
 Files in this dir are **reference copies**; they get placed on the server by
 hand during bring-up (`Caddyfile` → `/etc/caddy/Caddyfile`, `deploy-preview.sh`
-→ `/usr/local/bin/`).
+→ `/usr/local/bin/`). The server actually running today (lollolollol.lol) uses
+its own gate instead; see `live-server/README.md`.
 
 ## (a) Provision a box
 
