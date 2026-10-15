@@ -289,7 +289,11 @@ exists:
   calendar button in the chat header, and a "New event" form there.
   RSVP is a reaction (👍 🤔 👎) on the event message, so every Delta Chat
   client can answer; the sender can cancel (a new `.ics` with `METHOD:CANCEL`,
-  `SEQUENCE` + 1), which marks the original message cancelled too. Only the
+  `SEQUENCE` + 1), which marks the original message cancelled too. The
+  cancellation is a reply to the invite and, once indexed, an info message
+  (`SystemMessage::CalendarCancelled`, 7000, set locally and never sent) that
+  says "Bob cancelled “Title”" in the chat, the chat list and the notification,
+  and jumps to the invite when clicked. Only the
   sender of an event's first message can update or cancel it, and attendee
   `METHOD:REPLY` files are not read as versions. Sent events carry a last
   paragraph starting with "📅 " that tells clients without calendar support

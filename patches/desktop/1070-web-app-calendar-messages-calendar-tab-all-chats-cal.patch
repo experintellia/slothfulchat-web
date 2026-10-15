@@ -4,7 +4,7 @@ Date: Sun, 4 Oct 2026 14:09:55 +0000
 Subject: [PATCH] web-app: calendar messages, calendar tab, all-chats calendar,
  new events
 
-Calendar messages (core/0036's `Calendar` viewtype) render as an event
+Calendar messages (core/1027's `Calendar` viewtype) render as an event
 card in the chat: a date badge, title, time, location, and repeating /
 cancelled state. Clicking it shows the details with Open (the .ics) and
 Show in chat. A draft with an .ics shows the same card in the composer,
@@ -39,12 +39,13 @@ like webxdc and vCard drafts do.
  .../src/components/composer/Composer.tsx      |   64 +-
  .../components/composer/menuAttachment.tsx    |   21 +
  .../components/dialogs/MediaView/index.tsx    |   13 +-
- .../src/components/message/Message.tsx        |   10 +-
+ .../src/components/message/Message.tsx        |   27 +-
  .../screens/MainScreen/MainScreen.tsx         |    7 +
  packages/frontend/src/hooks/chat/useDraft.ts  |    6 +-
  .../frontend/src/hooks/chat/useMessage.ts     |    2 +-
  packages/frontend/src/keybindings.ts          |    7 +
- 16 files changed, 1877 insertions(+), 73 deletions(-)
+ packages/frontend/src/stockStrings.ts         |    2 +
+ 17 files changed, 1895 insertions(+), 74 deletions(-)
  create mode 100644 images/icons/calendar.svg
  create mode 100644 packages/frontend/src/components/Calendar/index.tsx
  create mode 100644 packages/frontend/src/components/Calendar/styles.module.scss
@@ -2208,7 +2209,7 @@ index 378b39c47919481cbe320c0487dce1cbbcd417db..2f56e6a8100fc7bc8bba2f2418e40c57
      </Dialog>
    )
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 22e222cef62f3be8daa0acaa667d5c40451a4c6c..b9b0e5b88936ae8d48021de9df687b0dd15e8fd7 100644
+index 22e222cef62f3be8daa0acaa667d5c40451a4c6c..099deef44d65d6e4204bcacf7174c4e409e0812b 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -51,6 +51,7 @@ import ShortcutMenu from '../ShortcutMenu'
@@ -2219,7 +2220,51 @@ index 22e222cef62f3be8daa0acaa667d5c40451a4c6c..b9b0e5b88936ae8d48021de9df687b0d
  import DownloadOnDemandPlaceholder, {
    DownloadFailedLabel,
    getPostMessageViewType,
-@@ -1215,7 +1216,8 @@ export default function Message(props: {
+@@ -1000,13 +1001,17 @@ export default function Message(props: {
+     // which is sent by chatmail servers.
+     const isInvalidUnencryptedMail =
+       message.systemMessageType === 'InvalidUnencryptedMail'
++    // a cancelled calendar event: a reply to the invite, which it jumps to
++    const isCalendarCancelled =
++      message.systemMessageType === 'CalendarCancelled'
+ 
+     // Some info messages can be clicked by the user to receive further information
+     const isInteractive =
+       (isWebxdcInfo && message.parentId) ||
+       message.infoContactId != null ||
+       isProtectionEnabledMsg ||
+-      isInvalidUnencryptedMail
++      isInvalidUnencryptedMail ||
++      (isCalendarCancelled && message.parentId)
+ 
+     let onClick: undefined | (() => void)
+     if (isInteractive) {
+@@ -1014,6 +1019,16 @@ export default function Message(props: {
+         if (isWebxdcInfo) {
+           // open or focus the webxdc app
+           openWebxdc(message)
++        } else if (isCalendarCancelled && message.parentId) {
++          jumpToMessage({
++            accountId,
++            msgId: message.parentId,
++            msgChatId: undefined,
++            highlight: true,
++            focus: true,
++            msgParentId: message.id,
++            scrollIntoViewArg: { block: 'center' },
++          })
+         } else if (
+           message.systemMessageType === 'GroupDescriptionChanged' &&
+           (chat.chatType === 'Group' || chat.chatType === 'OutBroadcast')
+@@ -1069,6 +1084,7 @@ export default function Message(props: {
+               )}
+             />
+           )}
++          {isCalendarCancelled && '📅 '}
+           {text}
+           {direction === 'outgoing' &&
+             (status === 'sending' || status === 'error') && (
+@@ -1215,7 +1231,8 @@ export default function Message(props: {
      // attachment card — the DownloadOnDemandPlaceholder above owns that UI.
      message.downloadState === 'Done' &&
      message.viewType !== 'Webxdc' &&
@@ -2229,7 +2274,7 @@ index 22e222cef62f3be8daa0acaa667d5c40451a4c6c..b9b0e5b88936ae8d48021de9df687b0d
  
    return (
      <div
-@@ -1327,6 +1329,12 @@ export default function Message(props: {
+@@ -1327,6 +1344,12 @@ export default function Message(props: {
                tabindexForInteractiveContents={tabindexForInteractiveContents}
              ></VCardComponent>
            )}
@@ -2343,3 +2388,16 @@ index 9056d7092989296862fe5cc4b566a17d7dea62f6..c0a5091b6e0918051f1ed1425de3eb24
      } else if ((ev.metaKey || ev.ctrlKey) && matchesLetterShortcut(ev, 'n')) {
        return KeybindAction.NewChat_Open
      } else if ((ev.metaKey || ev.ctrlKey) && matchesLetterShortcut(ev, 'k')) {
+diff --git a/packages/frontend/src/stockStrings.ts b/packages/frontend/src/stockStrings.ts
+index b82b3fbdcf671c0c94dc70cde0074c57d52d147a..805f5f9c43eb63394e307a97ad280c39a4f4e555 100644
+--- a/packages/frontend/src/stockStrings.ts
++++ b/packages/frontend/src/stockStrings.ts
+@@ -184,6 +184,8 @@ export async function updateCoreStrings() {
+     [C.DC_STR_CHANNEL_IMAGE_CHANGED]: tx('channel_image_changed'),
+     [C.DC_STR_CHANNEL_NAME_CHANGED]: tx('channel_name_changed'),
+     [C.DC_STR_MESSAGES_ARE_E2EE]: tx('messages_are_e2ee'),
++    [C.DC_STR_CALENDAR_YOU_CANCELLED]: tx('calendar_you_cancelled'),
++    [C.DC_STR_CALENDAR_CANCELLED_BY]: tx('calendar_cancelled_by'),
+   }
+ 
+   await BackendRemote.rpc.setStockStrings(strings)

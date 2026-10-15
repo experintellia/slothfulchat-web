@@ -17,7 +17,8 @@
 //      (how to answer); SlothfulChat hides it
 //   7. "Going" under the card answers with a 👍 reaction
 //   8. the sender cancels from the event details (a reply to the invite): the
-//      original card turns cancelled and so does the calendar
+//      original card turns cancelled and so does the calendar; the cancellation
+//      is an info message that jumps to the invite
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/test-calendar-e2e.mjs
@@ -306,6 +307,21 @@ try {
     cancelMsg.quote?.kind === 'WithMessage' && cancelMsg.quote.messageId === sentId,
     'the cancellation is a reply to the invite'
   )
+  check(
+    cancelMsg.isInfo &&
+      cancelMsg.systemMessageType === 'CalendarCancelled' &&
+      cancelMsg.text === 'You cancelled “Team lunch”',
+    'the cancellation is an info message'
+  )
+  const info = page.locator('.info-message', { hasText: 'You cancelled “Team lunch”' })
+  await info.waitFor({ timeout: 30_000 })
+  await info.getByRole('button').click()
+  await page.waitForFunction(
+    (id) => document.getElementById(String(id))?.closest('li')?.classList.contains('highlight'),
+    sentId,
+    { timeout: 10_000 }
+  )
+  check(true, 'clicking it jumps to the invite')
 
   console.log('PASS: calendar — message type, draft, indexing, views, sidebar, new event, RSVP, cancel')
 } catch (e) {

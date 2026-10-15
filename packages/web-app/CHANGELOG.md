@@ -49,7 +49,9 @@
   it is sent, the pencil on the draft's event card lets you edit it. Answer
   with Going / Maybe / Can't go under the card (sent as a 👍 🤔 👎 reaction, so
   people on other Delta Chat apps can answer too, and their message gets a
-  line explaining how), and cancel your own events from their details.
+  line explaining how), and cancel your own events from their details. A
+  cancellation shows as a line in the chat ("Bob cancelled “Team lunch”") and
+  in its notification; clicking it jumps to the invite.
 - **A download can now be stopped.** Tapped a big video by accident? The
   progress ring has an × that stops the download; tapping download again soon
   picks up where it left off.

@@ -55,23 +55,25 @@ get_calendar_msg_events(msg) and make_calendar_ics(event), which writes the
 ---
  Cargo.lock                                    |  156 +-
  Cargo.toml                                    |    2 +
+ deltachat-ffi/deltachat.h                     |   11 +
  deltachat-jsonrpc/src/api.rs                  |   62 +
  deltachat-jsonrpc/src/api/types/calendar.rs   |   88 +
- deltachat-jsonrpc/src/api/types/message.rs    |   25 +-
+ deltachat-jsonrpc/src/api/types/message.rs    |   29 +-
  deltachat-jsonrpc/src/api/types/mod.rs        |    1 +
  deltachat-jsonrpc/typescript/pnpm-lock.yaml   | 2864 +++++++++++++++++
  .../typescript/pnpm-workspace.yaml            |    2 +
- src/calendar.rs                               |  935 ++++++
- src/calendar/calendar_tests.rs                |  550 ++++
+ src/calendar.rs                               |  977 ++++++
+ src/calendar/calendar_tests.rs                |  565 ++++
  src/chat.rs                                   |   18 +-
  src/lib.rs                                    |    1 +
- src/message.rs                                |   33 +-
- src/mimeparser.rs                             |   11 +-
+ src/message.rs                                |   34 +-
+ src/mimefactory.rs                            |    1 +
+ src/mimeparser.rs                             |   15 +-
  src/receive_imf.rs                            |    4 +
  src/sql.rs                                    |   10 +
- src/stock_str.rs                              |    1 +
- src/summary.rs                                |   20 +-
- 18 files changed, 4747 insertions(+), 36 deletions(-)
+ src/stock_str.rs                              |   19 +
+ src/summary.rs                                |   22 +-
+ 20 files changed, 4845 insertions(+), 36 deletions(-)
  create mode 100644 deltachat-jsonrpc/src/api/types/calendar.rs
  create mode 100644 deltachat-jsonrpc/typescript/pnpm-lock.yaml
  create mode 100644 deltachat-jsonrpc/typescript/pnpm-workspace.yaml
@@ -516,6 +518,35 @@ index 4106fde890d6d1e0153972420813c11e1d45ad66..37f1e9c47201e229964441ab9e0d515f
  colorutils-rs = { version = "0.8.0", default-features = false }
  data-encoding = "2.9.0"
  escaper = "0.1"
+diff --git a/deltachat-ffi/deltachat.h b/deltachat-ffi/deltachat.h
+index 552be54daf540f5d37a479c3cf3f507d7497a3d7..cddf9689fb2a8db32e470efa4c988742fff56402 100644
+--- a/deltachat-ffi/deltachat.h
++++ b/deltachat-ffi/deltachat.h
+@@ -4593,6 +4593,7 @@ uint32_t        dc_msg_get_info_contact_id    (const dc_msg_t* msg);
+ #define         DC_INFO_WEBXDC_INFO_MESSAGE       32
+ #define         DC_INFO_CHAT_E2EE                 50
+ #define         DC_INFO_GROUP_DESCRIPTION_CHANGED 70
++#define         DC_INFO_CALENDAR_CANCELLED     7000
+ 
+ 
+ /**
+@@ -7501,6 +7502,16 @@ void dc_event_unref(dc_event_t* event);
+ /// Used when creating text for the "Encryption Info" dialogs.
+ #define DC_STR_MESSAGES_ARE_E2EE 242
+ 
++/// "You cancelled “%1$s”"
++///
++/// `%1$s` will be replaced by the title of the calendar event.
++#define DC_STR_CALENDAR_YOU_CANCELLED 7000
++
++/// "%1$s cancelled “%2$s”"
++///
++/// `%1$s` will be replaced by the name of the contact, `%2$s` by the title of the calendar event.
++#define DC_STR_CALENDAR_CANCELLED_BY 7001
++
+ /**
+  * @}
+  */
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
 index fe585cf2f1bacfd85b674c051089fd13317f6543..67d69e4499b137648d60aa74936715944fe31d90 100644
 --- a/deltachat-jsonrpc/src/api.rs
@@ -691,7 +722,7 @@ index 0000000000000000000000000000000000000000..052a21970ffd71a7122dad00932c3fab
 +    }
 +}
 diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
-index 9fe1ef9db885d59c81394a575dd2b4140060a949..5a2ee0f3df6b45f7df27b9bc87684d208d5d19ae 100644
+index 9fe1ef9db885d59c81394a575dd2b4140060a949..73f5f890c5eb7f78140138f423025ee4973f43b4 100644
 --- a/deltachat-jsonrpc/src/api/types/message.rs
 +++ b/deltachat-jsonrpc/src/api/types/message.rs
 @@ -17,6 +17,7 @@
@@ -732,7 +763,7 @@ index 9fe1ef9db885d59c81394a575dd2b4140060a949..5a2ee0f3df6b45f7df27b9bc87684d20
 -            text: message.get_text(),
 +            // the hint for clients without calendar support is not shown here
 +            text: if message.get_viewtype() == Viewtype::Calendar {
-+                deltachat::calendar::strip_hint(&message.get_text()).to_string()
++                deltachat::calendar::text(context, &message).await
 +            } else {
 +                message.get_text()
 +            },
@@ -772,6 +803,24 @@ index 9fe1ef9db885d59c81394a575dd2b4140060a949..5a2ee0f3df6b45f7df27b9bc87684d20
              MessageViewtype::Webxdc => Viewtype::Webxdc,
              MessageViewtype::Vcard => Viewtype::Vcard,
 +            MessageViewtype::Calendar => Viewtype::Calendar,
+         }
+     }
+ }
+@@ -431,6 +454,9 @@ pub enum SystemMessageType {
+ 
+     CallAccepted,
+     CallEnded,
++
++    /// A calendar event was cancelled; `parent_id` is the invite.
++    CalendarCancelled,
+ }
+ 
+ impl From<deltachat::mimeparser::SystemMessage> for SystemMessageType {
+@@ -460,6 +486,7 @@ fn from(system_message_type: deltachat::mimeparser::SystemMessage) -> Self {
+             SystemMessage::SecurejoinWaitTimeout => SystemMessageType::SecurejoinWaitTimeout,
+             SystemMessage::CallAccepted => SystemMessageType::CallAccepted,
+             SystemMessage::CallEnded => SystemMessageType::CallEnded,
++            SystemMessage::CalendarCancelled => SystemMessageType::CalendarCancelled,
          }
      }
  }
@@ -3665,10 +3714,10 @@ index 0000000000000000000000000000000000000000..49c0ad74208df0f3edd27c0dc970067b
 +  esbuild: false
 diff --git a/src/calendar.rs b/src/calendar.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..678bb55db0ac6839c737739f85f859530fbc4783
+index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f2803866b
 --- /dev/null
 +++ b/src/calendar.rs
-@@ -0,0 +1,935 @@
+@@ -0,0 +1,977 @@
 +//! # Calendar.
 +//!
 +//! iCalendar attachments (`.ics` files and the `text/calendar` part of email invitations) are
@@ -3704,7 +3753,9 @@ index 0000000000000000000000000000000000000000..678bb55db0ac6839c737739f85f85953
 +use crate::context::Context;
 +use crate::log::{LogExt, warn};
 +use crate::message::{Message, MsgId, Viewtype};
++use crate::mimeparser::SystemMessage;
 +use crate::param::Param;
++use crate::stock_str;
 +use crate::tools::{create_id, time};
 +
 +/// Created on every open (see the module docs).
@@ -3948,6 +3999,26 @@ index 0000000000000000000000000000000000000000..678bb55db0ac6839c737739f85f85953
 +    }
 +}
 +
++/// The text a Calendar message shows: without the hint, and for a cancellation
++/// ([`SystemMessage::CalendarCancelled`]) the info line ("Bob cancelled “Lunch”") followed by
++/// the sender's note.
++pub async fn text(context: &Context, msg: &Message) -> String {
++    let note = strip_hint(&msg.text);
++    if msg.param.get_cmd() != SystemMessage::CalendarCancelled {
++        return note.to_string();
++    }
++    let line = cancelled_line(context, msg).await;
++    match note {
++        "" => line,
++        note => format!("{line} – {note}"),
++    }
++}
++
++pub(crate) async fn cancelled_line(context: &Context, msg: &Message) -> String {
++    let title = msg.param.get(Param::Summary1).unwrap_or_default();
++    stock_str::calendar_cancelled(context, msg.from_id, title).await
++}
++
 +/// Writes an iCalendar file cancelling the events of the Calendar message `msg_id`: same
 +/// `UID`s, `SEQUENCE` + 1, `METHOD:CANCEL`. Only the message's sender may cancel.
 +pub async fn make_cancel_ics(context: &Context, msg_id: MsgId) -> Result<String> {
@@ -4018,12 +4089,32 @@ index 0000000000000000000000000000000000000000..678bb55db0ac6839c737739f85f85953
 +        Vec::new()
 +    };
 +    // A plain .ics File with events becomes a Calendar message (e.g. from before the viewtype).
-+    let retype = (msg.viewtype == Viewtype::File && !rows.is_empty()).then(|| {
-+        let mut param = msg.param.clone();
++    let mut param = msg.param.clone();
++    let retype = msg.viewtype == Viewtype::File && !rows.is_empty();
++    if retype {
 +        param.set(Param::Summary1, &rows[0].summary);
-+        param.to_string()
-+    });
-+    let retyped = retype.is_some();
++    }
++    // A cancellation from the event's organizer shows as an info message, pointing at the
++    // invite it replies to.
++    let cancels = !rows.is_empty()
++        && rows.iter().all(|r| r.cancelled)
++        && param.get_cmd() == SystemMessage::Unknown
++        && context
++            .sql
++            .query_get_value::<ContactId>(
++                "SELECT m.from_id FROM slothfulchat_calendar_events e
++                 JOIN msgs m ON m.id=e.msg_id
++                 WHERE e.uid=? AND m.id<? AND m.chat_id!=?
++                 ORDER BY m.id LIMIT 1",
++                (&rows[0].uid, msg_id, DC_CHAT_ID_TRASH),
++            )
++            .await?
++            .is_none_or(|organizer| organizer == msg.from_id);
++    if cancels {
++        param.set_cmd(SystemMessage::CalendarCancelled);
++    }
++    let changed = (retype || cancels).then(|| param.to_string());
++    let retyped = changed.is_some();
 +    let cancelled_uids: Vec<String> = rows
 +        .iter()
 +        .filter(|r| r.cancelled)
@@ -4032,7 +4123,7 @@ index 0000000000000000000000000000000000000000..678bb55db0ac6839c737739f85f85953
 +    context
 +        .sql
 +        .transaction(move |t| {
-+            if let Some(param) = retype {
++            if let Some(param) = changed {
 +                t.execute(
 +                    "UPDATE msgs SET type=?, param=? WHERE id=?",
 +                    (Viewtype::Calendar, param, msg_id),
@@ -4606,10 +4697,10 @@ index 0000000000000000000000000000000000000000..678bb55db0ac6839c737739f85f85953
 +mod calendar_tests;
 diff --git a/src/calendar/calendar_tests.rs b/src/calendar/calendar_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b49df18da0858215981b0b2e4d560c64424c662d
+index 0000000000000000000000000000000000000000..f4843b353f51b3f601dd24c38c276e3b0f824e86
 --- /dev/null
 +++ b/src/calendar/calendar_tests.rs
-@@ -0,0 +1,550 @@
+@@ -0,0 +1,565 @@
 +use super::*;
 +use crate::chat;
 +use crate::contact::ContactId;
@@ -5155,9 +5246,24 @@ index 0000000000000000000000000000000000000000..b49df18da0858215981b0b2e4d560c64
 +            "so does the invite"
 +        );
 +    }
-+    // the hint is not part of what the chat list shows
++    // the cancellation is an info message that points at the invite, and says what happened
 +    let last = Message::load_from_db(bob, bob.get_last_msg_in(bob_chat).await.id).await?;
-+    assert_eq!(last.get_summary(bob, None).await?.text, "📅 Party");
++    assert!(last.is_info());
++    assert_eq!(last.get_info_type(), SystemMessage::CalendarCancelled);
++    assert_eq!(last.parent(bob).await?.unwrap().id, bob_invite.id);
++    let line = "alice@example.org cancelled “Party”";
++    assert_eq!(text(bob, &last).await, line, "the hint is not shown");
++    assert_eq!(last.get_summary(bob, None).await?.text, format!("📅 {line}"));
++    let own = Message::load_from_db(alice, alice.get_last_msg_in(chat_id).await.id).await?;
++    assert_eq!(text(alice, &own).await, "You cancelled “Party”");
++
++    // the same cancellation from someone who isn't the organizer is no info message
++    let mut fake = Message::new(Viewtype::File);
++    fake.set_file_from_bytes(bob, "cancel.ics", cancel.as_bytes(), None)?;
++    chat::send_msg(bob, bob_chat, &mut fake).await?;
++    let fake = alice.recv_msg(&bob.pop_sent_msg().await).await;
++    assert_eq!(fake.viewtype, Viewtype::Calendar);
++    assert!(!fake.is_info());
 +    Ok(())
 +}
 diff --git a/src/chat.rs b/src/chat.rs
@@ -5223,10 +5329,18 @@ index 6b1e2a0d4041d4a079e2dd04c8066b9e3f80771a..c482ed753574232640c2b653cc3aa267
  pub mod chat;
  pub mod chatlist;
 diff --git a/src/message.rs b/src/message.rs
-index 222de7f560520ee14c7bf1c62213fd31626ada10..e643d910e7a681a61adff33cd418b5f268ae05d3 100644
+index 222de7f560520ee14c7bf1c62213fd31626ada10..4cd1479abf28d37f1391693d5b985be5ae8bdf52 100644
 --- a/src/message.rs
 +++ b/src/message.rs
-@@ -1186,6 +1186,21 @@ pub(crate) async fn try_set_vcard(&mut self, context: &Context, path: &Path) ->
+@@ -1081,6 +1081,7 @@ pub async fn get_info_contact_id(&self, context: &Context) -> Result<Option<Cont
+             | SystemMessage::IrohNodeAddr
+             | SystemMessage::CallAccepted
+             | SystemMessage::CallEnded
++            | SystemMessage::CalendarCancelled
+             | SystemMessage::Unknown => Ok(None),
+         }
+     }
+@@ -1186,6 +1187,21 @@ pub(crate) async fn try_set_vcard(&mut self, context: &Context, path: &Path) ->
          Ok(())
      }
  
@@ -5248,7 +5362,7 @@ index 222de7f560520ee14c7bf1c62213fd31626ada10..e643d910e7a681a61adff33cd418b5f2
      /// Set different sender name for a message.
      /// This overrides the name set by the `set_config()`-option `displayname`.
      pub fn set_override_sender_name(&mut self, name: Option<String>) {
-@@ -1268,7 +1283,13 @@ pub async fn set_quote(&mut self, context: &Context, quote: Option<&Message>) ->
+@@ -1268,7 +1284,13 @@ pub async fn set_quote(&mut self, context: &Context, quote: Option<&Message>) ->
  
              // The quote goes out on the wire as `> `-prefixed lines and into `msgs.param`,
              // so bound it here, the single funnel all quote producers pass through.
@@ -5263,7 +5377,7 @@ index 222de7f560520ee14c7bf1c62213fd31626ada10..e643d910e7a681a61adff33cd418b5f2
              let text = if text.is_empty() {
                  // Use summary, similar to "Image" to avoid sending empty quote.
                  quote
-@@ -1740,6 +1761,7 @@ pub(crate) fn guess_msgtype_from_path_suffix(path: &Path) -> Option<(Viewtype, &
+@@ -1740,6 +1762,7 @@ pub(crate) fn guess_msgtype_from_path_suffix(path: &Path) -> Option<(Viewtype, &
          "heic" => (Viewtype::File, "image/heic"), // supported since Android 10 / iOS 11
          "heif" => (Viewtype::File, "image/heif"), // supported since Android 10 / iOS 11
          "html" => (Viewtype::File, "text/html"),
@@ -5271,7 +5385,7 @@ index 222de7f560520ee14c7bf1c62213fd31626ada10..e643d910e7a681a61adff33cd418b5f2
          "htm" => (Viewtype::File, "text/html"),
          "ico" => (Viewtype::File, "image/vnd.microsoft.icon"),
          "jar" => (Viewtype::File, "application/java-archive"),
-@@ -2504,6 +2526,14 @@ pub enum Viewtype {
+@@ -2504,6 +2527,14 @@ pub enum Viewtype {
      /// with email addresses and possibly other fields.
      /// Use `parse_vcard()` to retrieve them.
      Vcard = 90,
@@ -5286,7 +5400,7 @@ index 222de7f560520ee14c7bf1c62213fd31626ada10..e643d910e7a681a61adff33cd418b5f2
  }
  
  impl Viewtype {
-@@ -2522,6 +2552,7 @@ pub fn has_file(&self) -> bool {
+@@ -2522,6 +2553,7 @@ pub fn has_file(&self) -> bool {
              Viewtype::Call => false,
              Viewtype::Webxdc => true,
              Viewtype::Vcard => true,
@@ -5294,11 +5408,34 @@ index 222de7f560520ee14c7bf1c62213fd31626ada10..e643d910e7a681a61adff33cd418b5f2
          }
      }
  }
+diff --git a/src/mimefactory.rs b/src/mimefactory.rs
+index 3ee7f35920b11f00634cef088909df5d6d1ce855..daf5c2859f86c87875fb7a4f3cec3619887a5c5b 100644
+--- a/src/mimefactory.rs
++++ b/src/mimefactory.rs
+@@ -1463,6 +1463,7 @@ async fn render_message(
+                 SystemMessage::ChatE2ee => {}
+                 SystemMessage::CallAccepted => {}
+                 SystemMessage::CallEnded => {}
++                SystemMessage::CalendarCancelled => {}
+             }
+ 
+             if command == SystemMessage::GroupDescriptionChanged
 diff --git a/src/mimeparser.rs b/src/mimeparser.rs
-index ebd4053b14b16f85edcc4973f2daa5013c4936ab..98f5e120a22a558df00654f4dc6f9d00b3fc5fc1 100644
+index ebd4053b14b16f85edcc4973f2daa5013c4936ab..31a33ad7bb61c874667d4b3ea2270663d914433e 100644
 --- a/src/mimeparser.rs
 +++ b/src/mimeparser.rs
-@@ -811,6 +811,7 @@ fn squash_attachment_parts(&mut self) {
+@@ -259,6 +259,10 @@ pub enum SystemMessage {
+ 
+     /// Group or broadcast channel description changed.
+     GroupDescriptionChanged = 70,
++
++    /// A calendar event was cancelled by its organizer. Set locally on the cancelling Calendar
++    /// message when it is indexed (`calendar.rs`), never sent; numbered far from upstream's.
++    CalendarCancelled = 7000,
+ }
+ 
+ impl MimeMessage {
+@@ -811,6 +815,7 @@ fn squash_attachment_parts(&mut self) {
                      | Viewtype::Voice
                      | Viewtype::Video
                      | Viewtype::Vcard
@@ -5306,7 +5443,7 @@ index ebd4053b14b16f85edcc4973f2daa5013c4936ab..98f5e120a22a558df00654f4dc6f9d00
                      | Viewtype::File
                      | Viewtype::Webxdc => true,
                      Viewtype::Unknown | Viewtype::Text | Viewtype::Call => false,
-@@ -1182,7 +1183,7 @@ async fn handle_multiple(
+@@ -1182,7 +1187,7 @@ async fn handle_multiple(
                              .unwrap_or_else(|| "calendar.ics".to_string());
                          self.do_add_single_file_part(
                              context,
@@ -5315,7 +5452,7 @@ index ebd4053b14b16f85edcc4973f2daa5013c4936ab..98f5e120a22a558df00654f4dc6f9d00
                              mimetype,
                              &mail.ctype.mimetype.to_lowercase(),
                              &mail.get_body_raw()?,
-@@ -1548,6 +1549,13 @@ async fn do_add_single_file_part(
+@@ -1548,6 +1553,13 @@ async fn do_add_single_file_part(
              } else {
                  Viewtype::File
              }
@@ -5329,7 +5466,7 @@ index ebd4053b14b16f85edcc4973f2daa5013c4936ab..98f5e120a22a558df00654f4dc6f9d00
          } else if msg_type == Viewtype::Image
              || msg_type == Viewtype::Gif
              || msg_type == Viewtype::Sticker
-@@ -2279,6 +2287,7 @@ fn get_mime_type(
+@@ -2279,6 +2291,7 @@ fn get_mime_type(
      let viewtype = match mimetype.type_() {
          mime::TEXT => match mimetype.subtype() {
              mime::VCARD => Viewtype::Vcard,
@@ -5381,10 +5518,42 @@ index 6ffa5f1a9dabdb9cb8972c0fe3ef26fd272064d7..74b138e99c0051131e5dde9d1e065cc1
          .await
          .context("Failed to prune connection history")
 diff --git a/src/stock_str.rs b/src/stock_str.rs
-index b71bcfb2597ce68080599764c5341fe2949dbb45..7d4bdd10e1885ef83d8aa5722b0155db4f6d7340 100644
+index b71bcfb2597ce68080599764c5341fe2949dbb45..d2c1df8bfdce8393f8e21bf1a44eed43c5c003aa 100644
 --- a/src/stock_str.rs
 +++ b/src/stock_str.rs
-@@ -1207,6 +1207,7 @@ pub fn to_locale_string(&self, context: &Context) -> String {
+@@ -419,6 +419,13 @@ pub enum StockMessage {
+ 
+     #[strum(props(fallback = "Messages are end-to-end encrypted."))]
+     MessagesAreE2ee = 242,
++
++    // slothfulchat-web fork strings, numbered far from upstream's.
++    #[strum(props(fallback = "You cancelled “%1$s”"))]
++    CalendarYouCancelled = 7000,
++
++    #[strum(props(fallback = "%1$s cancelled “%2$s”"))]
++    CalendarCancelledBy = 7001,
+ }
+ 
+ impl StockMessage {
+@@ -871,6 +878,17 @@ pub(crate) async fn msg_location_enabled_by(context: &Context, contact: ContactI
+     }
+ }
+ 
++/// Stock string: `You cancelled “%1$s”` or `%1$s cancelled “%2$s”`, for a calendar event.
++pub(crate) async fn calendar_cancelled(context: &Context, by: ContactId, title: &str) -> String {
++    if by == ContactId::SELF {
++        translated(context, StockMessage::CalendarYouCancelled).replace1(title)
++    } else {
++        translated(context, StockMessage::CalendarCancelledBy)
++            .replace1(&by.get_stock_name(context).await)
++            .replace2(title)
++    }
++}
++
+ /// Stock string: `Location streaming disabled.`.
+ pub(crate) fn msg_location_disabled(context: &Context) -> String {
+     translated(context, StockMessage::MsgLocationDisabled)
+@@ -1207,6 +1225,7 @@ pub fn to_locale_string(&self, context: &Context) -> String {
              Viewtype::File => file(context),
              Viewtype::Webxdc => "Mini App".to_owned(),
              Viewtype::Vcard => "👤".to_string(),
@@ -5393,17 +5562,19 @@ index b71bcfb2597ce68080599764c5341fe2949dbb45..7d4bdd10e1885ef83d8aa5722b0155db
              Viewtype::Unknown | Viewtype::Text | Viewtype::Call => self.to_string(),
          }
 diff --git a/src/summary.rs b/src/summary.rs
-index d209b39a6b52a5a98d57e0ecd912693cfc016e04..4325a77d48bf6ea9076215137c16fd2f22c1c89a 100644
+index d209b39a6b52a5a98d57e0ecd912693cfc016e04..811abe904868134620c0dbd796780bbe34abb47f 100644
 --- a/src/summary.rs
 +++ b/src/summary.rs
-@@ -245,6 +245,19 @@ async fn get_summary_text_without_prefix(&self, context: &Context) -> String {
+@@ -245,6 +245,21 @@ async fn get_summary_text_without_prefix(&self, context: &Context) -> String {
                  }
                  append_text = true;
              }
 +            Viewtype::Calendar => {
 +                emoji = Some("📅");
 +                type_name = None;
-+                type_file = if self.viewtype == Viewtype::Calendar {
++                type_file = if self.param.get_cmd() == SystemMessage::CalendarCancelled {
++                    Some(crate::calendar::cancelled_line(context, self).await)
++                } else if self.viewtype == Viewtype::Calendar {
 +                    self.param
 +                        .get(Param::Summary1)
 +                        .filter(|s| !s.is_empty())
@@ -5416,7 +5587,7 @@ index d209b39a6b52a5a98d57e0ecd912693cfc016e04..4325a77d48bf6ea9076215137c16fd2f
              Viewtype::Call => {
                  let call_info = context.load_call_by_id(self.id).await.unwrap_or(None);
                  let has_video = call_info.is_some_and(|c| c.has_video_initially());
-@@ -284,7 +297,12 @@ async fn get_summary_text_without_prefix(&self, context: &Context) -> String {
+@@ -284,7 +299,12 @@ async fn get_summary_text_without_prefix(&self, context: &Context) -> String {
          // A summary is a preview: bound it here, before the concatenation and the
          // whitespace-collapsing pass below, so neither allocates a copy of a whole
          // multi-megabyte message text.

@@ -9,7 +9,10 @@
   lists one message's events, and `makeCalendarIcs` writes a new event to send
   or draft with viewtype `Calendar`; `makeCalendarCancelIcs` cancels your own
   event. A trailing "📅 …" hint paragraph is stripped from Calendar messages'
-  `text`.
+  `text`. The organizer's cancellation is an info message
+  (`systemMessageType` `CalendarCancelled`, `parentId` = the invite) whose
+  text and summary say who cancelled what; its two stock strings are
+  `DC_STR_CALENDAR_YOU_CANCELLED` (7000) and `DC_STR_CALENDAR_CANCELLED_BY` (7001).
 - **No `log`→console bridge any more**: core reports Info/Warning/Error both
   through the `log` facade and as JSON-RPC events, so bridging the facade made
   every core log line appear twice on a page that prints the events. The

@@ -227,5 +227,11 @@
   },
   "calendar_cancel_confirm": {
     "message": "Cancel “%1$s” for everyone in this chat?"
+  },
+  "calendar_you_cancelled": {
+    "message": "You cancelled “%1$s”"
+  },
+  "calendar_cancelled_by": {
+    "message": "%1$s cancelled “%2$s”"
   }
 }
