@@ -387,7 +387,7 @@ index 0a752768c8f793d89a7a72bd15fae533c72f7918..e7ef01fa49709d65739cd9ef7f771fac
  
  [dev-dependencies]
 diff --git a/src/net.rs b/src/net.rs
-index e7d571b8df7543d13f826df1c93d3639b3f441e7..2080f1bd288fcf0574c9ecc9415ee49e4630b39e 100644
+index 254a1ac684db21e9deed2af0b7ca4f83f7a81e69..33dff886417e8a3c4d4843df2b690ca6786a9282 100644
 --- a/src/net.rs
 +++ b/src/net.rs
 @@ -8,6 +8,7 @@
@@ -398,7 +398,7 @@ index e7d571b8df7543d13f826df1c93d3639b3f441e7..2080f1bd288fcf0574c9ecc9415ee49e
  use tokio_io_timeout::TimeoutStream;
  
  use crate::context::Context;
-@@ -104,11 +105,22 @@ pub(crate) async fn load_connection_timestamp(
+@@ -108,11 +109,22 @@ pub(crate) async fn load_connection_timestamp(
      Ok(timestamp)
  }
  
@@ -421,7 +421,7 @@ index e7d571b8df7543d13f826df1c93d3639b3f441e7..2080f1bd288fcf0574c9ecc9415ee49e
  pub(crate) async fn connect_tcp_inner(
      addr: SocketAddr,
  ) -> Result<Pin<Box<TimeoutStream<TcpStream>>>> {
-@@ -253,6 +265,7 @@ pub(crate) async fn run_connection_attempts<O, I, F>(mut futures: I) -> Result<O
+@@ -257,6 +269,7 @@ pub(crate) async fn run_connection_attempts<O, I, F>(mut futures: I) -> Result<O
  /// for example using TLS.
  /// If TLS is not used or invalid TLS certificates are allowed,
  /// this option should be disabled.
