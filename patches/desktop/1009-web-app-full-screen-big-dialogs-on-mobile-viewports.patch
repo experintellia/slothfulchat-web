@@ -174,10 +174,10 @@ index c423a781c26066b9b0e1a5b59c808e68d7415cdf..d43ad0b19fbafe86b668b2bbeb99ed51
      background-color: gray;
    }
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 2c5908172debe30f4d86f51fa774b5a9de08e736..7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e 100644
+index 749b5afe283dcb9a60d9072355e9067108e5ca55..331019147238142ab6fb76d318a4c0a1c317753d 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
-@@ -146,7 +146,12 @@ function SettingsSectionDialog(
+@@ -156,7 +156,12 @@ function SettingsSectionDialog(
    } as const satisfies Partial<Parameters<typeof DialogHeader>[0]>
  
    return (
