@@ -315,7 +315,7 @@ exists:
   message. Pixel-identical for existing themes. `desktop/1003`
 - **Build info in the About dialog** — shows the slothfulchat-web version and
   source commit a deployed instance was built from, with the commit message
-  on hover. `desktop/1007`, `desktop/1011`, `desktop/1012`
+  on hover. `desktop/1007`, `desktop/1011`
 - **Stickers, including animated Lottie** — Telegram `.tgs` (gzipped Lottie)
   stickers render and send, alongside static ones. Core classifies `.tgs` as a
   sticker and honors the `Chat-Content: sticker` header for file-bearing parts;
@@ -854,7 +854,8 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   "Enable Webxdc Devtools" switch (it only toggles Electron's DevTools on a
   webxdc iframe — a browser's built-in dev tools can't be gated by the app,
   and webxdc apps don't run in this build anyway). `desktop/1000`,
-  `desktop/1005`, `desktop/1021`
+  `desktop/1021`; the second-device entry points are hidden by
+  `packages/web-app/static/overrides.css`, not a patch
 - **Long message text is stored in full** — core truncates message text to
   38 lines × 100 chars when writing `msgs.txt`, stashing the full body in
   `mime_headers` so a UI can re-offer it as an HTML message; that stores
@@ -882,7 +883,7 @@ the full table with what re-enabling each one would take.
 - **webxdc apps** — not in upstream's browser edition either; needs a
   sandboxed iframe host on a separate origin (planned, see issue #2).
 - **Second-device / multi-device backup transfer** — the UI is hidden
-  (`desktop/1005`) because it *cannot* work here: browser iroh is relay-only
+  (`packages/web-app/static/overrides.css`) because it *cannot* work here: browser iroh is relay-only
   with no LAN connectivity, and Delta Chat's backup transfer is
   LAN-restricted by design. File-based backup export/import covers moving an
   account meanwhile.

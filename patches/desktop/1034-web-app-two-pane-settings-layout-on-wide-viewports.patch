@@ -15,13 +15,13 @@ SettingsNav/SettingsSectionBody components so both layouts render the
 exact same content; SettingsIconButton gains an 'active' highlight
 (aria-current) for the sidebar.
 ---
- .../src/components/Settings/Settings.tsx      | 323 +++++++++++-------
+ .../src/components/Settings/Settings.tsx      | 347 +++++++++++-------
  .../Settings/SettingsIconButton.tsx           |   9 +-
  .../components/Settings/styles.module.scss    |  67 ++++
- 3 files changed, 278 insertions(+), 121 deletions(-)
+ 3 files changed, 293 insertions(+), 130 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25c0c140fc 100644
+index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5f07dbeb1 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
 @@ -1,4 +1,4 @@
@@ -29,8 +29,8 @@ index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25
 +import React, { useEffect, useCallback, useState } from 'react'
  
  import { useSettingsStore } from '../../stores/settings'
- import { runtime } from '@deltachat-desktop/runtime-interface'
-@@ -16,6 +16,9 @@ import EditProfileDialog from '../dialogs/EditProfileDialog'
+ import { SendBackupDialog } from '../dialogs/SetupMultiDevice'
+@@ -17,6 +17,9 @@ import EditProfileDialog from '../dialogs/EditProfileDialog'
  import SettingsSeparator, { SettingsEndSeparator } from './SettingsSeparator'
  import useDialog from '../../hooks/dialog/useDialog'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
@@ -40,7 +40,7 @@ index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25
  
  import type { DialogProps } from '../../contexts/DialogContext'
  
-@@ -25,11 +28,155 @@ type SettingsView =
+@@ -26,11 +29,166 @@ type SettingsView =
    | 'appearance'
    | 'advanced'
  
@@ -80,15 +80,17 @@ index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25
 +function SettingsNav({
 +  onSelectSection,
 +  activeSection,
++  onClose,
 +}: {
 +  onSelectSection: (section: SettingsView) => void
++  onClose: () => void
 +  /** set in the two-pane layout to highlight the visible section */
 +  activeSection?: SettingsView
 +}) {
    const { openDialog } = useDialog()
 +  const settingsStore = useSettingsStore()[0]
 +  const tx = useTranslationFunction()
- 
++
 +  return (
 +    <>
 +      {settingsStore != null && (
@@ -123,6 +125,15 @@ index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25
 +      >
 +        {tx('pref_appearance')}
 +      </SettingsIconButton>
++      <SettingsIconButton
++        icon='devices'
++        onClick={() => {
++          openDialog(SendBackupDialog)
++          onClose()
++        }}
++      >
++        {tx('multidevice_title')}
++      </SettingsIconButton>
 +      <ConnectivityButton />
 +      <SettingsIconButton
 +        icon='code-tags'
@@ -155,7 +166,7 @@ index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25
 +    </>
 +  )
 +}
-+
+ 
 +/** The content of one settings section, shared by both layouts. */
 +function SettingsSectionBody({
 +  section,
@@ -197,7 +208,7 @@ index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25
  
    useEffect(() => {
      if (window.__settingsOpened) {
-@@ -53,6 +200,45 @@ export default function Settings({ onClose }: DialogProps) {
+@@ -54,6 +212,46 @@ export default function Settings({ onClose }: DialogProps) {
      [onClose, openDialog]
    )
  
@@ -218,6 +229,7 @@ index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25
 +            <SettingsNav
 +              onSelectSection={setActiveSection}
 +              activeSection={activeSection}
++              onClose={onClose}
 +            />
 +          </nav>
 +          <div className={styles.settingsPane}>
@@ -243,7 +255,7 @@ index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25
    return (
      <Dialog onClose={onClose} fixed width={400} dataTestid='settings-dialog'>
        <DialogHeader
-@@ -61,66 +247,7 @@ export default function Settings({ onClose }: DialogProps) {
+@@ -62,75 +260,10 @@ export default function Settings({ onClose }: DialogProps) {
          dataTestid='settings'
        />
        <DialogBody>
@@ -279,6 +291,15 @@ index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25
 -        >
 -          {tx('pref_appearance')}
 -        </SettingsIconButton>
+-        <SettingsIconButton
+-          icon='devices'
+-          onClick={() => {
+-            openDialog(SendBackupDialog)
+-            onClose()
+-          }}
+-        >
+-          {tx('multidevice_title')}
+-        </SettingsIconButton>
 -        <ConnectivityButton />
 -        <SettingsIconButton
 -          icon='code-tags'
@@ -307,11 +328,14 @@ index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25
 -          {tx('global_menu_help_about_desktop')}
 -        </SettingsIconButton>
 -        <SettingsEndSeparator />
-+        <SettingsNav onSelectSection={openSettingsSectionDialog} />
++        <SettingsNav
++          onSelectSection={openSettingsSectionDialog}
++          onClose={onClose}
++        />
        </DialogBody>
      </Dialog>
    )
-@@ -134,16 +261,11 @@ function SettingsSectionDialog(
+@@ -144,16 +277,11 @@ function SettingsSectionDialog(
  ) {
    const { settingsMode, onClose: closeThisDialog } = props
    const tx = useTranslationFunction()
@@ -328,7 +352,7 @@ index 7c6a6ae64fdb80822a3fa35ce93af29ba8fffc1e..5bdf714da3b20be0b3a8fe2d37225a25
  
    return (
      <Dialog
-@@ -152,59 +274,20 @@ function SettingsSectionDialog(
+@@ -162,59 +290,20 @@ function SettingsSectionDialog(
        width={400}
        dataTestid='settings-section-dialog'
      >
