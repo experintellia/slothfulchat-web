@@ -268,6 +268,10 @@ try {
   // 7. RSVP by reaction
   const sentId = Number(await sent.getAttribute('id'))
   const going = sent.getByRole('button', { name: /Going/ })
+  check(
+    (await going.boundingBox()).y > (await sent.getByText('lunch?', { exact: true }).boundingBox()).y,
+    'the RSVP row is below the message text'
+  )
   await going.click()
   await page.waitForFunction(
     (id) =>

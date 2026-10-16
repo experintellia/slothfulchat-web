@@ -30,8 +30,8 @@ like webxdc and vCard drafts do.
 ---
  images/icons/calendar.svg                     |    1 +
  .../AccountListSidebar/AccountItem.tsx        |   10 +
- .../src/components/Calendar/index.tsx         | 1076 +++++++++++++++++
- .../components/Calendar/styles.module.scss    |  556 +++++++++
+ .../src/components/Calendar/index.tsx         | 1083 +++++++++++++++++
+ .../components/Calendar/styles.module.scss    |  551 +++++++++
  .../src/components/ChatView/ChatView.tsx      |   15 +
  packages/frontend/src/components/Gallery.tsx  |  157 ++-
  .../frontend/src/components/Icon/index.tsx    |    1 +
@@ -39,13 +39,13 @@ like webxdc and vCard drafts do.
  .../src/components/composer/Composer.tsx      |   64 +-
  .../components/composer/menuAttachment.tsx    |   21 +
  .../components/dialogs/MediaView/index.tsx    |   13 +-
- .../src/components/message/Message.tsx        |   27 +-
+ .../src/components/message/Message.tsx        |   33 +-
  .../screens/MainScreen/MainScreen.tsx         |    7 +
  packages/frontend/src/hooks/chat/useDraft.ts  |    6 +-
  .../frontend/src/hooks/chat/useMessage.ts     |    2 +-
  packages/frontend/src/keybindings.ts          |    7 +
  packages/frontend/src/stockStrings.ts         |    2 +
- 17 files changed, 1895 insertions(+), 74 deletions(-)
+ 17 files changed, 1903 insertions(+), 74 deletions(-)
  create mode 100644 images/icons/calendar.svg
  create mode 100644 packages/frontend/src/components/Calendar/index.tsx
  create mode 100644 packages/frontend/src/components/Calendar/styles.module.scss
@@ -80,10 +80,10 @@ index 1b6742647c9e289891e17fc9979b6f392f883362..5e178c0164c4505175512cc493069215
          action: async () => {
 diff --git a/packages/frontend/src/components/Calendar/index.tsx b/packages/frontend/src/components/Calendar/index.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..8ae54c66d16fd98719d63bbd6d15a4e3f059ca72
+index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b730672871e247000
 --- /dev/null
 +++ b/packages/frontend/src/components/Calendar/index.tsx
-@@ -0,0 +1,1076 @@
+@@ -0,0 +1,1083 @@
 +import React, { useCallback, useEffect, useMemo, useState } from 'react'
 +import moment from 'moment'
 +import classNames from 'classnames'
@@ -1095,10 +1095,7 @@ index 0000000000000000000000000000000000000000..8ae54c66d16fd98719d63bbd6d15a4e3
 +  )
 +}
 +
-+/**
-+ * The content of a `Calendar` message bubble: the card (opens the event details) and the
-+ * RSVP row, which answers with a reaction (see `RSVP`).
-+ */
++/** The card of a `Calendar` message bubble; it opens the event details. */
 +export function CalendarMessageContent({
 +  message,
 +  tabindexForInteractiveContents,
@@ -1106,10 +1103,33 @@ index 0000000000000000000000000000000000000000..8ae54c66d16fd98719d63bbd6d15a4e3
 +  message: T.Message
 +  tabindexForInteractiveContents: -1 | 0
 +}) {
-+  const tx = useTranslationFunction()
 +  const { openDialog } = useDialog()
 +  const event = message.calendarEvent
 +  if (!event) {
++    return null
++  }
++  return (
++    <CalendarEventCard
++      event={event}
++      tabIndex={tabindexForInteractiveContents}
++      onClick={() => openDialog(EventDetails, { event: toOccurrence(event) })}
++    />
++  )
++}
++
++/**
++ * The RSVP row under a `Calendar` message's text: answers with a reaction (see `RSVP`).
++ */
++export function CalendarRsvp({
++  message,
++  tabindexForInteractiveContents,
++}: {
++  message: T.Message
++  tabindexForInteractiveContents: -1 | 0
++}) {
++  const tx = useTranslationFunction()
++  const event = message.calendarEvent
++  if (!event || event.cancelled) {
 +    return null
 +  }
 +  const reactions = message.reactions?.reactions ?? []
@@ -1117,55 +1137,42 @@ index 0000000000000000000000000000000000000000..8ae54c66d16fd98719d63bbd6d15a4e3
 +    reactions.some(x => x.emoji === r.emoji && x.isFromSelf)
 +  )?.emoji
 +  return (
-+    <div className={styles.messageEvent}>
-+      <CalendarEventCard
-+        event={event}
-+        tabIndex={tabindexForInteractiveContents}
-+        onClick={() => openDialog(EventDetails, { event: toOccurrence(event) })}
-+      />
-+      {!event.cancelled && (
-+        <div
-+          role='group'
-+          aria-label={tx('calendar_rsvp')}
-+          className={styles.rsvp}
-+        >
-+          {RSVP.map(r => {
-+            const count = reactions.find(x => x.emoji === r.emoji)?.count ?? 0
-+            const on = mine === r.emoji
-+            return (
-+              <button
-+                key={r.emoji}
-+                type='button'
-+                aria-pressed={on}
-+                tabIndex={tabindexForInteractiveContents}
-+                className={classNames(styles.rsvpButton, on && styles.rsvpOn)}
-+                onClick={() =>
-+                  BackendRemote.rpc
-+                    .sendReaction(
-+                      selectedAccountId(),
-+                      message.id,
-+                      on ? [] : [r.emoji]
-+                    )
-+                    .catch(log.error)
-+                }
-+              >
-+                <span aria-hidden>{r.emoji}</span>
-+                {tx(r.label)}
-+                {count > 0 && <span className={styles.rsvpCount}>{count}</span>}
-+              </button>
-+            )
-+          })}
-+        </div>
-+      )}
++    <div role='group' aria-label={tx('calendar_rsvp')} className={styles.rsvp}>
++      {RSVP.map(r => {
++        const count = reactions.find(x => x.emoji === r.emoji)?.count ?? 0
++        const on = mine === r.emoji
++        return (
++          <button
++            key={r.emoji}
++            type='button'
++            aria-pressed={on}
++            tabIndex={tabindexForInteractiveContents}
++            className={classNames(styles.rsvpButton, on && styles.rsvpOn)}
++            onClick={() =>
++              BackendRemote.rpc
++                .sendReaction(
++                  selectedAccountId(),
++                  message.id,
++                  on ? [] : [r.emoji]
++                )
++                .catch(log.error)
++            }
++          >
++            <span aria-hidden>{r.emoji}</span>
++            {tx(r.label)}
++            {count > 0 && <span className={styles.rsvpCount}>{count}</span>}
++          </button>
++        )
++      })}
 +    </div>
 +  )
 +}
 diff --git a/packages/frontend/src/components/Calendar/styles.module.scss b/packages/frontend/src/components/Calendar/styles.module.scss
 new file mode 100644
-index 0000000000000000000000000000000000000000..cca20e4b5e598c8377399e65866b05f71cd2538a
+index 0000000000000000000000000000000000000000..30dde744644c3f7582cdb8e9a61c1e314ce6028a
 --- /dev/null
 +++ b/packages/frontend/src/components/Calendar/styles.module.scss
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,551 @@
 +.calendar {
 +  display: flex;
 +  flex-direction: column;
@@ -1677,17 +1684,12 @@ index 0000000000000000000000000000000000000000..cca20e4b5e598c8377399e65866b05f7
 +  white-space: nowrap;
 +}
 +
-+// A Calendar message: the card, then the RSVP row.
-+.messageEvent {
-+  display: flex;
-+  flex-direction: column;
-+  gap: 6px;
-+}
-+
++// A Calendar message: the card, the text, then the RSVP row.
 +.rsvp {
 +  display: flex;
 +  flex-wrap: wrap;
 +  gap: 6px;
++  margin-top: 6px;
 +}
 +
 +.rsvpButton {
@@ -2209,14 +2211,14 @@ index 378b39c47919481cbe320c0487dce1cbbcd417db..2f56e6a8100fc7bc8bba2f2418e40c57
      </Dialog>
    )
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 22e222cef62f3be8daa0acaa667d5c40451a4c6c..099deef44d65d6e4204bcacf7174c4e409e0812b 100644
+index 22e222cef62f3be8daa0acaa667d5c40451a4c6c..f8bc8a7856b26c0d4c37b848dc72000848010840 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -51,6 +51,7 @@ import ShortcutMenu from '../ShortcutMenu'
  import InvalidUnencryptedMailDialog from '../dialogs/InvalidUnencryptedMail'
  import Button from '../Button'
  import VCardComponent from './VCard'
-+import { CalendarMessageContent } from '../Calendar'
++import { CalendarMessageContent, CalendarRsvp } from '../Calendar'
  import DownloadOnDemandPlaceholder, {
    DownloadFailedLabel,
    getPostMessageViewType,
@@ -2287,6 +2289,19 @@ index 22e222cef62f3be8daa0acaa667d5c40451a4c6c..099deef44d65d6e4204bcacf7174c4e4
            {content}
            {textIsLong && (
              <button
+@@ -1341,6 +1364,12 @@ export default function Message(props: {
+                 : tx('message_text_show_more')}
+             </button>
+           )}
++          {message.viewType === 'Calendar' && (
++            <CalendarRsvp
++              message={message}
++              tabindexForInteractiveContents={tabindexForInteractiveContents}
++            />
++          )}
+           {hasHtml && (
+             <button
+               type='button'
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 index 9026f19f215cbba3c22f2af30b51c8f11f7b5a65..31359eb86c5fb7f49abe594b7b5f7d20fc6938f5 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
