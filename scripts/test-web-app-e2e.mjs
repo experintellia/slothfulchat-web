@@ -11,6 +11,7 @@
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { onboardClassicEmail } from './harness.mjs'
 
 const script = p => fileURLToPath(new URL(p, import.meta.url))
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
@@ -79,28 +80,18 @@ await page.addInitScript(() => {
 const rpc = (method, ...args) =>
   page.evaluate(([m, a]) => window.exp.rpc[m](...a), [method, args])
 
-// UI: manual/classic login flow (selectors from upstream frontend source:
-// OnboardingScreen -> InstantOnboardingScreen -> UseOtherServerDialog -> AccountSetupScreen)
+// UI: classic email login through the onboarding (scripts/harness.mjs)
 async function loginViaUI({ email, password }, { firstAccount }) {
   if (!firstAccount) {
     const add = page.getByTestId('add-account-button')
     await add.hover()
     await add.click()
   }
-  // The welcome screen shows OnboardingScreen (create-account-button) on a
-  // fresh start, but jumps straight to InstantOnboardingScreen
-  // (other-login-button) when the instant-onboarding flag is still set from a
-  // previous account's flow. Handle both.
-  const create = page.getByTestId('create-account-button')
-  const other = page.getByTestId('other-login-button')
-  await create.or(other).first().waitFor({ state: 'visible', timeout: 90_000 })
-  if (await create.isVisible()) await create.click()
-  await other.click()
-  await page.getByTestId('manual-email-login').click()
-  await page.locator('#addr').fill(email)
-  await page.locator('#password').fill(password)
+  // onboardClassicEmail copes with both starts: the welcome steps on a fresh
+  // start, or straight to the new-profile screen when the instant-onboarding
+  // flag is still set from a previous account's flow.
+  await onboardClassicEmail(page, { email, password })
   loginStarted = true
-  await page.getByTestId('login-with-credentials').click()
   // configure over IMAP/SMTP takes ~10-30s; main screen = chat list visible
   await page
     .locator('#new-chat-button')

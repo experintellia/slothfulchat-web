@@ -1760,6 +1760,8 @@ class BrowserRuntime {
     ;(window as any).__slothfulAnalyticsUi = {
       configured: analytics.isConfigured(),
       enabled: () => analytics.getConsent() !== 'denied',
+      // the welcome screen asks for an explicit choice: 'unset' = not asked yet
+      choice: () => analytics.getConsent(),
       setEnabled: (on: boolean) => analytics.setConsent(on ? 'granted' : 'denied'),
       showInfo: showAnalyticsInfoDialog,
     }
@@ -3149,8 +3151,8 @@ function showWelcomeHint() {
   // Anchor on data-testid, NOT the CSS-module class name: production builds
   // minify local class names (welcomeScreenButtonGroup → "xo"), so a
   // [class*=...] selector silently matches nothing there. The testids come
-  // from upstream's OnboardingScreen (create-account-button) and
-  // InstantOnboardingScreen (login-button) button groups — re-check them on
+  // from the onboarding's profile-kind step (create-account-button) and the
+  // new-profile screen's button group (login-button) — re-check them on
   // every vendor rebase.
   const group = document.querySelector(
     '[data-testid="create-account-button"], [data-testid="login-button"]'
@@ -3357,24 +3359,7 @@ function showBridgeDialog() {
       input.focus()
       return
     }
-    // Persist in localStorage (survives an installed-PWA launch, where a
-    // ?proxy= query param would not). Picking what the app would use anyway
-    // (the instance default, or localhost when there is none) clears the key
-    // instead, so a later instance-default change still propagates; an
-    // explicit localhost pick on an instance WITH a default is stored like
-    // any other override. A ?proxy= param still takes precedence over the
-    // stored value, so strip it before reloading.
-    const appDefault =
-      (window as any).__slothfulConfig?.defaultProxyUrl || DEFAULT_LOCAL_BRIDGE
-    if (normBridgeUrl(value) === normBridgeUrl(appDefault)) {
-      localStorage.removeItem(PROXY_KEY)
-    } else {
-      localStorage.setItem(PROXY_KEY, value)
-    }
-    const u = new URL(location.href)
-    u.searchParams.delete('proxy')
-    if (u.toString() !== location.href) location.href = u.toString()
-    else location.reload()
+    switchBridge(value)
   }
 
   row.append(closeBtn, testBtn, useBtn)
@@ -3388,6 +3373,28 @@ function showBridgeDialog() {
   // which paints a stray focus ring. The checked radio is the better start
   // (arrow keys then move the selection).
   radios.find(r => r.checked)?.focus()
+}
+
+/** Switch to `url` and reload onto it. Shared by the bridge dialog and the
+ * welcome screen's bridge step. Persists in localStorage (survives an
+ * installed-PWA launch, where a ?proxy= query param would not). Picking what
+ * the app would use anyway (the instance default, or localhost when there is
+ * none) clears the key instead, so a later instance-default change still
+ * propagates; an explicit localhost pick on an instance WITH a default is
+ * stored like any other override. A ?proxy= param still takes precedence over
+ * the stored value, so strip it before reloading. */
+function switchBridge(url: string) {
+  const appDefault =
+    (window as any).__slothfulConfig?.defaultProxyUrl || DEFAULT_LOCAL_BRIDGE
+  if (normBridgeUrl(url) === normBridgeUrl(appDefault)) {
+    localStorage.removeItem(PROXY_KEY)
+  } else {
+    localStorage.setItem(PROXY_KEY, url)
+  }
+  const u = new URL(location.href)
+  u.searchParams.delete('proxy')
+  if (u.toString() !== location.href) location.href = u.toString()
+  else location.reload()
 }
 
 /** Confirm an unrecognised bridge that arrived as `?proxy=` in the page URL.
@@ -3650,11 +3657,21 @@ if (typeof window !== 'undefined') {
   }
   pollBridge()
   // Hook for the (patched) ConnectivityDialog: show which bridge is in use and
-  // open the edit dialog from inside the React app.
+  // open the edit dialog from inside the React app. The welcome screen's
+  // bridge step lists the same options, probes them and switches (reloads).
   ;(window as any).__slothfulchatBridge = {
     url: resolveBridgeUrl,
     openDialog: showBridgeDialog,
     reachable: () => bridgeReachable,
+    local: DEFAULT_LOCAL_BRIDGE,
+    options: bridgeOptions,
+    // round trip in ms, null when it doesn't answer
+    probe: async (url: string): Promise<number | null> => {
+      const start = performance.now()
+      return (await probeBridge(url)) ? Math.round(performance.now() - start) : null
+    },
+    use: switchBridge,
+    normalize: normBridgeUrl,
   }
   // Translation editor (Ctrl/Cmd+Shift+L) — available in every
   // build; inert until opened. Pass the runtime so its live refresh survives

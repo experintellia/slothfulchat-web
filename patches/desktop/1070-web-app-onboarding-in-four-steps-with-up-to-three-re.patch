@@ -1,0 +1,3048 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Fri, 16 Oct 2026 03:01:02 +0000
+Subject: [PATCH] web-app: onboarding in four steps, with up to three relays
+
+The welcome screen becomes a short flow:
+
+1. Welcome: what the app is (four selling points, a "What's different"
+   link) and, on instances built with analytics, an explicit Share / Don't
+   share choice instead of the opt-out checkbox. Nothing is preselected;
+   Next waits for the choice, and only then sends the top-of-funnel event,
+   so a "Don't share" never lets it (or anything held before it) out.
+   Instances without analytics say they collect none.
+2. Bridge: This device / Hosted / Custom tiles over the runtime's bridge
+   list (window.__slothfulchatBridge gains local, options, probe, use,
+   normalize). The hosted dropdown shows each operator's description and a
+   live ping; it is a native popover positioned under its button, so it
+   never stretches or gets clipped by the dialog's scroll area (in-place
+   fallback without popover support). Switching reloads, like the bridge
+   dialog always did; a sessionStorage marker returns to step 3.
+3. Profile kind: new profile, "I already have a profile" (backup import,
+   which replaces the alternative-setups dialog), or a madmail server, and
+   scanning an invite or relay QR.
+4. New profile: nothing preselected. "Decide for me" is a disabled
+   placeholder for an automatic choice; "Choose relays myself" opens the
+   relay picker of desktop/1023 in a new multi-select mode (up to three,
+   three recommended) that also leads to a classic email account, with its
+   trade-offs and a hosted-bridge warning. The profile is created on the
+   first chatmail relay ("Main", "Make main" changes it): a classic
+   provider as the main transport would send everything through a
+   rate-limited account. The other relays are added once the profile
+   exists, in the background, and any that fail are reported together.
+   Every picked relay is pinged, typed and scanned ones included; a QR
+   button next to the picker adds a scanned relay. A scanned dcaccount: QR
+   no longer pins the server, it joins the list (madmail QRs still pin).
+   After an invite, the relays of its a= addresses that are in the
+   directory are offered. The consent covers all picked relays and opens a
+   list of their privacy policies.
+
+The manual classic-email login and the "other servers" dialog leave the
+onboarding: a classic account is now one of the picked relays. The
+onboarding, relay-picker and classic-email dialogs join desktop/1009's
+full-screen-on-phones list. Strings live in packages/web-app/fork-strings.json.
+---
+ .../src/components/Dialog/styles.module.scss  |   5 +-
+ .../WelcomeScreen/AlternativeSetupsDialog.tsx |  96 ---
+ .../WelcomeScreen/ClassicEmailRelayDialog.tsx | 155 ++++
+ .../WelcomeScreen/InstantOnboardingScreen.tsx |  33 +-
+ .../screens/WelcomeScreen/OnboardingArt.tsx   | 175 +++++
+ .../WelcomeScreen/OnboardingScreen.tsx        | 710 +++++++++++++++---
+ .../screens/WelcomeScreen/RelayPicker.tsx     | 322 ++++++--
+ .../WelcomeScreen/RelayPickerDialog.tsx       | 129 +++-
+ .../WelcomeScreen/UseOtherServerDialog.tsx    |  74 --
+ .../screens/WelcomeScreen/UserAgreement.tsx   | 117 ++-
+ .../screens/WelcomeScreen/index.tsx           |  29 +-
+ .../screens/WelcomeScreen/styles.module.scss  | 423 +++++++++++
+ .../src/contexts/InstantOnboardingContext.tsx |  30 +-
+ .../src/hooks/useInstantOnboarding.ts         | 143 +++-
+ .../src/utils/slothfulInstanceConfig.ts       |   3 +
+ 15 files changed, 2011 insertions(+), 433 deletions(-)
+ delete mode 100644 packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
+ create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/ClassicEmailRelayDialog.tsx
+ create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/OnboardingArt.tsx
+ delete mode 100644 packages/frontend/src/components/screens/WelcomeScreen/UseOtherServerDialog.tsx
+
+diff --git a/packages/frontend/src/components/Dialog/styles.module.scss b/packages/frontend/src/components/Dialog/styles.module.scss
+index f6da5903bf9916047d3a7d8ab19fc6727b362674..e8f7e8d7491173e308ca124abd46dd0a0d254d11 100644
+--- a/packages/frontend/src/components/Dialog/styles.module.scss
++++ b/packages/frontend/src/components/Dialog/styles.module.scss
+@@ -69,7 +69,10 @@ $paddingVertical: 20px;
+       [data-testid='qr-dialog'],
+       [data-testid='qrscan-dialog'],
+       [data-testid='view-group-dialog'],
+-      [data-testid='view-profile-dialog']
++      [data-testid='view-profile-dialog'],
++      [data-testid='onboarding-dialog'],
++      [data-testid='relay-picker-dialog'],
++      [data-testid='classic-relay-dialog']
+     ) {
+     border-radius: 0;
+     box-shadow: none;
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
+deleted file mode 100644
+index b00fbf2267707cc7a0d057cb642ee41db429dfdb..0000000000000000000000000000000000000000
+--- a/packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
++++ /dev/null
+@@ -1,96 +0,0 @@
+-import React from 'react'
+-import { dirname } from 'path'
+-
+-import Button from '../../Button'
+-import Dialog, { DialogBody, DialogContent, DialogHeader } from '../../Dialog'
+-import ImportBackupProgressDialog from './ImportBackupProgressDialog'
+-
+-import useDialog from '../../../hooks/dialog/useDialog'
+-import useTranslationFunction from '../../../hooks/useTranslationFunction'
+-import {
+-  LastUsedSlot,
+-  rememberLastUsedPath,
+-} from '../../../utils/lastUsedPaths'
+-import { runtime } from '@deltachat-desktop/runtime-interface'
+-
+-import styles from './styles.module.scss'
+-
+-import type { DialogProps } from '../../../contexts/DialogContext'
+-import { ReceiveBackupDialog } from '../../dialogs/SetupMultiDevice'
+-import { BackendRemote } from '../../../backend-com'
+-
+-interface Props {
+-  selectedAccountId: number
+-}
+-
+-export default function AlternativeSetupsDialog({
+-  onClose,
+-  selectedAccountId,
+-}: DialogProps & Props) {
+-  const tx = useTranslationFunction()
+-  const { openDialog } = useDialog()
+-
+-  /** remove configuration if user did set picture or displayname in the instant onboarding dialog already */
+-  const resetAccount = () =>
+-    BackendRemote.rpc.batchSetConfig(selectedAccountId, {
+-      selfavatar: null,
+-      displayname: null,
+-    })
+-
+-  const onClickSecondDevice = () => {
+-    resetAccount()
+-    openDialog(ReceiveBackupDialog)
+-    onClose()
+-  }
+-
+-  async function onClickImportBackup() {
+-    await resetAccount()
+-
+-    const { defaultPath, setLastPath } = await rememberLastUsedPath(
+-      LastUsedSlot.Backup
+-    )
+-
+-    const [file] = await runtime.showOpenFileDialog({
+-      title: tx('import_backup_title'),
+-      properties: ['openFile'],
+-      filters: [{ name: '.tar or .bak', extensions: ['tar', 'bak'] }],
+-      defaultPath,
+-    })
+-
+-    if (file) {
+-      onClose()
+-      openDialog(ImportBackupProgressDialog, {
+-        backupFile: file,
+-      })
+-      setLastPath(dirname(file))
+-    }
+-  }
+-
+-  return (
+-    <Dialog onClose={onClose}>
+-      <DialogHeader
+-        title={tx('onboarding_alternative_logins')}
+-        onClose={onClose}
+-      />
+-      <DialogBody>
+-        <DialogContent>
+-          <Button
+-            className={styles.welcomeScreenButton}
+-            onClick={onClickSecondDevice}
+-            data-testid='second-device-button'
+-          >
+-            {tx('multidevice_receiver_title')}
+-          </Button>
+-          <Button
+-            className={styles.welcomeScreenButton}
+-            onClick={onClickImportBackup}
+-            data-testid='import-backup-button'
+-          >
+-            {tx('import_backup_title')}
+-          </Button>
+-          <br /> {/* space after buttons */}
+-        </DialogContent>
+-      </DialogBody>
+-    </Dialog>
+-  )
+-}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/ClassicEmailRelayDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/ClassicEmailRelayDialog.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..5bb97699782f5905482ec48edd7b31124ee17760
+--- /dev/null
++++ b/packages/frontend/src/components/screens/WelcomeScreen/ClassicEmailRelayDialog.tsx
+@@ -0,0 +1,155 @@
++import React, { useState } from 'react'
++
++import Button from '../../Button'
++import Dialog, { DialogBody, DialogContent, DialogHeader } from '../../Dialog'
++import { DeltaInput } from '../../Login-Styles'
++import useTranslationFunction from '../../../hooks/useTranslationFunction'
++
++import styles from './styles.module.scss'
++
++import type { DialogProps } from '../../../contexts/DialogContext'
++
++type Props = {
++  onAdd: (relay: { addr: string; password: string }) => void
++}
++
++const UPSIDES = [
++  'onboarding_classic_up_kept',
++  'onboarding_classic_up_unblocked',
++  'onboarding_classic_up_other_service',
++  'onboarding_classic_up_no_expiry',
++  'onboarding_classic_up_own_domain',
++] as const
++
++const DOWNSIDES = [
++  'onboarding_classic_down_cleanup',
++  'onboarding_classic_down_push',
++  'onboarding_classic_down_limits',
++  'onboarding_classic_down_lockout',
++  'onboarding_classic_down_spam',
++  'onboarding_classic_down_metadata',
++  'onboarding_classic_down_setup',
++] as const
++
++/** A bridge on this device can reach any mail server; a hosted one usually
++ * only reaches the chatmail relays its operator allowlisted. */
++function bridgeIsLocal(): boolean {
++  const url = (window as any).__slothfulchatBridge?.url?.()
++  if (typeof url !== 'string') {
++    return true // not the browser edition: there is no bridge to warn about
++  }
++  try {
++    const host = new URL(url).hostname
++    return host === 'localhost' || host === '[::1]' || /^127\./.test(host)
++  } catch {
++    return false
++  }
++}
++
++/**
++ * slothfulchat-web: add a classic email account (IMAP/SMTP at a normal
++ * provider) as one of a new profile's relays, from the onboarding relay
++ * chooser. Says up front that it should be a dedicated account and what it
++ * trades against a chatmail relay. Server settings are autodetected by core
++ * when the profile is created; a wrong password fails there, loudly.
++ */
++export default function ClassicEmailRelayDialog({
++  onAdd,
++  onClose,
++}: Props & DialogProps) {
++  const tx = useTranslationFunction()
++  const [addr, setAddr] = useState('')
++  const [password, setPassword] = useState('')
++  const [invalid, setInvalid] = useState(false)
++
++  const onSubmit = (event: React.FormEvent) => {
++    event.preventDefault()
++    const trimmed = addr.trim()
++    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed) || password === '') {
++      setInvalid(true)
++      return
++    }
++    onAdd({ addr: trimmed, password })
++    onClose()
++  }
++
++  return (
++    <Dialog onClose={onClose} width={480} dataTestid='classic-relay-dialog'>
++      <DialogHeader
++        title={tx('onboarding_classic_email_title')}
++        onClose={onClose}
++      />
++      <DialogBody>
++        <DialogContent>
++          <p className={styles.onboardingWarning}>
++            {tx('onboarding_classic_email_new_account')}
++          </p>
++          <div className={styles.onboardingProsCons}>
++            <div>
++              <strong>{tx('onboarding_classic_upsides')}</strong>
++              <ul>
++                {UPSIDES.map(key => (
++                  <li key={key}>{tx(key)}</li>
++                ))}
++              </ul>
++            </div>
++            <div>
++              <strong>{tx('onboarding_classic_downsides')}</strong>
++              <ul>
++                {DOWNSIDES.map(key => (
++                  <li key={key}>{tx(key)}</li>
++                ))}
++              </ul>
++            </div>
++          </div>
++          {!bridgeIsLocal() && (
++            <p className={styles.onboardingWarning}>
++              {tx(
++                'onboarding_classic_bridge_warning',
++                (window as any).__slothfulchatBridge.url()
++              )}
++            </p>
++          )}
++          <form onSubmit={onSubmit}>
++            <DeltaInput
++              key='classicAddr'
++              id='classicAddr'
++              type='email'
++              placeholder={tx('onboarding_classic_addr_placeholder')}
++              value={addr}
++              onChange={event => {
++                setAddr(event.target.value)
++                setInvalid(false)
++              }}
++              autoFocus={true}
++            />
++            <DeltaInput
++              key='classicPassword'
++              id='classicPassword'
++              type='password'
++              placeholder={tx('onboarding_classic_password_placeholder')}
++              value={password}
++              onChange={event => {
++                setPassword(event.target.value)
++                setInvalid(false)
++              }}
++            />
++            {invalid && (
++              <p className={styles.inputError}>
++                {tx('onboarding_classic_invalid')}
++              </p>
++            )}
++            <Button
++              type='submit'
++              styling='primary'
++              className={styles.welcomeScreenButton}
++              data-testid='classic-relay-add'
++            >
++              {tx('onboarding_classic_add')}
++            </Button>
++          </form>
++        </DialogContent>
++      </DialogBody>
++    </Dialog>
++  )
++}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+index 1407c267366bcceb7349d317713b4d4687721121..7482800ecd90ddfae03a8e4c532410b3faeef159 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+@@ -4,6 +4,7 @@ import AdditionalActionInfo from './AdditionalActionInfo'
+ import Button from '../../Button'
+ import ProfileImageSelector from '../../dialogs/EditProfileDialog/ProfileImageSelector'
+ import RelayPicker from './RelayPicker'
++import { Steps } from './OnboardingScreen'
+ import UserAgreement from './UserAgreement'
+ import useAlertDialog from '../../../hooks/dialog/useAlertDialog'
+ import useChat from '../../../hooks/chat/useChat'
+@@ -15,8 +16,6 @@ import { ScreenContext } from '../../../contexts/ScreenContext'
+ import { Screens } from '../../../ScreenController'
+ 
+ import styles from './styles.module.scss'
+-import useDialog from '../../../hooks/dialog/useDialog'
+-import UseOtherServerDialog from './UseOtherServerDialog'
+ import { BackendRemote } from '../../../backend-com'
+ 
+ type Props = {
+@@ -45,12 +44,16 @@ export default function InstantOnboardingScreen({
+   const { createInstantAccount, resetInstantOnboarding } =
+     useInstantOnboarding()
+   const { selectChat } = useChat()
+-  const { welcomeQr } = useInstantOnboarding()
+-  const { openDialog } = useDialog()
++  const { welcomeQr, relays } = useInstantOnboarding()
+ 
+   const [displayName, setDisplayName] = useState('')
+   const [profilePicture, setProfilePicture] = useState<string | null>(null)
+   const [showMissingNameError, setShowMissingNameError] = useState(false)
++  // slothfulchat-web: no relay is preselected, so one has to be picked
++  // (unless a scanned dclogin:/madmail QR already names the server)
++  const [showMissingRelayError, setShowMissingRelayError] = useState(false)
++  const needsRelay =
++    welcomeQr?.qr.kind !== 'account' && welcomeQr?.qr.kind !== 'login'
+ 
+   useEffect(() => {
+     ;(async () => {
+@@ -108,6 +111,10 @@ export default function InstantOnboardingScreen({
+       setShowMissingNameError(true)
+       return
+     }
++    if (needsRelay && relays.length === 0) {
++      setShowMissingRelayError(true)
++      return
++    }
+ 
+     try {
+       await saveDisplayName()
+@@ -131,11 +138,6 @@ export default function InstantOnboardingScreen({
+     }
+   }
+ 
+-  const showOtherOptions = () => {
+-    saveDisplayName()
+-    openDialog(UseOtherServerDialog)
+-  }
+-
+   const onClickBack = () => {
+     saveDisplayName()
+     onCancel()
+@@ -150,6 +152,7 @@ export default function InstantOnboardingScreen({
+       <DialogBody className={styles.welcomeScreenBody}>
+         <DialogContent>
+           <form onSubmit={onConfirm}>
++            <Steps current={4} />
+             <ProfileImageSelector
+               displayName={displayName}
+               profilePicture={profilePicture}
+@@ -174,6 +177,11 @@ export default function InstantOnboardingScreen({
+                   created on — right above the privacy-policy consent so the
+                   policy link (UserAgreement) always matches the choice */}
+               <RelayPicker />
++              {showMissingRelayError && relays.length === 0 && (
++                <p className={styles.inputError}>
++                  {tx('onboarding_relays_missing')}
++                </p>
++              )}
+               <div className={styles.instantOnboardingAgreement}>
+                 {welcomeQr?.qr.kind !== 'login' && <UserAgreement />}
+                 {welcomeQr?.qr.kind === 'login' && (
+@@ -190,13 +198,6 @@ export default function InstantOnboardingScreen({
+                   ? tx('login_title')
+                   : tx('instant_onboarding_create')}
+               </Button>
+-              <Button
+-                className={styles.welcomeScreenButton}
+-                onClick={showOtherOptions}
+-                data-testid='other-login-button'
+-              >
+-                {tx('instant_onboarding_show_more_instances')}
+-              </Button>
+             </div>
+           </form>
+         </DialogContent>
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingArt.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingArt.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..0f69e85b40bce4c620bbeb10172878056ec70539
+--- /dev/null
++++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingArt.tsx
+@@ -0,0 +1,175 @@
++import React from 'react'
++
++import styles from './styles.module.scss'
++
++/**
++ * slothfulchat-web: the onboarding's line icons and the two small
++ * illustrations (bridge step, profile-kind step). Inline SVG in the text
++ * colour or the accent, decorative only (aria-hidden): the labels next to
++ * them carry the meaning.
++ */
++
++const ACCENT = 'var(--loginInputFocusColor)'
++const MUTED = 'var(--deltaChatPrimaryFgLight)'
++const SOFT = 'color-mix(in srgb, var(--loginInputFocusColor) 10%, transparent)'
++
++const line = {
++  fill: 'none',
++  stroke: 'currentColor',
++  strokeLinecap: 'round',
++  strokeLinejoin: 'round',
++} as const
++
++const USP_PATHS = {
++  lock: (
++    <>
++      <rect x='5' y='11' width='14' height='10' rx='2' />
++      <path d='M8 11V7a4 4 0 0 1 8 0v4' />
++    </>
++  ),
++  person: (
++    <>
++      <circle cx='12' cy='8' r='4' />
++      <path d='M4 21a8 8 0 0 1 16 0' />
++    </>
++  ),
++  network: (
++    <>
++      <circle cx='5' cy='12' r='2.5' />
++      <circle cx='19' cy='5' r='2.5' />
++      <circle cx='19' cy='19' r='2.5' />
++      <path d='M7.2 10.8l9.6-4.6M7.2 13.2l9.6 4.6' />
++    </>
++  ),
++  browser: (
++    <>
++      <rect x='3' y='4' width='18' height='14' rx='2' />
++      <path d='M3 8h18M7 21h10' />
++    </>
++  ),
++  check: <path d='M5 12l5 5L20 7' />,
++}
++
++export function UspIcon({ name }: { name: keyof typeof USP_PATHS }) {
++  return (
++    <svg
++      aria-hidden='true'
++      width={name === 'check' ? 16 : 22}
++      height={name === 'check' ? 16 : 22}
++      viewBox='0 0 24 24'
++      strokeWidth={name === 'check' ? 2.2 : 1.8}
++      className={styles.onboardingIcon}
++      style={name === 'check' ? { color: '#2e9e5b' } : undefined}
++      {...line}
++    >
++      {USP_PATHS[name]}
++    </svg>
++  )
++}
++
++const TILE_PATHS = {
++  local: (
++    <>
++      <rect x='3' y='4' width='18' height='12' rx='1.5' />
++      <path d='M8 20h8M12 16v4' />
++    </>
++  ),
++  hosted: (
++    <>
++      <rect x='4' y='4' width='16' height='7' rx='1.5' />
++      <rect x='4' y='13' width='16' height='7' rx='1.5' />
++      <path d='M8 7.5h.01M8 16.5h.01' />
++    </>
++  ),
++  custom: (
++    <>
++      <path d='M4 20h4L19 9l-4-4L4 16v4z' />
++      <path d='M13.5 6.5l4 4' />
++    </>
++  ),
++  qr: (
++    <>
++      <rect x='3' y='3' width='7' height='7' rx='1' />
++      <rect x='14' y='3' width='7' height='7' rx='1' />
++      <rect x='3' y='14' width='7' height='7' rx='1' />
++      <path d='M14 14h3v3M21 14v.01M14 21h3M21 18v3h-3' />
++    </>
++  ),
++}
++
++export function TileIcon({ name }: { name: keyof typeof TILE_PATHS }) {
++  return (
++    <svg
++      aria-hidden='true'
++      width='28'
++      height='28'
++      viewBox='0 0 24 24'
++      strokeWidth='1.6'
++      {...line}
++    >
++      {TILE_PATHS[name]}
++    </svg>
++  )
++}
++
++/** Browser window → bridge (with a padlock: encrypted before it gets there)
++ * → servers. */
++export function BridgeIllustration() {
++  return (
++    <svg
++      aria-hidden='true'
++      className={styles.onboardingIllustration}
++      width='260'
++      height='96'
++      viewBox='0 0 260 96'
++      fill='none'
++      strokeLinecap='round'
++      strokeLinejoin='round'
++    >
++      <rect x='8' y='22' width='64' height='50' rx='6' fill={SOFT} stroke={ACCENT} strokeWidth='2' />
++      <path d='M8 34h64' stroke={ACCENT} strokeWidth='2' />
++      <circle cx='16' cy='28' r='1.6' fill={ACCENT} />
++      <circle cx='22' cy='28' r='1.6' fill={ACCENT} />
++      <circle cx='28' cy='28' r='1.6' fill={ACCENT} />
++      <path d='M22 48h36M22 56h26' stroke={MUTED} strokeWidth='2' />
++      <path d='M76 66 Q130 14 184 66M76 66h108' stroke={ACCENT} strokeWidth='2.5' />
++      <path d='M94 66V49M112 66V38M130 66V35M148 66V38M166 66V49' stroke={MUTED} strokeWidth='2' />
++      <rect x='120' y='72' width='20' height='16' rx='3' stroke='#2e9e5b' strokeWidth='2' />
++      <path d='M124 72v-4a6 6 0 0 1 12 0v4' stroke='#2e9e5b' strokeWidth='2' />
++      <rect x='188' y='18' width='64' height='24' rx='5' fill={SOFT} stroke={ACCENT} strokeWidth='2' />
++      <rect x='188' y='48' width='64' height='24' rx='5' fill={SOFT} stroke={ACCENT} strokeWidth='2' />
++      <circle cx='200' cy='30' r='2' fill={ACCENT} />
++      <circle cx='200' cy='60' r='2' fill={ACCENT} />
++      <path d='M212 30h28M212 60h28' stroke={MUTED} strokeWidth='2' />
++    </svg>
++  )
++}
++
++/** A new profile (avatar with a plus) between a backup (left) and a server
++ * (right), the two lesser paths drawn muted. */
++export function ProfileKindIllustration() {
++  return (
++    <svg
++      aria-hidden='true'
++      className={styles.onboardingIllustration}
++      width='260'
++      height='96'
++      viewBox='0 0 260 96'
++      fill='none'
++      strokeLinecap='round'
++      strokeLinejoin='round'
++    >
++      <rect x='14' y='38' width='54' height='40' rx='5' stroke={MUTED} strokeWidth='2' />
++      <path d='M14 50h54M34 58h14M41 28v-12M35 22l6-6 6 6' stroke={MUTED} strokeWidth='2' />
++      <circle cx='130' cy='46' r='38' fill={SOFT} stroke={ACCENT} strokeWidth='2.5' />
++      <circle cx='130' cy='36' r='12' stroke={ACCENT} strokeWidth='2.5' />
++      <path d='M108 72a22 22 0 0 1 44 0' stroke={ACCENT} strokeWidth='2.5' />
++      <circle cx='160' cy='76' r='12' fill={ACCENT} />
++      <path d='M160 70v12M154 76h12' stroke='#fff' strokeWidth='2.5' />
++      <rect x='192' y='30' width='54' height='20' rx='4' stroke={MUTED} strokeWidth='2' />
++      <rect x='192' y='56' width='54' height='20' rx='4' stroke={MUTED} strokeWidth='2' />
++      <circle cx='202' cy='40' r='2' fill={MUTED} />
++      <circle cx='202' cy='66' r='2' fill={MUTED} />
++    </svg>
++  )
++}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0f47a389b 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
+@@ -1,16 +1,36 @@
+-import React, { useState } from 'react'
++import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
++import { dirname } from 'path'
+ 
+-import AlternativeSetupsDialog from './AlternativeSetupsDialog'
+ import UseWebimapServerDialog from './UseWebimapServerDialog'
++import ImportBackupProgressDialog from './ImportBackupProgressDialog'
++import QrCodeScanner from '../../dialogs/QrCodeScanner'
+ import Button from '../../Button'
+ import useDialog from '../../../hooks/dialog/useDialog'
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+ import { DialogBody, DialogContent, DialogFooter, DialogHeader } from '../../Dialog'
+ import { ClickableLink } from '../../helpers/ClickableLink'
+ import { instanceAnalyticsUi } from '../../../utils/slothfulInstanceConfig'
++import { LastUsedSlot, rememberLastUsedPath } from '../../../utils/lastUsedPaths'
++import { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
++import { BackendRemote } from '../../../backend-com'
++import { runtime } from '@deltachat-desktop/runtime-interface'
++import {
++  BridgeIllustration,
++  ProfileKindIllustration,
++  TileIcon,
++  UspIcon,
++} from './OnboardingArt'
+ 
+ import styles from './styles.module.scss'
+ 
++export type OnboardingStep = 'welcome' | 'bridge' | 'type'
++
++/** sessionStorage key: switching the bridge reloads the app, and this brings
++ * the welcome screen back on the step after the bridge choice. */
++export const ONBOARDING_STEP_KEY = 'slothfulchat.onboardingStep'
++
++const README_URL = 'https://github.com/experintellia/slothfulchat-web#readme'
++
+ type Props = {
+   onExitWelcomeScreen: () => Promise<void>
+   onNextStep: () => void
+@@ -18,123 +38,190 @@ type Props = {
+   onClose: () => Promise<void>
+   selectedAccountId: number
+   hasConfiguredAccounts: boolean
++  step: OnboardingStep
++  setStep: (step: OnboardingStep) => void
++}
++
++/** The WS bridge hooks the browser edition's runtime installs
++ * (packages/web-app/src/runtime.ts); undefined on other runtimes, which then
++ * skip the bridge step. */
++type BridgeApi = {
++  local: string
++  url: () => string
++  options: () => { url: string; description: string }[]
++  probe: (url: string) => Promise<number | null>
++  use: (url: string) => void
++  normalize: (url: string) => string
++}
++function bridgeApi(): BridgeApi | undefined {
++  const bridge = (window as any).__slothfulchatBridge
++  return typeof bridge?.options === 'function' ? bridge : undefined
+ }
+ 
+ /**
+- * Sub component of WelcomeScreen shows the choice
+- * to create a new account or to use an existing one
++ * Sub component of WelcomeScreen. slothfulchat-web: three steps instead of
++ * upstream's single button list, then the new-profile screen as the fourth:
++ *  1. welcome — what this is, and an explicit yes/no to anonymous usage
++ *     statistics (on instances built with analytics);
++ *  2. bridge — on this device, hosted, or custom, with a live connection test;
++ *  3. type — new profile, an existing one (backup), or a madmail server, plus
++ *     scanning an invite or relay QR.
++ * When profiles already exist ("add profile") only step 3 is shown.
+  */
+-
+ export default function OnboardingScreen(props: Props) {
+-  const tx = useTranslationFunction()
+-  const { openDialog } = useDialog()
++  if (props.step === 'welcome') {
++    return <WelcomeStep {...props} />
++  }
++  if (props.step === 'bridge' && bridgeApi()) {
++    return <BridgeStep {...props} />
++  }
++  return <ProfileKindStep {...props} />
++}
+ 
+-  // slothfulchat: opt-out checkbox for the anonymous usage statistics — only
+-  // rendered on instances built with analytics (undefined on self-hosted ones)
++export function Steps({ current }: { current: number }) {
++  return (
++    <div className={styles.onboardingSteps} aria-hidden='true'>
++      {[1, 2, 3, 4].map(n => (
++        <span key={n} className={n <= current ? styles.onboardingStepOn : ''} />
++      ))}
++    </div>
++  )
++}
++
++function WelcomeStep({ setStep }: Props) {
++  const tx = useTranslationFunction()
+   const analyticsUi = instanceAnalyticsUi()
+-  const [shareStats, setShareStats] = useState(() => analyticsUi?.enabled() ?? false)
+-  const onToggleStats = (event: React.MouseEvent<HTMLInputElement>) => {
+-    if (!analyticsUi) {
+-      return
+-    }
+-    // don't toggle consent here — the dialog's Opt out / Accept buttons are
+-    // the only place that changes it; re-sync the checkbox once it closes
+-    // (Esc = no change). preventDefault on click reliably blocks the toggle.
+-    event.preventDefault()
+-    analyticsUi.showInfo().then(() => setShareStats(analyticsUi.enabled()))
+-  }
+ 
+-  const onAlreadyHaveAccount = () => {
+-    openDialog(AlternativeSetupsDialog, {
+-      selectedAccountId: props.selectedAccountId,
+-    })
+-  }
++  // 'unset' = never asked: nothing preselected, the user has to pick
++  const savedStats = analyticsUi?.choice?.()
++  const [stats, setStats] = useState<'granted' | 'denied' | undefined>(
++    savedStats === 'granted' || savedStats === 'denied' ? savedStats : undefined
++  )
++  const statsMissing = analyticsUi !== undefined && stats === undefined
+ 
+-  const onUseWebimapServer = () => {
+-    openDialog(UseWebimapServerDialog, {
+-      selectedAccountId: props.selectedAccountId,
++  const showStatsInfo = () => {
++    // the info dialog's own Opt out / Accept buttons record a choice too
++    analyticsUi?.showInfo().then(() => {
++      const choice = analyticsUi.choice?.()
++      if (choice === 'granted' || choice === 'denied') {
++        setStats(choice)
++      }
+     })
+   }
+ 
+-  const onSubmit = (event: React.FormEvent) => {
+-    event.preventDefault()
+-    props.onNextStep()
++  const onNext = () => {
++    if (statsMissing) {
++      return
++    }
++    if (analyticsUi && stats) {
++      analyticsUi.setEnabled(stats === 'granted')
++    }
++    // top of the onboarding funnel — after the choice, so a "Don't share"
++    // never lets it (or anything held before it) out
++    ;(window as any).__slothfulTrack?.('onboarding', { step: 'welcome' })
++    setStep(bridgeApi() ? 'bridge' : 'type')
+   }
+ 
++  const usps = [
++    ['lock', 'onboarding_usp_encrypted', 'onboarding_usp_encrypted_explain'],
++    ['person', 'onboarding_usp_no_phone', 'onboarding_usp_no_phone_explain'],
++    ['network', 'onboarding_usp_no_server', 'onboarding_usp_no_server_explain'],
++    ['browser', 'onboarding_usp_no_install', 'onboarding_usp_no_install_explain'],
++  ] as const
++
+   return (
+     <>
+-      <DialogHeader
+-        onClose={props.hasConfiguredAccounts ? props.onClose : undefined}
+-        title={
+-          props.hasConfiguredAccounts
+-            ? tx('add_account')
+-            : tx('welcome_desktop')
+-        }
+-      />
++      <DialogHeader title={tx('welcome_desktop')} />
+       <DialogBody>
+         <DialogContent>
+-          <form onSubmit={onSubmit}>
+-            <div className={styles.welcomeScreenSection}>
+-              {/* slothfulchat: our app icon, replaces the upstream intro1.png logo */}
+-              <img
+-                className={styles.welcomeScreenIcon}
+-                src='./images/icon-512.png'
+-                alt='SlothfulChat'
+-              />
+-              <p className={styles.welcomeScreenTitle}>SlothfulChat</p>
+-              <p style={{ textAlign: 'center', margin: '10px 0 0' }}>
+-                An experimental fork of Delta Chat running fully in your browser,
+-                with features beyond stock Delta Chat — unofficial, and it may be buggy.
++          <div className={styles.welcomeScreenSection}>
++            {/* slothfulchat: our app icon, replaces the upstream intro1.png logo */}
++            <img
++              className={styles.welcomeScreenIcon}
++              src='./images/icon-512.png'
++              alt='SlothfulChat'
++            />
++            <p className={styles.welcomeScreenTitle}>SlothfulChat</p>
++            <p style={{ textAlign: 'center', margin: '10px 0 0' }}>
++              {tx('onboarding_intro')}{' '}
++              <ClickableLink href={README_URL}>
++                {tx('onboarding_whats_different')}
++              </ClickableLink>
++            </p>
++          </div>
++          <ul className={styles.onboardingUsps}>
++            {usps.map(([icon, title, explain]) => (
++              <li key={title}>
++                <UspIcon name={icon} />
++                <div>
++                  <strong>{tx(title)}</strong>
++                  <br />
++                  <span className={styles.onboardingNote}>{tx(explain)}</span>
++                </div>
++              </li>
++            ))}
++          </ul>
++          <Steps current={1} />
++          {analyticsUi ? (
++            <fieldset className={styles.onboardingFieldset}>
++              <legend className={styles.onboardingSectionTitle}>
++                {tx('onboarding_stats_title')}
++              </legend>
++              <p className={styles.onboardingNote}>
++                {tx('onboarding_stats_explain')}{' '}
++                <button
++                  type='button'
++                  className={styles.onboardingLinkButton}
++                  onClick={showStatsInfo}
++                >
++                  {tx('onboarding_stats_whats_collected')}
++                </button>
+               </p>
+-            </div>
+-            <div className={styles.welcomeScreenButtonGroup}>
+-              <Button
+-                type='submit'
+-                className={styles.welcomeScreenButton}
+-                styling='primary'
+-                data-testid='create-account-button'
+-              >
+-                {tx('onboarding_create_instant_account')}
+-              </Button>
+-              <Button
+-                className={styles.welcomeScreenButton}
+-                onClick={onAlreadyHaveAccount}
+-                data-testid='have-account-button'
+-              >
+-                {tx('onboarding_alternative_logins')}
+-              </Button>
+-              <Button
+-                className={styles.welcomeScreenButton}
+-                onClick={onUseWebimapServer}
+-              >
+-                madmail server — no bridge needed, extra experimental
+-              </Button>
+-            </div>
+-            <br /> {/* space after buttons */}
+-          </form>
++              <div className={styles.onboardingTwoColumns}>
++                <label className={styles.onboardingOption}>
++                  <input
++                    type='radio'
++                    name='stats'
++                    data-testid='stats-share'
++                    checked={stats === 'granted'}
++                    onChange={() => setStats('granted')}
++                  />
++                  <span>{tx('onboarding_stats_share')}</span>
++                </label>
++                <label className={styles.onboardingOption}>
++                  <input
++                    type='radio'
++                    name='stats'
++                    data-testid='stats-dont-share'
++                    checked={stats === 'denied'}
++                    onChange={() => setStats('denied')}
++                  />
++                  <span>{tx('onboarding_stats_dont_share')}</span>
++                </label>
++              </div>
++            </fieldset>
++          ) : (
++            <p className={styles.onboardingNoStats}>
++              <UspIcon name='check' />
++              {tx('onboarding_stats_none')}
++            </p>
++          )}
+         </DialogContent>
+       </DialogBody>
+       <DialogFooter>
+-        {analyticsUi && (
+-          <div
+-            className={styles.welcomeScreenFooterLinks}
+-            style={{ fontSize: '13px', marginBottom: '4px' }}
+-          >
+-            <label>
+-              <input
+-                type='checkbox'
+-                checked={shareStats}
+-                onClick={onToggleStats}
+-                readOnly
+-              />{' '}
+-              Share anonymous usage statistics
+-            </label>{' '}
+-            (
+-            <ClickableLink href={new URL('privacy.html', document.baseURI).href}>
+-              learn more
+-            </ClickableLink>
+-            )
+-          </div>
++        <Button
++          styling='primary'
++          className={styles.welcomeScreenButton}
++          disabled={statsMissing}
++          onClick={onNext}
++          data-testid='onboarding-next'
++        >
++          {tx('next')}
++        </Button>
++        {statsMissing && (
++          <p className={styles.onboardingNote} style={{ textAlign: 'center' }}>
++            {tx('onboarding_stats_required')}
++          </p>
+         )}
+         <div className={styles.welcomeScreenFooterLinks}>
+           <ClickableLink href='https://github.com/experintellia/slothfulchat-web'>
+@@ -153,3 +240,432 @@ export default function OnboardingScreen(props: Props) {
+     </>
+   )
+ }
++
++type Tile = 'local' | 'hosted' | 'custom'
++
++function BridgeStep({ setStep }: Props) {
++  const tx = useTranslationFunction()
++  const bridge = bridgeApi() as BridgeApi
++  const same = (a: string, b: string) => bridge.normalize(a) === bridge.normalize(b)
++
++  const [hosted] = useState(() =>
++    bridge.options().filter(option => !same(option.url, bridge.local))
++  )
++  const current = bridge.url()
++  const [tile, setTile] = useState<Tile>(() =>
++    same(current, bridge.local)
++      ? 'local'
++      : hosted.some(option => same(option.url, current))
++        ? 'hosted'
++        : 'custom'
++  )
++  const [hostedUrl, setHostedUrl] = useState(
++    () => hosted.find(option => same(option.url, current))?.url ?? hosted[0]?.url
++  )
++  const [customUrl, setCustomUrl] = useState(() =>
++    tile === 'custom' ? current : ''
++  )
++  const [customInvalid, setCustomInvalid] = useState(false)
++  // round trip per bridge URL: a number, null = no answer, absent = testing
++  const [pings, setPings] = useState<Record<string, number | null>>({})
++  const probe = (url: string) => {
++    if (url === '' || url in pings) {
++      return
++    }
++    bridge.probe(url).then(ms => setPings(prev => ({ ...prev, [url]: ms })))
++  }
++  useEffect(() => {
++    probe(bridge.local)
++    hosted.forEach(option => probe(option.url))
++    // probe the offered bridges once, when the step opens
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [])
++
++  const chosen =
++    tile === 'local'
++      ? bridge.local
++      : tile === 'hosted'
++        ? (hostedUrl ?? '')
++        : customUrl.trim()
++  const ping = pings[chosen]
++  const status =
++    chosen === ''
++      ? tx('onboarding_bridge_enter_custom')
++      : !(chosen in pings)
++        ? tx('onboarding_bridge_checking')
++        : ping === null
++          ? tx('onboarding_bridge_unreachable')
++          : tx('onboarding_bridge_reachable', String(ping))
++
++  const tiles: { id: Tile; label: string }[] = [
++    { id: 'local', label: tx('onboarding_bridge_local') },
++    ...(hosted.length > 0
++      ? [{ id: 'hosted' as const, label: tx('onboarding_bridge_hosted') }]
++      : []),
++    { id: 'custom', label: tx('onboarding_bridge_custom') },
++  ]
++
++  const onNext = () => {
++    if (!/^wss?:\/\/\S+$/i.test(chosen)) {
++      setCustomInvalid(true)
++      return
++    }
++    if (same(chosen, current)) {
++      setStep('type')
++      return
++    }
++    // switching reloads the app onto the new bridge; come back to step 3
++    try {
++      sessionStorage.setItem(ONBOARDING_STEP_KEY, 'type')
++    } catch {
++      // no sessionStorage: the reload just lands on step 1 again
++    }
++    bridge.use(chosen)
++  }
++
++  return (
++    <>
++      <DialogHeader
++        title={tx('onboarding_bridge_title')}
++        onClickBack={() => setStep('welcome')}
++      />
++      <DialogBody>
++        <DialogContent>
++          <BridgeIllustration />
++          <Steps current={2} />
++          <p className={styles.onboardingNote}>{tx('onboarding_bridge_explain')}</p>
++          <div
++            className={styles.onboardingTiles}
++            role='radiogroup'
++            aria-label={tx('onboarding_bridge_title')}
++            style={{ '--tiles': tiles.length } as React.CSSProperties}
++          >
++            {tiles.map(({ id, label }) => (
++              <label
++                key={id}
++                className={`${styles.onboardingTile} ${tile === id ? styles.onboardingTileOn : ''}`}
++                data-testid={`bridge-tile-${id}`}
++              >
++                <input
++                  type='radio'
++                  name='bridgeTile'
++                  className={styles.visuallyHidden}
++                  checked={tile === id}
++                  onChange={() => {
++                    setTile(id)
++                    setCustomInvalid(false)
++                  }}
++                />
++                <TileIcon name={id} />
++                <span>{label}</span>
++              </label>
++            ))}
++          </div>
++          {tile === 'hosted' ? (
++            <HostedBridgePicker
++              options={hosted}
++              value={hostedUrl}
++              pings={pings}
++              onChange={setHostedUrl}
++            />
++          ) : (
++            <input
++              type='text'
++              className={styles.onboardingInput}
++              data-testid='bridge-url'
++              aria-label={tx('onboarding_bridge_url')}
++              placeholder='wss://your-bridge.example'
++              readOnly={tile === 'local'}
++              value={tile === 'local' ? bridge.local : customUrl}
++              onChange={event => {
++                setCustomUrl(event.target.value)
++                setCustomInvalid(false)
++              }}
++              onBlur={() => probe(customUrl.trim())}
++            />
++          )}
++          <p className={styles.onboardingNote} data-testid='bridge-status'>
++            <span
++              className={styles.onboardingDot}
++              style={{ background: pingColor(chosen in pings ? ping : undefined) }}
++            />
++            {status}
++          </p>
++          {customInvalid && (
++            <p className={styles.inputError}>{tx('onboarding_bridge_invalid')}</p>
++          )}
++          {ping === null && chosen in pings && (
++            <p className={styles.onboardingWarning}>
++              {tx('onboarding_bridge_down_warning')}
++              {tile === 'local' && (
++                <>
++                  <br />
++                  {tx('onboarding_bridge_start_local')}{' '}
++                  <code>npx @slothfulchat/ws-tcp-proxy</code>
++                </>
++              )}
++            </p>
++          )}
++        </DialogContent>
++      </DialogBody>
++      <DialogFooter>
++        <Button
++          styling='primary'
++          className={styles.welcomeScreenButton}
++          onClick={onNext}
++          data-testid='onboarding-next'
++        >
++          {tx('next')}
++        </Button>
++      </DialogFooter>
++    </>
++  )
++}
++
++const SUPPORTS_POPOVER =
++  typeof HTMLElement !== 'undefined' && 'showPopover' in HTMLElement.prototype
++
++/** Dot colour for a round trip: green fast, orange slow, grey no answer or
++ * still testing. */
++function pingColor(ms: number | null | undefined): string {
++  if (ms === null || ms === undefined) {
++    return 'var(--deltaChatPrimaryFgLight)'
++  }
++  return ms < 100 ? '#2e9e5b' : '#d18a1c'
++}
++
++/**
++ * The hosted-bridge dropdown: a button showing the picked bridge's address,
++ * description and ping, opening a list of all of them. The list is a native
++ * popover, so it draws above the dialog instead of being clipped by (or
++ * stretching) its scroll area; positioned under the button when it opens.
++ */
++function HostedBridgePicker({
++  options,
++  value,
++  pings,
++  onChange,
++}: {
++  options: { url: string; description: string }[]
++  value?: string
++  pings: Record<string, number | null>
++  onChange: (url: string) => void
++}) {
++  const tx = useTranslationFunction()
++  const buttonRef = useRef<HTMLButtonElement>(null)
++  const listRef = useRef<HTMLDivElement>(null)
++  const [open, setOpen] = useState(false)
++  const selected = options.find(option => option.url === value) ?? options[0]
++
++  // layout effect: the attribute must be on before the first paint, or the
++  // list flashes open in place
++  useLayoutEffect(() => {
++    const list = listRef.current
++    if (!list || !SUPPORTS_POPOVER) {
++      return
++    }
++    list.setAttribute('popover', 'auto')
++    // light dismiss (outside click, Esc) closes the popover on its own
++    const onToggle = (event: Event) =>
++      setOpen((event as any).newState === 'open')
++    list.addEventListener('toggle', onToggle)
++    return () => list.removeEventListener('toggle', onToggle)
++  }, [])
++
++  const toggle = () => {
++    const list = listRef.current
++    const button = buttonRef.current
++    if (!list || !button) {
++      return
++    }
++    if (!SUPPORTS_POPOVER) {
++      setOpen(!open) // fallback: the list opens in place, under the button
++      return
++    }
++    if (open) {
++      list.hidePopover()
++      return
++    }
++    const rect = button.getBoundingClientRect()
++    list.style.left = `${rect.left}px`
++    list.style.top = `${rect.bottom + 4}px`
++    list.style.width = `${rect.width}px`
++    list.showPopover()
++  }
++
++  const row = (option: { url: string; description: string }) => {
++    const ms = pings[option.url]
++    return (
++      <>
++        <span className={styles.onboardingBridgeRowText}>
++          <span className={styles.onboardingMono}>{option.url}</span>
++          <span className={styles.onboardingNote}>{option.description}</span>
++        </span>
++        <span className={styles.onboardingPing}>
++          <span
++            className={styles.onboardingDot}
++            style={{ background: pingColor(ms) }}
++          />
++          {!(option.url in pings)
++            ? '…'
++            : ms === null
++              ? tx('onboarding_unreachable')
++              : `${ms} ms`}
++        </span>
++      </>
++    )
++  }
++
++  return (
++    <>
++      <button
++        ref={buttonRef}
++        type='button'
++        className={styles.onboardingDropdown}
++        aria-haspopup='listbox'
++        aria-expanded={open}
++        aria-label={tx('onboarding_bridge_hosted')}
++        data-testid='hosted-bridge-picker'
++        onClick={toggle}
++      >
++        {selected && row(selected)}
++        <span aria-hidden='true'>▾</span>
++      </button>
++      <div
++        ref={listRef}
++        role='listbox'
++        aria-label={tx('onboarding_bridge_hosted')}
++        className={styles.onboardingDropdownList}
++        hidden={!SUPPORTS_POPOVER && !open}
++      >
++        {options.map(option => (
++          <button
++            key={option.url}
++            type='button'
++            role='option'
++            aria-selected={option.url === selected?.url}
++            className={`${styles.onboardingDropdownOption} ${option.url === selected?.url ? styles.onboardingDropdownOptionOn : ''}`}
++            onClick={() => {
++              onChange(option.url)
++              if (SUPPORTS_POPOVER) {
++                listRef.current?.hidePopover()
++              } else {
++                setOpen(false)
++              }
++            }}
++          >
++            {row(option)}
++          </button>
++        ))}
++      </div>
++    </>
++  )
++}
++
++function ProfileKindStep(props: Props) {
++  const tx = useTranslationFunction()
++  const { openDialog } = useDialog()
++
++  const onImportBackup = async () => {
++    // drop a name/avatar already typed into the new-profile screen
++    await BackendRemote.rpc.batchSetConfig(props.selectedAccountId, {
++      selfavatar: null,
++      displayname: null,
++    })
++    const { defaultPath, setLastPath } = await rememberLastUsedPath(
++      LastUsedSlot.Backup
++    )
++    const [file] = await runtime.showOpenFileDialog({
++      title: tx('import_backup_title'),
++      properties: ['openFile'],
++      filters: [{ name: '.tar or .bak', extensions: ['tar', 'bak'] }],
++      defaultPath,
++    })
++    if (file) {
++      openDialog(ImportBackupProgressDialog, { backupFile: file })
++      setLastPath(dirname(file))
++    }
++  }
++
++  const choice = (
++    title: React.ReactNode,
++    explain: string,
++    onClick: () => void,
++    testId: string
++  ) => (
++    <button
++      type='button'
++      className={styles.onboardingChoice}
++      onClick={onClick}
++      data-testid={testId}
++    >
++      <strong>{title}</strong>
++      <span className={styles.onboardingNote}>{explain}</span>
++    </button>
++  )
++
++  return (
++    <>
++      <DialogHeader
++        onClickBack={
++          props.hasConfiguredAccounts
++            ? undefined
++            : () => props.setStep(bridgeApi() ? 'bridge' : 'welcome')
++        }
++        onClose={props.hasConfiguredAccounts ? props.onClose : undefined}
++        title={
++          props.hasConfiguredAccounts
++            ? tx('add_account')
++            : tx('onboarding_profile_kind_title')
++        }
++      />
++      <DialogBody>
++        <DialogContent>
++          <ProfileKindIllustration />
++          {!props.hasConfiguredAccounts && <Steps current={3} />}
++          {choice(
++            tx('onboarding_create_instant_account'),
++            tx('onboarding_new_profile_explain'),
++            props.onNextStep,
++            'create-account-button'
++          )}
++          {choice(
++            tx('onboarding_have_profile'),
++            tx('onboarding_import_backup_explain'),
++            onImportBackup,
++            'import-backup-button'
++          )}
++          {choice(
++            <>
++              madmail server (webimap){' '}
++              <span className={styles.onboardingTag}>
++                {tx('onboarding_experimental')}
++              </span>
++            </>,
++            tx('onboarding_madmail_explain'),
++            () =>
++              openDialog(UseWebimapServerDialog, {
++                selectedAccountId: props.selectedAccountId,
++              }),
++            'madmail-button'
++          )}
++          <hr className={styles.onboardingDivider} />
++          <Button
++            className={styles.welcomeScreenButton}
++            onClick={() =>
++              openDialog(QrCodeScanner, {
++                scanContext: SCAN_CONTEXT_TYPE.OTHER_SERVER,
++              })
++            }
++            data-testid='scan-qr-login'
++          >
++            {tx('onboarding_scan')}
++          </Button>
++          <p className={styles.onboardingNote} style={{ textAlign: 'center' }}>
++            {tx('onboarding_scan_explain')}
++          </p>
++        </DialogContent>
++      </DialogBody>
++    </>
++  )
++}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
+index 5cb5ecf495a39f5a3cb7ec386308641828a6d68a..029db624259ec6924f72c4c0971af17e305e4019 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
+@@ -1,39 +1,82 @@
+-import React, { useEffect, useState } from 'react'
++import React, { useEffect, useRef, useState } from 'react'
+ 
+-import useDialog from '../../../hooks/dialog/useDialog'
+-import useInstantOnboarding from '../../../hooks/useInstantOnboarding'
++import ClassicEmailRelayDialog from './ClassicEmailRelayDialog'
+ import RelayPickerDialog from './RelayPickerDialog'
+-import { defaultRelayHost, fetchRelayDirectory } from './relayDirectory'
++import QrCodeScanner from '../../dialogs/QrCodeScanner'
++import { TileIcon } from './OnboardingArt'
++import { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
++import useDialog from '../../../hooks/dialog/useDialog'
++import useInstantOnboarding, {
++  MAX_RELAYS,
++  mainRelay,
++} from '../../../hooks/useInstantOnboarding'
++import useTranslationFunction from '../../../hooks/useTranslationFunction'
++import {
++  defaultRelayHost,
++  fetchRelayDirectory,
++  probeRelay,
++} from './relayDirectory'
+ import styles from './styles.module.scss'
+ 
+-// English is hardcoded here (like the rest of patch desktop/1023) so the relay
+-// picker stays a self-contained patch and doesn't have to touch every locale
+-// file. See PATCHES.md.
++import type { OnboardingRelay } from '../../../contexts/InstantOnboardingContext'
++
++/** The relay domains an invite link names for its sender: every `a=` address
++ * in the fragment (`https://i.delta.chat/#FP&a=alice%40relay.example&…`).
++ * Invite links are expected to carry up to three addresses, one per relay. */
++export function inviteRelayHosts(url: string): string[] {
++  const fragment = url.slice(url.indexOf('#') + 1)
++  const hosts = new URLSearchParams(fragment)
++    .getAll('a')
++    .flatMap(value => value.split(','))
++    .map(addr => addr.trim().split('@')[1]?.toLowerCase())
++    .filter((host): host is string => Boolean(host))
++  return [...new Set(hosts)]
++}
++
++const relayName = (relay: OnboardingRelay) =>
++  'host' in relay ? relay.host : relay.addr
+ 
+ /**
+- * slothfulchat-web: on the instant-onboarding ("create profile") screen, a row
+- * showing which public chatmail relay the new address will be created on, with
+- * a button that opens the relay picker dialog (RelayPickerDialog) to change it.
++ * slothfulchat-web: the "Relays" section of the new-profile screen. Nothing is
++ * preselected: the user picks up to MAX_RELAYS relays (three recommended) in
++ * the relay chooser, which also leads to adding a classic email account. The
++ * profile is created on the first chatmail relay ("Main", see mainRelay);
++ * "Make main" moves another one to the front. "Decide for me" is a placeholder for a core API
++ * that picks relays automatically, and will become the default.
+  *
+- * The list comes live from the chatmail relay directory (relayDirectory.ts);
+- * fetching it is cheap and done here on mount, but probing each relay over the
+- * WS→TCP bridge is not, so that happens in the dialog, once opened. The row
+- * always reflects the chosen relay (kept in InstantOnboardingContext), so the
+- * consent link and account creation can't disagree with what's shown.
++ * After scanning an invite, the relays the inviter can be reached on are
++ * offered for one-click adding.
+  *
+- * Renders nothing while the directory is loading, when it is unavailable, when
+- * there is nothing to choose (fewer than two relays), or when a scanned
+- * `dcaccount:`/`dclogin:` QR already pins the server.
++ * Renders nothing when a scanned `dclogin:` (or madmail) QR pins the server.
+  */
+ export default function RelayPicker() {
+-  const { welcomeQr, selectedRelayHost, setSelectedRelayHost } =
+-    useInstantOnboarding()
++  const tx = useTranslationFunction()
++  const { welcomeQr, relays, setRelays } = useInstantOnboarding()
+   const { openDialog } = useDialog()
+-  const [relays, setRelays] = useState<string[] | null>(null)
+-
+   const defaultHost = defaultRelayHost()
++  const [directory, setDirectory] = useState<string[]>([defaultHost])
++  // round trip per picked chatmail relay: ms, null = unreachable, absent =
++  // measuring. Every picked relay is measured, also one typed or scanned that
++  // isn't in the directory: the user named it, so probing it through the
++  // bridge tells the bridge operator nothing new.
++  const [pings, setPings] = useState<Record<string, number | null>>({})
++  const probed = useRef(new Set<string>())
++  const hostsKey = relays.flatMap(r => ('host' in r ? [r.host] : [])).join(' ')
++  useEffect(() => {
++    for (const host of hostsKey.split(' ').filter(Boolean)) {
++      if (probed.current.has(host)) {
++        continue
++      }
++      probed.current.add(host)
++      probeRelay(host).then(probe =>
++        setPings(prev => ({
++          ...prev,
++          [host]: probe.status === 'reachable' ? probe.latencyMs : null,
++        }))
++      )
++    }
++  }, [hostsKey])
+ 
+-  // With a scanned account/login QR the server is fixed — no choice to offer.
+   const relayChoosable =
+     welcomeQr?.qr.kind !== 'account' && welcomeQr?.qr.kind !== 'login'
+ 
+@@ -44,7 +87,7 @@ export default function RelayPicker() {
+     let stale = false
+     fetchRelayDirectory().then(list => {
+       if (!stale) {
+-        setRelays(list)
++        setDirectory(list)
+       }
+     })
+     return () => {
+@@ -52,44 +95,219 @@ export default function RelayPicker() {
+     }
+   }, [relayChoosable])
+ 
+-  if (!relayChoosable || relays === null || relays.length < 2) {
++  if (!relayChoosable) {
+     return null
+   }
+ 
+-  // The chosen relay may be a directory relay, the default, or a custom host
+-  // typed earlier this session (kept in context, so not in `relays`).
+-  const current =
+-    selectedRelayHost && selectedRelayHost !== defaultHost
+-      ? selectedRelayHost
+-      : defaultHost
++  const full = relays.length >= MAX_RELAYS
++  const main = mainRelay(relays)
++  const has = (host: string) =>
++    relays.some(relay => 'host' in relay && relay.host === host)
++  const add = (relay: OnboardingRelay) =>
++    setRelays(prev =>
++      prev.length >= MAX_RELAYS ||
++      prev.some(r => relayName(r).toLowerCase() === relayName(relay).toLowerCase())
++        ? prev
++        : [...prev, relay]
++    )
++  const remove = (relay: OnboardingRelay) =>
++    setRelays(prev => prev.filter(r => r !== relay))
++  const makeMain = (relay: OnboardingRelay) =>
++    setRelays(prev => [relay, ...prev.filter(r => r !== relay)])
++
++  // ponytail: only relays from the directory (or the default) are offered, so
++  // an inviter on a classic provider isn't mistaken for a chatmail relay.
++  // Upgrade path: probe the host's chatmail signup endpoint instead.
++  const inviteHosts =
++    welcomeQr && welcomeQr.qr.kind !== 'account' && welcomeQr.qr.kind !== 'login'
++      ? inviteRelayHosts(welcomeQr.url).filter(host => directory.includes(host))
++      : []
+ 
+-  const openPicker = () =>
++  const openClassic = () =>
++    openDialog(ClassicEmailRelayDialog, { onAdd: add })
++
++  const openPicker = () => {
++    const classicCount = relays.filter(relay => 'addr' in relay).length
+     openDialog(RelayPickerDialog, {
+-      relays,
++      relays: directory,
+       defaultHost,
+-      selectedHost: current,
+-      onSelect: (host?: string) => setSelectedRelayHost(host),
++      multi: {
++        selected: relays.flatMap(relay => ('host' in relay ? [relay.host] : [])),
++        max: MAX_RELAYS - classicCount,
++        // keep classic accounts and scanned relays (with their QR) as they
++        // are, drop unpicked hosts, append newly picked ones in pick order
++        onChange: (hosts: string[]) =>
++          setRelays(prev => {
++            const kept = prev.filter(r => 'addr' in r || hosts.includes(r.host))
++            const added = hosts
++              .filter(host => !kept.some(r => 'host' in r && r.host === host))
++              .map(host => ({ host }))
++            return [...kept, ...added]
++          }),
++        onClassicEmail: openClassic,
++      },
+     })
++  }
+ 
+   return (
+-    <div className={styles.relayPicker}>
+-      <span className={styles.relayPickerLabel}>
+-        Chatmail relay for your new address
+-      </span>
+-      <button
+-        type='button'
+-        data-testid='relay-picker-button'
+-        className={styles.relayPickerTrigger}
+-        onClick={openPicker}
+-      >
+-        <span className={styles.relayPickerTriggerValue}>
+-          {current}
+-          {current === defaultHost && (
+-            <span className={styles.relayPickerDefaultTag}>default</span>
+-          )}
++    <div className={styles.onboardingRelays}>
++      {inviteHosts.length > 0 && (
++        <div className={styles.onboardingInfo}>
++          <p>{tx('onboarding_invite_relays')}</p>
++          {inviteHosts.map(host => (
++            <div key={host} className={styles.onboardingRelayRow}>
++              <span className={styles.onboardingRelayHost}>{host}</span>
++              {has(host) ? (
++                <span className={styles.onboardingNote}>
++                  {tx('onboarding_relay_in_list')}
++                </span>
++              ) : (
++                <button
++                  type='button'
++                  className={styles.onboardingLinkButton}
++                  data-testid={`invite-relay-add-${host}`}
++                  disabled={full}
++                  onClick={() => add({ host })}
++                >
++                  {tx('add_transport')}
++                </button>
++              )}
++            </div>
++          ))}
++        </div>
++      )}
++
++      <p className={styles.onboardingSectionTitle}>
++        {tx('onboarding_relays_title')}
++      </p>
++      <p className={styles.onboardingNote}>{tx('onboarding_relays_explain')}</p>
++      <label className={styles.onboardingOption} aria-disabled='true'>
++        <input type='radio' name='relayMode' disabled />
++        <span>
++          <strong>{tx('onboarding_relays_auto')}</strong>{' '}
++          <span className={styles.onboardingTag}>
++            {tx('onboarding_coming_soon')}
++          </span>
++          <br />
++          <span className={styles.onboardingNote}>
++            {tx('onboarding_relays_auto_explain')}
++          </span>
++        </span>
++      </label>
++      <label className={styles.onboardingOption}>
++        <input type='radio' name='relayMode' checked readOnly />
++        <span>
++          <strong>{tx('onboarding_relays_manual')}</strong>
++          <br />
++          <span className={styles.onboardingNote}>
++            {tx('onboarding_relays_manual_explain')}
++          </span>
+         </span>
+-        <span className={styles.relayPickerTriggerAction}>Change</span>
+-      </button>
++      </label>
++
++      {relays.map(relay => (
++        <div
++          key={relayName(relay)}
++          className={styles.onboardingRelayRow}
++          data-testid={`onboarding-relay-${relayName(relay)}`}
++        >
++          <span
++            className={styles.onboardingDot}
++            style={{
++              background:
++                'addr' in relay
++                  ? '#7a55c2'
++                  : typeof pings[relay.host] === 'number'
++                    ? (pings[relay.host] as number) < 100
++                      ? '#2e9e5b'
++                      : '#d18a1c'
++                    : 'var(--deltaChatPrimaryFgLight)',
++            }}
++          />
++          <span className={styles.onboardingRelayHost}>
++            {relayName(relay)}
++            {relay === main && (
++              <span className={styles.onboardingTag}>
++                {tx('onboarding_relay_main')}
++              </span>
++            )}
++            {'addr' in relay && (
++              <span className={styles.onboardingTag}>
++                {tx('onboarding_relay_classic')}
++              </span>
++            )}
++          </span>
++          {relay !== main && 'host' in relay && (
++            <button
++              type='button'
++              className={styles.onboardingLinkButton}
++              onClick={() => makeMain(relay)}
++            >
++              {tx('onboarding_relay_make_main')}
++            </button>
++          )}
++          <span className={styles.onboardingPing}>
++            {'addr' in relay
++              ? 'IMAP'
++              : typeof pings[relay.host] === 'number'
++                ? `${pings[relay.host]} ms`
++                : pings[relay.host] === null
++                  ? tx('onboarding_unreachable')
++                  : tx('onboarding_measuring')}
++          </span>
++          <button
++            type='button'
++            className={styles.onboardingRemoveButton}
++            aria-label={tx('onboarding_relay_remove')}
++            onClick={() => remove(relay)}
++          >
++            ×
++          </button>
++        </div>
++      ))}
++
++      {relays.length > 0 && !full && (
++        <p className={styles.onboardingInfo}>
++          {tx('onboarding_relays_recommend', [
++            String(relays.length),
++            String(MAX_RELAYS),
++          ])}
++        </p>
++      )}
++      {main && 'addr' in main && (
++        <p className={styles.onboardingWarning}>
++          {tx('onboarding_relays_only_classic')}
++        </p>
++      )}
++
++      <div className={styles.onboardingButtonRow}>
++        <button
++          type='button'
++          data-testid='relay-picker-button'
++          className={styles.onboardingChooseRelays}
++          onClick={openPicker}
++        >
++          {relays.length === 0
++            ? tx('onboarding_relays_choose')
++            : tx('onboarding_relays_change')}
++        </button>
++        {/* a scanned dcaccount: QR lands in the list (useInstantOnboarding) */}
++        <button
++          type='button'
++          data-testid='relay-scan-button'
++          className={styles.onboardingQrButton}
++          aria-label={tx('onboarding_relay_scan')}
++          title={tx('onboarding_relay_scan')}
++          disabled={full}
++          onClick={() =>
++            openDialog(QrCodeScanner, {
++              scanContext: SCAN_CONTEXT_TYPE.OTHER_SERVER,
++            })
++          }
++        >
++          <TileIcon name='qr' />
++        </button>
++      </div>
+     </div>
+   )
+ }
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
+index 33bc7e5b28764446e9569c4dbd50e178ac94342e..965318382aa0eb40f14c0925944e926969f630f3 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
+@@ -1,6 +1,8 @@
+ import React, { useEffect, useRef, useState } from 'react'
+ 
++import Button from '../../Button'
+ import Dialog, { DialogBody, DialogContent, DialogHeader } from '../../Dialog'
++import useTranslationFunction from '../../../hooks/useTranslationFunction'
+ import { probeRelay } from './relayDirectory'
+ import { normalizeRelayHost } from './relayDirectoryParse'
+ import styles from './styles.module.scss'
+@@ -29,7 +31,17 @@ type Props = {
+    * the bridge operator), only when the user clicks "Measure ping" */
+   contactRelays?: { host: string; contacts: number }[]
+   /** commit a choice; `undefined` means "use the default" */
+-  onSelect: (host?: string) => void
++  onSelect?: (host?: string) => void
++  /** onboarding: pick up to `max` relays instead of one. Rows toggle, the
++   * dialog stays open until Done, and every change goes to `onChange`.
++   * `onClassicEmail` adds a button that closes this dialog to add a classic
++   * email account instead. */
++  multi?: {
++    selected: string[]
++    max: number
++    onChange: (hosts: string[]) => void
++    onClassicEmail?: () => void
++  }
+ }
+ 
+ /** A round-trip time bucket, just for the colour of the signal dot. */
+@@ -57,8 +69,14 @@ export default function RelayPickerDialog({
+   excludeHosts,
+   contactRelays,
+   onSelect,
++  multi,
+   onClose,
+ }: Props & DialogProps) {
++  const tx = useTranslationFunction()
++  const [picked, setPicked] = useState(multi?.selected ?? [])
++  const full = multi !== undefined && picked.length >= multi.max
++  const isPicked = (host: string) =>
++    multi ? picked.includes(host) : host === selectedHost
+   const [probes, setProbes] = useState<Record<string, RelayProbe>>({})
+   const [customOpen, setCustomOpen] = useState(false)
+   const [customInput, setCustomInput] = useState('')
+@@ -77,12 +95,15 @@ export default function RelayPickerDialog({
+   const directoryHosts = relays.filter(host => !excluded.has(host))
+ 
+   // A previously-chosen custom host isn't in the directory; show it too.
+-  const hosts =
+-    selectedHost && selectedHost !== defaultHost
+-      ? directoryHosts.includes(selectedHost)
+-        ? directoryHosts
+-        : [...directoryHosts, selectedHost]
+-      : directoryHosts
++  const wanted = multi
++    ? picked
++    : selectedHost && selectedHost !== defaultHost
++      ? [selectedHost]
++      : []
++  const hosts = [
++    ...directoryHosts,
++    ...wanted.filter(host => !directoryHosts.includes(host)),
++  ]
+ 
+   // The contact section: ordered independently (initial order comes from the
+   // caller — contacts desc, then alpha), re-sorted only when "Measure ping"
+@@ -122,14 +143,31 @@ export default function RelayPickerDialog({
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [])
+ 
++  // A picked relay stays clickable so it can be unpicked, even once it reads
++  // unreachable or the list is full.
+   const isSelectable = (host: string) =>
+-    host === defaultHost || probes[host]?.status !== 'unreachable'
++    (multi !== undefined && picked.includes(host)) ||
++    (!full && (host === defaultHost || probes[host]?.status !== 'unreachable'))
++
++  const toggle = (host: string) => {
++    const next = picked.includes(host)
++      ? picked.filter(h => h !== host)
++      : full
++        ? picked
++        : [...picked, host]
++    setPicked(next)
++    multi?.onChange(next)
++  }
+ 
+   const choose = (host: string) => {
+     if (!isSelectable(host)) {
+       return
+     }
+-    onSelect(host === defaultHost ? undefined : host)
++    if (multi) {
++      toggle(host)
++      return
++    }
++    onSelect?.(host === defaultHost ? undefined : host)
+     onClose()
+   }
+ 
+@@ -139,7 +177,24 @@ export default function RelayPickerDialog({
+       setCustomError(true)
+       return
+     }
+-    onSelect(host === defaultHost ? undefined : host)
++    if (multi) {
++      if (!picked.includes(host)) {
++        toggle(host)
++      }
++      // a typed relay gets the same live probe as the directory ones
++      if (!probedRef.current.has(host)) {
++        probedRef.current.add(host)
++        probeRelay(host).then(probe => {
++          if (mountedRef.current) {
++            setProbes(prev => ({ ...prev, [host]: probe }))
++          }
++        })
++      }
++      setCustomInput('')
++      setCustomOpen(false)
++      return
++    }
++    onSelect?.(host === defaultHost ? undefined : host)
+     onClose()
+   }
+ 
+@@ -220,8 +275,18 @@ export default function RelayPickerDialog({
+   }
+ 
+   return (
+-    <Dialog onClose={onClose} width={400}>
+-      <DialogHeader title='Choose a chatmail relay' onClose={onClose} />
++    <Dialog onClose={onClose} width={400} dataTestid='relay-picker-dialog'>
++      <DialogHeader
++        title={
++          multi
++            ? tx('onboarding_choose_relays_title', [
++                String(picked.length),
++                String(multi.max),
++              ])
++            : 'Choose a chatmail relay'
++        }
++        onClose={onClose}
++      />
+       <DialogBody>
+         <DialogContent>
+           <div
+@@ -234,13 +299,13 @@ export default function RelayPickerDialog({
+                 type='button'
+                 key={host}
+                 role='option'
+-                aria-selected={host === selectedHost}
++                aria-selected={isPicked(host)}
+                 aria-disabled={!isSelectable(host)}
+                 data-testid={`relay-option-${host}`}
+                 disabled={!isSelectable(host)}
+                 className={[
+                   styles.relayDialogRow,
+-                  host === selectedHost ? styles.relayDialogRowSelected : '',
++                  isPicked(host) ? styles.relayDialogRowSelected : '',
+                   !isSelectable(host) ? styles.relayDialogRowDisabled : '',
+                 ]
+                   .filter(Boolean)
+@@ -248,7 +313,7 @@ export default function RelayPickerDialog({
+                 onClick={() => choose(host)}
+               >
+                 <span className={styles.relayDialogHost}>
+-                  {host === selectedHost && (
++                  {isPicked(host) && (
+                     <span className={styles.relayDialogCheck} aria-hidden='true'>
+                       ✓{' '}
+                     </span>
+@@ -258,7 +323,7 @@ export default function RelayPickerDialog({
+                     <span className={styles.relayDialogDefaultTag}>default</span>
+                   )}
+                 </span>
+-                {renderStatus(host, true)}
++                {renderStatus(host, probedRef.current.has(host))}
+               </button>
+             ))}
+           </div>
+@@ -293,13 +358,13 @@ export default function RelayPickerDialog({
+                     type='button'
+                     key={host}
+                     role='option'
+-                    aria-selected={host === selectedHost}
++                    aria-selected={isPicked(host)}
+                     aria-disabled={!isSelectable(host)}
+                     data-testid={`relay-option-${host}`}
+                     disabled={!isSelectable(host)}
+                     className={[
+                       styles.relayDialogRow,
+-                      host === selectedHost
++                      isPicked(host)
+                         ? styles.relayDialogRowSelected
+                         : '',
+                       !isSelectable(host) ? styles.relayDialogRowDisabled : '',
+@@ -309,7 +374,7 @@ export default function RelayPickerDialog({
+                     onClick={() => choose(host)}
+                   >
+                     <span className={styles.relayDialogHost}>
+-                      {host === selectedHost && (
++                      {isPicked(host) && (
+                         <span
+                           className={styles.relayDialogCheck}
+                           aria-hidden='true'
+@@ -371,10 +436,34 @@ export default function RelayPickerDialog({
+                 className={styles.relayDialogCustomConfirm}
+                 onClick={submitCustom}
+               >
+-                Use
++                {multi ? tx('add_transport') : 'Use'}
+               </button>
+             </div>
+           )}
++          {multi?.onClassicEmail && (
++            <button
++              type='button'
++              className={styles.relayDialogOther}
++              data-testid='relay-option-classic'
++              disabled={full}
++              onClick={() => {
++                onClose()
++                multi.onClassicEmail?.()
++              }}
++            >
++              {tx('onboarding_classic_email_open')}
++            </button>
++          )}
++          {multi && (
++            <Button
++              styling='primary'
++              className={styles.welcomeScreenButton}
++              data-testid='relay-picker-done'
++              onClick={onClose}
++            >
++              {tx('done')}
++            </Button>
++          )}
+         </DialogContent>
+       </DialogBody>
+     </Dialog>
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UseOtherServerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UseOtherServerDialog.tsx
+deleted file mode 100644
+index 30c490a749b8d0c29da92f36c9c749898f656cfe..0000000000000000000000000000000000000000
+--- a/packages/frontend/src/components/screens/WelcomeScreen/UseOtherServerDialog.tsx
++++ /dev/null
+@@ -1,74 +0,0 @@
+-import React, { useContext } from 'react'
+-
+-import Button from '../../Button'
+-import Dialog, { DialogBody, DialogContent, DialogHeader } from '../../Dialog'
+-
+-import useDialog from '../../../hooks/dialog/useDialog'
+-import useTranslationFunction from '../../../hooks/useTranslationFunction'
+-import { ScreenContext } from '../../../contexts/ScreenContext'
+-import { Screens } from '../../../ScreenController'
+-import { runtime } from '@deltachat-desktop/runtime-interface'
+-
+-import styles from './styles.module.scss'
+-
+-import type { DialogProps } from '../../../contexts/DialogContext'
+-import QrCodeScanner from '../../dialogs/QrCodeScanner'
+-import { CHATMAIL_INSTANCES_LIST_URL } from './chatmailInstances'
+-import Icon from '../../Icon'
+-import { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
+-
+-export default function UseOtherServerDialog({ onClose }: DialogProps) {
+-  const tx = useTranslationFunction()
+-  const { changeScreen } = useContext(ScreenContext)
+-  const { openDialog } = useDialog()
+-
+-  const onClickLogin = () => {
+-    onClose()
+-    changeScreen(Screens.Login)
+-  }
+-
+-  const onScanQRCode = () => {
+-    onClose()
+-    openDialog(QrCodeScanner, { scanContext: SCAN_CONTEXT_TYPE.OTHER_SERVER })
+-  }
+-
+-  const onShowMoreInstances = () => {
+-    runtime.openLink(CHATMAIL_INSTANCES_LIST_URL)
+-    onClose()
+-  }
+-
+-  return (
+-    <Dialog onClose={onClose}>
+-      <DialogHeader
+-        title={tx('instant_onboarding_show_more_instances')}
+-        onClose={onClose}
+-      />
+-      <DialogBody>
+-        <DialogContent>
+-          <Button
+-            className={styles.welcomeScreenButton}
+-            onClick={onShowMoreInstances}
+-          >
+-            {tx('instant_onboarding_other_server')}{' '}
+-            <Icon icon='open_in_new' className={styles.openExternalIcon} />
+-          </Button>
+-          <Button
+-            className={styles.welcomeScreenButton}
+-            onClick={onClickLogin}
+-            data-testid='manual-email-login'
+-          >
+-            {tx('manual_account_setup_option')}
+-          </Button>
+-          <Button
+-            className={styles.welcomeScreenButton}
+-            onClick={onScanQRCode}
+-            data-testid='scan-qr-login'
+-          >
+-            {tx('scan_invitation_code')}
+-          </Button>
+-          <br /> {/* space after buttons */}
+-        </DialogContent>
+-      </DialogBody>
+-    </Dialog>
+-  )
+-}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
+index f5438b4d09b4256d1ac781c395bd0d38641735a9..7cca80a9be17d53205d4844751d58d59a5f85873 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
+@@ -1,16 +1,18 @@
+ import React from 'react'
+ 
+ import { ClickableLink } from '../../helpers/ClickableLink'
+-import useInstantOnboarding from '../../../hooks/useInstantOnboarding'
++import Dialog, { DialogBody, DialogContent, DialogHeader } from '../../Dialog'
++import useDialog from '../../../hooks/dialog/useDialog'
++import useInstantOnboarding, {
++  mainRelay,
++} from '../../../hooks/useInstantOnboarding'
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+-import {
+-  DEFAULT_CHATMAIL_HOSTNAME,
+-  DEFAULT_INSTANCE_PRIVACY_POLICY_URL,
+-  isQRWithDefaultInstance,
+-} from './chatmailInstances'
+-import { instanceDefaultChatmailHost } from '../../../utils/slothfulInstanceConfig'
++
++import styles from './styles.module.scss'
+ 
+ import type { AccountQr, QrWithUrl } from '../../../backend/qr-types'
++import type { DialogProps } from '../../../contexts/DialogContext'
++import type { OnboardingRelay } from '../../../contexts/InstantOnboardingContext'
+ 
+ const URL_REGEX = /(https?:\/\/[^\s]+)/g
+ 
+@@ -36,40 +38,44 @@ function extractLinkFromQrCode(qrWithUrl: QrWithUrl<AccountQr>) {
+ 
+ export default function UserAgreement() {
+   const tx = useTranslationFunction()
+-  const { welcomeQr, selectedRelayHost } = useInstantOnboarding()
+-  const isDefaultInstance = isQRWithDefaultInstance(welcomeQr)
++  const { welcomeQr, relays } = useInstantOnboarding()
++  const { openDialog } = useDialog()
+ 
+-  // slothfulchat-web: the relay actually signed up on can differ from
+-  // upstream's default instance — because the operator configured their own
+-  // default relay (SLOTHFUL_DEFAULT_CHATMAIL), or because the user picked one
+-  // in the onboarding relay dropdown (RelayPicker). Both only apply when the
+-  // account is really created on that relay — i.e. the user didn't scan a
+-  // specific account/login QR (matching `configurationQR` in
+-  // useInstantOnboarding) — and then the consent link must name that relay
+-  // and point at ITS privacy policy. The dropdown choice wins over the
+-  // configured default, exactly like it does for account creation.
++  // slothfulchat-web: the profile is created on every relay picked on the
++  // "new profile" screen, so the consent covers all of them; the link opens a
++  // list of each one's privacy policy. Applies whenever no account/login QR
++  // pins the server (matching `configurationQR` in useInstantOnboarding).
+   const relayChoosable =
+     welcomeQr?.qr.kind !== 'account' && welcomeQr?.qr.kind !== 'login'
+-  const pickedHost =
+-    isDefaultInstance && relayChoosable
+-      ? (selectedRelayHost ?? instanceDefaultChatmailHost())
+-      : undefined
+-  const configuredHost =
+-    pickedHost === DEFAULT_CHATMAIL_HOSTNAME ? undefined : pickedHost
++  if (relayChoosable) {
++    if (relays.length === 0) {
++      return null
++    }
++    const main = mainRelay(relays)
++    const ordered = relays
++      .filter(relay => relay === main)
++      .concat(relays.filter(relay => relay !== main))
++    const MARK = '\u2063' // where the link goes in the translated sentence
++    const [before, after] = tx('onboarding_consent', MARK).split(MARK)
++    return (
++      <span>
++        {before}
++        <button
++          type='button'
++          className={styles.onboardingLinkButton}
++          data-testid='privacy-policies-button'
++          onClick={() => openDialog(PrivacyPoliciesDialog, { relays: ordered })}
++        >
++          {tx('onboarding_consent_link')}
++        </button>
++        {after}
++      </span>
++    )
++  }
+ 
+   return (
+     <>
+-      {isDefaultInstance && configuredHost && (
+-        <ClickableLink href={`https://${configuredHost}/privacy.html`}>
+-          {tx('instant_onboarding_agree_default2', configuredHost)}
+-        </ClickableLink>
+-      )}
+-      {isDefaultInstance && !configuredHost && (
+-        <ClickableLink href={DEFAULT_INSTANCE_PRIVACY_POLICY_URL}>
+-          {tx('instant_onboarding_agree_default2', DEFAULT_CHATMAIL_HOSTNAME)}
+-        </ClickableLink>
+-      )}
+-      {!isDefaultInstance && welcomeQr && welcomeQr.qr.kind === 'account' && (
++      {welcomeQr && welcomeQr.qr.kind === 'account' && (
+         <ClickableLink
+           href={extractLinkFromQrCode({ ...welcomeQr, qr: welcomeQr.qr })}
+         >
+@@ -79,3 +85,44 @@ export default function UserAgreement() {
+     </>
+   )
+ }
++
++/** Each picked relay's privacy policy; a classic email account is the
++ * user's own provider, whose terms apply instead. */
++function PrivacyPoliciesDialog({
++  relays,
++  onClose,
++}: { relays: OnboardingRelay[] } & DialogProps) {
++  const tx = useTranslationFunction()
++  return (
++    <Dialog onClose={onClose} width={400} dataTestid='privacy-policies-dialog'>
++      <DialogHeader title={tx('onboarding_policies_title')} onClose={onClose} />
++      <DialogBody>
++        <DialogContent>
++          <p className={styles.onboardingNote}>
++            {tx('onboarding_policies_explain')}
++          </p>
++          {relays.map(relay =>
++            'host' in relay ? (
++              <div key={relay.host} className={styles.onboardingRelayRow}>
++                <span className={styles.onboardingRelayHost}>{relay.host}</span>
++                <ClickableLink href={`https://${relay.host}/privacy.html`}>
++                  {tx('privacy_policy')}
++                </ClickableLink>
++              </div>
++            ) : (
++              <div key={relay.addr} className={styles.onboardingRelayRow}>
++                <span className={styles.onboardingRelayHost}>
++                  {relay.addr}
++                  <br />
++                  <span className={styles.onboardingNote}>
++                    {tx('onboarding_policies_classic')}
++                  </span>
++                </span>
++              </div>
++            )
++          )}
++        </DialogContent>
++      </DialogBody>
++    </Dialog>
++  )
++}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/index.tsx b/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
+index 0aa222ffc3a10251eaefaea3553109f3aa02a2d7..45ae6142cbc8a2ab75cfe98df6aea8369965ee1c 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/index.tsx
+@@ -3,7 +3,10 @@ import React, { useLayoutEffect, useState } from 'react'
+ import Dialog from '../../Dialog'
+ import ImageBackdrop from '../../ImageBackdrop'
+ import InstantOnboardingScreen from './InstantOnboardingScreen'
+-import OnboardingScreen from './OnboardingScreen'
++import OnboardingScreen, {
++  ONBOARDING_STEP_KEY,
++  OnboardingStep,
++} from './OnboardingScreen'
+ import useInstantOnboarding from '../../../hooks/useInstantOnboarding'
+ import { getConfiguredAccounts } from '../../../backend/account'
+ import { BackendRemote, EffectfulBackendActions } from '../../../backend-com'
+@@ -31,13 +34,19 @@ export default function WelcomeScreen({ selectedAccountId, ...props }: Props) {
+   const [hasConfiguredAccounts, setHasConfiguredAccounts] = useState(false)
+   const { openDialog } = useDialog()
+ 
+-  // slothfulchat: onboarding-funnel analytics — top of the funnel only. No-op
+-  // unless the browser edition set window.__slothfulTrack (runtime.js). The
+-  // chosen method and configure success/failure are derived from RPCs in our
+-  // telemetry layer, so nothing finer needs a hook here.
+-  React.useEffect(() => {
+-    ;(window as any).__slothfulTrack?.('onboarding', { step: 'welcome' })
+-  }, [])
++  // slothfulchat-web: which welcome step is shown. Kept here, not in
++  // OnboardingScreen, so backing out of the new-profile screen returns to the
++  // profile-kind step. A bridge switch reloads the app and leaves a marker to
++  // come back past the bridge step.
++  const [step, setStep] = useState<OnboardingStep>(() => {
++    try {
++      const saved = sessionStorage.getItem(ONBOARDING_STEP_KEY)
++      sessionStorage.removeItem(ONBOARDING_STEP_KEY)
++      return saved === 'type' ? 'type' : 'welcome'
++    } catch {
++      return 'welcome'
++    }
++  })
+ 
+   useLayoutEffect(() => {
+     // On a fresh DC start we will not have any yet.
+@@ -45,6 +54,8 @@ export default function WelcomeScreen({ selectedAccountId, ...props }: Props) {
+       const accounts = await getConfiguredAccounts()
+       if (accounts.length > 0) {
+         setHasConfiguredAccounts(true)
++        // bridge and statistics were settled with the first profile
++        setStep('type')
+       }
+     }
+ 
+@@ -86,6 +97,8 @@ export default function WelcomeScreen({ selectedAccountId, ...props }: Props) {
+         {!showInstantOnboarding ? (
+           <OnboardingScreen
+             onNextStep={() => startInstantOnboardingFlow()}
++            step={step}
++            setStep={setStep}
+             selectedAccountId={selectedAccountId}
+             hasConfiguredAccounts={hasConfiguredAccounts}
+             onClose={onClose}
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
+index 70c7b254b6291ad84544985f25f7af5cc99cff10..52d3618a80794136cd36bcb13ffe52c124b8779c 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
++++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
+@@ -69,6 +69,8 @@
+ 
+ .instantOnboardingAgreement {
+   display: flex;
++  flex-direction: column; // one privacy policy link per picked relay
++  gap: 4px;
+   justify-content: flex-start;
+   margin-bottom: 10px;
+   width: 100%;
+@@ -384,3 +386,424 @@
+   font-weight: 600;
+   padding: 6px 8px;
+ }
++
++// slothfulchat-web: the two-step welcome screen, the new-profile Relays
++// section and the classic email dialog.
++.onboardingFieldset {
++  border: none;
++  margin: 0 0 16px;
++  padding: 0;
++}
++
++.onboardingSectionTitle {
++  font-size: 12px;
++  font-weight: bold;
++  letter-spacing: 0.06em;
++  margin: 8px 0 4px;
++  padding: 0;
++  text-transform: uppercase;
++}
++
++.onboardingNote {
++  color: var(--deltaChatPrimaryFgLight);
++  font-size: 13px;
++  margin: 2px 0 6px;
++}
++
++.onboardingOption {
++  align-items: flex-start;
++  border: 1px solid var(--deltaChatPrimaryFgLight);
++  border-radius: 8px;
++  cursor: pointer;
++  display: flex;
++  gap: 10px;
++  margin: 6px 0;
++  padding: 8px 10px;
++  text-align: left;
++
++  &:has(:checked) {
++    border-color: var(--loginInputFocusColor);
++  }
++
++  &[aria-disabled='true'] {
++    cursor: not-allowed;
++    opacity: 0.55;
++  }
++
++  input[type='radio'] {
++    margin-top: 3px;
++  }
++}
++
++.onboardingTwoColumns {
++  display: grid;
++  gap: 8px;
++  grid-template-columns: repeat(2, minmax(0, 1fr));
++}
++
++.onboardingChoice {
++  appearance: none;
++  background: none;
++  border: 1px solid var(--deltaChatPrimaryFgLight);
++  border-radius: 8px;
++  color: inherit;
++  cursor: pointer;
++  display: flex;
++  flex-direction: column;
++  font: inherit;
++  gap: 2px;
++  margin: 7px 0;
++  padding: 10px 12px;
++  text-align: left;
++  width: 100%;
++
++  &:hover,
++  &:focus-visible {
++    border-color: var(--loginInputFocusColor);
++  }
++}
++
++.onboardingDivider {
++  border: none;
++  border-top: 1px solid var(--deltaChatPrimaryFgLight);
++  margin: 12px 0 6px;
++  opacity: 0.4;
++}
++
++.onboardingTag {
++  border: 1px solid currentColor;
++  border-radius: 999px;
++  font-size: 11px;
++  font-weight: normal;
++  margin-inline-start: 6px;
++  padding: 0 6px;
++  white-space: nowrap;
++}
++
++.onboardingRelays {
++  margin: 4px 0 14px;
++  text-align: left;
++  width: 100%;
++}
++
++.onboardingRelayRow {
++  align-items: center;
++  display: flex;
++  gap: 8px;
++  min-height: 36px;
++}
++
++.onboardingRelayHost {
++  flex: 1;
++  font-family: monospace;
++  min-width: 0;
++  overflow-wrap: anywhere;
++}
++
++.onboardingLinkButton {
++  appearance: none;
++  background: none;
++  border: none;
++  color: var(--loginInputFocusColor);
++  cursor: pointer;
++  font-size: 13px;
++  padding: 4px;
++
++  &:disabled {
++    cursor: not-allowed;
++    opacity: 0.5;
++  }
++}
++
++.onboardingRemoveButton {
++  appearance: none;
++  background: none;
++  border: none;
++  color: inherit;
++  cursor: pointer;
++  font-size: 18px;
++  height: 32px;
++  width: 32px;
++}
++
++.onboardingInfo,
++.onboardingWarning {
++  border: 1px solid var(--loginInputFocusColor);
++  border-radius: 8px;
++  font-size: 13px;
++  margin: 8px 0;
++  padding: 8px 10px;
++
++  p {
++    margin: 0 0 4px;
++  }
++}
++
++.onboardingWarning {
++  border-color: var(--colorDanger);
++}
++
++.onboardingProsCons {
++  display: grid;
++  font-size: 13px;
++  gap: 12px;
++  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
++
++  ul {
++    margin: 4px 0 0;
++    padding-inline-start: 18px;
++  }
++
++  li {
++    margin-bottom: 4px;
++  }
++}
++
++.onboardingSteps {
++  display: flex;
++  gap: 6px;
++  justify-content: center;
++  margin: 8px 0 12px;
++
++  span {
++    background: var(--deltaChatPrimaryFgLight);
++    border-radius: 2px;
++    height: 4px;
++    opacity: 0.35;
++    width: 28px;
++  }
++
++  .onboardingStepOn {
++    background: var(--loginInputFocusColor);
++    opacity: 1;
++  }
++}
++
++.onboardingUsps {
++  display: flex;
++  flex-direction: column;
++  gap: 10px;
++  list-style: none;
++  margin: 0 0 8px;
++  padding: 0;
++
++  li {
++    align-items: flex-start;
++    display: flex;
++    gap: 12px;
++    line-height: 1.35;
++  }
++}
++
++.onboardingIcon {
++  color: var(--loginInputFocusColor);
++  flex: none;
++  margin-top: 2px;
++}
++
++.onboardingNoStats {
++  align-items: center;
++  color: var(--deltaChatPrimaryFgLight);
++  display: flex;
++  font-size: 13px;
++  gap: 8px;
++  justify-content: center;
++}
++
++.onboardingIllustration {
++  display: block;
++  height: auto;
++  margin: 0 auto;
++  max-width: 100%;
++}
++
++.onboardingTiles {
++  display: grid;
++  gap: 8px;
++  grid-template-columns: repeat(var(--tiles, 3), minmax(0, 1fr));
++  margin: 8px 0 12px;
++}
++
++.onboardingTile {
++  align-items: center;
++  border: 1px solid var(--deltaChatPrimaryFgLight);
++  border-radius: 8px;
++  cursor: pointer;
++  display: flex;
++  flex-direction: column;
++  font-weight: bold;
++  gap: 6px;
++  justify-content: center;
++  min-height: 84px;
++  padding: 8px 4px;
++  position: relative;
++  text-align: center;
++
++  &:focus-within {
++    outline: 2px solid var(--loginInputFocusColor);
++    outline-offset: 2px;
++  }
++}
++
++.onboardingTileOn {
++  border: 2px solid var(--loginInputFocusColor);
++  color: var(--loginInputFocusColor);
++}
++
++.visuallyHidden {
++  clip: rect(0 0 0 0);
++  height: 1px;
++  opacity: 0;
++  overflow: hidden;
++  position: absolute;
++  white-space: nowrap;
++  width: 1px;
++}
++
++.onboardingInput {
++  background: none;
++  border: 1px solid var(--deltaChatPrimaryFgLight);
++  border-radius: 8px;
++  color: inherit;
++  font-family: monospace;
++  font-size: 14px;
++  min-height: 44px;
++  padding: 8px 12px;
++  width: 100%;
++
++  &:read-only {
++    opacity: 0.7;
++  }
++
++  &:focus {
++    border-color: var(--loginInputFocusColor);
++    outline: none;
++  }
++}
++
++.onboardingDot {
++  border-radius: 50%;
++  display: inline-block;
++  flex: none;
++  height: 8px;
++  margin-inline-end: 6px;
++  width: 8px;
++}
++
++.onboardingMono {
++  font-family: monospace;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.onboardingPing {
++  align-items: center;
++  color: var(--deltaChatPrimaryFgLight);
++  display: flex;
++  font-size: 13px;
++  white-space: nowrap;
++}
++
++.onboardingBridgeRowText {
++  display: flex;
++  flex: 1;
++  flex-direction: column;
++  min-width: 0;
++  text-align: start;
++
++  .onboardingNote {
++    margin: 0;
++  }
++}
++
++.onboardingDropdown,
++.onboardingDropdownOption {
++  align-items: center;
++  appearance: none;
++  background: none;
++  border: 1px solid var(--deltaChatPrimaryFgLight);
++  border-radius: 8px;
++  color: inherit;
++  cursor: pointer;
++  display: flex;
++  font: inherit;
++  gap: 10px;
++  min-height: 52px;
++  padding: 6px 10px;
++  width: 100%;
++}
++
++// a native popover in the top layer, placed under the button on open
++// (OnboardingScreen); without popover support it opens in place instead
++.onboardingDropdownList {
++  background: var(--bp4DialogBgPrimary);
++  border: 1px solid var(--deltaChatPrimaryFgLight);
++  border-radius: 8px;
++  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
++  color: inherit;
++  flex-direction: column;
++  gap: 2px;
++  margin: 4px 0 0;
++  padding: 4px;
++
++  &:popover-open,
++  &:not([popover]):not([hidden]) {
++    display: flex;
++  }
++
++  &:popover-open {
++    inset: auto;
++    margin: 0;
++    position: fixed;
++  }
++}
++
++.onboardingDropdownOption {
++  border-color: transparent;
++}
++
++.onboardingDropdownOptionOn {
++  border-color: var(--loginInputFocusColor);
++}
++
++.onboardingButtonRow {
++  display: flex;
++  gap: 8px;
++  margin-top: 8px;
++}
++
++.onboardingChooseRelays,
++.onboardingQrButton {
++  align-items: center;
++  appearance: none;
++  background: none;
++  border: 1px solid var(--deltaChatPrimaryFgLight);
++  border-radius: 8px;
++  color: inherit;
++  cursor: pointer;
++  display: flex;
++  font: inherit;
++  justify-content: center;
++  min-height: 44px;
++
++  &:hover:not(:disabled),
++  &:focus-visible {
++    border-color: var(--loginInputFocusColor);
++  }
++
++  &:disabled {
++    cursor: not-allowed;
++    opacity: 0.5;
++  }
++}
++
++.onboardingChooseRelays {
++  flex: 1;
++  font-weight: bold;
++}
++
++.onboardingQrButton {
++  flex: none;
++  width: 44px;
++}
+diff --git a/packages/frontend/src/contexts/InstantOnboardingContext.tsx b/packages/frontend/src/contexts/InstantOnboardingContext.tsx
+index a92312f69d22da0b2348816baf1c1cb325afae8f..2e56e9a8b53fa905c3d7be489cd5debc40d6cbb8 100644
+--- a/packages/frontend/src/contexts/InstantOnboardingContext.tsx
++++ b/packages/frontend/src/contexts/InstantOnboardingContext.tsx
+@@ -19,16 +19,22 @@ export type WelcomeQr =
+ 
+ export type WelcomeQrWithUrl = QrWithUrl<WelcomeQr>
+ 
++/** slothfulchat-web: a relay picked during onboarding. A chatmail relay is a
++ * host, plus the scanned `dcaccount:` URL when it came from a QR (core may need
++ * its path/query); a classic email account carries its login. */
++export type OnboardingRelay =
++  | { host: string; url?: string }
++  | { addr: string; password: string }
++
+ type InstantOnboardingContextValue = {
+   setShowInstantOnboarding: (value: boolean) => void
+   setWelcomeQr: (value?: WelcomeQrWithUrl) => void
+   showInstantOnboarding: boolean
+   welcomeQr?: WelcomeQrWithUrl
+-  // slothfulchat-web: chatmail relay picked in the onboarding relay dropdown;
+-  // undefined = the default relay (or the flow's QR decides, see
+-  // useInstantOnboarding)
+-  selectedRelayHost?: string
+-  setSelectedRelayHost: (value?: string) => void
++  // slothfulchat-web: relays picked on the "new profile" screen, in order
++  // (see useInstantOnboarding for which one the address is created on)
++  relays: OnboardingRelay[]
++  setRelays: React.Dispatch<React.SetStateAction<OnboardingRelay[]>>
+ }
+ 
+ export const InstantOnboardingContext =
+@@ -51,20 +57,18 @@ export const InstantOnboardingProvider = ({
+     undefined
+   )
+ 
+-  // slothfulchat-web: relay chosen in the onboarding dropdown (undefined =
+-  // default). Lives here so the picker, the consent link (UserAgreement) and
+-  // account creation (useInstantOnboarding) all agree on the same choice.
+-  const [selectedRelayHost, setSelectedRelayHost] = useState<
+-    string | undefined
+-  >(undefined)
++  // slothfulchat-web: relays chosen on the "new profile" screen. Lives here so
++  // the picker, the consent link (UserAgreement) and account creation
++  // (useInstantOnboarding) all agree on the same choice.
++  const [relays, setRelays] = useState<OnboardingRelay[]>([])
+ 
+   const value = {
+     setShowInstantOnboarding,
+     setWelcomeQr,
+     showInstantOnboarding,
+     welcomeQr,
+-    selectedRelayHost,
+-    setSelectedRelayHost,
++    relays,
++    setRelays,
+   }
+ 
+   return (
+diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
+index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..e1864cad7be4d23802c2ef25e2c179f7ab7fdb93 100644
+--- a/packages/frontend/src/hooks/useInstantOnboarding.ts
++++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
+@@ -1,4 +1,5 @@
+ import { useCallback, useContext } from 'react'
++import type { Dispatch, SetStateAction } from 'react'
+ 
+ import useDialog from './dialog/useDialog'
+ import useSecureJoin from './useSecureJoin'
+@@ -18,6 +19,37 @@ import type {
+   VerifyGroupQr,
+ } from '../backend/qr-types'
+ import AlertDialog from '../components/dialogs/AlertDialog'
++import { BackendRemote } from '../backend-com'
++import {
++  Credentials,
++  defaultCredentials,
++} from '../components/Settings/DefaultCredentials'
++import useTranslationFunction from './useTranslationFunction'
++import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
++
++import type { OnboardingRelay } from '../contexts/InstantOnboardingContext'
++
++/** slothfulchat-web: how many relays a new profile may start with. */
++export const MAX_RELAYS = 3
++
++/** The relay the new address is created on: the first chatmail relay (a
++ * classic provider as the main transport would send everything through a
++ * rate-limited account), else the first one. The rest are added afterwards. */
++export function mainRelay(relays: OnboardingRelay[]) {
++  return relays.find(r => 'host' in r) ?? relays[0]
++}
++
++/** The `dcaccount:` QR that signs up on a chatmail relay. The default relay
++ * keeps an operator's URL-form SLOTHFUL_DEFAULT_CHATMAIL endpoint, a scanned
++ * relay its QR, like the Transports dialog does. */
++function relayQr(relay: { host: string; url?: string }): string {
++  if (relay.url) {
++    return relay.url
++  }
++  return relay.host === defaultRelayHost()
++    ? (instanceDefaultChatmailQr() ?? `dcaccount:${relay.host}`)
++    : `dcaccount:${relay.host}`
++}
+ 
+ type InstantOnboarding = {
+   createInstantAccount: (accountId: number) => Promise<T.FullChat['id'] | null>
+@@ -30,11 +62,11 @@ type InstantOnboarding = {
+    */
+   startInstantOnboardingFlow: (qrWithUrl?: WelcomeQrWithUrl) => Promise<void>
+   welcomeQr?: WelcomeQrWithUrl
+-  /** slothfulchat-web: chatmail relay picked in the onboarding dropdown;
+-   * undefined = the default relay. Ignored whenever a scanned
+-   * `dcaccount:`/`dclogin:` QR pins the server. */
+-  selectedRelayHost?: string
+-  setSelectedRelayHost: (value?: string) => void
++  /** slothfulchat-web: relays picked on the "new profile" screen, see
++   * mainRelay(). Ignored whenever a scanned `dclogin:` (or madmail) QR pins
++   * the server. */
++  relays: OnboardingRelay[]
++  setRelays: Dispatch<SetStateAction<OnboardingRelay[]>>
+ }
+ 
+ /*
+@@ -45,6 +77,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
+   const context = useContext(InstantOnboardingContext)
+   const { openDialog } = useDialog()
+   const { secureJoin } = useSecureJoin()
++  const tx = useTranslationFunction()
+ 
+   if (!context) {
+     throw new Error(
+@@ -57,21 +90,72 @@ export default function useInstantOnboarding(): InstantOnboarding {
+     setWelcomeQr,
+     showInstantOnboarding,
+     welcomeQr,
+-    selectedRelayHost,
+-    setSelectedRelayHost,
++    relays,
++    setRelays,
+   } = context
+ 
+   const startInstantOnboardingFlow = useCallback(
+     async (qrWithUrl?: WelcomeQrWithUrl) => {
+       setShowInstantOnboarding(true)
+ 
++      // slothfulchat-web: a scanned relay QR (`dcaccount:`) no longer pins the
++      // server, it joins the relay list on the "new profile" screen and the
++      // user picks the rest. madmail (webimap) QRs still pin theirs.
++      if (qrWithUrl?.qr.kind === 'account' && !(qrWithUrl.qr as any).webimap) {
++        const { domain } = qrWithUrl.qr
++        const { url } = qrWithUrl
++        setRelays(prev =>
++          prev.length >= MAX_RELAYS ||
++          prev.some(r => 'host' in r && r.host === domain)
++            ? prev
++            : [...prev, { host: domain, url }]
++        )
++        setWelcomeQr(undefined)
++        return
++      }
++
+       // Since a QR code can be scanned by the user in literally any situation,
+       // also when the user already has an existing account and is logged in, we
+       // can store it here temporarily, adjust the UI state and bring the user
+       // back to the QR code process again when everything is ready.
+       setWelcomeQr(qrWithUrl)
+     },
+-    [setWelcomeQr, setShowInstantOnboarding]
++    [setWelcomeQr, setShowInstantOnboarding, setRelays]
++  )
++
++  /** slothfulchat-web: add the relays beyond the main one once the profile
++   * exists. Runs in the background after the main screen is up (each one is a
++   * login of its own and takes seconds); failures are reported together and
++   * never undo the profile. */
++  const addExtraRelays = useCallback(
++    async (accountId: number, extra: OnboardingRelay[]) => {
++      const failed: string[] = []
++      for (const relay of extra) {
++        try {
++          if ('addr' in relay) {
++            await BackendRemote.rpc.addOrUpdateTransport(
++              accountId,
++              defaultCredentials({
++                addr: relay.addr,
++                password: relay.password,
++              } as Credentials)
++            )
++          } else {
++            await BackendRemote.rpc.addTransportFromQr(accountId, relayQr(relay))
++          }
++        } catch (error) {
++          failed.push(
++            `${'addr' in relay ? relay.addr : relay.host}: ${unknownErrorToString(error)}`
++          )
++        }
++      }
++      if (failed.length > 0) {
++        openDialog(AlertDialog, {
++          message: `${tx('onboarding_relays_not_added')}\n\n${failed.join('\n')}`,
++        })
++      }
++    },
++    [openDialog, tx]
+   )
+ 
+   /**
+@@ -90,15 +174,26 @@ export default function useInstantOnboarding(): InstantOnboarding {
+       // flow at their own chatmail relay via SLOTHFUL_DEFAULT_CHATMAIL
+       // (baked into window.__slothfulConfig.defaultChatmailInstance). When
+       // that isn't set we keep upstream's default instance.
+-      let configurationQR =
++      let configurationQR: string | null =
+         instanceDefaultChatmailQr() ?? `dcaccount:${DEFAULT_CHATMAIL_HOSTNAME}`
+ 
+-      // slothfulchat-web: a relay picked in the onboarding dropdown replaces
+-      // the default signup target. Deliberately BEFORE the welcomeQr handling:
+-      // a scanned dcaccount:/dclogin: QR pins the server and must keep
+-      // winning over the dropdown (which isn't shown in those flows anyway).
+-      if (selectedRelayHost && selectedRelayHost !== defaultRelayHost()) {
+-        configurationQR = `dcaccount:${selectedRelayHost}`
++      // slothfulchat-web: the relays picked on the "new profile" screen
++      // replace the default signup target: the address is created on the main
++      // one (a chatmail signup, or a login for a classic email account), the
++      // rest are added once it exists. Deliberately BEFORE the welcomeQr
++      // handling: a scanned dclogin:/madmail QR pins the server and must keep
++      // winning (the picker isn't shown in those flows anyway).
++      let credentials: Credentials | null = null
++      const main = mainRelay(relays)
++      let extra = relays.filter(relay => relay !== main)
++      if (main && 'addr' in main) {
++        credentials = defaultCredentials({
++          addr: main.addr,
++          password: main.password,
++        } as Credentials)
++        configurationQR = null
++      } else if (main) {
++        configurationQR = relayQr(main)
+       }
+ 
+       if (welcomeQr) {
+@@ -110,11 +205,15 @@ export default function useInstantOnboarding(): InstantOnboarding {
+           // After parsing it'll automatically configure the account with the
+           // appropriate keys for login, e.g. `addr` and `password`
+           configurationQR = welcomeQr.url
++          credentials = null
++          extra = []
+         } else if (welcomeQr.qr.kind === 'login') {
+           // The credentails come from the scanned DCLOGIN qr code
+           // the account has to already exist on the mail server
+           // the host and credentials are extracted from URL
+           configurationQR = welcomeQr.url
++          credentials = null
++          extra = []
+         } else {
+           // Exhaustivity check, these QR codes just use default configurationQR
+           const _: VerifyContactQr | VerifyGroupQr | JoinBroadcastQr | never =
+@@ -126,7 +225,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
+         // show the configure progress dialog where
+         // the actual account creation happens
+         openDialog(ConfigureProgressDialog, {
+-          credentials: null,
++          credentials,
+           qrCode: configurationQR,
+           onSuccess: async () => {
+             // configure was successful so if there was an invite
+@@ -154,6 +253,8 @@ export default function useInstantOnboarding(): InstantOnboarding {
+                 }
+               }
+ 
++              void addExtraRelays(accountId, extra)
++
+               // Return optional id of chat here so the UI can switch to it
+               resolve(chatId)
+             } catch (error: any) {
+@@ -172,7 +273,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
+             // reachability/CORS probe was removed: every heuristic variant
+             // misdiagnosed working servers, e.g. slow servers read as
+             // unreachable.)
+-            if (/^webimapaccount:/i.test(configurationQR)) {
++            if (configurationQR && /^webimapaccount:/i.test(configurationQR)) {
+               const host = configurationQR.replace(/^webimapaccount:/i, '')
+               const summary = String(error)
+                 .split(/\n\s*stack backtrace:/i)[0]
+@@ -195,13 +296,13 @@ export default function useInstantOnboarding(): InstantOnboarding {
+         })
+       })
+     },
+-    [openDialog, secureJoin, welcomeQr, selectedRelayHost]
++    [openDialog, secureJoin, welcomeQr, relays, addExtraRelays]
+   )
+ 
+   const resetInstantOnboarding = () => {
+     setWelcomeQr(undefined)
+     setShowInstantOnboarding(false)
+-    setSelectedRelayHost(undefined)
++    setRelays([])
+   }
+ 
+   return {
+@@ -210,7 +311,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
+     showInstantOnboarding,
+     startInstantOnboardingFlow,
+     welcomeQr,
+-    selectedRelayHost,
+-    setSelectedRelayHost,
++    relays,
++    setRelays,
+   }
+ }
+diff --git a/packages/frontend/src/utils/slothfulInstanceConfig.ts b/packages/frontend/src/utils/slothfulInstanceConfig.ts
+index 93a4e738ae8c5e7fd90813c4dcac77208cd5f91d..0318bd1e63f57247fa1e5c47340e15c86094eb61 100644
+--- a/packages/frontend/src/utils/slothfulInstanceConfig.ts
++++ b/packages/frontend/src/utils/slothfulInstanceConfig.ts
+@@ -83,6 +83,9 @@ export type AnalyticsUi = {
+   enabled: () => boolean
+   setEnabled: (on: boolean) => void
+   showInfo: () => Promise<void>
++  /** the stored consent; 'unset' = never asked (the welcome screen then
++   * preselects nothing). Optional: older runtimes don't provide it. */
++  choice?: () => 'unset' | 'granted' | 'denied'
+ }
+ 
+ /**

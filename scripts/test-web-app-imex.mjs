@@ -10,7 +10,7 @@ import { stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright'
-import { startServers } from './harness.mjs'
+import { onboardClassicEmail, onboardToProfileKind, startServers } from './harness.mjs'
 
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
 const APP_PORT = Number(process.env.APP_PORT ?? 8642)
@@ -64,15 +64,7 @@ async function waitForBoot(p = page) {
 
 // UI: manual/classic login (same selector flow as test-web-app-e2e.mjs)
 async function loginViaUI({ email, password }) {
-  const create = page.getByTestId('create-account-button')
-  const other = page.getByTestId('other-login-button')
-  await create.or(other).first().waitFor({ state: 'visible', timeout: 90_000 })
-  if (await create.isVisible()) await create.click()
-  await other.click()
-  await page.getByTestId('manual-email-login').click()
-  await page.locator('#addr').fill(email)
-  await page.locator('#password').fill(password)
-  await page.getByTestId('login-with-credentials').click()
+  await onboardClassicEmail(page, { email, password })
   await page
     .locator('#new-chat-button')
     .waitFor({ state: 'visible', timeout: 150_000 })
@@ -129,10 +121,7 @@ try {
 
   // 4. IMPORT via the real welcome-screen UI, feeding the downloaded tar into
   // our runtime's showOpenFileDialog file input via playwright's file chooser
-  await page
-    .getByTestId('have-account-button')
-    .waitFor({ state: 'visible', timeout: 90_000 })
-  await page.getByTestId('have-account-button').click()
+  await onboardToProfileKind(page)
   const fileChooserPromise = page.waitForEvent('filechooser', {
     timeout: 30_000,
   })
@@ -184,10 +173,7 @@ try {
   )
   await waitForBoot(page2)
   console.log('OK: persistent core booted (fresh OPFS)')
-  await page2
-    .getByTestId('have-account-button')
-    .waitFor({ state: 'visible', timeout: 90_000 })
-  await page2.getByTestId('have-account-button').click()
+  await onboardToProfileKind(page2)
   const fileChooserPromise2 = page2.waitForEvent('filechooser', {
     timeout: 30_000,
   })

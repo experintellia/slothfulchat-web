@@ -7,7 +7,7 @@
 //
 // Modeled on scripts/test-web-app-e2e.mjs (servers, eval fix, login flow).
 import { chromium } from 'playwright'
-import { startServers } from './harness.mjs'
+import { onboardClassicEmail, startServers } from './harness.mjs'
 
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8641)
 const APP_PORT = Number(process.env.APP_PORT ?? 8642)
@@ -55,15 +55,7 @@ try {
   console.log('OK: wasm core booted (persist on)')
 
   // 1. UI login (selectors from test-web-app-e2e.mjs)
-  const create = page.getByTestId('create-account-button')
-  const other = page.getByTestId('other-login-button')
-  await create.or(other).first().waitFor({ state: 'visible', timeout: 90_000 })
-  if (await create.isVisible()) await create.click()
-  await other.click()
-  await page.getByTestId('manual-email-login').click()
-  await page.locator('#addr').fill(alice.email)
-  await page.locator('#password').fill(alice.password)
-  await page.getByTestId('login-with-credentials').click()
+  await onboardClassicEmail(page, { email: alice.email, password: alice.password })
   await page
     .locator('#new-chat-button')
     .waitFor({ state: 'visible', timeout: 150_000 })

@@ -11,7 +11,7 @@
 // Modeled on scripts/test-web-app-e2e.mjs (serve.mjs, avoid-eval freeze,
 // __coreSystemInfo boot gate).
 import { chromium } from 'playwright'
-import { startServers } from './harness.mjs'
+import { onboardToProfileKind, startServers } from './harness.mjs'
 
 const APP_PORT = Number(process.env.APP_PORT ?? 8655)
 const SENTINEL = 'SLOTHTX_SENTINEL_42'
@@ -37,8 +37,10 @@ try {
   await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
   console.log('OK: wasm core booted')
 
-  // The onboarding screen renders translated text and populates the tx registry.
-  const sel = '[data-testid=other-login-button],[data-testid=create-account-button]'
+  // The onboarding renders translated text and populates the tx registry; the
+  // profile-kind step's "Create New Profile" title is a single-key string.
+  await onboardToProfileKind(page)
+  const sel = '[data-testid=create-account-button] strong'
   await page.locator(sel).first().waitFor({ state: 'visible', timeout: 90_000 })
 
   // Resolve the tx key behind a visible string, from the editor's live registry.

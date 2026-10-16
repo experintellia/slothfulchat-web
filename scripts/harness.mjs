@@ -7,9 +7,9 @@
 // That is what lives here. What each script then *does* with the browser is
 // its own business and stays in its own file.
 //
-// Deliberately NOT here: the login-via-UI flow. Only four scripts have one and
-// two of those drive a different onboarding path, so a shared version would be
-// a parameter per caller.
+// Also here: the two onboarding walks most UI-login scripts share (desktop/1070
+// turned the old one-screen login into steps): onboardToProfileKind() and
+// onboardClassicEmail().
 //
 // Self-check: node --test scripts/harness.test.mjs
 import { spawn } from 'node:child_process'
@@ -171,4 +171,44 @@ export async function assertDialogRendered(dialog, panelWidth, label) {
   if (box.height > view.height) fail(`card is ${box.height}px tall — taller than the screen`)
   const panelBg = await panel.evaluate(e => getComputedStyle(e).backgroundColor)
   if (alphaOf(panelBg) < 1) fail(`card background is ${panelBg} — the page shows through it`)
+}
+
+/**
+ * Click through the onboarding's welcome and bridge steps (desktop/1070) up to
+ * the profile-kind step. Stops early when the app is already further along:
+ * adding a profile starts on that step, and a pending instant-onboarding flow
+ * starts on the new-profile screen. Returns which one is showing.
+ *
+ * @returns {Promise<'kind' | 'profile'>}
+ */
+export async function onboardToProfileKind(page, timeout = 90_000) {
+  const next = page.getByTestId('onboarding-next')
+  const kind = page.getByTestId('create-account-button')
+  const profile = page.getByTestId('login-button')
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    if (await kind.isVisible()) return 'kind'
+    if (await profile.isVisible()) return 'profile'
+    if (await next.isVisible()) await next.click().catch(() => {})
+    await page.waitForTimeout(200)
+  }
+  throw new Error('onboarding: never reached the profile-kind step')
+}
+
+/**
+ * Create a profile on a classic email account through the onboarding: new
+ * profile → relay chooser → "Use a classic email account" → its login. Leaves
+ * the account configuring; wait for the main screen yourself.
+ */
+export async function onboardClassicEmail(page, { email, password }) {
+  if ((await onboardToProfileKind(page)) === 'kind') {
+    await page.getByTestId('create-account-button').click()
+  }
+  await page.locator('#displayName').fill(email.split('@')[0])
+  await page.getByTestId('relay-picker-button').click()
+  await page.getByTestId('relay-option-classic').click()
+  await page.locator('#classicAddr').fill(email)
+  await page.locator('#classicPassword').fill(password)
+  await page.getByTestId('classic-relay-add').click()
+  await page.getByTestId('login-button').click()
 }

@@ -1,9 +1,11 @@
-// E2E test for the instant-onboarding relay picker (patch desktop/1023): the
-// "create profile" screen shows a row with the chosen chatmail relay and a
-// button that opens a dialog to change it. The dialog lists the directory
-// relays (default first), probes each over the WS→TCP bridge when it opens
-// (reachability + a round-trip latency), offers an "Other…" hostname field, and
-// the privacy-policy consent link follows the selection.
+// E2E test for the onboarding's relay choice (patches desktop/1023, 1070):
+// welcome → bridge → profile kind → new profile. Nothing is preselected; the
+// relay chooser lists the directory relays (default first), probes each over
+// the WS→TCP bridge when it opens (reachability + a round-trip latency), lets
+// the user pick up to three and type another, and every picked relay — the
+// typed one too — gets measured on the profile screen. The first picked relay
+// is the main one until another is made main, and the consent opens a list of
+// each picked relay's privacy policy.
 //
 // Both network dependencies are mocked so the test is hermetic and offline:
 //  - the directory fetch (chatmail-relays-mirror relays.json) is a fixture:
@@ -115,27 +117,39 @@ const fail = msg => {
 
 await page.goto(`http://localhost:${APP_PORT}/main.html`)
 
-// welcome screen → "Create New Profile" → instant onboarding screen
-await page.getByTestId('create-account-button').click({ timeout: 60_000 })
+// step 1: welcome (no analytics in a test build, so Next is enabled)
+await page.getByTestId('onboarding-next').click({ timeout: 60_000 })
 
-// the picker row appears once the (mocked) directory is fetched; it shows the
-// default relay and only needs the directory (>= 2 relays), no probing yet
+// step 2: bridge. The probe of the local bridge is mocked to answer, so the
+// "This device" tile (the one in use) reads reachable; Next keeps it, no reload.
+await page.getByTestId('bridge-tile-local').waitFor({ timeout: 15_000 })
+await page
+  .getByTestId('bridge-status')
+  .filter({ hasText: /Reachable, \d+ ms/ })
+  .waitFor({ timeout: 15_000 })
+await page.getByTestId('onboarding-next').click()
+
+// step 3: profile kind → new profile
+await page.getByTestId('create-account-button').click({ timeout: 15_000 })
+
+// step 4: nothing preselected, no consent until a relay is picked
 const trigger = page.getByTestId('relay-picker-button')
 await trigger.waitFor({ state: 'visible', timeout: 30_000 })
-if (!directoryRequested) fail('picker visible but directory was never fetched')
-if (!/nine\.testrun\.org/.test(await trigger.textContent()))
-  fail(`default relay not shown on the picker row: ${await trigger.textContent()}`)
-
-// consent link starts on the default relay
-const consent = page.locator('a', { hasText: 'Privacy Policy' })
-if (!/nine\.testrun\.org/.test((await consent.getAttribute('href')) || ''))
-  fail('consent link does not point at the default relay initially')
-
+if ((await page.locator('[data-testid^="onboarding-relay-"]').count()) !== 0)
+  fail('a relay was preselected')
+if ((await page.getByTestId('privacy-policies-button').count()) !== 0)
+  fail('consent shown before any relay was picked')
 // lazy: nothing has been probed before the dialog is opened
 if (relayProbed) fail('relays were probed before the dialog was opened (not lazy)')
 
-// open the dialog → the directory relays are listed, junk skipped
+// creating without a relay is refused with a hint
+await page.locator('#displayName').fill('Alice')
+await page.getByTestId('login-button').click()
+await page.getByText('Pick at least one relay.').waitFor({ timeout: 5_000 })
+
+// open the chooser → the directory relays are listed, junk skipped
 await trigger.click()
+if (!directoryRequested) fail('chooser opened but the directory was never fetched')
 const optExample = page.getByTestId('relay-option-example.org')
 const optBlocked = page.getByTestId('relay-option-relay.blocked.example')
 const optInvalid = page.getByTestId('relay-option-relay.does-not-exist.invalid')
@@ -166,31 +180,62 @@ await optInvalid.filter({ hasText: 'unreachable' }).waitFor({ timeout: 15_000 })
 if ((await optInvalid.getAttribute('aria-disabled')) !== 'true')
   fail('unreachable relay is not disabled')
 
-// select example.org → dialog closes, consent link follows
+// pick two: the dialog stays open and counts
 await optExample.click()
-let href = await consent.getAttribute('href')
-console.log('consent link after selecting example.org:', href)
-if (href !== 'https://example.org/privacy.html')
-  fail(`consent link did not follow the selection: ${href}`)
+await page.getByTestId('relay-option-nine.testrun.org').click()
+await page.getByText('Choose relays (2 of 3)').waitFor({ timeout: 5_000 })
 
-// the "Other…" field accepts a hand-typed relay
-await trigger.click()
+// a typed relay outside the directory is the third
 await page.getByTestId('relay-option-other').click()
 await page.getByTestId('relay-custom-input').fill('custom.relay.example')
 await page.getByTestId('relay-custom-confirm').click()
-href = await consent.getAttribute('href')
-console.log('consent link after typing a custom relay:', href)
-if (href !== 'https://custom.relay.example/privacy.html')
-  fail(`consent link did not follow the custom relay: ${href}`)
+await page.getByText('Choose relays (3 of 3)').waitFor({ timeout: 5_000 })
+await page.getByTestId('relay-picker-done').click()
 
-// switching back to the default restores the stock link
-await trigger.click()
-await page.getByTestId('relay-option-nine.testrun.org').click()
-if (!/nine\.testrun\.org\/privacy\.html/.test((await consent.getAttribute('href')) || ''))
-  fail('consent link did not switch back to the default relay')
+// back on the profile screen: all three listed in pick order, the first is
+// main, and the typed relay is measured too (it resolves to nothing here)
+const rows = page.locator('[data-testid^="onboarding-relay-"]')
+await rows.nth(2).waitFor({ timeout: 5_000 })
+const order = await rows.evaluateAll(els => els.map(e => e.dataset.testid))
+if (order.join() !== ['example.org', 'nine.testrun.org', 'custom.relay.example'].map(h => 'onboarding-relay-' + h).join())
+  fail(`unexpected relay order: ${order}`)
+if (!/Main/.test(await rows.nth(0).textContent()))
+  fail('first picked relay is not marked main')
+await page
+  .getByTestId('onboarding-relay-custom.relay.example')
+  .filter({ hasText: 'unreachable' })
+  .waitFor({ timeout: 15_000 })
+await page
+  .getByTestId('onboarding-relay-example.org')
+  .locator('text=/\\d+ ms/')
+  .waitFor({ timeout: 15_000 })
+
+// "Make main" moves a relay to the front
+await page
+  .getByTestId('onboarding-relay-nine.testrun.org')
+  .getByRole('button', { name: 'Make main' })
+  .click()
+if (!/Main/.test(await rows.nth(0).textContent()) || !/nine\.testrun\.org/.test(await rows.nth(0).textContent()))
+  fail('Make main did not move the relay to the front')
+
+// the consent opens each picked relay's privacy policy, main first
+await page.getByTestId('privacy-policies-button').click()
+const policies = page.getByTestId('privacy-policies-dialog').locator('a')
+await policies.first().waitFor({ timeout: 5_000 })
+const hrefs = await policies.evaluateAll(els => els.map(e => e.getAttribute('href')))
+const want = ['nine.testrun.org', 'example.org', 'custom.relay.example'].map(h => `https://${h}/privacy.html`)
+if (hrefs.join() !== want.join()) fail(`privacy policy links: ${hrefs}`)
+await page.keyboard.press('Escape')
+
+// removing a relay
+await page
+  .getByTestId('onboarding-relay-custom.relay.example')
+  .getByRole('button', { name: 'Remove relay' })
+  .click()
+if ((await rows.count()) !== 2) fail('relay was not removed')
 
 console.log(
-  'PASS: relay dialog lists relays, probes lazily (latency vs unreachable — a refused/blocked probe is never a false success), custom relay + consent link follow'
+  'PASS: onboarding steps, no preselection, chooser probes lazily (latency vs unreachable — a refused/blocked probe is never a false success), picks up to 3 incl. a typed relay that gets measured, make main, privacy policies, remove'
 )
 clearTimeout(watchdog)
 await browser.close()

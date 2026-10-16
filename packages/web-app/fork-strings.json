@@ -83,6 +83,270 @@
   "slothful_welcome_selfhost": {
     "message": "And it's yours to run: host your own instance, or fork it and change whatever you like 👉 https://github.com/experintellia/slothfulchat-web"
   },
+  "onboarding_intro": {
+    "message": "An experimental Delta Chat fork that runs entirely in your browser and adds plenty of features of its own."
+  },
+  "onboarding_whats_different": {
+    "message": "What's different"
+  },
+  "onboarding_usp_encrypted": {
+    "message": "End-to-end encrypted"
+  },
+  "onboarding_usp_encrypted_explain": {
+    "message": "Only you and the people you write to can read your messages. Not the relays, not the bridge."
+  },
+  "onboarding_usp_no_phone": {
+    "message": "No phone number"
+  },
+  "onboarding_usp_no_phone_explain": {
+    "message": "Get a profile in seconds. No sign-up form, no personal details."
+  },
+  "onboarding_usp_no_server": {
+    "message": "No central server"
+  },
+  "onboarding_usp_no_server_explain": {
+    "message": "Your messages travel over independent relays you choose, and you can use several at once."
+  },
+  "onboarding_usp_no_install": {
+    "message": "Nothing to install"
+  },
+  "onboarding_usp_no_install_explain": {
+    "message": "Chats with anyone on Delta Chat. Your data stays in this browser, so make a backup."
+  },
+  "onboarding_bridge_title": {
+    "message": "Bridge"
+  },
+  "onboarding_bridge_explain": {
+    "message": "Browsers can't talk to mail servers directly, so traffic goes through a bridge. It is encrypted before it gets there; the bridge can't read your messages."
+  },
+  "onboarding_bridge_local": {
+    "message": "This device"
+  },
+  "onboarding_bridge_hosted": {
+    "message": "Hosted"
+  },
+  "onboarding_bridge_url": {
+    "message": "Bridge address"
+  },
+  "onboarding_bridge_enter_custom": {
+    "message": "Enter the address of your bridge."
+  },
+  "onboarding_bridge_custom": {
+    "message": "Custom"
+  },
+  "onboarding_bridge_checking": {
+    "message": "Checking…"
+  },
+  "onboarding_bridge_reachable": {
+    "message": "Reachable, %1$s ms"
+  },
+  "onboarding_bridge_unreachable": {
+    "message": "Not reachable"
+  },
+  "onboarding_bridge_invalid": {
+    "message": "Enter a bridge address starting with wss:// or ws://."
+  },
+  "onboarding_bridge_down_warning": {
+    "message": "This bridge isn't reachable right now. New profiles need it to connect; a madmail server doesn't."
+  },
+  "onboarding_bridge_start_local": {
+    "message": "Start it on this device, then come back:"
+  },
+  "onboarding_stats_title": {
+    "message": "Anonymous usage statistics"
+  },
+  "onboarding_stats_explain": {
+    "message": "Helps us see which steps people get stuck on. No message content, no addresses, no cookies."
+  },
+  "onboarding_stats_whats_collected": {
+    "message": "What's collected"
+  },
+  "onboarding_stats_share": {
+    "message": "Share"
+  },
+  "onboarding_stats_dont_share": {
+    "message": "Don't share"
+  },
+  "onboarding_stats_required": {
+    "message": "Choose whether to share statistics to continue."
+  },
+  "onboarding_stats_none": {
+    "message": "This instance collects no usage statistics."
+  },
+  "onboarding_profile_kind_title": {
+    "message": "What kind of profile?"
+  },
+  "onboarding_new_profile_explain": {
+    "message": "Ready in a few seconds, on up to three relays of your choice."
+  },
+  "onboarding_have_profile": {
+    "message": "I already have a profile"
+  },
+  "onboarding_import_backup_explain": {
+    "message": "Restore a profile from a .tar backup file."
+  },
+  "onboarding_experimental": {
+    "message": "Experimental"
+  },
+  "onboarding_madmail_explain": {
+    "message": "Connects over plain HTTPS. No bridge needed, but only works with madmail servers that have webimap enabled."
+  },
+  "onboarding_scan_explain": {
+    "message": "Got an invite from someone, or a relay's QR code? Scan it to set up a profile with it."
+  },
+  "onboarding_scan": {
+    "message": "Scan invite code or relay QR"
+  },
+  "onboarding_relays_title": {
+    "message": "Relays"
+  },
+  "onboarding_relays_explain": {
+    "message": "Relays carry your messages. Pick 3, so you stay reachable when one is down or blocked."
+  },
+  "onboarding_relays_auto": {
+    "message": "Decide for me"
+  },
+  "onboarding_relays_auto_explain": {
+    "message": "Picks good relays for your network automatically. Will become the default."
+  },
+  "onboarding_coming_soon": {
+    "message": "Coming soon"
+  },
+  "onboarding_relays_manual": {
+    "message": "Choose relays myself"
+  },
+  "onboarding_relays_manual_explain": {
+    "message": "Up to 3. We recommend 3."
+  },
+  "onboarding_relays_choose": {
+    "message": "Choose relays…"
+  },
+  "onboarding_relays_change": {
+    "message": "Add or change relays…"
+  },
+  "onboarding_relays_missing": {
+    "message": "Pick at least one relay."
+  },
+  "onboarding_relays_recommend": {
+    "message": "%1$s of %2$s relays picked. Add more so you stay reachable when one is down."
+  },
+  "onboarding_relays_only_classic": {
+    "message": "No chatmail relay picked. Phones won't get reliable push notifications; add at least one chatmail relay."
+  },
+  "onboarding_relays_not_added": {
+    "message": "Your profile is ready, but these relays couldn't be added. You can add them later in Settings → Relays."
+  },
+  "onboarding_relay_main": {
+    "message": "Main"
+  },
+  "onboarding_relay_classic": {
+    "message": "Classic email"
+  },
+  "onboarding_relay_make_main": {
+    "message": "Make main"
+  },
+  "onboarding_relay_remove": {
+    "message": "Remove relay"
+  },
+  "onboarding_relay_in_list": {
+    "message": "In your relays"
+  },
+  "onboarding_relay_scan": {
+    "message": "Add relay from QR code"
+  },
+  "onboarding_measuring": {
+    "message": "measuring…"
+  },
+  "onboarding_unreachable": {
+    "message": "unreachable"
+  },
+  "onboarding_consent": {
+    "message": "By continuing you accept the %1$s."
+  },
+  "onboarding_consent_link": {
+    "message": "privacy policies of your relays"
+  },
+  "onboarding_policies_title": {
+    "message": "Privacy policies"
+  },
+  "onboarding_policies_explain": {
+    "message": "Your profile is created on each of these relays. Each one has its own privacy policy."
+  },
+  "onboarding_policies_classic": {
+    "message": "Classic email: your provider's own terms apply."
+  },
+  "onboarding_invite_relays": {
+    "message": "Relays from this invite. You can use them for your profile too:"
+  },
+  "onboarding_choose_relays_title": {
+    "message": "Choose relays (%1$s of %2$s)"
+  },
+  "onboarding_classic_email_open": {
+    "message": "Use a classic email account…"
+  },
+  "onboarding_classic_email_title": {
+    "message": "Classic email as a relay"
+  },
+  "onboarding_classic_email_new_account": {
+    "message": "Create a new email account just for this. Don't use one you already use for normal email: your regular mail would get mixed into your chats, and deleting chat messages deletes them from the mailbox."
+  },
+  "onboarding_classic_upsides": {
+    "message": "Upsides"
+  },
+  "onboarding_classic_downsides": {
+    "message": "Downsides"
+  },
+  "onboarding_classic_up_kept": {
+    "message": "Your own messages aren't deleted automatically."
+  },
+  "onboarding_classic_up_unblocked": {
+    "message": "Works where chatmail relays are blocked or unreachable: off-grid, censored networks, too far away."
+  },
+  "onboarding_classic_up_other_service": {
+    "message": "Can run on a different service under the hood, like yggmail."
+  },
+  "onboarding_classic_up_no_expiry": {
+    "message": "The address doesn't expire when you're inactive; chatmail relays remove unused accounts after a while."
+  },
+  "onboarding_classic_up_own_domain": {
+    "message": "Your own domain or server: no dependence on a relay operator."
+  },
+  "onboarding_classic_down_cleanup": {
+    "message": "You have to delete old messages yourself; a full mailbox stops new ones arriving."
+  },
+  "onboarding_classic_down_push": {
+    "message": "No reliable push notifications on phones, so keep at least one chatmail relay."
+  },
+  "onboarding_classic_down_limits": {
+    "message": "Providers cap sending; big groups can hit the daily limit."
+  },
+  "onboarding_classic_down_lockout": {
+    "message": "Providers may flag the traffic as spam and lock the account."
+  },
+  "onboarding_classic_down_spam": {
+    "message": "Anyone can send it unencrypted mail, so expect spam in contact requests."
+  },
+  "onboarding_classic_down_metadata": {
+    "message": "The provider sees who you write to and when (message content stays encrypted)."
+  },
+  "onboarding_classic_down_setup": {
+    "message": "Setup can need app passwords or turning on IMAP."
+  },
+  "onboarding_classic_bridge_warning": {
+    "message": "Your bridge (%1$s) probably only reaches the chatmail relays its operator allows, not your email provider. Pick the bridge on your own device in the bridge step for this."
+  },
+  "onboarding_classic_addr_placeholder": {
+    "message": "new-address@provider.example"
+  },
+  "onboarding_classic_password_placeholder": {
+    "message": "Password or app password"
+  },
+  "onboarding_classic_invalid": {
+    "message": "Enter a full email address, like name@provider.example, and its password."
+  },
+  "onboarding_classic_add": {
+    "message": "Add as relay"
+  },
   "download_may_still_arrive": {
     "message": "May still be arriving — try again in a few minutes"
   },

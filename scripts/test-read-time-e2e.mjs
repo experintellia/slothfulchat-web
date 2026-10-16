@@ -5,7 +5,7 @@
 //
 // Modeled on scripts/test-web-app-e2e.mjs (servers, eval fix, login flow).
 import { chromium } from 'playwright'
-import { startServers } from './harness.mjs'
+import { onboardClassicEmail, startServers } from './harness.mjs'
 
 const PROXY_PORT = Number(process.env.PROXY_PORT ?? 8651)
 const APP_PORT = Number(process.env.APP_PORT ?? 8652)
@@ -43,15 +43,7 @@ async function loginViaUI({ email, password }, { firstAccount }) {
     await add.hover()
     await add.click()
   }
-  const create = page.getByTestId('create-account-button')
-  const other = page.getByTestId('other-login-button')
-  await create.or(other).first().waitFor({ state: 'visible', timeout: 90_000 })
-  if (await create.isVisible()) await create.click()
-  await other.click()
-  await page.getByTestId('manual-email-login').click()
-  await page.locator('#addr').fill(email)
-  await page.locator('#password').fill(password)
-  await page.getByTestId('login-with-credentials').click()
+  await onboardClassicEmail(page, { email, password })
   await page
     .locator('#new-chat-button')
     .waitFor({ state: 'visible', timeout: 150_000 })

@@ -296,7 +296,8 @@ exists:
   signals (onboarding welcome, link-preview accept/dismiss, community-channel
   use), the Diagnostics button, and the consent surfaces (welcome-screen opt-out
   checkbox, Settings → Advanced toggle, privacy-policy links in About/welcome).
-  `desktop/1024`, `desktop/1025`, `desktop/1026`
+  `desktop/1024`, `desktop/1025`, `desktop/1026` (the welcome-screen checkbox
+  is now an explicit Share / Don't share step, `desktop/1070`)
 - **Attachment details & failure reason in Message Info** — file name, MIME
   type, size, image/video dimensions, audio/video duration; delivery failures
   show as an error banner, and clicking a message's failed-status icon opens
@@ -393,6 +394,37 @@ exists:
   a picked/typed relay skips the classic-email autoconfig probes: the core
   tries the standard chatmail server convention first and only autoconfigures
   if that doesn't connect (see `core/1013`). `desktop/1023`, `core/1013`
+  The single-relay row described here is what `desktop/1070` replaced with a
+  list of up to three; the dialog and its probing are unchanged.
+- **Step-by-step onboarding with up to three relays** — the welcome screen
+  becomes four steps. (1) What the app is (four selling points, a "What's
+  different" link to the README) and, on instances built with analytics, an
+  explicit Share / Don't share choice that replaces the opt-out checkbox of
+  `desktop/1026`: nothing is preselected and Next waits for it; instances
+  without analytics say they collect none. (2) The bridge: three tiles (this
+  device, hosted, custom) over the runtime's existing bridge list, a hosted
+  dropdown that shows each operator's description and live ping (a native
+  popover, so it never stretches the dialog's scroll area), and a connection
+  test with a warning. Switching reloads the app, as the runtime's bridge
+  dialog always did; a sessionStorage marker brings the user back to step 3.
+  (3) New profile, "I already have a profile" (backup import), or a madmail
+  server, plus scanning an invite or relay QR. (4) The new-profile screen:
+  nothing is preselected; "Decide for me" is a disabled placeholder for an
+  automatic choice to come, "Choose relays myself" opens the relay picker of
+  `desktop/1023` in a multi-select mode (up to three, three recommended),
+  which also leads to adding a classic email account, with the trade-offs
+  listed and a warning that hosted bridges rarely reach mail providers. The
+  profile is created on the first chatmail relay ("Main", changeable with
+  "Make main"), the others are added once it exists, in the background,
+  reporting any that fail. Every picked relay is pinged, typed and scanned
+  ones too; a QR button next to the picker adds a scanned relay. Scanning a
+  `dcaccount:` QR no longer pins the server, it joins the list; an invite
+  offers the relays of its `a=` addresses that are in the directory. The
+  consent names all picked relays and opens a list of their privacy policies.
+  The classic-email entry ("manual login") and the "other servers" dialog are
+  gone from onboarding: a classic account is now one of the picked relays.
+  The onboarding dialogs go full-screen on phones via `desktop/1009`'s list.
+  `desktop/1070`
 - **Add relays from a list, contact scan, or typed domain in the Transports
   dialog** — upstream's "Add transport" only scans a QR code (now labeled
   "Scan relay QR code…" so that's obvious). A second button, "Add from relay

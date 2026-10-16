@@ -10,7 +10,7 @@ import { mkdir, rm } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
 import { chromium } from 'playwright'
-import { startServers } from './harness.mjs'
+import { onboardClassicEmail, startServers } from './harness.mjs'
 
 // minimal PNG encoder: 48x48 two-tone image so profile-photo avatars are
 // visually distinct from initial-block fallbacks in the screenshots
@@ -117,15 +117,7 @@ async function loginViaUI({ email, password }, { firstAccount }) {
     await add.hover()
     await add.click()
   }
-  const create = page.getByTestId('create-account-button')
-  const other = page.getByTestId('other-login-button')
-  await create.or(other).first().waitFor({ state: 'visible', timeout: 90_000 })
-  if (await create.isVisible()) await create.click()
-  await other.click()
-  await page.getByTestId('manual-email-login').click()
-  await page.locator('#addr').fill(email)
-  await page.locator('#password').fill(password)
-  await page.getByTestId('login-with-credentials').click()
+  await onboardClassicEmail(page, { email, password })
   await page
     .locator('#new-chat-button')
     .waitFor({ state: 'visible', timeout: 150_000 })
@@ -230,9 +222,7 @@ try {
   })
 
   const chatList = page.locator('#new-chat-button')
-  const welcome = page
-    .getByTestId('create-account-button')
-    .or(page.getByTestId('other-login-button'))
+  const welcome = page.getByTestId('onboarding-dialog')
   await chatList.or(welcome).first().waitFor({ state: 'visible', timeout: 90_000 })
   if (!(await chatList.isVisible())) await seed()
 

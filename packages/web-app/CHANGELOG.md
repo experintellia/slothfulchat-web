@@ -1,5 +1,11 @@
 # Changelog
 
+- **A new, step-by-step onboarding.** Setting up starts with what the app is
+  and a clear yes or no to anonymous statistics, then the bridge (this device,
+  a hosted one, or your own, with a live connection test), then the kind of
+  profile. New profiles can use up to three relays you pick, with live ping, a
+  QR button, and a classic email account as an option; scanning an invite
+  offers the relays it names.
 - **Click a reaction to react the same way.** Clicking a reaction under a
   message adds that emoji as your reaction, or removes it if it's yours. Who
   reacted with what is now listed at the end of Message Info.

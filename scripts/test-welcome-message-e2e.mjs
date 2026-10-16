@@ -12,7 +12,7 @@
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { chromium } from 'playwright'
-import { startServers } from './harness.mjs'
+import { onboardToProfileKind, startServers } from './harness.mjs'
 
 const APP_PORT = Number(process.env.APP_PORT ?? 8679)
 
@@ -108,9 +108,8 @@ try {
   // in through selectAccount() at boot and hide the case that matters: instant
   // onboarding jumps to the main screen on its own, and the message has to be
   // there in that same session, not after a restart.
-  await page
-    .getByRole('button', { name: /madmail server/ })
-    .click({ timeout: 60_000 })
+  await onboardToProfileKind(page)
+  await page.getByTestId('madmail-button').click()
   await page.locator('#webimapHost').fill(`127.0.0.1:${mock.address().port}`)
   await page.getByRole('button', { name: 'Use this server' }).click()
   await page.locator('#displayName').fill('Alice')
@@ -179,9 +178,8 @@ try {
   const add = page.getByTestId('add-account-button')
   await add.hover()
   await add.click()
-  await page
-    .getByRole('button', { name: /madmail server/ })
-    .click({ timeout: 60_000 })
+  await onboardToProfileKind(page)
+  await page.getByTestId('madmail-button').click()
   await page.locator('#webimapHost').fill(`127.0.0.1:${mock.address().port}`)
   await page.getByRole('button', { name: 'Use this server' }).click()
   await page.locator('#displayName').fill('Bob')
