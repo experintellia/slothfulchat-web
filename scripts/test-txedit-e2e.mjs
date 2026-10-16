@@ -255,6 +255,7 @@ try {
   // ...and persist across a reload, like edits.
   await page.reload()
   await page.waitForFunction(() => window.__coreSystemInfo, null, { timeout: 120_000 })
+  await onboardToProfileKind(page) // a reload starts the onboarding over
   await page.locator(sel).first().waitFor({ state: 'visible', timeout: 90_000 })
   const [popup2] = await Promise.all([
     context.waitForEvent('page'),

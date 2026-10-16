@@ -46,18 +46,18 @@ full-screen-on-phones list. Strings live in packages/web-app/fork-strings.json.
  .../WelcomeScreen/AlternativeSetupsDialog.tsx |  96 ---
  .../WelcomeScreen/ClassicEmailRelayDialog.tsx | 155 ++++
  .../WelcomeScreen/InstantOnboardingScreen.tsx |  33 +-
- .../screens/WelcomeScreen/OnboardingArt.tsx   | 175 +++++
- .../WelcomeScreen/OnboardingScreen.tsx        | 710 +++++++++++++++---
- .../screens/WelcomeScreen/RelayPicker.tsx     | 322 ++++++--
- .../WelcomeScreen/RelayPickerDialog.tsx       | 129 +++-
+ .../screens/WelcomeScreen/OnboardingArt.tsx   | 253 ++++++
+ .../WelcomeScreen/OnboardingScreen.tsx        | 732 +++++++++++++++---
+ .../screens/WelcomeScreen/RelayPicker.tsx     | 327 ++++++--
+ .../WelcomeScreen/RelayPickerDialog.tsx       | 140 +++-
  .../WelcomeScreen/UseOtherServerDialog.tsx    |  74 --
  .../screens/WelcomeScreen/UserAgreement.tsx   | 117 ++-
  .../screens/WelcomeScreen/index.tsx           |  29 +-
- .../screens/WelcomeScreen/styles.module.scss  | 423 +++++++++++
+ .../screens/WelcomeScreen/styles.module.scss  | 438 +++++++++++
  .../src/contexts/InstantOnboardingContext.tsx |  30 +-
- .../src/hooks/useInstantOnboarding.ts         | 143 +++-
+ .../src/hooks/useInstantOnboarding.ts         | 146 +++-
  .../src/utils/slothfulInstanceConfig.ts       |   3 +
- 15 files changed, 2011 insertions(+), 433 deletions(-)
+ 15 files changed, 2140 insertions(+), 438 deletions(-)
  delete mode 100644 packages/frontend/src/components/screens/WelcomeScreen/AlternativeSetupsDialog.tsx
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/ClassicEmailRelayDialog.tsx
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/OnboardingArt.tsx
@@ -441,10 +441,10 @@ index 1407c267366bcceb7349d317713b4d4687721121..7482800ecd90ddfae03a8e4c532410b3
          </DialogContent>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingArt.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingArt.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..0f69e85b40bce4c620bbeb10172878056ec70539
+index 0000000000000000000000000000000000000000..42540bda11e206d4a169934cce3a2bb65985dec3
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingArt.tsx
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,253 @@
 +import React from 'react'
 +
 +import styles from './styles.module.scss'
@@ -573,18 +573,61 @@ index 0000000000000000000000000000000000000000..0f69e85b40bce4c620bbeb1017287805
 +      strokeLinecap='round'
 +      strokeLinejoin='round'
 +    >
-+      <rect x='8' y='22' width='64' height='50' rx='6' fill={SOFT} stroke={ACCENT} strokeWidth='2' />
++      <rect
++        x='8'
++        y='22'
++        width='64'
++        height='50'
++        rx='6'
++        fill={SOFT}
++        stroke={ACCENT}
++        strokeWidth='2'
++      />
 +      <path d='M8 34h64' stroke={ACCENT} strokeWidth='2' />
 +      <circle cx='16' cy='28' r='1.6' fill={ACCENT} />
 +      <circle cx='22' cy='28' r='1.6' fill={ACCENT} />
 +      <circle cx='28' cy='28' r='1.6' fill={ACCENT} />
 +      <path d='M22 48h36M22 56h26' stroke={MUTED} strokeWidth='2' />
-+      <path d='M76 66 Q130 14 184 66M76 66h108' stroke={ACCENT} strokeWidth='2.5' />
-+      <path d='M94 66V49M112 66V38M130 66V35M148 66V38M166 66V49' stroke={MUTED} strokeWidth='2' />
-+      <rect x='120' y='72' width='20' height='16' rx='3' stroke='#2e9e5b' strokeWidth='2' />
++      <path
++        d='M76 66 Q130 14 184 66M76 66h108'
++        stroke={ACCENT}
++        strokeWidth='2.5'
++      />
++      <path
++        d='M94 66V49M112 66V38M130 66V35M148 66V38M166 66V49'
++        stroke={MUTED}
++        strokeWidth='2'
++      />
++      <rect
++        x='120'
++        y='72'
++        width='20'
++        height='16'
++        rx='3'
++        stroke='#2e9e5b'
++        strokeWidth='2'
++      />
 +      <path d='M124 72v-4a6 6 0 0 1 12 0v4' stroke='#2e9e5b' strokeWidth='2' />
-+      <rect x='188' y='18' width='64' height='24' rx='5' fill={SOFT} stroke={ACCENT} strokeWidth='2' />
-+      <rect x='188' y='48' width='64' height='24' rx='5' fill={SOFT} stroke={ACCENT} strokeWidth='2' />
++      <rect
++        x='188'
++        y='18'
++        width='64'
++        height='24'
++        rx='5'
++        fill={SOFT}
++        stroke={ACCENT}
++        strokeWidth='2'
++      />
++      <rect
++        x='188'
++        y='48'
++        width='64'
++        height='24'
++        rx='5'
++        fill={SOFT}
++        stroke={ACCENT}
++        strokeWidth='2'
++      />
 +      <circle cx='200' cy='30' r='2' fill={ACCENT} />
 +      <circle cx='200' cy='60' r='2' fill={ACCENT} />
 +      <path d='M212 30h28M212 60h28' stroke={MUTED} strokeWidth='2' />
@@ -606,25 +649,60 @@ index 0000000000000000000000000000000000000000..0f69e85b40bce4c620bbeb1017287805
 +      strokeLinecap='round'
 +      strokeLinejoin='round'
 +    >
-+      <rect x='14' y='38' width='54' height='40' rx='5' stroke={MUTED} strokeWidth='2' />
-+      <path d='M14 50h54M34 58h14M41 28v-12M35 22l6-6 6 6' stroke={MUTED} strokeWidth='2' />
-+      <circle cx='130' cy='46' r='38' fill={SOFT} stroke={ACCENT} strokeWidth='2.5' />
++      <rect
++        x='14'
++        y='38'
++        width='54'
++        height='40'
++        rx='5'
++        stroke={MUTED}
++        strokeWidth='2'
++      />
++      <path
++        d='M14 50h54M34 58h14M41 28v-12M35 22l6-6 6 6'
++        stroke={MUTED}
++        strokeWidth='2'
++      />
++      <circle
++        cx='130'
++        cy='46'
++        r='38'
++        fill={SOFT}
++        stroke={ACCENT}
++        strokeWidth='2.5'
++      />
 +      <circle cx='130' cy='36' r='12' stroke={ACCENT} strokeWidth='2.5' />
 +      <path d='M108 72a22 22 0 0 1 44 0' stroke={ACCENT} strokeWidth='2.5' />
 +      <circle cx='160' cy='76' r='12' fill={ACCENT} />
 +      <path d='M160 70v12M154 76h12' stroke='#fff' strokeWidth='2.5' />
-+      <rect x='192' y='30' width='54' height='20' rx='4' stroke={MUTED} strokeWidth='2' />
-+      <rect x='192' y='56' width='54' height='20' rx='4' stroke={MUTED} strokeWidth='2' />
++      <rect
++        x='192'
++        y='30'
++        width='54'
++        height='20'
++        rx='4'
++        stroke={MUTED}
++        strokeWidth='2'
++      />
++      <rect
++        x='192'
++        y='56'
++        width='54'
++        height='20'
++        rx='4'
++        stroke={MUTED}
++        strokeWidth='2'
++      />
 +      <circle cx='202' cy='40' r='2' fill={MUTED} />
 +      <circle cx='202' cy='66' r='2' fill={MUTED} />
 +    </svg>
 +  )
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
-index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0f47a389b 100644
+index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..ab448cf028202cc5737e9e875382fad342805b83 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/OnboardingScreen.tsx
-@@ -1,16 +1,36 @@
+@@ -1,16 +1,44 @@
 -import React, { useState } from 'react'
 +import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 +import { dirname } from 'path'
@@ -636,10 +714,19 @@ index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0
  import Button from '../../Button'
  import useDialog from '../../../hooks/dialog/useDialog'
  import useTranslationFunction from '../../../hooks/useTranslationFunction'
- import { DialogBody, DialogContent, DialogFooter, DialogHeader } from '../../Dialog'
+-import { DialogBody, DialogContent, DialogFooter, DialogHeader } from '../../Dialog'
++import {
++  DialogBody,
++  DialogContent,
++  DialogFooter,
++  DialogHeader,
++} from '../../Dialog'
  import { ClickableLink } from '../../helpers/ClickableLink'
  import { instanceAnalyticsUi } from '../../../utils/slothfulInstanceConfig'
-+import { LastUsedSlot, rememberLastUsedPath } from '../../../utils/lastUsedPaths'
++import {
++  LastUsedSlot,
++  rememberLastUsedPath,
++} from '../../../utils/lastUsedPaths'
 +import { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
 +import { BackendRemote } from '../../../backend-com'
 +import { runtime } from '@deltachat-desktop/runtime-interface'
@@ -663,7 +750,7 @@ index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0
  type Props = {
    onExitWelcomeScreen: () => Promise<void>
    onNextStep: () => void
-@@ -18,123 +38,190 @@ type Props = {
+@@ -18,123 +46,194 @@ type Props = {
    onClose: () => Promise<void>
    selectedAccountId: number
    hasConfiguredAccounts: boolean
@@ -784,7 +871,11 @@ index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0
 +    ['lock', 'onboarding_usp_encrypted', 'onboarding_usp_encrypted_explain'],
 +    ['person', 'onboarding_usp_no_phone', 'onboarding_usp_no_phone_explain'],
 +    ['network', 'onboarding_usp_no_server', 'onboarding_usp_no_server_explain'],
-+    ['browser', 'onboarding_usp_no_install', 'onboarding_usp_no_install_explain'],
++    [
++      'browser',
++      'onboarding_usp_no_install',
++      'onboarding_usp_no_install_explain',
++    ],
 +  ] as const
 +
    return (
@@ -849,7 +940,7 @@ index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0
 +                {tx('onboarding_stats_explain')}{' '}
 +                <button
 +                  type='button'
-+                  className={styles.onboardingLinkButton}
++                  className={styles.onboardingInlineLink}
 +                  onClick={showStatsInfo}
 +                >
 +                  {tx('onboarding_stats_whats_collected')}
@@ -949,7 +1040,7 @@ index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0
          )}
          <div className={styles.welcomeScreenFooterLinks}>
            <ClickableLink href='https://github.com/experintellia/slothfulchat-web'>
-@@ -153,3 +240,432 @@ export default function OnboardingScreen(props: Props) {
+@@ -153,3 +252,440 @@ export default function OnboardingScreen(props: Props) {
      </>
    )
  }
@@ -959,7 +1050,8 @@ index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0
 +function BridgeStep({ setStep }: Props) {
 +  const tx = useTranslationFunction()
 +  const bridge = bridgeApi() as BridgeApi
-+  const same = (a: string, b: string) => bridge.normalize(a) === bridge.normalize(b)
++  const same = (a: string, b: string) =>
++    bridge.normalize(a) === bridge.normalize(b)
 +
 +  const [hosted] = useState(() =>
 +    bridge.options().filter(option => !same(option.url, bridge.local))
@@ -973,7 +1065,8 @@ index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0
 +        : 'custom'
 +  )
 +  const [hostedUrl, setHostedUrl] = useState(
-+    () => hosted.find(option => same(option.url, current))?.url ?? hosted[0]?.url
++    () =>
++      hosted.find(option => same(option.url, current))?.url ?? hosted[0]?.url
 +  )
 +  const [customUrl, setCustomUrl] = useState(() =>
 +    tile === 'custom' ? current : ''
@@ -1046,7 +1139,9 @@ index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0
 +        <DialogContent>
 +          <BridgeIllustration />
 +          <Steps current={2} />
-+          <p className={styles.onboardingNote}>{tx('onboarding_bridge_explain')}</p>
++          <p className={styles.onboardingNote}>
++            {tx('onboarding_bridge_explain')}
++          </p>
 +          <div
 +            className={styles.onboardingTiles}
 +            role='radiogroup'
@@ -1100,12 +1195,16 @@ index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0
 +          <p className={styles.onboardingNote} data-testid='bridge-status'>
 +            <span
 +              className={styles.onboardingDot}
-+              style={{ background: pingColor(chosen in pings ? ping : undefined) }}
++              style={{
++                background: pingColor(chosen in pings ? ping : undefined),
++              }}
 +            />
 +            {status}
 +          </p>
 +          {customInvalid && (
-+            <p className={styles.inputError}>{tx('onboarding_bridge_invalid')}</p>
++            <p className={styles.inputError}>
++              {tx('onboarding_bridge_invalid')}
++            </p>
 +          )}
 +          {ping === null && chosen in pings && (
 +            <p className={styles.onboardingWarning}>
@@ -1383,7 +1482,7 @@ index 45d18674c983e6afb5d5b8b2f911e129e4ce7a3d..48a99748e19d3c7c712ccd69a6863db0
 +  )
 +}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
-index 5cb5ecf495a39f5a3cb7ec386308641828a6d68a..029db624259ec6924f72c4c0971af17e305e4019 100644
+index 5cb5ecf495a39f5a3cb7ec386308641828a6d68a..73b24f06a7f42ee13087ce9d3679b8c5005bb177 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
 @@ -1,39 +1,82 @@
@@ -1501,7 +1600,7 @@ index 5cb5ecf495a39f5a3cb7ec386308641828a6d68a..029db624259ec6924f72c4c0971af17e
        }
      })
      return () => {
-@@ -52,44 +95,219 @@ export default function RelayPicker() {
+@@ -52,44 +95,224 @@ export default function RelayPicker() {
      }
    }, [relayChoosable])
  
@@ -1523,7 +1622,9 @@ index 5cb5ecf495a39f5a3cb7ec386308641828a6d68a..029db624259ec6924f72c4c0971af17e
 +  const add = (relay: OnboardingRelay) =>
 +    setRelays(prev =>
 +      prev.length >= MAX_RELAYS ||
-+      prev.some(r => relayName(r).toLowerCase() === relayName(relay).toLowerCase())
++      prev.some(
++        r => relayName(r).toLowerCase() === relayName(relay).toLowerCase()
++      )
 +        ? prev
 +        : [...prev, relay]
 +    )
@@ -1536,13 +1637,14 @@ index 5cb5ecf495a39f5a3cb7ec386308641828a6d68a..029db624259ec6924f72c4c0971af17e
 +  // an inviter on a classic provider isn't mistaken for a chatmail relay.
 +  // Upgrade path: probe the host's chatmail signup endpoint instead.
 +  const inviteHosts =
-+    welcomeQr && welcomeQr.qr.kind !== 'account' && welcomeQr.qr.kind !== 'login'
++    welcomeQr &&
++    welcomeQr.qr.kind !== 'account' &&
++    welcomeQr.qr.kind !== 'login'
 +      ? inviteRelayHosts(welcomeQr.url).filter(host => directory.includes(host))
 +      : []
  
 -  const openPicker = () =>
-+  const openClassic = () =>
-+    openDialog(ClassicEmailRelayDialog, { onAdd: add })
++  const openClassic = () => openDialog(ClassicEmailRelayDialog, { onAdd: add })
 +
 +  const openPicker = () => {
 +    const classicCount = relays.filter(relay => 'addr' in relay).length
@@ -1553,7 +1655,9 @@ index 5cb5ecf495a39f5a3cb7ec386308641828a6d68a..029db624259ec6924f72c4c0971af17e
 -      selectedHost: current,
 -      onSelect: (host?: string) => setSelectedRelayHost(host),
 +      multi: {
-+        selected: relays.flatMap(relay => ('host' in relay ? [relay.host] : [])),
++        selected: relays.flatMap(relay =>
++          'host' in relay ? [relay.host] : []
++        ),
 +        max: MAX_RELAYS - classicCount,
 +        // keep classic accounts and scanned relays (with their QR) as they
 +        // are, drop unpicked hosts, append newly picked ones in pick order
@@ -1750,7 +1854,7 @@ index 5cb5ecf495a39f5a3cb7ec386308641828a6d68a..029db624259ec6924f72c4c0971af17e
    )
  }
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
-index 33bc7e5b28764446e9569c4dbd50e178ac94342e..965318382aa0eb40f14c0925944e926969f630f3 100644
+index 33bc7e5b28764446e9569c4dbd50e178ac94342e..2b6767b4cfe842d609831f14e0dc8fd6f2e9317e 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
 @@ -1,6 +1,8 @@
@@ -1915,17 +2019,26 @@ index 33bc7e5b28764446e9569c4dbd50e178ac94342e..965318382aa0eb40f14c0925944e9269
                    !isSelectable(host) ? styles.relayDialogRowDisabled : '',
                  ]
                    .filter(Boolean)
-@@ -248,7 +313,7 @@ export default function RelayPickerDialog({
+@@ -248,17 +313,22 @@ export default function RelayPickerDialog({
                  onClick={() => choose(host)}
                >
                  <span className={styles.relayDialogHost}>
 -                  {host === selectedHost && (
+-                    <span className={styles.relayDialogCheck} aria-hidden='true'>
 +                  {isPicked(host) && (
-                     <span className={styles.relayDialogCheck} aria-hidden='true'>
++                    <span
++                      className={styles.relayDialogCheck}
++                      aria-hidden='true'
++                    >
                        ✓{' '}
                      </span>
-@@ -258,7 +323,7 @@ export default function RelayPickerDialog({
-                     <span className={styles.relayDialogDefaultTag}>default</span>
+                   )}
+                   {host}
+                   {host === defaultHost && (
+-                    <span className={styles.relayDialogDefaultTag}>default</span>
++                    <span className={styles.relayDialogDefaultTag}>
++                      default
++                    </span>
                    )}
                  </span>
 -                {renderStatus(host, true)}
@@ -1933,7 +2046,7 @@ index 33bc7e5b28764446e9569c4dbd50e178ac94342e..965318382aa0eb40f14c0925944e9269
                </button>
              ))}
            </div>
-@@ -293,13 +358,13 @@ export default function RelayPickerDialog({
+@@ -293,15 +363,13 @@ export default function RelayPickerDialog({
                      type='button'
                      key={host}
                      role='option'
@@ -1945,11 +2058,13 @@ index 33bc7e5b28764446e9569c4dbd50e178ac94342e..965318382aa0eb40f14c0925944e9269
                      className={[
                        styles.relayDialogRow,
 -                      host === selectedHost
-+                      isPicked(host)
-                         ? styles.relayDialogRowSelected
-                         : '',
+-                        ? styles.relayDialogRowSelected
+-                        : '',
++                      isPicked(host) ? styles.relayDialogRowSelected : '',
                        !isSelectable(host) ? styles.relayDialogRowDisabled : '',
-@@ -309,7 +374,7 @@ export default function RelayPickerDialog({
+                     ]
+                       .filter(Boolean)
+@@ -309,7 +377,7 @@ export default function RelayPickerDialog({
                      onClick={() => choose(host)}
                    >
                      <span className={styles.relayDialogHost}>
@@ -1958,7 +2073,7 @@ index 33bc7e5b28764446e9569c4dbd50e178ac94342e..965318382aa0eb40f14c0925944e9269
                          <span
                            className={styles.relayDialogCheck}
                            aria-hidden='true'
-@@ -371,10 +436,34 @@ export default function RelayPickerDialog({
+@@ -371,10 +439,34 @@ export default function RelayPickerDialog({
                  className={styles.relayDialogCustomConfirm}
                  onClick={submitCustom}
                >
@@ -2075,7 +2190,7 @@ index 30c490a749b8d0c29da92f36c9c749898f656cfe..00000000000000000000000000000000
 -  )
 -}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-index f5438b4d09b4256d1ac781c395bd0d38641735a9..7cca80a9be17d53205d4844751d58d59a5f85873 100644
+index f5438b4d09b4256d1ac781c395bd0d38641735a9..968afb62880419fdab42bc02d61873073ea1b8c0 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
 @@ -1,16 +1,18 @@
@@ -2149,7 +2264,7 @@ index f5438b4d09b4256d1ac781c395bd0d38641735a9..7cca80a9be17d53205d4844751d58d59
 +        {before}
 +        <button
 +          type='button'
-+          className={styles.onboardingLinkButton}
++          className={styles.onboardingInlineLink}
 +          data-testid='privacy-policies-button'
 +          onClick={() => openDialog(PrivacyPoliciesDialog, { relays: ordered })}
 +        >
@@ -2284,7 +2399,7 @@ index 0aa222ffc3a10251eaefaea3553109f3aa02a2d7..45ae6142cbc8a2ab75cfe98df6aea836
              hasConfiguredAccounts={hasConfiguredAccounts}
              onClose={onClose}
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
-index 70c7b254b6291ad84544985f25f7af5cc99cff10..52d3618a80794136cd36bcb13ffe52c124b8779c 100644
+index 70c7b254b6291ad84544985f25f7af5cc99cff10..507feb323e6c24cc4007cda96a95ed1efab59371 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/styles.module.scss
 @@ -69,6 +69,8 @@
@@ -2296,7 +2411,7 @@ index 70c7b254b6291ad84544985f25f7af5cc99cff10..52d3618a80794136cd36bcb13ffe52c1
    justify-content: flex-start;
    margin-bottom: 10px;
    width: 100%;
-@@ -384,3 +386,424 @@
+@@ -384,3 +386,439 @@
    font-weight: 600;
    padding: 6px 8px;
  }
@@ -2464,6 +2579,7 @@ index 70c7b254b6291ad84544985f25f7af5cc99cff10..52d3618a80794136cd36bcb13ffe52c1
 +  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 +
 +  ul {
++    list-style: disc;
 +    margin: 4px 0 0;
 +    padding-inline-start: 18px;
 +  }
@@ -2721,6 +2837,20 @@ index 70c7b254b6291ad84544985f25f7af5cc99cff10..52d3618a80794136cd36bcb13ffe52c1
 +  flex: none;
 +  width: 44px;
 +}
++
++// a link-looking button inside running text (consent sentence, "What's
++// collected"): no padding, so the sentence doesn't break around it
++.onboardingInlineLink {
++  appearance: none;
++  background: none;
++  border: none;
++  color: var(--loginInputFocusColor);
++  cursor: pointer;
++  display: inline;
++  font: inherit;
++  padding: 0;
++  text-decoration: underline;
++}
 diff --git a/packages/frontend/src/contexts/InstantOnboardingContext.tsx b/packages/frontend/src/contexts/InstantOnboardingContext.tsx
 index a92312f69d22da0b2348816baf1c1cb325afae8f..2e56e9a8b53fa905c3d7be489cd5debc40d6cbb8 100644
 --- a/packages/frontend/src/contexts/InstantOnboardingContext.tsx
@@ -2781,7 +2911,7 @@ index a92312f69d22da0b2348816baf1c1cb325afae8f..2e56e9a8b53fa905c3d7be489cd5debc
  
    return (
 diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
-index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..e1864cad7be4d23802c2ef25e2c179f7ab7fdb93 100644
+index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..27e3c3787f7e79c24d8a560152f10d453a3fb601 100644
 --- a/packages/frontend/src/hooks/useInstantOnboarding.ts
 +++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
 @@ -1,4 +1,5 @@
@@ -2853,7 +2983,7 @@ index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..e1864cad7be4d23802c2ef25e2c179f7
  
    if (!context) {
      throw new Error(
-@@ -57,21 +90,72 @@ export default function useInstantOnboarding(): InstantOnboarding {
+@@ -57,21 +90,75 @@ export default function useInstantOnboarding(): InstantOnboarding {
      setWelcomeQr,
      showInstantOnboarding,
      welcomeQr,
@@ -2911,7 +3041,10 @@ index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..e1864cad7be4d23802c2ef25e2c179f7
 +              } as Credentials)
 +            )
 +          } else {
-+            await BackendRemote.rpc.addTransportFromQr(accountId, relayQr(relay))
++            await BackendRemote.rpc.addTransportFromQr(
++              accountId,
++              relayQr(relay)
++            )
 +          }
 +        } catch (error) {
 +          failed.push(
@@ -2929,7 +3062,7 @@ index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..e1864cad7be4d23802c2ef25e2c179f7
    )
  
    /**
-@@ -90,15 +174,26 @@ export default function useInstantOnboarding(): InstantOnboarding {
+@@ -90,15 +177,26 @@ export default function useInstantOnboarding(): InstantOnboarding {
        // flow at their own chatmail relay via SLOTHFUL_DEFAULT_CHATMAIL
        // (baked into window.__slothfulConfig.defaultChatmailInstance). When
        // that isn't set we keep upstream's default instance.
@@ -2963,7 +3096,7 @@ index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..e1864cad7be4d23802c2ef25e2c179f7
        }
  
        if (welcomeQr) {
-@@ -110,11 +205,15 @@ export default function useInstantOnboarding(): InstantOnboarding {
+@@ -110,11 +208,15 @@ export default function useInstantOnboarding(): InstantOnboarding {
            // After parsing it'll automatically configure the account with the
            // appropriate keys for login, e.g. `addr` and `password`
            configurationQR = welcomeQr.url
@@ -2979,7 +3112,7 @@ index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..e1864cad7be4d23802c2ef25e2c179f7
          } else {
            // Exhaustivity check, these QR codes just use default configurationQR
            const _: VerifyContactQr | VerifyGroupQr | JoinBroadcastQr | never =
-@@ -126,7 +225,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
+@@ -126,7 +228,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
          // show the configure progress dialog where
          // the actual account creation happens
          openDialog(ConfigureProgressDialog, {
@@ -2988,7 +3121,7 @@ index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..e1864cad7be4d23802c2ef25e2c179f7
            qrCode: configurationQR,
            onSuccess: async () => {
              // configure was successful so if there was an invite
-@@ -154,6 +253,8 @@ export default function useInstantOnboarding(): InstantOnboarding {
+@@ -154,6 +256,8 @@ export default function useInstantOnboarding(): InstantOnboarding {
                  }
                }
  
@@ -2997,7 +3130,7 @@ index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..e1864cad7be4d23802c2ef25e2c179f7
                // Return optional id of chat here so the UI can switch to it
                resolve(chatId)
              } catch (error: any) {
-@@ -172,7 +273,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
+@@ -172,7 +276,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
              // reachability/CORS probe was removed: every heuristic variant
              // misdiagnosed working servers, e.g. slow servers read as
              // unreachable.)
@@ -3006,7 +3139,7 @@ index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..e1864cad7be4d23802c2ef25e2c179f7
                const host = configurationQR.replace(/^webimapaccount:/i, '')
                const summary = String(error)
                  .split(/\n\s*stack backtrace:/i)[0]
-@@ -195,13 +296,13 @@ export default function useInstantOnboarding(): InstantOnboarding {
+@@ -195,13 +299,13 @@ export default function useInstantOnboarding(): InstantOnboarding {
          })
        })
      },
@@ -3022,7 +3155,7 @@ index 6c95d7208c6186caa91bea5ccdc177815e00d4bd..e1864cad7be4d23802c2ef25e2c179f7
    }
  
    return {
-@@ -210,7 +311,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
+@@ -210,7 +314,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
      showInstantOnboarding,
      startInstantOnboardingFlow,
      welcomeQr,
