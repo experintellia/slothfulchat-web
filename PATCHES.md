@@ -337,10 +337,11 @@ exists:
   `packages/web-app/src/chat-export.ts`. `desktop/1017`
 - **Community suggestions in the New Chat dialog** — pseudo entries below
   "New Group"/"New Channel": "Sloth (Slothful.chat Developer)" opens a chat
-  with the developer (via a baked-in invite link, routed through the regular
-  invite-link confirmation flow) so users can send feedback and report bugs —
-  it disappears once a contact with the developer's address exists (i.e. once
-  the invite has been accepted and there is a real chat to use instead);
+  with the developer so users can send feedback and report bugs — it imports
+  a baked-in vCard (with the developer's key), so the user can write right
+  away without waiting for a SecureJoin handshake, and the first message
+  reaches the developer as a contact request; the entry disappears once a
+  contact with the developer's address exists (there is a real chat then);
   "Public Bots" opens a searchable directory of community-made bots (name,
   admin, description, language) pulled from
   [deltachat-bot/public-bots](https://github.com/deltachat-bot/public-bots);

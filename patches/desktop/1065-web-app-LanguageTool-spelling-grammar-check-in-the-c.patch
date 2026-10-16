@@ -1622,10 +1622,10 @@ index d9c3b182aaeea3ee944f2369bbc20028a83cd294..e0320d808faca2054f2700a616dd202a
    stylesToInject?: string | undefined
  ): Promise<string> {
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index 4fba516699801e2862dfcf1337dc2ddeb0dfcb6d..1301478dcd4465dd48c6aec5680516f2af37e879 100644
+index d0e05391a8157656989fc2ad6d11f258005ac998..5943369f480ad2be401c6b85339ef1d8dfe8e950 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-@@ -1047,6 +1047,7 @@ export const ChatSettingsSetNameAndProfileImage = ({
+@@ -1052,6 +1052,7 @@ export const ChatSettingsSetNameAndProfileImage = ({
        {setDescription !== undefined && (
          <DeltaTextarea
            placeholder={tx('chat_description')}
