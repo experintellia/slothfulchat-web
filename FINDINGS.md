@@ -362,7 +362,7 @@ Added [madmail](https://github.com/themadorg/madmail)'s
 [WebIMAP/WebSMTP](https://github.com/themadorg/madmail/blob/main/docs/TDD/10-webimap.md)
 as a transport variant next to IMAP/SMTP — the first transport that needs **no
 WS→TCP bridge**: mail flows over plain HTTPS `fetch()` from the worker
-(building on `core/1008`'s fetch client, which landed independently).
+(building on `core/1002`'s fetch client, which landed independently).
 Activated by a `webimap: bool` on the login params (advanced toggle in the
 login form), the `webimapaccount:host[:port]` QR scheme (instant onboarding via
 `POST /new`), or the welcome-screen madmail dialog. Patch count: **11 core /
@@ -377,7 +377,7 @@ login form), the `webimapaccount:host[:port]` QR scheme (instant onboarding via
   of an authenticated `GET /webimap/mailboxes`. The scheduler reuses the whole
   `ImapConnectionState`/SchedBox plumbing — the only branch is which loop gets
   spawned — so interrupts, stop and the connectivity view work unchanged.
-  Extends `core/1008`'s `request()` with a timeout (native `tokio::time::timeout`,
+  Extends `core/1002`'s `request()` with a timeout (native `tokio::time::timeout`,
   wasm AbortController + wasmtimer race) and `follow_redirects` (webimap passes
   RequestRedirect::Error so X-Email/X-Password never follow a redirect).
 - **QR host validation**: `webimapaccount:` payloads are parsed with `url::Url`

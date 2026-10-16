@@ -3,22 +3,30 @@ From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 6 Jul 2026 00:57:11 +0000
 Subject: [PATCH] wasm: stub HTTP/proxy modules, rustls ring provider
 
-- net/http_wasm.rs, net/proxy_wasm.rs: compile-compatible stubs selected
-  via #[cfg]+#[path]; every operation errors at runtime (fetch()/WS proxy
-  is the upgrade path)
+- net/http_wasm.rs: on wasm32 the net::http module (selected via
+  #[cfg]+#[path]) is a thin adapter that maps core's HTTP API onto
+  tokio-wasm-shim's tokio::net::fetch; the fetch()/web-sys plumbing lives
+  in crates/tokio-wasm-shim. The browser owns TLS/redirects/caching;
+  requests are subject to CORS (apps.testrun.org sends ACAO:*, so the
+  webxdc apps list works). The read_url*/post_* wrappers use a 60s timeout
+  (browser fetch() has none). The adapter lands with the wiring because
+  upstream's net/http.rs needs hyper, which wasm32 doesn't build; a stack
+  cut off before the adapter would compile that file and fail.
+- net/proxy_wasm.rs: compile-compatible stub selected via #[cfg]+#[path];
+  proxies need raw TCP, so every operation errors at runtime.
 - tls: default_provider() helper -> aws-lc-rs native, ring on wasm;
   non-strict TLS falls back to rustls (no native-tls on wasm)
 - session: gate native-tls/socks5/shadowsocks SessionStream impls
 - qr: shadowsocks QR decoding errors on wasm
 ---
- src/net.rs            |  8 +++++
- src/net/http_wasm.rs  | 75 +++++++++++++++++++++++++++++++++++++++++++
- src/net/proxy_wasm.rs | 45 ++++++++++++++++++++++++++
- src/net/session.rs    |  4 +++
- src/net/tls.rs        | 65 +++++++++++++++++++++++++++----------
- src/net/tls/danger.rs |  8 ++---
- src/qr.rs             |  7 ++++
- 7 files changed, 191 insertions(+), 21 deletions(-)
+ src/net.rs            |   8 +++
+ src/net/http_wasm.rs  | 129 ++++++++++++++++++++++++++++++++++++++++++
+ src/net/proxy_wasm.rs |  45 +++++++++++++++
+ src/net/session.rs    |   4 ++
+ src/net/tls.rs        |  65 +++++++++++++++------
+ src/net/tls/danger.rs |   8 +--
+ src/qr.rs             |   7 +++
+ 7 files changed, 245 insertions(+), 21 deletions(-)
  create mode 100644 src/net/http_wasm.rs
  create mode 100644 src/net/proxy_wasm.rs
 
@@ -44,20 +52,28 @@ index 01cf1c03c6fcce4f7be5a0712efcbe2419e2cd53..254a1ac684db21e9deed2af0b7ca4f83
  pub(crate) mod tls;
 diff --git a/src/net/http_wasm.rs b/src/net/http_wasm.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2319619dbe160dad075e7b7c6b1b0cdbe566655a
+index 0000000000000000000000000000000000000000..1bb038716ec5a34bac5153e0f8afdfa4d09b525f
 --- /dev/null
 +++ b/src/net/http_wasm.rs
-@@ -0,0 +1,75 @@
-+//! wasm32 stub for the HTTP module.
+@@ -0,0 +1,129 @@
++//! wasm32 HTTP module backed by the browser `fetch()` API.
 +//!
-+//! The native implementation uses hyper over raw TCP. On wasm every request
-+//! errors at runtime; routing HTTP through `fetch()` or the WebSocket proxy
-+//! is the upgrade path (M3+).
++//! The native implementation uses hyper over raw TCP. Here the browser owns
++//! the connection: TLS, redirects and caching are handled by `fetch()`, and
++//! requests are subject to CORS. The JS plumbing is `tokio::net::fetch` in
++//! tokio-wasm-shim; this module only maps it onto core's HTTP API.
 +
-+use anyhow::{Result, bail};
++use std::time::Duration;
++
++use anyhow::{Context as _, Result, bail};
++use mime::Mime;
 +use serde::Serialize;
++use tokio::net::fetch;
 +
 +use crate::context::Context;
++
++/// Default timeout for the `read_url*`/`post_*` wrappers.
++const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 +
 +/// HTTP(S) GET response.
 +#[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,56 +88,102 @@ index 0000000000000000000000000000000000000000..2319619dbe160dad075e7b7c6b1b0cdb
 +    pub encoding: Option<String>,
 +}
 +
++/// POST endpoints carry tokens; https only, as on native.
++fn ensure_https(url: &str) -> Result<()> {
++    if !url.starts_with("https://") {
++        bail!("POST requests to non-HTTPS URLs are not allowed");
++    }
++    Ok(())
++}
++
 +/// Retrieves the text contents of URL using HTTP GET request.
-+pub async fn read_url(_context: &Context, _url: &str) -> Result<String> {
-+    bail!("HTTP requests are not available on wasm yet")
++pub async fn read_url(context: &Context, url: &str) -> Result<String> {
++    let response = read_url_blob(context, url).await?;
++    Ok(String::from_utf8_lossy(&response.blob).to_string())
 +}
 +
 +/// Retrieves the text contents of URL using HTTP GET request.
 +pub(crate) async fn read_url_with_tls(
-+    _context: &Context,
-+    _url: &str,
++    context: &Context,
++    url: &str,
 +    _strict_tls: bool,
 +) -> Result<String> {
-+    bail!("HTTP requests are not available on wasm yet")
++    // The browser owns TLS on the fetch path; `strict_tls` has no meaning here.
++    read_url(context, url).await
 +}
 +
 +/// Removes expired cache entries.
 +pub(crate) async fn http_cache_cleanup(_context: &Context) -> Result<()> {
++    // No core-side HTTP cache on wasm; the browser HTTP cache covers GETs.
 +    Ok(())
 +}
 +
 +/// Retrieves the binary contents of URL using HTTP GET request.
-+pub async fn read_url_blob(_context: &Context, _url: &str) -> Result<Response> {
-+    bail!("HTTP requests are not available on wasm yet")
++pub async fn read_url_blob(_context: &Context, url: &str) -> Result<Response> {
++    let resp = fetch("GET", url, &[], None, DEFAULT_TIMEOUT, true).await?;
++    if !resp.ok {
++        bail!(
++            "The server returned a non-successful response code: {}",
++            resp.status
++        );
++    }
++    let content_type = resp.content_type.and_then(|v| v.parse::<Mime>().ok());
++    let mimetype = content_type.as_ref().map(|m| m.essence_str().to_string());
++    let encoding = content_type
++        .as_ref()
++        .and_then(|m| m.get_param(mime::CHARSET))
++        .map(|c| c.as_str().to_string());
++    Ok(Response {
++        blob: resp.body,
++        mimetype,
++        encoding,
++    })
 +}
 +
 +/// Retrieves the binary contents of URL using HTTP GET request.
 +pub(crate) async fn read_url_blob_with_tls(
-+    _context: &Context,
-+    _url: &str,
++    context: &Context,
++    url: &str,
 +    _strict_tls: bool,
 +) -> Result<Response> {
-+    bail!("HTTP requests are not available on wasm yet")
++    read_url_blob(context, url).await
 +}
 +
 +/// Sends an empty POST request to the URL.
-+pub(crate) async fn post_empty(_context: &Context, _url: &str) -> Result<(String, bool)> {
-+    bail!("HTTP requests are not available on wasm yet")
++///
++/// Returns response text and whether request was successful.
++pub(crate) async fn post_empty(_context: &Context, url: &str) -> Result<(String, bool)> {
++    ensure_https(url)?;
++    let resp = fetch("POST", url, &[], None, DEFAULT_TIMEOUT, true).await?;
++    Ok((String::from_utf8_lossy(&resp.body).to_string(), resp.ok))
 +}
 +
 +/// Sends a POST request with given string as body.
-+pub(crate) async fn post_string(_context: &Context, _url: &str, _body: String) -> Result<bool> {
-+    bail!("HTTP requests are not available on wasm yet")
++pub(crate) async fn post_string(_context: &Context, url: &str, body: String) -> Result<bool> {
++    ensure_https(url)?;
++    Ok(fetch("POST", url, &[], Some(body), DEFAULT_TIMEOUT, true)
++        .await?
++        .ok)
 +}
 +
 +/// Posts the given form to the URL.
 +pub(crate) async fn post_form<T: Serialize + ?Sized>(
 +    _context: &Context,
-+    _url: &str,
-+    _form: &T,
++    url: &str,
++    form: &T,
 +) -> Result<bytes::Bytes> {
-+    bail!("HTTP requests are not available on wasm yet")
++    ensure_https(url)?;
++    let body = serde_urlencoded::to_string(form).context("Failed to encode data")?;
++    let resp = fetch(
++        "POST",
++        url,
++        &[("content-type", "application/x-www-form-urlencoded")],
++        Some(body),
++        DEFAULT_TIMEOUT,
++        true,
++    )
++    .await?;
++    Ok(resp.body.into())
 +}
 diff --git a/src/net/proxy_wasm.rs b/src/net/proxy_wasm.rs
 new file mode 100644

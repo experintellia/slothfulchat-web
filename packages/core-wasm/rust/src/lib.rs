@@ -56,7 +56,7 @@ pub async fn init(
     // use the console bindings directly.
 
     if let Some(url) = ws_proxy_url {
-        deltachat::net::ws_tcp::set_ws_proxy_url(url);
+        tokio::net::set_ws_proxy_url(url);
     }
 
     if persist {

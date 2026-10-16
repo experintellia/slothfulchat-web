@@ -15,8 +15,15 @@ wasm-bindgen-futures = "0.4"
 futures = "0.3"
 js-sys = "0.3"
 wasm-bindgen = "0.2"
-# OPFS persistence (M5): memfs hydrate/write-through + sqlite sahpool VFS
+# net: IMAP/SMTP/DNS through a WebSocket-TCP proxy, HTTP via fetch()
+serde_json = "1"
+tokio-util = { version = "0.7", features = ["compat"] }
+ws_stream_wasm = "0.7"
+# OPFS persistence (M5): memfs hydrate/write-through + sqlite sahpool VFS;
+# fetch() for net
 web-sys = { version = "0.3", features = [
+    "AbortController",
+    "AbortSignal",
     "console",
     "Blob",
     "File",
@@ -27,7 +34,11 @@ web-sys = { version = "0.3", features = [
     "FileSystemReadWriteOptions",
     "FileSystemRemoveOptions",
     "FileSystemSyncAccessHandle",
+    "Headers",
     "Navigator",
+    "RequestInit",
+    "RequestRedirect",
+    "Response",
     "StorageManager",
     "WorkerGlobalScope",
     "WorkerNavigator",

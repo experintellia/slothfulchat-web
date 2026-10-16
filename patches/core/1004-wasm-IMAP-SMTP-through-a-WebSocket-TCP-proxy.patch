@@ -3,21 +3,26 @@ From: slothfulchat <patches@slothfulchat.invalid>
 Date: Mon, 6 Jul 2026 22:34:43 +0000
 Subject: [PATCH] wasm: IMAP/SMTP through a WebSocket-TCP proxy
 
-Browsers cannot open TCP sockets, so on wasm32 connect_tcp_inner tunnels
-through a local WS proxy (src/net/ws_tcp.rs): ws_stream_wasm -> duplex
-bridge -> SessionStream. TLS still terminates inside wasm, the proxy only
-sees ciphertext. DNS resolves via the proxy's /dns/{host} endpoint.
-Adds wasm deps: ws_stream_wasm, tokio-util/compat, wasm-bindgen-futures,
-plus chrono wasmbind and pgp wasm feature (JS clock instead of
+Browsers cannot open TCP sockets. On wasm32, tokio-wasm-shim's
+tokio::net::TcpStream is a tunnel through a WS proxy and
+tokio::net::lookup_host resolves via the proxy's /dns/{host} endpoint
+(both live in crates/tokio-wasm-shim, not here). TLS still terminates
+inside wasm; the proxy only sees ciphertext.
+
+Core keeps the glue: connect_tcp_inner on wasm returns the bare shim
+stream (tokio-io-timeout needs real tokio timers, which panic on wasm),
+SessionStream is implemented for it, and connect_tcp (proxies) is
+native-only. dns.rs needs no change: the shim's lookup_host takes the
+same (host, port) pairs.
+
+Also adds chrono wasmbind and pgp wasm feature (JS clock instead of
 SystemTime::now which panics on wasm32-unknown-unknown).
 ---
- Cargo.lock        | 153 ++++++++++++++++++++++++++++++++--------------
- Cargo.toml        |   8 +++
- src/net.rs        |  16 +++++
- src/net/dns.rs    |  10 +++
- src/net/ws_tcp.rs | 147 ++++++++++++++++++++++++++++++++++++++++++++
- 5 files changed, 288 insertions(+), 46 deletions(-)
- create mode 100644 src/net/ws_tcp.rs
+ Cargo.lock         | 153 +++++++++++++++++++++++++++++++--------------
+ Cargo.toml         |   5 ++
+ src/net.rs         |  13 ++++
+ src/net/session.rs |  12 ++++
+ 4 files changed, 137 insertions(+), 46 deletions(-)
 
 diff --git a/Cargo.lock b/Cargo.lock
 index a17aa174647a2ab7adcb7b4ad76ad1e795018356..04697b57101667f994cfda5eb18d992c86ddb526 100644
@@ -360,10 +365,10 @@ index a17aa174647a2ab7adcb7b4ad76ad1e795018356..04697b57101667f994cfda5eb18d992c
   "js-sys",
   "wasm-bindgen",
 diff --git a/Cargo.toml b/Cargo.toml
-index 0a752768c8f793d89a7a72bd15fae533c72f7918..75281633f59d7b8dbea4f1853e76568213907db3 100644
+index 0a752768c8f793d89a7a72bd15fae533c72f7918..e7ef01fa49709d65739cd9ef7f771fac40b239fc 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -120,13 +120,21 @@ tokio-stream = { version = "0.1.17", features = ["fs"] }
+@@ -120,12 +120,17 @@ tokio-stream = { version = "0.1.17", features = ["fs"] }
  
  [target.'cfg(target_arch = "wasm32")'.dependencies]
  async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio"] }
@@ -378,22 +383,14 @@ index 0a752768c8f793d89a7a72bd15fae533c72f7918..75281633f59d7b8dbea4f1853e765682
 +# rPGP's Timestamp::now() calls SystemTime::now() and panics on wasm32-unknown-unknown;
 +# its "wasm" feature switches it to web-time (JS clock).
 +pgp = { version = "0.20.0", default-features = false, features = ["wasm"] }
-+tokio-util = { workspace = true, features = ["compat"] }
  uuid = { version = "1", features = ["js"] }
-+wasm-bindgen-futures = "0.4"
-+ws_stream_wasm = "0.7"
  
  [dev-dependencies]
- anyhow = { workspace = true, features = ["backtrace"] } # Enable `backtrace` feature in tests.
 diff --git a/src/net.rs b/src/net.rs
-index 254a1ac684db21e9deed2af0b7ca4f83f7a81e69..93bf951a6db99a49cdc85b95bf3900dcf0d01100 100644
+index 254a1ac684db21e9deed2af0b7ca4f83f7a81e69..33dff886417e8a3c4d4843df2b690ca6786a9282 100644
 --- a/src/net.rs
 +++ b/src/net.rs
-@@ -5,9 +5,11 @@
- use std::time::Duration;
- 
- use anyhow::{Context as _, Result, format_err};
-+#[cfg(not(target_arch = "wasm32"))]
+@@ -8,6 +8,7 @@
  use tokio::net::TcpStream;
  use tokio::task::JoinSet;
  use tokio::time::timeout;
@@ -401,24 +398,15 @@ index 254a1ac684db21e9deed2af0b7ca4f83f7a81e69..93bf951a6db99a49cdc85b95bf3900dc
  use tokio_io_timeout::TimeoutStream;
  
  use crate::context::Context;
-@@ -29,6 +31,8 @@
- pub(crate) mod proxy;
- pub(crate) mod session;
- pub(crate) mod tls;
-+#[cfg(target_arch = "wasm32")]
-+pub mod ws_tcp;
- 
- use dns::lookup_host_with_cache;
- pub(crate) use http::read_url_with_tls;
-@@ -108,11 +112,22 @@ pub(crate) async fn load_connection_timestamp(
+@@ -108,11 +109,22 @@ pub(crate) async fn load_connection_timestamp(
      Ok(timestamp)
  }
  
 +/// Returns a TCP connection tunneled through the WebSocket proxy
-+/// (browsers cannot open TCP sockets; see `ws_tcp`).
++/// (browsers cannot open TCP sockets; see tokio-wasm-shim's `net`).
 +#[cfg(target_arch = "wasm32")]
-+pub(crate) async fn connect_tcp_inner(addr: SocketAddr) -> Result<ws_tcp::WsTcpStream> {
-+    let stream = timeout(TIMEOUT, ws_tcp::connect_ws_tcp(addr))
++pub(crate) async fn connect_tcp_inner(addr: SocketAddr) -> Result<TcpStream> {
++    let stream = timeout(TIMEOUT, TcpStream::connect(addr))
 +        .await
 +        .with_context(|| format!("Connection to {addr} timed out"))??;
 +    Ok(stream)
@@ -433,7 +421,7 @@ index 254a1ac684db21e9deed2af0b7ca4f83f7a81e69..93bf951a6db99a49cdc85b95bf3900dc
  pub(crate) async fn connect_tcp_inner(
      addr: SocketAddr,
  ) -> Result<Pin<Box<TimeoutStream<TcpStream>>>> {
-@@ -257,6 +272,7 @@ pub(crate) async fn run_connection_attempts<O, I, F>(mut futures: I) -> Result<O
+@@ -257,6 +269,7 @@ pub(crate) async fn run_connection_attempts<O, I, F>(mut futures: I) -> Result<O
  /// for example using TLS.
  /// If TLS is not used or invalid TLS certificates are allowed,
  /// this option should be disabled.
@@ -441,191 +429,26 @@ index 254a1ac684db21e9deed2af0b7ca4f83f7a81e69..93bf951a6db99a49cdc85b95bf3900dc
  pub(crate) async fn connect_tcp(
      context: &Context,
      host: &str,
-diff --git a/src/net/dns.rs b/src/net/dns.rs
-index f4e6bec11b42c52366d7e5c72f7a4bc1a9b75d8a..b6bf59cd0a2a4b48e6d5277a612b6487bce0982a 100644
---- a/src/net/dns.rs
-+++ b/src/net/dns.rs
-@@ -45,6 +45,7 @@
- use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
- use std::str::FromStr;
- use std::sync::LazyLock;
-+#[cfg(not(target_arch = "wasm32"))]
- use tokio::net::lookup_host;
- use tokio::time::timeout;
- 
-@@ -95,6 +96,7 @@ pub(crate) async fn prune_dns_cache(context: &Context) -> Result<()> {
-     LazyLock::new(Default::default);
- 
- /// Wrapper for `lookup_host` that returns IP addresses.
-+#[cfg(not(target_arch = "wasm32"))]
- async fn lookup_ips(host: impl tokio::net::ToSocketAddrs) -> Result<impl Iterator<Item = IpAddr>> {
-     Ok(lookup_host(host)
-         .await
-@@ -102,6 +104,14 @@ async fn lookup_ips(host: impl tokio::net::ToSocketAddrs) -> Result<impl Iterato
-         .map(|addr| addr.ip()))
+diff --git a/src/net/session.rs b/src/net/session.rs
+index dd1a18505e0ebbb5f0884a210762fde5bbc62038..6f24a57789525d551576b9362830de21a508a3c3 100644
+--- a/src/net/session.rs
++++ b/src/net/session.rs
+@@ -63,6 +63,18 @@ fn peer_addr(&self) -> Result<SocketAddr> {
+         self.get_ref().peer_addr()
+     }
  }
- 
-+/// Resolves hostnames through the WebSocket proxy (no resolver in browsers).
++/// wasm: tokio-wasm-shim's `TcpStream` is the WebSocket-proxy tunnel.
 +#[cfg(target_arch = "wasm32")]
-+async fn lookup_ips<H: AsRef<str>>(host: (H, u16)) -> Result<impl Iterator<Item = IpAddr>> {
-+    Ok(super::ws_tcp::ws_dns_lookup(host.0.as_ref())
-+        .await?
-+        .into_iter())
-+}
-+
- async fn lookup_host_with_memory_cache(
-     context: &Context,
-     hostname: &str,
-diff --git a/src/net/ws_tcp.rs b/src/net/ws_tcp.rs
-new file mode 100644
-index 0000000000000000000000000000000000000000..eab5f2edc59219e20c30901d05a2cd792b7b3cc6
---- /dev/null
-+++ b/src/net/ws_tcp.rs
-@@ -0,0 +1,147 @@
-+//! wasm32 TCP transport: tunnels byte streams through a WebSocket proxy.
-+//!
-+//! Browsers cannot open TCP sockets. A trivial proxy (see the prototype's
-+//! `scripts/ws-tcp-proxy.mjs`) exposes `/tcp/{ip}/{port}` as a raw byte
-+//! tunnel and `/dns/{host}` for name resolution. TLS still terminates inside
-+//! wasm against the real server — the proxy only ever relays ciphertext.
-+//!
-+//! JS WebSocket handles are `!Send`, but core requires `Send` streams and
-+//! connection futures. The socket therefore lives in a `spawn_local` task
-+//! bridged to a `tokio::io::duplex` pair, which is plain Rust and `Send`.
-+
-+use std::net::{IpAddr, SocketAddr};
-+use std::pin::Pin;
-+use std::sync::OnceLock;
-+use std::task::{Context as TaskContext, Poll};
-+use std::time::Duration;
-+
-+use anyhow::{Context as _, Result, format_err};
-+use futures::StreamExt;
-+use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
-+use tokio_util::compat::FuturesAsyncReadCompatExt;
-+
-+use crate::net::session::SessionStream;
-+
-+static WS_PROXY_URL: OnceLock<String> = OnceLock::new();
-+
-+/// Configures the WebSocket proxy base URL (e.g. `ws://localhost:8641`).
-+/// Must be called before any network operation; subsequent calls are ignored.
-+pub fn set_ws_proxy_url(url: String) {
-+    let _ = WS_PROXY_URL.set(url);
-+}
-+
-+fn proxy_url(kind: &str, host: &str, port: Option<u16>) -> Result<String> {
-+    let base = WS_PROXY_URL
-+        .get()
-+        .context("no WebSocket proxy configured — call set_ws_proxy_url() first")?;
-+    let base = base.trim_end_matches('/');
-+    Ok(match port {
-+        Some(port) => format!("{base}/{kind}/{host}/{port}"),
-+        None => format!("{base}/{kind}/{host}"),
-+    })
-+}
-+
-+/// A TCP connection tunneled through the WebSocket proxy.
-+#[derive(Debug)]
-+pub(crate) struct WsTcpStream {
-+    inner: DuplexStream,
-+    peer: SocketAddr,
-+}
-+
-+impl AsyncRead for WsTcpStream {
-+    fn poll_read(
-+        mut self: Pin<&mut Self>,
-+        cx: &mut TaskContext<'_>,
-+        buf: &mut ReadBuf<'_>,
-+    ) -> Poll<std::io::Result<()>> {
-+        Pin::new(&mut self.inner).poll_read(cx, buf)
-+    }
-+}
-+
-+impl AsyncWrite for WsTcpStream {
-+    fn poll_write(
-+        mut self: Pin<&mut Self>,
-+        cx: &mut TaskContext<'_>,
-+        buf: &[u8],
-+    ) -> Poll<std::io::Result<usize>> {
-+        Pin::new(&mut self.inner).poll_write(cx, buf)
-+    }
-+
-+    fn poll_flush(
-+        mut self: Pin<&mut Self>,
-+        cx: &mut TaskContext<'_>,
-+    ) -> Poll<std::io::Result<()>> {
-+        Pin::new(&mut self.inner).poll_flush(cx)
-+    }
-+
-+    fn poll_shutdown(
-+        mut self: Pin<&mut Self>,
-+        cx: &mut TaskContext<'_>,
-+    ) -> Poll<std::io::Result<()>> {
-+        Pin::new(&mut self.inner).poll_shutdown(cx)
-+    }
-+}
-+
-+impl SessionStream for WsTcpStream {
++impl SessionStream for TcpStream {
 +    fn set_read_timeout(&mut self, _timeout: Option<Duration>) {
 +        // ponytail: no per-read timeouts on the tunneled stream; callers'
 +        // tokio::time::timeout (wasmtimer on wasm) covers the hang case.
 +    }
 +
 +    fn peer_addr(&self) -> Result<SocketAddr> {
-+        Ok(self.peer)
++        Ok(TcpStream::peer_addr(self)?)
 +    }
 +}
-+
-+/// Opens a tunneled TCP connection to `addr` via the proxy.
-+///
-+/// The returned future and stream are `Send`; the `!Send` JS socket lives in
-+/// a local task.
-+pub(crate) async fn connect_ws_tcp(addr: SocketAddr) -> Result<WsTcpStream> {
-+    let url = proxy_url("tcp", &addr.ip().to_string(), Some(addr.port()))?;
-+    let (tx, rx) = futures::channel::oneshot::channel();
-+    wasm_bindgen_futures::spawn_local(async move {
-+        let _ = tx.send(connect_inner(&url).await);
-+    });
-+    let inner = rx.await.context("ws connect task dropped")??;
-+    Ok(WsTcpStream { inner, peer: addr })
-+}
-+
-+async fn connect_inner(url: &str) -> Result<DuplexStream> {
-+    let (_meta, ws) = ws_stream_wasm::WsMeta::connect(url, None)
-+        .await
-+        .map_err(|e| format_err!("WebSocket connect to {url} failed: {e}"))?;
-+    let ws_io = ws.into_io();
-+    let (client, server) = tokio::io::duplex(64 * 1024);
-+    wasm_bindgen_futures::spawn_local(async move {
-+        let mut ws_io = ws_io.compat();
-+        let mut server = server;
-+        // Runs until either side closes; dropping both ends tears down the
-+        // WebSocket and signals EOF to core.
-+        let _ = tokio::io::copy_bidirectional(&mut ws_io, &mut server).await;
-+    });
-+    Ok(client)
-+}
-+
-+/// Resolves a hostname through the proxy's `/dns/{host}` endpoint.
-+pub(crate) async fn ws_dns_lookup(host: &str) -> Result<Vec<IpAddr>> {
-+    let url = proxy_url("dns", host, None)?;
-+    let (tx, rx) = futures::channel::oneshot::channel();
-+    wasm_bindgen_futures::spawn_local(async move {
-+        let _ = tx.send(dns_inner(&url).await);
-+    });
-+    rx.await.context("ws dns task dropped")?
-+}
-+
-+async fn dns_inner(url: &str) -> Result<Vec<IpAddr>> {
-+    let (_meta, mut ws) = ws_stream_wasm::WsMeta::connect(url, None)
-+        .await
-+        .map_err(|e| format_err!("WebSocket connect to {url} failed: {e}"))?;
-+    let message = ws.next().await.context("no DNS reply from proxy")?;
-+    let text = match message {
-+        ws_stream_wasm::WsMessage::Text(text) => text,
-+        ws_stream_wasm::WsMessage::Binary(bytes) => String::from_utf8(bytes)?,
-+    };
-+    let ips: Vec<IpAddr> = serde_json::from_str(&text).context("bad DNS reply")?;
-+    Ok(ips)
-+}
+ impl SessionStream for Pin<Box<TimeoutStream<TcpStream>>> {
+     fn set_read_timeout(&mut self, timeout: Option<Duration>) {
+         self.as_mut().set_read_timeout_pinned(timeout);
