@@ -1,5 +1,8 @@
 # Changelog
 
+- **Write to the developer right away.** "Sloth (Slothful.chat Developer)" in
+  New Chat now opens the chat immediately, instead of waiting for an invite
+  handshake to finish first.
 - **Click a reaction to react the same way.** Clicking a reaction under a
   message adds that emoji as your reaction, or removes it if it's yours. Who
   reacted with what is now listed at the end of Message Info.

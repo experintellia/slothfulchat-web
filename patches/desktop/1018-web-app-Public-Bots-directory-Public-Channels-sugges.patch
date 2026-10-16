@@ -27,7 +27,7 @@ SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS build/customize variable.
 ---
  .../src/components/AppPicker/index.tsx        |  17 +-
  .../src/components/Settings/ChatsAndMedia.tsx |  18 +
- .../components/dialogs/CreateChat/index.tsx   | 110 +++++-
+ .../components/dialogs/CreateChat/index.tsx   | 113 +++++-
  .../components/dialogs/PublicBots/index.tsx   | 374 ++++++++++++++++++
  .../dialogs/PublicBots/styles.module.scss     |  93 +++++
  .../dialogs/PublicChannels/index.tsx          | 106 +++++
@@ -35,7 +35,7 @@ SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS build/customize variable.
  .../src/utils/slothfulInstanceConfig.ts       |  14 +
  packages/shared/shared-types.d.ts             |  11 +
  packages/shared/state.ts                      |   2 +
- 10 files changed, 750 insertions(+), 18 deletions(-)
+ 10 files changed, 754 insertions(+), 17 deletions(-)
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/index.tsx
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/styles.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/PublicChannels/index.tsx
@@ -114,7 +114,7 @@ index 4e131b72344a8442f5b01eefb875426ae8f43b43..934ab9c4a6e77bfcf62d29b41ccc5cbf
        <DownloadOnDemand settings={settingsStore.settings} />
  
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index 41213436d874059504485102da88b717bd0fee95..4fba516699801e2862dfcf1337dc2ddeb0dfcb6d 100644
+index 41213436d874059504485102da88b717bd0fee95..d0e05391a8157656989fc2ad6d11f258005ac998 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 @@ -21,7 +21,7 @@ import {
@@ -126,7 +126,7 @@ index 41213436d874059504485102da88b717bd0fee95..4fba516699801e2862dfcf1337dc2dde
  import { AddMemberDialog } from '../AddMember/AddMemberDialog'
  import { ContactListItem } from '../../contact/ContactListItem'
  import { useSettingsStore } from '../../../stores/settings'
-@@ -59,11 +59,14 @@ import ImageCropper from '../../ImageCropper'
+@@ -59,6 +59,9 @@ import ImageCropper from '../../ImageCropper'
  import { RovingTabindexProvider } from '../../../contexts/RovingTabindex'
  import ViewProfile from '../ViewProfile'
  import { isInviteLink } from '@deltachat-desktop/shared/util'
@@ -136,31 +136,32 @@ index 41213436d874059504485102da88b717bd0fee95..4fba516699801e2862dfcf1337dc2dde
  import { copyToBlobDir } from '../../../utils/copyToBlobDir'
  import { DeltaTextarea } from '../../Login-Styles'
  import { useRpcFetch } from '../../../hooks/useFetch'
- import { I18nContext } from '../../../contexts/I18nContext'
--import { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
-+import useProcessQR, { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
- import { IMAGE_EXTENSIONS } from '@deltachat-desktop/shared/constants'
- 
- // Exported (and a regular `enum` rather than `const enum`) so that callers like
-@@ -138,6 +141,17 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
+@@ -138,6 +141,24 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
    )
  }
  
-+// Invite link to a chat with the slothfulchat-web developer, offered as a
++// vCard (with public key) of the slothfulchat-web developer, offered as a
 +// community suggestion in the New Chat dialog so users can send feedback and
-+// bug reports. Handed to the regular QR / invite-link confirmation flow.
-+const DEVELOPER_INVITE_LINK =
-+  'https://i.delta.chat/#B46FEBFE9C6FFA664EDCE3E4EA074B8D29AFD911&v=3&i=kwVtkflDAKPHh16IAC0I55sr&s=noRyH0enGqbsz1tNW-Hd4Fck&a=gwv7nupnl%40arcanechat.me&n=Sloth+%28slothful.chat+dev_'
++// bug reports. Importing it creates the contact right away, so the user can
++// write at once instead of waiting for a SecureJoin handshake; their first
++// message reaches the developer as a contact request.
++const DEVELOPER_VCARD = `BEGIN:VCARD
++VERSION:4.0
++EMAIL:gwv7nupnl@arcanechat.me
++FN:Sloth (slothful.chat developer)
++KEY:data:application/pgp-keys;base64\\,xjMEalJKoBYJKwYBBAHaRw8BAQdA4Gk+2W8+AoRHIbZGffo4oL27/fIAn+l58oA+N2DodlTCugQfFggAbAUCalJKoBYhBLRv6/6cb/pmTtzj5OoHS40pr9kRAhsDAh4JBAsJCAcFFQgJCgsDFgIBAycJAgIZATIUgAAAAAASABdyZWxheXNAY2hhdG1haWwuYXRnd3Y3bnVwbmxAYXJjYW5lY2hhdC5tZQAAat0A/3YyjL6ziryMjqwsufVAmagV9ON/O/Wh0i+zxbOm6fv5AQCyhtZuIpVsICFJWuGY5ggzu1wTZzeDD9RAvxqCPZQjC80ZPGd3djdudXBubEBhcmNhbmVjaGF0Lm1lPsKRBBMWCAA5BQJqUkqgFiEEtG/r/pxv+mZO3OPk6gdLjSmv2RECGwMCHgkECwkIBwUVCAkKCwMWAgEDJwkCAhkBAAoJEOoHS40pr9kRu8gA/RHzSyTX3rcQk6+SYQiIirdDUfxjjBPaHaHPnmeNVAqMAQDwNqK7zyf1dxBcPehRDQN3dF4QG/fbHIt+F6RVH0NoDs44BGpSSqASCisGAQQBl1UBBQEBB0AfSNOl374vcVPH71384wCd7xi+9NmL5k1fKir34WzqJAMBCAfCeAQYFggAIAUCalJKoAIbDBYhBLRv6/6cb/pmTtzj5OoHS40pr9kRAAoJEOoHS40pr9kRlm8A/17utTi3dYQLqYCtNkvqWa3AhEHPuxuel84KlpXFjZbnAQDX+5HClf2VXfJdJhXvndXaOz1QyS1eaEj3XPyBpPFIBA==
++REV:20261016T005035Z
++END:VCARD`
 +
-+// The developer's address (the `a=` part of the invite link above). Once a
-+// contact with this address exists, the invite has been accepted and there
-+// is a real chat, so the shortcut is dropped in favour of that chat.
++// The developer's address (the EMAIL of the vCard above). Once a contact with
++// this address exists, the vCard has been imported and there is a real chat,
++// so the shortcut is dropped in favour of that chat.
 +const DEVELOPER_ADDRESS = 'gwv7nupnl@arcanechat.me'
 +
  type CreateChatMainProps = {
    onClose: DialogProps['onClose']
  }
-@@ -178,6 +192,32 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -178,6 +199,32 @@ function CreateChatMain(props: CreateChatMainProps) {
    const showAddBroadcastList = queryStr.length === 0
    const showAddContactQRScan = queryStr.length === 0
  
@@ -193,7 +194,7 @@ index 41213436d874059504485102da88b717bd0fee95..4fba516699801e2862dfcf1337dc2dde
    // Don't offer the classic email / add-contact options if
    // forceEncryption is set (default)
  
-@@ -205,6 +245,15 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -205,6 +252,15 @@ function CreateChatMain(props: CreateChatMainProps) {
          ? [CreateChatExtraItemType.ADD_BROADCAST_LIST]
          : []),
        ...(showNewEmail ? [CreateChatExtraItemType.NEW_EMAIL] : []),
@@ -209,7 +210,7 @@ index 41213436d874059504485102da88b717bd0fee95..4fba516699801e2862dfcf1337dc2dde
        ...contactIds,
        ...(showAddContact ? [CreateChatExtraItemType.ADD_CONTACT] : []),
      ],
-@@ -215,6 +264,8 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -215,6 +271,8 @@ function CreateChatMain(props: CreateChatMainProps) {
        showAddContactQRScan,
        showAddGroup,
        showNewEmail,
@@ -218,15 +219,15 @@ index 41213436d874059504485102da88b717bd0fee95..4fba516699801e2862dfcf1337dc2dde
        showPseudoListItemAddContactFromInviteLink,
      ]
    )
-@@ -446,6 +497,7 @@ function CreateChatMainRow({
+@@ -446,6 +504,7 @@ function CreateChatMainRow({
    const tx = useTranslationFunction()
    const accountId = selectedAccountId()
    const { openDialog } = useDialog()
-+  const processQr = useProcessQR()
++  const createChatByContactId = useCreateChatByContactId()
  
    const el = (() => {
      switch (item) {
-@@ -504,6 +556,57 @@ function CreateChatMainRow({
+@@ -504,6 +563,55 @@ function CreateChatMainRow({
            </PseudoListItem>
          )
        }
@@ -236,14 +237,12 @@ index 41213436d874059504485102da88b717bd0fee95..4fba516699801e2862dfcf1337dc2dde
 +            id='contactdeveloper'
 +            text='Sloth (Slothful.chat Developer)'
 +            subText='Send feedback & report bugs'
-+            onClick={() => {
-+              // Hand the invite link to the regular QR / invite-link
-+              // machinery: it asks for confirmation and then sets up the chat.
-+              processQr(
++            onClick={async () => {
++              const [contactId] = await BackendRemote.rpc.importVcardContents(
 +                accountId,
-+                DEVELOPER_INVITE_LINK,
-+                SCAN_CONTEXT_TYPE.DEFAULT
++                DEVELOPER_VCARD
 +              )
++              await createChatByContactId(accountId, contactId)
 +              onClose()
 +            }}
 +          >
@@ -284,7 +283,7 @@ index 41213436d874059504485102da88b717bd0fee95..4fba516699801e2862dfcf1337dc2dde
        case CreateChatExtraItemType.ADD_CONTACT: {
          return (
            <PseudoListItemAddContact
-@@ -558,6 +661,9 @@ const enum CreateChatExtraItemType {
+@@ -558,6 +666,9 @@ const enum CreateChatExtraItemType {
    NEW_EMAIL,
    ADD_CONTACT,
    INVITE_LINK,
