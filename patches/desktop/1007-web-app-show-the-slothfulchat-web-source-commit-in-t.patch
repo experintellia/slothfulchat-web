@@ -4,36 +4,69 @@ Date: Wed, 8 Jul 2026 23:01:12 +0000
 Subject: [PATCH] web-app: show the slothfulchat-web source commit in the About
  dialog
 
-Surfaces which commit + message a deployed instance was built from,
-next to the existing (devmode-only) upstream git ref. Baked in by
-assemble.mjs/customize.mjs via window.__slothfulConfig; unset (and
-hidden) for the Electron/Tauri targets, which don't define it.
+Surfaces which slothfulchat-web version and commit a deployed instance was
+built from, under upstream's version line: version and short hash inline,
+the commit subject as a native title tooltip on a small (i) hint so the line
+doesn't wrap. Baked in by assemble.mjs/customize.mjs via
+window.__slothfulConfig; unset (and hidden) for the Electron/Tauri targets,
+which don't define it.
 
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Upstream's devmode-only `git: {GIT_REF}` line is left alone: the browser
+runtime fills GIT_REF with the same commit hash, so it isn't "unknown".
 ---
- .../frontend/src/components/dialogs/About/index.tsx  | 12 ++++++++++++
- 1 file changed, 12 insertions(+)
+ .../src/components/dialogs/About/index.tsx    | 19 +++++++++++++++++++
+ .../dialogs/About/styles.module.scss          |  5 +++++
+ 2 files changed, 24 insertions(+)
 
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 105c89b66eda7a7c06c87dfd8ccee088846ccf47..5b0dc9e26b68e230c5461d88bc25ef963c48f9e3 100644
+index 105c89b66eda7a7c06c87dfd8ccee088846ccf47..d4222f46cb8146d2dae1849ade048b767b2c8954 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
-@@ -57,6 +57,18 @@ export default function About({ onClose }: DialogProps) {
+@@ -34,6 +34,7 @@ export default function About({ onClose }: DialogProps) {
+ 
+   const runtimeInfo = runtime.getRuntimeInfo()
+   const { VERSION, GIT_REF } = runtimeInfo.buildInfo
++  const slothfulConfig = (window as any).__slothfulConfig
+ 
+   return (
+     <DialogWithHeader
+@@ -57,6 +58,24 @@ export default function About({ onClose }: DialogProps) {
                    <small>git: {GIT_REF}</small>
                  </>
                )}
-+              {(window as any).__slothfulConfig?.commitHash && (
++              {slothfulConfig?.commitHash && (
 +                <>
 +                  <br />
 +                  <small>
-+                    slothfulchat-web:{' '}
-+                    {(window as any).__slothfulConfig.commitHash}
-+                    {(window as any).__slothfulConfig.commitMessage
-+                      ? ` — ${(window as any).__slothfulConfig.commitMessage}`
-+                      : ''}
++                    slothfulchat-web
++                    {slothfulConfig.version ? ` v${slothfulConfig.version}` : ''}
++                    {' '}({slothfulConfig.commitHash})
++                    {slothfulConfig.commitMessage && (
++                      <span
++                        className={styles.commitMessageHint}
++                        title={slothfulConfig.commitMessage}
++                      >
++                        {' '}ⓘ
++                      </span>
++                    )}
 +                  </small>
 +                </>
 +              )}
              </div>
              <p style={{ marginTop: 16, textAlign: 'left', fontSize: 13 }}>
                <b>slothfulchat-web</b> is an unofficial experiment. It runs Delta
+diff --git a/packages/frontend/src/components/dialogs/About/styles.module.scss b/packages/frontend/src/components/dialogs/About/styles.module.scss
+index f3bd3a89cf5fbb621f1f94a8ace0f1aabf62d310..df20489d11fa6bf91d2b12449a808c8d7f393a01 100644
+--- a/packages/frontend/src/components/dialogs/About/styles.module.scss
++++ b/packages/frontend/src/components/dialogs/About/styles.module.scss
+@@ -14,5 +14,10 @@
+ 
+   .appVersion {
+     margin-bottom: 15px;
++
++    .commitMessageHint {
++      cursor: help;
++      opacity: 0.7;
++    }
+   }
+ }
