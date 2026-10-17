@@ -6,7 +6,7 @@ Subject: [PATCH] web-app: experimental switch for the server's own mail tunnel
 Settings -> Experimental -> Connection -> "Use the mail server's own
 tunnel" (experimentalServerTunnel, on by default while the feature is in
 beta). Off, the core worker never probes mail hosts for madmail's
-/engine.io/ IMAP/SMTP tunnel and every account goes through the bridge
+/mailtunnel IMAP/SMTP tunnel and every account goes through the bridge
 as before. runtime.ts reads the setting when it starts the core worker,
 so a change applies after a reload.
 ---
@@ -34,14 +34,14 @@ index cc431cfabe557c0d47b21f9049fa7caad1853fe5..dc893821ff72d79291fd41bab96bb061
        {runtime.getRuntimeInfo().isContentProtectionSupported && (
          <DesktopSettingsSwitch
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 69d2e7284980e3535086226a6af883f6d3857b5f..5d612a1fd671da2028d70fb9e3a9dc51185a3679 100644
+index 69d2e7284980e3535086226a6af883f6d3857b5f..3c2bb1caa70d78d012c9c3f0f2897bdedb28f5ed 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -49,6 +49,8 @@ export interface DesktopSettingsType {
    experimentalUnreadReadTime: boolean
    /** webapp: Telegram-style reply threads (reply badge, thread mode in the message list). Off by default (experimental). */
    experimentalReplyThreads: boolean
-+  /** webapp: reach mail servers that tunnel their own IMAP/SMTP over engine.io (madmail /engine.io/) through that tunnel instead of the bridge. On by default (beta); read when the core starts. */
++  /** webapp: reach mail servers that tunnel their own IMAP/SMTP (madmail /mailtunnel) through that tunnel instead of the bridge. On by default (beta); read when the core starts. */
 +  experimentalServerTunnel: boolean
    /** webapp: spelling/grammar check in the composer. Off by default. */
    grammarCheck: boolean

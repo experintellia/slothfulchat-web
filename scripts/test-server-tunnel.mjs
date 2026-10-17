@@ -1,18 +1,17 @@
 // Server-tunnel transport test: tokio-wasm-shim's net.rs reaching a mail
-// server's own IMAP/SMTP tunnel (madmail's /engine.io/) instead of the bridge.
+// server's own IMAP/SMTP tunnel (madmail's /mailtunnel) instead of the bridge.
 //
 // The wasm side runs for real: crates/tokio-wasm-shim/browser-test, a small
 // crate around the shim, is built with wasm-pack and, in a Web Worker, does
 // what core does with an IMAP/SMTP host — lookup_host, TcpStream::connect —
-// then checks 300 kB come back unchanged. The other side is the reference
-// engine.io server (npm `engine.io`) standing in for madmail's tunnel: it
-// echoes instead of dialing IMAP. madmail's own Rust tests cover its side
-// against a real listener (polling, WebSocket and the polling→WebSocket
-// upgrade).
+// then checks 300 kB come back unchanged. The other side is a stand-in for
+// madmail's /mailtunnel protocol (see crates/chatmail-www/src/mail_tunnel.rs
+// there) that echoes instead of dialing IMAP; madmail's own Rust tests cover
+// its side against a real listener.
 //
 // Variants:
 //  - websocket: https/wss://tunnel.test reaches the server through a local
-//    CONNECT proxy; the session must be a WebSocket one.
+//    CONNECT proxy; the tunnel must be a plain WebSocket one.
 //  - polling: the proxy refuses every CONNECT, so the WebSocket fails, while
 //    page routing serves the https requests; the shim must fall back to
 //    long-polling.
@@ -22,6 +21,7 @@
 //  - off: the beta switch is off, so tunnel.test is never probed and goes to
 //    the (unset) bridge like any host without a tunnel.
 import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer, request as httpsRequest } from 'node:https';
@@ -29,8 +29,8 @@ import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { attach } from 'engine.io';
 import { chromium } from 'playwright';
+import { WebSocketServer } from 'ws';
 
 const BYTES = 300_000;
 const dir = mkdtempSync(join(tmpdir(), 'server-tunnel-'));
@@ -56,20 +56,58 @@ const files = {
     }`,
 };
 
-// -- "madmail": engine.io over https, echoing what a tunnel would relay --
+// -- "madmail": the /mailtunnel protocol over https, echoing what it would relay --
 const key = join(dir, 'key.pem');
 const cert = join(dir, 'cert.pem');
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
   '-days', '1', '-subj', '/CN=tunnel.test', '-addext', 'subjectAltName=DNS:tunnel.test,IP:203.0.113.7'],
   { stdio: 'ignore' });
 const https = createHttpsServer({ key: readFileSync(key), cert: readFileSync(cert) });
-const eio = attach(https, { cors: { origin: '*' }, maxHttpBufferSize: 1 << 20 });
-const sessions = [];
-eio.on('connection', socket => {
-  const port = new URL(socket.request.url, 'https://x').searchParams.get('port');
-  if (!port) return socket.close(); // the probe: opened, then closed, like madmail
-  sessions.push(socket.transport.name);
-  socket.on('message', data => socket.send(data));
+const sessions = []; // the transport of each tunnel opened
+const polls = new Map(); // id → { queue: Buffer[], wake }
+const readBody = req =>
+  new Promise(resolve => {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+  });
+https.on('request', async (req, res) => {
+  const send = (status, body = '', type = 'text/plain') => {
+    res.writeHead(status, { 'access-control-allow-origin': '*', 'content-type': type });
+    res.end(body);
+  };
+  const { pathname } = new URL(req.url, 'https://x');
+  if (req.method === 'GET' && pathname === '/mailtunnel') return send(200, 'mailtunnel 1');
+  if (req.method === 'POST' && /^\/mailtunnel\/\d+$/.test(pathname)) {
+    const id = randomBytes(16).toString('hex');
+    polls.set(id, { queue: [], wake: () => {} });
+    sessions.push('polling');
+    return send(200, id);
+  }
+  const m = pathname.match(/^\/mailtunnel\/poll\/([0-9a-f]{32})(\/close)?$/);
+  const poll = m && polls.get(m[1]);
+  if (!poll) return send(404);
+  if (m[2]) {
+    polls.delete(m[1]);
+    poll.wake();
+    return send(204);
+  }
+  if (req.method === 'POST') {
+    poll.queue.push(await readBody(req)); // the echo
+    poll.wake();
+    return send(204);
+  }
+  if (!poll.queue.length) await new Promise(r => ((poll.wake = r), setTimeout(r, 25_000)));
+  if (!polls.has(m[1])) return send(404);
+  send(200, Buffer.concat(poll.queue.splice(0)), 'application/octet-stream');
+});
+const wss = new WebSocketServer({ noServer: true });
+https.on('upgrade', (req, socket, head) => {
+  if (!/^\/mailtunnel\/\d+$/.test(new URL(req.url, 'https://x').pathname)) return socket.destroy();
+  wss.handleUpgrade(req, socket, head, ws => {
+    sessions.push('websocket');
+    ws.on('message', (data, binary) => (binary ? ws.send(data) : ws.close()));
+  });
 });
 await new Promise(r => https.listen(0, '127.0.0.1', r));
 const httpsPort = https.address().port;
@@ -160,7 +198,7 @@ check('off', off.out.includes('no WebSocket proxy configured') && off.transports
 
 await browser.close();
 proxy.close();
-eio.close();
+wss.close();
 https.close();
 if (failures.length) {
   console.error(`server tunnel: ${failures.length} variant(s) failed: ${failures.join(', ')}`);

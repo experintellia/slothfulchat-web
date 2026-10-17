@@ -125,8 +125,8 @@ pub async fn init(
     Ok(DeltaChat { session })
 }
 
-/// Beta: whether mail servers that tunnel their own IMAP/SMTP over engine.io
-/// (madmail's `/engine.io/`) are reached through it instead of the WebSocket
+/// Beta: whether mail servers that tunnel their own IMAP/SMTP (madmail's
+/// `/mailtunnel`) are reached through it instead of the WebSocket
 /// proxy. On unless this says otherwise; call before `init`.
 #[wasm_bindgen]
 pub fn set_server_tunnel(enabled: bool) {

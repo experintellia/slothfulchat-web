@@ -43,7 +43,7 @@ interface ConfigMessage {
   proxyUrl?: string
   /** OPFS persistence; false = fresh in-memory core (tests). */
   persist: boolean
-  /** Beta per-server IMAP/SMTP tunnel (madmail /engine.io/); default on. */
+  /** Beta per-server IMAP/SMTP tunnel (madmail /mailtunnel); default on. */
   serverTunnel?: boolean
 }
 

@@ -27,8 +27,8 @@ pub mod durability;
 // `Vec::resize` aborts the worker instead of failing the operation.
 pub mod limits;
 
-// engine.io framing for servers that tunnel their own IMAP/SMTP (`net`).
-pub mod engineio;
+// Pure helpers for servers that tunnel their own IMAP/SMTP (`net`).
+pub mod tunnel;
 
 #[cfg(target_arch = "wasm32")]
 pub mod fs;

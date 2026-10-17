@@ -106,7 +106,7 @@ export interface Core {
  * `persist` (default true) keeps accounts/messages/blobs in OPFS across
  * page reloads; pass false for a fresh, fully in-memory core.
  * `serverTunnel` (default true, beta) reaches mail servers that tunnel their
- * own IMAP/SMTP over engine.io through that tunnel instead of the proxy. */
+ * own IMAP/SMTP (madmail /mailtunnel) through that tunnel instead of the proxy. */
 export function startCore(
   options: { wsProxyUrl?: string; persist?: boolean; serverTunnel?: boolean } = {},
   workerUrl: URL = new URL('./worker.js', import.meta.url),

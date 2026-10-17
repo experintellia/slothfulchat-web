@@ -3619,10 +3619,9 @@ function serverTunnelEnabled(): boolean {
   }
 }
 
-// Hosts that tunnel their own IMAP/SMTP over engine.io (madmail's
-// /engine.io/): the core worker reaches them without the bridge. Same probe as
-// tokio-wasm-shim's net.rs: a handshake without `port` the server closes at
-// once. Other hosts fail its CORS check, which the browser logs and nothing
+// Hosts that tunnel their own IMAP/SMTP (madmail's /mailtunnel): the core
+// worker reaches them without the bridge. Same probe as tokio-wasm-shim's
+// net.rs: `GET /mailtunnel` answers "mailtunnel 1" and opens nothing. Other hosts fail its CORS check, which the browser logs and nothing
 // can silence, so each host is probed once per page; only an offline miss is
 // retried.
 const tunnelProbes = new Map<string, Promise<boolean>>()
@@ -3630,10 +3629,10 @@ function serverTunnels(host: string): Promise<boolean> {
   let probe = tunnelProbes.get(host)
   if (!probe) {
     const name = host.includes(':') ? `[${host}]` : host // IPv6 literal
-    probe = fetch(`https://${name}/engine.io/?EIO=4&transport=polling`, {
+    probe = fetch(`https://${name}/mailtunnel`, {
       signal: AbortSignal.timeout(5000),
     })
-      .then(async r => r.ok && (await r.text()).startsWith('0{'))
+      .then(async r => r.ok && (await r.text()).startsWith('mailtunnel '))
       .catch(() => false)
     tunnelProbes.set(host, probe)
     probe.then(yes => yes || navigator.onLine || tunnelProbes.delete(host))

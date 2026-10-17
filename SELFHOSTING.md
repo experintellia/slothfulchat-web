@@ -23,8 +23,8 @@ You host **two things**:
 > bridge at all — if all your accounts are webimap, you only host the static
 > site.
 >
-> Likewise, a mail server that tunnels its own IMAP/SMTP over engine.io
-> (madmail's `/engine.io/` endpoint) is reached through that tunnel —
+> Likewise, a mail server that tunnels its own IMAP/SMTP (madmail's
+> `/mailtunnel` endpoint) is reached through that tunnel —
 > WebSocket, or HTTP long-polling where WebSocket is blocked — so its accounts
 > skip the bridge too.
 
