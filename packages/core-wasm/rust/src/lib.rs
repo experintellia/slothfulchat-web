@@ -125,6 +125,14 @@ pub async fn init(
     Ok(DeltaChat { session })
 }
 
+/// Beta: whether mail servers that tunnel their own IMAP/SMTP over engine.io
+/// (madmail's `/engine.io/`) are reached through it instead of the WebSocket
+/// proxy. On unless this says otherwise; call before `init`.
+#[wasm_bindgen]
+pub fn set_server_tunnel(enabled: bool) {
+    tokio::net::set_server_tunnel_enabled(enabled);
+}
+
 /// Registers the JS handler that runs offloaded crypto ops on the pool
 /// worker: `(op: string, payload: Uint8Array) -> Promise<Uint8Array>`.
 ///
