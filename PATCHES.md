@@ -632,6 +632,14 @@ exists:
   created with `IF NOT EXISTS` after the numbered migrations rather than as a
   numbered migration, so the fork never claims a version number upstream will
   use next. `core/1026`, `desktop/1067`
+- **Switch for the server's own mail tunnel (beta)** — Settings →
+  Experimental → Connection → "Use the mail server's own tunnel"
+  (`experimentalServerTunnel`, on by default). The tunnel itself is not a
+  patch: `crates/tokio-wasm-shim` reaches a mail server that serves madmail's
+  `/mailtunnel` IMAP/SMTP tunnel directly, over WebSocket or long-polling,
+  instead of through the bridge. Off, the worker never probes for it.
+  runtime.ts reads the setting when it starts the core worker, so a change
+  applies after a reload. `desktop/1070`
 
 ## Bugfixes
 

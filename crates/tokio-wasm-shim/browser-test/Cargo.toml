@@ -1,0 +1,17 @@
+# Browser test harness for tokio-wasm-shim's net (scripts/test-server-tunnel.mjs
+# builds it with wasm-pack and drives it in Chromium). Not part of the shim.
+[package]
+name = "tokio-wasm-shim-browser-test"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tokio = { package = "tokio-wasm-shim", path = ".." }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+
+[workspace]

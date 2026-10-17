@@ -4,6 +4,11 @@
 //!   exposes `/tcp/{ip}/{port}` as a raw tunnel (`packages/ws-tcp-proxy`);
 //!   TLS still terminates inside wasm, the proxy only ever relays ciphertext.
 //! - [`lookup_host`] resolves through the same proxy's `/dns/{host}` endpoint.
+//! - A mail server that tunnels IMAP/SMTP to its own listeners (madmail's
+//!   `/mailtunnel`) needs no proxy at all: [`lookup_host`] probes for it once
+//!   and hands core a synthetic IP for the host, and [`TcpStream::connect`]
+//!   dials that IP through the server's tunnel: a plain binary WebSocket, or
+//!   raw-body HTTP long-polling where WebSocket is blocked.
 //! - [`fetch`] is HTTP via the browser's `fetch()` (not a tokio API; core's
 //!   wasm `net/http` module is a thin adapter over it).
 //!
@@ -12,25 +17,42 @@
 //! plain Rust values cross back: a `tokio::io::duplex` pair for the socket,
 //! a `Vec` for DNS and fetch results.
 
+use std::collections::BTreeMap;
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures::StreamExt;
-use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf};
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
+use crate::tunnel;
+
 static WS_PROXY_URL: OnceLock<String> = OnceLock::new();
+
+/// Beta switch for the per-server tunnel (Settings → Experimental); on by default.
+static SERVER_TUNNEL: AtomicBool = AtomicBool::new(true);
+/// Server-tunnel probe results by host, for the worker's lifetime.
+static PROBED: Mutex<BTreeMap<String, bool>> = Mutex::new(BTreeMap::new());
+/// Synthetic IP → host that tunnels its own IMAP/SMTP (see [`tunnel::synthetic_ip`]).
+static TUNNELED: Mutex<BTreeMap<Ipv4Addr, String>> = Mutex::new(BTreeMap::new());
 
 /// Configures the WebSocket proxy base URL (e.g. `ws://localhost:8641`).
 /// Must be called before any network operation; subsequent calls are ignored.
 pub fn set_ws_proxy_url(url: String) {
     let _ = WS_PROXY_URL.set(url);
+}
+
+/// Turns the per-server tunnel off (or back on); off, every host goes
+/// through the WebSocket proxy as before. Call before any network operation.
+pub fn set_server_tunnel_enabled(enabled: bool) {
+    SERVER_TUNNEL.store(enabled, Ordering::Relaxed);
 }
 
 fn other(msg: impl Into<String>) -> io::Error {
@@ -61,10 +83,20 @@ impl TcpStream {
     /// ponytail: takes a resolved `SocketAddr` only (all core passes);
     /// resolve names with [`lookup_host`] first.
     pub async fn connect(addr: SocketAddr) -> io::Result<TcpStream> {
-        let url = proxy_url("tcp", &addr.ip().to_string(), Some(addr.port()))?;
-        let inner = crate::task::spawn(async move { connect_inner(&url).await })
-            .await
-            .map_err(|_| other("ws connect task dropped"))??;
+        let tunneled = match addr.ip() {
+            IpAddr::V4(ip) => TUNNELED.lock().unwrap().get(&ip).cloned(),
+            IpAddr::V6(_) => None,
+        };
+        let inner = match tunneled {
+            Some(host) => {
+                crate::task::spawn(async move { tunnel_connect(&host, addr.port()).await }).await
+            }
+            None => {
+                let url = proxy_url("tcp", &addr.ip().to_string(), Some(addr.port()))?;
+                crate::task::spawn(async move { connect_inner(&url).await }).await
+            }
+        }
+        .map_err(|_| other("ws connect task dropped"))??;
         Ok(TcpStream { inner, peer: addr })
     }
 
@@ -87,6 +119,113 @@ async fn connect_inner(url: &str) -> io::Result<DuplexStream> {
         let _ = tokio::io::copy_bidirectional(&mut ws_io, &mut server).await;
     });
     Ok(client)
+}
+
+/// Does `host` tunnel IMAP/SMTP to itself? `GET /mailtunnel` answers
+/// `mailtunnel 1` there, without opening anything.
+///
+/// A host without the tunnel fails the probe's CORS check (or, for a madmail
+/// on a bare IP with a self-signed certificate, its TLS check), which the
+/// browser logs to the console and no page code can silence, so each host is
+/// probed once per worker; only a probe made while offline is retried. A
+/// madmail IP server with a Let's Encrypt IP certificate (`--auto-ip-cert`)
+/// passes like any named host.
+async fn has_server_tunnel(host: &str) -> bool {
+    if !SERVER_TUNNEL.load(Ordering::Relaxed) {
+        return false;
+    }
+    if let Some(&yes) = PROBED.lock().unwrap().get(host) {
+        return yes;
+    }
+    let url = format!("https://{}/mailtunnel", tunnel::url_host(host));
+    let yes = crate::task::spawn(async move {
+        request("GET", &url, None, Duration::from_secs(5))
+            .await
+            .is_ok_and(|resp| resp.ok && resp.body.starts_with(b"mailtunnel "))
+    })
+    .await
+    .unwrap_or(false);
+    let scope: web_sys::WorkerGlobalScope = js_sys::global().unchecked_into();
+    if yes || scope.navigator().on_line() {
+        PROBED.lock().unwrap().insert(host.to_string(), yes);
+    }
+    yes
+}
+
+/// One tunnel to `host` carrying one TCP stream to its `port`: the plain
+/// binary WebSocket (the same byte pipe as the proxy's `/tcp/…`), else
+/// long-polling.
+async fn tunnel_connect(host: &str, port: u16) -> io::Result<DuplexStream> {
+    let base = format!("{}/mailtunnel/{port}", tunnel::url_host(host));
+    let ws = crate::time::timeout(
+        Duration::from_secs(10),
+        connect_inner(&format!("wss://{base}")),
+    )
+    .await;
+    match ws {
+        Ok(Ok(stream)) => Ok(stream),
+        // WebSocket blocked or hanging (proxy, middlebox): long-poll instead.
+        _ => polling_tunnel(&format!("https://{base}")).await,
+    }
+}
+
+/// The long-polling half of the tunnel: `POST` the port URL for a session
+/// id, then `GET`/`POST` raw bytes at `…/poll/{id}`; madmail's
+/// `mail_tunnel.rs` documents the protocol.
+async fn polling_tunnel(open_url: &str) -> io::Result<DuplexStream> {
+    let open = request("POST", open_url, None, Duration::from_secs(10)).await?;
+    let id = String::from_utf8(open.body).unwrap_or_default();
+    if !open.ok || id.len() != 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(other(format!("mail tunnel refused: HTTP {}", open.status)));
+    }
+    let url = format!("{}/poll/{id}", open_url.rsplit_once('/').unwrap().0);
+    let (client, server) = tokio::io::duplex(64 * 1024);
+    let (mut rd, mut wr) = tokio::io::split(server);
+
+    let read_url = url.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        // Each GET waits (server side, up to 25 s) for bytes; empty = none yet.
+        while let Ok(resp) = request("GET", &read_url, None, Duration::from_secs(40)).await {
+            if resp.status != 200 || wr.write_all(&resp.body).await.is_err() {
+                break; // 404: the tunnel ended
+            }
+        }
+        // Dropping `wr` signals EOF to core.
+    });
+
+    wasm_bindgen_futures::spawn_local(async move {
+        let mut buf = vec![0u8; 64 * 1024]; // the server's body limit
+        loop {
+            let n = match rd.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            let body = Some(buf[..n].to_vec());
+            let sent = request("POST", &url, body, Duration::from_secs(40)).await;
+            if !sent.is_ok_and(|resp| resp.ok) {
+                return;
+            }
+        }
+        let close = format!("{url}/close");
+        let _ = request("POST", &close, None, Duration::from_secs(10)).await;
+    });
+    Ok(client)
+}
+
+/// One plain HTTP request for the tunnel, any status; must run on the JS
+/// thread. A byte body goes out without a content type, which keeps it a
+/// CORS "simple" request (no preflight).
+async fn request(
+    method: &str,
+    url: &str,
+    body: Option<Vec<u8>>,
+    wait: Duration,
+) -> io::Result<FetchResponse> {
+    let body = body.map(|b| JsValue::from(js_sys::Uint8Array::from(&b[..])));
+    crate::time::timeout(wait, fetch_inner(method, url, &[], body, false, None))
+        .await
+        .map_err(|_| other(format!("mail tunnel {method} timed out")))?
+        .map_err(|e| other(format!("mail tunnel {method} {e}")))
 }
 
 impl AsyncRead for TcpStream {
@@ -136,14 +275,24 @@ impl ToSocketAddrs for (String, u16) {
     }
 }
 
-/// Resolves a hostname through the proxy's `/dns/{host}` endpoint.
+/// Resolves a hostname through the proxy's `/dns/{host}` endpoint, or to a
+/// synthetic IP if the host tunnels its own IMAP/SMTP (no proxy needed).
 pub async fn lookup_host(host: impl ToSocketAddrs) -> io::Result<impl Iterator<Item = SocketAddr>> {
     let (host, port) = host.host_port();
+    if has_server_tunnel(host).await {
+        let ip = tunnel::synthetic_ip(host);
+        TUNNELED.lock().unwrap().insert(ip, host.to_string());
+        return Ok(vec![SocketAddr::new(ip.into(), port)].into_iter());
+    }
     let url = proxy_url("dns", host, None)?;
     let ips = crate::task::spawn(async move { dns_inner(&url).await })
         .await
         .map_err(|_| other("ws dns task dropped"))??;
-    Ok(ips.into_iter().map(move |ip| SocketAddr::new(ip, port)))
+    Ok(ips
+        .into_iter()
+        .map(|ip| SocketAddr::new(ip, port))
+        .collect::<Vec<_>>()
+        .into_iter())
 }
 
 async fn dns_inner(url: &str) -> io::Result<Vec<IpAddr>> {
@@ -208,7 +357,7 @@ pub async fn fetch(
                 &method,
                 &url,
                 &headers,
-                body,
+                body.as_deref().map(JsValue::from_str),
                 follow_redirects,
                 controller.as_ref(),
             ),
@@ -233,7 +382,7 @@ async fn fetch_inner(
     method: &str,
     url: &str,
     headers: &[(String, String)],
-    body: Option<String>,
+    body: Option<JsValue>,
     follow_redirects: bool,
     controller: Option<&web_sys::AbortController>,
 ) -> Result<FetchResponse, String> {
@@ -246,7 +395,7 @@ async fn fetch_inner(
         init.set_signal(Some(&controller.signal()));
     }
     if let Some(body) = &body {
-        init.set_body(&JsValue::from_str(body));
+        init.set_body(body);
     }
     if !headers.is_empty() {
         let js_headers = web_sys::Headers::new().map_err(js_str)?;

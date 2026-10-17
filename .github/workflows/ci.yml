@@ -316,6 +316,15 @@ jobs:
       - name: Smoke test — core-wasm boots in the browser
         run: pnpm --filter @slothfulchat/core-wasm test
 
+      # The mail server's own IMAP/SMTP tunnel (madmail /mailtunnel, beta):
+      # tokio-wasm-shim in a Web Worker against a stand-in for madmail's
+      # protocol, over WebSocket, with WebSocket refused (long-polling
+      # fallback), for a bare-IP host, and with the beta switch off. Builds
+      # its own small harness crate with wasm-pack (installed by build-web-app
+      # above).
+      - name: Test — server tunnel over WebSocket and long-polling
+        run: node scripts/test-server-tunnel.mjs
+
       # The account template is an optimization and has to fail like one: a
       # template sqlite cannot read must leave a WORKING account behind, not
       # one wrapped around a database that never opens and never heals. The

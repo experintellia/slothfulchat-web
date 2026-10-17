@@ -329,7 +329,10 @@ function getCore(): Core {
     analytics.event('bridge', { kind: bridgeKind(wsProxyUrl) })
     warnIfNoWebAssembly()
     perf.boot('worker-spawn')
-    core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))
+    core = startCore(
+      { wsProxyUrl, persist, serverTunnel: serverTunnelEnabled() },
+      new URL(BASE + 'core/worker.js', location.href)
+    )
     // time selected RPC round-trips (local) + derive anonymous usage events
     observeTransport(core.transport as any)
     // Print core's own log events on release builds. core-wasm no longer
@@ -3579,18 +3582,62 @@ async function bridgeNeed(): Promise<'none' | 'required' | 'fallback'> {
     const rpc = getCore().dc.rpc
     const transports = await rpc.listTransports(accId)
     if (transports.length === 0) return onboardingWebimap() ? 'none' : 'required'
-    const hasBridge = transports.some(t => !(t as any).webimap)
-    if (!hasBridge) return 'none'
+    // webimap transports, and IMAP ones whose server tunnels itself, skip the bridge.
+    const viaBridge = await Promise.all(
+      transports.map(
+        async t =>
+          !(t as any).webimap &&
+          !(
+            serverTunnelEnabled() &&
+            (await serverTunnels(
+              t.imapServer || (t.addr ?? '').split('@')[1] || ''
+            ))
+          )
+      )
+    )
+    if (!viaBridge.includes(true)) return 'none'
     const primaryAddr = (
       (await rpc.getConfig(accId, 'configured_addr')) ?? ''
     ).toLowerCase()
-    const primary = transports.find(
+    const primary = transports.findIndex(
       t => (t.addr ?? '').toLowerCase() === primaryAddr
     )
-    return (primary as any)?.webimap ? 'fallback' : 'required'
+    return primary >= 0 && !viaBridge[primary] ? 'fallback' : 'required'
   } catch {
     return 'required'
   }
+}
+
+/** Beta switch, Settings → Experimental → "Server's own mail tunnel" (on by
+ * default). Read when the core worker starts, so a change applies on reload. */
+function serverTunnelEnabled(): boolean {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
+    return stored.experimentalServerTunnel !== false
+  } catch {
+    return true
+  }
+}
+
+// Hosts that tunnel their own IMAP/SMTP (madmail's /mailtunnel): the core
+// worker reaches them without the bridge. Same probe as tokio-wasm-shim's
+// net.rs: `GET /mailtunnel` answers "mailtunnel 1" and opens nothing. Other hosts fail its CORS check, which the browser logs and nothing
+// can silence, so each host is probed once per page; only an offline miss is
+// retried.
+const tunnelProbes = new Map<string, Promise<boolean>>()
+function serverTunnels(host: string): Promise<boolean> {
+  let probe = tunnelProbes.get(host)
+  if (!probe) {
+    const name = host.includes(':') ? `[${host}]` : host // IPv6 literal
+    probe = fetch(`https://${name}/mailtunnel`, {
+      signal: AbortSignal.timeout(5000),
+    })
+      .then(async r => r.ok && (await r.text()).startsWith('mailtunnel '))
+      .catch(() => false)
+    tunnelProbes.set(host, probe)
+    probe.then(yes => yes || navigator.onLine || tunnelProbes.delete(host))
+  }
+  return probe
 }
 
 async function checkBridge(): Promise<boolean> {
