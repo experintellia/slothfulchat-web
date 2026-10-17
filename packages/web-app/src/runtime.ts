@@ -3579,18 +3579,46 @@ async function bridgeNeed(): Promise<'none' | 'required' | 'fallback'> {
     const rpc = getCore().dc.rpc
     const transports = await rpc.listTransports(accId)
     if (transports.length === 0) return onboardingWebimap() ? 'none' : 'required'
-    const hasBridge = transports.some(t => !(t as any).webimap)
-    if (!hasBridge) return 'none'
+    // webimap transports, and IMAP ones whose server tunnels itself, skip the bridge.
+    const viaBridge = await Promise.all(
+      transports.map(
+        async t =>
+          !(t as any).webimap &&
+          !(await serverTunnels(
+            t.imapServer || (t.addr ?? '').split('@')[1] || ''
+          ))
+      )
+    )
+    if (!viaBridge.includes(true)) return 'none'
     const primaryAddr = (
       (await rpc.getConfig(accId, 'configured_addr')) ?? ''
     ).toLowerCase()
-    const primary = transports.find(
+    const primary = transports.findIndex(
       t => (t.addr ?? '').toLowerCase() === primaryAddr
     )
-    return (primary as any)?.webimap ? 'fallback' : 'required'
+    return primary >= 0 && !viaBridge[primary] ? 'fallback' : 'required'
   } catch {
     return 'required'
   }
+}
+
+// Hosts that tunnel their own IMAP/SMTP over engine.io (madmail's
+// /engine.io/): the core worker reaches them without the bridge. Same probe as
+// tokio-wasm-shim's net.rs: a handshake without `port` the server closes at once.
+const tunnelProbes = new Map<string, Promise<boolean>>()
+function serverTunnels(host: string): Promise<boolean> {
+  let probe = tunnelProbes.get(host)
+  if (!probe) {
+    probe = fetch(`https://${host}/engine.io/?EIO=4&transport=polling`, {
+      signal: AbortSignal.timeout(5000),
+    })
+      .then(async r => r.ok && (await r.text()).startsWith('0{'))
+      .catch(() => false)
+    tunnelProbes.set(host, probe)
+    // a miss may only mean we were offline: retry it in a while
+    probe.then(yes => yes || setTimeout(() => tunnelProbes.delete(host), 300_000))
+  }
+  return probe
 }
 
 async function checkBridge(): Promise<boolean> {
