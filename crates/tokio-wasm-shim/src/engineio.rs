@@ -59,6 +59,15 @@ pub fn encode_binary(data: &[u8]) -> String {
     )
 }
 
+/// `host` as it goes into a URL: IPv6 literals in brackets.
+pub fn url_host(host: &str) -> String {
+    if host.parse::<std::net::Ipv6Addr>().is_ok() {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    }
+}
+
 /// The address `lookup_host` hands core for a tunneled host: core only ever
 /// dials resolved IPs, so the host rides along in an IP that `connect` maps
 /// back. 198.18.0.0/15 (RFC 2544 benchmarking) is never a real mail server.
@@ -102,6 +111,13 @@ mod tests {
         assert!(decode("").is_err());
         assert!(decode("b!!").is_err());
         assert_eq!(encode_binary(b"a1 NOOP\r\n"), "bYTEgTk9PUA0K");
+    }
+
+    #[test]
+    fn url_hosts() {
+        assert_eq!(url_host("mail.example"), "mail.example");
+        assert_eq!(url_host("203.0.113.7"), "203.0.113.7");
+        assert_eq!(url_host("2001:db8::7"), "[2001:db8::7]");
     }
 
     #[test]

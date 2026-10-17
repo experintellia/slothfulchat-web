@@ -16,6 +16,9 @@
 //  - polling: the proxy refuses every CONNECT, so the WebSocket fails, while
 //    page routing serves the https requests; the shim must fall back to
 //    long-polling.
+//  - ip: the same over WebSocket for a madmail on a bare IP (203.0.113.7,
+//    TEST-NET-3), which has a browser-trusted Let's Encrypt IP certificate when
+//    installed with --auto-ip-cert.
 //  - off: the beta switch is off, so tunnel.test is never probed and goes to
 //    the (unset) bridge like any host without a tunnel.
 import { execFileSync } from 'node:child_process';
@@ -42,11 +45,11 @@ const files = {
   'harness_bg.wasm': readFileSync(join(dir, 'pkg/tokio_wasm_shim_browser_test_bg.wasm')),
   'worker.js': `
     import init, { echo, set_server_tunnel } from './harness.js'
-    onmessage = async ({ data: { tunnel, port, n } }) => {
+    onmessage = async ({ data: { tunnel, host, port, n } }) => {
       try {
         await init({ module_or_path: './harness_bg.wasm' })
         set_server_tunnel(tunnel)
-        postMessage('OK ' + (await echo('tunnel.test', port, n)))
+        postMessage('OK ' + (await echo(host, port, n)))
       } catch (e) {
         postMessage('ERR ' + e)
       }
@@ -57,7 +60,8 @@ const files = {
 const key = join(dir, 'key.pem');
 const cert = join(dir, 'cert.pem');
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
-  '-days', '1', '-subj', '/CN=tunnel.test', '-addext', 'subjectAltName=DNS:tunnel.test'], { stdio: 'ignore' });
+  '-days', '1', '-subj', '/CN=tunnel.test', '-addext', 'subjectAltName=DNS:tunnel.test,IP:203.0.113.7'],
+  { stdio: 'ignore' });
 const https = createHttpsServer({ key: readFileSync(key), cert: readFileSync(cert) });
 const eio = attach(https, { cors: { origin: '*' }, maxHttpBufferSize: 1 << 20 });
 const sessions = [];
@@ -73,7 +77,8 @@ const httpsPort = https.address().port;
 // -- CONNECT proxy: the browser's only way to tunnel.test --
 let allowConnect = true;
 const proxy = createServer().on('connect', (req, client, head) => {
-  if (!allowConnect || req.url !== 'tunnel.test:443') return client.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+  const known = req.url === 'tunnel.test:443' || req.url === '203.0.113.7:443';
+  if (!allowConnect || !known) return client.end('HTTP/1.1 403 Forbidden\r\n\r\n');
   const up = connect(httpsPort, '127.0.0.1', () => {
     client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
     up.write(head);
@@ -130,7 +135,7 @@ async function run(mode) {
         w.onerror = e => resolve('ERR worker ' + e.message);
         w.postMessage(args);
       }),
-    { tunnel: mode !== 'off', port: 993, n: BYTES },
+    { tunnel: mode !== 'off', host: mode === 'ip' ? '203.0.113.7' : 'tunnel.test', port: 993, n: BYTES },
   );
   await ctx.unrouteAll({ behavior: 'ignoreErrors' });
   await ctx.close();
@@ -142,11 +147,12 @@ const check = (name, ok, detail) => {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}: ${detail}`);
   if (!ok) failures.push(name);
 };
-for (const mode of ['websocket', 'polling']) {
+for (const mode of ['websocket', 'polling', 'ip']) {
   const { out, transports } = await run(mode);
   // 198.18.x.x: the synthetic address the shim hands core for a tunneled host
   const echoed = out.startsWith('OK 198.1') && out.endsWith(`echoed ${BYTES} bytes`);
-  check(mode, echoed && transports.join() === mode, `${out} | sessions: ${transports.join() || 'none'}`);
+  const expected = mode === 'polling' ? 'polling' : 'websocket';
+  check(mode, echoed && transports.join() === expected, `${out} | sessions: ${transports.join() || 'none'}`);
 }
 const off = await run('off');
 check('off', off.out.includes('no WebSocket proxy configured') && off.transports.length === 0,

@@ -3629,7 +3629,8 @@ const tunnelProbes = new Map<string, Promise<boolean>>()
 function serverTunnels(host: string): Promise<boolean> {
   let probe = tunnelProbes.get(host)
   if (!probe) {
-    probe = fetch(`https://${host}/engine.io/?EIO=4&transport=polling`, {
+    const name = host.includes(':') ? `[${host}]` : host // IPv6 literal
+    probe = fetch(`https://${name}/engine.io/?EIO=4&transport=polling`, {
       signal: AbortSignal.timeout(5000),
     })
       .then(async r => r.ok && (await r.text()).startsWith('0{'))

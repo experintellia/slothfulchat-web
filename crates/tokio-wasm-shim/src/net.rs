@@ -125,17 +125,23 @@ async fn connect_inner(url: &str) -> io::Result<DuplexStream> {
 /// Does `host` tunnel IMAP/SMTP to itself? One engine.io handshake without a
 /// `port` answers it: the server opens the session, then closes it at once.
 ///
-/// A host without the tunnel fails the probe's CORS check, which the browser
-/// logs to the console and no page code can silence, so each host is probed
-/// once per worker; only a probe made while offline is retried.
+/// A host without the tunnel fails the probe's CORS check (or, for a madmail
+/// on a bare IP with a self-signed certificate, its TLS check), which the
+/// browser logs to the console and no page code can silence, so each host is
+/// probed once per worker; only a probe made while offline is retried. A
+/// madmail IP server with a Let's Encrypt IP certificate (`--auto-ip-cert`)
+/// passes like any named host.
 async fn has_server_tunnel(host: &str) -> bool {
-    if !SERVER_TUNNEL.load(Ordering::Relaxed) || host.parse::<IpAddr>().is_ok() {
-        return false; // an IP literal has no browser-trusted certificate
+    if !SERVER_TUNNEL.load(Ordering::Relaxed) {
+        return false;
     }
     if let Some(&yes) = PROBED.lock().unwrap().get(host) {
         return yes;
     }
-    let url = format!("https://{host}/engine.io/?EIO=4&transport=polling");
+    let url = format!(
+        "https://{}/engine.io/?EIO=4&transport=polling",
+        engineio::url_host(host)
+    );
     let yes = crate::task::spawn(async move {
         poll("GET", &url, None, Duration::from_secs(5))
             .await
@@ -152,7 +158,10 @@ async fn has_server_tunnel(host: &str) -> bool {
 
 /// One engine.io session to `host` carrying one TCP stream to its `port`.
 async fn tunnel_connect(host: &str, port: u16) -> io::Result<DuplexStream> {
-    let ws_url = format!("wss://{host}/engine.io/?EIO=4&transport=websocket&port={port}");
+    let ws_url = format!(
+        "wss://{}/engine.io/?EIO=4&transport=websocket&port={port}",
+        engineio::url_host(host)
+    );
     let ws = crate::time::timeout(Duration::from_secs(10), async {
         let (_meta, mut ws) = ws_stream_wasm::WsMeta::connect(&ws_url, None).await.ok()?;
         match ws.next().await? {
@@ -214,7 +223,10 @@ fn ws_tunnel(ws: WsStream) -> DuplexStream {
 }
 
 async fn polling_tunnel(host: &str, port: u16) -> io::Result<DuplexStream> {
-    let base = format!("https://{host}/engine.io/?EIO=4&transport=polling");
+    let base = format!(
+        "https://{}/engine.io/?EIO=4&transport=polling",
+        engineio::url_host(host)
+    );
     let open = poll(
         "GET",
         &format!("{base}&port={port}"),
