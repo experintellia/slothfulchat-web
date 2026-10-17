@@ -11,6 +11,7 @@ import initWasm, {
   init,
   set_account_template,
   set_crypto_offload,
+  set_server_tunnel,
 } from '../wasm-dist/deltachat_wasm.js'
 import { OPFS_PROBE_DEADLINE_MS, probeUntilDeadline } from './opfs-probe.mjs'
 
@@ -42,6 +43,8 @@ interface ConfigMessage {
   proxyUrl?: string
   /** OPFS persistence; false = fresh in-memory core (tests). */
   persist: boolean
+  /** Beta per-server IMAP/SMTP tunnel (madmail /engine.io/); default on. */
+  serverTunnel?: boolean
 }
 
 const scope = self as unknown as {
@@ -365,8 +368,9 @@ let accountTemplate: Promise<Uint8Array | undefined> | undefined = (async () => 
 })
 
 const ready = (async () => {
-  const { proxyUrl, persist } = await config
+  const { proxyUrl, persist, serverTunnel } = await config
   await initWasm()
+  set_server_tunnel(serverTunnel !== false)
   // non-blocking, like the crypto pool below: boot must never wait on an
   // optimization. Awaiting it here delayed init by the length of a fetch, and
   // that was enough to flip the order two <dialog>s open in — top-layer order

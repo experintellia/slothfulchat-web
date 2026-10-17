@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -36,17 +37,23 @@ use crate::engineio::{self, Packet, SEP};
 
 static WS_PROXY_URL: OnceLock<String> = OnceLock::new();
 
-/// Server-tunnel probe results by host, with when they were taken.
-static PROBED: Mutex<BTreeMap<String, (bool, f64)>> = Mutex::new(BTreeMap::new());
+/// Beta switch for the per-server tunnel (Settings → Experimental); on by default.
+static SERVER_TUNNEL: AtomicBool = AtomicBool::new(true);
+/// Server-tunnel probe results by host, for the worker's lifetime.
+static PROBED: Mutex<BTreeMap<String, bool>> = Mutex::new(BTreeMap::new());
 /// Synthetic IP → host that tunnels its own IMAP/SMTP (see [`engineio::synthetic_ip`]).
 static TUNNELED: Mutex<BTreeMap<Ipv4Addr, String>> = Mutex::new(BTreeMap::new());
-/// A failed probe is retried after this long: it may only mean we were offline.
-const PROBE_MISS_TTL_MS: f64 = 5.0 * 60_000.0;
 
 /// Configures the WebSocket proxy base URL (e.g. `ws://localhost:8641`).
 /// Must be called before any network operation; subsequent calls are ignored.
 pub fn set_ws_proxy_url(url: String) {
     let _ = WS_PROXY_URL.set(url);
+}
+
+/// Turns the per-server tunnel off (or back on); off, every host goes
+/// through the WebSocket proxy as before. Call before any network operation.
+pub fn set_server_tunnel_enabled(enabled: bool) {
+    SERVER_TUNNEL.store(enabled, Ordering::Relaxed);
 }
 
 fn other(msg: impl Into<String>) -> io::Error {
@@ -117,15 +124,16 @@ async fn connect_inner(url: &str) -> io::Result<DuplexStream> {
 
 /// Does `host` tunnel IMAP/SMTP to itself? One engine.io handshake without a
 /// `port` answers it: the server opens the session, then closes it at once.
+///
+/// A host without the tunnel fails the probe's CORS check, which the browser
+/// logs to the console and no page code can silence, so each host is probed
+/// once per worker; only a probe made while offline is retried.
 async fn has_server_tunnel(host: &str) -> bool {
-    if host.parse::<IpAddr>().is_ok() {
-        return false; // no browser-trusted certificate for an IP literal
+    if !SERVER_TUNNEL.load(Ordering::Relaxed) || host.parse::<IpAddr>().is_ok() {
+        return false; // an IP literal has no browser-trusted certificate
     }
-    let now = js_sys::Date::now();
-    if let Some(&(yes, at)) = PROBED.lock().unwrap().get(host) {
-        if yes || now - at < PROBE_MISS_TTL_MS {
-            return yes;
-        }
+    if let Some(&yes) = PROBED.lock().unwrap().get(host) {
+        return yes;
     }
     let url = format!("https://{host}/engine.io/?EIO=4&transport=polling");
     let yes = crate::task::spawn(async move {
@@ -135,7 +143,10 @@ async fn has_server_tunnel(host: &str) -> bool {
     })
     .await
     .unwrap_or(false);
-    PROBED.lock().unwrap().insert(host.to_string(), (yes, now));
+    let scope: web_sys::WorkerGlobalScope = js_sys::global().unchecked_into();
+    if yes || scope.navigator().on_line() {
+        PROBED.lock().unwrap().insert(host.to_string(), yes);
+    }
     yes
 }
 

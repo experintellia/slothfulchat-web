@@ -104,9 +104,11 @@ export interface Core {
 
 /** Spawns the core worker and returns the typed client.
  * `persist` (default true) keeps accounts/messages/blobs in OPFS across
- * page reloads; pass false for a fresh, fully in-memory core. */
+ * page reloads; pass false for a fresh, fully in-memory core.
+ * `serverTunnel` (default true, beta) reaches mail servers that tunnel their
+ * own IMAP/SMTP over engine.io through that tunnel instead of the proxy. */
 export function startCore(
-  options: { wsProxyUrl?: string; persist?: boolean } = {},
+  options: { wsProxyUrl?: string; persist?: boolean; serverTunnel?: boolean } = {},
   workerUrl: URL = new URL('./worker.js', import.meta.url),
 ): Core {
   const worker = new Worker(workerUrl, { type: 'module' })
@@ -118,6 +120,7 @@ export function startCore(
     type: 'config',
     proxyUrl: options.wsProxyUrl,
     persist: options.persist !== false,
+    serverTunnel: options.serverTunnel !== false,
   })
   const transport = new WasmTransport(worker)
   const dc = new WasmDeltaChat(transport)

@@ -4,6 +4,7 @@
   offers an IMAP/SMTP tunnel at `/engine.io/` (a madmail prototype) is now
   reached through it directly — over WebSocket, or HTTP long-polling on
   networks that block WebSocket — instead of through a WebSocket-TCP bridge.
+  It's beta: switch it off in Settings → Experimental → Connection.
 - **Write to the developer right away.** "Sloth (Slothful.chat Developer)" in
   New Chat now opens the chat immediately, instead of waiting for an invite
   handshake to finish first.

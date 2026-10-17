@@ -329,7 +329,10 @@ function getCore(): Core {
     analytics.event('bridge', { kind: bridgeKind(wsProxyUrl) })
     warnIfNoWebAssembly()
     perf.boot('worker-spawn')
-    core = startCore({ wsProxyUrl, persist }, new URL(BASE + 'core/worker.js', location.href))
+    core = startCore(
+      { wsProxyUrl, persist, serverTunnel: serverTunnelEnabled() },
+      new URL(BASE + 'core/worker.js', location.href)
+    )
     // time selected RPC round-trips (local) + derive anonymous usage events
     observeTransport(core.transport as any)
     // Print core's own log events on release builds. core-wasm no longer
@@ -3584,9 +3587,12 @@ async function bridgeNeed(): Promise<'none' | 'required' | 'fallback'> {
       transports.map(
         async t =>
           !(t as any).webimap &&
-          !(await serverTunnels(
-            t.imapServer || (t.addr ?? '').split('@')[1] || ''
-          ))
+          !(
+            serverTunnelEnabled() &&
+            (await serverTunnels(
+              t.imapServer || (t.addr ?? '').split('@')[1] || ''
+            ))
+          )
       )
     )
     if (!viaBridge.includes(true)) return 'none'
@@ -3602,9 +3608,23 @@ async function bridgeNeed(): Promise<'none' | 'required' | 'fallback'> {
   }
 }
 
+/** Beta switch, Settings → Experimental → "Server's own mail tunnel" (on by
+ * default). Read when the core worker starts, so a change applies on reload. */
+function serverTunnelEnabled(): boolean {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
+    return stored.experimentalServerTunnel !== false
+  } catch {
+    return true
+  }
+}
+
 // Hosts that tunnel their own IMAP/SMTP over engine.io (madmail's
 // /engine.io/): the core worker reaches them without the bridge. Same probe as
-// tokio-wasm-shim's net.rs: a handshake without `port` the server closes at once.
+// tokio-wasm-shim's net.rs: a handshake without `port` the server closes at
+// once. Other hosts fail its CORS check, which the browser logs and nothing
+// can silence, so each host is probed once per page; only an offline miss is
+// retried.
 const tunnelProbes = new Map<string, Promise<boolean>>()
 function serverTunnels(host: string): Promise<boolean> {
   let probe = tunnelProbes.get(host)
@@ -3615,8 +3635,7 @@ function serverTunnels(host: string): Promise<boolean> {
       .then(async r => r.ok && (await r.text()).startsWith('0{'))
       .catch(() => false)
     tunnelProbes.set(host, probe)
-    // a miss may only mean we were offline: retry it in a while
-    probe.then(yes => yes || setTimeout(() => tunnelProbes.delete(host), 300_000))
+    probe.then(yes => yes || navigator.onLine || tunnelProbes.delete(host))
   }
   return probe
 }
