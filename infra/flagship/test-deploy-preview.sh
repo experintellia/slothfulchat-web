@@ -112,6 +112,13 @@ run 'delete 99' | :
 cmp -s "$G/calls" "$G/calls.before"
 ok "delete deployed + no-op undeployed"
 
+# 7b. another domain, set by the operator in the forced command: the gate
+#     must put the PR host under it, not under preview.slothful.chat.
+SLOTHFUL_PREVIEW_DOMAIN=example.org run 'upload 6' <"$G/v1.tgz"
+grep -q ' pr-6\.example\.org ' "$G/srv/previews/pr-6/site.caddy"
+run 'delete 6'
+ok "SLOTHFUL_PREVIEW_DOMAIN override"
+
 # 8. list shows slots only
 run 'upload 7' <"$G/v1.tgz" >/dev/null 2>&1
 mkdir -p "$G/srv/previews/_keep"

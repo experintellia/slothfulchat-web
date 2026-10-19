@@ -62,8 +62,8 @@ jobs:
     env:
       SLOTHFUL_INSTANCE_NAME: ${{ vars.SLOTHFUL_INSTANCE_NAME }}
       # This preview's own origin, not prod's. PREVIEW_DOMAIN must stay in
-      # sync with the sticky-comment step below and the host the gate script
-      # writes into site.caddy (infra/flagship/deploy-preview.sh).
+      # sync with the sticky-comment step below and the gate script's
+      # SLOTHFUL_PREVIEW_DOMAIN (infra/flagship/README.md, step e).
       SLOTHFUL_INSTANCE_URL: https://pr-${{ github.event.number }}.${{ vars.PREVIEW_DOMAIN || 'preview.slothful.chat' }}
       SLOTHFUL_DEFAULT_PROXY: ${{ vars.SLOTHFUL_DEFAULT_PROXY }}
       SLOTHFUL_PUBLIC_BRIDGES: ${{ vars.SLOTHFUL_PUBLIC_BRIDGES }}
@@ -149,9 +149,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.number }}
-          # Must match the domain the gate script writes into site.caddy
-          # (infra/flagship/deploy-preview.sh); set it while the server runs on a
-          # temporary domain, unset it to go back to the default.
+          # Must match the gate script's SLOTHFUL_PREVIEW_DOMAIN
+          # (infra/flagship/README.md, step e); set it while the server runs on
+          # a temporary domain, unset it to go back to the default.
           DOMAIN: ${{ vars.PREVIEW_DOMAIN || 'preview.slothful.chat' }}
         run: |
           set -euo pipefail
