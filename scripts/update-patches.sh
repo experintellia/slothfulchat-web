@@ -86,3 +86,4 @@ update() {
 
 update core vendor/core
 update desktop vendor/deltachat-desktop
+update ios vendor/deltachat-ios

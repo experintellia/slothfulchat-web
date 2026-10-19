@@ -23,3 +23,11 @@ apply() {
 
 apply core vendor/core
 apply desktop vendor/deltachat-desktop
+apply ios vendor/deltachat-ios
+
+# iOS links our patched core, not its own nested submodule pin: point the
+# (never-inited) submodule path at build/core. skip-worktree keeps the swap out
+# of `git commit -a` in build/ios.
+ios_core=build/ios/deltachat-ios/libraries/deltachat-core-rust
+rmdir "$ios_core" && ln -s ../../../core "$ios_core"
+git -C build/ios update-index --skip-worktree deltachat-ios/libraries/deltachat-core-rust

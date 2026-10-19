@@ -59,10 +59,10 @@ jobs:
     steps:
       # persist-credentials: false — nothing here pushes, so the token should
       # not sit in .git/config while the build runs third-party code.
-      - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
+      - name: Checkout (with submodules — vendor/core, vendor/deltachat-desktop, vendor/deltachat-ios)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          submodules: recursive
+          submodules: true
           persist-credentials: false
 
       - name: Build web-app dist/

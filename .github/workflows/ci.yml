@@ -261,10 +261,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
-      - name: Checkout (with submodules — vendor/core + vendor/deltachat-desktop)
+      - name: Checkout (with submodules — vendor/core, vendor/deltachat-desktop, vendor/deltachat-ios)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          submodules: recursive
+          submodules: true
           persist-credentials: false
 
       # The whole build — toolchains, patch stacks, caches, jsonrpc-client,

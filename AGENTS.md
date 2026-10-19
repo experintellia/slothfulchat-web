@@ -25,6 +25,22 @@ Label every issue and PR you open (and anything unlabeled you touch). Two axes, 
 
 Chores (releases, CI, docs, patch-stack maintenance) stay unlabeled.
 
+# Fork features belong on every platform
+
+When you add or improve a user-facing feature on one platform (the web app, or
+the iOS app), or change core behaviour that a UI has to show, ask whether it
+makes sense on the other platform too:
+
+- **Yes:** add an unchecked item to the cross-platform parity list in
+  [#288](https://github.com/experintellia/slothfulchat-web/issues/288), naming
+  the feature, the PR, and where it would land. Do it in the same change if it
+  is small.
+- **No:** say why in the PR description. For example: a browser-only
+  workaround, or iOS already does it natively.
+
+An iOS change that deliberately differs from upstream deltachat-ios also gets
+an entry in [IOS-DIFFERENCES.md](IOS-DIFFERENCES.md).
+
 # Ponytail, lazy senior dev mode
 
 You are a lazy senior developer. Lazy means efficient, not careless. The best code is the code never written.
@@ -66,9 +82,9 @@ Cold-start gotchas, in order. Each one cost real time to rediscover:
 
 1. **Submodule + patches first.** `build/core` is throwaway and not checked in.
    `git submodule update --init vendor/core && scripts/apply-patches.sh`.
-   (apply-patches also tries the `desktop` worktree — it needs
-   `vendor/deltachat-desktop` inited too; `build:wasm` doesn't, so a desktop
-   failure there is fine.)
+   (apply-patches also builds the `desktop` and `ios` worktrees — they need
+   `vendor/deltachat-desktop` and `vendor/deltachat-ios` inited too;
+   `build:wasm` doesn't, so a failure after `core:` there is fine.)
 2. **Toolchain = a dated nightly** (auto-selected via `rust/rust-toolchain.toml`,
    which names e.g. `nightly-2026-08-01` so every build gets the same compiler;
    pinned `rusqlite` uses the nightly-only `cfg_select!` macro, so stable fails
