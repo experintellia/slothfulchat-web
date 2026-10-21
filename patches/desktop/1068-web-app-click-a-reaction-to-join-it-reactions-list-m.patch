@@ -16,30 +16,34 @@ end of the message info dialog, after read receipts and attachment details,
 so who-reacted and who-read live in one place.
 
 Rebased onto v2.62.0: upstream rewrote the Reactions dialog meanwhile
-(49a33099d, aaf99cad2, ee7433f49, 0a31d3a6a: emoji pills that toggle
-your reaction, a total count, live updates). This patch still removes
-it, since the pills under the message toggle directly and the
-who-reacted list lives in Message Info, so upstream's dialog code
-(pills, live refresh) is deleted with it and its stylesheet loses the
-pill classes. Reactions keeps upstream's render-all and visually-hidden
-overflow (781bedd9f). ReactionsBar's doc-link import of the deleted
-dialog is dropped too.
+(49d8a3025, aaf99cad2, ee7433f49, 0a31d3a6a: emoji pills that toggle
+your reaction, a total count, live updates). The dialog is still
+removed, but the rest of its content comes along into Message Info: a
+plain count per emoji (af9a5f166's list, before aaf99cad2 made it
+pills) above the who-reacted list, and the section refreshes on
+ReactionsChanged while open, as 0a31d3a6a did for the dialog. The
+pills are not kept anywhere: they toggled your reaction while looking
+like filters, and the pills under the message already do that. A
+channel subscriber only knows their own reaction, so their who-reacted
+list holds just that; the counts are complete. Reactions keeps
+upstream's render-all and visually-hidden overflow (781bedd9f).
+ReactionsBar's doc-link import of the deleted dialog is dropped too,
+and so is the Reactions stylesheet's pointer to the dialog's pill class.
 ---
  .../src/components/PeopleHoverInfo/index.tsx  |   8 +-
  .../src/components/Reactions/index.tsx        |  52 ++-
- .../components/Reactions/styles.module.scss   |   4 +-
+ .../components/Reactions/styles.module.scss   |   6 +-
  .../components/ReactionsBar/ReactionsBar.tsx  |   5 -
  .../MessageDetail/BasicMessageInfo.tsx        |  14 +
- .../MessageDetail/ReactionsList.module.scss   |  39 ++
- .../dialogs/MessageDetail/ReactionsList.tsx   | 129 +++++++
+ .../dialogs/MessageDetail/MessageDetail.tsx   |   8 +-
+ .../ReactionsList.module.scss}                |  30 +-
+ .../dialogs/MessageDetail/ReactionsList.tsx   | 153 ++++++++
  .../dialogs/ReactionsDialog/index.tsx         | 340 ------------------
- .../ReactionsDialog/styles.module.scss        |  69 ----
  .../src/components/message/Message.tsx        |  13 +-
- 10 files changed, 232 insertions(+), 441 deletions(-)
- create mode 100644 packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss
+ 10 files changed, 230 insertions(+), 399 deletions(-)
+ rename packages/frontend/src/components/dialogs/{ReactionsDialog/styles.module.scss => MessageDetail/ReactionsList.module.scss} (55%)
  create mode 100644 packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.tsx
  delete mode 100644 packages/frontend/src/components/dialogs/ReactionsDialog/index.tsx
- delete mode 100644 packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss
 
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/index.tsx b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
 index b4ff74629aa984a070942fa82397ed7bd08279dd..3ee863f8378e95fef8b153ea004972114858ccbe 100644
@@ -173,7 +177,7 @@ index 8dbaea418d5fca331e5192c498cc6eab45106a3f..df85fc846e1450043cf38d4f9cee9320
        ></button>
      </div>
 diff --git a/packages/frontend/src/components/Reactions/styles.module.scss b/packages/frontend/src/components/Reactions/styles.module.scss
-index e8f692edc6d014c392cedf02582cc45894d28c07..01165842e044f741fd3c55e5dd44a519b176444f 100644
+index e8f692edc6d014c392cedf02582cc45894d28c07..b7f659d188fd95aff158b63725af0e8a0b8d9b42 100644
 --- a/packages/frontend/src/components/Reactions/styles.module.scss
 +++ b/packages/frontend/src/components/Reactions/styles.module.scss
 @@ -11,8 +11,8 @@
@@ -187,6 +191,15 @@ index e8f692edc6d014c392cedf02582cc45894d28c07..01165842e044f741fd3c55e5dd44a519
  .emojiTrigger {
    position: relative;
    z-index: 1;
+@@ -24,8 +24,6 @@
+ }
+ 
+ .emoji {
+-  // Basically the same as with `.accumulatedReactionsButton`
+-  // in the "Reactions" dialog.
+   background-color: var(--messageIncomingBg);
+   border-radius: 24px;
+   border: solid 1px rgba(100, 100, 100, 0.3);
 diff --git a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx b/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
 index eba8553dfb6b34dba08b9750ff1d768f6f442a33..75c88b98a06f1633475d27e3bab45e4fe8422d59 100644
 --- a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
@@ -211,7 +224,7 @@ index eba8553dfb6b34dba08b9750ff1d768f6f442a33..75c88b98a06f1633475d27e3bab45e4f
    onClick,
    messageId,
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
-index 364ff384c69cd9beaae1b060b975bc61fdd9e388..a3ec45619a8e9bc677026da4121ce6946fbd8b1c 100644
+index 364ff384c69cd9beaae1b060b975bc61fdd9e388..9d49482d6e87691ade62ccd4edda2922ed86781d 100644
 --- a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 @@ -11,6 +11,7 @@ import useTranslationFunction from '../../../hooks/useTranslationFunction'
@@ -234,7 +247,7 @@ index 364ff384c69cd9beaae1b060b975bc61fdd9e388..a3ec45619a8e9bc677026da4121ce694
 +            </div>
 +          </div>
 +          <ReactionsList
-+            reactionsByContact={message.reactions.reactionsByContact}
++            reactions={message.reactions}
 +            onClose={props.onClose}
 +          />
 +        </>
@@ -242,57 +255,92 @@ index 364ff384c69cd9beaae1b060b975bc61fdd9e388..a3ec45619a8e9bc677026da4121ce694
      </div>
    )
  }
-diff --git a/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss
-new file mode 100644
-index 0000000000000000000000000000000000000000..22f4aab8e7b0591ffa28c4c5f9380a7c8fa87b0d
---- /dev/null
+diff --git a/packages/frontend/src/components/dialogs/MessageDetail/MessageDetail.tsx b/packages/frontend/src/components/dialogs/MessageDetail/MessageDetail.tsx
+index f4e66b91b1fff943cdad564d0e4f50f8d557ecac..f287df61a0e837334adf4ec06c7fa61ddc3efd06 100644
+--- a/packages/frontend/src/components/dialogs/MessageDetail/MessageDetail.tsx
++++ b/packages/frontend/src/components/dialogs/MessageDetail/MessageDetail.tsx
+@@ -1,7 +1,7 @@
+ import React, { useCallback, useContext, useEffect, useState } from 'react'
+ 
+ import { selectedAccountId } from '../../../ScreenController'
+-import { BackendRemote } from '../../../backend-com'
++import { BackendRemote, onDCEvent } from '../../../backend-com'
+ import Dialog, { DialogBody, DialogHeader } from '../../Dialog'
+ import Callout from '../../Callout'
+ import useDialog from '../../../hooks/dialog/useDialog'
+@@ -58,6 +58,12 @@ function MessageInfo({
+       setMessage(message)
+     }
+     refresh()
++    // Keeps the reactions list live, like upstream's Reactions dialog was.
++    return onDCEvent(accountId, 'ReactionsChanged', ({ msgId }) => {
++      if (msgId === messageId) {
++        refresh()
++      }
++    })
+   }, [messageId])
+ 
+   return (
+diff --git a/packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss
+similarity index 55%
+rename from packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss
+rename to packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss
+index b3e7de97b9eccdb6c156f57784564f7212ed35fa..2b89e45263ac19f86ef0bf5107f738aed9104265 100644
+--- a/packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss
-@@ -0,0 +1,39 @@
-+@use '../../../../scss/mixins';
-+
-+.reactionsDialogList {
+@@ -1,8 +1,7 @@
+ @use '../../../../scss/mixins';
+ 
+ .reactionsDialogList {
+-  margin: 0;
+-  margin-bottom: 1rem;
 +  margin: 0 10px;
-+}
-+
-+.reactionsDialogListItem {
-+  @include mixins.button-reset;
-+
-+  width: 100%;
+ }
+ 
+ .reactionsDialogListItem {
+@@ -39,31 +38,14 @@
+   text-align: center;
+ }
+ 
+-.accumulatedReactionsList {
++.accumulatedReactionsListItem {
 +  align-items: center;
-+  display: flex;
-+  justify-content: space-between;
-+  border-radius: 10px;
-+}
-+
-+.reactionsDialogListClickable {
-+  &:hover,
-+  &:focus {
-+    background-color: var(--chatListItemBgHover);
-+  }
-+}
-+
-+.reactionsDialogAvatar {
-+  flex: 0 0 48px;
-+  margin-inline: 10px;
-+}
-+
-+.reactionsDialogContactName {
+   display: flex;
+-  flex-wrap: wrap;
+-  gap: 0.5rem 0.625rem;
+-}
+-
+-.accumulatedReactionsButton {
+-  @include mixins.button-reset;
+-
+-  padding: 0.125rem 0.5rem;
+-
+-  // Basically the same as with `.emoji` on message bubbles
+-  border-radius: 999999px;
+-  border: solid 1px rgba(100, 100, 100, 0.3);
+-  background-color: var(--messageIncomingBg);
+-  &.isFromSelf {
+-    background-color: var(--messageOutgoingBg);
+-  }
+-}
+-
+-.accumulatedReactionsEmoji {
+-  font-size: 1.125rem;
++  padding-block: 8px;
+ }
+ 
+ .accumulatedReactionsCount {
+-  margin-inline: 0.125rem;
 +  flex: 1;
 +  margin-inline-end: 10px;
-+  overflow: hidden;
-+}
-+
-+.reactionsDialogEmoji {
-+  flex: 0 0 50px;
-+  font-size: 20px;
-+  text-align: center;
-+}
+   overflow: hidden;
+ }
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.tsx b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..1619fed29b2057d1341b3328e4390ddf57880c6c
+index 0000000000000000000000000000000000000000..349c59e5fbbb160f13647c5029dbe2925af95df5
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.tsx
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,153 @@
 +import React, { useEffect, useRef, useState } from 'react'
 +import classNames from 'classnames'
 +
@@ -310,9 +358,10 @@ index 0000000000000000000000000000000000000000..1619fed29b2057d1341b3328e4390ddf
 +  RovingTabindexProvider,
 +  useRovingTabindex,
 +} from '../../../contexts/RovingTabindex'
++import useTranslationFunction from '../../../hooks/useTranslationFunction'
 +
 +type Props = {
-+  reactionsByContact: T.Reactions['reactionsByContact']
++  reactions: T.Reactions
 +  onClose?: () => void
 +}
 +
@@ -320,8 +369,18 @@ index 0000000000000000000000000000000000000000..1619fed29b2057d1341b3328e4390ddf
 +  emoji: string
 +}
 +
-+/** Who reacted with what, shown at the end of the message info dialog. */
-+export function ReactionsList({ reactionsByContact, onClose }: Props) {
++/**
++ * Shown at the end of the message info dialog: upstream's Reactions dialog
++ * content (the count per emoji, then who reacted with what) minus its emoji
++ * pills, which toggled your own reaction while looking like filters.
++ * ponytail: a channel subscriber only knows their own reaction, so for them
++ * the second list holds just that; the counts are complete either way.
++ */
++export function ReactionsList({
++  reactions: { reactions, reactionsByContact },
++  onClose,
++}: Props) {
++  const tx = useTranslationFunction()
 +  const accountId = selectedAccountId()
 +  const [contacts, setContacts] = useState<ContactWithReaction[]>([])
 +  const openViewProfileDialog = useOpenViewProfileDialog({ onAction: onClose })
@@ -356,20 +415,33 @@ index 0000000000000000000000000000000000000000..1619fed29b2057d1341b3328e4390ddf
 +  }, [accountId, reactionsByContact])
 +
 +  return (
-+    <ul ref={ref} className={styles.reactionsDialogList}>
-+      <RovingTabindexProvider wrapperElementRef={ref}>
-+        {contacts.map(contact => (
-+          <li key={contact.id}>
-+            <ReactionsDialogListItem
-+              contact={contact}
-+              onClickNonSelf={contactId =>
-+                openViewProfileDialog(accountId, contactId)
-+              }
-+            />
++    // It updates while open (see `MessageInfo`).
++    <div aria-live='polite' aria-relevant='all'>
++      <ul className={styles.reactionsDialogList}>
++        {reactions.map(({ emoji, count }) => (
++          <li key={emoji} className={styles.accumulatedReactionsListItem}>
++            <div className={styles.reactionsDialogEmoji}>{emoji}</div>
++            <div className={styles.accumulatedReactionsCount}>
++              {tx('n_reactions', count.toLocaleString(), { quantity: count })}
++            </div>
 +          </li>
 +        ))}
-+      </RovingTabindexProvider>
-+    </ul>
++      </ul>
++      <ul ref={ref} className={styles.reactionsDialogList}>
++        <RovingTabindexProvider wrapperElementRef={ref}>
++          {contacts.map(contact => (
++            <li key={contact.id}>
++              <ReactionsDialogListItem
++                contact={contact}
++                onClickNonSelf={contactId =>
++                  openViewProfileDialog(accountId, contactId)
++                }
++              />
++            </li>
++          ))}
++        </RovingTabindexProvider>
++      </ul>
++    </div>
 +  )
 +}
 +
@@ -767,81 +839,6 @@ index 2af10bf5a4cb553766a3b9003da86417bbb3f64e..00000000000000000000000000000000
 -      <div className={styles.reactionsDialogEmoji}>{contact.emoji}</div>
 -    </button>
 -  )
--}
-diff --git a/packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss b/packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss
-deleted file mode 100644
-index b3e7de97b9eccdb6c156f57784564f7212ed35fa..0000000000000000000000000000000000000000
---- a/packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss
-+++ /dev/null
-@@ -1,69 +0,0 @@
--@use '../../../../scss/mixins';
--
--.reactionsDialogList {
--  margin: 0;
--  margin-bottom: 1rem;
--}
--
--.reactionsDialogListItem {
--  @include mixins.button-reset;
--
--  width: 100%;
--  align-items: center;
--  display: flex;
--  justify-content: space-between;
--  border-radius: 10px;
--}
--
--.reactionsDialogListClickable {
--  &:hover,
--  &:focus {
--    background-color: var(--chatListItemBgHover);
--  }
--}
--
--.reactionsDialogAvatar {
--  flex: 0 0 48px;
--  margin-inline: 10px;
--}
--
--.reactionsDialogContactName {
--  flex: 1;
--  margin-inline-end: 10px;
--  overflow: hidden;
--}
--
--.reactionsDialogEmoji {
--  flex: 0 0 50px;
--  font-size: 20px;
--  text-align: center;
--}
--
--.accumulatedReactionsList {
--  display: flex;
--  flex-wrap: wrap;
--  gap: 0.5rem 0.625rem;
--}
--
--.accumulatedReactionsButton {
--  @include mixins.button-reset;
--
--  padding: 0.125rem 0.5rem;
--
--  // Basically the same as with `.emoji` on message bubbles
--  border-radius: 999999px;
--  border: solid 1px rgba(100, 100, 100, 0.3);
--  background-color: var(--messageIncomingBg);
--  &.isFromSelf {
--    background-color: var(--messageOutgoingBg);
--  }
--}
--
--.accumulatedReactionsEmoji {
--  font-size: 1.125rem;
--}
--
--.accumulatedReactionsCount {
--  margin-inline: 0.125rem;
--  overflow: hidden;
 -}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
 index 8ef332f47f3c580d03784c106fc19d48f229c5ba..32a326661585ac9f2ad510763e277796864a129e 100644

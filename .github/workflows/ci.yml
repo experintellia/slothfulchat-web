@@ -467,7 +467,7 @@ jobs:
       # right-click menus e2e (fully offline, mock madmail): a chat-list row
       # (right-click) and a chat-header webxdc app icon (context-menu key) open
       # the app's menu with the native one cancelled; a selected profile name
-      # keeps the native menu (its Copy).
+      # keeps the native menu (its Copy). Also: a pasted proxy link only warns.
       - name: E2E test — right-click menus
         run: node scripts/test-context-menu-e2e.mjs
 
@@ -518,8 +518,8 @@ jobs:
 
       # clickable reactions e2e (fully offline, mock madmail, three accounts):
       # clicking someone else's pill joins it, again takes it back, a click in
-      # the hover card does nothing; Message Info lists who reacted. Also
-      # writes the shots.
+      # the hover card does nothing; Message Info lists the counts and who
+      # reacted, and updates live. Also writes the shots.
       - name: E2E test — clickable reactions
         run: node scripts/shot-reactions.mjs
 

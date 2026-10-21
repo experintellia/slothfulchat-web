@@ -21,11 +21,22 @@ the menu stays and only its "Use Proxy" item is removed.
 runtime.openLink() only takes http:/https: template strings since
 56f5a6877, so the Changelog/Imprint URLs built from document.baseURI are
 narrowed via a small localPage() helper.
+
+Also hides upstream's "Hide menu bar" switch in Settings > Appearance,
+which only ever showed disabled in a browser. And as proxies don't work
+on wasm, a proxy QR code or link (scanned, pasted, opened, or the
+chat-list search result upstream offers for a pasted one since #6752)
+gets an alert saying so instead of the confirmation and the
+ProxyConfiguration dialog. The check sits in useProcessQr before the
+logged-in check, so every path gets the same answer, on the welcome
+screen too. The string is a fork string.
 ---
  .../src/components/Settings/Advanced.tsx      | 15 ----
+ .../src/components/Settings/Appearance.tsx    |  2 +-
  .../src/components/dialogs/About/index.tsx    | 88 ++++++++++++++-----
  .../WelcomeScreen/InstantOnboardingScreen.tsx | 13 +--
- 3 files changed, 65 insertions(+), 51 deletions(-)
+ packages/frontend/src/hooks/useProcessQr.ts   | 29 +++---
+ 5 files changed, 77 insertions(+), 70 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
 index 96699ecdc6586d27a16846671909837f596c2da0..15e418e7e2239a0b0f5941ba27d85212e399e4b3 100644
@@ -67,6 +78,19 @@ index 96699ecdc6586d27a16846671909837f596c2da0..15e418e7e2239a0b0f5941ba27d85212
        <CoreSettingsSwitch
          label={tx('pref_multidevice')}
          settingsKey='bcc_self'
+diff --git a/packages/frontend/src/components/Settings/Appearance.tsx b/packages/frontend/src/components/Settings/Appearance.tsx
+index b4d953e0e8ca5085c8ba25a065aa64dd2a7ac8ea..d7b43d2e0223ae23407468df25103153ddd9d84b 100644
+--- a/packages/frontend/src/components/Settings/Appearance.tsx
++++ b/packages/frontend/src/components/Settings/Appearance.tsx
+@@ -134,7 +134,7 @@ export default function Appearance({
+         callback={() => ThemeManager.refresh()}
+       />
+       {/* on macOS the menu bar can not be hidden */}
+-      {!isMac && (
++      {!isMac && !isBrowser && (
+         <DesktopSettingsSwitch
+           settingsKey='hideMenuBar'
+           label={tx('pref_hide_menu_bar')}
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
 index fb81947daa1383ede4e31a58491a4847fa4355aa..2860788bada28d421fd6ebb02d22a72d61fe7607 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
@@ -215,3 +239,57 @@ index 1d90af853868793ffb184d5bdaef62792a84a64a..fad23d60ba11e65a0e1aef5a98c6ca20
      isTeamProfile
        ? {
            // TODO fix a11y: the menu item needs to be `role="menuitemcheckbox"`.
+diff --git a/packages/frontend/src/hooks/useProcessQr.ts b/packages/frontend/src/hooks/useProcessQr.ts
+index 9cde0ab88b151f169431655fac7182e613b91ca8..34fd9cca18c1ede4b1c9b2606ec8ddb564b4f765 100644
+--- a/packages/frontend/src/hooks/useProcessQr.ts
++++ b/packages/frontend/src/hooks/useProcessQr.ts
+@@ -17,7 +17,6 @@ import type { WelcomeQrWithUrl } from '../contexts/InstantOnboardingContext'
+ import type { TranslationKey } from '@deltachat-desktop/shared/translationKeyType'
+ import useChat from './chat/useChat'
+ import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
+-import ProxyConfiguration from '../components/dialogs/ProxyConfiguration'
+ import TransportsDialog from '../components/dialogs/Transports'
+ import useAddTransportDialog from './dialog/useAddTransportDialog'
+ 
+@@ -251,6 +250,17 @@ export default function useProcessQR() {
+         return callback?.()
+       }
+ 
++      // slothfulchat: proxies are not implemented on wasm, so a proxy link
++      // or QR code gets this instead of the confirm + ProxyConfiguration
++      // dialog, logged in or not.
++      if (qr.kind === 'proxy') {
++        await openAlertDialog({
++          message: tx('proxy_not_supported_in_browser'),
++          dataTestid: 'proxy-not-supported',
++        })
++        return callback?.()
++      }
++
+       // Some actions can only be executed when the user already has an account
+       // and is logged in
+       const isLoggedIn = await BackendRemote.rpc.isConfigured(accountId)
+@@ -392,23 +402,6 @@ export default function useProcessQR() {
+         return callback?.()
+       }
+ 
+-      if (qr.kind === 'proxy') {
+-        const userConfirmed = await openConfirmationDialog({
+-          message: tx('proxy_use_proxy_confirm', qr.url),
+-          confirmLabel: tx('ok'),
+-        })
+-
+-        if (userConfirmed) {
+-          openDialog(ProxyConfiguration, {
+-            accountId,
+-            configured: true,
+-            newProxyUrl: qr.url,
+-          })
+-        }
+-
+-        return callback?.()
+-      }
+-
+       // Just show the contents of the scanned QR code
+       // so the user can see what it contains,
+       // we don't know what to do with it ..

@@ -39,7 +39,7 @@ index 4a1c0245143b02160ae482e64e802e98fe142ee1..4b313e0cf0536074b6e245318477971d
      return () => {
        shadowRoot.removeChild(style)
 diff --git a/packages/frontend/src/components/Settings/Appearance.tsx b/packages/frontend/src/components/Settings/Appearance.tsx
-index b4d953e0e8ca5085c8ba25a065aa64dd2a7ac8ea..25f17392f80948ed37f09f86373030b19a757e6e 100644
+index d7b43d2e0223ae23407468df25103153ddd9d84b..ace853c4026df8517adba26532635a34bae3f743 100644
 --- a/packages/frontend/src/components/Settings/Appearance.tsx
 +++ b/packages/frontend/src/components/Settings/Appearance.tsx
 @@ -14,6 +14,7 @@ import {

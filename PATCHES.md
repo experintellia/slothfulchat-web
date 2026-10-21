@@ -831,8 +831,10 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   reaction pill under a message reacts with that emoji, or takes it back when
   it's yours (upstream opens its Reactions dialog, whose pills toggle your
   reaction too). The who-reacted list now sits at the end of Message Info
-  instead, next to read receipts; the "+N" pill opens it. Unlike upstream's
-  dialog, it doesn't update live while open. `desktop/1068`
+  instead, next to read receipts, with upstream's count per emoji above it,
+  and updates live while open; the "+N" pill opens it. Upstream's emoji
+  buttons from that dialog are left out: they looked like filters but
+  toggled your own reaction. `desktop/1068`
 - **Branding** — the app calls itself SlothfulChat and uses its own icon in
   the About dialog and welcome screen, with explicit "experimental fork, not
   affiliated with Delta Chat" notices and a source-code link. Only
@@ -858,8 +860,11 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   announces (multi-relay onboarding, the new audio player) works differently
   here. `core/1020`, `desktop/1051`, `desktop/1055`
 - **Hidden upstream UI that can't work in this build** — proxy settings
-  (unimplemented on wasm), the second-device / multi-device backup
-  transfer flow (iroh doesn't run in browsers yet). `desktop/1000`; the
+  (unimplemented on wasm), the "Hide menu bar" switch (a browser tab has
+  none), the second-device / multi-device backup transfer flow (iroh
+  doesn't run in browsers yet). A proxy QR code or link, however it
+  arrives (scan, paste, the chat-list search result for a pasted link),
+  gets an alert that proxies don't work here instead. `desktop/1000`; the
   second-device entry points are hidden by
   `packages/web-app/static/overrides.css`, not a patch
 - **Long message text is stored in full** — core truncates message text to

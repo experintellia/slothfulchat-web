@@ -25,6 +25,9 @@
 //      what's tested)
 //   4b'. (desktop/1068) a reaction pill toggles that reaction; Message Info
 //      lists the reactions at its end
+//   5. (desktop/1000) a proxy link pasted into the chat-list search leads to
+//      a "proxies don't work here" alert, not the proxy dialog (all proxy
+//      QR codes and links pass through the same useProcessQr branch)
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/test-context-menu-e2e.mjs
@@ -305,7 +308,8 @@ try {
   await page.keyboard.press('Enter') // the pills sit on top of it for the mouse
   const info = page.locator('dialog', { hasText: 'Message Info' })
   await info.waitFor({ state: 'visible', timeout: 10_000 })
-  await info.locator('ul', { hasText: '❤️' }).waitFor({ state: 'visible', timeout: 10_000 })
+  // (two lists: the count per emoji, then who reacted with what)
+  await info.locator('ul', { hasText: '❤️' }).last().waitFor({ state: 'visible', timeout: 10_000 })
   check(
     (await info.locator('strong').last().textContent()) === 'Reactions',
     'Message Info ends with a Reactions section listing ❤️'
@@ -525,6 +529,17 @@ try {
   check(await msgMenu.isVisible(), 'long press on message text opens the menu too (phones)')
   await page.keyboard.press('Escape')
   await msgMenu.waitFor({ state: 'hidden' })
+
+  // 5. a pasted proxy link offers its search result, which only warns
+  await page.locator('#chat-list-search').fill('socks5://127.0.0.1:1080')
+  await page.getByTestId('useproxyfromqr').click({ timeout: 10_000 })
+  const proxyAlert = page.getByTestId('proxy-not-supported')
+  await proxyAlert.waitFor({ state: 'visible', timeout: 10_000 })
+  check(
+    (await proxyAlert.textContent()).includes("Proxies don't work") &&
+      !(await rpc('getConfig', aliceId, 'proxy_url')),
+    'a proxy link only warns that proxies do not work here, and sets nothing'
+  )
 
   console.log('PASS: right-click menus — app menu where the app owns one, native elsewhere')
 } catch (e) {
