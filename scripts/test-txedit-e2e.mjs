@@ -24,6 +24,14 @@ const { cleanup, watchdog } = await startServers({
 
 const browser = await chromium.launch()
 const context = await browser.newContext()
+// Since desktop 2.62 _languages.json offers every locale upstream ships a file
+// for, so nothing is 'hidden' any more. Make one so: keep de.json, unlist de.
+await context.route('**/locales/_languages.json', async route => {
+  const response = await route.fetch()
+  const json = await response.json()
+  delete json.de
+  await route.fulfill({ response, json })
+})
 const page = await context.newPage()
 page.on('pageerror', e => console.error('[pageerror]', e.message))
 // upstream's avoid-eval.js breaks page.evaluate; freeze the real eval first.

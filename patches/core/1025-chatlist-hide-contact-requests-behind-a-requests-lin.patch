@@ -10,8 +10,8 @@ created, raises a notification), burying the real conversations.
 
 Add a DC_GCL_NO_REQUESTS chatlist flag. With it the normal chatlist
 leaves contact requests (blocked=2) out and, unless DC_GCL_NO_SPECIALS is
-set, puts the new DC_CHAT_ID_REQUESTS_LINK (8) pseudo chat on top when
-any unarchived request exists, mirroring DC_CHAT_ID_ARCHIVED_LINK; the
+set, puts the new ChatId::REQUESTS_LINK (8) pseudo chat on top when
+any unarchived request exists, mirroring ChatId::ARCHIVED_LINK; the
 "all done" hint is not added while requests wait. Archived requests stay
 in the archive like any archived chat and are not counted.
 

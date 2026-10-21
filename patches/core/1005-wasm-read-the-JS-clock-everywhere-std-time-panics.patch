@@ -9,6 +9,8 @@ std::time::{SystemTime,Instant}::now() abort on wasm32-unknown-unknown.
 - tools: time_now() returns a wasm-safe Instant; Time::now call sites
   switched; path_is_dir/path_is_file sync-fs helpers for wasm
 - deltachat-ratelimit: SystemTime::now via deltachat_time
+- jsonrpc: MuteDuration::Until via tools::SystemTime (muting a chat
+  for a while panicked the core worker)
 
 Since v2.64.0 upstream builds the rustls config with
 ClientConfig::builder() (ring as process default) and lists
@@ -16,23 +18,24 @@ deltachat-time as a dev-dependency only; the wasm branch now uses
 builder_with_details() with ring plus the JS clock inline, and
 deltachat-time is a wasm32 dependency again.
 ---
- Cargo.lock                     |  3 +++
- Cargo.toml                     |  3 +++
- deltachat-ratelimit/Cargo.toml |  2 ++
- deltachat-ratelimit/src/lib.rs | 15 +++++++----
- src/context.rs                 |  8 +++---
- src/imap.rs                    |  4 +--
- src/imap/idle.rs               |  2 +-
- src/key.rs                     |  2 +-
- src/net/tls.rs                 | 26 +++++++++++++++++-
- src/quota.rs                   |  6 ++---
- src/scheduler.rs               |  2 +-
- src/smtp.rs                    |  2 +-
- src/smtp/send.rs               |  2 +-
- src/sql/migrations.rs          |  4 +--
- src/sql/pool/wal_checkpoint.rs |  8 +++---
- src/tools.rs                   | 48 +++++++++++++++++++++++++++++++---
- 16 files changed, 107 insertions(+), 30 deletions(-)
+ Cargo.lock                              |  3 ++
+ Cargo.toml                              |  3 ++
+ deltachat-jsonrpc/src/api/types/chat.rs |  4 ++-
+ deltachat-ratelimit/Cargo.toml          |  2 ++
+ deltachat-ratelimit/src/lib.rs          | 15 +++++---
+ src/context.rs                          |  8 ++---
+ src/imap.rs                             |  4 +--
+ src/imap/idle.rs                        |  2 +-
+ src/key.rs                              |  2 +-
+ src/net/tls.rs                          | 26 +++++++++++++-
+ src/quota.rs                            |  6 ++--
+ src/scheduler.rs                        |  2 +-
+ src/smtp.rs                             |  2 +-
+ src/smtp/send.rs                        |  2 +-
+ src/sql/migrations.rs                   |  4 +--
+ src/sql/pool/wal_checkpoint.rs          |  8 ++---
+ src/tools.rs                            | 48 ++++++++++++++++++++++---
+ 17 files changed, 110 insertions(+), 31 deletions(-)
 
 diff --git a/Cargo.lock b/Cargo.lock
 index 19f2339adb41a78910ee571dc27a3bb7692ca968..926ad4a8ae23c94ab9a52f20c73953e27337097c 100644
@@ -62,6 +65,25 @@ index 7de85958db87b60b9898618316815fa70f423685..12b59006a16f5159dd15a9679756f89e
  # rPGP's Timestamp::now() calls SystemTime::now() and panics on wasm32-unknown-unknown;
  # its "wasm" feature switches it to web-time (JS clock).
  pgp = { version = "0.21.0", default-features = false, features = ["wasm"] }
+diff --git a/deltachat-jsonrpc/src/api/types/chat.rs b/deltachat-jsonrpc/src/api/types/chat.rs
+index 01cc8f0ef0749a12c183e08fc5942ea954ef466f..ef76df5f407b0e7823667b13b6886261c804458d 100644
+--- a/deltachat-jsonrpc/src/api/types/chat.rs
++++ b/deltachat-jsonrpc/src/api/types/chat.rs
+@@ -1,4 +1,4 @@
+-use std::time::{Duration, SystemTime};
++use std::time::Duration;
+ 
+ use anyhow::{Context as _, Result, bail};
+ use deltachat::chat::{self, ChatVisibility, get_chat_contacts, get_past_chat_contacts};
+@@ -6,6 +6,8 @@
+ use deltachat::constants::Chattype;
+ use deltachat::contact::{Contact, ContactId};
+ use deltachat::context::Context;
++// std::time::SystemTime::now() panics on wasm32-unknown-unknown; this reads the JS clock there.
++use deltachat::tools::SystemTime;
+ use serde::{Deserialize, Serialize};
+ use typescript_type_def::TypeDef;
+ 
 diff --git a/deltachat-ratelimit/Cargo.toml b/deltachat-ratelimit/Cargo.toml
 index 9556177175a954912891cbc2558fe6d879deef9b..fa0d85de34a9fa68b824ed865a520c501519c4a8 100644
 --- a/deltachat-ratelimit/Cargo.toml

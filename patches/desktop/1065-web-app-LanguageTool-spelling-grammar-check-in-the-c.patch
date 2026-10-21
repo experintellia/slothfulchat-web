@@ -9,11 +9,11 @@ Content-Transfer-Encoding: 8bit
 
 The desktop targets ship with Chromium spellcheck off (Electron has no
 local hunspell dictionary, see target-electron windows/main.ts), and a
-browser grammar add-on can't reach into an Electron/Tauri window. So the
+browser grammar add-on can't reach into an Electron window. So the
 composer gets its own grammar checker: Harper (writewithharper.com,
 English only, wasm on this device) or LanguageTool, like the LibreOffice
 extension or the Obsidian community plugin, over plain fetch, which works
-the same on browser, Electron and Tauri.
+the same on browser and Electron.
 
 Settings -> Experimental -> Composer: a "Grammar & spelling checker"
 switch (off by default) and a "Checker" row, shown while off too so the
@@ -46,7 +46,7 @@ rest amber; "insert after" suggestions become the flagged text plus the
 insertion, so the card's replace path stays one. The dialog has no
 "Check connection" for Harper (that would load it while it is off); the
 Connectivity view's test check covers it once it is on. Outside the
-web-app (Electron, Tauri) harper/ isn't served, so picking Harper there
+web-app (Electron) harper/ isn't served, so picking Harper there
 shows the failed-check icon.
 
 Composer: 1s after typing stops the draft is checked; for LanguageTool
@@ -110,7 +110,7 @@ description (EditGroupNameDialog) and the new-group description
 than checking every DeltaTextarea, because the proxy dialog uses one for
 proxy URLs, which must not be sent anywhere.
 
-CSP: Electron's main.html and Tauri's connect-src allow
+CSP: Electron's main.html allows
 http(s)://*:*/v2/check -- any host/port, pinned to that one path, the
 same pattern the web edition uses for /unfurl.
 

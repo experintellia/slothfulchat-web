@@ -251,6 +251,9 @@ try {
   const bubble = page.locator('.message', { hasText: 'hello world' })
   for (let i = 0; i < 3 && !(await bubble.isVisible()); i++) {
     await page.locator('.chat-list-item', { hasText: 'Saved Messages' }).click()
+    // the view lingers on the old chat until the new one loads; clicking back
+    // before then never leaves the group, so its messages never reload
+    await page.locator('#chat-section-heading', { hasText: 'Saved Messages' }).waitFor()
     await row.click()
     await bubble.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {})
   }
