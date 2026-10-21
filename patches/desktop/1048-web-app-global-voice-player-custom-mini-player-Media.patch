@@ -77,6 +77,9 @@ shared with CustomAudioControls.
 Pure helpers (mediaSessionMetadata, clampSeek, voicePlayerSurface) plus
 the positionStore/utils cases are covered by the audioPlayer mocha
 suite (lands here because it imports mediaSession.ts).
+
+Rebased onto v2.62.0: voiceMessageMediaSessionDetails is read from the
+new desktop-settings store (95f5a1e1d).
 ---
  .../GlobalVoiceMessagePlayer.tsx              | 517 ++++++++++++++++--
  .../GlobalVoiceMessagePlayer/mediaSession.ts  |  72 +++
@@ -90,7 +93,7 @@ suite (lands here because it imports mediaSession.ts).
  create mode 100644 packages/frontend/src/tests/audioPlayer.test.ts
 
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
-index 49a037ccd9e990b006c125247da3fb7b3e482294..d6a6da1f7840604fef5a694bbb69640a7686e2ac 100644
+index 49a037ccd9e990b006c125247da3fb7b3e482294..2ea200b8b55e8ace948d13b80ced01bae65a46b4 100644
 --- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
 +++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
 @@ -1,50 +1,503 @@
@@ -108,7 +111,7 @@ index 49a037ccd9e990b006c125247da3fb7b3e482294..d6a6da1f7840604fef5a694bbb69640a
 +import { nextPlaybackRate } from '../AudioPlayer/utils'
 +import { Avatar } from '../Avatar'
 +import { ScreenContext } from '../../contexts/ScreenContext'
-+import { useSettingsStore } from '../../stores/settings'
++import { useDesktopSettingsStore } from '../../stores/settings'
 +import { useRpcFetch } from '../../hooks/useFetch'
 +import { BackendRemote } from '../../backend-com'
 +import useMessage from '../../hooks/chat/useMessage'
@@ -144,7 +147,7 @@ index 49a037ccd9e990b006c125247da3fb7b3e482294..d6a6da1f7840604fef5a694bbb69640a
    const nextVoiceMessagePlayerCtx = useContext(NextVoiceMessagePlayerContext)
 +  const { smallScreenMode } = useContext(ScreenContext)
 +
-+  const desktopSettings = useSettingsStore()[0]?.desktopSettings
++  const desktopSettings = useDesktopSettingsStore()[0]
 +  const showDetails = desktopSettings?.voiceMessageMediaSessionDetails === true
 +
 +  const currentSrc = mediaPlayerMutexCtx.currentSrc
@@ -848,10 +851,10 @@ index 9b4893c814a0d00ee9740e89de89f93564a39a83..7b783842d90b977ec5d6b7c717ad3fc8
 +  }
 +}
 diff --git a/packages/frontend/src/components/Settings/Notifications.tsx b/packages/frontend/src/components/Settings/Notifications.tsx
-index b29ea71e1039633088cb1962bcd76448b1146322..3f6568473bd1799d5dbd7c19db129b1f55889593 100644
+index ea6516a327b4d44bc526a8e46ef56a229be1e90a..a466cbcc49b069e69b92d3c6fa8b47dacbbb02e1 100644
 --- a/packages/frontend/src/components/Settings/Notifications.tsx
 +++ b/packages/frontend/src/components/Settings/Notifications.tsx
-@@ -118,6 +118,12 @@ export default function Notifications({ desktopSettings }: Props) {
+@@ -116,6 +116,12 @@ export default function Notifications({ desktopSettings }: Props) {
          label={tx('pref_show_notification_content')}
          disabled={!desktopSettings['notifications']}
        />
@@ -865,10 +868,10 @@ index b29ea71e1039633088cb1962bcd76448b1146322..3f6568473bd1799d5dbd7c19db129b1f
          settingsKey='notifications'
          label={tx('pref_notifications_explain')}
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index c0c8ac59909486fa4433234841b170fbdc80180b..5c77d5f8bef2fe7f42dfcd49a03eb38ba0f6ccee 100644
+index fb5aa9caa7afb6bcd1b5122c5d5fc7a5c1da2f83..80ef7522ed76db5d1938d59a4c479fd82cd8cc82 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-@@ -298,6 +298,16 @@ export default function MainScreen({ accountId }: Props) {
+@@ -301,6 +301,16 @@ export default function MainScreen({ accountId }: Props) {
          !messageSectionShouldBeHidden ? 'chat-view-open' : ''
        }`}
      >
@@ -885,7 +888,7 @@ index c0c8ac59909486fa4433234841b170fbdc80180b..5c77d5f8bef2fe7f42dfcd49a03eb38b
        <div
          className={styles.chatListAndHeaderAndAudioPlayer}
          ref={chatListSidebarRef}
-@@ -352,7 +362,7 @@ export default function MainScreen({ accountId }: Props) {
+@@ -355,7 +365,7 @@ export default function MainScreen({ accountId }: Props) {
            />
          </section>
  
@@ -895,7 +898,7 @@ index c0c8ac59909486fa4433234841b170fbdc80180b..5c77d5f8bef2fe7f42dfcd49a03eb38b
        {!smallScreenMode && (
          <div
 diff --git a/packages/frontend/src/components/screens/MainScreen/styles.module.scss b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
-index ecb61801bc2e495b961ff69b8a00e309f4f2d1da..821e9bc365a1b1ef92d3609d0d275c522b432b42 100644
+index b1f63c8abb76cd3af51751451ad3601ea0527c61..3b7f0d6e594fe3db2cecdc11403e3ff3b2e34ef1 100644
 --- a/packages/frontend/src/components/screens/MainScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
 @@ -14,6 +14,25 @@

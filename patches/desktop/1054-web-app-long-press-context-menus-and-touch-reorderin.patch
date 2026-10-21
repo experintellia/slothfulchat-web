@@ -68,10 +68,10 @@ gesture via pointerType if that ever matters.
  create mode 100644 packages/frontend/src/utils/longPressContextMenu.ts
 
 diff --git a/packages/frontend/scss/_global.scss b/packages/frontend/scss/_global.scss
-index 3e827e0ca35a64947ac6c094f363501b2c295bc8..becab06553e9d8220a627e5826ae837807552752 100644
+index 32e88d1007943dc00adb657fb6df632666e58105..df5af660e331926f846ab29cd804de0a4514d0b6 100644
 --- a/packages/frontend/scss/_global.scss
 +++ b/packages/frontend/scss/_global.scss
-@@ -73,6 +73,15 @@ button {
+@@ -72,6 +72,15 @@ button {
    cursor: pointer;
    font-size: inherit;
    user-select: none;
@@ -127,7 +127,7 @@ index d9acfd6f5f3c10e933add98ff7b9eca6fc1a04bb..6c7efbec8b5c4ce45f058f4e1ce1a965
                      [styles.dragging]: draggedAccountId === id,
                      [styles.dragOverTop]:
 diff --git a/packages/frontend/src/components/attachment/galleryAttachment.tsx b/packages/frontend/src/components/attachment/galleryAttachment.tsx
-index e0f5e8499c932ef778d50372eb0712983d77f584..ebcd063d2ca7fba1351a58a7adb9bcbef6886578 100644
+index 9ce45ca41cea5b6abc9a10a8092ab735b0a48d5f..5fea4e8ef0d0be15a2a2d37f7995dfed39f954a9 100644
 --- a/packages/frontend/src/components/attachment/galleryAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/galleryAttachment.tsx
 @@ -30,6 +30,7 @@ import { useRovingTabindex } from '../../contexts/RovingTabindex'
@@ -157,7 +157,7 @@ index e0f5e8499c932ef778d50372eb0712983d77f584..ebcd063d2ca7fba1351a58a7adb9bcbe
              file ? ev => dragAttachmentOut(file, fileName, ev) : undefined
            }
 diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
-index ca9c68d6f9456cf32cd28a5bfedff75e568c508b..206d0909719b61961eef3fa12ac3fae2c9d0f5a2 100644
+index 31db0d818a60246bd70674db675226dacb37f953..4b673097e4c5577c18bc4a0601db9c3508c4d323 100644
 --- a/packages/frontend/src/components/attachment/messageAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
 @@ -28,6 +28,7 @@ import { BackendRemote } from '../../backend-com'
@@ -177,7 +177,7 @@ index ca9c68d6f9456cf32cd28a5bfedff75e568c508b..206d0909719b61961eef3fa12ac3fae2
          onDragStart={ev => dragAttachmentOut(file, fileName, ev)}
          title={fileMime || 'null'}
        >
-@@ -406,7 +407,7 @@ export function DraftAttachment({
+@@ -407,7 +408,7 @@ export function DraftAttachment({
        <div className={classNames('message-attachment-generic')}>
          <div
            className='file-icon'

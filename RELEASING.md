@@ -329,9 +329,10 @@ gh api repos/:owner/:repo/environments/github-pages --jq '.protection_rules'
 
 ## The jsonrpc-client dependency (core-wasm)
 
-core-wasm's published package.json depends on the **npm release** of
-`@deltachat/jsonrpc-client` (types for consumers; the runtime is bundled into
-`dist/`). Local/CI builds override it to the freshly generated client from the
-patched core via `overrides:` in `pnpm-workspace.yaml`, so builds always match
-the core. When vendor/core moves to a new upstream release, bump the npm
-version in packages/core-wasm/package.json to the matching release.
+core-wasm does not depend on an npm release of `@deltachat/jsonrpc-client`:
+no release describes the patched core. Builds use the client generated from
+build/core (`deltachat-jsonrpc-bindings/typescript`, via `overrides:` in
+`pnpm-workspace.yaml`), and `build:types` vendors its declarations into
+`dist/jsonrpc-client/`. When vendor/core moves to a new upstream release, set
+`coreVersion` in packages/core-wasm/package.json to the core's version;
+`build:types` fails until it matches.

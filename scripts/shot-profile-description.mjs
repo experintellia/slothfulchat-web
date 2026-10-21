@@ -135,6 +135,8 @@ try {
       .filter({ hasText: chatName })
       .first()
       .click()
+    // the header button opens whichever chat is shown, and the switch lags the click
+    await page.locator('#chat-section-heading', { hasText: chatName }).waitFor({ timeout: 30_000 })
     await page.getByTestId('chat-info-button').click()
     const dialog = page.getByTestId(testId)
     await dialog.getByTestId('profile-description').waitFor({ timeout: 30_000 })

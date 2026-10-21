@@ -6,7 +6,8 @@
 // reacts ❤️. In Bob's view, clicking Alice's 👍 pill joins it (the path
 // test-context-menu-e2e can't reach with one account); clicking it again
 // takes Bob's back. "More Info" behind the pills opens Message Info, which
-// lists who reacted with what at its end. Shots go to .cache/reaction-shots/.
+// ends with the count per emoji and who reacted with what, kept live while
+// it is open. Shots go to .cache/reaction-shots/.
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/shot-reactions.mjs
@@ -140,7 +141,18 @@ try {
   for (const name of ['Alice Weber', 'Carol Nguyen', 'Me']) {
     expect(await info.locator('ul').getByText(name).count(), `lists ${name}`)
   }
+  // plain rows, not upstream's pills that toggled your reaction
+  const counts = async () => (await info.locator('li', { hasText: / reactions?$/ }).allTextContents()).join()
+  expect((await counts()) === '👍2 reactions,❤️1 reaction', 'counts per emoji, most used first')
+  expect(!(await info.getByRole('menuitemradio').count()), 'no reaction pills in Message Info')
   await shot('03-message-info')
+
+  // It stays live: Bob takes his 👍 back from elsewhere while it is open.
+  await rpc('sendReaction', bobId, msg, [])
+  // (a tie is ordered by core, not by us)
+  await until(async () => (await counts()).split(',').sort().join() === '❤️1 reaction,👍1 reaction', 'the counts to update')
+  await until(async () => !(await info.locator('ul').getByText('Me', { exact: true }).count()), 'Me to leave the list')
+  expect(true, 'Message Info updates live when a reaction changes')
 
   console.log('PASS: clickable reactions work as expected')
 } catch (err) {

@@ -66,6 +66,20 @@ account_tree, view_list). New i18n keys: reply_thread, n_replies
 (plural), thread_show, thread_reply_needs_quote, thread_reply_to_latest,
 thread_show_as_tree, thread_show_as_list, thread_close.
 
+Rebased onto v2.62.0: upstream restructured the chat view
+(7b95f8248..9490a1b6d): ChatViewInner sits behind key={chatId},
+MessageListView is inlined, useMessageList() and the multiselect context
+moved up into ChatViewInner, and the multiselect counter moved into the
+header (19e4825c6). So thread is passed to useMessageList() there, and
+in thread mode ThreadHeading and ThreadNavButtons stand in for upstream's
+heading and buttons, next to its multiselect counter.
+MessageListInner lost its custom memo comparator, so the reply props go
+through plain React.memo. ChatContext and the store's activeView are
+memoized upstream now (e4dedf44f) and carry the thread fields. The
+settings read moved to useDesktopSettingsStore (95f5a1e1d), and the
+thread navbar avatar uses freshness instead of the removed
+wasSeenRecently (1171b3e4a).
+
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  images/icons/account_tree.svg                 |   1 +
@@ -77,23 +91,23 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  packages/frontend/scss/message/_message.scss  |   9 +-
  packages/frontend/scss/message/_metadata.scss |  47 +++++-
  packages/frontend/src/backend/replyThreads.ts |  20 +++
- .../src/components/ChatView/ChatView.tsx      | 108 ++++++++++++-
+ .../src/components/ChatView/ChatView.tsx      | 133 +++++++++++++--
  .../frontend/src/components/Icon/index.tsx    |   2 +
  .../Settings/ExperimentalFeatures.tsx         |   6 +
  .../src/components/composer/Composer.tsx      |  79 ++++++++-
  .../src/components/message/Message.tsx        |  32 +++-
  .../src/components/message/MessageList.tsx    |  82 ++++++++++
- .../message/MessageListAndComposer.tsx        |  20 ++-
+ .../message/MessageListAndComposer.tsx        |  18 ++
  .../components/message/MessageMetaData.tsx    |  58 +++++++
  .../src/components/message/MessageWrapper.tsx |  23 ++-
- .../frontend/src/contexts/ChatContext.tsx     | 150 ++++++++++++++++++
+ .../frontend/src/contexts/ChatContext.tsx     | 154 ++++++++++++++++++
  .../frontend/src/hooks/chat/useMessage.ts     |  33 +++-
- packages/frontend/src/stores/messagelist.ts   | 134 +++++++++++-----
+ packages/frontend/src/stores/messagelist.ts   | 134 ++++++++++-----
  .../src/tests/replyThreadLayout.test.ts       |  41 +++++
  .../frontend/src/utils/replyThreadLayout.ts   |  58 +++++++
  packages/shared/shared-types.d.ts             |   2 +
  packages/shared/state.ts                      |   1 +
- 25 files changed, 865 insertions(+), 61 deletions(-)
+ 25 files changed, 887 insertions(+), 66 deletions(-)
  create mode 100644 images/icons/account_tree.svg
  create mode 100644 images/icons/reply.svg
  create mode 100644 images/icons/thread.svg
@@ -148,7 +162,7 @@ index b24bd54a81b2f29f14c011e56068e34b76b100d3..b62a11edbcb08027d6065bdfb8b36d27
        .paper-plane {
          height: 24px;
 diff --git a/packages/frontend/scss/message/_message-list.scss b/packages/frontend/scss/message/_message-list.scss
-index 1666557b4c5b9d0be87a3f00084cc79c003e4670..d9986dbdeae0e3051c83871ad30ba4f8ce81c0b2 100644
+index 0593ff5b687338f9404b7c5459226e1c3a1f1e1d..8f270107f4c0f16dc2368fc7d6f2ad4ce481bee2 100644
 --- a/packages/frontend/scss/message/_message-list.scss
 +++ b/packages/frontend/scss/message/_message-list.scss
 @@ -151,6 +151,17 @@
@@ -170,10 +184,10 @@ index 1666557b4c5b9d0be87a3f00084cc79c003e4670..d9986dbdeae0e3051c83871ad30ba4f8
          // The contents of the `<li>` are focusable (see `useRovingTabindex`).
          // Focusing an element inside a scrollable region makes the browser
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index 770ebc9da4dcb8abea2690093989532dccc3a436..13d48c4542b32f53ef967cdd34b656f5ed8316be 100644
+index e763cb9edc9849dd85a918d34e275986a36fdbd8..8f26ef67b9e399b053dea476977d83c8292142cb 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
-@@ -296,7 +296,8 @@ $info-text-max-width: 400px;
+@@ -297,7 +297,8 @@ $info-text-max-width: 400px;
  
      .date,
      .edited,
@@ -183,7 +197,7 @@ index 770ebc9da4dcb8abea2690093989532dccc3a436..13d48c4542b32f53ef967cdd34b656f5
        color: var(--messageMetadataIncoming);
      }
    }
-@@ -320,7 +321,8 @@ $info-text-max-width: 400px;
+@@ -321,7 +322,8 @@ $info-text-max-width: 400px;
    .metadata:not(.with-image-no-caption) {
      .date,
      .edited,
@@ -193,7 +207,7 @@ index 770ebc9da4dcb8abea2690093989532dccc3a436..13d48c4542b32f53ef967cdd34b656f5
        color: var(--messageOutgoingStatusColor);
      }
  
-@@ -442,7 +444,8 @@ $info-text-max-width: 400px;
+@@ -449,7 +451,8 @@ $info-text-max-width: 400px;
    .metadata {
      .date,
      .edited,
@@ -309,29 +323,33 @@ index 0000000000000000000000000000000000000000..e91bb4284c5a0d68e55de8c77bdfc858
 +  ): Promise<ReplyThreadEntry[]>
 +}
 diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
-index ad239c0d0ea6ff41ed153731037997c3f79e33bf..ff8d2509f9a67145bef1dc01bce50896552ed30f 100644
+index 4832fb6ade45fecc0aecf30b2ec7d686130fbdba..475fff5624b85430ff0ee193573ff951d6985c38 100644
 --- a/packages/frontend/src/components/ChatView/ChatView.tsx
 +++ b/packages/frontend/src/components/ChatView/ChatView.tsx
-@@ -32,6 +32,7 @@ import { ContextMenuContext } from '../../contexts/ContextMenuContext'
- import { mouseEventToPosition } from '../../utils/mouseEventToPosition'
- import useMessage from '../../hooks/chat/useMessage'
- import classNames from 'classnames'
+@@ -38,6 +38,7 @@ import {
+   useMessageFocusAndMultiselectContextValue,
+ } from '../message/focusAndMultiselect'
+ import { useMessageList } from '../../stores/messagelist'
 +import type { ThreadView } from '../../utils/replyThreadLayout'
  
  const log = getLogger('ChatView')
  
-@@ -45,7 +46,7 @@ export function ChatView({
-   className?: string
+@@ -93,10 +94,10 @@ export function ChatViewInner({
+   chatWithLinger: NonNullable<ReturnType<typeof useChat>['chatWithLinger']>
  }) {
    const tx = useTranslationFunction()
--  const { chatWithLinger, unselectChat } = useChat()
-+  const { chatWithLinger, unselectChat, thread } = useChat()
+-  const { unselectChat } = useChat()
++  const { unselectChat, thread } = useChat()
    const { smallScreenMode } = useContext(ScreenContext)
  
+-  const messageListData = useMessageList(accountId, chatWithLinger.id)
++  const messageListData = useMessageList(accountId, chatWithLinger.id, thread)
+   const messageIds = useMemo(
+     () =>
+       messageListData.state.messageListItems
+@@ -112,7 +113,8 @@ export function ChatViewInner({
    return (
-@@ -55,7 +56,8 @@ export function ChatView({
-       className={classNames(className, styles.chatAndNavbar)}
-     >
+     <>
        <nav className={styles.chatNavbar} data-tauri-drag-region>
 -        {smallScreenMode && (
 +        {/* In thread mode the thread's own close button leads back. */}
@@ -339,36 +357,48 @@ index ad239c0d0ea6ff41ed153731037997c3f79e33bf..ff8d2509f9a67145bef1dc01bce50896
            <span data-no-drag-region>
              <Button
                aria-label={tx('back')}
-@@ -67,11 +69,23 @@ export function ChatView({
-             </Button>
-           </span>
-         )}
--        <div className={styles.chatNavbarHeadingWrapper} data-tauri-drag-region>
--          {chatWithLinger && <ChatHeading chat={chatWithLinger} />}
--        </div>
+@@ -136,19 +138,30 @@ export function ChatViewInner({
+                   </div>
+                 )}
+               </div>
+-              <ChatHeading
+-                chat={chatWithLinger}
+-                // Why `hidden` instead of simply not rendering?
+-                // Because this component contains the accessible title
+-                // for the "ChatView" section (`id='chat-section-heading'`).
+-                hidden={showMessageMultiselectCounter}
+-              />
++              {thread ? (
++                <ThreadHeading
++                  chat={chatWithLinger}
++                  thread={thread}
++                  hidden={showMessageMultiselectCounter}
++                />
++              ) : (
++                <ChatHeading
++                  chat={chatWithLinger}
++                  // Why `hidden` instead of simply not rendering?
++                  // Because this component contains the accessible title
++                  // for the "ChatView" section (`id='chat-section-heading'`).
++                  hidden={showMessageMultiselectCounter}
++                />
++              )}
+             </>
+           )}
+         </div>
 -        {chatWithLinger && (
 -          <ChatNavButtons chat={chatWithLinger} lastUsedApps={lastUsedApps} />
-+        {chatWithLinger && thread ? (
-+          <ThreadNav chat={chatWithLinger} thread={thread} />
-+        ) : (
-+          <>
-+            <div
-+              className={styles.chatNavbarHeadingWrapper}
-+              data-tauri-drag-region
-+            >
-+              {chatWithLinger && <ChatHeading chat={chatWithLinger} />}
-+            </div>
-+            {chatWithLinger && (
-+              <ChatNavButtons
-+                chat={chatWithLinger}
-+                lastUsedApps={lastUsedApps}
-+              />
-+            )}
-+          </>
-         )}
+-        )}
++        {chatWithLinger &&
++          (thread ? (
++            <ThreadNavButtons thread={thread} />
++          ) : (
++            <ChatNavButtons chat={chatWithLinger} lastUsedApps={lastUsedApps} />
++          ))}
        </nav>
-       <MessageListView accountId={accountId} />
-@@ -271,6 +285,86 @@ function ChatHeading({ chat }: { chat: T.FullChat }) {
+       <RecoverableCrashScreen reset_on_change_key={chatWithLinger.id}>
+         <MessageMultiselectContext.Provider
+@@ -333,6 +346,100 @@ function ChatHeading({ chat, hidden }: { chat: T.FullChat; hidden: boolean }) {
    )
  }
  
@@ -379,14 +409,20 @@ index ad239c0d0ea6ff41ed153731037997c3f79e33bf..ff8d2509f9a67145bef1dc01bce50896
 +}
 +
 +/**
-+ * The navbar in thread mode: the chat's avatar and name over the start of
-+ * the thread's first message, then the list/tree toggle and the button
-+ * back to the whole chat.
++ * The navbar heading in thread mode: the chat's avatar and name over the
++ * start of the thread's first message.
 + */
-+function ThreadNav({ chat, thread }: { chat: T.FullChat; thread: ThreadView }) {
++function ThreadHeading({
++  chat,
++  thread,
++  hidden,
++}: {
++  chat: T.FullChat
++  thread: ThreadView
++  hidden: boolean
++}) {
 +  const tx = useTranslationFunction()
 +  const accountId = selectedAccountId()
-+  const { closeThread, setThreadLayout } = useChat()
 +  const rootTextFetch = useRpcFetch(fetchThreadRootText, [
 +    accountId,
 +    thread.msgId,
@@ -394,61 +430,69 @@ index ad239c0d0ea6ff41ed153731037997c3f79e33bf..ff8d2509f9a67145bef1dc01bce50896
 +  const rootText = rootTextFetch.lingeringResult?.ok
 +    ? rootTextFetch.lingeringResult.value
 +    : ''
++
++  return (
++    <div
++      className={classNames('navbar-heading', { 'visually-hidden': hidden })}
++      data-no-drag-region
++    >
++      <Avatar
++        displayName={chat.name}
++        color={chat.color}
++        avatarPath={chat.profileImage || undefined}
++        small
++        freshness={chat.freshness}
++        // Decorative, like in `ChatHeading`: the name is right below.
++        aria-hidden={true}
++      />
++      <div style={{ marginInlineStart: '7px', overflow: 'hidden' }}>
++        <div className='navbar-chat-name'>
++          <h2 id='chat-section-heading' className='truncated'>
++            {chat.name}
++            <span className='visually-hidden'>
++              <br />
++              {tx('reply_thread')}
++            </span>
++          </h2>
++        </div>
++        <div className='navbar-chat-subtitle truncated'>{rootText}</div>
++      </div>
++    </div>
++  )
++}
++
++/** Thread mode's navbar buttons: the list/tree toggle and the way back. */
++function ThreadNavButtons({ thread }: { thread: ThreadView }) {
++  const tx = useTranslationFunction()
++  const { closeThread, setThreadLayout } = useChat()
 +  const isTree = thread.layout === 'tree'
 +  const toggleLabel = tx(isTree ? 'thread_show_as_list' : 'thread_show_as_tree')
 +
 +  return (
-+    <>
-+      <div className={styles.chatNavbarHeadingWrapper} data-tauri-drag-region>
-+        <div className='navbar-heading' data-no-drag-region>
-+          <Avatar
-+            displayName={chat.name}
-+            color={chat.color}
-+            avatarPath={chat.profileImage || undefined}
-+            small
-+            wasSeenRecently={chat.wasSeenRecently}
-+            // Decorative, like in `ChatHeading`: the name is right below.
-+            aria-hidden={true}
-+          />
-+          <div style={{ marginInlineStart: '7px', overflow: 'hidden' }}>
-+            <div className='navbar-chat-name'>
-+              <h2 id='chat-section-heading' className='truncated'>
-+                {chat.name}
-+                <span className='visually-hidden'>
-+                  <br />
-+                  {tx('reply_thread')}
-+                </span>
-+              </h2>
-+            </div>
-+            <div className='navbar-chat-subtitle truncated'>{rootText}</div>
-+          </div>
-+        </div>
-+      </div>
-+      <div className='views' data-no-drag-region>
-+        <Button
-+          onClick={() => setThreadLayout(isTree ? 'list' : 'tree')}
-+          aria-label={toggleLabel}
-+          title={toggleLabel}
-+          className='navbar-button'
-+          styling='borderless'
-+        >
-+          <Icon
-+            coloring='navbar'
-+            icon={isTree ? 'view_list' : 'account_tree'}
-+            size={18}
-+          />
-+        </Button>
-+        <Button
-+          onClick={() => closeThread()}
-+          aria-label={tx('thread_close')}
-+          title={tx('thread_close')}
-+          className='navbar-button'
-+          styling='borderless'
-+        >
-+          <Icon coloring='navbar' icon='cross' size={18} />
-+        </Button>
-+      </div>
-+    </>
++    <div className='views' data-no-drag-region>
++      <Button
++        onClick={() => setThreadLayout(isTree ? 'list' : 'tree')}
++        aria-label={toggleLabel}
++        title={toggleLabel}
++        className='navbar-button'
++        styling='borderless'
++      >
++        <Icon
++          coloring='navbar'
++          icon={isTree ? 'view_list' : 'account_tree'}
++          size={18}
++        />
++      </Button>
++      <Button
++        onClick={() => closeThread()}
++        aria-label={tx('thread_close')}
++        title={tx('thread_close')}
++        className='navbar-button'
++        styling='borderless'
++      >
++        <Icon coloring='navbar' icon='cross' size={18} />
++      </Button>
++    </div>
 +  )
 +}
 +
@@ -456,7 +500,7 @@ index ad239c0d0ea6ff41ed153731037997c3f79e33bf..ff8d2509f9a67145bef1dc01bce50896
    chat,
    lastUsedApps,
 diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
-index a3d7bba947071787a97438eb187e30f4eeb34485..e86224ed9968a2a4b6c7ea9da81e9531f480725c 100644
+index 832c5633e25bc8008f3ebdac39d130ed94c3693f..dfcfde977421b5617a923f7f04c31067a4a5c401 100644
 --- a/packages/frontend/src/components/Icon/index.tsx
 +++ b/packages/frontend/src/components/Icon/index.tsx
 @@ -4,6 +4,7 @@ import classNames from 'classnames'
@@ -467,7 +511,7 @@ index a3d7bba947071787a97438eb187e30f4eeb34485..e86224ed9968a2a4b6c7ea9da81e9531
    | 'apps'
    | 'archive'
    | 'arrow-left'
-@@ -54,6 +55,7 @@ export type IconName =
+@@ -55,6 +56,7 @@ export type IconName =
    | 'test-tube'
    | 'trash'
    | 'upload-file'
@@ -476,10 +520,10 @@ index a3d7bba947071787a97438eb187e30f4eeb34485..e86224ed9968a2a4b6c7ea9da81e9531
  
  type IconColoring =
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index bec970fc0551645a5acee1d974f56ff933d41d8f..cc431cfabe557c0d47b21f9049fa7caad1853fe5 100644
+index 7c82ff6e56a15479fa8a3a14e685acd92bd10a0e..22e310b69775437c033fc7685de6890e22be13a0 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-@@ -127,6 +127,12 @@ export function ExperimentalFeatures() {
+@@ -125,6 +125,12 @@ export function ExperimentalFeatures() {
          description='Show roughly how long the unread messages in a chat take to read (e.g. "~4 min") next to the unread counter. Off by default (experimental).'
          forkAdded
        />
@@ -493,10 +537,10 @@ index bec970fc0551645a5acee1d974f56ff933d41d8f..cc431cfabe557c0d47b21f9049fa7caa
          settingsKey='enableOnDemandLocationStreaming'
          label={tx('pref_on_demand_location_streaming')}
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index c747e1a9a6446bec14577ffc6ea0d7e79ce84719..e36069ce6a40a96d40185025f7ab1ef6cd7b09a9 100644
+index 43e4212c71609724fc9ce32336d48d28665e7f5e..141f91f0cf2d2a5bdc9062e200b40018225ec924 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
-@@ -28,7 +28,11 @@ import { useSettingsStore } from '../../stores/settings'
+@@ -27,7 +27,11 @@ import { useDesktopSettingsStore } from '../../stores/settings'
  import { BackendRemote, EffectfulBackendActions, Type } from '../../backend-com'
  import { selectedAccountId } from '../../ScreenController'
  import { runtime } from '@deltachat-desktop/runtime-interface'
@@ -509,7 +553,7 @@ index c747e1a9a6446bec14577ffc6ea0d7e79ce84719..e36069ce6a40a96d40185025f7ab1ef6
  import useDialog from '../../hooks/dialog/useDialog'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
  import useMessage from '../../hooks/chat/useMessage'
-@@ -37,6 +41,7 @@ import { useDraft, type DraftObject } from '../../hooks/chat/useDraft'
+@@ -36,6 +40,7 @@ import { useDraft, type DraftObject } from '../../hooks/chat/useDraft'
  import { useRpcFetch } from '../../hooks/useFetch'
  
  import type { EmojiMartData } from '../EmojiPicker'
@@ -587,7 +631,7 @@ index c747e1a9a6446bec14577ffc6ea0d7e79ce84719..e36069ce6a40a96d40185025f7ab1ef6
    )
    const shiftPressed = useRef(false)
    const onEmojiSelect = (emoji: EmojiMartData) => {
-@@ -750,6 +785,40 @@ const Composer = forwardRef<
+@@ -768,6 +803,40 @@ const Composer = forwardRef<
                      />
                    </section>
                  )}
@@ -628,7 +672,7 @@ index c747e1a9a6446bec14577ffc6ea0d7e79ce84719..e36069ce6a40a96d40185025f7ab1ef6
                <LinkPreviewGhost preview={linkPreview} />
                {trackingChip && (
                  <div
-@@ -876,6 +945,10 @@ const Composer = forwardRef<
+@@ -893,6 +962,10 @@ const Composer = forwardRef<
                    (!messageEditing.isEditingModeActive
                      ? composerSendMessage
                      : null) ??
@@ -640,10 +684,10 @@ index c747e1a9a6446bec14577ffc6ea0d7e79ce84719..e36069ce6a40a96d40185025f7ab1ef6
                      log.error(
                        'Tried to send a message while draft is loading or in message editing mode'
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index a02b2f6689d03f6132a25090bdd06cbdd31a2a6f..a4ef84c2f10e0471ebc2ab5d2f93819ad7b0a47e 100644
+index dce5cdce23bdb7a3d316254367128c95bbcbc9fc..29550023ab685d0c4cf5632de16a8ad744c375eb 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -278,6 +278,7 @@ function buildContextMenu(
+@@ -279,6 +279,7 @@ function buildContextMenu(
      privateReply,
      chat,
      jumpToMessage,
@@ -651,7 +695,7 @@ index a02b2f6689d03f6132a25090bdd06cbdd31a2a6f..a4ef84c2f10e0471ebc2ab5d2f93819a
    }: {
      accountId: number
      message: T.Message | null
-@@ -287,6 +288,7 @@ function buildContextMenu(
+@@ -288,6 +289,7 @@ function buildContextMenu(
      privateReply: PrivateReply
      chat: T.FullChat
      jumpToMessage: JumpToMessage
@@ -659,7 +703,7 @@ index a02b2f6689d03f6132a25090bdd06cbdd31a2a6f..a4ef84c2f10e0471ebc2ab5d2f93819a
    },
    clickTarget: HTMLAnchorElement | null
  ): (false | ContextMenuItem)[] {
-@@ -373,6 +375,20 @@ function buildContextMenu(
+@@ -374,6 +376,20 @@ function buildContextMenu(
      message.fromId > C.DC_CONTACT_ID_LAST_SPECIAL
  
    return [
@@ -680,7 +724,7 @@ index a02b2f6689d03f6132a25090bdd06cbdd31a2a6f..a4ef84c2f10e0471ebc2ab5d2f93819a
      // Reply
      showReply && {
        label: tx('notify_reply_button'),
-@@ -607,8 +623,12 @@ export default function Message(props: {
+@@ -608,8 +624,12 @@ export default function Message(props: {
    chat: T.FullChat
    message: T.Message
    conversationType: ConversationType
@@ -694,7 +738,7 @@ index a02b2f6689d03f6132a25090bdd06cbdd31a2a6f..a4ef84c2f10e0471ebc2ab5d2f93819a
    const { viewType, text, hasLocation, hasHtml } = message
    const direction = getDirection(message)
    const status = mapCoreMsgStatus2String(message.state)
-@@ -662,6 +682,7 @@ export default function Message(props: {
+@@ -664,6 +684,7 @@ export default function Message(props: {
          privateReply,
          chat: props.chat,
          jumpToMessage,
@@ -702,7 +746,7 @@ index a02b2f6689d03f6132a25090bdd06cbdd31a2a6f..a4ef84c2f10e0471ebc2ab5d2f93819a
        }
        const items = isMultiselectMember
          ? buildMultiselectContextMenu(
-@@ -725,6 +746,7 @@ export default function Message(props: {
+@@ -727,6 +748,7 @@ export default function Message(props: {
        showReactionsBar,
        text,
        jumpToMessage,
@@ -724,18 +768,18 @@ index a02b2f6689d03f6132a25090bdd06cbdd31a2a6f..a4ef84c2f10e0471ebc2ab5d2f93819a
 +              }
              />
              <div
-               // TODO the "+1" count aria-live announcment is perhaps not great
+               // TODO the "show ReactionsDialog" button also gets announced.
 diff --git a/packages/frontend/src/components/message/MessageList.tsx b/packages/frontend/src/components/message/MessageList.tsx
-index 7c3f8ca20fb7f96b411c563512a57e6787906dd5..0c2c5a82271dc884a031768fefebc80ca7cc0426 100644
+index 5c5704e82abc43d53f62f0c9e6c59a91f87af2ef..a88abb506947efcb4b6150d44b8ec1825744fa1e 100644
 --- a/packages/frontend/src/components/message/MessageList.tsx
 +++ b/packages/frontend/src/components/message/MessageList.tsx
 @@ -36,6 +36,53 @@ import {
-   useMessageFocusAndMultiselectContextValue,
+   MessageMultiselectContext,
  } from './focusAndMultiselect'
  import { marknoticedChat } from '../../backend/chat'
 +import { rpcWithReplies } from '../../backend/replyThreads'
 +import asyncThrottle from '@jcoreio/async-throttle'
-+import { useSettingsStore } from '../../stores/settings'
++import { useDesktopSettingsStore } from '../../stores/settings'
 +
 +/**
 + * Reply-badge counts for the messages in `msgIds`, fetched in one batch, and
@@ -783,7 +827,7 @@ index 7c3f8ca20fb7f96b411c563512a57e6787906dd5..0c2c5a82271dc884a031768fefebc80c
  
  /**
   * Returns a "live" version of `FullChat.freshMessageCounter`.
-@@ -113,7 +160,21 @@ export default function MessageList({
+@@ -112,7 +159,21 @@ export default function MessageList({
      viewState,
      jumpToMessageStack,
      loaded,
@@ -792,7 +836,7 @@ index 7c3f8ca20fb7f96b411c563512a57e6787906dd5..0c2c5a82271dc884a031768fefebc80c
 +  // The badges are the only way into thread mode, so the setting only has to
 +  // hide them.
 +  const replyThreads =
-+    useSettingsStore()[0]?.desktopSettings.experimentalReplyThreads === true
++    useDesktopSettingsStore()[0]?.experimentalReplyThreads === true
 +  const replyCounts = useReplyCounts(
 +    accountId,
 +    chat.id,
@@ -805,7 +849,7 @@ index 7c3f8ca20fb7f96b411c563512a57e6787906dd5..0c2c5a82271dc884a031768fefebc80c
    const { hideReactionsBar, isReactionsBarShown } = useReactionsBar()
  
    const messageListRef = useRef<HTMLDivElement | null>(null)
-@@ -692,6 +753,8 @@ export default function MessageList({
+@@ -694,6 +755,8 @@ export default function MessageList({
            unreadMessageInViewIntersectionObserver
          }
          loadMissingMessages={loadMissingMessages}
@@ -814,7 +858,7 @@ index 7c3f8ca20fb7f96b411c563512a57e6787906dd5..0c2c5a82271dc884a031768fefebc80c
        />
        <JumpDownButton
          // We're using `hidden` prop instead of simply not rendering
-@@ -731,6 +794,13 @@ export const MessageListInner = React.memo(
+@@ -733,6 +796,13 @@ export const MessageListInner = React.memo(
      loaded: boolean
      unreadMessageInViewIntersectionObserver: IntersectionObserver
      loadMissingMessages: () => Promise<void>
@@ -828,7 +872,7 @@ index 7c3f8ca20fb7f96b411c563512a57e6787906dd5..0c2c5a82271dc884a031768fefebc80c
    }) => {
      const tx = useTranslationFunction()
  
-@@ -746,6 +816,8 @@ export const MessageListInner = React.memo(
+@@ -748,6 +818,8 @@ export const MessageListInner = React.memo(
        loaded,
        unreadMessageInViewIntersectionObserver,
        loadMissingMessages,
@@ -836,26 +880,26 @@ index 7c3f8ca20fb7f96b411c563512a57e6787906dd5..0c2c5a82271dc884a031768fefebc80c
 +      threadDepth,
      } = props
  
-     const conversationType: ConversationType = {
-@@ -943,6 +1015,16 @@ export const MessageListInner = React.memo(
-                           unreadMessageInViewIntersectionObserver={
-                             unreadMessageInViewIntersectionObserver
-                           }
-+                          // No badges in thread mode: the counts left from
-+                          // the whole chat are stale there, and a badge
-+                          // would only re-enter the thread you're in.
-+                          replyCount={
-+                            threadDepth === null && replyCounts
-+                              ? (replyCounts[messageId.msg_id] ?? 0)
-+                              : undefined
-+                          }
-+                          inReplyThread={threadDepth !== null}
-+                          threadDepth={threadDepth?.[messageId.msg_id] ?? 0}
-                         />
-                       )
-                     } else if (message?.kind === 'loadingError') {
+     const conversationType: ConversationType = useMemo(
+@@ -935,6 +1007,16 @@ export const MessageListInner = React.memo(
+                       unreadMessageInViewIntersectionObserver={
+                         unreadMessageInViewIntersectionObserver
+                       }
++                      // No badges in thread mode: the counts left from
++                      // the whole chat are stale there, and a badge
++                      // would only re-enter the thread you're in.
++                      replyCount={
++                        threadDepth === null && replyCounts
++                          ? (replyCounts[messageId.msg_id] ?? 0)
++                          : undefined
++                      }
++                      inReplyThread={threadDepth !== null}
++                      threadDepth={threadDepth?.[messageId.msg_id] ?? 0}
+                     />
+                   )
+                 } else if (message?.kind === 'loadingError') {
 diff --git a/packages/frontend/src/components/message/MessageListAndComposer.tsx b/packages/frontend/src/components/message/MessageListAndComposer.tsx
-index 8ca2c10f974c92a7e74edabdaa82186b594f0f17..d1ed438563b99d5b643c2c92ee724f006b5c1b1e 100644
+index be04265974e9d1bbd96ac1309e2590e011461cb7..d3d445597a52d7ea0c11fca279c12c95e39d9adc 100644
 --- a/packages/frontend/src/components/message/MessageListAndComposer.tsx
 +++ b/packages/frontend/src/components/message/MessageListAndComposer.tsx
 @@ -15,6 +15,7 @@ import ConfirmSendingFiles from '../dialogs/ConfirmSendingFiles'
@@ -863,10 +907,10 @@ index 8ca2c10f974c92a7e74edabdaa82186b594f0f17..d1ed438563b99d5b643c2c92ee724f00
  import useDialog from '../../hooks/dialog/useDialog'
  import useMessage from '../../hooks/chat/useMessage'
 +import useChat from '../../hooks/chat/useChat'
- import { useMessageList } from '../../stores/messagelist'
+ import type { useMessageList } from '../../stores/messagelist'
  import { IMAGE_EXTENSIONS } from '@deltachat-desktop/shared/constants'
  
-@@ -98,6 +99,7 @@ export default function MessageListAndComposer({ accountId, chat }: Props) {
+@@ -103,6 +104,7 @@ export default function MessageListAndComposer({
  
    const { openDialog, hasOpenDialogs } = useDialog()
    const { sendMessage } = useMessage()
@@ -874,13 +918,10 @@ index 8ca2c10f974c92a7e74edabdaa82186b594f0f17..d1ed438563b99d5b643c2c92ee724f00
  
    const regularMessageInputRef = useRef<ComposerMessageInput>(null)
    const editMessageInputRef = useRef<ComposerMessageInput>(null)
-@@ -107,7 +109,18 @@ export default function MessageListAndComposer({ accountId, chat }: Props) {
-     state: messageListState,
-     fetchMoreBottom,
+@@ -114,6 +116,17 @@ export default function MessageListAndComposer({
      fetchMoreTop,
--  } = useMessageList(accountId, chat.id)
-+  } = useMessageList(accountId, chat.id, thread)
-+
+   } = messageListData
+ 
 +  // The thread can't be loaded (its messages were deleted): back to the chat.
 +  const threadGone =
 +    thread !== null &&
@@ -891,10 +932,11 @@ index 8ca2c10f974c92a7e74edabdaa82186b594f0f17..d1ed438563b99d5b643c2c92ee724f00
 +      closeThread(false)
 +    }
 +  }, [threadGone, closeThread])
- 
++
    const {
      draftState,
-@@ -255,6 +268,11 @@ export default function MessageListAndComposer({ accountId, chat }: Props) {
+     draftIsLoading,
+@@ -260,6 +273,11 @@ export default function MessageListAndComposer({
          clearDraftState={clearDraftState}
          setDraftState={setDraftState}
          messageCache={messageListState.messageCache}
@@ -907,7 +949,7 @@ index 8ca2c10f974c92a7e74edabdaa82186b594f0f17..d1ed438563b99d5b643c2c92ee724f00
      </div>
    )
 diff --git a/packages/frontend/src/components/message/MessageMetaData.tsx b/packages/frontend/src/components/message/MessageMetaData.tsx
-index 4c86c98ff2ed1657e5f90504945b8a356d942715..1f4b509839770a5d0d563c56bf34c45a48a7cd82 100644
+index dd730cce38d3721d0210e2943178fc2f18356f5b..94d8a374177df58ed0350797ccacae0ce1efbe06 100644
 --- a/packages/frontend/src/components/message/MessageMetaData.tsx
 +++ b/packages/frontend/src/components/message/MessageMetaData.tsx
 @@ -11,6 +11,7 @@ import { useRpcFetch } from '../../hooks/useFetch'
@@ -1004,7 +1046,7 @@ index 4c86c98ff2ed1657e5f90504945b8a356d942715..1f4b509839770a5d0d563c56bf34c45a
   * Returns true if message contains visual media (image, sticker or video)
   * without any further text.
 diff --git a/packages/frontend/src/components/message/MessageWrapper.tsx b/packages/frontend/src/components/message/MessageWrapper.tsx
-index 786813135336a91628407340c5d700c85bb333c5..206804db47b69ae5dcd719d996615eee58b3e1c1 100644
+index 2ebfc28c206138f31f769db518e89df23e04026b..8c5df4a0ede3342263998e22d66b82b24da0b7ed 100644
 --- a/packages/frontend/src/components/message/MessageWrapper.tsx
 +++ b/packages/frontend/src/components/message/MessageWrapper.tsx
 @@ -1,4 +1,5 @@
@@ -1029,8 +1071,8 @@ index 786813135336a91628407340c5d700c85bb333c5..206804db47b69ae5dcd719d996615eee
 +
  const log = getLogger('renderer/message/MessageWrapper')
  
- export function MessageWrapper(props: RenderMessageProps) {
-@@ -56,7 +65,19 @@ export function MessageWrapper(props: RenderMessageProps) {
+ export const MessageWrapper = React.memo(function MessageWrapper(
+@@ -58,7 +67,19 @@ export const MessageWrapper = React.memo(function MessageWrapper(
    ])
  
    return (
@@ -1052,7 +1094,7 @@ index 786813135336a91628407340c5d700c85bb333c5..206804db47b69ae5dcd719d996615eee
        {/* TODO perf: `shouldInViewObserve` does not become `false`
        when we do mark a message as read, because the messagelist.ts
 diff --git a/packages/frontend/src/contexts/ChatContext.tsx b/packages/frontend/src/contexts/ChatContext.tsx
-index 4cb9f0dab54eb59c7cfec944f371a40c5eb54eb4..16e9ce200111836c9d1d19c4652b61a84023ce8d 100644
+index c407a15448a064fbcb1726ec661d92468982657d..00800f88feb3ce06f009a48e191b0353f5dc47c2 100644
 --- a/packages/frontend/src/contexts/ChatContext.tsx
 +++ b/packages/frontend/src/contexts/ChatContext.tsx
 @@ -8,6 +8,8 @@ import type { RefObject, PropsWithChildren } from 'react'
@@ -1236,17 +1278,28 @@ index 4cb9f0dab54eb59c7cfec944f371a40c5eb54eb4..16e9ce200111836c9d1d19c4652b61a8
    }, [setChatId])
  
    // Callback ref pattern: keeping ref in sync for external callers
-@@ -280,6 +426,10 @@ export const ChatProvider = ({
-     chatId,
-     selectChat,
-     unselectChat,
-+    thread,
-+    openThread,
-+    closeThread,
-+    setThreadLayout,
-   }
+@@ -282,6 +428,10 @@ export const ChatProvider = ({
+       chatId,
+       selectChat,
+       unselectChat,
++      thread,
++      openThread,
++      closeThread,
++      setThreadLayout,
+     }),
+     [
+       chatWithLinger,
+@@ -290,6 +440,10 @@ export const ChatProvider = ({
+       chatId,
+       selectChat,
+       unselectChat,
++      thread,
++      openThread,
++      closeThread,
++      setThreadLayout,
+     ]
+   )
  
-   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>
 diff --git a/packages/frontend/src/hooks/chat/useMessage.ts b/packages/frontend/src/hooks/chat/useMessage.ts
 index 5de8754cd827934fa572138ae0e52d3b5560de62..405172133c74344bb8f3a9da3edbc24777680878 100644
 --- a/packages/frontend/src/hooks/chat/useMessage.ts
@@ -1334,12 +1387,12 @@ index 5de8754cd827934fa572138ae0e52d3b5560de62..405172133c74344bb8f3a9da3edbc247
  
    const sendMessage = useCallback<SendMessage>(
 diff --git a/packages/frontend/src/stores/messagelist.ts b/packages/frontend/src/stores/messagelist.ts
-index ee4700c141fc64dda5a050d86f65d6e1db47ad0a..420a8ee6a2d150927d3b78a3b3875083e405f896 100644
+index 84e35fdca8f46d79a2c873c9d16444daf7427867..84de359ae8da3c3958314794aeed4183b0594f62 100644
 --- a/packages/frontend/src/stores/messagelist.ts
 +++ b/packages/frontend/src/stores/messagelist.ts
 @@ -16,6 +16,9 @@ import { debounce } from 'debounce'
  import { getLogger } from '@deltachat-desktop/shared/logger'
- import { useSettingsStore } from './settings'
+ import { useDesktopSettingsStore } from './settings'
  import { shouldShowOSNotificationForCurrentChat } from '../system-integration/notifications'
 +import { rpcWithReplies } from '../backend/replyThreads'
 +import { layoutThread } from '../utils/replyThreadLayout'
@@ -1438,10 +1491,10 @@ index ee4700c141fc64dda5a050d86f65d6e1db47ad0a..420a8ee6a2d150927d3b78a3b3875083
 +    return order.map(msg_id => ({ kind: 'message', msg_id }))
 +  }
 +
-   get activeView() {
-     const start = this.state.oldestFetchedMessageListItemIndex
-     const end = this.state.newestFetchedMessageListItemIndex
-@@ -237,10 +285,12 @@ export class MessageListStore extends Store<MessageListState> {
+   private activeViewCache: {
+     items: T.MessageListItem[]
+     start: number
+@@ -261,10 +309,12 @@ export class MessageListStore extends Store<MessageListState> {
  
    reducer = {
      selectedChat: (payload: Partial<MessageListState>) => {
@@ -1455,7 +1508,7 @@ index ee4700c141fc64dda5a050d86f65d6e1db47ad0a..420a8ee6a2d150927d3b78a3b3875083
            ...payload,
            loaded: true,
          }
-@@ -449,16 +499,17 @@ export class MessageListStore extends Store<MessageListState> {
+@@ -484,16 +534,17 @@ export class MessageListStore extends Store<MessageListState> {
            return await this.__jumpToMessage(...jumpArgs)
          }
  
@@ -1483,7 +1536,7 @@ index ee4700c141fc64dda5a050d86f65d6e1db47ad0a..420a8ee6a2d150927d3b78a3b3875083
  
          const firstUnreadMsgId = await firstUnreadMsgIdP
          if (firstUnreadMsgId !== null) {
-@@ -690,12 +741,7 @@ export class MessageListStore extends Store<MessageListState> {
+@@ -728,12 +779,7 @@ export class MessageListStore extends Store<MessageListState> {
          async () => {
            // this.log.debug(`refresh`, this)
            const state = this.state
@@ -1497,7 +1550,7 @@ index ee4700c141fc64dda5a050d86f65d6e1db47ad0a..420a8ee6a2d150927d3b78a3b3875083
            let {
              newestFetchedMessageListItemIndex,
              oldestFetchedMessageListItemIndex,
-@@ -730,12 +776,7 @@ export class MessageListStore extends Store<MessageListState> {
+@@ -769,12 +815,7 @@ export class MessageListStore extends Store<MessageListState> {
        'refresh'
      ),
      onEventIncomingMessage: this.scheduler.queuedEffect(async () => {
@@ -1511,7 +1564,7 @@ index ee4700c141fc64dda5a050d86f65d6e1db47ad0a..420a8ee6a2d150927d3b78a3b3875083
        await this.__appendNewMessages(messageListItems)
      }, 'onEventIncomingMessage'),
      onEventMessagesChanged: this.scheduler.queuedEffect(
-@@ -785,12 +826,7 @@ export class MessageListStore extends Store<MessageListState> {
+@@ -841,12 +882,7 @@ export class MessageListStore extends Store<MessageListState> {
              'DC_EVENT_MSGS_CHANGED',
              'changed message seems to be a new message, refetching messageIds'
            )
@@ -1525,7 +1578,7 @@ index ee4700c141fc64dda5a050d86f65d6e1db47ad0a..420a8ee6a2d150927d3b78a3b3875083
  
            // Some "new" messages don't trigger `IncomingMsg` but only
            // `MsgsChanged` — e.g. info messages from the current user's actions
-@@ -812,6 +848,30 @@ export class MessageListStore extends Store<MessageListState> {
+@@ -868,6 +904,30 @@ export class MessageListStore extends Store<MessageListState> {
     * @returns
     */
    private async __appendNewMessages(messageListItems: T.MessageListItem[]) {
@@ -1556,7 +1609,7 @@ index ee4700c141fc64dda5a050d86f65d6e1db47ad0a..420a8ee6a2d150927d3b78a3b3875083
      const last_item: Type.MessageListItem | undefined =
        this.state.messageListItems[this.state.messageListItems.length - 1]
  
-@@ -1027,12 +1087,8 @@ export class MessageListStore extends Store<MessageListState> {
+@@ -1084,12 +1144,8 @@ export class MessageListStore extends Store<MessageListState> {
      // - A new message has just been sent to the chat and we want to jump
      //   to it.
      if (!isMessageInCurrentChat || !currentMessageListContainsTheMessage) {
@@ -1683,7 +1736,7 @@ index 0000000000000000000000000000000000000000..993e93f552bfdaa39d12e5cb584a9633
 +  return { order, depth }
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index c0a0aefdf2b2ea7f1989e7c54dcd9171026c43c0..69d2e7284980e3535086226a6af883f6d3857b5f 100644
+index 50b125bceb95e957e717996e9d4bdd8543faa695..70d5a5fe7f01041a03f48809a5d61abc504bc845 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -47,6 +47,8 @@ export interface DesktopSettingsType {
@@ -1696,7 +1749,7 @@ index c0a0aefdf2b2ea7f1989e7c54dcd9171026c43c0..69d2e7284980e3535086226a6af883f6
    grammarCheck: boolean
    /** webapp: which checker: Harper (English only, runs on this device) or LanguageTool (sends the draft to the server below) */
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 840cbdf0ef641d5072c5a0a611da071c3bb2a90c..efe6b51aa9c95d088f39bc49beceaf73b924dd49 100644
+index bd57137cbea0f11ce58b64a6144edc148fbc64ea..848b07821d516f76eb1fdf9d00513b2474e92ae0 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -18,6 +18,7 @@ export function getDefaultState(): DesktopSettingsType {

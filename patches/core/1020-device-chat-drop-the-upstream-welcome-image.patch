@@ -15,11 +15,38 @@ The "core-welcome-image" label is untouched, so dropping our own file in
 here later still works exactly as before. Also drops the include_bytes!
 of the jpg from the wasm bundle.
 ---
- src/stock_str.rs | 12 +++---------
- 1 file changed, 3 insertions(+), 9 deletions(-)
+ src/message/message_tests.rs | 14 +++++++++++++-
+ src/stock_str.rs             | 12 +++---------
+ 2 files changed, 16 insertions(+), 10 deletions(-)
 
+diff --git a/src/message/message_tests.rs b/src/message/message_tests.rs
+index 85e096d3bbcbc03df700d0d38c87289e95932a8a..35b1650f9b5163916e599ec8ee0dbb4cb81a5681 100644
+--- a/src/message/message_tests.rs
++++ b/src/message/message_tests.rs
+@@ -30,8 +30,20 @@ async fn test_get_width_height() {
+     let t = TestContext::new_alice().await;
+ 
+     // test that get_width() and get_height() are returning some dimensions for images;
+-    // (as the device-chat contains a welcome-images, we check that)
++    // the device chat has no welcome image in this fork, so add one there
+     t.update_device_chats().await.ok();
++    let mut image = Message::new(Viewtype::Image);
++    image
++        .set_file_from_bytes(
++            &t,
++            "welcome-image.jpg",
++            include_bytes!("../../assets/welcome-image.jpg"),
++            None,
++        )
++        .unwrap();
++    chat::add_device_msg(&t, None, Some(&mut image))
++        .await
++        .unwrap();
+     let device_chat_id = ChatId::get_for_contact(&t, ContactId::DEVICE)
+         .await
+         .unwrap();
 diff --git a/src/stock_str.rs b/src/stock_str.rs
-index 75f87dbe81a9c42a32db9a6c0ca534680745ad89..b71bcfb2597ce68080599764c5341fe2949dbb45 100644
+index cd93315f234974823ab8c5800214082b44ead3bc..f6bcb27d5070f0070108a04b84f0e82c4c025231 100644
 --- a/src/stock_str.rs
 +++ b/src/stock_str.rs
 @@ -9,13 +9,11 @@
@@ -36,7 +63,7 @@ index 75f87dbe81a9c42a32db9a6c0ca534680745ad89..b71bcfb2597ce68080599764c5341fe2
  
  /// Storage for string translations.
  #[derive(Debug, Clone)]
-@@ -1240,13 +1238,9 @@ pub(crate) async fn update_device_chats(&self) -> Result<()> {
+@@ -1267,13 +1265,9 @@ pub(crate) async fn update_device_chats(&self) -> Result<()> {
  
          // add welcome-messages. by the label, this is done only once,
          // if the user has deleted the message or the chat, it is not added again.

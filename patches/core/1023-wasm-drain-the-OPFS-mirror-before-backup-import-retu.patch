@@ -45,10 +45,10 @@ should stay upstreamable.
  1 file changed, 71 insertions(+), 2 deletions(-)
 
 diff --git a/src/imex.rs b/src/imex.rs
-index 4f2927fd1f795d6717192eb6c83e4815d5e1bba8..531539dda278128c90d53d57c38611330fc249af 100644
+index 3425718a3e93f973f38dd7c8223b0b33e2e2f37c..8f61ddd4656a70545b0e744ae38735086e8d29ff 100644
 --- a/src/imex.rs
 +++ b/src/imex.rs
-@@ -247,6 +247,36 @@ pub(crate) async fn import_backup_stream<R: tokio::io::AsyncRead + Unpin>(
+@@ -248,6 +248,36 @@ pub(crate) async fn import_backup_stream<R: tokio::io::AsyncRead + Unpin>(
          .0
  }
  
@@ -85,7 +85,7 @@ index 4f2927fd1f795d6717192eb6c83e4815d5e1bba8..531539dda278128c90d53d57c3861133
  /// Reader that emits progress events as bytes are read from it.
  #[pin_project]
  struct ProgressReader<R> {
-@@ -298,7 +328,11 @@ fn poll_read(
+@@ -299,7 +329,11 @@ fn poll_read(
                  .read
                  .saturating_add(usize_to_u64(buf.filled().len() - before));
  
@@ -98,7 +98,7 @@ index 4f2927fd1f795d6717192eb6c83e4815d5e1bba8..531539dda278128c90d53d57c3861133
              if progress > *this.last_progress {
                  this.context.emit_event(EventType::ImexProgress(progress));
                  *this.last_progress = progress;
-@@ -376,7 +410,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+@@ -377,7 +411,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
          .log_err(context)
          .ok();
      if res.is_ok() {
@@ -107,7 +107,7 @@ index 4f2927fd1f795d6717192eb6c83e4815d5e1bba8..531539dda278128c90d53d57c3861133
          res = context.sql.run_migrations(context).await;
          context.emit_event(EventType::AccountsItemChanged);
      }
-@@ -402,6 +436,41 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+@@ -403,6 +437,41 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
              .log_err(context)
              .ok();
      }

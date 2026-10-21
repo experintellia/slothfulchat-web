@@ -48,37 +48,44 @@ the numbered migrations instead of as migration 155: a fork must not
 claim a version number upstream will use next, or databases already at
 that number silently skip upstream's real migration. The slothfulchat_
 prefix keeps the index name clear of upstream's.
+
+Since v2.64.0 the index runs after upstream's migrations 155-169, the
+queries use ChatId::TRASH (upstream renamed DC_CHAT_ID_TRASH), and
+docs/schema.sql lists the index so upstream's documented-schema test
+(test_sql_schema_docs.py) stays green.
 ---
- deltachat-jsonrpc/src/api.rs               |  51 +++++-
+ deltachat-jsonrpc/src/api.rs               |  52 +++++-
  deltachat-jsonrpc/src/api/types/message.rs |   9 ++
+ docs/schema.sql                            |   2 +
  src/message.rs                             | 180 ++++++++++++++++++++-
  src/message/message_tests.rs               | 148 +++++++++++++++++
  src/sql/migrations.rs                      |  12 ++
- 5 files changed, 397 insertions(+), 3 deletions(-)
+ 6 files changed, 400 insertions(+), 3 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
-index 52547ecaa6382fef043e936c5bba93c520b6078f..fe585cf2f1bacfd85b674c051089fd13317f6543 100644
+index d545b8579f324f3a6c43cd9f9afe82f4e6e8f507..49b4cabc3b54d264d7958352bfd96bc3c11493d4 100644
 --- a/deltachat-jsonrpc/src/api.rs
 +++ b/deltachat-jsonrpc/src/api.rs
-@@ -24,7 +24,7 @@
+@@ -24,7 +24,8 @@
  use deltachat::location;
  use deltachat::message::{
-     self, delete_msgs_ex, get_existing_msg_ids, get_msg_read_receipt_count, get_msg_read_receipts,
--    markseen_msgs, Message, MessageState, MsgId, Viewtype,
-+    get_reply_counts, get_reply_thread, markseen_msgs, Message, MessageState, MsgId, Viewtype,
+     self, Message, MessageState, MsgId, Viewtype, delete_msgs_ext, get_existing_msg_ids,
+-    get_msg_read_receipt_count, get_msg_read_receipts, markseen_msgs,
++    get_msg_read_receipt_count, get_msg_read_receipts, get_reply_counts, get_reply_thread,
++    markseen_msgs,
  };
  use deltachat::peer_channels::{
      leave_webxdc_realtime, send_webxdc_realtime_advertisement, send_webxdc_realtime_data,
-@@ -55,7 +55,7 @@
+@@ -53,7 +54,7 @@
  use types::contact::{ContactObject, VcardContact};
  use types::events::Event;
  use types::http::HttpResponse;
 -use types::message::{MessageData, MessageObject, MessageReadReceipt};
 +use types::message::{MessageData, MessageObject, MessageReadReceipt, ReplyThreadEntry};
- use types::notify_state::JsonrpcNotifyState;
- use types::provider_info::ProviderInfo;
  use types::reactions::JsonrpcReactions;
-@@ -1600,6 +1600,53 @@ async fn get_message_read_receipts(
+ use types::webxdc::WebxdcMessageInfo;
+ 
+@@ -1629,6 +1630,53 @@ async fn get_message_read_receipts(
          Ok(receipts)
      }
  
@@ -133,10 +140,10 @@ index 52547ecaa6382fef043e936c5bba93c520b6078f..fe585cf2f1bacfd85b674c051089fd13
      /// This function is typically called when the user hits the "Download" button
      /// that is shown by the UI in case `download_state` is `'Available'` or `'Failure'`
 diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
-index 92b75f68892b243fb774eb0cc135521fd0d9cb50..9fe1ef9db885d59c81394a575dd2b4140060a949 100644
+index 981be122543143337f4b180efd0187285542df69..deb98fc7d58d27dccf840f5194ab0792a418c5a1 100644
 --- a/deltachat-jsonrpc/src/api/types/message.rs
 +++ b/deltachat-jsonrpc/src/api/types/message.rs
-@@ -695,6 +695,15 @@ pub struct MessageReadReceipt {
+@@ -703,6 +703,15 @@ pub struct MessageReadReceipt {
      pub timestamp: i64,
  }
  
@@ -152,8 +159,21 @@ index 92b75f68892b243fb774eb0cc135521fd0d9cb50..9fe1ef9db885d59c81394a575dd2b414
  #[derive(Serialize, TypeDef, schemars::JsonSchema)]
  #[serde(rename_all = "camelCase")]
  pub struct MessageInfo {
+diff --git a/docs/schema.sql b/docs/schema.sql
+index 6b7b7a69c143d12960a6d8d8e5eda1cf82cfe9ff..5f81c8c343dac7b934a220673bf84ef5a893e0c5 100644
+--- a/docs/schema.sql
++++ b/docs/schema.sql
+@@ -337,6 +337,8 @@ CREATE INDEX msgs_index7 ON msgs (state, hidden, chat_id, timestamp);
+ CREATE INDEX msgs_index8 ON msgs (ephemeral_timestamp);
+ CREATE INDEX msgs_index9 ON msgs (pre_rfc724_mid);
+ CREATE INDEX msgs_index10 ON msgs (pinned) WHERE pinned=1;
++-- slothfulchat fork: reverse In-Reply-To lookups for reply threads.
++CREATE INDEX slothfulchat_msgs_index_in_reply_to ON msgs (mime_in_reply_to);
+ 
+ CREATE TABLE leftgrps (
+     id INTEGER PRIMARY KEY,
 diff --git a/src/message.rs b/src/message.rs
-index 736ccdf0b63396c24d912362b0e5908ade288598..222de7f560520ee14c7bf1c62213fd31626ada10 100644
+index af0d209f15d47447206964597549e18f9b3b425a..533d2b0260610da89a9c5fb8ddca0faa935df6bd 100644
 --- a/src/message.rs
 +++ b/src/message.rs
 @@ -1,6 +1,6 @@
@@ -164,7 +184,7 @@ index 736ccdf0b63396c24d912362b0e5908ade288598..222de7f560520ee14c7bf1c62213fd31
  use std::path::{Path, PathBuf};
  use std::str;
  
-@@ -1525,6 +1525,184 @@ pub async fn get_msg_read_receipt_count(context: &Context, msg_id: MsgId) -> Res
+@@ -1499,6 +1499,184 @@ pub async fn get_msg_read_receipt_count(context: &Context, msg_id: MsgId) -> Res
          .await
  }
  
@@ -253,7 +273,7 @@ index 736ccdf0b63396c24d912362b0e5908ade288598..222de7f560520ee14c7bf1c62213fd31
 +                 SELECT id, parent FROM below",
 +                link = reply_link_sql("c", "p")
 +            ),
-+            (DC_CHAT_ID_TRASH,),
++            (ChatId::TRASH,),
 +            |row| Ok((row.get(0)?, row.get(1)?)),
 +        )
 +        .await?;
@@ -340,7 +360,7 @@ index 736ccdf0b63396c24d912362b0e5908ade288598..222de7f560520ee14c7bf1c62213fd31
 +                 GROUP BY m.id
 +                 ORDER BY m.timestamp, m.id"
 +            ),
-+            (msg_id, DC_CHAT_ID_TRASH),
++            (msg_id, ChatId::TRASH),
 +            |row| Ok((row.get(0)?, row.get(1)?)),
 +        )
 +        .await
@@ -350,10 +370,10 @@ index 736ccdf0b63396c24d912362b0e5908ade288598..222de7f560520ee14c7bf1c62213fd31
      msg.param
          .get(Param::Filename)
 diff --git a/src/message/message_tests.rs b/src/message/message_tests.rs
-index 407e247e4379e836eaef881ad73c0f1a997aab03..98070aa168858a360569356dcc7012b8b0cb9abe 100644
+index 35b1650f9b5163916e599ec8ee0dbb4cb81a5681..20351124b6e835dc6485fb4223761d6fbbb8a496 100644
 --- a/src/message/message_tests.rs
 +++ b/src/message/message_tests.rs
-@@ -81,6 +81,154 @@ async fn test_quote_basic() {
+@@ -93,6 +93,154 @@ async fn test_quote_basic() {
      assert_eq!(quoted_msg.get_text(), msg2.quoted_text().unwrap());
  }
  
@@ -509,10 +529,10 @@ index 407e247e4379e836eaef881ad73c0f1a997aab03..98070aa168858a360569356dcc7012b8
  async fn test_no_quote() {
      let mut tcm = TestContextManager::new();
 diff --git a/src/sql/migrations.rs b/src/sql/migrations.rs
-index 1ba18ce447d0efb26b2f9400f3a2c54cf8abbdc3..e4ff13b3947bac6dbe7a0cd9ad9030ce97122c19 100644
+index 26e22ff67a7e36b4908ebfd87173ed08d9a48771..f0b14029e1f7c3f027e16e06d6881560005869c0 100644
 --- a/src/sql/migrations.rs
 +++ b/src/sql/migrations.rs
-@@ -2456,6 +2456,18 @@ pub async fn run(context: &Context, sql: &Sql) -> Result<bool> {
+@@ -2702,6 +2702,18 @@ pub async fn run(context: &Context, sql: &Sql) -> Result<bool> {
          .await?;
      }
  

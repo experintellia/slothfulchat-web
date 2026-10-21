@@ -11,13 +11,13 @@ working after future translations:pull. Languages that transliterate the
 name into their own script instead of using the Latin string aren't
 covered by this and still need a real translation.
 ---
- bin/build-shared-convert-translations.mjs | 31 +++++++++++++++++++++++
+ .../build-shared-convert-translations.mjs     | 31 +++++++++++++++++++
  1 file changed, 31 insertions(+)
 
-diff --git a/bin/build-shared-convert-translations.mjs b/bin/build-shared-convert-translations.mjs
-index bdf12c3b4853ee0485acffa45f605aa9bce86d49..b92f86376cdeb217cb18bb734d0bce9250c3ac41 100755
---- a/bin/build-shared-convert-translations.mjs
-+++ b/bin/build-shared-convert-translations.mjs
+diff --git a/bin/translations/build-shared-convert-translations.mjs b/bin/translations/build-shared-convert-translations.mjs
+index e8156f62cf3071f410f9a4af1854cb4ef401e5dc..51359645423e1c123b420b21ee9e440c19687ae2 100755
+--- a/bin/translations/build-shared-convert-translations.mjs
++++ b/bin/translations/build-shared-convert-translations.mjs
 @@ -15,6 +15,36 @@ function removeJunk(input) {
      .replace(new RegExp('\\\\', 'g'), '')
  }

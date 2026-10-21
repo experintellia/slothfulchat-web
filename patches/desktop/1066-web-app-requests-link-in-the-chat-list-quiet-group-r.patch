@@ -40,7 +40,7 @@ first message is worse than one ping.
  7 files changed, 131 insertions(+), 35 deletions(-)
 
 diff --git a/packages/frontend/src/components/chat/ChatList.tsx b/packages/frontend/src/components/chat/ChatList.tsx
-index f21eaeda8a707f52b72522221c9d9b921d064b1e..5f6b1201225fe4d8e6dfadc630fdd5457a937776 100644
+index 144fa6c27243c3b01f26fd59e497d6e08201a3e9..0148a86473df9e013d0bc0979b4b4f4465a53a33 100644
 --- a/packages/frontend/src/components/chat/ChatList.tsx
 +++ b/packages/frontend/src/components/chat/ChatList.tsx
 @@ -20,7 +20,11 @@ import InfiniteLoader from 'react-window-infinite-loader'
@@ -56,7 +56,7 @@ index f21eaeda8a707f52b72522221c9d9b921d064b1e..5f6b1201225fe4d8e6dfadc630fdd545
  import {
    ChatListItemRowChat,
    ChatListItemRowContact,
-@@ -191,6 +195,7 @@ export default function ChatList(props: {
+@@ -194,6 +198,7 @@ export default function ChatList(props: {
    onExitSearch?: () => void
    onChatClick: (chatId: number) => void
    unreadOnly?: boolean
@@ -64,7 +64,7 @@ index f21eaeda8a707f52b72522221c9d9b921d064b1e..5f6b1201225fe4d8e6dfadc630fdd545
  }) {
    const accountId = selectedAccountId()
  
-@@ -203,13 +208,17 @@ export default function ChatList(props: {
+@@ -206,13 +211,17 @@ export default function ChatList(props: {
    } = props
    const isSearchActive = queryStr && queryStr !== ''
    const showUnreadFilterDivider =
@@ -82,9 +82,9 @@ index f21eaeda8a707f52b72522221c9d9b921d064b1e..5f6b1201225fe4d8e6dfadc630fdd545
 +  const showRequestsEmpty =
 +    props.showRequests && !isSearchActive && chatListIds.length === 0
  
-   const { openContextMenu, activeContextMenuChatIds } = useChatContextMenu()
-   const { selectChat } = useChat()
-@@ -294,7 +303,11 @@ export default function ChatList(props: {
+   const qrSearchResult = useQrSearchResult(accountId, queryStr ?? '')
+ 
+@@ -299,7 +308,11 @@ export default function ChatList(props: {
      queryStr,
    ])
  
@@ -97,7 +97,7 @@ index f21eaeda8a707f52b72522221c9d9b921d064b1e..5f6b1201225fe4d8e6dfadc630fdd545
  
    // KeyboardShortcuts ---------
    useKeyBindingAction(KeybindAction.ChatList_ScrollToSelectedChat, () =>
-@@ -305,7 +318,7 @@ export default function ChatList(props: {
+@@ -310,7 +323,7 @@ export default function ChatList(props: {
      if (activeChatId === null) return selectFirstChat()
      const activeChatIndex = chatListIds.indexOf(activeChatId)
      const newChatId = chatListIds[activeChatIndex + 1]
@@ -106,7 +106,7 @@ index f21eaeda8a707f52b72522221c9d9b921d064b1e..5f6b1201225fe4d8e6dfadc630fdd545
        selectChat(accountId, newChatId)
      }
    })
-@@ -314,7 +327,7 @@ export default function ChatList(props: {
+@@ -319,7 +332,7 @@ export default function ChatList(props: {
      if (activeChatId === null) return selectFirstChat()
      const activeChatIndex = chatListIds.indexOf(activeChatId)
      const newChatId = chatListIds[activeChatIndex - 1]
@@ -115,7 +115,7 @@ index f21eaeda8a707f52b72522221c9d9b921d064b1e..5f6b1201225fe4d8e6dfadc630fdd545
        selectChat(accountId, newChatId)
      }
    })
-@@ -398,6 +411,11 @@ export default function ChatList(props: {
+@@ -403,6 +416,11 @@ export default function ChatList(props: {
                  {translate_n('n_chats', chatListIds.length)}
                </div>
              )}
@@ -127,7 +127,7 @@ index f21eaeda8a707f52b72522221c9d9b921d064b1e..5f6b1201225fe4d8e6dfadc630fdd545
              {showUnreadFilterDivider && (
                <div
                  id='unread-filter-divider'
-@@ -892,19 +910,25 @@ export function useLogicVirtualChatList(
+@@ -898,19 +916,25 @@ export function useLogicVirtualChatList(
  function useLogicChatPart(
    queryStr: string | undefined,
    showArchivedChats: boolean,
@@ -182,7 +182,7 @@ index 33439210eb48ed469ee59bd4aee18d62df17e22b..fc0416e38d1e9fa420680ac0708d292f
    fn: (...args: ARGS) => void,
    delay_ms: number
 diff --git a/packages/frontend/src/components/chat/ChatListItem.tsx b/packages/frontend/src/components/chat/ChatListItem.tsx
-index 38fedad2c99a7ce4cfbb4ce96a9fc14c1f51a021..adf9344cee46e519b09e9870046617abaa7d52ba 100644
+index 56ed0759bc6739439f976d4cdaeef6c541c94a99..ad7e6d37edf7a5b0bbae8d64b2c7c092c8f4412c 100644
 --- a/packages/frontend/src/components/chat/ChatListItem.tsx
 +++ b/packages/frontend/src/components/chat/ChatListItem.tsx
 @@ -17,6 +17,7 @@ import { parseAndRenderMessage } from '../message/MessageParser'
@@ -265,7 +265,7 @@ index 38fedad2c99a7ce4cfbb4ce96a9fc14c1f51a021..adf9344cee46e519b09e9870046617ab
        </div>
        {/* 2 calls to achieve same output as above (one hidden, one visible) */}
        <FreshMessageCounter
-@@ -529,10 +547,12 @@ const ChatListItem = React.memo<ChatListItemProps>(props => {
+@@ -532,10 +550,12 @@ const ChatListItem = React.memo<ChatListItemProps>(props => {
      return <RegularChatListItem {...props} chat={chatListItem} />
    } else if (chatListItem.kind == 'Error') {
      return <ChatListItemError {...props} chatListItem={chatListItem} />
@@ -281,10 +281,10 @@ index 38fedad2c99a7ce4cfbb4ce96a9fc14c1f51a021..adf9344cee46e519b09e9870046617ab
          onFocus={props.onFocus}
          onKeyDown={props.onKeyDown}
 diff --git a/packages/frontend/src/components/chat/ChatListItemRow.tsx b/packages/frontend/src/components/chat/ChatListItemRow.tsx
-index a3171373293dcc0aa4f6597bba70d287c7d87c5c..2fc8186df0d03bcc2c3b10d98a4b50c5ea2e3eb2 100644
+index b80b611c6ff2da2968a1bacec6786f83aae545b3..08a0f25f9e45a7be3ae45395e27ffa8999a22016 100644
 --- a/packages/frontend/src/components/chat/ChatListItemRow.tsx
 +++ b/packages/frontend/src/components/chat/ChatListItemRow.tsx
-@@ -158,7 +158,7 @@ export const ChatListItemRowChat = React.memo<{
+@@ -165,7 +165,7 @@ export const ChatListItemRowChat = React.memo<{
          // so we can still e.g. delete it.
          return
        }
@@ -294,10 +294,10 @@ index a3171373293dcc0aa4f6597bba70d287c7d87c5c..2fc8186df0d03bcc2c3b10d98a4b50c5
          // It has its own `onContextMenu` handler,
          // so here we don't need to do anything.
 diff --git a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
-index adf8f3c1905caf7361bbd4dbbd8a4fe421e2d180..2dfa2456084265bf5d1263773d3f71c64532483b 100644
+index 610698bd792719b1026ba7ee28b51ff67c2b9b12..61d018b68f7b1386b46c53426dd6dbae118e0c77 100644
 --- a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
-@@ -15,6 +15,7 @@ import ProxyConfiguration from '../../dialogs/ProxyConfiguration'
+@@ -19,6 +19,7 @@ import useProxyEnabled from '../../../hooks/useProxyEnabled'
  type Props = {
    accountId?: number
    showArchivedChats: boolean
@@ -305,7 +305,7 @@ index adf8f3c1905caf7361bbd4dbbd8a4fe421e2d180..2dfa2456084265bf5d1263773d3f71c6
    onExitArchive: () => void
    searchRef: React.ClassAttributes<HTMLInputElement>['ref']
    onSearchChange: (event: { target: { value: string } }) => void
-@@ -28,6 +29,7 @@ type Props = {
+@@ -32,6 +33,7 @@ type Props = {
  export default function ChatListHeader({
    accountId,
    showArchivedChats,
@@ -313,7 +313,7 @@ index adf8f3c1905caf7361bbd4dbbd8a4fe421e2d180..2dfa2456084265bf5d1263773d3f71c6
    onExitArchive,
    searchRef,
    onSearchChange,
-@@ -69,7 +71,7 @@ export default function ChatListHeader({
+@@ -106,7 +108,7 @@ export default function ChatListHeader({
  
    return (
      <section className={styles.chatListHeader} data-tauri-drag-region>
@@ -322,7 +322,7 @@ index adf8f3c1905caf7361bbd4dbbd8a4fe421e2d180..2dfa2456084265bf5d1263773d3f71c6
          <>
            <span data-no-drag-region>
              <Button
-@@ -82,11 +84,13 @@ export default function ChatListHeader({
+@@ -119,11 +121,13 @@ export default function ChatListHeader({
              </Button>
            </span>
            <div className={styles.archivedChatsTitle}>
@@ -339,7 +339,7 @@ index adf8f3c1905caf7361bbd4dbbd8a4fe421e2d180..2dfa2456084265bf5d1263773d3f71c6
            <SearchInput
              id='chat-list-search'
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index 6bc7536059269c87f8437c7ceeb7426ecae7dc38..9026f19f215cbba3c22f2af30b51c8f11f7b5a65 100644
+index ed8f5d177b68f3c303713d3031e3e9fef95aedeb..8f511ecd20cbf214a5c9f0ca51ae953234febc81 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 @@ -10,6 +10,7 @@ import React, {
@@ -350,7 +350,7 @@ index 6bc7536059269c87f8437c7ceeb7426ecae7dc38..9026f19f215cbba3c22f2af30b51c8f1
  import ConnectivityToast from '../../ConnectivityToast'
  import SettingsStoreInstance from '../../../stores/settings'
  import { BackendRemote, onDCEvent } from '../../../backend-com'
-@@ -55,7 +56,16 @@ export default function MainScreen({ accountId }: Props) {
+@@ -58,7 +59,16 @@ export default function MainScreen({ accountId }: Props) {
    const [queryChatId, setQueryChatId] = useState<null | number>(null)
    const [archivedChatsSelected, setArchivedChatsSelected] = useState(false)
    const [unreadOnly, setUnreadOnly] = useState(false)
@@ -367,7 +367,7 @@ index 6bc7536059269c87f8437c7ceeb7426ecae7dc38..9026f19f215cbba3c22f2af30b51c8f1
    const { smallScreenMode } = useContext(ScreenContext)
  
    // Resizable chat list: an explicit width overrides the default 3:8 flex
-@@ -91,6 +101,10 @@ export default function MainScreen({ accountId }: Props) {
+@@ -94,6 +104,10 @@ export default function MainScreen({ accountId }: Props) {
          setArchivedChatsSelected(true)
          return
        }
@@ -378,7 +378,7 @@ index 6bc7536059269c87f8437c7ceeb7426ecae7dc38..9026f19f215cbba3c22f2af30b51c8f1
  
        accountId && selectChat(accountId, chatId)
      },
-@@ -286,6 +300,7 @@ export default function MainScreen({ accountId }: Props) {
+@@ -289,6 +303,7 @@ export default function MainScreen({ accountId }: Props) {
  
    const isSearchActive = queryStr.length > 0 || queryChatId !== null
    const showArchivedChats = !isSearchActive && archivedChatsSelected
@@ -386,7 +386,7 @@ index 6bc7536059269c87f8437c7ceeb7426ecae7dc38..9026f19f215cbba3c22f2af30b51c8f1
  
    const lastUsedApps =
      lastUsedAppsFetch?.result?.ok && lastUsedAppsFetch.result.value.length > 0
-@@ -339,7 +354,11 @@ export default function MainScreen({ accountId }: Props) {
+@@ -342,7 +357,11 @@ export default function MainScreen({ accountId }: Props) {
            <ChatListHeader
              accountId={accountId}
              showArchivedChats={showArchivedChats}
@@ -399,7 +399,7 @@ index 6bc7536059269c87f8437c7ceeb7426ecae7dc38..9026f19f215cbba3c22f2af30b51c8f1
              searchRef={searchRef}
              onSearchChange={handleSearchChange}
              onSearchClear={handleSearchClear}
-@@ -352,6 +371,7 @@ export default function MainScreen({ accountId }: Props) {
+@@ -355,6 +374,7 @@ export default function MainScreen({ accountId }: Props) {
              queryStr={queryStr}
              showArchivedChats={showArchivedChats}
              unreadOnly={unreadOnly}
@@ -408,10 +408,10 @@ index 6bc7536059269c87f8437c7ceeb7426ecae7dc38..9026f19f215cbba3c22f2af30b51c8f1
              selectedChatId={chatId ?? null}
              queryChatId={queryChatId}
 diff --git a/packages/frontend/src/system-integration/notifications.ts b/packages/frontend/src/system-integration/notifications.ts
-index 2b2be36eabc2085db9bd256b644b4c1273c9d82e..f488e4b6a084928d40b4a735ec76720577a38322 100644
+index db55ca4300c35d45eabe6f8d5bc9756c089090bd..fbb904d41490abd0618b350f5ddf82766ebdd899 100644
 --- a/packages/frontend/src/system-integration/notifications.ts
 +++ b/packages/frontend/src/system-integration/notifications.ts
-@@ -332,9 +332,26 @@ async function flushNotifications(accountId: number) {
+@@ -375,9 +375,26 @@ async function flushNotifications(accountId: number) {
      // make it work even if there is nothing
      queuedNotifications[accountId] = []
    }

@@ -18,14 +18,20 @@ microphone id), and fall back to the default camera when a stored
 deviceId has gone stale (OverconstrainedError) instead of showing the
 camera-error screen.
 
+Rebased onto v2.62.0: upstream fixed the main bug itself (8f4c6bd2b "QR
+scanner camera select not working" requests the device with exact
+deviceId, falling back to ideal, which also covers stale stored ids).
+Only the device-list part remains: re-enumerate after getUserMedia
+succeeds and drop the auto-select of devices[0] of the unfiltered list.
+
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Patch-Range: upstream-fix
 ---
- .../src/components/QrReader/index.tsx         | 54 +++++++++++--------
- 1 file changed, 32 insertions(+), 22 deletions(-)
+ .../src/components/QrReader/index.tsx         | 36 ++++++++++---------
+ 1 file changed, 19 insertions(+), 17 deletions(-)
 
 diff --git a/packages/frontend/src/components/QrReader/index.tsx b/packages/frontend/src/components/QrReader/index.tsx
-index 3b175a7dd8c829c63d22a26d0d1a228cf59fbe99..53dec8aac403794eb36ca25e9c12df6936d4df41 100644
+index a53f202ebcc5c0678ada78596b82f6deae806457..9661daab3efd9f5ca11fad825de415c923e21f1f 100644
 --- a/packages/frontend/src/components/QrReader/index.tsx
 +++ b/packages/frontend/src/components/QrReader/index.tsx
 @@ -93,24 +93,22 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
@@ -67,24 +73,7 @@ index 3b175a7dd8c829c63d22a26d0d1a228cf59fbe99..53dec8aac403794eb36ca25e9c12df69
      // General handler for errors which might occur during scanning.
      const handleError = useCallback(
        (error: any) => {
-@@ -325,10 +323,12 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
-       }
- 
-       const startStream = async () => {
--        const videoConstraints: MediaTrackConstraints = {
--          deviceId,
--          facingMode: 'user',
--        }
-+        // An explicitly selected camera must be requested with `exact`:
-+        // as a soft constraint it ties with `facingMode` on multi-camera
-+        // devices (Android) and the browser keeps the default camera.
-+        const videoConstraints: MediaTrackConstraints = deviceId
-+          ? { deviceId: { exact: deviceId } }
-+          : { facingMode: 'user' }
- 
-         try {
-           setReady(false)
-@@ -381,6 +381,10 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
+@@ -405,6 +403,10 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
            video.srcObject = stream
            activeStream = stream
  
@@ -95,23 +84,7 @@ index 3b175a7dd8c829c63d22a26d0d1a228cf59fbe99..53dec8aac403794eb36ca25e9c12df69
            const settings = videoTracks[0].getSettings()
            let isFacingUser = true
            if (settings.facingMode !== undefined) {
-@@ -400,8 +404,14 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
-           }
- 
-           setReady(true)
--        } catch {
-+        } catch (error) {
-           stopStream(activeStream)
-+          if (deviceId && error instanceof OverconstrainedError) {
-+            // Selected device id is stale (e.g. site data was cleared);
-+            // fall back to the default camera instead of an error screen.
-+            setDeviceId(undefined)
-+            return
-+          }
-           setCameraAccessError(true)
-         }
-       }
-@@ -420,7 +430,7 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
+@@ -444,7 +446,7 @@ export const QrReader = forwardRef<QrCodeScanRef, Props>(
          setReady(false)
          setCameraAccessError(false)
        }

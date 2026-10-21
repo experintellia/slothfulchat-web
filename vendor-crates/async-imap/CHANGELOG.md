@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-09-30
+
+- Upgrade imap-proto to 0.17.0.
+- Remove `futures` dependency, depend on `futures-util/io`
+- Do not fail `LOGIN` command when receiving a `NO` response for another request
+- Add tests for parsing the banner and `LOGIN` response with unicode characters such as en dash. The bug is fixed by upgrading imap-proto to 0.17.0.
+- Update to Rust 2024 edition
+- Set MSRV to 1.88.0
+- Update base64 from 0.22 to 0.23
+
+## [0.11.3] - 2026-07-17
+
+- Add `login_with_capabilities()` to `LOGIN` and get capabilities from the response at the same time.
+
 ## [0.11.2] - 2026-02-10
 
 - Expose gmail labels and msg id (#124)
@@ -221,6 +235,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 0.1.0 - 2019-11-11
 
+[0.12.0]: https://github.com/chatmail/async-imap/compare/v0.11.3...v0.12.0
+[0.11.3]: https://github.com/chatmail/async-imap/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/chatmail/async-imap/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/chatmail/async-imap/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/chatmail/async-imap/compare/v0.10.4...v0.11.0

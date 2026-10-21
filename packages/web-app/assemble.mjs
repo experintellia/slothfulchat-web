@@ -312,8 +312,8 @@ for (const pkg of ['web-app', 'core-wasm', 'ws-tcp-proxy', 'customize']) {
 //                               types @slothfulchat/core-wasm re-exports.
 //   api-docs/openrpc/           page + bundled @open-rpc/docs-react viewer
 //                               (ours is only the shell) for…
-//   api-docs/openrpc.json       …yerpc's OpenRPC document, switched on by
-//                               patches/core (openrpc_outdir). Kept raw next to
+//   api-docs/openrpc.json       …yerpc's OpenRPC document, written by the
+//                               bindings build.rs (core/1021). Kept raw next to
 //                               the viewer so tools can be pointed at it.
 // Skipped with a warning when the core TS build hasn't run — `pnpm assemble`
 // alone must not require a native cargo build. Both halves are gated, not just
@@ -325,7 +325,7 @@ for (const pkg of ['web-app', 'core-wasm', 'ws-tcp-proxy', 'customize']) {
 // entry: file_server already serves the directory index, and unlike dist/caddy/
 // (which gets `error /caddy/* 404` because it must NOT leave the box) this is
 // meant to be public.
-const coreTs = join(repo, 'build/core/deltachat-jsonrpc/typescript')
+const coreTs = join(repo, 'build/core/deltachat-jsonrpc-bindings/typescript')
 if (existsSync(join(coreTs, 'docs/index.html')) && existsSync(join(coreTs, 'generated/openrpc.json'))) {
   await mkdir(join(dist, 'api-docs/openrpc'), { recursive: true })
   await cp(join(here, 'api-docs/index.html'), join(dist, 'api-docs/index.html'))
@@ -346,7 +346,7 @@ if (existsSync(join(coreTs, 'docs/index.html')) && existsSync(join(coreTs, 'gene
     define: { 'process.env.NODE_ENV': '"production"' },
   })
 } else {
-  console.warn('assemble: no /api-docs (build/core docs/ or generated/openrpc.json missing — run `cargo test -p deltachat-jsonrpc` then `pnpm api-docs`)')
+  console.warn('assemble: no /api-docs (build/core docs/ or generated/openrpc.json missing — run `cargo build -p deltachat-jsonrpc-bindings` then `pnpm api-docs`)')
 }
 
 // The offline app-shell precache manifest (dist/sw-precache.js) is emitted by

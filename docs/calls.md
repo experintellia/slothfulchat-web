@@ -68,20 +68,20 @@ users — which would defeat the purpose. Concretely:
 
 ## What already exists (verified against our pins)
 
-Core `@deltachat/jsonrpc-client@2.53.0` / `chatmail/core` `v2.53.0`:
+Core `chatmail/core` `v2.64.0` (first read at v2.53.0; the method and event names below are unchanged):
 
 - Methods: `place_outgoing_call(accountId, chatId, place_call_info /*SDP offer*/, has_video) -> msgId`,
   `accept_incoming_call(accountId, msgId, accept_call_info /*SDP answer*/)`,
   `end_call(accountId, msgId)`, `call_info(accountId, msgId)`,
-  `ice_servers(accountId) -> string` (JSON ICE list — already returns a **chatmail
-  relay's TURN** plus a STUN default, so relay fallback needs no extra infra).
+  `ice_servers(accountId) -> string` (JSON ICE list — the **TURN servers of every
+  relay** on the profile, so relay fallback needs no extra infra).
 - Events: `IncomingCall{ msgId, chatId, place_call_info, has_video }`,
   `OutgoingCallAccepted{ msgId, chatId, accept_call_info }`,
   `IncomingCallAccepted{ msgId, chatId, from_this_device }`,
   `CallEnded{ msgId, chatId }`.
 - Config `WhoCanCallMe` (privacy — who may ring you).
 
-Frontend `vendor/deltachat-desktop` @ `1b90817`: `runtime.ts` declares the two
+Frontend `vendor/deltachat-desktop` @ `v2.62.0`: `runtime.ts` declares the two
 call hooks; `ChatView.tsx` shows the call button only for `target === 'electron'`;
 `Message.tsx` renders call info-messages with accept/redial buttons wired to those
 hooks. Our `packages/web-app/src/runtime.ts` stubs both (~L648–653). Electron's

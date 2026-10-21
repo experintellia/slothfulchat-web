@@ -14,19 +14,22 @@ Subject: [PATCH] wasm: stub HTTP/proxy modules, rustls ring provider
   cut off before the adapter would compile that file and fail.
 - net/proxy_wasm.rs: compile-compatible stub selected via #[cfg]+#[path];
   proxies need raw TCP, so every operation errors at runtime.
-- tls: default_provider() helper -> aws-lc-rs native, ring on wasm;
-  non-strict TLS falls back to rustls (no native-tls on wasm)
+- tls: non-strict TLS falls back to rustls (no native-tls on wasm);
+  rustls uses ring, which the wasm32 tokio-rustls features switch on
 - session: gate native-tls/socks5/shadowsocks SessionStream impls
 - qr: shadowsocks QR decoding errors on wasm
+
+Since v2.64.0 upstream uses ring again (61898b478 reverted the aws-lc-rs
+switch), so the default_provider() helper is gone. post_string() and
+post_form() left http_wasm.rs with their upstream counterparts.
 ---
- src/net.rs            |   8 +++
- src/net/http_wasm.rs  | 129 ++++++++++++++++++++++++++++++++++++++++++
- src/net/proxy_wasm.rs |  45 +++++++++++++++
+ src/net.rs            |   8 ++++
+ src/net/http_wasm.rs  | 100 ++++++++++++++++++++++++++++++++++++++++++
+ src/net/proxy_wasm.rs |  45 +++++++++++++++++++
  src/net/session.rs    |   4 ++
- src/net/tls.rs        |  65 +++++++++++++++------
- src/net/tls/danger.rs |   8 +--
+ src/net/tls.rs        |  49 +++++++++++++++------
  src/qr.rs             |   7 +++
- 7 files changed, 245 insertions(+), 21 deletions(-)
+ 6 files changed, 199 insertions(+), 14 deletions(-)
  create mode 100644 src/net/http_wasm.rs
  create mode 100644 src/net/proxy_wasm.rs
 
@@ -52,10 +55,10 @@ index 01cf1c03c6fcce4f7be5a0712efcbe2419e2cd53..254a1ac684db21e9deed2af0b7ca4f83
  pub(crate) mod tls;
 diff --git a/src/net/http_wasm.rs b/src/net/http_wasm.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..1bb038716ec5a34bac5153e0f8afdfa4d09b525f
+index 0000000000000000000000000000000000000000..3be2b8172c044ab040871a2b9624a14a65644bf9
 --- /dev/null
 +++ b/src/net/http_wasm.rs
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,100 @@
 +//! wasm32 HTTP module backed by the browser `fetch()` API.
 +//!
 +//! The native implementation uses hyper over raw TCP. Here the browser owns
@@ -65,9 +68,8 @@ index 0000000000000000000000000000000000000000..1bb038716ec5a34bac5153e0f8afdfa4
 +
 +use std::time::Duration;
 +
-+use anyhow::{Context as _, Result, bail};
++use anyhow::{Result, bail};
 +use mime::Mime;
-+use serde::Serialize;
 +use tokio::net::fetch;
 +
 +use crate::context::Context;
@@ -157,34 +159,6 @@ index 0000000000000000000000000000000000000000..1bb038716ec5a34bac5153e0f8afdfa4
 +    let resp = fetch("POST", url, &[], None, DEFAULT_TIMEOUT, true).await?;
 +    Ok((String::from_utf8_lossy(&resp.body).to_string(), resp.ok))
 +}
-+
-+/// Sends a POST request with given string as body.
-+pub(crate) async fn post_string(_context: &Context, url: &str, body: String) -> Result<bool> {
-+    ensure_https(url)?;
-+    Ok(fetch("POST", url, &[], Some(body), DEFAULT_TIMEOUT, true)
-+        .await?
-+        .ok)
-+}
-+
-+/// Posts the given form to the URL.
-+pub(crate) async fn post_form<T: Serialize + ?Sized>(
-+    _context: &Context,
-+    url: &str,
-+    form: &T,
-+) -> Result<bytes::Bytes> {
-+    ensure_https(url)?;
-+    let body = serde_urlencoded::to_string(form).context("Failed to encode data")?;
-+    let resp = fetch(
-+        "POST",
-+        url,
-+        &[("content-type", "application/x-www-form-urlencoded")],
-+        Some(body),
-+        DEFAULT_TIMEOUT,
-+        true,
-+    )
-+    .await?;
-+    Ok(resp.body.into())
-+}
 diff --git a/src/net/proxy_wasm.rs b/src/net/proxy_wasm.rs
 new file mode 100644
 index 0000000000000000000000000000000000000000..152613428194158216307b10f2dccbe0c0293568
@@ -271,29 +245,10 @@ index 981e01fd4dc6c1888b7cf88278fc2d6428691989..dd1a18505e0ebbb5f0884a210762fde5
      fn set_read_timeout(&mut self, timeout: Option<Duration>) {
          self.get_mut().set_read_timeout(timeout)
 diff --git a/src/net/tls.rs b/src/net/tls.rs
-index 870fe1a8a022a72c399d19846af337a078107e74..c868c7634145a979985019d450dbcfa4a355dab7 100644
+index cd8629e9fe7fefad51f2e5eb139ee419cb9f0aa8..3d21c41269e8c6faffd07903e136a094d3fa702a 100644
 --- a/src/net/tls.rs
 +++ b/src/net/tls.rs
-@@ -16,6 +16,18 @@
- mod danger;
- use danger::CustomCertificateVerifier;
- 
-+/// Default rustls crypto provider: aws-lc-rs does not build for wasm32; ring does.
-+#[cfg(not(target_arch = "wasm32"))]
-+pub(crate) fn default_provider() -> rustls::crypto::CryptoProvider {
-+    rustls::crypto::aws_lc_rs::default_provider()
-+}
-+
-+/// Default rustls crypto provider: aws-lc-rs does not build for wasm32; ring does.
-+#[cfg(target_arch = "wasm32")]
-+pub(crate) fn default_provider() -> rustls::crypto::CryptoProvider {
-+    rustls::crypto::ring::default_provider()
-+}
-+
- mod spki;
- pub use spki::SpkiHashStore;
- 
-@@ -49,20 +61,41 @@ pub async fn wrap_tls<'a>(
+@@ -49,20 +49,41 @@ pub async fn wrap_tls<'a>(
          // We use native_tls because it accepts 1024-bit RSA keys.
          // Rustls does not support them even if
          // certificate checks are disabled: <https://github.com/rustls/rustls/issues/234>.
@@ -349,60 +304,11 @@ index 870fe1a8a022a72c399d19846af337a078107e74..c868c7634145a979985019d450dbcfa4
      }
  }
  
-@@ -126,9 +159,7 @@ pub async fn wrap_rustls<'a>(
-     let root_cert_store =
-         rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
- 
--    let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(
--        rustls::crypto::aws_lc_rs::default_provider(),
--    ))
-+    let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(default_provider()))
-     .with_safe_default_protocol_versions()?
-     .with_root_certificates(root_cert_store)
-     .with_no_client_auth();
-diff --git a/src/net/tls/danger.rs b/src/net/tls/danger.rs
-index 809dd820d1402f48574a6fe2c41e4a81594d151f..4063fbb6f0426cbf43f9e64152938f8b7c5c99d6 100644
---- a/src/net/tls/danger.rs
-+++ b/src/net/tls/danger.rs
-@@ -51,7 +51,7 @@ fn verify_server_cert(
- 
-         let spki = parsed_certificate.subject_public_key_info();
- 
--        let provider = rustls::crypto::aws_lc_rs::default_provider();
-+        let provider = super::default_provider();
- 
-         if let ServerName::DnsName(dns_name) = server_name
-             && dns_name.as_ref().starts_with("_")
-@@ -97,7 +97,7 @@ fn verify_tls12_signature(
-         cert: &CertificateDer<'_>,
-         dss: &rustls::DigitallySignedStruct,
-     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
--        let provider = rustls::crypto::aws_lc_rs::default_provider();
-+        let provider = super::default_provider();
-         let supported_schemes = &provider.signature_verification_algorithms;
-         rustls::crypto::verify_tls12_signature(message, cert, dss, supported_schemes)
-     }
-@@ -108,13 +108,13 @@ fn verify_tls13_signature(
-         cert: &CertificateDer<'_>,
-         dss: &rustls::DigitallySignedStruct,
-     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
--        let provider = rustls::crypto::aws_lc_rs::default_provider();
-+        let provider = super::default_provider();
-         let supported_schemes = &provider.signature_verification_algorithms;
-         rustls::crypto::verify_tls13_signature(message, cert, dss, supported_schemes)
-     }
- 
-     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
--        let provider = rustls::crypto::aws_lc_rs::default_provider();
-+        let provider = super::default_provider();
-         provider
-             .signature_verification_algorithms
-             .supported_schemes()
 diff --git a/src/qr.rs b/src/qr.rs
-index 9a07249555c09229801804b2084145f1b22a5fe3..981087c11d7d8a7228fd27c626fb7322551cffeb 100644
+index c77c13fefb0f86bf2338c8b1687e42d4bf3b99b7..9eaa09442b0f988b0bcdc4a0e7eda6845a0ba23a 100644
 --- a/src/qr.rs
 +++ b/src/qr.rs
-@@ -763,7 +763,14 @@ fn decode_tg_socks_proxy(_context: &Context, qr: &str) -> Result<Qr> {
+@@ -760,7 +760,14 @@ fn decode_tg_socks_proxy(_context: &Context, qr: &str) -> Result<Qr> {
      Ok(Qr::Proxy { url, host, port })
  }
  

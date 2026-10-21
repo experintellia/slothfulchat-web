@@ -363,7 +363,7 @@ index 0000000000000000000000000000000000000000..fb2417d18d7cd71b572c9e836a0eee7b
 +  }
 +}
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
-index 5d3432a69a2ae27c4b647437b25750cd0d6f0255..b6e27a62a1879eef2daaab7681b3cdd0cff2a725 100644
+index d890f907a3008bedbf9a1c763ad57c2442cdcbb1..364ff384c69cd9beaae1b060b975bc61fdd9e388 100644
 --- a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 @@ -13,7 +13,7 @@ import useOpenViewProfileDialog from '../../../hooks/dialog/useOpenViewProfileDi
@@ -685,7 +685,7 @@ index 0000000000000000000000000000000000000000..64025839222c93a33b7c6a50d4160fd7
 +  )
 +}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 4e50db2120e7f5b7958d2b729c4cb8cd294ffe14..551ce7ea5a5865dbdbf554eeaa0b82ba696591ca 100644
+index 14e49bb32a39f32851cc5958ae0f8c066f9caaf6..b59e9302e07676c03718bacf08340edefed1cf42 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -47,6 +47,10 @@ import ShortcutMenu from '../ShortcutMenu'

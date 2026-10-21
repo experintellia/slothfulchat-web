@@ -19,6 +19,7 @@
  * Onboarding RPC map (verified against deltachat-desktop ConfigureProgressDialog):
  *   - manual email login  → add_or_update_transport
  *   - default chatmail / scanned QR / webimap → add_transport_from_qr(id, qr)
+ *   - first profile (desktop 2.62+)          → init_transports(id, qr | null)
  *   (bare `configure` / `add_transport` are never called by the frontend.)
  */
 import * as perf from './perf'
@@ -30,10 +31,11 @@ type Transport = { request: Request }
 // Accounts we've already counted a creation for this session (so re-saving
 // transport settings — also add_or_update_transport — doesn't re-fire).
 const createdAccounts = new Set<number>()
-// Lazily-probed, non-identifying per-account send context: is it a chatmail
-// server, and does it use the bridge-free webimap transport.
-const sendCtx = new Map<number, { transport: string; chatmail: string }>()
-const sendCtxPending = new Map<number, Promise<{ transport: string; chatmail: string }>>()
+// Lazily-probed, non-identifying per-account send context: does it use the
+// bridge-free webimap transport. (Core 2.64 dropped is_chatmail, so there is
+// no chatmail yes/no to report any more.)
+const sendCtx = new Map<number, { transport: string }>()
+const sendCtxPending = new Map<number, Promise<{ transport: string }>>()
 
 let qrScanSent = false // dedupe qr_scan, and mark "user scanned a code" this visit
 const milestonesSent = new Set<string>() // in-memory first-line dedupe (storage may be blocked)
@@ -82,7 +84,9 @@ function handle(method: string, params: unknown, p: Promise<unknown>, raw: Reque
       break
     }
 
-    // default chatmail relay / scanned QR / webimap — distinguished by the QR
+    // default chatmail relay / scanned QR / webimap — distinguished by the QR.
+    // init_transports is desktop's first-profile onboarding (qr or null).
+    case 'init_transports':
     case 'add_transport_from_qr': {
       const qr = Array.isArray(params) ? String(params[1] ?? '') : ''
       const webimap = /^webimapaccount:/i.test(qr)
@@ -97,7 +101,7 @@ function handle(method: string, params: unknown, p: Promise<unknown>, raw: Reque
       timed(`send ${type}`, p)
       if (accountId != null) {
         ensureSendCtx(accountId, raw).then(ctx =>
-          analytics.event('send', { type, transport: ctx.transport, chatmail: ctx.chatmail }),
+          analytics.event('send', { type, transport: ctx.transport }),
         )
       }
       break
@@ -113,10 +117,19 @@ function handle(method: string, params: unknown, p: Promise<unknown>, raw: Reque
       const qr = Array.isArray(params) ? String(params[1] ?? '') : ''
       if (/^webimapaccount:/i.test(qr)) setSuppressBridgeWarning(true)
       else if (/^dcaccount:/i.test(qr)) setSuppressBridgeWarning(false)
-      if (!qrScanSent) {
-        qrScanSent = true
-        analytics.event('qr_scan')
-      }
+      // Since desktop 2.62 the chat-list search and message links run check_qr
+      // on any text with a colon ("10:30", a web link), so only a code core can
+      // act on counts as a scan.
+      const actionable =
+        method === 'check_qr'
+          ? p.then((r: any) => r?.kind !== 'text' && r?.kind !== 'url', () => false)
+          : Promise.resolve(true)
+      actionable.then(yes => {
+        if (yes && !qrScanSent) {
+          qrScanSent = true
+          analytics.event('qr_scan')
+        }
+      })
       break
     }
 
@@ -163,7 +176,7 @@ function onConfigure(
     () => {
       if (accountId != null) {
         createdAccounts.add(accountId)
-        sendCtx.set(accountId, { transport, chatmail: method === 'chatmail' ? 'yes' : 'no' })
+        sendCtx.set(accountId, { transport })
       }
       analytics.event('account_created', { transport, method })
       analytics.event('onboarding', { step: 'success', method })
@@ -173,29 +186,26 @@ function onConfigure(
   )
 }
 
-/** Cache/probe the coarse send context for an account. Probes is_chatmail and
- * the transport list via the same RPC API, so returning users (configured in a
- * previous session) are labelled correctly too. Never sends any of the probed
- * data — only the derived yes/no + imap/webimap categories. */
-function ensureSendCtx(accountId: number, raw: Request): Promise<{ transport: string; chatmail: string }> {
+/** Cache/probe the coarse send context for an account. Probes the transport
+ * list via the same RPC API, so returning users (configured in a previous
+ * session) are labelled correctly too. Never sends any of the probed data —
+ * only the derived imap/webimap category. */
+function ensureSendCtx(accountId: number, raw: Request): Promise<{ transport: string }> {
   const cached = sendCtx.get(accountId)
   if (cached) return Promise.resolve(cached)
   const pending = sendCtxPending.get(accountId)
   if (pending) return pending
-  const probe = Promise.all([
-    raw('get_config', [accountId, 'is_chatmail']).catch(() => ''),
-    raw('list_transports', [accountId]).catch(() => []),
-  ])
-    .then(([isChatmail, transports]) => {
+  const probe = raw('list_transports', [accountId])
+    .catch(() => [])
+    .then(transports => {
       const ctx = {
-        chatmail: isChatmail === '1' ? 'yes' : 'no',
         // value-form: a transport carries a "webimap" key even when unset
         transport: /"webimap"\s*:\s*true/.test(safeJson(transports)) ? 'webimap' : 'imap',
       }
       sendCtx.set(accountId, ctx)
       return ctx
     })
-    .catch(() => ({ transport: 'imap', chatmail: 'no' }))
+    .catch(() => ({ transport: 'imap' }))
   sendCtxPending.set(accountId, probe)
   return probe
 }

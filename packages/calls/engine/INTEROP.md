@@ -12,7 +12,7 @@ Delta Chat clients (which run `deltachat/calls-webapp`) and by
 - `vendor/deltachat-desktop/packages/target-electron/src/windows/video-call.ts`
   and `.../static/calls-webapp-preload.js` — the reference `window.calls` host.
 - `vendor/core/src/calls.rs`, `vendor/core/deltachat-jsonrpc/src/api/types/calls.rs`
-  — our pinned core (`v2.53.0`).
+  — our pinned core (`v2.64.0`; first read at `v2.53.0`).
 
 ## 1. Payload format — RAW SDP, nothing else
 

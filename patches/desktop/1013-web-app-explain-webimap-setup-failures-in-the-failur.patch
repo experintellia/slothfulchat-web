@@ -21,16 +21,20 @@ break-spaces, so the multi-line checklist displays as written. No
 network guessing, no false warnings, and the hints appear exactly when
 the opaque NetworkError does.
 
+Rebased onto v2.62.0: without a scanned code configurationQR is now null
+(1171b3e4a, #6774: core picks the chatmail relay itself), so the webimap
+check guards against null.
+
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  .../src/hooks/useInstantOnboarding.ts         | 29 +++++++++++++++++++
  1 file changed, 29 insertions(+)
 
 diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
-index 15785bbc70f43637eef9e9cb99faed30cd0748f9..1aabccd89bf8fb50ef85686a95843fe56c75c2c4 100644
+index 15441d55652dce5d017b97ff02f567b70ec615d8..870edff1bcf95e32c59b12352c9505092d0e828a 100644
 --- a/packages/frontend/src/hooks/useInstantOnboarding.ts
 +++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
-@@ -138,6 +138,35 @@ export default function useInstantOnboarding(): InstantOnboarding {
+@@ -111,6 +111,35 @@ export default function useInstantOnboarding(): InstantOnboarding {
              }
            },
            onFail: error => {
@@ -45,7 +49,7 @@ index 15785bbc70f43637eef9e9cb99faed30cd0748f9..1aabccd89bf8fb50ef85686a95843fe5
 +            // reachability/CORS probe was removed: every heuristic variant
 +            // misdiagnosed working servers, e.g. slow servers read as
 +            // unreachable.)
-+            if (/^webimapaccount:/i.test(configurationQR)) {
++            if (configurationQR && /^webimapaccount:/i.test(configurationQR)) {
 +              const host = configurationQR.replace(/^webimapaccount:/i, '')
 +              const summary = String(error)
 +                .split(/\n\s*stack backtrace:/i)[0]

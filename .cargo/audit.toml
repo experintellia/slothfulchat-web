@@ -42,12 +42,14 @@ ignore = [
   # rustls-webpki: the graph carries TWO copies, and the live one is patched.
   #
   #   rustls-webpki 0.102.8  <- iroh 0.35 / iroh-relay 0.35
-  #   rustls-webpki 0.103.13 <- rustls 0.23.41 <- tokio-rustls <- deltachat
+  #   rustls-webpki 0.103.16 <- rustls 0.23.46 <- tokio-rustls <- deltachat
   #
-  # IMAP/SMTP TLS terminates inside the core on rustls 0.23.41 (patch
+  # IMAP/SMTP TLS terminates inside the core on rustls 0.23.46 (patch
   # core/1002 routes the wasm non-strict branch to wrap_rustls too), so the
-  # verifier that actually validates mail-server certificates is 0.103.13 —
-  # at or above every patched range below (0.103.10 / .12 / .12 / .13).
+  # verifier that actually validates mail-server certificates is 0.103.16 —
+  # at or above every patched range below (0.103.10 / .12 / .12 / .13 / .16).
+  # cargo-audit ignores these ids for EVERY version, so CI's "Live rustls-webpki
+  # is at or above 0.103.16" step holds the live copy there.
   #
   # The 0.102.8 copy is iroh's, and iroh imports exactly three things from it:
   # `Error`, `ring_algs` (algorithm constants handed to rustls) and a
@@ -65,19 +67,23 @@ ignore = [
   "RUSTSEC-2026-0104", # reachable panic parsing a CRL
   "RUSTSEC-2026-0098", # name constraints for URI names incorrectly accepted
   "RUSTSEC-2026-0049", # CRLs not authoritative by distribution point
+  "RUSTSEC-2026-0382", # paths through distrusted emSign intermediates accepted
+                       # (a path-building flaw; iroh's copy builds no paths and
+                       # has no trust anchors. webpki-roots, the other half of
+                       # this, is at the fixed 1.0.10)
 
-  # ml-dsa 0.0.4 <- pgp 0.20 (draft-pqc feature) <- deltachat. Timing leak in
+  # ml-dsa 0.0.4 <- pgp 0.21 (pqc feature) <- deltachat. Timing leak in
   # `decompose` over values derived from the SECRET components s2/t0 — a
   # signing-side leak; verification touches only public data. Reaching it
   # needs an ML-DSA *self* key, and core hardcodes Ed25519Legacy +
-  # ECDH(Curve25519Legacy) at src/pgp.rs:36-37 with no algorithm choice
+  # ECDH(Curve25519Legacy) at src/pgp.rs:37-38 with no algorithm choice
   # anywhere. No supported action produces one.
   "RUSTSEC-2025-0144",
 
-  # rsa 0.9.10 <- pgp 0.20 <- deltachat. Marvin attack: a PRIVATE-key timing
+  # rsa 0.9.10 <- pgp 0.21 <- deltachat. Marvin attack: a PRIVATE-key timing
   # leak. Sorting the paths — verifying a signature from, or encrypting to, an
   # RSA-keyed contact are public-key ops and unaffected; decrypting and
-  # signing use OUR key, which is Ed25519/X25519 per src/pgp.rs:36-37. So the
+  # signing use OUR key, which is Ed25519/X25519 per src/pgp.rs:37-38. So the
   # vulnerable code runs only with an RSA self key.
   #
   # TRIP-WIRE: `import_self_keys` exists on the JSON-RPC surface with no UI

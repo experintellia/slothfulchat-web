@@ -52,6 +52,11 @@ Deliberately not copied from upstream's draft: it truncates in
 `Message::load_from_db` behind a context flag. That silently shortens
 drafts, saved messages and resends — the text the user is still editing
 is not a preview — so the bound belongs at each preview site instead.
+
+Since v2.64.0 upstream's get_summary_text_ext() truncates the text to
+approx_chars itself (DC_DESIRED_TEXT_LEN for every standard summary)
+before concatenating, so the summary.rs hunk is gone; the other bounds
+stay.
 ---
  deltachat-jsonrpc/src/api/types/chat_list.rs |  2 +-
  deltachat-jsonrpc/src/api/types/message.rs   |  8 +-
@@ -60,19 +65,18 @@ is not a preview — so the bound belongs at each preview site instead.
  src/constants.rs                             |  7 +-
  src/decrypt.rs                               |  6 +-
  src/html.rs                                  | 11 ++-
- src/message.rs                               | 10 ++-
+ src/message.rs                               |  8 +-
  src/mimefactory/mimefactory_tests.rs         |  4 +-
  src/mimeparser.rs                            |  8 +-
  src/mimeparser/mimeparser_tests.rs           | 64 ++++------------
  src/receive_imf/receive_imf_tests.rs         | 39 +++-------
- src/summary.rs                               |  7 +-
  src/tools.rs                                 | 81 +-------------------
  src/tools/tools_tests.rs                     | 73 ------------------
  src/webxdc/maps_integration.rs               |  5 +-
- 16 files changed, 106 insertions(+), 283 deletions(-)
+ 15 files changed, 99 insertions(+), 281 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api/types/chat_list.rs b/deltachat-jsonrpc/src/api/types/chat_list.rs
-index a07641b2b21ff357f1429b0079f9656119d4bb36..615f004c11875363eb456ba84c2b416f3bad9fa9 100644
+index 57a7f7ad5d6abc93e570130b148437e564ad626f..f5f42c1fd78c4923dda8ae0851bddb516511a9d2 100644
 --- a/deltachat-jsonrpc/src/api/types/chat_list.rs
 +++ b/deltachat-jsonrpc/src/api/types/chat_list.rs
 @@ -98,8 +98,8 @@ pub(crate) async fn get_chat_list_item_by_id(
@@ -83,10 +87,10 @@ index a07641b2b21ff357f1429b0079f9656119d4bb36..615f004c11875363eb456ba84c2b416f
      let summary_text1 = summary.prefix.map_or_else(String::new, |s| s.to_string());
 -    let summary_text2 = summary.text.to_owned();
  
-     let summary_preview_image = summary.thumbnail_path;
+     let visibility = chat.get_visibility();
  
 diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
-index b589893e4125e58636ba3d61eec6ee2002a45a72..88847652e5db7cc868eba7ec4812a879260d2b6c 100644
+index f0f9d376a804a01dc8d21ba7316e27bdd42be71b..785c5176d4ed71ac2af47df9c2e26224e01b0fcf 100644
 --- a/deltachat-jsonrpc/src/api/types/message.rs
 +++ b/deltachat-jsonrpc/src/api/types/message.rs
 @@ -12,6 +12,7 @@
@@ -97,7 +101,7 @@ index b589893e4125e58636ba3d61eec6ee2002a45a72..88847652e5db7cc868eba7ec4812a879
  use num_traits::cast::ToPrimitive;
  use serde::{Deserialize, Serialize};
  use typescript_type_def::TypeDef;
-@@ -515,8 +516,8 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Self> {
+@@ -523,8 +524,8 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Self> {
              image_mime_type: message.get_filemime(),
              chat_name: chat.name,
              chat_profile_image,
@@ -108,7 +112,7 @@ index b589893e4125e58636ba3d61eec6ee2002a45a72..88847652e5db7cc868eba7ec4812a879
          })
      }
  }
-@@ -576,7 +577,8 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Self> {
+@@ -584,7 +585,8 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Self> {
              chat_profile_image,
              is_chat_contact_request: chat.is_contact_request(),
              is_chat_archived: chat.get_visibility() == ChatVisibility::Archived,
@@ -119,10 +123,10 @@ index b589893e4125e58636ba3d61eec6ee2002a45a72..88847652e5db7cc868eba7ec4812a879
          })
      }
 diff --git a/src/chat.rs b/src/chat.rs
-index 2b56149b4939da820e94439707a67bd5d1c4ebcf..58ee0b3b095d26ecd8994bf0531f0e6f8e12d8ba 100644
+index 3bdab250c0f61db8cfffd31b8642af77f79a8943..88a8b10bb2fcceb8e01307b9317e6cb88601a078 100644
 --- a/src/chat.rs
 +++ b/src/chat.rs
-@@ -51,7 +51,6 @@
+@@ -46,7 +46,6 @@
  use crate::tools::{
      IsNoneOrEmpty, SystemTime, buf_compress, create_broadcast_secret, create_id,
      create_outgoing_rfc724_mid, get_abs_path, gm2local_offset, normalize_text, time,
@@ -130,8 +134,8 @@ index 2b56149b4939da820e94439707a67bd5d1c4ebcf..58ee0b3b095d26ecd8994bf0531f0e6f
  };
  use crate::webxdc::StatusUpdateSerial;
  
-@@ -1896,7 +1895,7 @@ async fn prepare_msg_raw(
-             EphemeralTimer::Enabled { duration } => time().saturating_add(duration.into()),
+@@ -1908,7 +1907,7 @@ async fn prepare_msg_raw(
+             EphemeralTimer::Enabled { duration } => time().saturating_add(duration.get().into()),
          };
  
 -        let (msg_text, was_truncated) = truncate_msg_text(context, msg.text.clone()).await?;
@@ -139,8 +143,8 @@ index 2b56149b4939da820e94439707a67bd5d1c4ebcf..58ee0b3b095d26ecd8994bf0531f0e6f
          let new_mime_headers = if msg.has_html() {
              msg.param.get(Param::SendHtml).map(|s| s.to_string())
          } else {
-@@ -1909,13 +1908,6 @@ async fn prepare_msg_raw(
-             html_part.write_part(cursor).ok();
+@@ -1920,13 +1919,6 @@ async fn prepare_msg_raw(
+             html_part.write_part(&mut buffer);
              String::from_utf8_lossy(&buffer).to_string()
          });
 -        let new_mime_headers = new_mime_headers.or_else(|| match was_truncated {
@@ -154,10 +158,10 @@ index 2b56149b4939da820e94439707a67bd5d1c4ebcf..58ee0b3b095d26ecd8994bf0531f0e6f
              Some(h) => Some(tokio::task::block_in_place(move || {
                  buf_compress(h.as_bytes())
 diff --git a/src/chat/chat_tests.rs b/src/chat/chat_tests.rs
-index a27b70670194f584fba117c40ca19714ec3e6c21..afc9ae3278a17e2cf82e729c047edea044fa17dc 100644
+index f5388313351984ae8f27fc3a846027771e6d58da..659f67c8623fe7811a30b94638ef21f472a137c4 100644
 --- a/src/chat/chat_tests.rs
 +++ b/src/chat/chat_tests.rs
-@@ -4,7 +4,7 @@
+@@ -6,7 +6,7 @@
  use crate::Event;
  use crate::chatlist::get_archived_cnt;
  use crate::constants::{
@@ -166,7 +170,7 @@ index a27b70670194f584fba117c40ca19714ec3e6c21..afc9ae3278a17e2cf82e729c047edea0
  };
  use crate::ephemeral::Timer;
  use crate::headerdef::HeaderDef;
-@@ -5884,8 +5884,8 @@ async fn test_send_edit_request() -> Result<()> {
+@@ -5996,8 +5996,8 @@ async fn test_send_edit_request() -> Result<()> {
      let forwarded = alice2.get_last_msg().await;
      assert!(!forwarded.is_edited());
  
@@ -177,7 +181,7 @@ index a27b70670194f584fba117c40ca19714ec3e6c21..afc9ae3278a17e2cf82e729c047edea0
      static REPEAT_TXT: &str = "this text with 42 chars is just repeated.\n";
      static REPEAT_CNT: usize = constants::DC_DESIRED_TEXT_LEN / REPEAT_TXT.len() + 2;
      let long_txt = REPEAT_TXT.repeat(REPEAT_CNT);
-@@ -5897,12 +5897,10 @@ async fn test_send_edit_request() -> Result<()> {
+@@ -6009,12 +6009,10 @@ async fn test_send_edit_request() -> Result<()> {
      bob.recv_msg_opt(&sent).await;
      let test = Message::load_from_db(bob, bob_msg.id).await?;
      assert!(test.is_edited());
@@ -193,7 +197,7 @@ index a27b70670194f584fba117c40ca19714ec3e6c21..afc9ae3278a17e2cf82e729c047edea0
      send_edit_request(alice, alice_msg.id, "Text me on Delta.Chat".to_string()).await?;
      let sent = alice.pop_sent_msg().await;
      let test = Message::load_from_db(alice, alice_msg.id).await?;
-@@ -5916,6 +5914,46 @@ async fn test_send_edit_request() -> Result<()> {
+@@ -6028,6 +6026,46 @@ async fn test_send_edit_request() -> Result<()> {
      Ok(())
  }
  
@@ -241,10 +245,10 @@ index a27b70670194f584fba117c40ca19714ec3e6c21..afc9ae3278a17e2cf82e729c047edea0
  async fn test_edit_saved_messages() -> Result<()> {
      let mut tcm = TestContextManager::new();
 diff --git a/src/constants.rs b/src/constants.rs
-index 9b109c0f590d2f1cb5a346fba7dcce73a11500e4..aed4650a4498d5a6d188315b57d8e376ffed25c4 100644
+index 6a9462378a43deeb7c021447f21296c3265f033a..0b748c473ac69c3af2eebfc45c753be32b116f5a 100644
 --- a/src/constants.rs
 +++ b/src/constants.rs
-@@ -152,11 +152,10 @@ pub enum Chattype {
+@@ -138,11 +138,10 @@ pub enum Chattype {
  // how many chars desktop can display per line (from "subjective" testing)
  pub const DC_DESIRED_TEXT_LINE_LEN: usize = 100;
  
@@ -277,10 +281,10 @@ index eb335614d89e37a72d13d172581d7e11b4961fa8..0eba9e71c6955288ff30fe2c6a10d077
      }
  }
 diff --git a/src/html.rs b/src/html.rs
-index a72c7137ce6a38e1c62b8a2a6eae4be0869a96c4..2e2806460ee15ac6661174b9572c87c47315bfb0 100644
+index acdf7a61996a5ed7bea0e18324694ca949892f56..323371b6c9130ceeee4407df033d788590c78c74 100644
 --- a/src/html.rs
 +++ b/src/html.rs
-@@ -551,18 +551,17 @@ async fn check_receiver(ctx: &TestContext, chat: &Chat, sender: &TestContext) {
+@@ -568,18 +568,17 @@ async fn check_receiver(ctx: &TestContext, chat: &Chat, sender: &TestContext) {
          check_sender(bob, &chat_bob).await;
          check_receiver(alice, &chat_alice, bob).await;
  
@@ -305,21 +309,19 @@ index a72c7137ce6a38e1c62b8a2a6eae4be0869a96c4..2e2806460ee15ac6661174b9572c87c4
      }
  
 diff --git a/src/message.rs b/src/message.rs
-index 4bbd12ba4ac6373781b0c22330a49da2a87ce6ac..736ccdf0b63396c24d912362b0e5908ade288598 100644
+index 6cbd3788141ab6a38f72d2f0867a536d8a16cc81..af0d209f15d47447206964597549e18f9b3b425a 100644
 --- a/src/message.rs
 +++ b/src/message.rs
-@@ -17,7 +17,9 @@
+@@ -17,7 +17,7 @@
  use crate::chat::{Chat, ChatId, ChatIdBlocked, ChatVisibility, send_msg};
  use crate::chatlist_events;
  use crate::config::Config;
--use crate::constants::{Blocked, Chattype, DC_CHAT_ID_TRASH, DC_MSG_ID_LAST_SPECIAL};
-+use crate::constants::{
-+    Blocked, Chattype, DC_CHAT_ID_TRASH, DC_DESIRED_TEXT_LEN, DC_MSG_ID_LAST_SPECIAL,
-+};
+-use crate::constants::{Blocked, Chattype};
++use crate::constants::{Blocked, Chattype, DC_DESIRED_TEXT_LEN};
  use crate::contact::{self, Contact, ContactId};
  use crate::context::Context;
  use crate::debug_logging::set_debug_logging_xdc;
-@@ -35,7 +37,7 @@
+@@ -35,7 +35,7 @@
  use crate::tools::create_outgoing_rfc724_mid;
  use crate::tools::{
      get_filebytes, get_filemeta, gm2local_offset, read_file, sanitize_filename, time,
@@ -328,7 +330,7 @@ index 4bbd12ba4ac6373781b0c22330a49da2a87ce6ac..736ccdf0b63396c24d912362b0e5908a
  };
  
  /// Message ID, including reserved IDs.
-@@ -1264,7 +1266,9 @@ pub async fn set_quote(&mut self, context: &Context, quote: Option<&Message>) ->
+@@ -1238,7 +1238,9 @@ pub async fn set_quote(&mut self, context: &Context, quote: Option<&Message>) ->
              );
              self.in_reply_to = Some(quote.rfc724_mid.clone());
  
@@ -340,10 +342,10 @@ index 4bbd12ba4ac6373781b0c22330a49da2a87ce6ac..736ccdf0b63396c24d912362b0e5908a
                  // Use summary, similar to "Image" to avoid sending empty quote.
                  quote
 diff --git a/src/mimefactory/mimefactory_tests.rs b/src/mimefactory/mimefactory_tests.rs
-index 32ee79849b76a5c58bcdaf05404d047fc24beec3..ce8274f94a7bd61fbb65508f9dd1d7326bfd7197 100644
+index ea348b29eba062f91e662392b4065ff28e8b82e3..9b966d6dad6a29d6e3df18e5e040da8384931fef 100644
 --- a/src/mimefactory/mimefactory_tests.rs
 +++ b/src/mimefactory/mimefactory_tests.rs
-@@ -703,8 +703,8 @@ async fn test_protected_headers_directive() -> Result<()> {
+@@ -810,8 +810,8 @@ async fn test_protected_headers_directive() -> Result<()> {
  
      // Now Bob can send an encrypted message to Alice.
      let mut msg = Message::new(Viewtype::File);
@@ -352,10 +354,10 @@ index 32ee79849b76a5c58bcdaf05404d047fc24beec3..ce8274f94a7bd61fbb65508f9dd1d732
 +    // MimeMessage::decoded_data is set for decrypted mail; we need it to check presence of the
 +    // necessary headers.
      msg.set_text("a".repeat(constants::DC_DESIRED_TEXT_LEN + 1));
-     msg.set_file_from_bytes(&bob, "foo.bar", "content".as_bytes(), None)?;
+     msg.set_file_from_bytes(&bob, "foo.bar", b"content", None)?;
      let sent = bob.send_msg(chat, &mut msg).await;
 diff --git a/src/mimeparser.rs b/src/mimeparser.rs
-index 357ea9f32a791135562e0d6edda9fbef0f998541..ebd4053b14b16f85edcc4973f2daa5013c4936ab 100644
+index 49552038b7f3605f453d26ea5232d04b75397a16..28a75f0043e1c80deec705c664b452e6317118cd 100644
 --- a/src/mimeparser.rs
 +++ b/src/mimeparser.rs
 @@ -31,7 +31,7 @@
@@ -366,8 +368,8 @@ index 357ea9f32a791135562e0d6edda9fbef0f998541..ebd4053b14b16f85edcc4973f2daa501
 +use crate::tools::{get_filemeta, parse_receive_headers, time, validate_id};
  use crate::{chatlist_events, location, tools};
  
- /// Public key extracted from `Autocrypt-Gossip`
-@@ -1446,12 +1446,6 @@ async fn add_single_part_if_known(
+ /// A parsed MIME message.
+@@ -1456,12 +1456,6 @@ async fn add_single_part_if_known(
                              (simplified_txt, top_quote)
                          };
  
@@ -381,7 +383,7 @@ index 357ea9f32a791135562e0d6edda9fbef0f998541..ebd4053b14b16f85edcc4973f2daa501
                              let mut part = Part {
                                  dehtml_failed,
 diff --git a/src/mimeparser/mimeparser_tests.rs b/src/mimeparser/mimeparser_tests.rs
-index 562ea644a492b8a37db84984a57cb5c1613de55a..679fa62b322f116a08b6893b6c5343f96a8746e1 100644
+index fbe5b58a860104cebffc5ca412f393c462670316..236af19fb3656a5b522f765a846f63fc0076e29c 100644
 --- a/src/mimeparser/mimeparser_tests.rs
 +++ b/src/mimeparser/mimeparser_tests.rs
 @@ -5,7 +5,7 @@
@@ -392,8 +394,8 @@ index 562ea644a492b8a37db84984a57cb5c1613de55a..679fa62b322f116a08b6893b6c5343f9
 +    constants::{self, Blocked, DC_DESIRED_TEXT_LEN},
      contact::Contact,
      key,
-     message::{MessageState, MessengerMessage},
-@@ -1274,64 +1274,27 @@ async fn test_mime_modified_html() {
+     message::MessageState,
+@@ -1286,64 +1286,27 @@ async fn test_mime_modified_html() {
      );
  }
  
@@ -468,7 +470,7 @@ index 562ea644a492b8a37db84984a57cb5c1613de55a..679fa62b322f116a08b6893b6c5343f9
  #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
  async fn test_large_message_no_signature() -> Result<()> {
      let mut tcm = TestContextManager::new();
-@@ -1346,9 +1309,8 @@ async fn test_large_message_no_signature() -> Result<()> {
+@@ -1358,9 +1321,8 @@ async fn test_large_message_no_signature() -> Result<()> {
      let sent = alice.send_text(chat.id, &txt).await;
      let msg = bob.recv_msg(&sent).await;
  
@@ -481,10 +483,10 @@ index 562ea644a492b8a37db84984a57cb5c1613de55a..679fa62b322f116a08b6893b6c5343f9
  }
  
 diff --git a/src/receive_imf/receive_imf_tests.rs b/src/receive_imf/receive_imf_tests.rs
-index cc6c8af5b5e06be9fb4c01864ab4690793cfb5a1..bc0261f3661e3e18671d43c08e8847de3f7d3e4b 100644
+index 2206b74abc95067ebd4298bbcc3964654dcd18bd..a3846df84ea6c5934517de069d270477d1193e52 100644
 --- a/src/receive_imf/receive_imf_tests.rs
 +++ b/src/receive_imf/receive_imf_tests.rs
-@@ -3609,40 +3609,19 @@ async fn test_big_forwarded_with_big_attachment() -> Result<()> {
+@@ -3667,40 +3667,19 @@ async fn test_big_forwarded_with_big_attachment() -> Result<()> {
          msg.get_text()
              .starts_with("this text with 42 chars is just repeated.")
      );
@@ -534,36 +536,11 @@ index cc6c8af5b5e06be9fb4c01864ab4690793cfb5a1..bc0261f3661e3e18671d43c08e8847de
      Ok(())
  }
  
-diff --git a/src/summary.rs b/src/summary.rs
-index 9f665f386777dee6e2830f423a10fba855fdde27..d209b39a6b52a5a98d57e0ecd912693cfc016e04 100644
---- a/src/summary.rs
-+++ b/src/summary.rs
-@@ -9,7 +9,7 @@
- 
- use crate::calls::{CallState, call_state};
- use crate::chat::Chat;
--use crate::constants::Chattype;
-+use crate::constants::{Chattype, DC_DESIRED_TEXT_LEN};
- use crate::contact::{Contact, ContactId};
- use crate::context::Context;
- use crate::message::{Message, MessageState, Viewtype};
-@@ -281,7 +281,10 @@ async fn get_summary_text_without_prefix(&self, context: &Context) -> String {
-             }
-         };
- 
--        let text = self.text.clone();
-+        // A summary is a preview: bound it here, before the concatenation and the
-+        // whitespace-collapsing pass below, so neither allocates a copy of a whole
-+        // multi-megabyte message text.
-+        let text = truncate(&self.text, DC_DESIRED_TEXT_LEN).into_owned();
- 
-         let summary = if let Some(type_file) = type_file {
-             if append_text && !text.is_empty() {
 diff --git a/src/tools.rs b/src/tools.rs
-index f2984f7844f632da8f2a0a7c8236631464099615..f8b02bafd6a97280956c7d1ee1f7eb1b03a1080b 100644
+index a2e5579f182dac9f7f10e328196e744601938dae..731cb3506f1c6027d343d4b7a0d8d2165d054468 100644
 --- a/src/tools.rs
 +++ b/src/tools.rs
-@@ -39,8 +39,7 @@
+@@ -36,8 +36,7 @@
  use uuid::Uuid;
  
  use crate::chat::{add_device_msg, add_device_msg_with_importance};
@@ -573,7 +550,7 @@ index f2984f7844f632da8f2a0a7c8236631464099615..f8b02bafd6a97280956c7d1ee1f7eb1b
  use crate::context::Context;
  use crate::events::EventType;
  use crate::log::warn;
-@@ -50,7 +49,7 @@
+@@ -47,7 +46,7 @@
  /// Shortens a string to a specified length and adds "[...]" to the
  /// end of the shortened string.
  #[expect(clippy::arithmetic_side_effects)]
@@ -582,7 +559,7 @@ index f2984f7844f632da8f2a0a7c8236631464099615..f8b02bafd6a97280956c7d1ee1f7eb1b
      let count = buf.chars().count();
      if count <= approx_chars + DC_ELLIPSIS.len() {
          return Cow::Borrowed(buf);
-@@ -76,82 +75,6 @@ pub(crate) fn truncate(buf: &str, approx_chars: usize) -> Cow<'_, str> {
+@@ -73,82 +72,6 @@ pub(crate) fn truncate(buf: &str, approx_chars: usize) -> Cow<'_, str> {
      }
  }
  
@@ -666,7 +643,7 @@ index f2984f7844f632da8f2a0a7c8236631464099615..f8b02bafd6a97280956c7d1ee1f7eb1b
   * date/time tools
   ******************************************************************************/
 diff --git a/src/tools/tools_tests.rs b/src/tools/tools_tests.rs
-index 77bde4fbf52bc5792d27c37186acab8d22cf71bb..989501047a7ea039c051be8c5085856570337e09 100644
+index 5af8d47c15b47fa8e7f138232287d9249b1f2654..8c5169f2d3cbca2605ff762dfe58983f7b6c29e7 100644
 --- a/src/tools/tools_tests.rs
 +++ b/src/tools/tools_tests.rs
 @@ -124,79 +124,6 @@ fn test_truncate_edge() {

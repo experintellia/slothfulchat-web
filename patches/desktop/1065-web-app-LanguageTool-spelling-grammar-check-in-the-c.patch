@@ -9,11 +9,11 @@ Content-Transfer-Encoding: 8bit
 
 The desktop targets ship with Chromium spellcheck off (Electron has no
 local hunspell dictionary, see target-electron windows/main.ts), and a
-browser grammar add-on can't reach into an Electron/Tauri window. So the
+browser grammar add-on can't reach into an Electron window. So the
 composer gets its own grammar checker: Harper (writewithharper.com,
 English only, wasm on this device) or LanguageTool, like the LibreOffice
 extension or the Obsidian community plugin, over plain fetch, which works
-the same on browser, Electron and Tauri.
+the same on browser and Electron.
 
 Settings -> Experimental -> Composer: a "Grammar & spelling checker"
 switch (off by default) and a "Checker" row, shown while off too so the
@@ -46,7 +46,7 @@ rest amber; "insert after" suggestions become the flagged text plus the
 insertion, so the card's replace path stays one. The dialog has no
 "Check connection" for Harper (that would load it while it is off); the
 Connectivity view's test check covers it once it is on. Outside the
-web-app (Electron, Tauri) harper/ isn't served, so picking Harper there
+web-app (Electron) harper/ isn't served, so picking Harper there
 shows the failed-check icon.
 
 Composer: 1s after typing stops the draft is checked; for LanguageTool
@@ -110,7 +110,7 @@ description (EditGroupNameDialog) and the new-group description
 than checking every DeltaTextarea, because the proxy dialog uses one for
 proxy URLs, which must not be sent anywhere.
 
-CSP: Electron's main.html and Tauri's connect-src allow
+CSP: Electron's main.html allows
 http(s)://*:*/v2/check -- any host/port, pinned to that one path, the
 same pattern the web edition uses for /unfurl.
 
@@ -121,6 +121,12 @@ SettingsSwitch and EmojiSetSelector) is one exported ForkBadge.
 Styles live in their own composer/_language-tool.scss, so the upstream
 _composer.scss is untouched.
 
+Rebased onto v2.62.0: every settings read and write goes through the new
+desktop-settings store (95f5a1e1d). The Tauri CSP hunk is dropped with
+packages/target-tauri (f839866f4, #6656); Tauri now lives in its own
+repository, so the LanguageTool connect-src there would have to be added
+in that repo.
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  .../scss/composer/_language-tool.scss         | 164 +++++++
@@ -128,7 +134,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../frontend/src/components/Login-Styles.tsx  |  20 +-
  .../components/Settings/EmojiSetSelector.tsx  |  11 +-
  .../Settings/ExperimentalFeatures.tsx         |  22 +
- .../Settings/LanguageToolDialog.tsx           | 191 +++++++++
+ .../Settings/LanguageToolDialog.tsx           | 194 +++++++++
  .../components/Settings/SettingsSelector.tsx  |  10 +-
  .../components/Settings/SettingsSwitch.tsx    |  25 +-
  .../src/components/composer/Composer.tsx      |   5 +
@@ -143,8 +149,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  packages/frontend/static/main.html            |   5 +-
  packages/shared/shared-types.d.ts             |   9 +
  packages/shared/state.ts                      |   5 +
- .../target-tauri/src-tauri/tauri.conf.json5   |   3 +-
- 21 files changed, 1425 insertions(+), 25 deletions(-)
+ 20 files changed, 1426 insertions(+), 24 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_language-tool.scss
  create mode 100644 packages/frontend/src/components/Settings/LanguageToolDialog.tsx
  create mode 100644 packages/frontend/src/components/composer/LanguageTool.tsx
@@ -334,14 +339,14 @@ index 99294f1a2d241d0a44587307984a445148ae2f66..14f5141368e95609f1f19de894af5738
  // Contact
  @use 'contact/_contact-list';
 diff --git a/packages/frontend/src/components/Login-Styles.tsx b/packages/frontend/src/components/Login-Styles.tsx
-index 2103c668a83b3d77c0f073fc40d2af952996b848..aa7571bb427ab6340afd825347e3fd323e973acb 100644
+index 2103c668a83b3d77c0f073fc40d2af952996b848..a9becff7ac10ae662c0f7f4fdda8e4c573819f3d 100644
 --- a/packages/frontend/src/components/Login-Styles.tsx
 +++ b/packages/frontend/src/components/Login-Styles.tsx
 @@ -1,4 +1,8 @@
 -import React, { ReactElement, useId } from 'react'
 +import React, { ReactElement, useId, useRef } from 'react'
 +
-+import { useSettingsStore } from '../stores/settings'
++import { useDesktopSettingsStore } from '../stores/settings'
 +import { LanguageTool } from './composer/LanguageTool'
 +import { languageToolConfig } from './composer/languageToolCheck'
  
@@ -362,7 +367,7 @@ index 2103c668a83b3d77c0f073fc40d2af952996b848..aa7571bb427ab6340afd825347e3fd32
      const defaultId = useId()
      const id = props.id ?? `delta-textarea-${defaultId}`
 +    const textareaRef = useRef<HTMLTextAreaElement>(null)
-+    const settings = useSettingsStore()[0]?.desktopSettings
++    const settings = useDesktopSettingsStore()[0]
 +    const lt = props.languageTool && settings && languageToolConfig(settings)
  
      const alwaysShowLabel = (props.label?.length ?? 0) > 0
@@ -413,7 +418,7 @@ index 0d7da17eae0be4d2522429206e89050fdda47302..4083945fe1ee6813d7513712c79ee1d1
        <div
          role='radiogroup'
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 6573050374cfe174e923d97cde3f2ddb341f4677..bec970fc0551645a5acee1d974f56ff933d41d8f 100644
+index 568f80d17b1752c1a681ef203866d798686ebf2d..7c82ff6e56a15479fa8a3a14e685acd92bd10a0e 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -26,6 +26,9 @@ import { getLogger } from '@deltachat-desktop/shared/logger'
@@ -423,10 +428,10 @@ index 6573050374cfe174e923d97cde3f2ddb341f4677..bec970fc0551645a5acee1d974f56ff9
 +import LanguageToolDialog, {
 +  languageToolServerLabel,
 +} from './LanguageToolDialog'
+ import type { DesktopSettingsType } from '@deltachat-desktop/shared/shared-types'
  
  const log = getLogger('ExperimentalFeatures')
- 
-@@ -83,6 +86,25 @@ export function ExperimentalFeatures() {
+@@ -81,6 +84,25 @@ export function ExperimentalFeatures() {
          description='When your message contains a link and has no image, offer to attach a preview card. Off by default; turn on to be prompted.'
          forkAdded
        />
@@ -441,8 +446,8 @@ index 6573050374cfe174e923d97cde3f2ddb341f4677..bec970fc0551645a5acee1d974f56ff9
 +      <SettingsSelector
 +        onClick={() => openDialog(LanguageToolDialog)}
 +        currentValue={
-+          settingsStore
-+            ? languageToolServerLabel(settingsStore.desktopSettings)
++          desktopSettingsStore
++            ? languageToolServerLabel(desktopSettingsStore)
 +            : undefined
 +        }
 +        forkAdded
@@ -454,13 +459,16 @@ index 6573050374cfe174e923d97cde3f2ddb341f4677..bec970fc0551645a5acee1d974f56ff9
          label='Record without noise filtering'
 diff --git a/packages/frontend/src/components/Settings/LanguageToolDialog.tsx b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..1a212c4cb8f0698a2b71cfcfba929c8c2f639687
+index 0000000000000000000000000000000000000000..5bdd317ef16a88de65761d99e01b4cdcc2efb500
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/LanguageToolDialog.tsx
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,194 @@
 +import React, { useRef, useState } from 'react'
 +
-+import SettingsStoreInstance, { useSettingsStore } from '../../stores/settings'
++import {
++  DesktopSettingsStoreInstance,
++  useDesktopSettingsStore,
++} from '../../stores/settings'
 +import useTranslationFunction from '../../hooks/useTranslationFunction'
 +import Dialog, {
 +  DialogBody,
@@ -499,7 +507,7 @@ index 0000000000000000000000000000000000000000..1a212c4cb8f0698a2b71cfcfba929c8c
 + * server, like the Obsidian LanguageTool plugin. */
 +export default function LanguageToolDialog({ onClose }: DialogProps) {
 +  const tx = useTranslationFunction()
-+  const settings = useSettingsStore()[0]?.desktopSettings
++  const settings = useDesktopSettingsStore()[0]
 +  const [mode, setMode] = useState(
 +    settings?.grammarCheckEngine !== 'languagetool'
 +      ? 'harper'
@@ -531,7 +539,7 @@ index 0000000000000000000000000000000000000000..1a212c4cb8f0698a2b71cfcfba929c8c
 +      : !username.trim() === !apiKey.trim())
 +
 +  const save = async () => {
-+    const set = SettingsStoreInstance.effect.setDesktopSetting
++    const set = DesktopSettingsStoreInstance.effect.set
 +    // Harper: keep the LanguageTool settings for switching back
 +    if (!config.harper) {
 +      await set('languageToolServer', config.server || undefined)
@@ -729,10 +737,10 @@ index d71b3a31c6c2956183367044026b123abc5d4f2a..55890232e243be4f47b3987bc463cba8
          {description && (
            <div
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index 58d59822b279829edd0634729a7eacedd985c800..c747e1a9a6446bec14577ffc6ea0d7e79ce84719 100644
+index 945ac8b96f732db2024c3af43b295a9decaf0ecd..43e4212c71609724fc9ce32336d48d28665e7f5e 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
-@@ -13,6 +13,7 @@ import { extension } from 'mime-types'
+@@ -12,6 +12,7 @@ import { extension } from 'mime-types'
  
  import MenuAttachment from './menuAttachment'
  import ComposerMessageInput from './ComposerMessageInput'
@@ -743,30 +751,30 @@ index 58d59822b279829edd0634729a7eacedd985c800..c747e1a9a6446bec14577ffc6ea0d7e7
 @@ -151,6 +152,8 @@ const Composer = forwardRef<
    )
  
-   const settingsStore = useSettingsStore()[0]
+   const desktopSettingsStore = useDesktopSettingsStore()[0]
 +  const languageTool =
-+    settingsStore && languageToolConfig(settingsStore.desktopSettings)
++    desktopSettingsStore && languageToolConfig(desktopSettingsStore)
  
    // `/`-completion for DM chats whose contact lists `/commands` in their bio.
    const dmContactId =
-@@ -866,6 +869,7 @@ const Composer = forwardRef<
-                   settingsStore?.desktopSettings.experimentalCompletionMenu ===
-                   true
+@@ -883,6 +886,7 @@ const Composer = forwardRef<
+                 completionMenu={
+                   desktopSettingsStore.experimentalCompletionMenu === true
                  }
 +                languageTool={languageTool}
                  botCommands={botCommands}
                  loadingDraft={draftIsLoading}
                  sendMessageOrEditRequest={
-@@ -893,6 +897,7 @@ const Composer = forwardRef<
-                   settingsStore?.desktopSettings.experimentalCompletionMenu ===
-                   true
+@@ -909,6 +913,7 @@ const Composer = forwardRef<
+                 completionMenu={
+                   desktopSettingsStore.experimentalCompletionMenu === true
                  }
 +                languageTool={languageTool}
                  loadingDraft={false}
                  sendMessageOrEditRequest={
                    messageEditing.doSendEditRequest ?? (() => {})
 diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
-index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..e2d1d889c4589ea2bc7292ebdb239177ad5a2d06 100644
+index 6cb92c090478e8107f034ea9e7db7b9bf7ebda70..848a88985313119d5aa85250065e78d9987e5bd5 100644
 --- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 +++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 @@ -11,6 +11,8 @@ import {
@@ -787,7 +795,7 @@ index b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c..e2d1d889c4589ea2bc7292ebdb239177
    onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
    // used to show/hide send button
    onChange: (text: string) => void
-@@ -479,9 +483,22 @@ export default class ComposerMessageInput extends React.Component<
+@@ -469,9 +473,22 @@ export default class ComposerMessageInput extends React.Component<
                    ? 'rtl'
                    : 'auto' /* auto is based on content but defaults to ltr */
                }
@@ -1541,14 +1549,14 @@ index 0000000000000000000000000000000000000000..cbb4a0c56549f097f301260c9982f788
 +  }
 +}
 diff --git a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
-index d9c3b182aaeea3ee944f2369bbc20028a83cd294..e0320d808faca2054f2700a616dd202a7bdbf161 100644
+index d9c3b182aaeea3ee944f2369bbc20028a83cd294..8723aa919cb66d632ac1aac477460c82f82214e1 100644
 --- a/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 +++ b/packages/frontend/src/components/dialogs/ConnectivityDialog.tsx
 @@ -5,6 +5,12 @@ import { BackendRemote, onDCEvent } from '../../backend-com'
  import { selectedAccountId } from '../../ScreenController'
  import Dialog, { DialogBody, DialogContent, DialogHeader } from '../Dialog'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
-+import { useSettingsStore } from '../../stores/settings'
++import { useDesktopSettingsStore } from '../../stores/settings'
 +import { languageToolConfig, ltCheck } from '../composer/languageToolCheck'
 +import LanguageToolDialog, {
 +  languageToolServerLabel,
@@ -1574,7 +1582,7 @@ index d9c3b182aaeea3ee944f2369bbc20028a83cd294..e0320d808faca2054f2700a616dd202a
 + * un-underlined have an explanation here, and a way to the checker dialog. */
 +function LanguageToolInfo() {
 +  const { openDialog } = useDialog()
-+  const settings = useSettingsStore()[0]?.desktopSettings
++  const settings = useDesktopSettingsStore()[0]
 +  const config = settings && languageToolConfig(settings)
 +  const on = !!config
 +  const { harper, server, username, apiKey } = config || {}
@@ -1622,10 +1630,10 @@ index d9c3b182aaeea3ee944f2369bbc20028a83cd294..e0320d808faca2054f2700a616dd202a
    stylesToInject?: string | undefined
  ): Promise<string> {
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index d0e05391a8157656989fc2ad6d11f258005ac998..5943369f480ad2be401c6b85339ef1d8dfe8e950 100644
+index d62fa66c2ab538a471fcdfa1e9f5627073c10c4c..1abc64d53914fdf96cf618bfa379cd9c069ae7fa 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-@@ -1052,6 +1052,7 @@ export const ChatSettingsSetNameAndProfileImage = ({
+@@ -1063,6 +1063,7 @@ export const ChatSettingsSetNameAndProfileImage = ({
        {setDescription !== undefined && (
          <DeltaTextarea
            placeholder={tx('chat_description')}
@@ -1634,10 +1642,10 @@ index d0e05391a8157656989fc2ad6d11f258005ac998..5943369f480ad2be401c6b85339ef1d8
            onChange={ev => setDescription(ev.target.value)}
          />
 diff --git a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
-index 505a87fa28180cc40aa6fe9ddc41944e7b7a48da..b0b7e2d6518f4ae9d1791bc309a79c8912c05f28 100644
+index 46bb4937deb2ea94fbf983708ef545235493d623..e367c828d23716b486c267345970003228cdba1d 100644
 --- a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 +++ b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
-@@ -121,6 +121,7 @@ function EditProfileDialogInner({
+@@ -130,6 +130,7 @@ function EditProfileDialogInner({
                key='status'
                id='status'
                placeholder={tx('pref_default_status_label')}
@@ -1646,10 +1654,10 @@ index 505a87fa28180cc40aa6fe9ddc41944e7b7a48da..b0b7e2d6518f4ae9d1791bc309a79c89
                onChange={(
                  event: React.FormEvent<HTMLElement> &
 diff --git a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
-index 6a7ad0dbfee72213041c44151dd7a210eeefbbf3..bb45855f8b6c471a47526379e379ead7bfe411df 100644
+index 9c670e7b0173819ad3d0fc0c05a95e1bedff3ba9..dac254e2e91099cf6e2f1fb0482e43460af9511a 100644
 --- a/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
 +++ b/packages/frontend/src/components/dialogs/ViewGroup/index.tsx
-@@ -718,6 +718,7 @@ export function EditGroupNameDialog({
+@@ -773,6 +773,7 @@ function EditGroupNameDialog({
              <DeltaTextarea
                id='description'
                placeholder={tx('chat_description')}
@@ -1871,7 +1879,7 @@ index b3b3a9f095b8b58b9405702e8fee122bf1490483..ee6a895360aaf45794f38a01ecf39f26
      <link rel="stylesheet" href="./fonts/fonts.css" />
      <link rel="stylesheet" href="./main.css" />
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index f16da9295efcbdc6d909e6235fc583f86947a066..c0a0aefdf2b2ea7f1989e7c54dcd9171026c43c0 100644
+index d1dcd764d493404c9f27ae6b607ed111aafcb39f..50b125bceb95e957e717996e9d4bdd8543faa695 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -47,6 +47,15 @@ export interface DesktopSettingsType {
@@ -1891,7 +1899,7 @@ index f16da9295efcbdc6d909e6235fc583f86947a066..c0a0aefdf2b2ea7f1989e7c54dcd9171
    voiceMessageMediaSessionDetails: boolean
    /** webapp: record voice messages as unprocessed "original audio" (no noise suppression / echo cancellation / auto gain). Off by default. Switched in Settings -> Experimental -> Composer, applies to the next recording. */
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index fa8889f2f2fc98e0bc4ef3ebb5b5741b1132f5c0..840cbdf0ef641d5072c5a0a611da071c3bb2a90c 100644
+index de8e23e94867c68e4a23e515757059c4abaf07c8..bd57137cbea0f11ce58b64a6144edc148fbc64ea 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -18,6 +18,11 @@ export function getDefaultState(): DesktopSettingsType {
@@ -1906,17 +1914,3 @@ index fa8889f2f2fc98e0bc4ef3ebb5b5741b1132f5c0..840cbdf0ef641d5072c5a0a611da071c
      voiceMessageMediaSessionDetails: false,
      voiceRecordingOriginalAudio: false,
      voiceRecordingDeviceId: undefined,
-diff --git a/packages/target-tauri/src-tauri/tauri.conf.json5 b/packages/target-tauri/src-tauri/tauri.conf.json5
-index 5219048e346ad8bfb79cf157d66e35ceccd28f65..74a1098376d82541978fcdd91c331226aa721ca9 100644
---- a/packages/target-tauri/src-tauri/tauri.conf.json5
-+++ b/packages/target-tauri/src-tauri/tauri.conf.json5
-@@ -14,7 +14,8 @@
-       // The CSP will be further adjusted in `run()`, see `context.config_mut()`.
-       "csp": {
-         "default-src": "none",
--        "connect-src": "'self' ipc:",
-+        // */v2/check: the LanguageTool API (composer spell/grammar check).
-+        "connect-src": "'self' ipc: http://*:*/v2/check https://*:*/v2/check",
-         // The sha-256 values are for
-         // - `emoji-mart-awesome`.
-         // - `react-zoom-pan-pinch`'s TransformComponent (2nd and 3rd entries).

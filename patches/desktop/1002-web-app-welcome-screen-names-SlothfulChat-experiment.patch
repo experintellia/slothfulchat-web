@@ -29,10 +29,10 @@ awkwardly next to the buttons.
  4 files changed, 52 insertions(+), 19 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index f7911abe211b8894421c3a0ab53e9ce900f081b8..105c89b66eda7a7c06c87dfd8ccee088846ccf47 100644
+index 2860788bada28d421fd6ebb02d22a72d61fe7607..40633cfc1a45844191be9e520bebb2e8751d4203 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
-@@ -35,11 +35,6 @@ export default function About({ onClose }: DialogProps) {
+@@ -39,11 +39,6 @@ export default function About({ onClose }: DialogProps) {
    const runtimeInfo = runtime.getRuntimeInfo()
    const { VERSION, GIT_REF } = runtimeInfo.buildInfo
  
@@ -44,7 +44,7 @@ index f7911abe211b8894421c3a0ab53e9ce900f081b8..105c89b66eda7a7c06c87dfd8ccee088
    return (
      <DialogWithHeader
        width={400}
-@@ -49,9 +44,12 @@ export default function About({ onClose }: DialogProps) {
+@@ -53,9 +48,12 @@ export default function About({ onClose }: DialogProps) {
        <DialogBody>
          <DialogContent>
            <div className={styles.aboutContent}>
@@ -60,7 +60,7 @@ index f7911abe211b8894421c3a0ab53e9ce900f081b8..105c89b66eda7a7c06c87dfd8ccee088
                v{VERSION}
                {runtime.getRC_Config().devmode && (
                  <>
-@@ -63,7 +61,8 @@ export default function About({ onClose }: DialogProps) {
+@@ -67,7 +65,8 @@ export default function About({ onClose }: DialogProps) {
              <p style={{ marginTop: 16, textAlign: 'left', fontSize: 13 }}>
                <b>slothfulchat-web</b> is an unofficial experiment. It runs Delta
                Chat's chatmail core — the same core behind the Delta Chat

@@ -187,8 +187,13 @@ test it. Record-then-play answers the same question with no feedback
 path.
 
 Refs #179
+
+Rebased onto v2.62.0: the recorder and microphone test read and write
+their settings through the new desktop-settings store
+(useDesktopSettingsStore / DesktopSettingsStoreInstance.effect.set,
+95f5a1e1d).
 ---
- .../AudioRecorder/AudioRecorder.tsx           | 656 ++++++++++++++++--
+ .../AudioRecorder/AudioRecorder.tsx           | 659 ++++++++++++++++--
  .../components/AudioRecorder/MicRecorder.ts   | 157 ++++-
  .../components/AudioRecorder/recorderLogic.ts | 159 +++++
  .../AudioRecorder/styles.module.scss          | 256 ++++++-
@@ -196,13 +201,13 @@ Refs #179
  .../components/Settings/MicrophoneTest.tsx    | 242 +++++++
  .../components/Settings/styles.module.scss    |   8 +
  .../frontend/src/tests/audioRecorder.test.ts  | 172 +++++
- 8 files changed, 1603 insertions(+), 66 deletions(-)
+ 8 files changed, 1606 insertions(+), 66 deletions(-)
  create mode 100644 packages/frontend/src/components/AudioRecorder/recorderLogic.ts
  create mode 100644 packages/frontend/src/components/Settings/MicrophoneTest.tsx
  create mode 100644 packages/frontend/src/tests/audioRecorder.test.ts
 
 diff --git a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
-index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e41898722a5cc6c 100644
+index 2b0ec223896a241711f68ff29f0125316c409afb..a16cab7e68df64b7b44bff7db53731cb680c19ff 100644
 --- a/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 +++ b/packages/frontend/src/components/AudioRecorder/AudioRecorder.tsx
 @@ -1,4 +1,10 @@
@@ -217,11 +222,14 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
  import MicRecorder from './MicRecorder'
  import styles from './styles.module.scss'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
-@@ -6,9 +12,31 @@ import { runtime } from '@deltachat-desktop/runtime-interface'
+@@ -6,9 +12,34 @@ import { runtime } from '@deltachat-desktop/runtime-interface'
  import useDialog from '../../hooks/dialog/useDialog'
  import AlertDialog from '../dialogs/AlertDialog'
  import { getLogger } from '@deltachat-desktop/shared/logger'
-+import SettingsStoreInstance, { useSettingsStore } from '../../stores/settings'
++import {
++  DesktopSettingsStoreInstance,
++  useDesktopSettingsStore,
++} from '../../stores/settings'
 +import { MediaPlayerMutexContext } from '../../contexts/MediaPlayerMutexContext'
 +import { drawBars } from '../AudioPlayer/Waveform'
 +import { CustomAudioControls } from '../AudioPlayer'
@@ -249,7 +257,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
  export enum AudioErrorType {
    'NO_INPUT',
    'OTHER_ERROR',
-@@ -23,21 +51,39 @@ export class AudioRecorderError extends Error {
+@@ -23,21 +54,39 @@ export class AudioRecorderError extends Error {
  }
  
  /**
@@ -297,7 +305,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
  
    return (
      <div role='timer'>
-@@ -54,7 +100,7 @@ const Timer = () => {
+@@ -54,7 +103,7 @@ const Timer = () => {
   * 2. a level layer to show/hide the coloured background
   * 3. a coloured background with a color gradient from green to red
   */
@@ -306,7 +314,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
    const steps = 10
    // doubling the volume shows a more realistic volume level
    const level = Math.min(prop.volume * 2, 1)
-@@ -66,7 +112,9 @@ const VolumeMeter = (prop: { volume: number }) => {
+@@ -66,7 +115,9 @@ const VolumeMeter = (prop: { volume: number }) => {
        aria-valuemin={0}
        aria-valuemax={1}
        aria-valuenow={level}
@@ -317,7 +325,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
      >
        <div className={styles.volumeBar}>
          <div className={styles.mask}>
-@@ -98,6 +146,90 @@ export const AudioRecorder = ({
+@@ -98,6 +149,90 @@ export const AudioRecorder = ({
    const [volume, setVolume] = useState(0)
    const recorder = useRef<MicRecorder | null>(null)
    const { openDialog } = useDialog()
@@ -333,7 +341,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
 +  // unmount effect can run it if the component leaves mid-gesture.
 +  const gestureCleanupRef = useRef<(() => void) | null>(null)
 +
-+  const settings = useSettingsStore()[0]?.desktopSettings
++  const settings = useDesktopSettingsStore()[0]
 +  const originalAudio = settings?.voiceRecordingOriginalAudio === true
 +  const voiceRecordingDeviceId = settings?.voiceRecordingDeviceId ?? null
 +
@@ -408,7 +416,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
  
    const onAccessDenied = useCallback(() => {
      openDialog(AlertDialog, {
-@@ -105,10 +237,25 @@ export const AudioRecorder = ({
+@@ -105,10 +240,25 @@ export const AudioRecorder = ({
      })
    }, [openDialog, tx])
  
@@ -434,7 +442,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
        log.debug('checkMediaAccess', { access })
        if (access === 'denied') {
          onAccessDenied()
-@@ -117,6 +264,9 @@ export const AudioRecorder = ({
+@@ -117,6 +267,9 @@ export const AudioRecorder = ({
        if (access === 'not-determined') {
          // try to ask for access
          const accessAllowed = await runtime.askForMediaAccess('microphone')
@@ -444,7 +452,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
          if (accessAllowed === false) {
            onAccessDenied()
            return
-@@ -128,59 +278,429 @@ export const AudioRecorder = ({
+@@ -128,59 +281,429 @@ export const AudioRecorder = ({
        return
      }
  
@@ -493,7 +501,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
 +        if (mic.deviceIdWasStale) {
 +          // undefined (not null): the persistence setter only round-trips
 +          // string|number|boolean|undefined. Reads normalize back with `?? null`.
-+          SettingsStoreInstance.effect.setDesktopSetting(
++          DesktopSettingsStoreInstance.effect.set(
 +            'voiceRecordingDeviceId',
 +            undefined
 +          )
@@ -587,7 +595,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
 +  const selectDevice = (deviceId: string | null) => {
 +    closeMicMenuToTrigger()
 +    // null → undefined for the persistence setter (see stale-reset note above).
-+    SettingsStoreInstance.effect.setDesktopSetting(
++    DesktopSettingsStoreInstance.effect.set(
 +      'voiceRecordingDeviceId',
 +      deviceId ?? undefined
 +    )
@@ -893,7 +901,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
  
    if (!recording) {
      return (
-@@ -188,24 +708,68 @@ export const AudioRecorder = ({
+@@ -188,24 +711,68 @@ export const AudioRecorder = ({
          type='button'
          aria-label={tx('voice_message')}
          className={styles.microphoneButton}
@@ -976,7 +984,7 @@ index 2b0ec223896a241711f68ff29f0125316c409afb..0ff0d4b258fb839965b8dc1e9e418987
          <button
            type='button'
            className={styles.cancel}
-@@ -222,6 +786,6 @@ export const AudioRecorder = ({
+@@ -222,6 +789,6 @@ export const AudioRecorder = ({
            {tx('ok')}
          </button>
        </div>
@@ -1654,32 +1662,32 @@ index 32e59194781f3ba01a788b9c3f896e38e123c418..560a6dc64f71e367ce02659ad6f03d12
    }
  }
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 3704aa87c23e40196d6e1da6186660f03b576fae..6573050374cfe174e923d97cde3f2ddb341f4677 100644
+index e32b03328f71d9f519209c7b0b6a347041360677..568f80d17b1752c1a681ef203866d798686ebf2d 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 @@ -1,10 +1,11 @@
 -import React from 'react'
 +import React, { useState } from 'react'
  
- import SettingsStoreInstance, {
-   useSettingsStore,
-   type SettingsStoreState,
+ import {
+   DesktopSettingsStoreInstance,
+   useDesktopSettingsStore,
  } from '../../stores/settings'
  import DesktopSettingsSwitch from './DesktopSettingsSwitch'
 +import MicrophoneTest from './MicrophoneTest'
  import SettingsHeading from './SettingsHeading'
  import SettingsSeparator from './SettingsSeparator'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
-@@ -32,6 +33,8 @@ export function ExperimentalFeatures() {
+@@ -33,6 +34,8 @@ export function ExperimentalFeatures() {
    const tx = useTranslationFunction()
-   const settingsStore = useSettingsStore()[0]
+   const desktopSettingsStore = useDesktopSettingsStore()[0]
    const { openDialog } = useDialog()
 +  // Remount key for the microphone test — see where it is used below.
 +  const [micTestRun, setMicTestRun] = useState(0)
  
    const showExperimentalInfoDialog = async (
      settingsKey: keyof Pick<
-@@ -80,6 +83,20 @@ export function ExperimentalFeatures() {
+@@ -78,6 +81,20 @@ export function ExperimentalFeatures() {
          description='When your message contains a link and has no image, offer to attach a preview card. Off by default; turn on to be prompted.'
          forkAdded
        />
@@ -1702,7 +1710,7 @@ index 3704aa87c23e40196d6e1da6186660f03b576fae..6573050374cfe174e923d97cde3f2ddb
        <DesktopSettingsSwitch
 diff --git a/packages/frontend/src/components/Settings/MicrophoneTest.tsx b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..7d974a795ea64f5efa463e93a210e0f6f4690c70
+index 0000000000000000000000000000000000000000..798c869881eb4698f93f9e11165660b53394d43c
 --- /dev/null
 +++ b/packages/frontend/src/components/Settings/MicrophoneTest.tsx
 @@ -0,0 +1,242 @@
@@ -1718,7 +1726,7 @@ index 0000000000000000000000000000000000000000..7d974a795ea64f5efa463e93a210e0f6
 +import SettingsButton from './SettingsButton'
 +import { CustomAudioControls } from '../AudioPlayer'
 +import { MediaPlayerMutexContext } from '../../contexts/MediaPlayerMutexContext'
-+import { useSettingsStore } from '../../stores/settings'
++import { useDesktopSettingsStore } from '../../stores/settings'
 +import { originalAudioHonored } from '../AudioRecorder/recorderLogic'
 +import { getLogger } from '@deltachat-desktop/shared/logger'
 +import styles from './styles.module.scss'
@@ -1755,7 +1763,7 @@ index 0000000000000000000000000000000000000000..7d974a795ea64f5efa463e93a210e0f6
 + * fiddly to judge.
 + */
 +export default function MicrophoneTest() {
-+  const settings = useSettingsStore()[0]?.desktopSettings
++  const settings = useDesktopSettingsStore()[0]
 +  const originalAudio = settings?.voiceRecordingOriginalAudio === true
 +  const deviceId = settings?.voiceRecordingDeviceId ?? null
 +  const mutexCtx = useContext(MediaPlayerMutexContext)

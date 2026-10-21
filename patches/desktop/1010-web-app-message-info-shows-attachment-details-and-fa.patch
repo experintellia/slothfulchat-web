@@ -26,7 +26,7 @@ Adds the untranslated labels Type/Size/Resolution/Duration.
  3 files changed, 119 insertions(+), 12 deletions(-)
 
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
-index ff0ec1325429678c94c868c7f361d94297d31c2a..5d3432a69a2ae27c4b647437b25750cd0d6f0255 100644
+index 4c5352f5e9a59f830914dcae4ecadd03754b2aab..d890f907a3008bedbf9a1c763ad57c2442cdcbb1 100644
 --- a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 @@ -1,6 +1,7 @@
@@ -189,7 +189,7 @@ index c6b31462f1c4d746827d48de444412fac20e2148..b7f85baa156a418482c65b77655d8a88
    display: flex;
    justify-content: space-between;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index bd2464902144405d7ba61d8b26229e7d70db1f40..65171d5ea8c2e9b7428fb7304d6f681d9cf777bc 100644
+index 256703c8bf931d45d2a6e12bad4c3eb5c150b16b..05c168bf5a5520115469a75db86a4e6828518169 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -67,7 +67,6 @@ import { useRpcFetch } from '../../hooks/useFetch'

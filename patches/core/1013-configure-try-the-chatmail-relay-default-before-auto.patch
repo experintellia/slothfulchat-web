@@ -22,17 +22,22 @@ carry relay-specific settings. The random credentials are generated once
 by login_param_from_account_qr and reused across both attempts, so a
 fallback never creates a second address. The ports live in one place for
 the eventual WebSocket-transport relays.
+
+Since v2.64.0 the offline provider database is gone (2.57); the skip
+check now asks provider::legacy_settings_for_addr() whether the domain
+has hard-coded servers (only nauta.cu today), so nine.testrun.org and
+every other relay get the convention.
 ---
  src/configure.rs                  |  36 +++++++--
- src/configure/chatmail_default.rs | 124 ++++++++++++++++++++++++++++++
- 2 files changed, 155 insertions(+), 5 deletions(-)
+ src/configure/chatmail_default.rs | 128 ++++++++++++++++++++++++++++++
+ 2 files changed, 159 insertions(+), 5 deletions(-)
  create mode 100644 src/configure/chatmail_default.rs
 
 diff --git a/src/configure.rs b/src/configure.rs
-index 33da10d442c1431f13d6c68f66db07eb38602c4e..3a7efa5366a4c49d16204895ab637a63403b8221 100644
+index 0c4ca91cf4d4a206adbedcea9ee470670a85a622..28eda20760c1d1d9aa0bbd0e84143b1caf6f74c6 100644
 --- a/src/configure.rs
 +++ b/src/configure.rs
-@@ -11,6 +11,7 @@
+@@ -9,6 +9,7 @@
  
  mod auto_mozilla;
  mod auto_outlook;
@@ -40,7 +45,7 @@ index 33da10d442c1431f13d6c68f66db07eb38602c4e..3a7efa5366a4c49d16204895ab637a63
  pub(crate) mod server_params;
  
  use anyhow::{Context as _, Result, bail, ensure, format_err};
-@@ -179,14 +180,39 @@ pub async fn add_transport_from_qr(&self, qr: &str) -> Result<()> {
+@@ -172,14 +173,39 @@ pub async fn add_transport_from_qr(&self, qr: &str) -> Result<()> {
          self.stop_io().await;
  
          let result = async move {
@@ -87,10 +92,10 @@ index 33da10d442c1431f13d6c68f66db07eb38602c4e..3a7efa5366a4c49d16204895ab637a63
          .await;
 diff --git a/src/configure/chatmail_default.rs b/src/configure/chatmail_default.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..79940db566d50da33c10dfb5840e225e631d5315
+index 0000000000000000000000000000000000000000..474b4ec3b0e641613fbd60c4cc5f8d5897c8ffd5
 --- /dev/null
 +++ b/src/configure/chatmail_default.rs
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,128 @@
 +//! slothfulchat-web: try the standard chatmail relay convention before autoconfig.
 +//!
 +//! A `dcaccount:` QR hands the core an address on a chatmail relay with no server
@@ -121,9 +126,9 @@ index 0000000000000000000000000000000000000000..79940db566d50da33c10dfb5840e225e
 +/// can't or shouldn't apply:
 +/// - the QR/user already supplied server details — respect them;
 +/// - the address carries no domain;
-+/// - the domain is covered by the offline provider database — `configure()`
-+///   already avoids network autoconfig there, and the database may carry
-+///   relay-specific settings we would otherwise drop.
++/// - the domain has hard-coded legacy servers (what is left of upstream's
++///   provider database) — `configure()` already avoids network autoconfig
++///   there, and we would otherwise drop those settings.
 +pub(crate) fn chatmail_default_param(param: &EnteredLoginParam) -> Option<EnteredLoginParam> {
 +    let has_server_details = !param.imap.server.is_empty()
 +        || param.imap.port != 0
@@ -141,7 +146,11 @@ index 0000000000000000000000000000000000000000..79940db566d50da33c10dfb5840e225e
 +        Some((_, domain)) if !domain.is_empty() => domain,
 +        _ => return None,
 +    };
-+    if provider::get_provider_info(domain).is_some() {
++    if provider::legacy_settings_for_addr(&param.addr)
++        .ok()?
++        .autoconfig_servers
++        .is_some()
++    {
 +        return None;
 +    }
 +
@@ -180,7 +189,7 @@ index 0000000000000000000000000000000000000000..79940db566d50da33c10dfb5840e225e
 +
 +    #[test]
 +    fn fills_in_the_chatmail_convention_for_a_bare_relay_account() {
-+        // mehl.cloud is a chatmail relay that is not in the offline provider DB.
++        // mehl.cloud is a chatmail relay without hard-coded legacy servers.
 +        let param = bare_account_param("ab12cd34@mehl.cloud");
 +        let convention = chatmail_default_param(&param).expect("convention applies");
 +        assert_eq!(convention.imap.server, "mehl.cloud");
@@ -195,10 +204,10 @@ index 0000000000000000000000000000000000000000..79940db566d50da33c10dfb5840e225e
 +    }
 +
 +    #[test]
-+    fn skips_domains_in_the_provider_database() {
-+        // nine.testrun.org ships in the offline provider database, so the normal
-+        // path already avoids network autoconfig and keeps the DB's settings.
-+        let param = bare_account_param("ab12cd34@nine.testrun.org");
++    fn skips_domains_with_legacy_servers() {
++        // nauta.cu has hard-coded servers, so the normal path already avoids
++        // network autoconfig and keeps those settings.
++        let param = bare_account_param("ab12cd34@nauta.cu");
 +        assert!(chatmail_default_param(&param).is_none());
 +    }
 +

@@ -4,15 +4,18 @@ Date: Sat, 11 Jul 2026 16:15:53 +0000
 Subject: [PATCH] web-app: analytics opt-out checkbox on welcome screen +
  privacy policy links
 
+Rebased onto v2.62.0: runtime.openLink() only takes http:/https:
+template strings (56f5a6877), so the privacy.html URLs are narrowed
+(About reuses localPage() from desktop/1000).
 ---
- .../src/components/Settings/Advanced.tsx      | 45 +++++++++++++++++++
- .../src/components/dialogs/About/index.tsx    |  9 ++++
- .../WelcomeScreen/OnboardingScreen.tsx        | 43 +++++++++++++++++-
+ .../src/components/Settings/Advanced.tsx      | 48 +++++++++++++++++++
+ .../src/components/dialogs/About/index.tsx    |  7 +++
+ .../WelcomeScreen/OnboardingScreen.tsx        | 43 ++++++++++++++++-
  .../src/utils/slothfulInstanceConfig.ts       | 24 ++++++++++
- 4 files changed, 120 insertions(+), 1 deletion(-)
+ 4 files changed, 121 insertions(+), 1 deletion(-)
 
 diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
-index 15e418e7e2239a0b0f5941ba27d85212e399e4b3..79669fa2bb7717f8ec61041f9e4d38bcdc94e8dc 100644
+index 15e418e7e2239a0b0f5941ba27d85212e399e4b3..73a6be5581870b807d8b3b457f52e346d196b5fa 100644
 --- a/packages/frontend/src/components/Settings/Advanced.tsx
 +++ b/packages/frontend/src/components/Settings/Advanced.tsx
 @@ -10,6 +10,8 @@ import SettingsButton from './SettingsButton'
@@ -38,7 +41,7 @@ index 15e418e7e2239a0b0f5941ba27d85212e399e4b3..79669fa2bb7717f8ec61041f9e4d38bc
        {runtime.getRuntimeInfo().target !== 'browser' && (
          <>
            <SettingsSeparator />
-@@ -91,6 +100,42 @@ export default function Advanced({ onClose }: Props) {
+@@ -91,6 +100,45 @@ export default function Advanced({ onClose }: Props) {
    )
  }
  
@@ -66,7 +69,10 @@ index 15e418e7e2239a0b0f5941ba27d85212e399e4b3..79669fa2bb7717f8ec61041f9e4d38bc
 +      />
 +      <SettingsButton
 +        onClick={() =>
-+          runtime.openLink(new URL('privacy.html', document.baseURI).href)
++          runtime.openLink(
++            // served next to the app, so http: or https: like the app itself
++            new URL('privacy.html', document.baseURI).href as `https:${string}`
++          )
 +        }
 +      >
 +        {/* link-blue like settingsSelectorValue, so the row reads as a link */}
@@ -82,18 +88,16 @@ index 15e418e7e2239a0b0f5941ba27d85212e399e4b3..79669fa2bb7717f8ec61041f9e4d38bc
    const tx = useTranslationFunction()
  
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index e0248c77e3c8112216066a4f0ed5eed7faf82823..249d7a04ca736a4f1aefa13b5f8e14665778cdeb 100644
+index b4e754250941c71ede5d581313a37c5a8db144e4..55e5421f6e478cb9ecfca880ffc85109ed28a228 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
-@@ -124,6 +124,15 @@ export default function About({ onClose }: DialogProps) {
+@@ -124,6 +124,13 @@ export default function About({ onClose }: DialogProps) {
          >
            {'Imprint'}
          </SettingsIconButton>
 +        <SettingsIconButton
 +          icon='visibility'
-+          onClick={() =>
-+            runtime.openLink(new URL('privacy.html', document.baseURI).href)
-+          }
++          onClick={() => runtime.openLink(localPage('privacy.html'))}
 +          dataTestid='about-privacy'
 +        >
 +          {'Privacy policy'}
@@ -181,10 +185,10 @@ index 3784a858e03567a6e5c66cc5ae4abd32393b8ad6..45d18674c983e6afb5d5b8b2f911e129
        </DialogFooter>
      </>
 diff --git a/packages/frontend/src/utils/slothfulInstanceConfig.ts b/packages/frontend/src/utils/slothfulInstanceConfig.ts
-index 3e44735537a63deabd0be2e64a791a0b8979a89e..93a4e738ae8c5e7fd90813c4dcac77208cd5f91d 100644
+index 855bfde5b2c77bb28ed05a738a5bfd7305c64465..2bced983fe3c954ef24b321b7cf2538eec642675 100644
 --- a/packages/frontend/src/utils/slothfulInstanceConfig.ts
 +++ b/packages/frontend/src/utils/slothfulInstanceConfig.ts
-@@ -70,3 +70,27 @@ export function instanceDefaultChatmailQr(): string | undefined {
+@@ -80,3 +80,27 @@ export function instanceDefaultChatmailQr(): string | undefined {
  export function instanceDefaultChatmailHost(): string | undefined {
    return parseDefaultChatmail()?.host
  }

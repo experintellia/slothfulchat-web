@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { MANIFEST, MARKER } from './mark-fork-api.mjs'
 
 const root = path.resolve(fileURLToPath(import.meta.url), '../..')
-const coreTs = path.join(root, 'build/core/deltachat-jsonrpc/typescript')
+const coreTs = path.join(root, 'build/core/deltachat-jsonrpc-bindings/typescript')
 const read = (p) => readFileSync(p, 'utf8')
 const count = (s) => (s.match(new RegExp(MARKER, 'g')) ?? []).length
 const camel = (s) => s.replace(/_(\w)/g, (_, c) => c.toUpperCase())

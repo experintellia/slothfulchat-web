@@ -1,5 +1,10 @@
 # Changelog
 
+- **chatmail core 2.64.0** (was 2.54.0-dev): sending fails over between a
+  profile's relays, pinned messages and channel reactions in the API, a send
+  queue that encrypts at send time, and the removal of OAuth2, the provider
+  database and `is_chatmail`. The bundled type definitions follow; see core's changelog for
+  the full list of removed JSON-RPC fields.
 - **No `log`→console bridge any more**: core reports Info/Warning/Error both
   through the `log` facade and as JSON-RPC events, so bridging the facade made
   every core log line appear twice on a page that prints the events. The

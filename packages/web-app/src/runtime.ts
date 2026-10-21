@@ -40,6 +40,8 @@ import {
   reportChoiceNote,
 } from './fatal-report.ts'
 import { tempRemovalPath } from './temp-paths.ts'
+// the desktop frontend this build ships, so About and bug reports name it right
+import { version as desktopVersion } from '../../../build/desktop/package.json'
 import { initDiagnostics } from './diagnostics'
 import { initChatExport } from './chat-export'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
@@ -95,7 +97,7 @@ function getDefaultSettings() {
     minimizeToTray: false,
     syncAllAccounts: true,
     lastSaveDialogLocation: undefined,
-    enableWebxdcDevTools: false,
+    hideMenuBar: false,
     HTMLEmailAskForRemoteLoadingConfirmation: true,
     HTMLEmailAlwaysLoadRemoteContent: false,
     galleryImageKeepAspectRatio: false,
@@ -1356,7 +1358,8 @@ class BrowserRuntime {
     accountId: number
     chatId: number
     messageId: number
-    title: string
+    // desktop omits it when notification content is hidden
+    title?: string
     body: string
     icon: string | null
   }): Promise<void> {
@@ -1393,7 +1396,7 @@ class BrowserRuntime {
       }
     }
 
-    const notification = new Notification(title, {
+    const notification = new Notification(title ?? APP_NAME, {
       body,
       icon,
       tag: `${accountId}.${chatId}.${messageId}`,
@@ -1704,6 +1707,7 @@ class BrowserRuntime {
       theme: undefined,
       'theme-watch': false,
       'translation-watch': false,
+      'allow-custom-rpc-server-path': false,
       'allow-unsafe-core-replacement': false,
       minimized: false,
       version: false,
@@ -1713,7 +1717,7 @@ class BrowserRuntime {
     })
     this.runtime_info = {
       buildInfo: {
-        VERSION: '2.53.1-slothfulchat-wasm',
+        VERSION: `${desktopVersion}-slothfulchat-wasm`,
         // the slothfulchat-web commit, so the Log dialog and devmode About show a
         // real ref (assemble.mjs bakes it into config.js; empty without git)
         GIT_REF: (window as any).__slothfulConfig?.commitHash || 'unknown',

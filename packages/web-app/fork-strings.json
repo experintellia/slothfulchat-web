@@ -41,6 +41,9 @@
   "invite_link_view": {
     "message": "View"
   },
+  "proxy_not_supported_in_browser": {
+    "message": "Proxies don't work in this browser version yet, so this proxy can't be used."
+  },
   "resize_chat_list": {
     "message": "Resize chat list"
   },

@@ -113,7 +113,7 @@ index 73525b8c220eef70f69c51e25086809cc7c6cccd..b4691aba852cf20861c28ea6eec962bf
        </div>
      </div>
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index ac2645c545784c199532c61215a2c2962a075058..f1080982f4c2cb1f44f17afbfe6d363c0c43da8b 100644
+index 020952c1dda5999e39b345d24fc7b4b56cffaac0..cba73475622d82de5ebf266bd423bb4c79903018 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -48,6 +48,7 @@ import InvalidUnencryptedMailDialog from '../dialogs/InvalidUnencryptedMail'
@@ -124,7 +124,7 @@ index ac2645c545784c199532c61215a2c2962a075058..f1080982f4c2cb1f44f17afbfe6d363c
    getPostMessageViewType,
    placeholderCaption,
  } from './DownloadOnDemandPlaceholder'
-@@ -1112,9 +1113,7 @@ export default function Message(props: {
+@@ -1113,9 +1114,7 @@ export default function Message(props: {
          <div className={'download'}>
            {text} {'- '}
            {downloadState == 'Failure' && (

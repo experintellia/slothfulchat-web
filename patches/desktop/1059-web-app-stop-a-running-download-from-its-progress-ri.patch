@@ -9,11 +9,16 @@ Content-Transfer-Encoding: 8bit
 The progress ring gets an × button calling abort_download. It takes the
 percentage's place on hover/focus, and for good on touch devices or
 before the first percentage arrives; the arc keeps showing progress.
+
+Rebased onto v2.62.0: abortDownload is fork core API missing from the
+published @deltachat/jsonrpc-client, so it is now typed locally through
+an abortDownload() helper exported from DownloadOnDemandPlaceholder (the
+two call sites failed check:types before this rebase as well).
 ---
- .../_message-download-placeholder.scss        | 40 ++++++++++++
- .../message/DownloadOnDemandPlaceholder.tsx   | 64 +++++++++++++++----
- .../src/components/message/Message.tsx        | 11 ++++
- 3 files changed, 101 insertions(+), 14 deletions(-)
+ .../_message-download-placeholder.scss        | 40 ++++++++++
+ .../message/DownloadOnDemandPlaceholder.tsx   | 74 +++++++++++++++----
+ .../src/components/message/Message.tsx        | 10 +++
+ 3 files changed, 110 insertions(+), 14 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message-download-placeholder.scss b/packages/frontend/scss/message/_message-download-placeholder.scss
 index 0d3ba43fd0a0a0cded69accbb7a635cf88fad05a..91ff2e518e1b070561c70203a648cb84a5aa219f 100644
@@ -69,10 +74,26 @@ index 0d3ba43fd0a0a0cded69accbb7a635cf88fad05a..91ff2e518e1b070561c70203a648cb84
        stroke: rgba(255, 255, 255, 0.4);
        opacity: 1;
 diff --git a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-index b4691aba852cf20861c28ea6eec962bfa645da9a..e8553f49a5d3adfc6a7ad9040627f08923828181 100644
+index b4691aba852cf20861c28ea6eec962bfa645da9a..8d0ccd2f14f5da735b204126e75c9e3cd9c38324 100644
 --- a/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
 +++ b/packages/frontend/src/components/message/DownloadOnDemandPlaceholder.tsx
-@@ -26,21 +26,27 @@ const RING_R = 16
+@@ -20,27 +20,43 @@ import {
+ 
+ export { getPostMessageViewType, placeholderCaption }
+ 
++// `abortDownload` is fork core API (core/1015); the published
++// @deltachat/jsonrpc-client this tree type-checks against lacks it, so it is
++// typed locally (same pattern as backend/replyThreads.ts).
++export const abortDownload = (accountId: number, msgId: number) =>
++  (
++    BackendRemote.rpc as typeof BackendRemote.rpc & {
++      abortDownload(accountId: number, msgId: number): Promise<void>
++    }
++  ).abortDownload(accountId, msgId)
++
+ // Telegram-style circular download indicator: spins while indeterminate
+ // (no DownloadProgress event yet), then the arc fills with the percentage.
+ const RING_R = 16
  const RING_C = 2 * Math.PI * RING_R
  
  function ProgressCircle({
@@ -109,7 +130,7 @@ index b4691aba852cf20861c28ea6eec962bfa645da9a..e8553f49a5d3adfc6a7ad9040627f089
          <circle className='track' cx='20' cy='20' r={RING_R} />
          <circle
            className='bar'
-@@ -54,6 +60,17 @@ function ProgressCircle({
+@@ -54,6 +70,17 @@ function ProgressCircle({
          />
        </svg>
        {!indeterminate && <span className='pct'>{percent}%</span>}
@@ -119,7 +140,7 @@ index b4691aba852cf20861c28ea6eec962bfa645da9a..e8553f49a5d3adfc6a7ad9040627f089
 +        type='button'
 +        className='abort'
 +        aria-label={tx('download_abort')}
-+        onClick={() => BackendRemote.rpc.abortDownload(accountId, message.id)}
++        onClick={() => abortDownload(accountId, message.id)}
 +        tabIndex={tabIndex}
 +      >
 +        <Icon icon='cross' size={14} />
@@ -127,7 +148,7 @@ index b4691aba852cf20861c28ea6eec962bfa645da9a..e8553f49a5d3adfc6a7ad9040627f089
      </div>
    )
  }
-@@ -150,13 +167,17 @@ function DownloadControls({
+@@ -150,13 +177,17 @@ function DownloadControls({
    downloadPercent,
    tabindexForInteractiveContents,
  }: Omit<PlaceholderProps, 'postMessageViewType'>) {
@@ -147,7 +168,7 @@ index b4691aba852cf20861c28ea6eec962bfa645da9a..e8553f49a5d3adfc6a7ad9040627f089
        ) : (
          <CircleDownloadButton
            messageId={message.id}
-@@ -239,7 +260,12 @@ export default function DownloadOnDemandPlaceholder({
+@@ -239,7 +270,12 @@ export default function DownloadOnDemandPlaceholder({
    if (viewType === 'Audio' || viewType === 'Voice') {
      const downloadControl =
        message.downloadState === 'InProgress' ? (
@@ -161,7 +182,7 @@ index b4691aba852cf20861c28ea6eec962bfa645da9a..e8553f49a5d3adfc6a7ad9040627f089
        ) : (
          <CircleDownloadButton
            messageId={message.id}
-@@ -296,7 +322,12 @@ export default function DownloadOnDemandPlaceholder({
+@@ -296,7 +332,12 @@ export default function DownloadOnDemandPlaceholder({
            <DownloadFailedLabel message={message} />
          )}
          {message.downloadState === 'InProgress' ? (
@@ -175,7 +196,7 @@ index b4691aba852cf20861c28ea6eec962bfa645da9a..e8553f49a5d3adfc6a7ad9040627f089
          ) : (
            // Mirror the real card's big primary "Start" button, labeled Download.
            <Button
-@@ -322,7 +353,12 @@ export default function DownloadOnDemandPlaceholder({
+@@ -322,7 +363,12 @@ export default function DownloadOnDemandPlaceholder({
        className={'message-attachment-generic download-on-demand' + contentBelow}
      >
        {message.downloadState === 'InProgress' ? (
@@ -190,19 +211,25 @@ index b4691aba852cf20861c28ea6eec962bfa645da9a..e8553f49a5d3adfc6a7ad9040627f089
          <CircleDownloadButton
            messageId={message.id}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index f1080982f4c2cb1f44f17afbfe6d363c0c43da8b..b32107fb4d2604d27965d2fcb73696a977ac0300 100644
+index cba73475622d82de5ebf266bd423bb4c79903018..921bcf4995159b32724fb2fba827f49cfb6b2f14 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -1121,6 +1121,17 @@ export default function Message(props: {
+@@ -48,6 +48,7 @@ import InvalidUnencryptedMailDialog from '../dialogs/InvalidUnencryptedMail'
+ import Button from '../Button'
+ import VCardComponent from './VCard'
+ import DownloadOnDemandPlaceholder, {
++  abortDownload,
+   DownloadFailedLabel,
+   getPostMessageViewType,
+   placeholderCaption,
+@@ -1122,6 +1123,15 @@ export default function Message(props: {
                {downloadPercent !== null && ` ${downloadPercent}%`}
              </span>
            )}
 +          {downloadState == 'InProgress' && (
 +            <button
 +              type='button'
-+              onClick={() =>
-+                BackendRemote.rpc.abortDownload(accountId, message.id)
-+              }
++              onClick={() => abortDownload(accountId, message.id)}
 +              tabIndex={tabindexForInteractiveContents}
 +            >
 +              {tx('download_abort')}

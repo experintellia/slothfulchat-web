@@ -69,10 +69,10 @@ index bcb05045cac15519b8cff7ffea0203ce3883fed9..a402064ae51fc81ed5b4a3dde0e1327a
    )
  }
 diff --git a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
-index 99ea87af1eca7548de03b462385db079cd687eaa..505a87fa28180cc40aa6fe9ddc41944e7b7a48da 100644
+index 50c9fbdfc3b6c117f71054e627a4d43bdc1c8fd1..46bb4937deb2ea94fbf983708ef545235493d623 100644
 --- a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 +++ b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
-@@ -87,7 +87,7 @@ function EditProfileDialogInner({
+@@ -93,7 +93,7 @@ function EditProfileDialogInner({
    }
  
    return (
@@ -81,7 +81,7 @@ index 99ea87af1eca7548de03b462385db079cd687eaa..505a87fa28180cc40aa6fe9ddc41944e
        <DialogBody>
          <DialogContent>
            <div className={styles.editProfileDialog}>
-@@ -142,15 +142,11 @@ function EditProfileDialogInner({
+@@ -151,15 +151,11 @@ function EditProfileDialogInner({
                {tx('cancel')}
              </FooterActionButton>
            )}

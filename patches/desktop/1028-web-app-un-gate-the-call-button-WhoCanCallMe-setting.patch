@@ -23,12 +23,12 @@ target check, so the browser build can expose the privacy setting.
  2 files changed, 11 insertions(+), 6 deletions(-)
 
 diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
-index 85f2b388c7216502468b7400f1259ecd2578448f..ad239c0d0ea6ff41ed153731037997c3f79e33bf 100644
+index def01437ec8836fd946e87850f76721fcf013c36..4832fb6ade45fecc0aecf30b2ec7d686130fbdba 100644
 --- a/packages/frontend/src/components/ChatView/ChatView.tsx
 +++ b/packages/frontend/src/components/ChatView/ChatView.tsx
-@@ -321,9 +321,11 @@ function ChatNavButtons({
-           <Icon coloring='navbar' icon='map' size={18} />
-         </Button>
+@@ -387,9 +387,11 @@ function ChatNavButtons({
+           size={22}
+         />
        )}
 -      {/* Calls are only implemented on Electron; Tauri and Browser
 -        runtimes do not implement `startOutgoingVideoCall`. */}
@@ -42,10 +42,10 @@ index 85f2b388c7216502468b7400f1259ecd2578448f..ad239c0d0ea6ff41ed153731037997c3
          chat.isEncrypted &&
          // Core only allows placing calls in chats of type "single"
 diff --git a/packages/frontend/src/components/Settings/Notifications.tsx b/packages/frontend/src/components/Settings/Notifications.tsx
-index ab9072696f3a6919d52473d4fd91d9afdac1be06..b29ea71e1039633088cb1962bcd76448b1146322 100644
+index 3396c305d6c289779140f196c7fef1bb8844aec5..ea6516a327b4d44bc526a8e46ef56a229be1e90a 100644
 --- a/packages/frontend/src/components/Settings/Notifications.tsx
 +++ b/packages/frontend/src/components/Settings/Notifications.tsx
-@@ -85,9 +85,12 @@ export default function Notifications({ desktopSettings }: Props) {
+@@ -83,9 +83,12 @@ export default function Notifications({ desktopSettings }: Props) {
          disabled={isMuted || !desktopSettings['notifications']}
          disabledValue={false}
        />

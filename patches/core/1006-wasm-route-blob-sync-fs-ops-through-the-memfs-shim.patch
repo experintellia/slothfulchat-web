@@ -5,16 +5,21 @@ Subject: [PATCH] wasm: route blob sync fs ops through the memfs shim
 
 blob.rs does blocking std::fs inside block_in_place; std::fs is
 unsupported on wasm32, so use the shim's sync_* memfs API there.
+
+Since v2.64.0 upstream no longer reopens the file to guess the format
+from its extension, so the reopenable boxed reader is gone: each target
+builds its concrete reader (BufReader<File> natively, Cursor over the
+memfs bytes on wasm) once.
 ---
- src/blob.rs            | 97 ++++++++++++++++++++++++++++++------------
- src/blob/blob_tests.rs |  6 +--
- 2 files changed, 72 insertions(+), 31 deletions(-)
+ src/blob.rs            | 79 ++++++++++++++++++++++++++++++------------
+ src/blob/blob_tests.rs |  6 ++--
+ 2 files changed, 59 insertions(+), 26 deletions(-)
 
 diff --git a/src/blob.rs b/src/blob.rs
-index 20267a9133affe0b7636b2f156ec3eaf44c67406..a0c4e15dd1a75d0d85e10f01e3245b0f28f38a04 100644
+index 183ce2f7506ddf5e0c8b617116dccb36e35c6fb0..215cdc645c59b15d8308c56691e63815b4dd27c1 100644
 --- a/src/blob.rs
 +++ b/src/blob.rs
-@@ -25,6 +25,26 @@
+@@ -25,6 +25,21 @@
  use crate::message::Viewtype;
  use crate::tools::sanitize_filename;
  
@@ -23,7 +28,7 @@ index 20267a9133affe0b7636b2f156ec3eaf44c67406..a0c4e15dd1a75d0d85e10f01e3245b0f
 +/// so the in-memory `tokio::fs` shim is used there instead.
 +#[cfg(not(target_arch = "wasm32"))]
 +mod sync_fs {
-+    pub use std::fs::{copy, create_dir_all, read, rename, write};
++    pub use std::fs::{copy, create_dir_all, rename, write};
 +}
 +#[cfg(target_arch = "wasm32")]
 +mod sync_fs {
@@ -33,15 +38,10 @@ index 20267a9133affe0b7636b2f156ec3eaf44c67406..a0c4e15dd1a75d0d85e10f01e3245b0f
 +    };
 +}
 +
-+/// Object-safe reader used by [`BlobObject::check_or_recode_to_size`]
-+/// so the same code can read from a file (native) or the in-memory fs (wasm).
-+trait BufReadSeek: std::io::BufRead + std::io::Seek {}
-+impl<T: std::io::BufRead + std::io::Seek> BufReadSeek for T {}
-+
  /// Represents a file in the blob directory.
  ///
  /// The object has a name, which will always be valid UTF-8.  Having a
-@@ -80,10 +100,10 @@ pub fn create_and_deduplicate(
+@@ -79,10 +94,10 @@ pub fn create_and_deduplicate(
                      "Source file not in blobdir. Copying instead of moving in order to prevent moving a file that was still needed."
                  );
                  temp_path = blobdir.join(format!("tmp-{}", rand::random::<u64>()));
@@ -53,9 +53,9 @@ index 20267a9133affe0b7636b2f156ec3eaf44c67406..a0c4e15dd1a75d0d85e10f01e3245b0f
 +                    sync_fs::create_dir_all(blobdir).log_err(context).ok();
 +                    sync_fs::copy(src, &temp_path).context("Copying new blobfile failed")?;
                  };
-                 src_in_blobdir = &temp_path;
-             }
-@@ -108,7 +128,7 @@ pub fn create_and_deduplicate(
+                 &temp_path
+             };
+@@ -107,7 +122,7 @@ pub fn create_and_deduplicate(
  
              // This will also replace an already-existing file.
              // Renaming is atomic, so this will avoid race conditions.
@@ -64,7 +64,7 @@ index 20267a9133affe0b7636b2f156ec3eaf44c67406..a0c4e15dd1a75d0d85e10f01e3245b0f
  
              context.emit_event(EventType::NewBlobFile(blob.as_name().to_string()));
              Ok(blob)
-@@ -132,10 +152,10 @@ pub fn create_and_deduplicate_from_bytes(
+@@ -131,10 +146,10 @@ pub fn create_and_deduplicate_from_bytes(
          task::block_in_place(|| {
              let blobdir = context.get_blobdir();
              let temp_path = blobdir.join(format!("tmp-{}", rand::random::<u64>()));
@@ -78,51 +78,35 @@ index 20267a9133affe0b7636b2f156ec3eaf44c67406..a0c4e15dd1a75d0d85e10f01e3245b0f
              };
  
              BlobObject::create_and_deduplicate(context, &temp_path, Path::new(original_name))
-@@ -336,21 +356,33 @@ fn check_or_recode_to_size(
+@@ -337,13 +352,22 @@ fn check_or_recode_to_size(
          let original_name = name.clone();
          let vt = &mut *viewtype;
          let res: Result<String> = tokio::task::block_in_place(move || {
 -            let mut file = std::fs::File::open(self.to_abs_path())?;
 -            let (nr_bytes, exif) = image_metadata(&file)?;
 +            let abs_path = self.to_abs_path();
-+            #[cfg(target_arch = "wasm32")]
-+            let file_bytes = sync_fs::read(&abs_path)?;
-+            // Returns file length and a fresh reader positioned at the start.
-+            let open_reader = || -> Result<(u64, Box<dyn BufReadSeek>)> {
-+                #[cfg(not(target_arch = "wasm32"))]
-+                {
-+                    let file = std::fs::File::open(&abs_path)?;
-+                    let nr_bytes = file.metadata()?.len();
-+                    Ok((nr_bytes, Box::new(std::io::BufReader::new(file))))
-+                }
-+                #[cfg(target_arch = "wasm32")]
-+                {
-+                    let nr_bytes = file_bytes.len() as u64;
-+                    Ok((nr_bytes, Box::new(Cursor::new(file_bytes.clone()))))
-+                }
++            // A file reader natively, the in-memory fs on wasm; both are BufRead + Seek.
++            #[cfg(not(target_arch = "wasm32"))]
++            let (nr_bytes, mut file) = {
++                let file = std::fs::File::open(&abs_path)?;
++                (file.metadata()?.len(), std::io::BufReader::new(file))
 +            };
-+            let (nr_bytes, mut file) = open_reader()?;
++            #[cfg(target_arch = "wasm32")]
++            let (nr_bytes, mut file) = {
++                let bytes = sync_fs::read(&abs_path)?;
++                (bytes.len() as u64, Cursor::new(bytes))
++            };
 +            let exif = image_metadata(&mut file)?;
              *no_exif_ref = exif.is_none();
 -            // It's strange that BufReader modifies a file position while it takes a non-mut
 -            // reference. Ok, just rewind it.
              file.rewind()?;
--            let imgreader = ImageReader::new(std::io::BufReader::new(&file)).with_guessed_format();
-+            let imgreader = ImageReader::new(file).with_guessed_format();
-             let imgreader = match imgreader {
-                 Ok(ir) => ir,
-                 _ => {
--                    file.rewind()?;
--                    ImageReader::with_format(
--                        std::io::BufReader::new(&file),
--                        ImageFormat::from_path(self.to_abs_path())?,
--                    )
-+                    let (_, file) = open_reader()?;
-+                    ImageReader::with_format(file, ImageFormat::from_path(&abs_path)?)
-                 }
-             };
+-            let imgreader = ImageReader::new(std::io::BufReader::new(&file))
++            let imgreader = ImageReader::new(file)
+                 .with_guessed_format()
+                 .context("Failed to guess image format due to I/O error")?;
              let fmt = imgreader.format().context("Unknown format")?;
-@@ -548,25 +580,34 @@ fn file_hash(src: &Path) -> Result<blake3::Hash> {
+@@ -542,25 +566,34 @@ fn file_hash(src: &Path) -> Result<blake3::Hash> {
          "Use `get_abs_path()` to get the absolute path of the blobfile"
      );
      let mut hasher = blake3::Hasher::new();
@@ -169,10 +153,10 @@ index 20267a9133affe0b7636b2f156ec3eaf44c67406..a0c4e15dd1a75d0d85e10f01e3245b0f
  
  fn exif_orientation(exif: &exif::Exif, context: &Context) -> Orientation {
 diff --git a/src/blob/blob_tests.rs b/src/blob/blob_tests.rs
-index 0b765d72a98712605e820bb49315737ae328767f..6a74964242887f43abaed593e63e48e22ed36d3e 100644
+index f740837d13606fc66059551c36144be85df069e9..01432c977f9e4486a60c5e9195f48a1e612e25a1 100644
 --- a/src/blob/blob_tests.rs
 +++ b/src/blob/blob_tests.rs
-@@ -587,7 +587,7 @@ pub(crate) async fn test(self) -> anyhow::Result<DynamicImage> {
+@@ -589,7 +589,7 @@ pub(crate) async fn test(self) -> anyhow::Result<DynamicImage> {
              .context("failed to write file")?;
          check_image_size(&file, original_width, original_height);
  
@@ -181,7 +165,7 @@ index 0b765d72a98712605e820bb49315737ae328767f..6a74964242887f43abaed593e63e48e2
          if has_exif {
              let exif = exif.unwrap();
              assert_eq!(exif_orientation(&exif, &alice), orientation);
-@@ -633,7 +633,7 @@ pub(crate) async fn test(self) -> anyhow::Result<DynamicImage> {
+@@ -635,7 +635,7 @@ pub(crate) async fn test(self) -> anyhow::Result<DynamicImage> {
              assert_eq!(&bytes1, bytes);
          }
  
@@ -190,7 +174,7 @@ index 0b765d72a98712605e820bb49315737ae328767f..6a74964242887f43abaed593e63e48e2
          assert!(res_viewtype != Viewtype::Image || exif.is_none());
  
          let img = check_image_size(file_saved, compressed_width, compressed_height);
-@@ -715,7 +715,7 @@ async fn test_send_big_gif_as_image() -> Result<()> {
+@@ -717,7 +717,7 @@ async fn test_send_big_gif_as_image() -> Result<()> {
          .get_blobdir()
          .join("saved-".to_string() + &bob_msg.get_filename().unwrap());
      bob_msg.save_file(&bob, &file_saved).await?;

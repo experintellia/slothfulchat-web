@@ -28,10 +28,10 @@ now sit together instead of historical order.
  4 files changed, 31 insertions(+), 17 deletions(-)
 
 diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
-index 0affbd317085ba73d79da5258401ce42f0c640a9..0b368d2e5c1926e83aa2257742b25eecd1ee1b4b 100644
+index 5d2c37addbca7d3db19d2abdc24a3cfe0dd439cd..0c0307cc8037090e37444812329074b405c67558 100644
 --- a/packages/frontend/src/components/Icon/index.tsx
 +++ b/packages/frontend/src/components/Icon/index.tsx
-@@ -48,6 +48,7 @@ export type IconName =
+@@ -49,6 +49,7 @@ export type IconName =
    | 'settings'
    | 'swap_vert'
    | 'swap_hor'
@@ -40,7 +40,7 @@ index 0affbd317085ba73d79da5258401ce42f0c640a9..0b368d2e5c1926e83aa2257742b25eec
    | 'upload-file'
    | 'visibility'
 diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
-index 79669fa2bb7717f8ec61041f9e4d38bcdc94e8dc..be8430cc21715c877c523a2bcefd2826241dff9e 100644
+index 73a6be5581870b807d8b3b457f52e346d196b5fa..0820800f6f17fbd1741ed69ec3c8428263ead92a 100644
 --- a/packages/frontend/src/components/Settings/Advanced.tsx
 +++ b/packages/frontend/src/components/Settings/Advanced.tsx
 @@ -1,6 +1,5 @@
@@ -63,11 +63,11 @@ index 79669fa2bb7717f8ec61041f9e4d38bcdc94e8dc..be8430cc21715c877c523a2bcefd2826
          <>
            <SettingsSeparator />
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 5995b3e5e8e2284642f7fcf3650ad66f1a0553c9..f4a6b2ccc69ce690a7b4928c61c021f761aa3009 100644
+index 86863f98aa70f4dc523c20bfb9b4354447f298fd..0faa9c0b90b8f91097fefccd524b9c2c63ec545e 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-@@ -5,6 +5,8 @@ import SettingsStoreInstance, {
-   type SettingsStoreState,
+@@ -5,6 +5,8 @@ import {
+   useDesktopSettingsStore,
  } from '../../stores/settings'
  import DesktopSettingsSwitch from './DesktopSettingsSwitch'
 +import SettingsHeading from './SettingsHeading'
@@ -75,16 +75,13 @@ index 5995b3e5e8e2284642f7fcf3650ad66f1a0553c9..f4a6b2ccc69ce690a7b4928c61c021f7
  import useTranslationFunction from '../../hooks/useTranslationFunction'
  import SettingsSwitch from './SettingsSwitch'
  import { runtime } from '@deltachat-desktop/runtime-interface'
-@@ -55,37 +57,43 @@ export function ExperimentalFeatures() {
+@@ -56,34 +58,40 @@ export function ExperimentalFeatures() {
      }
  
      message +=
 -      '\n\n• If you want to quit the experimental feature, you can disable it at "Settings / Advanced"'
 +      '\n\n• If you want to quit the experimental feature, you can disable it at "Settings / Experimental features"'
-     openDialog(AlertDialog, {
-       message,
-       confirmLabel: tx('ok'),
-     })
+     openDialog(AlertDialog, { message })
    }
  
 +  // grouped by where the feature shows up, so related toggles sit together
@@ -131,10 +128,10 @@ index 5995b3e5e8e2284642f7fcf3650ad66f1a0553c9..f4a6b2ccc69ce690a7b4928c61c021f7
          <DesktopSettingsSwitch
            settingsKey='contentProtectionEnabled'
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 786ea5822eabe0d8c0e60450d4a6caf5f07dbeb1..bd9ef167abd229fd60c10fbb94eb93df2c3def28 100644
+index 1792b4ed1914a2243516218ece4e675c35f3ef21..7a270d9c925bda43e1ba28540e2875920445a872 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
-@@ -11,6 +11,7 @@ import Notifications from './Notifications'
+@@ -14,6 +14,7 @@ import Notifications from './Notifications'
  import About from '../dialogs/About'
  import Appearance from './Appearance'
  import Advanced from './Advanced'
@@ -142,7 +139,7 @@ index 786ea5822eabe0d8c0e60450d4a6caf5f07dbeb1..bd9ef167abd229fd60c10fbb94eb93df
  import Profile from './Profile'
  import Dialog, { DialogBody, DialogHeader } from '../Dialog'
  import EditProfileDialog from '../dialogs/EditProfileDialog'
-@@ -28,12 +29,14 @@ type SettingsView =
+@@ -31,12 +32,14 @@ type SettingsView =
    | 'notifications'
    | 'appearance'
    | 'advanced'
@@ -157,7 +154,7 @@ index 786ea5822eabe0d8c0e60450d4a6caf5f07dbeb1..bd9ef167abd229fd60c10fbb94eb93df
  }
  
  /**
-@@ -127,6 +130,13 @@ function SettingsNav({
+@@ -130,6 +133,13 @@ function SettingsNav({
        >
          {tx('menu_advanced')}
        </SettingsIconButton>
@@ -171,9 +168,9 @@ index 786ea5822eabe0d8c0e60450d4a6caf5f07dbeb1..bd9ef167abd229fd60c10fbb94eb93df
        <SettingsSeparator />
        {!runtime.getRuntimeInfo().isMac && (
          <SettingsIconButton
-@@ -178,6 +188,7 @@ function SettingsSectionBody({
-         />
-       )}
+@@ -184,6 +194,7 @@ function SettingsSectionBody({
+           />
+         )}
        {section === 'advanced' && <Advanced onClose={closeSettings} />}
 +      {section === 'experimental' && <ExperimentalFeatures />}
        <SettingsEndSeparator />

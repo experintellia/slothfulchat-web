@@ -79,10 +79,10 @@ index 130faa3a96a1fa28be595d4c61938552719d64b8..cad4f00e8cf47972f81a1b81c075cd05
    }
  }
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index 097705511fd37227f20ad08672e8d035231bdd97..58d59822b279829edd0634729a7eacedd985c800 100644
+index 78747ad142356230a4603f2b306c1e6ab0e81bfa..945ac8b96f732db2024c3af43b295a9decaf0ecd 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
-@@ -13,6 +13,7 @@ import { extension } from 'mime-types'
+@@ -12,6 +12,7 @@ import { extension } from 'mime-types'
  
  import MenuAttachment from './menuAttachment'
  import ComposerMessageInput from './ComposerMessageInput'
@@ -90,7 +90,7 @@ index 097705511fd37227f20ad08672e8d035231bdd97..58d59822b279829edd0634729a7eaced
  import LinkPreviewGhost from './linkPreview/LinkPreviewGhost'
  import ghostStyles from './linkPreview/styles.module.scss'
  import Icon from '../Icon'
-@@ -32,6 +33,7 @@ import useTranslationFunction from '../../hooks/useTranslationFunction'
+@@ -31,6 +32,7 @@ import useTranslationFunction from '../../hooks/useTranslationFunction'
  import useMessage from '../../hooks/chat/useMessage'
  import useChat from '../../hooks/chat/useChat'
  import { useDraft, type DraftObject } from '../../hooks/chat/useDraft'
@@ -100,7 +100,7 @@ index 097705511fd37227f20ad08672e8d035231bdd97..58d59822b279829edd0634729a7eaced
  import { VisualVCardComponent } from '../message/VCard'
 @@ -150,6 +152,22 @@ const Composer = forwardRef<
  
-   const settingsStore = useSettingsStore()[0]
+   const desktopSettingsStore = useDesktopSettingsStore()[0]
  
 +  // `/`-completion for DM chats whose contact lists `/commands` in their bio.
 +  const dmContactId =
@@ -121,16 +121,16 @@ index 097705511fd37227f20ad08672e8d035231bdd97..58d59822b279829edd0634729a7eaced
    // Sender-baked link previews: when the draft has a URL and no image, offer to
    // generate a preview card and attach it as an image. See docs/link-preview.md.
    // Experimental and off by default; turn it on in Settings → Advanced.
-@@ -848,6 +866,7 @@ const Composer = forwardRef<
-                   settingsStore?.desktopSettings.experimentalCompletionMenu ===
-                   true
+@@ -865,6 +883,7 @@ const Composer = forwardRef<
+                 completionMenu={
+                   desktopSettingsStore.experimentalCompletionMenu === true
                  }
 +                botCommands={botCommands}
                  loadingDraft={draftIsLoading}
                  sendMessageOrEditRequest={
                    (!messageEditing.isEditingModeActive
 diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
-index cb9d28ae4267efb7138312e12ca24f166f8df640..b561f5dc38f9f9ab74bb8c6fd76613ebf6bdb73c 100644
+index 16860f764971520ee142260e583dea3c660fc20c..6cb92c090478e8107f034ea9e7db7b9bf7ebda70 100644
 --- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 +++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 @@ -7,6 +7,10 @@ import { I18nContext } from '../../contexts/I18nContext'
@@ -164,7 +164,7 @@ index cb9d28ae4267efb7138312e12ca24f166f8df640..b561f5dc38f9f9ab74bb8c6fd76613eb
    onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
    // used to show/hide send button
    onChange: (text: string) => void
-@@ -186,12 +188,21 @@ export default class ComposerMessageInput extends React.Component<
+@@ -176,12 +178,21 @@ export default class ComposerMessageInput extends React.Component<
      this.refreshCompletion(el.value, el.selectionStart ?? el.value.length)
    }
  
@@ -187,7 +187,7 @@ index cb9d28ae4267efb7138312e12ca24f166f8df640..b561f5dc38f9f9ab74bb8c6fd76613eb
        const token = findActiveToken(text, caret, provider)
        if (!token) {
          continue
-@@ -203,7 +214,15 @@ export default class ComposerMessageInput extends React.Component<
+@@ -193,7 +204,15 @@ export default class ComposerMessageInput extends React.Component<
          return
        }
        this.completionDismissed = null
@@ -204,7 +204,7 @@ index cb9d28ae4267efb7138312e12ca24f166f8df640..b561f5dc38f9f9ab74bb8c6fd76613eb
        return
      }
      this.closeCompletion()
-@@ -250,9 +269,14 @@ export default class ComposerMessageInput extends React.Component<
+@@ -240,9 +259,14 @@ export default class ComposerMessageInput extends React.Component<
        return
      }
      const text = this.props.text
@@ -221,7 +221,7 @@ index cb9d28ae4267efb7138312e12ca24f166f8df640..b561f5dc38f9f9ab74bb8c6fd76613eb
      this.closeCompletion()
      this.props.onChange(updated)
    }
-@@ -405,7 +429,11 @@ export default class ComposerMessageInput extends React.Component<
+@@ -395,7 +419,11 @@ export default class ComposerMessageInput extends React.Component<
            <>
              {completion.open && (
                <CompletionMenu

@@ -10,9 +10,9 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
+edition = "2024"
 name = "mail-builder"
-version = "0.4.4"
+version = "1.0.0"
 authors = ["Stalwart Labs <hello@stalw.art>"]
 build = false
 autolib = false

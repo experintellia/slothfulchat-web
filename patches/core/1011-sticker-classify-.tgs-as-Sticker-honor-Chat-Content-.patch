@@ -21,10 +21,10 @@ and plays the Lottie.
  2 files changed, 14 insertions(+), 3 deletions(-)
 
 diff --git a/src/message.rs b/src/message.rs
-index 4a80b57442c7239b983a3dea2ded5dcfe90de120..677b75e698dce1f16a44ff6af0df937d4ed743cd 100644
+index dc3ed2f0d700dc1e553d9766b4ccc473c066be46..05b7273185bff0ec706e636978114b2d8d1f6097 100644
 --- a/src/message.rs
 +++ b/src/message.rs
-@@ -1595,7 +1595,10 @@ pub(crate) fn guess_msgtype_from_path_suffix(path: &Path) -> Option<(Viewtype, &
+@@ -1571,7 +1571,10 @@ pub(crate) fn guess_msgtype_from_path_suffix(path: &Path) -> Option<(Viewtype, &
          "rtf" => (Viewtype::File, "application/rtf"),
          "spx" => (Viewtype::File, "audio/ogg"), // Ogg Speex Profile
          "svg" => (Viewtype::File, "image/svg+xml"),
@@ -37,10 +37,10 @@ index 4a80b57442c7239b983a3dea2ded5dcfe90de120..677b75e698dce1f16a44ff6af0df937d
          "tif" => (Viewtype::File, "image/tiff"),
          "ttf" => (Viewtype::File, "font/ttf"),
 diff --git a/src/mimeparser.rs b/src/mimeparser.rs
-index eda7f8540a87a17387df1bbf0c59294d7953a775..357ea9f32a791135562e0d6edda9fbef0f998541 100644
+index 32bacab83b5d1c60d097c89d924e973782ec66ce..49552038b7f3605f453d26ea5232d04b75397a16 100644
 --- a/src/mimeparser.rs
 +++ b/src/mimeparser.rs
-@@ -848,8 +848,16 @@ fn parse_attachments(&mut self) {
+@@ -856,8 +856,16 @@ fn parse_attachments(&mut self) {
              {
                  part.typ = Viewtype::Voice;
              }

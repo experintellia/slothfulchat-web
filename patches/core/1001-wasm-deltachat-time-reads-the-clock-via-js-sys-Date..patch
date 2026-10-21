@@ -11,10 +11,10 @@ from the JS clock does not.
  2 files changed, 15 insertions(+), 1 deletion(-)
 
 diff --git a/deltachat-time/Cargo.toml b/deltachat-time/Cargo.toml
-index a2931d7263b496997c354a61a65809332159a534..7055fb9851434f4f08cb035e33ed2469ddcece2f 100644
+index 7a055f629b5d5b1842ee284c3cdc75358136161e..168e1dccfb0c8dca6e3b00534b0ac772fa201c35 100644
 --- a/deltachat-time/Cargo.toml
 +++ b/deltachat-time/Cargo.toml
-@@ -6,3 +6,6 @@ edition = "2021"
+@@ -6,3 +6,6 @@ edition = "2024"
  license = "MPL-2.0"
  
  [dependencies]

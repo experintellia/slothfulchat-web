@@ -72,296 +72,59 @@ the connectivity view (HTML), which kept saying "Connected":
   an error) shows after a single round-trip.
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+Rebased onto v2.64.0, where SMTP picks a transport per connection
+(sorted_transports, smtp::Connection) and is_chatmail, oauth2 and the
+provider database are gone: a webimap transport now becomes a Connection
+whose transport is Transport::Webimap (nothing to dial), smtp_send()
+routes on that instead of re-loading the primary transport, configure()
+verifies webimap in place of the IMAP/SMTP probe and no longer sets
+is_chatmail, and request() sends origin-form URIs like upstream's other
+hyper requests.
 ---
- Cargo.lock                                    | 169 +++++++-
  deltachat-ffi/src/lot.rs                      |   2 +-
  .../src/api/types/login_param.rs              |   7 +
  deltachat-jsonrpc/src/api/types/qr.rs         |   5 +-
- src/configure.rs                              | 160 +++++---
+ src/autorelay.rs                              |   1 +
+ src/configure.rs                              |  54 ++-
  src/lib.rs                                    |   1 +
- src/login_param.rs                            |   7 +
+ src/login_param.rs                            |   6 +
  src/net/http.rs                               |  74 +++-
- src/net/http_wasm.rs                          |  54 ++-
- src/qr.rs                                     |  98 +++++
+ src/net/http_wasm.rs                          |  63 +--
+ src/qr.rs                                     |  97 +++++
  src/qr/dclogin_scheme.rs                      |   1 +
  src/qr/qr_tests.rs                            |  40 +-
  src/scheduler.rs                              |  19 +-
  src/scheduler/connectivity.rs                 |   6 +-
- src/smtp.rs                                   |  66 +++-
+ src/smtp.rs                                   |  88 +++--
+ src/smtp/send.rs                              |   5 +-
  src/transport.rs                              |   9 +
- src/transport/transport_tests.rs              |   5 +-
+ src/transport/transport_tests.rs              |   4 +-
  src/webimap.rs                                | 374 ++++++++++++++++++
- 18 files changed, 997 insertions(+), 100 deletions(-)
+ 19 files changed, 793 insertions(+), 63 deletions(-)
  create mode 100644 src/webimap.rs
 
-diff --git a/Cargo.lock b/Cargo.lock
-index a5493caefab1568ff12f4015e0554f141b2b9f94..1dc1060c0b96caa3ade8d919c3c369721d7267a0 100644
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -2,6 +2,18 @@
- # It is not intended for manual editing.
- version = 4
- 
-+[[package]]
-+name = "accessory"
-+version = "2.1.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "28e416a3ab45838bac2ab2d81b1088d738d7b2d2c5272a54d39366565a29bd80"
-+dependencies = [
-+ "macroific",
-+ "proc-macro2",
-+ "quote",
-+ "syn 2.0.118",
-+]
-+
- [[package]]
- name = "addr2line"
- version = "0.25.1"
-@@ -1347,6 +1359,20 @@ dependencies = [
-  "generic-array",
- ]
- 
-+[[package]]
-+name = "delegate-display"
-+version = "3.0.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "9926686c832494164c33a36bf65118f4bd6e704000b58c94681bf62e9ad67a74"
-+dependencies = [
-+ "impartial-ord",
-+ "itoa",
-+ "macroific",
-+ "proc-macro2",
-+ "quote",
-+ "syn 2.0.118",
-+]
-+
- [[package]]
- name = "deltachat"
- version = "2.54.0-dev"
-@@ -1436,9 +1462,7 @@ dependencies = [
-  "url",
-  "uuid",
-  "walkdir",
-- "wasm-bindgen-futures",
-  "webpki-roots",
-- "ws_stream_wasm",
- ]
- 
- [[package]]
-@@ -2028,6 +2052,18 @@ version = "0.1.9"
- source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
- 
-+[[package]]
-+name = "fancy_constructor"
-+version = "2.1.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "28a27643a5d05f3a22f5afd6e0d0e6e354f92d37907006f97b84b9cb79082198"
-+dependencies = [
-+ "macroific",
-+ "proc-macro2",
-+ "quote",
-+ "syn 2.0.118",
-+]
-+
- [[package]]
- name = "fast-socks5"
- version = "1.0.0"
-@@ -2993,6 +3029,51 @@ dependencies = [
-  "nom 7.1.3",
- ]
- 
-+[[package]]
-+name = "impartial-ord"
-+version = "1.0.6"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "0ab604ee7085efba6efc65e4ebca0e9533e3aff6cb501d7d77b211e3a781c6d5"
-+dependencies = [
-+ "proc-macro2",
-+ "quote",
-+ "syn 2.0.118",
-+]
-+
-+[[package]]
-+name = "indexed_db_futures"
-+version = "0.6.4"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "69ff41758cbd104e91033bb53bc449bec7eea65652960c81eddf3fc146ecea19"
-+dependencies = [
-+ "accessory",
-+ "cfg-if",
-+ "delegate-display",
-+ "derive_more 2.0.1",
-+ "fancy_constructor",
-+ "indexed_db_futures_macros_internal",
-+ "js-sys",
-+ "sealed",
-+ "smallvec",
-+ "thiserror 2.0.18",
-+ "tokio",
-+ "wasm-bindgen",
-+ "wasm-bindgen-futures",
-+ "web-sys",
-+]
-+
-+[[package]]
-+name = "indexed_db_futures_macros_internal"
-+version = "1.0.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "caeba94923b68f254abef921cea7e7698bf4675fdd89d7c58bf1ed885b49a27d"
-+dependencies = [
-+ "macroific",
-+ "proc-macro2",
-+ "quote",
-+ "syn 2.0.118",
-+]
-+
- [[package]]
- name = "indexmap"
- version = "2.11.4"
-@@ -3000,7 +3081,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
- dependencies = [
-  "equivalent",
-- "hashbrown 0.15.4",
-+ "hashbrown 0.16.1",
- ]
- 
- [[package]]
-@@ -3499,6 +3580,54 @@ version = "0.11.11"
- source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "9106e1d747ffd48e6be5bb2d97fa706ed25b144fbee4d5c02eae110cd8d6badd"
- 
-+[[package]]
-+name = "macroific"
-+version = "2.0.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "89f276537b4b8f981bf1c13d79470980f71134b7bdcc5e6e911e910e556b0285"
-+dependencies = [
-+ "macroific_attr_parse",
-+ "macroific_core",
-+ "macroific_macro",
-+]
-+
-+[[package]]
-+name = "macroific_attr_parse"
-+version = "2.0.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "ad4023761b45fcd36abed8fb7ae6a80456b0a38102d55e89a57d9a594a236be9"
-+dependencies = [
-+ "proc-macro2",
-+ "quote",
-+ "sealed",
-+ "syn 2.0.118",
-+]
-+
-+[[package]]
-+name = "macroific_core"
-+version = "2.0.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "d0a7594d3c14916fa55bef7e9d18c5daa9ed410dd37504251e4b75bbdeec33e3"
-+dependencies = [
-+ "proc-macro2",
-+ "quote",
-+ "sealed",
-+ "syn 2.0.118",
-+]
-+
-+[[package]]
-+name = "macroific_macro"
-+version = "2.0.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "4da6f2ed796261b0a74e2b52b42c693bb6dee1effba3a482c49592659f824b3b"
-+dependencies = [
-+ "macroific_attr_parse",
-+ "macroific_core",
-+ "proc-macro2",
-+ "quote",
-+ "syn 2.0.118",
-+]
-+
- [[package]]
- name = "mail-builder"
- version = "0.4.4"
-@@ -5496,6 +5625,17 @@ dependencies = [
-  "url",
- ]
- 
-+[[package]]
-+name = "sealed"
-+version = "0.6.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "22f968c5ea23d555e670b449c1c5e7b2fc399fdaec1d304a17cd48e288abc107"
-+dependencies = [
-+ "proc-macro2",
-+ "quote",
-+ "syn 2.0.118",
-+]
-+
- [[package]]
- name = "sec1"
- version = "0.7.3"
-@@ -5978,6 +6118,22 @@ dependencies = [
-  "wasm-bindgen",
- ]
- 
-+[[package]]
-+name = "sqlite-wasm-vfs"
-+version = "0.2.0"
-+source = "registry+https://github.com/rust-lang/crates.io-index"
-+checksum = "7f7a5c9ac229421d577bb5a9bb59048838509958b218dd4e0b3c1214a87c361e"
-+dependencies = [
-+ "indexed_db_futures",
-+ "js-sys",
-+ "rsqlite-vfs",
-+ "thiserror 2.0.18",
-+ "tokio",
-+ "wasm-bindgen",
-+ "wasm-bindgen-futures",
-+ "web-sys",
-+]
-+
- [[package]]
- name = "stable_deref_trait"
- version = "1.2.0"
-@@ -6460,9 +6616,16 @@ version = "1.0.0"
- dependencies = [
-  "futures",
-  "js-sys",
-+ "serde_json",
-+ "sqlite-wasm-rs",
-+ "sqlite-wasm-vfs",
-  "tokio",
-+ "tokio-util",
-+ "wasm-bindgen",
-  "wasm-bindgen-futures",
-  "wasmtimer",
-+ "web-sys",
-+ "ws_stream_wasm",
- ]
- 
- [[package]]
 diff --git a/deltachat-ffi/src/lot.rs b/deltachat-ffi/src/lot.rs
-index 1c8c0af5b9d61934a2a30549f2a9a1360ccc38b2..f5440f65f37eb36def9c4b5d1463f8fdc518150b 100644
+index 79a7a5d2e48585665e70db33ba4444d06007e143..c17ce2cd939cc78fc77c9ebdae7c2ddeb3055889 100644
 --- a/deltachat-ffi/src/lot.rs
 +++ b/deltachat-ffi/src/lot.rs
-@@ -49,7 +49,7 @@ pub fn get_text1(&self) -> Option<Cow<'_, str>> {
+@@ -47,7 +47,7 @@ pub fn get_text1(&self) -> Option<Cow<'_, str>> {
+                 Qr::AskVerifyGroup { grpname, .. } => Some(Cow::Borrowed(grpname)),
+                 Qr::AskJoinBroadcast { name, .. } => Some(Cow::Borrowed(name)),
                  Qr::FprOk { .. } => None,
-                 Qr::FprMismatch { .. } => None,
-                 Qr::FprWithoutAddr { fingerprint, .. } => Some(Cow::Borrowed(fingerprint)),
 -                Qr::Account { domain } => Some(Cow::Borrowed(domain)),
 +                Qr::Account { domain, .. } => Some(Cow::Borrowed(domain)),
                  Qr::Backup2 { .. } => None,
                  Qr::BackupTooNew { .. } => None,
                  Qr::Proxy { host, port, .. } => Some(Cow::Owned(format!("{host}:{port}"))),
 diff --git a/deltachat-jsonrpc/src/api/types/login_param.rs b/deltachat-jsonrpc/src/api/types/login_param.rs
-index 1112e6a39b2fa50118f346bbafd02b6bfd06090b..0bb67457bd1caccb43cff6025f9fe5eb819b62b3 100644
+index e9832dc6eb087a5984d537c38f31701b49e73fb0..e8e451a43c895c67e41c79c02e5d95ea75309e47 100644
 --- a/deltachat-jsonrpc/src/api/types/login_param.rs
 +++ b/deltachat-jsonrpc/src/api/types/login_param.rs
-@@ -70,6 +70,11 @@ pub struct EnteredLoginParam {
-     /// If true, login via OAUTH2 (not recommended anymore).
-     /// Default: false
-     pub oauth2: Option<bool>,
+@@ -56,6 +56,11 @@ pub struct EnteredLoginParam {
+     /// invalid hostnames.
+     /// Default: Automatic
+     pub certificate_checks: Option<EnteredCertificateChecks>,
 +
 +    /// If true, mail access goes over madmail's webimap HTTP API
 +    /// instead of IMAP/SMTP (experimental).
@@ -369,28 +132,28 @@ index 1112e6a39b2fa50118f346bbafd02b6bfd06090b..0bb67457bd1caccb43cff6025f9fe5eb
 +    pub webimap: Option<bool>,
  }
  
- impl From<dc::TransportListEntry> for TransportListEntry {
-@@ -101,6 +106,7 @@ fn from(param: dc::EnteredLoginParam) -> Self {
+ impl From<dc::EnteredLoginParam> for EnteredLoginParam {
+@@ -77,6 +82,7 @@ fn from(param: dc::EnteredLoginParam) -> Self {
+             smtp_user: param.smtp.user.into_option(),
              smtp_password: param.smtp.password.into_option(),
              certificate_checks: certificate_checks.into_option(),
-             oauth2: param.oauth2.into_option(),
 +            webimap: param.webimap.into_option(),
          }
      }
  }
-@@ -128,6 +134,7 @@ fn try_from(param: EnteredLoginParam) -> Result<Self> {
+@@ -104,6 +110,7 @@ fn try_from(param: EnteredLoginParam) -> Result<Self> {
              },
              certificate_checks: param.certificate_checks.unwrap_or_default().into(),
-             oauth2: param.oauth2.unwrap_or_default(),
+             oauth2: false,
 +            webimap: param.webimap.unwrap_or_default(),
          })
      }
  }
 diff --git a/deltachat-jsonrpc/src/api/types/qr.rs b/deltachat-jsonrpc/src/api/types/qr.rs
-index 4bf55f398a48e212adbfe444dd3ed32ecdd2f376..184fc88a3b990177fe8d813c1c9a631277375b46 100644
+index a8542bd0b9847c873ff186c05c5f09aa35498b04..1939fe93cbbc338861e6d808e7178cfb1f544dfe 100644
 --- a/deltachat-jsonrpc/src/api/types/qr.rs
 +++ b/deltachat-jsonrpc/src/api/types/qr.rs
-@@ -82,6 +82,9 @@ pub enum QrObject {
+@@ -72,6 +72,9 @@ pub enum QrObject {
      Account {
          /// Server domain name.
          domain: String,
@@ -400,29 +163,41 @@ index 4bf55f398a48e212adbfe444dd3ed32ecdd2f376..184fc88a3b990177fe8d813c1c9a6312
      },
      /// Provides a backup that can be retrieved using iroh-net based backup transfer protocol.
      Backup2 {
-@@ -301,7 +304,7 @@ fn from(qr: Qr) -> Self {
-                 QrObject::FprMismatch { contact_id }
+@@ -286,7 +289,7 @@ fn from(qr: Qr) -> Self {
+                 let contact_id = contact_id.to_u32();
+                 QrObject::FprOk { contact_id }
              }
-             Qr::FprWithoutAddr { fingerprint } => QrObject::FprWithoutAddr { fingerprint },
 -            Qr::Account { domain } => QrObject::Account { domain },
 +            Qr::Account { domain, webimap } => QrObject::Account { domain, webimap },
              Qr::Backup2 {
                  ref node_addr,
                  auth_token,
+diff --git a/src/autorelay.rs b/src/autorelay.rs
+index 424baee6f759076a566949eb640aa88bc0e52aca..34ed02a3ebb154fa41a7f746ae87616a7db1d045 100644
+--- a/src/autorelay.rs
++++ b/src/autorelay.rs
+@@ -276,6 +276,7 @@ pub(crate) fn login_param_from_host(host: &str, mark_as_autorelay: bool) -> Ente
+         smtp: Default::default(),
+         certificate_checks: EnteredCertificateChecks::Strict,
+         oauth2: false,
++        webimap: false,
+     }
+ }
+ 
 diff --git a/src/configure.rs b/src/configure.rs
-index 54fc172b847e8604fe7bacb5d26616b0e87d9156..33da10d442c1431f13d6c68f66db07eb38602c4e 100644
+index 98309e6b274007abb2de16f7e253322c8bedb386..0c4ca91cf4d4a206adbedcea9ee470670a85a622 100644
 --- a/src/configure.rs
 +++ b/src/configure.rs
-@@ -40,7 +40,7 @@
+@@ -37,7 +37,7 @@
  use crate::tools::time;
  use crate::transport::{
      ConfiguredCertificateChecks, ConfiguredLoginParam, ConfiguredServerLoginParam,
--    ConnectionCandidate, send_sync_transports,
-+    ConnectionCandidate, ConnectionSecurity, send_sync_transports,
+-    ConnectionCandidate, delete_transport_row, maybe_update_sending_transport,
++    ConnectionCandidate, ConnectionSecurity, delete_transport_row, maybe_update_sending_transport,
+     purge_transport_caches, send_sync_transports, transport_addrs,
  };
- use crate::{EventType, stock_str};
- use crate::{chat, provider};
-@@ -418,6 +418,46 @@ async fn get_configured_param(
+ use crate::{EventType, autorelay, stock_str};
+@@ -376,6 +376,44 @@ async fn get_configured_param(
          param.smtp.password.clone()
      };
  
@@ -459,49 +234,28 @@ index 54fc172b847e8604fe7bacb5d26616b0e87d9156..33da10d442c1431f13d6c68f66db07eb
 +            }],
 +            smtp_user: param.addr.clone(),
 +            smtp_password,
-+            provider: None,
 +            certificate_checks: ConfiguredCertificateChecks::Strict,
-+            oauth2: false,
 +            webimap: true,
 +        });
 +    }
 +
-     let mut addr = param.addr.clone();
-     if param.oauth2 {
-         // the used oauth2 addr may differ, check this.
-@@ -586,6 +626,7 @@ async fn get_configured_param(
+     let addr = param.addr.clone();
+ 
+     let parsed = EmailAddress::new(&param.addr).context("Bad email-address")?;
+@@ -488,6 +526,7 @@ async fn get_configured_param(
+                 ConfiguredCertificateChecks::AcceptInvalidCertificates
              }
          },
-         oauth2: param.oauth2,
 +        webimap: false,
      };
      Ok(configured_login_param)
  }
-@@ -599,65 +640,84 @@ async fn configure(ctx: &Context, param: &EnteredLoginParam) -> Result<Option<&'
+@@ -505,7 +544,18 @@ pub(crate) async fn configure(
  
-     progress!(ctx, 550);
+     emit_progress(ctx, 550);
  
--    // Spawn SMTP configuration task
--    // to try SMTP while connecting to IMAP.
--    let context_smtp = ctx.clone();
--    let smtp_param = configured_param.smtp.clone();
--    let smtp_password = configured_param.smtp_password.clone();
--    let smtp_addr = configured_param.addr.clone();
--
--    let proxy_config2 = proxy_config.clone();
--    let smtp_config_task = task::spawn(async move {
--        let mut smtp = Smtp::new();
--        smtp.connect(
--            &context_smtp,
--            &smtp_param,
--            &smtp_password,
--            &proxy_config2,
--            &smtp_addr,
--            strict_tls,
--            configured_param.oauth2,
--        )
--        .await?;
-+    if configured_param.webimap {
+-    if !skip_network {
++    if configured_param.webimap && !skip_network {
 +        // webimap (madmail): a single authenticated HTTP request verifies
 +        // the credentials for both receiving and sending.
 +        if let Err(err) = crate::webimap::WebimapClient::new(&configured_param)?
@@ -510,126 +264,31 @@ index 54fc172b847e8604fe7bacb5d26616b0e87d9156..33da10d442c1431f13d6c68f66db07eb
 +        {
 +            bail!("{}", nicer_configuration_error(ctx, format!("{err:#}")));
 +        }
- 
--        Ok::<(), anyhow::Error>(())
--    });
-+        progress!(ctx, 900);
- 
--    progress!(ctx, 600);
-+        // madmail relays are PGP-only, like chatmail.
-+        if !ctx.get_config_bool(Config::FixIsChatmail).await? {
-+            ctx.sql.set_raw_config("is_chatmail", Some("1")).await?;
-+        }
-+    } else {
-+        // Spawn SMTP configuration task
-+        // to try SMTP while connecting to IMAP.
-+        let context_smtp = ctx.clone();
-+        let smtp_param = configured_param.smtp.clone();
-+        let smtp_password = configured_param.smtp_password.clone();
-+        let smtp_addr = configured_param.addr.clone();
-+        let oauth2 = configured_param.oauth2;
 +
-+        let proxy_config2 = proxy_config.clone();
-+        let smtp_config_task = task::spawn(async move {
-+            let mut smtp = Smtp::new();
-+            smtp.connect(
-+                &context_smtp,
-+                &smtp_param,
-+                &smtp_password,
-+                &proxy_config2,
-+                &smtp_addr,
-+                strict_tls,
-+                oauth2,
-+            )
-+            .await?;
- 
--    // Configure IMAP
-+            Ok::<(), anyhow::Error>(())
-+        });
- 
--    let transport_id = 0;
--    let (_s, r) = async_channel::bounded(1);
--    let mut imap = Imap::new(ctx, transport_id, configured_param.clone(), r).await?;
--    let configuring = true;
--    let imap_session = match imap.connect(ctx, configuring).await {
--        Ok(imap_session) => imap_session,
--        Err(err) => {
--            bail!("{}", nicer_configuration_error(ctx, format!("{err:#}")));
--        }
--    };
-+        progress!(ctx, 600);
-+
-+        // Configure IMAP
- 
--    progress!(ctx, 850);
-+        let transport_id = 0;
-+        let (_s, r) = async_channel::bounded(1);
-+        let mut imap = Imap::new(ctx, transport_id, configured_param.clone(), r).await?;
-+        let configuring = true;
-+        let imap_session = match imap.connect(ctx, configuring).await {
-+            Ok(imap_session) => imap_session,
-+            Err(err) => {
-+                bail!("{}", nicer_configuration_error(ctx, format!("{err:#}")));
-+            }
-+        };
- 
--    // Wait for SMTP configuration
--    smtp_config_task.await??;
-+        progress!(ctx, 850);
- 
--    progress!(ctx, 900);
-+        // Wait for SMTP configuration
-+        smtp_config_task.await??;
- 
--    let is_configured = ctx.is_configured().await?;
--    if !ctx.get_config_bool(Config::FixIsChatmail).await? {
--        if imap_session.is_chatmail() {
--            ctx.sql.set_raw_config("is_chatmail", Some("1")).await?;
--        } else if !is_configured {
--            // Reset the setting that may have been set
--            // during failed configuration.
--            ctx.sql.set_raw_config("is_chatmail", Some("0")).await?;
-+        progress!(ctx, 900);
-+
-+        let is_configured = ctx.is_configured().await?;
-+        if !ctx.get_config_bool(Config::FixIsChatmail).await? {
-+            if imap_session.is_chatmail() {
-+                ctx.sql.set_raw_config("is_chatmail", Some("1")).await?;
-+            } else if !is_configured {
-+                // Reset the setting that may have been set
-+                // during failed configuration.
-+                ctx.sql.set_raw_config("is_chatmail", Some("0")).await?;
-+            }
-         }
--    }
- 
--    drop(imap_session);
--    drop(imap);
-+        drop(imap_session);
-+        drop(imap);
-+    }
- 
-     progress!(ctx, 910);
- 
++        emit_progress(ctx, 900);
++    } else if !skip_network {
+         // Spawn SMTP configuration task
+         // to try SMTP while connecting to IMAP.
+         let context_smtp = ctx.clone();
 diff --git a/src/lib.rs b/src/lib.rs
-index 8146ed57349f0f3844c96a5a91c4aec1ef209b48..f30aa4faa3a33c378387d39e94b529d3e90ef2e3 100644
+index 9bd1973c6fed9460d97a2f932c473569840a7f79..1de13869d9f04077536137f83c9c8c44bf9f9d51 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -97,6 +97,7 @@
+@@ -100,6 +100,7 @@
  mod token;
- mod transport;
+ pub mod transport;
  mod update_helper;
 +mod webimap;
  pub mod webxdc;
  #[macro_use]
  mod dehtml;
 diff --git a/src/login_param.rs b/src/login_param.rs
-index 1b80c3fe34203a7448c97e2190b19592777032de..3306314bf566dee56a20000b1a48c45010b250c3 100644
+index 744ba3291005724dfb570b3ea8a1fb9e786d85a8..e1a0fe640acde7cd05b996e223c222b538318c53 100644
 --- a/src/login_param.rs
 +++ b/src/login_param.rs
-@@ -145,6 +145,11 @@ pub struct EnteredLoginParam {
- 
-     /// If true, login via OAUTH2 (not recommended anymore)
+@@ -132,6 +132,11 @@ pub struct EnteredLoginParam {
+     /// Deprecated 2026-07, always false
+     #[serde(default)]
      pub oauth2: bool,
 +
 +    /// If true, mail access goes over madmail's webimap HTTP API
@@ -639,24 +298,16 @@ index 1b80c3fe34203a7448c97e2190b19592777032de..3306314bf566dee56a20000b1a48c450
  }
  
  impl EnteredLoginParam {
-@@ -247,6 +252,7 @@ pub(crate) async fn load_legacy(context: &Context) -> Result<Self> {
+@@ -228,6 +233,7 @@ pub(crate) async fn load_legacy(context: &Context) -> Result<Self> {
              },
              certificate_checks,
-             oauth2,
+             oauth2: false,
 +            webimap: false,
          })
      }
- 
-@@ -420,6 +426,7 @@ async fn test_save_entered_login_param() -> Result<()> {
-             },
-             certificate_checks: Default::default(),
-             oauth2: false,
-+            webimap: false,
-         };
-         param.save_legacy(&t).await?;
-         assert_eq!(
+ }
 diff --git a/src/net/http.rs b/src/net/http.rs
-index 1922be7a3ff5dded54d12fc1a1adeb31b252e759..c8149809920964afb6d553d21f46ece585dabd43 100644
+index b1f98070750bc74a910b9b8117d3d33b01d94852..2ae816e832b8ef9cb539c51e0ab6ff6e2227a650 100644
 --- a/src/net/http.rs
 +++ b/src/net/http.rs
 @@ -1,6 +1,8 @@
@@ -669,7 +320,7 @@ index 1922be7a3ff5dded54d12fc1a1adeb31b252e759..c8149809920964afb6d553d21f46ece5
  use bytes::Bytes;
  use http_body_util::BodyExt;
  use hyper_util::rt::TokioIo;
-@@ -120,6 +122,76 @@ async fn get_http_sender<B>(
+@@ -119,6 +121,76 @@ async fn get_http_sender<B>(
      Ok(sender)
  }
  
@@ -706,7 +357,7 @@ index 1922be7a3ff5dded54d12fc1a1adeb31b252e759..c8149809920964afb6d553d21f46ece5
 +
 +        let mut req = hyper::Request::builder()
 +            .method(hyper::Method::from_bytes(method.as_bytes())?)
-+            .uri(parsed_url)
++            .uri(origin_form(&parsed_url))
 +            .header(hyper::header::HOST, authority.as_str());
 +        for (name, value) in headers {
 +            req = req.header(*name, *value);
@@ -747,10 +398,10 @@ index 1922be7a3ff5dded54d12fc1a1adeb31b252e759..c8149809920964afb6d553d21f46ece5
  fn http_url_cache_timestamps(url: &str, mimetype: Option<&str>) -> (i64, i64) {
      let now = time();
 diff --git a/src/net/http_wasm.rs b/src/net/http_wasm.rs
-index 1bb038716ec5a34bac5153e0f8afdfa4d09b525f..e66de01d286136b89f504cfd5b85f29432ebb63b 100644
+index 3be2b8172c044ab040871a2b9624a14a65644bf9..44543653dd4c0148c829e5b60bffae974bf39bd2 100644
 --- a/src/net/http_wasm.rs
 +++ b/src/net/http_wasm.rs
-@@ -38,6 +38,37 @@ fn ensure_https(url: &str) -> Result<()> {
+@@ -37,6 +37,37 @@ fn ensure_https(url: &str) -> Result<()> {
      Ok(())
  }
  
@@ -788,7 +439,7 @@ index 1bb038716ec5a34bac5153e0f8afdfa4d09b525f..e66de01d286136b89f504cfd5b85f294
  /// Retrieves the text contents of URL using HTTP GET request.
  pub async fn read_url(context: &Context, url: &str) -> Result<String> {
      let response = read_url_blob(context, url).await?;
-@@ -61,25 +92,12 @@ pub(crate) async fn http_cache_cleanup(_context: &Context) -> Result<()> {
+@@ -60,34 +91,12 @@ pub(crate) async fn http_cache_cleanup(_context: &Context) -> Result<()> {
  }
  
  /// Retrieves the binary contents of URL using HTTP GET request.
@@ -815,12 +466,21 @@ index 1bb038716ec5a34bac5153e0f8afdfa4d09b525f..e66de01d286136b89f504cfd5b85f294
 -        mimetype,
 -        encoding,
 -    })
+-}
+-
+-/// Retrieves the binary contents of URL using HTTP GET request.
+-pub(crate) async fn read_url_blob_with_tls(
+-    context: &Context,
+-    url: &str,
+-    _strict_tls: bool,
+-) -> Result<Response> {
+-    read_url_blob(context, url).await
 +    Ok(response)
  }
  
- /// Retrieves the binary contents of URL using HTTP GET request.
+ /// Sends an empty POST request to the URL.
 diff --git a/src/qr.rs b/src/qr.rs
-index 981087c11d7d8a7228fd27c626fb7322551cffeb..7f6188805f68b697bd4fdba791a4a0c5fabe8f1c 100644
+index 9eaa09442b0f988b0bcdc4a0e7eda6845a0ba23a..41dc1bba166dc32701c8f5d9737c8b66f4a69182 100644
 --- a/src/qr.rs
 +++ b/src/qr.rs
 @@ -27,6 +27,7 @@
@@ -831,7 +491,7 @@ index 981087c11d7d8a7228fd27c626fb7322551cffeb..7f6188805f68b697bd4fdba791a4a0c5
  pub(super) const DCLOGIN_SCHEME: &str = "DCLOGIN:";
  const TG_SOCKS_SCHEME: &str = "https://t.me/socks";
  const MAILTO_SCHEME: &str = "mailto:";
-@@ -150,6 +151,10 @@ pub enum Qr {
+@@ -138,6 +139,10 @@ pub enum Qr {
      Account {
          /// Server domain name.
          domain: String,
@@ -842,7 +502,7 @@ index 981087c11d7d8a7228fd27c626fb7322551cffeb..7f6188805f68b697bd4fdba791a4a0c5
      },
  
      /// Provides a backup that can be retrieved using iroh-net based backup transfer protocol.
-@@ -375,6 +380,8 @@ pub async fn check_qr(context: &Context, qr: &str) -> Result<Qr> {
+@@ -363,6 +368,8 @@ pub async fn check_qr(context: &Context, qr: &str) -> Result<Qr> {
          decode_ideltachat(context, IDELTACHAT_NOSLASH_SCHEME, qr).await?
      } else if starts_with_ignore_case(qr, DCACCOUNT_SCHEME) {
          decode_account(qr)?
@@ -851,7 +511,7 @@ index 981087c11d7d8a7228fd27c626fb7322551cffeb..7f6188805f68b697bd4fdba791a4a0c5
      } else if starts_with_ignore_case(qr, DCLOGIN_SCHEME) {
          dclogin_scheme::decode_login(qr)?
      } else if starts_with_ignore_case(qr, TG_SOCKS_SCHEME) {
-@@ -708,6 +715,7 @@ fn decode_account(qr: &str) -> Result<Qr> {
+@@ -705,6 +712,7 @@ fn decode_account(qr: &str) -> Result<Qr> {
                      .host_str()
                      .context("can't extract account setup domain")?
                      .to_string(),
@@ -859,7 +519,7 @@ index 981087c11d7d8a7228fd27c626fb7322551cffeb..7f6188805f68b697bd4fdba791a4a0c5
              })
          } else {
              bail!("Bad scheme for account URL: {:?}.", url.scheme());
-@@ -721,10 +729,52 @@ fn decode_account(qr: &str) -> Result<Qr> {
+@@ -718,10 +726,52 @@ fn decode_account(qr: &str) -> Result<Qr> {
          }
          Ok(Qr::Account {
              domain: payload.to_string(),
@@ -912,7 +572,7 @@ index 981087c11d7d8a7228fd27c626fb7322551cffeb..7f6188805f68b697bd4fdba791a4a0c5
  /// scheme: `https://t.me/socks?server=foo&port=123` or `https://t.me/socks?server=1.2.3.4&port=123`
  fn decode_tg_socks_proxy(_context: &Context, qr: &str) -> Result<Qr> {
      let url = url::Url::parse(qr).context("Invalid t.me/socks url")?;
-@@ -830,6 +880,10 @@ pub(crate) async fn login_param_from_account_qr(
+@@ -827,6 +877,10 @@ pub(crate) async fn login_param_from_account_qr(
      context: &Context,
      qr: &str,
  ) -> Result<EnteredLoginParam> {
@@ -923,15 +583,7 @@ index 981087c11d7d8a7228fd27c626fb7322551cffeb..7f6188805f68b697bd4fdba791a4a0c5
      let payload = qr
          .get(DCACCOUNT_SCHEME.len()..)
          .context("Invalid DCACCOUNT scheme")?;
-@@ -849,6 +903,7 @@ pub(crate) async fn login_param_from_account_qr(
-             smtp: Default::default(),
-             certificate_checks: EnteredCertificateChecks::Strict,
-             oauth2: false,
-+            webimap: false,
-         };
-         return Ok(param);
-     }
-@@ -869,6 +924,7 @@ pub(crate) async fn login_param_from_account_qr(
+@@ -853,6 +907,7 @@ pub(crate) async fn login_param_from_account_qr(
              smtp: Default::default(),
              certificate_checks: EnteredCertificateChecks::Strict,
              oauth2: false,
@@ -939,7 +591,7 @@ index 981087c11d7d8a7228fd27c626fb7322551cffeb..7f6188805f68b697bd4fdba791a4a0c5
          };
  
          Ok(param)
-@@ -886,6 +942,48 @@ pub(crate) async fn login_param_from_account_qr(
+@@ -870,6 +925,48 @@ pub(crate) async fn login_param_from_account_qr(
      }
  }
  
@@ -989,7 +641,7 @@ index 981087c11d7d8a7228fd27c626fb7322551cffeb..7f6188805f68b697bd4fdba791a4a0c5
  /// "DCACCOUNT:" and "DCLOGIN:" QR codes configure `context`, but I/O mustn't be started for such QR
  /// codes, consider using [`Context::add_transport_from_qr`] which also restarts I/O.
 diff --git a/src/qr/dclogin_scheme.rs b/src/qr/dclogin_scheme.rs
-index 5e179513cdcd9663e18f50d8ae0e7cdc6efa7036..5e0296254ff643507a8a1d5149835f405c9cbce5 100644
+index dca20fa40ad6b63860141634bce431b063f8fe70..6fbb0f5905b2dac7b6f4e2cb975a1445841e921b 100644
 --- a/src/qr/dclogin_scheme.rs
 +++ b/src/qr/dclogin_scheme.rs
 @@ -197,6 +197,7 @@ pub(crate) fn login_param_from_login_qr(
@@ -1001,10 +653,10 @@ index 5e179513cdcd9663e18f50d8ae0e7cdc6efa7036..5e0296254ff643507a8a1d5149835f40
              Ok(param)
          }
 diff --git a/src/qr/qr_tests.rs b/src/qr/qr_tests.rs
-index 71c631f908c699fbe84cf270f5b6f887088602f0..883c0193575dff5cdfa810209409c46f43825e65 100644
+index d39b79f0b54024df232a27a3148d48db3833a027..fa593ceffdf212d5423a674ad21ff0576fa268c4 100644
 --- a/src/qr/qr_tests.rs
 +++ b/src/qr/qr_tests.rs
-@@ -731,7 +731,8 @@ async fn test_decode_account() -> Result<()> {
+@@ -749,7 +749,8 @@ async fn test_decode_account() -> Result<()> {
          assert_eq!(
              qr,
              Qr::Account {
@@ -1014,7 +666,7 @@ index 71c631f908c699fbe84cf270f5b6f887088602f0..883c0193575dff5cdfa810209409c46f
              }
          );
      }
-@@ -739,6 +740,43 @@ async fn test_decode_account() -> Result<()> {
+@@ -757,6 +758,43 @@ async fn test_decode_account() -> Result<()> {
      Ok(())
  }
  
@@ -1059,10 +711,10 @@ index 71c631f908c699fbe84cf270f5b6f887088602f0..883c0193575dff5cdfa810209409c46f
  /// We should not suggest trying to configure an account in this case.
  /// Such links may be created by copy-paste error or because of incorrect parsing.
 diff --git a/src/scheduler.rs b/src/scheduler.rs
-index a2324ae9a691272b74086f08c27de986f4d9bdfa..b9cee9912b547fc859a7de35ac9a367ff33cfa0a 100644
+index 82235cc27a6f205849b7273ff3683a5bd9c567ad..c9e5afc10125cfcad1370982efd153fbdd9232f0 100644
 --- a/src/scheduler.rs
 +++ b/src/scheduler.rs
-@@ -641,7 +641,18 @@ pub async fn start(ctx: &Context) -> Result<Self> {
+@@ -745,7 +745,18 @@ pub async fn start(ctx: &Context) -> Result<Self> {
              let (inbox_start_send, inbox_start_recv) = oneshot::channel();
              let handle = {
                  let ctx = ctx.clone();
@@ -1082,7 +734,7 @@ index a2324ae9a691272b74086f08c27de986f4d9bdfa..b9cee9912b547fc859a7de35ac9a367f
              };
              let addr = configured_login_param.addr.clone();
              let folder = configured_login_param
-@@ -915,7 +926,7 @@ fn stop(&self) {
+@@ -1032,7 +1043,7 @@ fn stop(&self) {
  }
  
  #[derive(Debug)]
@@ -1094,7 +746,7 @@ index a2324ae9a691272b74086f08c27de986f4d9bdfa..b9cee9912b547fc859a7de35ac9a367f
 +    pub(crate) stop_token: CancellationToken,
  }
 diff --git a/src/scheduler/connectivity.rs b/src/scheduler/connectivity.rs
-index 19086ac92c12effdb7b28e0e22908257c682c72f..435cb3d1700bd49c75e4e831987211a5882fd5de 100644
+index f21ea14d4ee52884259c3ef2cedabbfa1b918fc5..a3ad77882686613aea27805fd559ce479f162594 100644
 --- a/src/scheduler/connectivity.rs
 +++ b/src/scheduler/connectivity.rs
 @@ -152,7 +152,11 @@ fn all_work_done(&self) -> bool {
@@ -1111,36 +763,85 @@ index 19086ac92c12effdb7b28e0e22908257c682c72f..435cb3d1700bd49c75e4e831987211a5
          context.emit_event(EventType::ConnectivityChanged);
      }
 diff --git a/src/smtp.rs b/src/smtp.rs
-index de53df70c5a9fa5e640541bb930877633067615d..f88a9d29811e8bc93d4e91ea64e9ec18efa1a18f 100644
+index 38a3a8a74dec5d371d9ce68d9fd5d477f8bff126..674fe547f63809c4277c2a02dc929d206c961bf2 100644
 --- a/src/smtp.rs
 +++ b/src/smtp.rs
-@@ -92,6 +92,11 @@ pub async fn connect_configured(&mut self, context: &Context) -> Result<()> {
-         let (_transport_id, lp) = ConfiguredLoginParam::load(context)
-             .await?
-             .context("Not configured")?;
-+        if lp.webimap {
-+            // webimap transports (madmail) have no SMTP connection,
-+            // sending goes over HTTP in `webimap::smtp_send()`.
-+            return Ok(());
-+        }
+@@ -32,10 +32,20 @@
+     ConfiguredLoginParam, ConfiguredServerLoginParam, prioritize_server_login_params,
+ };
+ 
++/// What a [`Connection`] sends over.
++#[derive(Debug)]
++enum Transport {
++    Smtp(SmtpTransport<Box<dyn SessionBufStream>>),
++
++    /// madmail's webimap HTTP API: nothing to connect to,
++    /// sending is an HTTP POST in `webimap::smtp_send()`.
++    Webimap(ConfiguredLoginParam),
++}
++
+ /// SMTP connection with information about it.
+ #[derive(Debug)]
+ struct Connection {
+-    transport: SmtpTransport<Box<dyn SessionBufStream>>,
++    transport: Transport,
+ 
+     /// Email address that should be put into the From field when sending over this connection.
+     from: EmailAddress,
+@@ -130,11 +140,13 @@ pub fn new() -> Self {
+ 
+     /// Disconnect the SMTP transport and drop it entirely.
+     pub fn disconnect(&mut self) {
+-        if let Some(mut connection) = self.connection.take() {
++        if let Some(connection) = self.connection.take()
++            && let Transport::Smtp(mut transport) = connection.transport
++        {
+             // Closing connection with a QUIT command may take some time, especially if it's a
+             // stale connection and an attempt to send the command times out. Send a command in a
+             // separate task to avoid waiting for reply or timeout.
+-            task::spawn(async move { connection.transport.quit().await });
++            task::spawn(async move { transport.quit().await });
+         }
+     }
+ 
+@@ -165,6 +177,16 @@ pub async fn connect_configured(&mut self, context: &Context) -> Result<()> {
+         self.connectivity.set_connecting(context);
          let proxy_config = ProxyConfig::load(context).await?;
-         self.connect(
-             context,
-@@ -193,6 +198,48 @@ pub(crate) async fn smtp_send(
+         for (transport_id, lp) in sorted_transports(context).await? {
++            if lp.webimap {
++                self.connection = Some(Connection {
++                    from: EmailAddress::new(lp.addr.clone())
++                        .with_context(|| format!("Invalid address {:?}", lp.addr))?,
++                    transport: Transport::Webimap(lp),
++                    transport_id,
++                    last_success: tools::time_now(),
++                });
++                return Ok(());
++            }
+             info!(context, "Trying to connect to transport {transport_id}.");
+             match self
+                 .connect(
+@@ -234,7 +256,7 @@ pub async fn connect(
+             };
+ 
+             self.connection = Some(Connection {
+-                transport,
++                transport: Transport::Smtp(transport),
+                 from,
+                 transport_id,
+                 last_success: tools::time_now(),
+@@ -279,6 +301,45 @@ async fn smtp_send(
  
      smtp.connectivity.set_working(context);
  
 +    // webimap transports (madmail) send over HTTP POST instead of SMTP.
 +    // This is the single choke point for messages, MDNs, sync and status updates.
-+    let status = match ConfiguredLoginParam::load(context).await {
-+        Err(err) => {
-+            smtp.last_send_error = Some(format!("{err:#}"));
-+            return SendResult::Retry;
-+        }
-+        Ok(Some((_transport_id, lp))) if lp.webimap => {
++    let status = match smtp.connection.as_ref().map(|c| &c.transport) {
++        Some(Transport::Webimap(lp)) => {
++            let lp = lp.clone();
 +            crate::webimap::smtp_send(context, &lp, recipients, message, smtp).await
 +        }
-+        Ok(_) => smtp_send_over_smtp(context, recipients, message, smtp).await,
++        _ => smtp_send_over_smtp(context, recipients, message, smtp).await,
 +    };
 +
 +    if let SendResult::Failure(err) = &status
@@ -1172,11 +873,11 @@ index de53df70c5a9fa5e640541bb930877633067615d..f88a9d29811e8bc93d4e91ea64e9ec18
 +    message: &str,
 +    smtp: &mut Smtp,
 +) -> SendResult {
-     if let Err(err) = smtp
-         .connect_configured(context)
-         .await
-@@ -310,25 +357,6 @@ pub(crate) async fn smtp_send(
-         Ok(()) => SendResult::Success,
+     let Some(ref mut connection) = smtp.connection else {
+         warn!(
+             context,
+@@ -406,25 +467,6 @@ async fn smtp_send(
+         }
      };
  
 -    if let SendResult::Failure(err) = &status
@@ -1201,14 +902,30 @@ index de53df70c5a9fa5e640541bb930877633067615d..f88a9d29811e8bc93d4e91ea64e9ec18
      status
  }
  
+diff --git a/src/smtp/send.rs b/src/smtp/send.rs
+index ecc64c64f3266bc87a562b1000d756e7cdc63548..ee37ba5a5f2734a1f4ee1db24d54193b37f7206b 100644
+--- a/src/smtp/send.rs
++++ b/src/smtp/send.rs
+@@ -38,7 +38,10 @@ pub(super) async fn send(
+             .context("Envelope error")?;
+         let mail = SendableEmail::new(envelope, message);
+ 
+-        self.transport.send(mail).await.map_err(Error::SmtpSend)?;
++        let super::Transport::Smtp(transport) = &mut self.transport else {
++            return Err(Error::Other(anyhow::format_err!("Not an SMTP connection")));
++        };
++        transport.send(mail).await.map_err(Error::SmtpSend)?;
+ 
+         self.last_success = tools::time_now();
+         Ok(())
 diff --git a/src/transport.rs b/src/transport.rs
-index 97d5f5b02d693f5fdb70c73fad947123925fe393..1dccfcae006d943f133ba41e2ca9133f80e688f0 100644
+index 70ca9abbaa68466f26df4a527325fe5c74e9be14..48ae33dd2d284596e5fce6e6b23745721fbda4f5 100644
 --- a/src/transport.rs
 +++ b/src/transport.rs
-@@ -202,6 +202,10 @@ pub(crate) struct ConfiguredLoginParam {
- 
-     /// If true, login via OAUTH2 (not recommended anymore)
-     pub oauth2: bool,
+@@ -192,6 +192,10 @@ pub(crate) struct ConfiguredLoginParam {
+     /// TLS options: whether to allow invalid certificates and/or
+     /// invalid hostnames
+     pub certificate_checks: ConfiguredCertificateChecks,
 +
 +    /// If true, mail access goes over madmail's webimap HTTP API
 +    /// instead of IMAP/SMTP.
@@ -1216,47 +933,47 @@ index 97d5f5b02d693f5fdb70c73fad947123925fe393..1dccfcae006d943f133ba41e2ca9133f
  }
  
  /// JSON representation of ConfiguredLoginParam
-@@ -225,6 +229,8 @@ pub(crate) struct ConfiguredLoginParamJson {
-     pub provider_id: Option<String>,
-     pub certificate_checks: ConfiguredCertificateChecks,
+@@ -218,6 +222,8 @@ pub(crate) struct ConfiguredLoginParamJson {
+     /// Deprecated 2026-07, always false
+     #[serde(default)]
      pub oauth2: bool,
 +    #[serde(default)]
 +    pub webimap: bool,
  }
  
  impl fmt::Display for ConfiguredLoginParam {
-@@ -584,6 +590,7 @@ pub(crate) async fn load_legacy(context: &Context) -> Result<Option<Self>> {
+@@ -389,6 +395,7 @@ pub(crate) async fn load_legacy(context: &Context) -> Result<Option<Self>> {
+             smtp_user: send_user,
+             smtp_password: send_pw,
              certificate_checks,
-             provider,
-             oauth2,
 +            webimap: false,
          }))
      }
  
-@@ -628,6 +635,7 @@ pub(crate) fn from_json(json: &str) -> Result<Self> {
-             provider,
+@@ -423,6 +430,7 @@ pub(crate) fn from_json(json: &str) -> Result<Self> {
+             smtp_password: json.smtp_password,
+ 
              certificate_checks: json.certificate_checks,
-             oauth2: json.oauth2,
 +            webimap: json.webimap,
          })
      }
  
-@@ -664,6 +672,7 @@ fn from(configured_login_param: ConfiguredLoginParam) -> Self {
-             provider_id: configured_login_param.provider.map(|p| p.id.to_string()),
+@@ -459,6 +467,7 @@ fn from(configured_login_param: ConfiguredLoginParam) -> Self {
+ 
              certificate_checks: configured_login_param.certificate_checks,
-             oauth2: configured_login_param.oauth2,
+             oauth2: false,
 +            webimap: configured_login_param.webimap,
          }
      }
  }
 diff --git a/src/transport/transport_tests.rs b/src/transport/transport_tests.rs
-index b06cea9185d61eaccf0da9fa98b5e037c9d0eed2..294a39e7050efb5ff46a082af81f7e2508784443 100644
+index a981c40b6c42162bc1e93900abd720f98085fc6a..6d5c6ec96cde09349e08340430371bc2958fa71a 100644
 --- a/src/transport/transport_tests.rs
 +++ b/src/transport/transport_tests.rs
-@@ -50,13 +50,14 @@ async fn test_save_load_login_param() -> Result<()> {
-         provider: None,
+@@ -47,13 +47,14 @@ async fn test_save_load_login_param() -> Result<()> {
+         smtp_user: "".to_string(),
+         smtp_password: "bar".to_string(),
          certificate_checks: ConfiguredCertificateChecks::Strict,
-         oauth2: false,
 +        webimap: false,
      };
  
@@ -1264,23 +981,15 @@ index b06cea9185d61eaccf0da9fa98b5e037c9d0eed2..294a39e7050efb5ff46a082af81f7e25
          .clone()
          .save_to_transports_table(&t, &EnteredLoginParam::default(), time())
          .await?;
--    let expected_param = r#"{"addr":"alice@example.org","imap":[{"connection":{"host":"imap.example.com","port":123,"security":"Starttls"},"user":"alice"}],"imap_folder":"Folder","imap_user":"","imap_password":"foo","smtp":[{"connection":{"host":"smtp.example.com","port":456,"security":"Tls"},"user":"alice@example.org"}],"smtp_user":"","smtp_password":"bar","provider_id":null,"certificate_checks":"Strict","oauth2":false}"#;
-+    let expected_param = r#"{"addr":"alice@example.org","imap":[{"connection":{"host":"imap.example.com","port":123,"security":"Starttls"},"user":"alice"}],"imap_folder":"Folder","imap_user":"","imap_password":"foo","smtp":[{"connection":{"host":"smtp.example.com","port":456,"security":"Tls"},"user":"alice@example.org"}],"smtp_user":"","smtp_password":"bar","provider_id":null,"certificate_checks":"Strict","oauth2":false,"webimap":false}"#;
+-    let expected_param = r#"{"addr":"alice@example.org","imap":[{"connection":{"host":"imap.example.com","port":123,"security":"Starttls"},"user":"alice"}],"imap_folder":"Folder","imap_user":"","imap_password":"foo","smtp":[{"connection":{"host":"smtp.example.com","port":456,"security":"Tls"},"user":"alice@example.org"}],"smtp_user":"","smtp_password":"bar","certificate_checks":"Strict","oauth2":false}"#;
++    let expected_param = r#"{"addr":"alice@example.org","imap":[{"connection":{"host":"imap.example.com","port":123,"security":"Starttls"},"user":"alice"}],"imap_folder":"Folder","imap_user":"","imap_password":"foo","smtp":[{"connection":{"host":"smtp.example.com","port":456,"security":"Tls"},"user":"alice@example.org"}],"smtp_user":"","smtp_password":"bar","certificate_checks":"Strict","oauth2":false,"webimap":false}"#;
      assert_eq!(
          t.sql
              .query_get_value::<String>("SELECT configured_param FROM transports", ())
-@@ -175,6 +176,7 @@ async fn test_posteo_alias() -> Result<()> {
-         provider: get_provider_by_id("posteo"),
-         certificate_checks: ConfiguredCertificateChecks::Strict,
-         oauth2: false,
-+        webimap: false,
-     };
- 
-     let loaded = ConfiguredLoginParam::load_legacy(&t).await?.unwrap();
-@@ -294,6 +296,7 @@ fn dummy_configured_login_param(
-         provider,
+@@ -113,6 +114,7 @@ fn dummy_configured_login_param(addr: &str) -> ConfiguredLoginParam {
+         smtp_user: addr.to_string(),
+         smtp_password: "foobarbaz".to_string(),
          certificate_checks: ConfiguredCertificateChecks::Automatic,
-         oauth2: false,
 +        webimap: false,
      }
  }

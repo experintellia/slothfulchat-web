@@ -7,7 +7,7 @@ this repository's `patches/core` stack applied — so it describes the JSON-RPC
 API **this bundle actually runs**, not the nearest published upstream release.
 
 It is regenerated from that patched Rust source on every build, by the same
-`cargo test` that emits the client bindings. Items the fork added or changed
+build step that emits the client bindings (`deltachat-jsonrpc-bindings`). Items the fork added or changed
 carry a 🦥 note in their description saying which patch did it.
 
 ## Getting these types

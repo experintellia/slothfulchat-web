@@ -45,11 +45,11 @@ new strings conflicted. CI now rejects a desktop patch that touches that file.
 The same distinction is carried into the generated JSON-RPC documentation, so a
 reader does not have to come here to find out whether an API is upstream's or
 ours. CI does this for you — the build runs `pnpm mark-fork-api` between
-`pnpm apply-patches` and the `cargo test` that generates the bindings. Run it by
-hand only when generating docs locally, and in that same slot: it needs
-`build/core`'s per-patch commits to attribute lines, and `cargo test` is what
-turns `///` into both the TypeScript JSDoc and the OpenRPC descriptions, so
-marking any later marks nothing. It adds a line like
+`pnpm apply-patches` and the `cargo build -p deltachat-jsonrpc-bindings` that
+generates the bindings. Run it by hand only when generating docs locally, and in
+that same slot: it needs `build/core`'s per-patch commits to attribute lines,
+and that build is what turns `///` into both the TypeScript JSDoc and the
+OpenRPC descriptions, so marking any later marks nothing. It adds a line like
 
 ```
 /// 🦥 slothfulchat-web fork: added by core/1018.
@@ -121,21 +121,24 @@ exists:
   the same wasm build, falling back to the inline path whenever the pool is
   unregistered, dead, erroring or too slow; decrypted messages are re-encoded
   at the OpenPGP packet level so core still verifies signatures itself.
-  Native builds unchanged. `core/1019`
+  Upstream now encrypts when the SMTP loop sends a message rather than when
+  it is created, so that is where the encryption is offloaded. Native
+  behaviour unchanged. `core/1019`
 
 ## New features
 
-- **OpenRPC document for the JSON-RPC API** — one attribute. The
-  `deltachat-jsonrpc` crate already enables yerpc's `openrpc` feature and
-  every API type already derives `schemars::JsonSchema`, so the generator was
-  compiled in and fully fed; `#[rpc]` just never set `openrpc_outdir`, and
-  without it yerpc emits no generator at all. With it, the existing
-  `cargo test -p deltachat-jsonrpc` writes `typescript/generated/openrpc.json`
-  (177 methods, 40 schemas, doc comments carried through as descriptions) next
-  to the TypeScript bindings it already writes there, from the same impl block.
-  Nothing new lands in the tree — `generated/` is gitignored. We publish it at
-  `/api-docs/openrpc.json`. Good upstream candidate: it is a one-line change
-  to an unused switch, no new dependency, and native builds are unaffected.
+- **OpenRPC document for the JSON-RPC API** — three lines in a build script.
+  The `deltachat-jsonrpc` crate already enables yerpc's `openrpc` feature and
+  every API type already derives `schemars::JsonSchema`, so yerpc already
+  generates the spec from the same impl block as the TypeScript bindings;
+  nothing ever wrote it out. Now the `deltachat-jsonrpc-bindings` build
+  script, which writes those bindings, also writes
+  `typescript/generated/openrpc.json` next to them (184 methods, 40 schemas,
+  doc comments carried through as descriptions), so the existing
+  `cargo build -p deltachat-jsonrpc-bindings` produces both. Nothing new lands
+  in the tree — `generated/` is gitignored. We publish it at
+  `/api-docs/openrpc.json`. Good upstream candidate: no new dependency,
+  `deltachat-jsonrpc` itself is untouched, and native builds are unaffected.
   `core/1021`
 - **Custom voice-message player controls** — play/pause
   button, seek bar, elapsed/total time and a 1×/1.5×/2× speed pill (the rate
@@ -361,9 +364,13 @@ exists:
   self-hosters can send new sign-ups to their own server. The value may be a
   bare host, a URL, or a `dcaccount:` QR. The welcome-screen consent link
   points at the configured relay and its `/privacy.html` (not upstream's
-  default) whenever the account is actually created on it. Unset falls back to
-  upstream's default instance; scanned `dcaccount:`/`dclogin:` QR codes still
-  override it. `desktop/1020`
+  generic policy) whenever the account is actually created on it. Unset falls
+  back to `nine.testrun.org`, upstream's former default; scanned
+  `dcaccount:`/`dclogin:` QR codes still override it. Upstream no longer has a
+  default: it lets core pick a relay by probing its built-in list on TCP 443,
+  which the WS→TCP bridge doesn't tunnel (only the mail ports), so this build
+  always hands core a concrete relay, also when onboarding from an invite
+  link. `desktop/1020`
 - **Relay picker on instant onboarding** — the "create profile" screen shows a
   row (right above the privacy-policy consent) with the chatmail relay the new
   address will be created on, and a button that opens a "Choose a chatmail
@@ -451,17 +458,17 @@ exists:
 - **Grammar & spelling checker** — the composer can check the draft with
   [Harper](https://writewithharper.com) (English only, wasm on this device)
   or [LanguageTool](https://languagetool.org), like the LibreOffice
-  extension or the Obsidian plugin. Needed because the desktop targets run
-  with Chromium spellcheck off (no local hunspell dictionary in Electron) and
-  a browser add-on can't reach into an Electron/Tauri window; LanguageTool's
-  plain `fetch` works on all three. Settings → Experimental → Composer has
+  extension or the Obsidian plugin. Needed because the Electron target runs
+  with Chromium spellcheck off (no local hunspell dictionary) and a browser
+  add-on can't reach into an Electron window; LanguageTool's plain `fetch`
+  works in both. Settings → Experimental → Composer has
   the switch (off by default) and a checker dialog: Harper (the default,
   nothing leaves the device), LanguageTool cloud (free, or Premium username +
   API key) or a self-hosted LanguageTool URL, with a "Check connection" test.
   Harper's `harper.js` is not bundled: the web-app serves it in `harper/`
   (out of the SW precache; cached on first use and kept across updates) and
   the frontend imports it — and its ~15 MB wasm — only once the check is on
-  with Harper picked; it lints in a worker. Electron/Tauri don't serve `harper/`, so
+  with Harper picked; it lints in a worker. Electron doesn't serve `harper/`, so
   there only LanguageTool works. Issues are underlined in a
   transparent, click-through copy of the text laid over the textarea (a
   textarea can't style parts of its own text), coloured like LanguageTool's
@@ -540,7 +547,7 @@ exists:
   notifications. Archived requests
   stay in the archive. Core gains a `DC_GCL_NO_REQUESTS` chatlist flag
   (which also keeps requests out of a bare `is:unread` filter), the
-  `DC_CHAT_ID_REQUESTS_LINK` pseudo chat and an `is:request` chatlist query.
+  `ChatId::REQUESTS_LINK` pseudo chat and an `is:request` chatlist query.
   `core/1025`, `desktop/1066`
 
 - **Resizable chat-list sidebar** — a drag handle between the chat list and
@@ -661,10 +668,11 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   ends without delivering the message (rejected, trashed, no body) now fails
   it instead of leaving it `InProgress`; only an in-progress download is ever
   set to `Failure`. `core/1024`
-- Camera selection in the QR reader did nothing on multi-camera Android
-  Chromium devices, and the camera menu was blank before permissions were
-  granted; stale stored camera ids no longer show the error screen.
-  `desktop/0003`
+- The QR reader's camera menu stayed blank until camera permission was
+  granted, and its first pick could be a microphone from the unfiltered
+  device list; cameras are now listed again once permission is granted.
+  (Upstream has since fixed the bigger bug this started with: picking a
+  camera did nothing on multi-camera Android.) `desktop/0003`
 - Dialogs no longer close when a drag that started inside them (e.g.
   selecting text in an input) is released over the backdrop — an outside
   click only closes a dialog when the press also started on the backdrop.
@@ -778,8 +786,6 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   stays a scroll, resting still opens the context menu. Mouse reordering keeps
   using the browser's drag and drop; both end in one pure `reorderedAccounts()`
   covered by `scripts/test-account-reorder-touch.mjs`. `desktop/1054`
-- The QR reader defaults to the rear camera — you scan someone else's code,
-  not your own face. `desktop/1006`
 - The connectivity view shows a loading state instead of a blank iframe while
   the core is busy, and displays the WS bridge address with an edit button.
   `desktop/1001`
@@ -790,7 +796,7 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   name, account tag) confirm on Enter like a native `prompt()` would.
   `desktop/1015`
 - The chat title-bar icon buttons (apps, map, three-dot menu) had a cramped
-  20×20 px hit box in a 50 px-tall navbar with an unclickable 12 px gap
+  22×22 px hit box in a 50 px-tall navbar with an unclickable 12 px gap
   between them; each button's click target now fills that vertical dead space
   and the gap. Compensating negative margins keep the icons and navbar height
   pixel-for-pixel unchanged. `desktop/1027`
@@ -823,9 +829,12 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   text selection); "Copy Text" copies it. `desktop/1060`
 - **Click a reaction to join it, no separate Reactions dialog** — clicking a
   reaction pill under a message reacts with that emoji, or takes it back when
-  it's yours (upstream opens a who-reacted dialog). That list now sits at the
-  end of Message Info instead, next to read receipts; the "+N" pill opens it.
-  `desktop/1068`
+  it's yours (upstream opens its Reactions dialog, whose pills toggle your
+  reaction too). The who-reacted list now sits at the end of Message Info
+  instead, next to read receipts, with upstream's count per emoji above it,
+  and updates live while open; the "+N" pill opens it. Upstream's emoji
+  buttons from that dialog are left out: they looked like filters but
+  toggled your own reaction. `desktop/1068`
 - **Branding** — the app calls itself SlothfulChat and uses its own icon in
   the About dialog and welcome screen, with explicit "experimental fork, not
   affiliated with Delta Chat" notices and a source-code link. Only
@@ -846,16 +855,17 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   read, so RELEASING.md requires a human to approve the text. It is a table
   rather than a patch per release so later releases amend one patch instead
   of growing the stack; the `changelog-version-<v>` label makes core drop
-  repeats. Upstream's own `changelog-version-2.3.0` entry is dropped with it:
-  it announces what Delta Chat 2.0 brought over 1.x, and no SlothfulChat
-  release predates that. `core/1020`, `desktop/1051`, `desktop/1055`
+  repeats. Upstream's own release message (now `changelog-version-2.62.0`) is
+  dropped with it: it is Delta Chat's release note, and part of what it
+  announces (multi-relay onboarding, the new audio player) works differently
+  here. `core/1020`, `desktop/1051`, `desktop/1055`
 - **Hidden upstream UI that can't work in this build** — proxy settings
-  (unimplemented on wasm), the second-device / multi-device backup
-  transfer flow (iroh doesn't run in browsers yet), and the experimental
-  "Enable Webxdc Devtools" switch (it only toggles Electron's DevTools on a
-  webxdc iframe — a browser's built-in dev tools can't be gated by the app,
-  and webxdc apps don't run in this build anyway). `desktop/1000`,
-  `desktop/1021`; the second-device entry points are hidden by
+  (unimplemented on wasm), the "Hide menu bar" switch (a browser tab has
+  none), the second-device / multi-device backup transfer flow (iroh
+  doesn't run in browsers yet). A proxy QR code or link, however it
+  arrives (scan, paste, the chat-list search result for a pasted link),
+  gets an alert that proxies don't work here instead. `desktop/1000`; the
+  second-device entry points are hidden by
   `packages/web-app/static/overrides.css`, not a patch
 - **Long message text is stored in full** — core truncates message text to
   38 lines × 100 chars when writing `msgs.txt`, stashing the full body in

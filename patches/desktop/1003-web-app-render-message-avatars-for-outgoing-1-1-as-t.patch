@@ -20,7 +20,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  2 files changed, 22 insertions(+), 11 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index 3ebe85f759f4faacdd19a357ba8f5bc6a0ac19b9..a5d349d020464f5b4bb0e5153927a63848c6c8bd 100644
+index 25ff29d91c9aa840d2b6b00481220f18211f44b9..049538711c097afef76c77ec23217536e6863e6e 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
 @@ -30,6 +30,11 @@ $info-text-max-width: 400px;
@@ -36,7 +36,7 @@ index 3ebe85f759f4faacdd19a357ba8f5bc6a0ac19b9..a5d349d020464f5b4bb0e5153927a638
      bottom: 0px;
      position: static;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index ae973e3ee60d21edecbec524de5366b93619a344..bd2464902144405d7ba61d8b26229e7d70db1f40 100644
+index 7c209c75d1db4a3d7449c46d3ac830f3f5e38490..256703c8bf931d45d2a6e12bad4c3eb5c150b16b 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -79,10 +79,14 @@ const Avatar = ({

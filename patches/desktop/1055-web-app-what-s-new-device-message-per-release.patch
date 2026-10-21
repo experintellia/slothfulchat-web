@@ -29,12 +29,19 @@ own changelog anchor (#v-0.9.0), which survives later releases where a
 positional link would not.
 
 Seeded with 0.9.0.
+
+Rebased onto v2.62.0: upstream's updateDeviceChat() now adds a
+changelog-version-2.62.0 message (update_2_6 strings, 8f8ffd767 #6776)
+instead of the 2.3.0 one. It is dropped the same way: it is Delta Chat's
+release note (multi-relay onboarding, the new audio player, sticker
+picker, a donation request) and partly describes things this fork does
+differently.
 ---
- packages/frontend/src/deviceMessages.ts | 41 ++++++++++++++++++++++---
- 1 file changed, 37 insertions(+), 4 deletions(-)
+ packages/frontend/src/deviceMessages.ts | 46 ++++++++++++++++++++-----
+ 1 file changed, 37 insertions(+), 9 deletions(-)
 
 diff --git a/packages/frontend/src/deviceMessages.ts b/packages/frontend/src/deviceMessages.ts
-index 3b180fa34f632724ad097211f3086dd24d0570d5..a2aa9e245da5ab8362350d71106b5ef4063680d9 100644
+index 76745b8e76aea4c2d27e88cebf41969e9bbb35e5..3837f569de353c088fbade0f18a06ab24cd54873 100644
 --- a/packages/frontend/src/deviceMessages.ts
 +++ b/packages/frontend/src/deviceMessages.ts
 @@ -6,7 +6,6 @@ export async function updateDeviceChat(
@@ -45,17 +52,22 @@ index 3b180fa34f632724ad097211f3086dd24d0570d5..a2aa9e245da5ab8362350d71106b5ef4
    const addDeviceMessage = async (
      label: string,
      msg: Partial<Parameters<typeof BackendRemote.rpc.addDeviceMessage>[2]>
-@@ -28,11 +27,45 @@ export async function updateDeviceChat(
+@@ -28,16 +27,45 @@ export async function updateDeviceChat(
        })
      }
    }
--  await addDeviceMessage(`changelog-version-2.3.0`, {
--    text: tx('update_2_0', 'https://delta.chat/donate'),
+-  await addDeviceMessage(`changelog-version-2.62.0`, {
+-    text:
+-      tx('update_2_6') +
+-      '\n\n' +
+-      tx('update_2_6_desktop_additions') +
+-      ' ' +
+-      tx('update_2_6_end'),
 -  })
-+  // Upstream's `changelog-version-2.3.0` entry is deliberately gone: it
-+  // announces what Delta Chat 2.0 brought over 1.x, and no SlothfulChat
-+  // release ever predates that, so every account here would be told about
-+  // an upgrade it never lived through.
++  // Upstream's own `changelog-version-<v>` entries (2.3.0, 2.62.0, …) are
++  // deliberately gone: they are Delta Chat's release notes, announcing
++  // features this fork shipped earlier, differently or not at all; the
++  // table below is this fork's release note instead.
 +  for (const [version, text] of SLOTHFUL_RELEASE_MESSAGES) {
 +    await addDeviceMessage(`changelog-version-${version}`, { text })
 +  }

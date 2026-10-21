@@ -23,10 +23,10 @@ native path is unchanged.
  2 files changed, 49 insertions(+), 5 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
-index ab910004b33fa9a3a2cef971115e4799e04b9fe2..8281447d2f7dcfd21b587154d85b8e20193792e9 100644
+index 71d3fd325e82bd3b9367b418acf889fead849b7f..46aa52773a8a9fd3b8abb353b09ec2a1cfbaf16d 100644
 --- a/deltachat-jsonrpc/src/api.rs
 +++ b/deltachat-jsonrpc/src/api.rs
-@@ -35,7 +35,9 @@
+@@ -34,7 +34,9 @@
  use deltachat::reaction::{get_msg_reactions, send_reaction};
  use deltachat::securejoin;
  use deltachat::stock_str::{emit_events_for_updated_stock_strings, StockMessage};
@@ -35,9 +35,9 @@ index ab910004b33fa9a3a2cef971115e4799e04b9fe2..8281447d2f7dcfd21b587154d85b8e20
 +use deltachat::storage_usage::get_blobdir_storage_usage;
 +use deltachat::storage_usage::get_storage_usage;
  use deltachat::webxdc::StatusUpdateSerial;
- use deltachat::EventEmitter;
  use sanitize_filename::is_sanitized;
-@@ -339,10 +341,18 @@ async fn get_push_state(&self, account_id: u32) -> Result<JsonrpcNotifyState> {
+ use tokio::fs;
+@@ -351,10 +353,18 @@ async fn get_account_info(&self, account_id: u32) -> Result<Account> {
      /// Get the combined filesize of an account in bytes
      async fn get_account_file_size(&self, account_id: u32) -> Result<u64> {
          let ctx = self.get_context(account_id).await?;
@@ -59,7 +59,7 @@ index ab910004b33fa9a3a2cef971115e4799e04b9fe2..8281447d2f7dcfd21b587154d85b8e20
 +        Ok(size)
      }
  
-     /// Returns provider for the given domain.
+     /// Checks if the context is already configured.
 diff --git a/src/storage_usage.rs b/src/storage_usage.rs
 index a2283bf563c8d47c5352502f60ad0ae0469f868c..84d0264668b7f854092f2a51d460919cce196d08 100644
 --- a/src/storage_usage.rs

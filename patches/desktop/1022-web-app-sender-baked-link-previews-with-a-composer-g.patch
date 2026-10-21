@@ -39,6 +39,11 @@ Composer.tsx:
   widgets; the ready chip then shows the baked card big in the same slot, with
   a labeled ⤢ Bigger / ⤡ Smaller size toggle and remove.
 
+Rebased onto v2.62.0: desktop settings moved to their own store
+(95f5a1e1d), so the composer reads linkPreviewSuggestions from
+useDesktopSettingsStore(), declared above the link-preview hook instead
+of upstream's later spot.
+
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
  .../Settings/ExperimentalFeatures.tsx         |   5 +
@@ -62,10 +67,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/components/composer/linkPreview/useLinkPreview.ts
 
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index b4ed923b9ef19a978dd64f8299f1d7b1c1f1be00..efdf056692f5eacac32f9573468286d6dd7c645f 100644
+index d8041d2de49e1db2acc9dae5685bb61be1a4d477..0d4ef1c26a80aa135ba2afe337186cd19a3685cf 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-@@ -71,6 +71,11 @@ export function ExperimentalFeatures() {
+@@ -69,6 +69,11 @@ export function ExperimentalFeatures() {
            showExperimentalInfoDialog('enableOnDemandLocationStreaming', value)
          }
        />
@@ -78,10 +83,10 @@ index b4ed923b9ef19a978dd64f8299f1d7b1c1f1be00..efdf056692f5eacac32f9573468286d6
          <DesktopSettingsSwitch
            settingsKey='contentProtectionEnabled'
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index bd995140f62aebc77d8a9b529acb4f9e26bb56e6..99cb83ef4c538ca95db98cd9b3222beb85e37aa5 100644
+index b623e90e12862407b8bb6659e478f083eda06fd2..8b41c4ce49ee1f5486ad5a54817c2c0653a6a328 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
-@@ -13,6 +13,8 @@ import { extension } from 'mime-types'
+@@ -12,6 +12,8 @@ import { extension } from 'mime-types'
  
  import MenuAttachment from './menuAttachment'
  import ComposerMessageInput from './ComposerMessageInput'
@@ -94,7 +99,7 @@ index bd995140f62aebc77d8a9b529acb4f9e26bb56e6..99cb83ef4c538ca95db98cd9b3222beb
      [chatId, updateDraftText]
    )
  
-+  const settingsStore = useSettingsStore()[0]
++  const desktopSettingsStore = useDesktopSettingsStore()[0]
 +
 +  // Sender-baked link previews: when the draft has a URL and no image, offer to
 +  // generate a preview card and attach it as an image. See docs/link-preview.md.
@@ -108,7 +113,7 @@ index bd995140f62aebc77d8a9b529acb4f9e26bb56e6..99cb83ef4c538ca95db98cd9b3222beb
 +    removeFile,
 +    disabled:
 +      messageEditing.isEditingModeActive ||
-+      settingsStore?.desktopSettings.linkPreviewSuggestions === false,
++      desktopSettingsStore?.linkPreviewSuggestions === false,
 +  })
 +
    const onArrowUpWhenEmpty = useCallback(async () => {
@@ -118,12 +123,12 @@ index bd995140f62aebc77d8a9b529acb4f9e26bb56e6..99cb83ef4c538ca95db98cd9b3222beb
          }
        }
  
--  const settingsStore = useSettingsStore()[0]
+-  const desktopSettingsStore = useDesktopSettingsStore()[0]
 -
    const focusMessageInput = useCallback(() => {
      // Only one of these is actually rendered at any given moment.
      regularMessageInputRef.current?.focus()
-@@ -645,21 +662,24 @@ const Composer = forwardRef<
+@@ -663,21 +680,24 @@ const Composer = forwardRef<
                    />
                  </section>
                )}
@@ -1645,7 +1650,7 @@ index 0000000000000000000000000000000000000000..144b0ce8389357a2ff1f0834987d0f9b
 +  )
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 9310b6de851c57e2d67370a9af42e88515e38934..1ea04c297f4d23483de9223bf79b3cc13fd5e9dd 100644
+index 91412aadddfc915edf173488dcf7661d77284e61..e63a68fcc0d61cc8f515a46ec6091298844eec92 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -39,6 +39,8 @@ export interface DesktopSettingsType {
@@ -1658,7 +1663,7 @@ index 9310b6de851c57e2d67370a9af42e88515e38934..1ea04c297f4d23483de9223bf79b3cc1
    locale: string | null
    notifications: boolean
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 49969df628f78d51a2bcc89a37b4802bd2e57862..7f20920cd2014ba4829cf21287a4a2a688d1dc3b 100644
+index be17a78d9501cfc68b535886d499e13011f6825f..bece8a82b2e50b90e133a2e0aa6c0750ea9d2366 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -14,6 +14,7 @@ export function getDefaultState(): DesktopSettingsType {

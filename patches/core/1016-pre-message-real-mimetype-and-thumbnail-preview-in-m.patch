@@ -70,7 +70,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 ---
  deltachat-jsonrpc/src/api/types/message.rs |   5 +
  src/blob.rs                                |  51 +++
- src/download/post_msg_metadata.rs          | 404 ++++++++++++++++++++-
+ src/download/post_msg_metadata.rs          | 408 ++++++++++++++++++++-
  src/imap.rs                                |   5 +-
  src/message.rs                             |   3 +-
  src/receive_imf.rs                         |  17 +-
@@ -78,10 +78,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  src/sql/sql_tests.rs                       |  40 +-
  src/tests/pre_messages/receiving.rs        | 123 ++++++-
  src/tests/pre_messages/util.rs             |  12 +-
- 10 files changed, 644 insertions(+), 26 deletions(-)
+ 10 files changed, 648 insertions(+), 26 deletions(-)
 
 diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
-index 2b37fb507df66daf8a8e86fd5f0b9a196c055ba2..b589893e4125e58636ba3d61eec6ee2002a45a72 100644
+index 969a65d5b743e8ea57d2a88dd4fc64fb8f6f574a..f0f9d376a804a01dc8d21ba7316e27bdd42be71b 100644
 --- a/deltachat-jsonrpc/src/api/types/message.rs
 +++ b/deltachat-jsonrpc/src/api/types/message.rs
 @@ -48,6 +48,10 @@ pub struct MessageObject {
@@ -95,7 +95,7 @@ index 2b37fb507df66daf8a8e86fd5f0b9a196c055ba2..b589893e4125e58636ba3d61eec6ee20
      state: u32,
  
      /// An error text, if there is one.
-@@ -210,6 +214,7 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Option<Self
+@@ -213,6 +217,7 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Option<Self
              has_location: message.has_location(),
              has_html: message.has_html(),
              view_type: message.get_viewtype().into(),
@@ -104,10 +104,10 @@ index 2b37fb507df66daf8a8e86fd5f0b9a196c055ba2..b589893e4125e58636ba3d61eec6ee20
                  .get_state()
                  .to_u32()
 diff --git a/src/blob.rs b/src/blob.rs
-index a0c4e15dd1a75d0d85e10f01e3245b0f28f38a04..cd0e145a1010cf610e29d7712335b2c2c0909230 100644
+index 215cdc645c59b15d8308c56691e63815b4dd27c1..b1d247761194702ebe67406b3faa28782111da3a 100644
 --- a/src/blob.rs
 +++ b/src/blob.rs
-@@ -725,6 +725,57 @@ fn encode_img(
+@@ -711,6 +711,57 @@ fn encode_img(
      Ok(())
  }
  
@@ -166,7 +166,7 @@ index a0c4e15dd1a75d0d85e10f01e3245b0f28f38a04..cd0e145a1010cf610e29d7712335b2c2
      context: &Context,
      img: &DynamicImage,
 diff --git a/src/download/post_msg_metadata.rs b/src/download/post_msg_metadata.rs
-index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268627415e3 100644
+index 705a71a710406adda2feef9d169210e36bcdee94..015cc1bd81023b7e602b5fa437cc1324385feb17 100644
 --- a/src/download/post_msg_metadata.rs
 +++ b/src/download/post_msg_metadata.rs
 @@ -2,6 +2,7 @@
@@ -360,7 +360,7 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
          assert_eq!(
              post_msg_metadata,
              Some(PostMsgMetadata {
-@@ -140,11 +274,229 @@ async fn test_build_from_file_msg() -> Result<()> {
+@@ -140,11 +274,233 @@ async fn test_build_from_file_msg() -> Result<()> {
                  filename: "test.bin".to_string(),
                  wh: None,
                  duration: None,
@@ -427,6 +427,7 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
 +            .expect("image has a file");
 +        assert_eq!(post_msg_metadata.mime.as_deref(), Some("image/png"));
 +        assert_eq!(post_msg_metadata.thumbnail, None);
++        alice.assert_warn("failed to encode preview").await;
 +        Ok(())
 +    }
 +
@@ -537,6 +538,7 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
 +        apply_received_metadata(alice, &mut param, &metadata);
 +        assert_eq!(param.get(Param::MimeType), Some("image/jpeg"));
 +        assert!(!param.exists(Param::File));
++        alice.assert_warn("thumbnail too large").await;
 +        Ok(())
 +    }
 +
@@ -560,6 +562,7 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
 +        let mut param = Params::new();
 +        apply_received_metadata(alice, &mut param, &metadata);
 +        assert!(!param.exists(Param::File));
++        alice.assert_warn("thumbnail without filename").await;
 +        Ok(())
 +    }
 +
@@ -584,13 +587,14 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
 +        apply_received_metadata(alice, &mut param, &metadata);
 +        assert_eq!(param.get(Param::MimeType), Some("image/jpeg"));
 +        assert!(!param.exists(Param::File));
++        alice.assert_warn("invalid base64").await;
 +        Ok(())
 +    }
 +
      /// Build from message with image attachment
      #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
      async fn test_build_from_image_msg() -> Result<()> {
-@@ -158,17 +510,17 @@ async fn test_build_from_image_msg() -> Result<()> {
+@@ -158,17 +514,17 @@ async fn test_build_from_image_msg() -> Result<()> {
          // this is usually done while sending,
          // but we don't send it here, so we need to call it ourself
          image_msg.try_calc_and_set_dimensions(alice).await?;
@@ -619,7 +623,7 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
  
          Ok(())
      }
-@@ -183,6 +535,8 @@ fn test_serialize_to_header() -> Result<()> {
+@@ -183,6 +539,8 @@ fn test_serialize_to_header() -> Result<()> {
                  filename: "test.bin".to_string(),
                  wh: None,
                  duration: None,
@@ -628,7 +632,7 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
              }
              .to_header_value()?,
              "{\"size\":1000000,\"viewtype\":\"File\",\"filename\":\"test.bin\"}"
-@@ -194,6 +548,8 @@ fn test_serialize_to_header() -> Result<()> {
+@@ -194,6 +552,8 @@ fn test_serialize_to_header() -> Result<()> {
                  filename: "vacation.png".to_string(),
                  wh: Some((1080, 1920)),
                  duration: None,
@@ -637,7 +641,7 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
              }
              .to_header_value()?,
              "{\"size\":5342765,\"viewtype\":\"Image\",\"filename\":\"vacation.png\",\"wh\":[1080,1920]}"
-@@ -205,6 +561,8 @@ fn test_serialize_to_header() -> Result<()> {
+@@ -205,6 +565,8 @@ fn test_serialize_to_header() -> Result<()> {
                  filename: "audio-DD-MM-YY.ogg".to_string(),
                  wh: None,
                  duration: Some(152_310),
@@ -646,7 +650,7 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
              }
              .to_header_value()?,
              "{\"size\":5000,\"viewtype\":\"Audio\",\"filename\":\"audio-DD-MM-YY.ogg\",\"duration\":152310}"
-@@ -227,6 +585,8 @@ fn test_deserialize_from_header() -> Result<()> {
+@@ -227,6 +589,8 @@ fn test_deserialize_from_header() -> Result<()> {
                  filename: "test.bin".to_string(),
                  wh: None,
                  duration: None,
@@ -655,7 +659,7 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
              }
          );
          assert_eq!(
-@@ -239,6 +599,8 @@ fn test_deserialize_from_header() -> Result<()> {
+@@ -239,6 +603,8 @@ fn test_deserialize_from_header() -> Result<()> {
                  filename: "vacation.png".to_string(),
                  wh: Some((1080, 1920)),
                  duration: None,
@@ -664,7 +668,7 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
              }
          );
          assert_eq!(
-@@ -251,6 +613,24 @@ fn test_deserialize_from_header() -> Result<()> {
+@@ -251,6 +617,24 @@ fn test_deserialize_from_header() -> Result<()> {
                  filename: "audio-DD-MM-YY.ogg".to_string(),
                  wh: None,
                  duration: Some(152_310),
@@ -690,10 +694,10 @@ index 705a71a710406adda2feef9d169210e36bcdee94..8d46cd387aa93c0bf33b49a1df0e1268
          );
  
 diff --git a/src/imap.rs b/src/imap.rs
-index d780f9fa88033ea6c4921413791d72f751247b2c..a84ef699673d945d85b28b6e80390c501b1f6521 100644
+index c04d726a5c2a9373a83a91af5c47b004bd06a9cd..d55fad5b8dcecf42af29b16a8ce703bbf5610e6e 100644
 --- a/src/imap.rs
 +++ b/src/imap.rs
-@@ -1276,7 +1276,10 @@ pub(crate) async fn fetch_many_msgs(
+@@ -1120,7 +1120,10 @@ pub(crate) async fn fetch_many_msgs(
                      context,
                      "Passing message UID {} to receive_imf().", request_uid
                  );
@@ -702,14 +706,14 @@ index d780f9fa88033ea6c4921413791d72f751247b2c..a84ef699673d945d85b28b6e80390c50
 +                // pre-message metadata now carries a mime + thumbnail preview, which nudged
 +                // both callers of `fetch_many_msgs` past the `large_futures` size threshold.
 +                let res = Box::pin(receive_imf_inner(context, rfc724_mid, body, is_seen)).await;
- 
-                 // If there was an error receiving the message, show a device message:
-                 let received_msg = match res {
+                 crate::sql::update_transport_last_rcvd_timestamp(context, transport_id)
+                     .await
+                     .context(format!(
 diff --git a/src/message.rs b/src/message.rs
-index 677b75e698dce1f16a44ff6af0df937d4ed743cd..4bbd12ba4ac6373781b0c22330a49da2a87ce6ac 100644
+index 05b7273185bff0ec706e636978114b2d8d1f6097..6cbd3788141ab6a38f72d2f0867a536d8a16cc81 100644
 --- a/src/message.rs
 +++ b/src/message.rs
-@@ -899,8 +899,7 @@ pub async fn get_filebytes(&self, context: &Context) -> Result<Option<u64>> {
+@@ -871,8 +871,7 @@ pub async fn get_filebytes(&self, context: &Context) -> Result<Option<u64>> {
  
      /// If message is a Pre-Message,
      /// then this returns the viewtype it will have when it is downloaded.
@@ -720,10 +724,10 @@ index 677b75e698dce1f16a44ff6af0df937d4ed743cd..4bbd12ba4ac6373781b0c22330a49da2
              return self
                  .param
 diff --git a/src/receive_imf.rs b/src/receive_imf.rs
-index c91cdea22bbfffb0eed178ff687f5f582e625124..6e51913ca8ecd63564379ac553d4a68736e3b9ec 100644
+index d06a636d0f9dc832bd8732d22dbf8aeab2c32563..a2f2ee7e090be98233d99f887f2d437aaf5eda0e 100644
 --- a/src/receive_imf.rs
 +++ b/src/receive_imf.rs
-@@ -2165,18 +2165,25 @@ async fn add_parts(
+@@ -2157,18 +2157,25 @@ async fn add_parts(
              }
          };
  
@@ -755,10 +759,10 @@ index c91cdea22bbfffb0eed178ff687f5f582e625124..6e51913ca8ecd63564379ac553d4a687
              .sql
              .call_write(|conn| {
 diff --git a/src/sql.rs b/src/sql.rs
-index 5c6ec77b05eacc83815cd0da56cdbf24e4bb5547..406d7c56d5dccfa3c09b46a9b25405b37dc57285 100644
+index 4177ade8f92523c1c4999a9d75860a31b22efb23..8669fa05dd886836c5edffaee57befbd5d94b19a 100644
 --- a/src/sql.rs
 +++ b/src/sql.rs
-@@ -972,7 +972,9 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
+@@ -1012,7 +1012,9 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
      maybe_add_from_param(
          &context.sql,
          &mut files_in_use,
@@ -769,7 +773,7 @@ index 5c6ec77b05eacc83815cd0da56cdbf24e4bb5547..406d7c56d5dccfa3c09b46a9b25405b3
          Param::File,
      )
      .await?;
-@@ -1085,7 +1087,11 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
+@@ -1132,7 +1134,11 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
                      if p == blobdir
                          && (is_file_in_use(&files_in_use, None, &name_s)
                              || is_file_in_use(&files_in_use, Some(".waveform"), &name_s)
@@ -783,7 +787,7 @@ index 5c6ec77b05eacc83815cd0da56cdbf24e4bb5547..406d7c56d5dccfa3c09b46a9b25405b3
                          continue;
                      }
 diff --git a/src/sql/sql_tests.rs b/src/sql/sql_tests.rs
-index 944932b948bc3e35ec187f058fd849dd5bb86a42..4914dd653e9131e2245bc7f45e9f5e3ed86a2f42 100644
+index 4bea6cf209311e82d0d97ee52f0c30f778df6fce..d24ec6159857fe04f6b82d9f86cd7034024a5a2b 100644
 --- a/src/sql/sql_tests.rs
 +++ b/src/sql/sql_tests.rs
 @@ -1,5 +1,5 @@
@@ -793,7 +797,7 @@ index 944932b948bc3e35ec187f058fd849dd5bb86a42..4914dd653e9131e2245bc7f45e9f5e3e
  use crate::{EventType, test_utils::TestContext};
  
  #[test]
-@@ -423,3 +423,41 @@ async fn test_housekeeping_keeps_pending_download_staging() -> Result<()> {
+@@ -425,3 +425,41 @@ async fn test_housekeeping_keeps_pending_download_staging() -> Result<()> {
  
      Ok(())
  }
@@ -836,7 +840,7 @@ index 944932b948bc3e35ec187f058fd849dd5bb86a42..4914dd653e9131e2245bc7f45e9f5e3e
 +    Ok(())
 +}
 diff --git a/src/tests/pre_messages/receiving.rs b/src/tests/pre_messages/receiving.rs
-index 7a2586e2cb9759dad0009edff1d4364c8716d86a..0f612af7571cc7b2d82add83b84222fd6fe3e398 100644
+index f8d016edf08ddc9f47ba593420a744d919a3af4d..0e4224425ce848b6b6fe6179e58007b21c350e96 100644
 --- a/src/tests/pre_messages/receiving.rs
 +++ b/src/tests/pre_messages/receiving.rs
 @@ -1,4 +1,6 @@
@@ -846,9 +850,9 @@ index 7a2586e2cb9759dad0009edff1d4364c8716d86a..0f612af7571cc7b2d82add83b84222fd
  use anyhow::{Context as _, Result};
  use pretty_assertions::assert_eq;
  
-@@ -15,8 +17,10 @@
- use crate::receive_imf::receive_imf;
- use crate::summary::assert_summary_texts;
+@@ -20,8 +22,10 @@
+ use crate::test_utils::SentMessage;
+ use crate::test_utils::TestContext;
  use crate::test_utils::TestContextManager;
 +use crate::tools::SystemTime;
  use crate::tests::pre_messages::util::{
@@ -858,7 +862,7 @@ index 7a2586e2cb9759dad0009edff1d4364c8716d86a..0f612af7571cc7b2d82add83b84222fd
  };
  use crate::webxdc::StatusUpdateSerial;
  
-@@ -49,7 +53,9 @@ async fn test_mimeparser_pre_message_and_post_message() -> Result<()> {
+@@ -54,7 +58,9 @@ async fn test_mimeparser_pre_message_and_post_message() -> Result<()> {
                  viewtype: Viewtype::File,
                  filename: "test.bin".to_string(),
                  wh: None,
@@ -869,7 +873,7 @@ index 7a2586e2cb9759dad0009edff1d4364c8716d86a..0f612af7571cc7b2d82add83b84222fd
              })
          }
      );
-@@ -1007,3 +1013,116 @@ async fn test_bot_pre_message_notifications() -> Result<()> {
+@@ -1059,3 +1065,116 @@ async fn test_bot_pre_message_notifications() -> Result<()> {
  
      Ok(())
  }

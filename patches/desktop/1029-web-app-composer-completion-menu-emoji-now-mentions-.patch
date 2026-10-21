@@ -39,14 +39,20 @@ flag plumbed from Composer to both ComposerMessageInput instances. The single
 gate is an early return in refreshCompletion() -- the only path that opens the
 menu -- so detection, key ownership, and rendering are all inert when off.
 
+Rebased onto v2.62.0: upstream dropped the unused
+ComposerMessageInputState (08bfbca21), so the component's state type is
+(re)declared here for the completion state alone, and Composer reads
+experimentalCompletionMenu from the new desktop-settings store
+(95f5a1e1d).
+
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 ---
  .../scss/composer/_completion-menu.scss       |  53 ++++
  .../frontend/scss/composer/_composer.scss     |   4 +
  packages/frontend/scss/manifest.scss          |   1 +
  .../Settings/ExperimentalFeatures.tsx         |   5 +
- .../src/components/composer/Composer.tsx      |   8 +
- .../composer/ComposerMessageInput.tsx         | 253 +++++++++++++++---
+ .../src/components/composer/Composer.tsx      |   6 +
+ .../composer/ComposerMessageInput.tsx         | 261 +++++++++++++++---
  .../composer/completion/CompletionMenu.tsx    |  64 +++++
  .../composer/completion/emojiProvider.ts      |  73 +++++
  .../composer/completion/findActiveToken.ts    |  31 +++
@@ -54,7 +60,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
  .../frontend/src/tests/completion.test.ts     |  65 +++++
  packages/shared/shared-types.d.ts             |   2 +
  packages/shared/state.ts                      |   1 +
- 13 files changed, 556 insertions(+), 35 deletions(-)
+ 13 files changed, 561 insertions(+), 36 deletions(-)
  create mode 100644 packages/frontend/scss/composer/_completion-menu.scss
  create mode 100644 packages/frontend/src/components/composer/completion/CompletionMenu.tsx
  create mode 100644 packages/frontend/src/components/composer/completion/emojiProvider.ts
@@ -149,10 +155,10 @@ index e76631775c08af4a7b8e90c4e0620bd40e7c3b00..b55d0ebbc49ccae193d25e9e2fd25fe2
  // Contact
  @use 'contact/_contact-list';
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index efdf056692f5eacac32f9573468286d6dd7c645f..7f020792a6ac162bad0993fc11067247e44f1cb2 100644
+index 0d4ef1c26a80aa135ba2afe337186cd19a3685cf..55764bcbd83f3c2d86dd344623f73a2cb5a441ba 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-@@ -76,6 +76,11 @@ export function ExperimentalFeatures() {
+@@ -74,6 +74,11 @@ export function ExperimentalFeatures() {
          label='Link-preview suggestions'
          description='When your message contains a link and has no image, offer to attach a preview card. Off by default; turn on to be prompted.'
        />
@@ -165,33 +171,31 @@ index efdf056692f5eacac32f9573468286d6dd7c645f..7f020792a6ac162bad0993fc11067247
          <DesktopSettingsSwitch
            settingsKey='contentProtectionEnabled'
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index 99cb83ef4c538ca95db98cd9b3222beb85e37aa5..c2977f97ae547ea5643bdc961eabcfe6f5b2e7ec 100644
+index 8b41c4ce49ee1f5486ad5a54817c2c0653a6a328..cc00682c937fce6a30b3576acc4f9e8b298724ee 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
-@@ -764,6 +764,10 @@ const Composer = forwardRef<
+@@ -782,6 +782,9 @@ const Composer = forwardRef<
                  isMessageEditingMode={false}
                  ref={regularMessageInputRef}
-                 enterKeySends={settingsStore?.desktopSettings.enterKeySends}
+                 enterKeySends={desktopSettingsStore.enterKeySends}
 +                completionMenu={
-+                  settingsStore?.desktopSettings.experimentalCompletionMenu ===
-+                  true
++                  desktopSettingsStore.experimentalCompletionMenu === true
 +                }
                  loadingDraft={draftIsLoading}
                  sendMessageOrEditRequest={
                    (!messageEditing.isEditingModeActive
-@@ -786,6 +790,10 @@ const Composer = forwardRef<
+@@ -804,6 +807,9 @@ const Composer = forwardRef<
                  hidden={!messageEditing.isEditingModeActive}
                  ref={editMessageInputRef}
-                 enterKeySends={settingsStore?.desktopSettings.enterKeySends}
+                 enterKeySends={desktopSettingsStore.enterKeySends}
 +                completionMenu={
-+                  settingsStore?.desktopSettings.experimentalCompletionMenu ===
-+                  true
++                  desktopSettingsStore.experimentalCompletionMenu === true
 +                }
                  loadingDraft={false}
                  sendMessageOrEditRequest={
                    messageEditing.doSendEditRequest ?? (() => {})
 diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
-index 0dca79d9ac7a293bd95e623d83e023863379ba11..cb9d28ae4267efb7138312e12ca24f166f8df640 100644
+index ff6c142018f2b6cecd16edb0a0284aae0de46790..16860f764971520ee142260e583dea3c660fc20c 100644
 --- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 +++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
 @@ -4,12 +4,38 @@ import { ActionEmitter, KeybindAction } from '../../keybindings'
@@ -242,15 +246,22 @@ index 0dca79d9ac7a293bd95e623d83e023863379ba11..cb9d28ae4267efb7138312e12ca24f16
    onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
    // used to show/hide send button
    onChange: (text: string) => void
-@@ -39,6 +67,7 @@ type ComposerMessageInputProps = {
- 
- type ComposerMessageInputState = {
-   // error?:boolean|Error
-+  completion: CompletionState
+@@ -37,23 +65,37 @@ type ComposerMessageInputProps = {
+   onArrowUpWhenEmpty?: () => void
  }
  
- export default class ComposerMessageInput extends React.Component<
-@@ -51,16 +80,23 @@ export default class ComposerMessageInput extends React.Component<
+-export default class ComposerMessageInput extends React.Component<ComposerMessageInputProps> {
++type ComposerMessageInputState = {
++  completion: CompletionState
++}
++
++export default class ComposerMessageInput extends React.Component<
++  ComposerMessageInputProps,
++  ComposerMessageInputState
++> {
+   static contextType = DialogContext
+   declare context: React.ContextType<typeof DialogContext>
+ 
    composerSize: number
    setCursorPosition: number | false
    textareaRef: React.RefObject<HTMLTextAreaElement | null>
@@ -274,7 +285,7 @@ index 0dca79d9ac7a293bd95e623d83e023863379ba11..cb9d28ae4267efb7138312e12ca24f16
  
      this.textareaRef = React.createRef()
      this.focus = this.focus.bind(this)
-@@ -141,6 +177,128 @@ export default class ComposerMessageInput extends React.Component<
+@@ -125,6 +167,128 @@ export default class ComposerMessageInput extends React.Component<ComposerMessag
    onChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
      const text = e.target.value
      this.props.onChange(text)
@@ -403,7 +414,7 @@ index 0dca79d9ac7a293bd95e623d83e023863379ba11..cb9d28ae4267efb7138312e12ca24f16
    }
  
    keyEventToAction(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-@@ -156,6 +314,12 @@ export default class ComposerMessageInput extends React.Component<
+@@ -140,6 +304,12 @@ export default class ComposerMessageInput extends React.Component<ComposerMessag
    }
  
    onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -416,7 +427,7 @@ index 0dca79d9ac7a293bd95e623d83e023863379ba11..cb9d28ae4267efb7138312e12ca24f16
      const action = this.keyEventToAction(e)
  
      if (action === 'SEND') {
-@@ -234,44 +398,63 @@ export default class ComposerMessageInput extends React.Component<
+@@ -218,44 +388,63 @@ export default class ComposerMessageInput extends React.Component<ComposerMessag
      if (this.props.hidden) {
        return null
      }
@@ -810,7 +821,7 @@ index 0000000000000000000000000000000000000000..39a5f97568ae91d34ce987adedcf4a68
 +  })
 +})
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 1ea04c297f4d23483de9223bf79b3cc13fd5e9dd..575687a9c75ab2d418e81c98f94bb126e70a91dd 100644
+index e63a68fcc0d61cc8f515a46ec6091298844eec92..66532669f35c22a669a5aff08708bb0e0d906ff8 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -41,6 +41,8 @@ export interface DesktopSettingsType {
@@ -823,7 +834,7 @@ index 1ea04c297f4d23483de9223bf79b3cc13fd5e9dd..575687a9c75ab2d418e81c98f94bb126
    locale: string | null
    notifications: boolean
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 7f20920cd2014ba4829cf21287a4a2a688d1dc3b..3d2255672370d81b99c162a81546413cce803aec 100644
+index bece8a82b2e50b90e133a2e0aa6c0750ea9d2366..0bf2feedb8c618150ac70a6dc0c084fc23885c22 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -15,6 +15,7 @@ export function getDefaultState(): DesktopSettingsType {

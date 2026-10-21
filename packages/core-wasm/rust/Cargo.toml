@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 deltachat = { path = "../../../build/core", default-features = false }
 deltachat-jsonrpc = { path = "../../../build/core/deltachat-jsonrpc", default-features = false }
 tokio = { package = "tokio-wasm-shim", path = "../../../crates/tokio-wasm-shim" }
-yerpc = "0.6"
+yerpc = "0.7"
 futures-lite = "2"
 serde_json = "1"
 toml = "0.9"

@@ -100,6 +100,8 @@ async function runScenario({ accounts = 1, sequential = false } = {}) {
     // produced. Sequentially, a later op can land on a respawned worker.
     const keygen = async (i) => {
       const aid = await window.dc.rpc.addAccount();
+      // core 2.64 only accepts a configured_addr that belongs to a transport
+      await window.dc.rpc.addPseudoTransport(aid, `offload${i}@example.org`);
       await window.dc.rpc.setConfig(aid, 'configured_addr', `offload${i}@example.org`);
       await window.dc.rpc.exportSelfKeys(aid, `/keys-${aid}`, null);
       const info = await window.dc.rpc.getInfo(aid);
