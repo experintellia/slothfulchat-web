@@ -869,6 +869,15 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   unchanged and rows written by official core are never rewritten, so
   messages already in a database keep their truncated text and still open in
   the HTML viewer. `core/1017`, `desktop/1050`
+- **Encrypted chats only, no plaintext email** — core's `force_encryption`
+  always reads as on, whatever an older version or another device stored, so
+  unencrypted mail is neither sent nor fetched, and existing unencrypted chats
+  (address contacts, plain-email groups, mailing lists) turn read-only. The
+  "Enforce end-to-end encryption" login switch and cloning an unencrypted
+  group into a new plain email are gone; upstream's own gates already hide
+  "New E-Mail" once encryption is forced. Logging in with a normal email
+  account still works. Upstream plans the same removal. `core/1027`,
+  `desktop/1070`
 - **Logging** — core Info/Warning/Error events are printed once instead of
   twice: `packages/core-wasm` no longer installs a `log`→console bridge, and
   the fork runtime prints the events itself on release builds (upstream's own

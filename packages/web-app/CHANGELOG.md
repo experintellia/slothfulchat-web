@@ -1,5 +1,8 @@
 # Changelog
 
+- **Encrypted chats only.** Unencrypted email is no longer sent or received,
+  and old unencrypted chats become read-only. Logging in with a normal email
+  account still works.
 - **Write to the developer right away.** "Sloth (Slothful.chat Developer)" in
   New Chat now opens the chat immediately, instead of waiting for an invite
   handshake to finish first.
