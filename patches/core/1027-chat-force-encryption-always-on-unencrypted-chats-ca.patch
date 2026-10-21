@@ -18,9 +18,9 @@ letting a message fail at send time. ForcePlaintext messages (securejoin)
 skip it, as they already skip MissingKey.
 ---
  src/chat.rs            | 14 +++++++++++++-
- src/chat/chat_tests.rs | 20 ++++++++++++++++++++
+ src/chat/chat_tests.rs | 23 ++++++++++++++++++++++-
  src/config.rs          |  5 +++++
- 3 files changed, 38 insertions(+), 1 deletion(-)
+ 3 files changed, 40 insertions(+), 2 deletions(-)
 
 diff --git a/src/chat.rs b/src/chat.rs
 index d1b0d420344fe63ee4e06da2312f32e1cf8bfc7e..b88b01ac0a35c2776f9b3ccef97918384e616f00 100644
@@ -69,7 +69,7 @@ index d1b0d420344fe63ee4e06da2312f32e1cf8bfc7e..b88b01ac0a35c2776f9b3ccef9791838
              .get_bool(Param::ForcePlaintext)
              .unwrap_or_default(),
 diff --git a/src/chat/chat_tests.rs b/src/chat/chat_tests.rs
-index afc9ae3278a17e2cf82e729c047edea044fa17dc..9d7b394781a181287781bebceadd88d4e472ed02 100644
+index afc9ae3278a17e2cf82e729c047edea044fa17dc..f16459e68562980c23d36835edbf2fc44275101d 100644
 --- a/src/chat/chat_tests.rs
 +++ b/src/chat/chat_tests.rs
 @@ -1006,6 +1006,26 @@ async fn test_device_chat_cannot_sent() {
@@ -99,6 +99,16 @@ index afc9ae3278a17e2cf82e729c047edea044fa17dc..9d7b394781a181287781bebceadd88d4
  #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
  async fn test_device_chat_is_encrypted() {
      let t = TestContext::new_alice().await;
+@@ -2795,7 +2815,8 @@ async fn test_can_send_group() -> Result<()> {
+     let bob = Contact::create(&alice, "", "bob@f.br").await?;
+     let chat_id = ChatId::create_for_contact(&alice, bob).await?;
+     let chat = Chat::load_from_db(&alice, chat_id).await?;
+-    assert!(chat.can_send(&alice).await?);
++    // Unencrypted 1:1 while encryption is forced (the default).
++    assert!(!chat.can_send(&alice).await?);
+     let chat_id = create_group(&alice, "foo").await?;
+     assert_eq!(
+         Chat::load_from_db(&alice, chat_id)
 diff --git a/src/config.rs b/src/config.rs
 index b55be91c6432c98ce35261d752536a1911294438..0286450e006af914e6d0b442b9abc2da913f48c9 100644
 --- a/src/config.rs
