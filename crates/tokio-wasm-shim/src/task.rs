@@ -220,6 +220,16 @@ impl<T: 'static> JoinSet<T> {
     }
 }
 
+/// Like tokio's: dropping the set aborts its tasks. Core relies on it, e.g.
+/// `run_connection_attempts()`'s delay set and the autorelay probes.
+impl<T> Drop for JoinSet<T> {
+    fn drop(&mut self) {
+        for handle in self.handles.iter_mut() {
+            handle.abort();
+        }
+    }
+}
+
 impl<T: 'static> Default for JoinSet<T> {
     fn default() -> Self {
         Self::new()
