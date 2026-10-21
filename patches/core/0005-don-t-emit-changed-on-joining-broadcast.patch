@@ -9,10 +9,10 @@ Patch-Range: upstream-fix
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/src/securejoin/bob.rs b/src/securejoin/bob.rs
-index 52b545e2faeb12f3aca379c7d198fd43e708853c..29ec3a27356430fd2b4d04d027dc2d09ef11a1a0 100644
+index bd4388105abda11d47104100350c3a2160006bb0..7e83ee1145484bf585722817ec5012fb877d8b3e 100644
 --- a/src/securejoin/bob.rs
 +++ b/src/securejoin/bob.rs
-@@ -285,7 +285,8 @@ pub(super) async fn handle_auth_required_or_pubkey(
+@@ -283,7 +283,8 @@ pub(super) async fn handle_auth_required_or_pubkey(
              .await?;
  
          match invite {

@@ -19,14 +19,14 @@ Content-Transfer-Encoding: 8bit
  src/blob.rs     |  8 +++++++-
  src/context.rs  |  2 +-
  src/imex.rs     |  6 +++---
- src/tools.rs    | 23 +++++++++++++++++++++--
- 5 files changed, 43 insertions(+), 17 deletions(-)
+ src/tools.rs    | 19 +++++++++++++++++--
+ 5 files changed, 39 insertions(+), 17 deletions(-)
 
 diff --git a/src/accounts.rs b/src/accounts.rs
-index c825c2d15e36ea530935a1235bfc020098cf6186..0a8e9f7378fc8bf57759ddeb741427a0b714356d 100644
+index 88718beb0defe224932eed8b5bdb0b54fa4ce26a..95d911a2f87fb2c0fe00b22780eceac6bd6f9aa3 100644
 --- a/src/accounts.rs
 +++ b/src/accounts.rs
-@@ -87,12 +87,12 @@ fn get_id(&self) -> u32 {
+@@ -84,12 +84,12 @@ fn log_info(&self, file: &str, line: u32, msg: String) {
      /// Creates them if the directory doesn't exist, or if it exists but is empty.
      /// Errors if the directory exists with files but no config.
      async fn ensure_accounts_dir(dir: &Path) -> Result<()> {
@@ -41,7 +41,7 @@ index c825c2d15e36ea530935a1235bfc020098cf6186..0a8e9f7378fc8bf57759ddeb741427a0
              let mut rd = fs::read_dir(dir).await?;
              ensure!(rd.next_entry().await?.is_none(), "{dir:?} is not empty");
              Config::new(dir).await?;
-@@ -103,10 +103,10 @@ async fn ensure_accounts_dir(dir: &Path) -> Result<()> {
+@@ -100,10 +100,10 @@ async fn ensure_accounts_dir(dir: &Path) -> Result<()> {
      /// Opens an existing accounts structure. Will error if the folder doesn't exist,
      /// no account exists and no config exists.
      async fn open(events: Events, dir: PathBuf, writable: bool) -> Result<Self> {
@@ -54,7 +54,7 @@ index c825c2d15e36ea530935a1235bfc020098cf6186..0a8e9f7378fc8bf57759ddeb741427a0
  
          let config = Config::from_file(config_file, writable).await?;
  
-@@ -238,8 +238,8 @@ pub async fn migrate_account(&mut self, dbfile: PathBuf) -> Result<u32> {
+@@ -235,8 +235,8 @@ pub async fn migrate_account(&mut self, dbfile: PathBuf) -> Result<u32> {
          let blobdir = Context::derive_blobdir(&dbfile);
          let walfile = Context::derive_walfile(&dbfile);
  
@@ -65,7 +65,7 @@ index c825c2d15e36ea530935a1235bfc020098cf6186..0a8e9f7378fc8bf57759ddeb741427a0
  
          let old_id = self.config.get_selected_account();
  
-@@ -264,7 +264,7 @@ pub async fn migrate_account(&mut self, dbfile: PathBuf) -> Result<u32> {
+@@ -261,7 +261,7 @@ pub async fn migrate_account(&mut self, dbfile: PathBuf) -> Result<u32> {
              try_many_times(|| fs::rename(&blobdir, &new_blobdir))
                  .await
                  .context("failed to rename blobdir")?;
@@ -74,7 +74,7 @@ index c825c2d15e36ea530935a1235bfc020098cf6186..0a8e9f7378fc8bf57759ddeb741427a0
                  fs::rename(&walfile, &new_walfile)
                      .await
                      .context("failed to rename walfile")?;
-@@ -616,15 +616,16 @@ fn drop(&mut self) {
+@@ -623,15 +623,16 @@ fn drop(&mut self) {
  }
  
  impl Config {
@@ -93,7 +93,7 @@ index c825c2d15e36ea530935a1235bfc020098cf6186..0a8e9f7378fc8bf57759ddeb741427a0
      #[expect(clippy::arithmetic_side_effects)]
      async fn create_lock_task(dir: PathBuf) -> Result<Option<JoinHandle<anyhow::Result<()>>>> {
          let lockfile = dir.join(LOCKFILE_NAME);
-@@ -704,7 +705,7 @@ pub async fn new(dir: &Path) -> Result<Self> {
+@@ -711,7 +712,7 @@ pub async fn new(dir: &Path) -> Result<Self> {
      /// Takes a mutable reference because the saved file is a part of the `Config` state. This
      /// protects from parallel calls resulting to a wrong file contents.
      async fn sync(&mut self) -> Result<()> {
@@ -103,7 +103,7 @@ index c825c2d15e36ea530935a1235bfc020098cf6186..0a8e9f7378fc8bf57759ddeb741427a0
              !self
                  .lock_task
 diff --git a/src/blob.rs b/src/blob.rs
-index a60ebe65c7794f593a03d4d74bc75fd95e03ae74..20267a9133affe0b7636b2f156ec3eaf44c67406 100644
+index a605d693f71788ebf4ffbd370643a32294588aaa..183ce2f7506ddf5e0c8b617116dccb36e35c6fb0 100644
 --- a/src/blob.rs
 +++ b/src/blob.rs
 @@ -14,6 +14,7 @@
@@ -114,7 +114,7 @@ index a60ebe65c7794f593a03d4d74bc75fd95e03ae74..20267a9133affe0b7636b2f156ec3eaf
  use tokio_stream::wrappers::ReadDirStream;
  
  use crate::config::Config;
-@@ -595,7 +596,12 @@ pub(crate) struct BlobDirContents<'a> {
+@@ -589,7 +590,12 @@ pub(crate) struct BlobDirContents<'a> {
  impl<'a> BlobDirContents<'a> {
      pub(crate) async fn new(context: &'a Context) -> Result<BlobDirContents<'a>> {
          let readdir = fs::read_dir(context.get_blobdir()).await?;
@@ -129,10 +129,10 @@ index a60ebe65c7794f593a03d4d74bc75fd95e03ae74..20267a9133affe0b7636b2f156ec3eaf
                  match entry {
                      Ok(entry) => Some(entry),
 diff --git a/src/context.rs b/src/context.rs
-index 3b94c4e0270b694c34d4289a60cb4ee021549c20..9f31e0caa4290d859e13c5a1eab5ee5b1735d2bf 100644
+index 360b82d660ec965dbee006cba54f63799ac7a601..eb3b5d3870f389acb21b16627fa8d1e328a6c8ab 100644
 --- a/src/context.rs
 +++ b/src/context.rs
-@@ -402,7 +402,7 @@ pub async fn new_closed(
+@@ -405,7 +405,7 @@ pub async fn new_closed(
          blob_fname.push(dbfile.file_name().unwrap_or_default());
          blob_fname.push("-blobs");
          let blobdir = dbfile.with_file_name(blob_fname);
@@ -142,7 +142,7 @@ index 3b94c4e0270b694c34d4289a60cb4ee021549c20..9f31e0caa4290d859e13c5a1eab5ee5b
          }
          let context = Context::with_blobdir(
 diff --git a/src/imex.rs b/src/imex.rs
-index e93c98a357822e28c44758cf22b333904efda31b..718c53c3db1d20964dde0ddc79ccc6d549319982 100644
+index 00afc432cca0eea9f7d3c5606455eddaf1a020c2..a7e90f36d6c0532e37940068ba847a788bccf757 100644
 --- a/src/imex.rs
 +++ b/src/imex.rs
 @@ -23,8 +23,8 @@
@@ -156,9 +156,9 @@ index e93c98a357822e28c44758cf22b333904efda31b..718c53c3db1d20964dde0ddc79ccc6d5
  };
  
  mod transfer;
-@@ -434,7 +434,7 @@ fn get_next_backup_path(
+@@ -435,7 +435,7 @@ fn get_next_backup_path(
          let mut destfile = folder.clone();
-         destfile.push(format!("{stem}-{i:02}-{addr}.tar"));
+         destfile.push(format!("{stem}-{i:02}-{fingerprint}.tar"));
  
 -        if !tempdbfile.exists() && !tempfile.exists() && !destfile.exists() {
 +        if !path_exists(&tempdbfile) && !path_exists(&tempfile) && !path_exists(&destfile) {
@@ -166,10 +166,10 @@ index e93c98a357822e28c44758cf22b333904efda31b..718c53c3db1d20964dde0ddc79ccc6d5
          }
      }
 diff --git a/src/tools.rs b/src/tools.rs
-index cfa31781aa45327b5dab30537b509f0df1be19a4..bd1939b4c690a17f65c6244184bf24a304b015f1 100644
+index 381e1b6dec68734419a5326d021049e62aedfdc0..3af7fac2fb0692b07dc6f7a6bb822f0753706212 100644
 --- a/src/tools.rs
 +++ b/src/tools.rs
-@@ -355,7 +355,7 @@ pub(crate) async fn get_filebytes(context: &Context, path: &Path) -> Result<u64>
+@@ -353,7 +353,7 @@ pub(crate) async fn get_filebytes(context: &Context, path: &Path) -> Result<u64>
  
  pub(crate) async fn delete_file(context: &Context, path: &Path) -> Result<()> {
      let path_abs = get_abs_path(context, path);
@@ -178,7 +178,7 @@ index cfa31781aa45327b5dab30537b509f0df1be19a4..bd1939b4c690a17f65c6244184bf24a3
          bail!("path {} does not exist", path_abs.display());
      }
      if !path_abs.is_file() {
-@@ -443,7 +443,7 @@ fn as_ref(&self) -> &Path {
+@@ -441,7 +441,7 @@ fn as_ref(&self) -> &Path {
  
  pub(crate) async fn create_folder(context: &Context, path: &Path) -> Result<(), io::Error> {
      let path_abs = get_abs_path(context, path);
@@ -187,18 +187,8 @@ index cfa31781aa45327b5dab30537b509f0df1be19a4..bd1939b4c690a17f65c6244184bf24a3
          match fs::create_dir_all(path_abs).await {
              Ok(_) => Ok(()),
              Err(err) => {
-@@ -534,12 +534,31 @@ pub fn open_file_std(context: &Context, path: impl AsRef<Path>) -> Result<std::f
- 
- /// Reads directory and returns a vector of directory entries.
- pub async fn read_dir(path: &Path) -> Result<Vec<fs::DirEntry>> {
-+    #[cfg(not(target_arch = "wasm32"))]
-     let res = tokio_stream::wrappers::ReadDirStream::new(fs::read_dir(path).await?)
-         .try_collect()
-         .await?;
-+    // The wasm fs shim's ReadDir implements Stream itself.
-+    #[cfg(target_arch = "wasm32")]
-+    let res = fs::read_dir(path).await?.try_collect().await?;
-     Ok(res)
+@@ -496,6 +496,21 @@ pub async fn read_file(context: &Context, path: &Path) -> Result<Vec<u8>> {
+     }
  }
  
 +/// Returns whether the path exists.

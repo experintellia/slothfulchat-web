@@ -76,16 +76,24 @@ another transport finished meanwhile is never flipped back to `Failure`,
 and one nobody asked for keeps its plain download button.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Since v2.64.0 upstream's download_msg() only looks at the session's own
+transport and answers Ok(None) when the row is missing, so a message no
+relay has stays queued forever upstream too. Here it keeps the
+cross-transport imap_location() lookup; the unlocatable case still runs
+fail_unlocatable_post_msg() but now also returns Ok(None) instead of an
+error, matching upstream's quieter logging, and download_msgs() carries
+the Done-arm failure as an arm of upstream's new match.
 ---
- src/download.rs | 389 ++++++++++++++++++++++++++++++++++++++++++++----
+ src/download.rs | 397 ++++++++++++++++++++++++++++++++++++++++++++----
  src/webimap.rs  |   4 +
- 2 files changed, 368 insertions(+), 25 deletions(-)
+ 2 files changed, 374 insertions(+), 27 deletions(-)
 
 diff --git a/src/download.rs b/src/download.rs
-index ebb9a0d0064a60b8def3a9c2bc4cfc8d8b893051..f3429218924b746f3ebce7fdf790fe9526100304 100644
+index 5c533bb02387a017da0c0de90b4dcfd4e7bb924e..5e490453167aa9718e1907f740a4187e4b0d01ce 100644
 --- a/src/download.rs
 +++ b/src/download.rs
-@@ -95,7 +95,7 @@ pub async fn download_full(self, context: &Context) -> Result<()> {
+@@ -91,7 +91,7 @@ pub async fn download_full(self, context: &Context) -> Result<()> {
                  context
                      .sql
                      .execute(
@@ -94,35 +102,43 @@ index ebb9a0d0064a60b8def3a9c2bc4cfc8d8b893051..f3429218924b746f3ebce7fdf790fe95
                          (msg.rfc724_mid(), msg.id),
                      )
                      .await?;
-@@ -510,25 +510,12 @@ pub(crate) async fn download_msg(
+@@ -506,27 +506,18 @@ pub(crate) async fn download_msg(
      session: &mut Session,
  ) -> Result<Option<FetchMsgResult>> {
      let transport_id = session.transport_id();
 -    let row = context
 -        .sql
 -        .query_row_optional(
--            "SELECT uid, folder, transport_id FROM imap
+-            "SELECT uid, folder FROM imap
 -             WHERE rfc724_mid=? AND target!=''
--             ORDER BY transport_id=? DESC LIMIT 1",
+-             AND transport_id=?
+-             LIMIT 1",
 -            (&rfc724_mid, transport_id),
 -            |row| {
 -                let server_uid: u32 = row.get(0)?;
 -                let server_folder: String = row.get(1)?;
--                let msg_transport_id: u32 = row.get(2)?;
--                Ok((server_uid, server_folder, msg_transport_id))
+-                Ok((server_uid, server_folder))
 -            },
 -        )
 -        .await?;
 +    let row = imap_location(context, &rfc724_mid, transport_id).await?;
  
-     let Some((server_uid, server_folder, msg_transport_id)) = row else {
-         // No IMAP record found, we don't know the UID and folder.
+-    let Some((server_uid, server_folder)) = row else {
+-        // No IMAP record found, the message is not available on this transport.
++    let Some((server_uid, server_folder, msg_transport_id)) = row else {
++        // No IMAP record found on any transport, we don't know the UID and folder.
          delete_from_available_post_msgs(context, &rfc724_mid).await?;
 +        fail_unlocatable_post_msg(context, &rfc724_mid).await?;
-         return Err(anyhow!(
-             "IMAP location for {rfc724_mid:?} post-message is unknown"
-         ));
-@@ -581,6 +568,36 @@ async fn fetch_single_msg(
+         return Ok(None);
+     };
++    if msg_transport_id != transport_id {
++        // The message is available on another transport.
++        return Ok(None);
++    }
+     let result =
+         Box::pin(session.fetch_single_msg(context, &server_folder, server_uid, rfc724_mid, queued))
+             .await?;
+@@ -571,6 +562,36 @@ async fn fetch_single_msg(
          ensure!(folder_exists, "No folder {folder}");
  
          let transport_id = self.transport_id();
@@ -159,7 +175,7 @@ index ebb9a0d0064a60b8def3a9c2bc4cfc8d8b893051..f3429218924b746f3ebce7fdf790fe95
          let chunking_disabled = context
              .chunked_download_disabled
              .lock()
-@@ -597,15 +614,6 @@ async fn fetch_single_msg(
+@@ -587,15 +608,6 @@ async fn fetch_single_msg(
              "Downloading message {}/{} in chunks...", folder, uid
          );
  
@@ -175,7 +191,7 @@ index ebb9a0d0064a60b8def3a9c2bc4cfc8d8b893051..f3429218924b746f3ebce7fdf790fe95
          let mut staging =
              StagingFile::open(context, transport_id, folder, uidvalidity, uid).await?;
          let msg_id = rfc724_mid_exists(context, &rfc724_mid).await?;
-@@ -641,6 +649,11 @@ async fn fetch_single_msg(
+@@ -631,6 +643,11 @@ async fn fetch_single_msg(
                          .map(|()| FetchMsgResult::Done);
                  }
                  staging.delete().await?;
@@ -187,7 +203,7 @@ index ebb9a0d0064a60b8def3a9c2bc4cfc8d8b893051..f3429218924b746f3ebce7fdf790fe95
                  bail!("Failed to fetch UID {uid}");
              }
              ChunkOutcome::TooLarge => {
-@@ -775,6 +788,16 @@ async fn disable_chunked_download(context: &Context, transport_id: u32) -> Resul
+@@ -765,6 +782,16 @@ async fn disable_chunked_download(context: &Context, transport_id: u32) -> Resul
  
  async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()> {
      if let Some(msg_id) = rfc724_mid_exists(context, rfc724_mid).await? {
@@ -204,7 +220,7 @@ index ebb9a0d0064a60b8def3a9c2bc4cfc8d8b893051..f3429218924b746f3ebce7fdf790fe95
          // Update download state to failure
          // so it can be retried.
          //
-@@ -788,6 +811,133 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
+@@ -778,6 +805,133 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
      Ok(())
  }
  
@@ -338,19 +354,19 @@ index ebb9a0d0064a60b8def3a9c2bc4cfc8d8b893051..f3429218924b746f3ebce7fdf790fe95
  async fn available_post_msgs_contains_rfc724_mid(
      context: &Context,
      rfc724_mid: &str,
-@@ -846,6 +996,11 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
-             return Ok(());
-         }
-         if let Ok(Some(FetchMsgResult::Done)) = res {
-+            // A fetch can end without moving the message on: receive_imf
-+            // rejecting or trashing it, or a FETCH response without a body.
-+            // The queue entry goes either way, so anything still in progress
-+            // is failed here, once for every path, rather than left spinning.
-+            set_state_to_failure(context, rfc724_mid).await?;
-             delete_from_downloads(context, rfc724_mid).await?;
-             delete_from_available_post_msgs(context, rfc724_mid).await?;
-         }
-@@ -981,6 +1136,190 @@ async fn test_update_download_state() -> Result<()> {
+@@ -836,6 +990,11 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
+                 return Ok(());
+             }
+             Ok(Some(FetchMsgResult::Done)) => {
++                // A fetch can end without moving the message on: receive_imf
++                // rejecting or trashing it, or a FETCH response without a body.
++                // The queue entry goes either way, so anything still in progress
++                // is failed here, once for every path, rather than left spinning.
++                set_state_to_failure(context, rfc724_mid).await?;
+                 delete_from_downloads(context, rfc724_mid).await?;
+                 delete_from_available_post_msgs(context, rfc724_mid).await?;
+             }
+@@ -975,6 +1134,190 @@ async fn test_update_download_state() -> Result<()> {
          Ok(())
      }
  

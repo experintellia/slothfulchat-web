@@ -27,10 +27,10 @@ Patch-Range: upstream-fix
  2 files changed, 20 insertions(+), 1 deletion(-)
 
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
-index bf1b29cedc562e9dc365747b5fa035b5697d956f..7a1fa644d7ae784569db220279d5f386ec9e58df 100644
+index e7a4b8a2a4d1cf8c5c7fcae99eaef3af48633d2e..b0529f28b90d4a11890cf81119578f3c4747581c 100644
 --- a/deltachat-jsonrpc/src/api.rs
 +++ b/deltachat-jsonrpc/src/api.rs
-@@ -34,7 +34,7 @@
+@@ -33,7 +33,7 @@
  use deltachat::qr_code_generator::{create_qr_svg, generate_backup_qr, get_securejoin_qr_svg};
  use deltachat::reaction::{get_msg_reactions, send_reaction};
  use deltachat::securejoin;
@@ -38,8 +38,8 @@ index bf1b29cedc562e9dc365747b5fa035b5697d956f..7a1fa644d7ae784569db220279d5f386
 +use deltachat::stock_str::{emit_events_for_updated_stock_strings, StockMessage};
  use deltachat::storage_usage::{get_blobdir_storage_usage, get_storage_usage};
  use deltachat::webxdc::StatusUpdateSerial;
- use deltachat::EventEmitter;
-@@ -476,6 +476,10 @@ async fn set_stock_strings(&self, strings: HashMap<u32, String>) -> Result<()> {
+ use sanitize_filename::is_sanitized;
+@@ -473,6 +473,10 @@ async fn set_stock_strings(&self, strings: HashMap<u32, String>) -> Result<()> {
                  accounts.set_stock_translation(stock_id, stock_message)?;
              }
          }
@@ -51,10 +51,10 @@ index bf1b29cedc562e9dc365747b5fa035b5697d956f..7a1fa644d7ae784569db220279d5f386
      }
  
 diff --git a/src/stock_str.rs b/src/stock_str.rs
-index 886f57b6b560de750ec0b505513b05706fd02a7f..75f87dbe81a9c42a32db9a6c0ca534680745ad89 100644
+index 63398ec974582c9b0e0deca44c86a4a1f533822a..cd93315f234974823ab8c5800214082b44ead3bc 100644
 --- a/src/stock_str.rs
 +++ b/src/stock_str.rs
-@@ -1253,6 +1253,21 @@ pub(crate) async fn update_device_chats(&self) -> Result<()> {
+@@ -1280,6 +1280,21 @@ pub(crate) async fn update_device_chats(&self) -> Result<()> {
      }
  }
  

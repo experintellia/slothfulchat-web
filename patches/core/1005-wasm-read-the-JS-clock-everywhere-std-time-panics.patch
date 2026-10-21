@@ -9,29 +9,65 @@ std::time::{SystemTime,Instant}::now() abort on wasm32-unknown-unknown.
 - tools: time_now() returns a wasm-safe Instant; Time::now call sites
   switched; path_is_dir/path_is_file sync-fs helpers for wasm
 - deltachat-ratelimit: SystemTime::now via deltachat_time
+
+Since v2.64.0 upstream builds the rustls config with
+ClientConfig::builder() (ring as process default) and lists
+deltachat-time as a dev-dependency only; the wasm branch now uses
+builder_with_details() with ring plus the JS clock inline, and
+deltachat-time is a wasm32 dependency again.
 ---
+ Cargo.lock                     |  3 +++
+ Cargo.toml                     |  3 +++
  deltachat-ratelimit/Cargo.toml |  2 ++
  deltachat-ratelimit/src/lib.rs | 15 +++++++----
  src/context.rs                 |  8 +++---
  src/imap.rs                    |  4 +--
  src/imap/idle.rs               |  2 +-
  src/key.rs                     |  2 +-
- src/net/tls.rs                 | 43 +++++++++++++++++++++++++-----
+ src/net/tls.rs                 | 26 +++++++++++++++++-
  src/quota.rs                   |  6 ++---
  src/scheduler.rs               |  2 +-
  src/smtp.rs                    |  2 +-
  src/smtp/send.rs               |  2 +-
- src/sql/migrations.rs          |  6 ++---
+ src/sql/migrations.rs          |  4 +--
  src/sql/pool/wal_checkpoint.rs |  8 +++---
  src/tools.rs                   | 48 +++++++++++++++++++++++++++++++---
- 14 files changed, 113 insertions(+), 37 deletions(-)
+ 16 files changed, 107 insertions(+), 30 deletions(-)
 
+diff --git a/Cargo.lock b/Cargo.lock
+index 19f2339adb41a78910ee571dc27a3bb7692ca968..926ad4a8ae23c94ab9a52f20c73953e27337097c 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -5200,6 +5200,9 @@ dependencies = [
+ [[package]]
+ name = "ratelimit"
+ version = "1.0.0"
++dependencies = [
++ "deltachat-time",
++]
+ 
+ [[package]]
+ name = "rayon"
+diff --git a/Cargo.toml b/Cargo.toml
+index 7de85958db87b60b9898618316815fa70f423685..12b59006a16f5159dd15a9679756f89e156dd4fa 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -124,6 +124,9 @@ tokio-stream = { version = "0.1.17" }
+ getrandom = { version = "0.3", features = ["wasm_js"] }
+ getrandom-old = { package = "getrandom", version = "0.2", features = ["js"] }
+ js-sys = "0.3"
++# tools::SystemTime/time_now() read the JS clock through deltachat-time on wasm
++# (upstream only needs it for tests, hence a dev-dependency there).
++deltachat-time = { path = "./deltachat-time" }
+ # rPGP's Timestamp::now() calls SystemTime::now() and panics on wasm32-unknown-unknown;
+ # its "wasm" feature switches it to web-time (JS clock).
+ pgp = { version = "0.21.0", default-features = false, features = ["wasm"] }
 diff --git a/deltachat-ratelimit/Cargo.toml b/deltachat-ratelimit/Cargo.toml
-index 04f2a910772233d183e2931e82fdb50870a93e92..075e2b23614b560663612e2fab014bc2f062e444 100644
+index 9556177175a954912891cbc2558fe6d879deef9b..fa0d85de34a9fa68b824ed865a520c501519c4a8 100644
 --- a/deltachat-ratelimit/Cargo.toml
 +++ b/deltachat-ratelimit/Cargo.toml
 @@ -5,4 +5,6 @@ description = "Token bucket implementation"
- edition = "2021"
+ edition = "2024"
  license = "MPL-2.0"
  
 +
@@ -99,10 +135,10 @@ index 497cc83bb23db221e7c8cfbf1e7c9c436231b5df..df53680a4521e5e3fe01ebc457d090bc
          let mut ratelimit = Ratelimit::new_at(Duration::new(60, 0), 3.0, now);
          assert!(ratelimit.can_send_at(now));
 diff --git a/src/context.rs b/src/context.rs
-index 9f31e0caa4290d859e13c5a1eab5ee5b1735d2bf..5a478ad3905b65c3c3c63a1598e89b07d6cfb492 100644
+index eb3b5d3870f389acb21b16627fa8d1e328a6c8ab..9f313b94aab1861970a6a4d3af633062785b5ad4 100644
 --- a/src/context.rs
 +++ b/src/context.rs
-@@ -469,7 +469,7 @@ pub(crate) fn with_blobdir(
+@@ -472,7 +472,7 @@ pub(crate) fn with_blobdir(
          push_subscriber: PushSubscriber,
      ) -> Result<Context> {
          ensure!(
@@ -111,25 +147,25 @@ index 9f31e0caa4290d859e13c5a1eab5ee5b1735d2bf..5a478ad3905b65c3c3c63a1598e89b07
              "Blobdir does not exist: {}",
              blobdir.display()
          );
-@@ -496,7 +496,7 @@ pub(crate) fn with_blobdir(
-             new_msgs_notify,
+@@ -498,7 +498,7 @@ pub(crate) fn with_blobdir(
+             restart_io_after_fetch: AtomicBool::new(false),
              server_id: RwLock::new(None),
-             metadata: RwLock::new(None),
+             metadata: RwLock::new(BTreeMap::new()),
 -            creation_time: tools::Time::now(),
 +            creation_time: tools::time_now(),
              last_error: parking_lot::RwLock::new("".to_string()),
              migration_error: parking_lot::RwLock::new(None),
              debug_logging: std::sync::RwLock::new(None),
-@@ -603,7 +603,7 @@ pub async fn background_fetch(&self) -> Result<()> {
+@@ -600,7 +600,7 @@ pub async fn background_fetch(&self) -> Result<()> {
+             return Ok(());
          }
  
-         let address = self.get_primary_self_addr().await?;
 -        let time_start = tools::Time::now();
 +        let time_start = tools::time_now();
-         info!(self, "background_fetch started fetching {address}.");
+         info!(self, "background_fetch started.");
  
          if self.scheduler.is_running().await {
-@@ -808,7 +808,7 @@ pub async fn stop_ongoing(&self) {
+@@ -780,7 +780,7 @@ pub async fn stop_ongoing(&self) {
                  }
                  info!(self, "Signaling the ongoing process to stop ASAP.",);
                  *s = RunningState::ShallStop {
@@ -139,19 +175,19 @@ index 9f31e0caa4290d859e13c5a1eab5ee5b1735d2bf..5a478ad3905b65c3c3c63a1598e89b07
              }
              RunningState::ShallStop { .. } | RunningState::Stopped => {
 diff --git a/src/imap.rs b/src/imap.rs
-index a34e8590e424b6483b0d6d8ec8dc02c86c8f89ba..45374e6463aff7e6087f44a206caf44f8c66b242 100644
+index 261fe263d8cc5ca703be45fc21764686278dd9c7..31fd6a39062423dac3a1a04312d41122b11bc07f 100644
 --- a/src/imap.rs
 +++ b/src/imap.rs
-@@ -307,7 +307,7 @@ pub(crate) async fn connect(
-         context: &Context,
-         configuring: bool,
-     ) -> Result<Session> {
+@@ -258,7 +258,7 @@ pub fn transport_id(&self) -> u32 {
+     /// instead if you are going to actually use connection rather than trying connection
+     /// parameters.
+     pub(crate) async fn connect(&mut self, context: &Context) -> Result<Session> {
 -        let now = tools::Time::now();
 +        let now = tools::time_now();
          let until_can_send = max(
              min(self.conn_last_try, now)
                  .checked_add(Duration::from_millis(self.conn_backoff_ms))
-@@ -339,7 +339,7 @@ pub(crate) async fn connect(
+@@ -300,7 +300,7 @@ pub(crate) async fn connect(&mut self, context: &Context) -> Result<Session> {
          info!(context, "Connecting to IMAP server.");
          self.connectivity.set_connecting(context);
  
@@ -161,10 +197,10 @@ index a34e8590e424b6483b0d6d8ec8dc02c86c8f89ba..45374e6463aff7e6087f44a206caf44f
          const BACKOFF_MAX_MS: u64 = 80_000;
          self.conn_backoff_ms = min(self.conn_backoff_ms, BACKOFF_MAX_MS / 2);
 diff --git a/src/imap/idle.rs b/src/imap/idle.rs
-index 2f55684ef9b289d45ca55906bdad55d42fad2a35..368fb5d99226603c4d5bc476e646479c2b2c52c7 100644
+index ad1485fbb2dc70fb1b7e646b62572880c3e5cfa6..f34488dd99e7c2f15195c2dba07fd4fbe731db23 100644
 --- a/src/imap/idle.rs
 +++ b/src/imap/idle.rs
-@@ -121,7 +121,7 @@ pub async fn idle(
+@@ -127,7 +127,7 @@ pub async fn idle(
  impl Imap {
      /// Idle using polling.
      pub(crate) async fn fake_idle(&mut self, context: &Context, watch_folder: &str) -> Result<()> {
@@ -174,10 +210,10 @@ index 2f55684ef9b289d45ca55906bdad55d42fad2a35..368fb5d99226603c4d5bc476e646479c
          info!(context, "IMAP-fake-IDLEing folder={:?}", watch_folder);
  
 diff --git a/src/key.rs b/src/key.rs
-index ff088a1c546e23def8e0603068793caa58b0125f..1f3ade763507c67e5d60bab01aaeb5733789d816 100644
+index 0c7d23b5064fee21d7ea13585b9302d580efcb59..457f1dbf3e49f45ee3c545b244ea799f08f4f4a1 100644
 --- a/src/key.rs
 +++ b/src/key.rs
-@@ -472,7 +472,7 @@ async fn generate_keypair(context: &Context) -> Result<SignedSecretKey> {
+@@ -476,7 +476,7 @@ async fn generate_keypair(context: &Context) -> Result<SignedSecretKey> {
      match load_keypair(context).await? {
          Some(key_pair) => Ok(key_pair),
          None => {
@@ -187,12 +223,12 @@ index ff088a1c546e23def8e0603068793caa58b0125f..1f3ade763507c67e5d60bab01aaeb573
              let keypair = Handle::current()
                  .spawn_blocking(move || crate::pgp::create_keypair(addr))
 diff --git a/src/net/tls.rs b/src/net/tls.rs
-index c868c7634145a979985019d450dbcfa4a355dab7..30643716a8621b90f3415b5a2a57b24c104e5b22 100644
+index 3d21c41269e8c6faffd07903e136a094d3fa702a..db918fd924752fb6a23dd8334c2bbc30e8f6151a 100644
 --- a/src/net/tls.rs
 +++ b/src/net/tls.rs
-@@ -28,6 +28,41 @@ pub(crate) fn default_provider() -> rustls::crypto::CryptoProvider {
-     rustls::crypto::ring::default_provider()
- }
+@@ -16,6 +16,21 @@
+ mod danger;
+ use danger::CustomCertificateVerifier;
  
 +/// Rustls time provider backed by the JS clock:
 +/// `SystemTime::now()` panics on wasm32-unknown-unknown.
@@ -209,44 +245,27 @@ index c868c7634145a979985019d450dbcfa4a355dab7..30643716a8621b90f3415b5a2a57b24c
 +    }
 +}
 +
-+/// `ClientConfig` builder with the right crypto provider
-+/// and, on wasm, a non-panicking time provider.
-+fn client_config_builder() -> Result<
-+    rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>,
-+    rustls::Error,
-+> {
-+    #[cfg(not(target_arch = "wasm32"))]
-+    let builder = rustls::ClientConfig::builder_with_provider(Arc::new(default_provider()));
-+    #[cfg(target_arch = "wasm32")]
-+    let builder = rustls::ClientConfig::builder_with_details(
-+        Arc::new(default_provider()),
-+        Arc::new(JsClockTimeProvider),
-+    );
-+    let root_cert_store =
-+        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-+    Ok(builder
-+        .with_safe_default_protocol_versions()?
-+        .with_root_certificates(root_cert_store))
-+}
-+
  mod spki;
  pub use spki::SpkiHashStore;
  
-@@ -156,13 +191,7 @@ pub async fn wrap_rustls<'a>(
-     spki_hash_store: &SpkiHashStore,
-     sql: &Sql,
- ) -> Result<impl SessionStream + 'a> {
--    let root_cert_store =
--        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
--
--    let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(default_provider()))
--    .with_safe_default_protocol_versions()?
--    .with_root_certificates(root_cert_store)
--    .with_no_client_auth();
-+    let mut config = client_config_builder()?.with_no_client_auth();
+@@ -147,7 +162,16 @@ pub async fn wrap_rustls<'a>(
+     let root_cert_store =
+         rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+ 
+-    let mut config = rustls::ClientConfig::builder()
++    #[cfg(not(target_arch = "wasm32"))]
++    let builder = rustls::ClientConfig::builder();
++    // On wasm, a time provider that does not panic (cert validation reads the clock).
++    #[cfg(target_arch = "wasm32")]
++    let builder = rustls::ClientConfig::builder_with_details(
++        Arc::new(rustls::crypto::ring::default_provider()),
++        Arc::new(JsClockTimeProvider),
++    )
++    .with_safe_default_protocol_versions()?;
++    let mut config = builder
+         .with_root_certificates(root_cert_store)
+         .with_no_client_auth();
      config.alpn_protocols = if alpn.is_empty() {
-         vec![]
-     } else {
 diff --git a/src/quota.rs b/src/quota.rs
 index 64fb9711071d12f2729f4c3da39ffd9a4f46fa6d..6e3bbf715c83fcb4649e7cb3c0b9cc3fd0cf2e51 100644
 --- a/src/quota.rs
@@ -279,10 +298,10 @@ index 64fb9711071d12f2729f4c3da39ffd9a4f46fa6d..6e3bbf715c83fcb4649e7cb3c0b9cc3f
              );
              map
 diff --git a/src/scheduler.rs b/src/scheduler.rs
-index be7e4190e5e47451777c340249eeaaaf43f5d829..4c81caa194925c35d718face6a33df419ccd0666 100644
+index 0687ad62c20b147ca99e3f57c3c26dd144745245..d57084be2ef661e6407901d882a98c375016acce 100644
 --- a/src/scheduler.rs
 +++ b/src/scheduler.rs
-@@ -589,7 +589,7 @@ async fn smtp_loop(
+@@ -672,7 +672,7 @@ async fn smtp_loop(
              // again, we increase the timeout exponentially, in order not to do lots of
              // unnecessary retries.
              if let Some(t) = timeout {
@@ -292,45 +311,45 @@ index be7e4190e5e47451777c340249eeaaaf43f5d829..4c81caa194925c35d718face6a33df41
                      ctx,
                      "SMTP has messages to retry, planning to retry {t} seconds later."
 diff --git a/src/smtp.rs b/src/smtp.rs
-index 7f1bdf1dc80862caeddf977da861ece08faa9a36..de53df70c5a9fa5e640541bb930877633067615d 100644
+index 03093e80da3db4e91f5367fd2f7af02a234c6873..38a3a8a74dec5d371d9ce68d9fd5d477f8bff126 100644
 --- a/src/smtp.rs
 +++ b/src/smtp.rs
-@@ -152,7 +152,7 @@ pub async fn connect(
-             };
- 
-             self.transport = Some(transport);
--            self.last_success = Some(tools::Time::now());
-+            self.last_success = Some(tools::time_now());
+@@ -237,7 +237,7 @@ pub async fn connect(
+                 transport,
+                 from,
+                 transport_id,
+-                last_success: tools::Time::now(),
++                last_success: tools::time_now(),
+             });
  
              context.emit_event(EventType::SmtpConnected(format!(
-                 "SMTP-LOGIN as {} ok",
 diff --git a/src/smtp/send.rs b/src/smtp/send.rs
-index d48920c4fb8d9372e8062071a2ba0847d7b10e50..1783c64cd824fcbd0fc5104995c8b1ccdb3b76e7 100644
+index 915664898218ebe0180b6bc68f6b19355cb9f0d0..ecc64c64f3266bc87a562b1000d756e7cdc63548 100644
 --- a/src/smtp/send.rs
 +++ b/src/smtp/send.rs
-@@ -61,7 +61,7 @@ pub async fn send(
-         );
-         info!(context, "{info_msg}.");
-         context.emit_event(EventType::SmtpMessageSent(info_msg));
--        self.last_success = Some(tools::Time::now());
-+        self.last_success = Some(tools::time_now());
+@@ -40,7 +40,7 @@ pub(super) async fn send(
+ 
+         self.transport.send(mail).await.map_err(Error::SmtpSend)?;
+ 
+-        self.last_success = tools::Time::now();
++        self.last_success = tools::time_now();
          Ok(())
      }
  }
 diff --git a/src/sql/migrations.rs b/src/sql/migrations.rs
-index 095c11fece3b6814d10443b97c3400006dc21c7a..1ba18ce447d0efb26b2f9400f3a2c54cf8abbdc3 100644
+index c341a65d7a20927f806f10a352b66cc6d7ee6790..26e22ff67a7e36b4908ebfd87173ed08d9a48771 100644
 --- a/src/sql/migrations.rs
 +++ b/src/sql/migrations.rs
-@@ -17,7 +17,7 @@
+@@ -16,7 +16,7 @@
  use crate::log::warn;
- use crate::provider::get_provider_info;
+ 
  use crate::sql::Sql;
 -use crate::tools::{self, Time, inc_and_check, time_elapsed};
 +use crate::tools::{self, inc_and_check, time_elapsed, time_now};
  use crate::transport::ConfiguredLoginParam;
  
  const DBVERSION: i32 = 68;
-@@ -699,7 +699,7 @@ pub(crate) async fn msgs_to_key_contacts(context: &Context) -> Result<()> {
+@@ -695,7 +695,7 @@ pub(crate) async fn msgs_to_key_contacts(context: &Context) -> Result<()> {
          .context("Update first_key_contacts_msg_id")?;
          Ok((msgs_migrated, first_key_contacts_msg_id))
      };
@@ -339,15 +358,6 @@ index 095c11fece3b6814d10443b97c3400006dc21c7a..1ba18ce447d0efb26b2f9400f3a2c54c
      let mut msgs_migrated = 0;
      loop {
          let (n, first_key_contacts_msg_id) = sql.transaction(trans_fn).await?;
-@@ -1952,7 +1952,7 @@ pub async fn run(context: &Context, sql: &Sql) -> Result<bool> {
- 
-     inc_and_check(&mut migration_version, 132)?;
-     if dbversion < migration_version {
--        let start = Time::now();
-+        let start = time_now();
-         sql.execute_migration_transaction(|t| migrate_key_contacts(context, t), migration_version)
-             .await?;
-         info!(
 diff --git a/src/sql/pool/wal_checkpoint.rs b/src/sql/pool/wal_checkpoint.rs
 index 0d95be93bd61cbde474e725ef218056dba1ab3ec..5185a4fc521ee605b95ebdb98173e954ada00fdc 100644
 --- a/src/sql/pool/wal_checkpoint.rs
@@ -389,10 +399,10 @@ index 0d95be93bd61cbde474e725ef218056dba1ab3ec..5185a4fc521ee605b95ebdb98173e954
          let blocked = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
              let blocked: i64 = row.get(0)?;
 diff --git a/src/tools.rs b/src/tools.rs
-index bd1939b4c690a17f65c6244184bf24a304b015f1..4640cefd3c67da5f0367124320e0b7710aa3e0ef 100644
+index 3af7fac2fb0692b07dc6f7a6bb822f0753706212..14f26601c6b543095333407f85992bbc1950a0b7 100644
 --- a/src/tools.rs
 +++ b/src/tools.rs
-@@ -18,14 +18,16 @@
+@@ -18,13 +18,15 @@
  // https://doc.rust-lang.org/1.87.0/std/time/struct.Instant.html#method.elapsed.
  use std::time::Duration;
  pub use std::time::SystemTime as Time;
@@ -403,15 +413,14 @@ index bd1939b4c690a17f65c6244184bf24a304b015f1..4640cefd3c67da5f0367124320e0b771
  use anyhow::{Context as _, Result, bail, ensure};
  use base64::Engine as _;
  use chrono::{Local, NaiveDateTime, NaiveTime, TimeZone};
- use deltachat_contact_tools::EmailAddress;
 -#[cfg(test)]
 +// Also used on wasm32-unknown-unknown, where `std::time::SystemTime::now()` panics:
 +// the shim reads the JS clock instead.
 +#[cfg(any(test, target_arch = "wasm32"))]
  pub use deltachat_time::SystemTimeTools as SystemTime;
- use futures::TryStreamExt;
  use mailparse::MailHeaderMap;
-@@ -358,7 +360,7 @@ pub(crate) async fn delete_file(context: &Context, path: &Path) -> Result<()> {
+ use mailparse::dateparse;
+@@ -356,7 +358,7 @@ pub(crate) async fn delete_file(context: &Context, path: &Path) -> Result<()> {
      if !path_exists(&path_abs) {
          bail!("path {} does not exist", path_abs.display());
      }
@@ -420,7 +429,7 @@ index bd1939b4c690a17f65c6244184bf24a304b015f1..4640cefd3c67da5f0367124320e0b771
          warn!(context, "refusing to delete non-file {}.", path.display());
          bail!("not a file: \"{}\"", path.display());
      }
-@@ -559,6 +561,30 @@ pub(crate) fn path_exists(path: impl AsRef<Path>) -> bool {
+@@ -511,6 +513,30 @@ pub(crate) fn path_exists(path: impl AsRef<Path>) -> bool {
      }
  }
  
@@ -451,7 +460,7 @@ index bd1939b4c690a17f65c6244184bf24a304b015f1..4640cefd3c67da5f0367124320e0b771
  pub(crate) fn time() -> i64 {
      SystemTime::now()
          .duration_since(SystemTime::UNIX_EPOCH)
-@@ -566,8 +592,22 @@ pub(crate) fn time() -> i64 {
+@@ -518,8 +544,22 @@ pub(crate) fn time() -> i64 {
          .as_secs() as i64
  }
  
@@ -474,4 +483,4 @@ index bd1939b4c690a17f65c6244184bf24a304b015f1..4640cefd3c67da5f0367124320e0b771
 +    time_now().duration_since(*time).unwrap_or_default()
  }
  
- /// Struct containing all mailto information
+ pub(crate) trait IsNoneOrEmpty<T> {

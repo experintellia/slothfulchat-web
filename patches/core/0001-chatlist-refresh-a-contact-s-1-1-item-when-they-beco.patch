@@ -24,34 +24,70 @@ actually advanced and the contact is within the recently-seen window),
 next to the `ContactsChanged` event that already fires there, so it adds at
 most one chat lookup per relevant incoming message.
 
+Rebased onto v2.64.0: the event now fires only on the transition into
+recently seen (the previous last_seen is read first), because every
+newer message re-ran the guard and upstream's new
+test_same_avatar_no_changed_event asserts that a message from an
+already-seen contact leaves the 1:1 item alone. That test clears the
+events after its avatar-change message, which also made Bob recently
+seen.
+
 Patch-Range: upstream-fix
 ---
- src/contact.rs                |  6 ++++++
+ src/contact.rs                | 13 +++++++++++++
+ src/contact/contact_tests.rs  |  2 ++
  src/events/chatlist_events.rs | 29 +++++++++++++++++++++++++++++
- 2 files changed, 35 insertions(+)
+ 3 files changed, 44 insertions(+)
 
 diff --git a/src/contact.rs b/src/contact.rs
-index 310600c96af273cc49a4afe9721f91d918d8ac7b..2f739f943b7b5b98fee07ceec3bc3f911d0af0ed 100644
+index fb6716baa5df466abf3bc3a2e086e1eb958564d4..317d6b8602bbdbd5122cf7ea99f964fa18e9c342 100644
 --- a/src/contact.rs
 +++ b/src/contact.rs
-@@ -1998,6 +1998,12 @@ pub(crate) async fn update_last_seen(
+@@ -1949,6 +1949,11 @@ pub(crate) async fn update_last_seen(
+         "Can not update special contact last seen timestamp"
+     );
+ 
++    let was_seen_recently = context
++        .sql
++        .query_get_value::<i64>("SELECT last_seen FROM contacts WHERE id=?", (contact_id,))
++        .await?
++        .is_some_and(|last_seen| last_seen > time() - SEEN_RECENTLY_SECONDS);
+     if context
+         .sql
+         .execute(
+@@ -1960,6 +1965,14 @@ pub(crate) async fn update_last_seen(
          && timestamp > time() - SEEN_RECENTLY_SECONDS
      {
          context.emit_event(EventType::ContactsChanged(Some(contact_id)));
-+        // The contact just became "recently seen", so the 1:1 chat's chatlist
++        // If the contact just became "recently seen", the 1:1 chat's chatlist
 +        // item (which shows this indicator) needs to be re-rendered. The reverse
 +        // transition (becoming un-seen) already does this in the recently-seen
 +        // scheduler loop; without it here, receiving a message from a contact in
 +        // e.g. a group would not refresh their 1:1 chatlist item.
-+        chatlist_events::emit_chatlist_item_changed_for_contact_chat(context, contact_id).await;
++        if !was_seen_recently {
++            chatlist_events::emit_chatlist_item_changed_for_contact_chat(context, contact_id).await;
++        }
          context
              .scheduler
              .interrupt_recently_seen(contact_id, timestamp)
+diff --git a/src/contact/contact_tests.rs b/src/contact/contact_tests.rs
+index 5a7e748d485d47b6e08870e826b5914f25cc6edd..de034cdf2c11311c2d78a15cf543c8b75324a81a 100644
+--- a/src/contact/contact_tests.rs
++++ b/src/contact/contact_tests.rs
+@@ -1546,6 +1546,8 @@ async fn wait_for_chatlist_event(context: &TestContext, expected_chat_id: ChatId
+     let sent = bob.send_text(bob_group_id, "Avatar change").await;
+     alice.recv_msg(&sent).await;
+     wait_for_chatlist_event(alice, alice_bob_chat.id).await;
++    // The same message also made Bob "recently seen", which refreshes the item too.
++    alice.evtracker.clear_events();
+ 
+     // Avatar is the same, so single chat is not updated.
+     let sent2 = bob2.send_text(bob2_group_id, "No avatar change").await;
 diff --git a/src/events/chatlist_events.rs b/src/events/chatlist_events.rs
-index ec909a12f453547e84faa634a1ac5f683377a706..eb222088f119e4d33e8458ae6567f3d49c912703 100644
+index 3180626a5760f4fd5e5d496182ddf0a17e49cdf6..e47baa2402102c6c2aea09260d2581d158438c52 100644
 --- a/src/events/chatlist_events.rs
 +++ b/src/events/chatlist_events.rs
-@@ -380,6 +380,35 @@ async fn test_change_chat_profile_image() -> Result<()> {
+@@ -377,6 +377,35 @@ async fn test_change_chat_profile_image() -> Result<()> {
          Ok(())
      }
  

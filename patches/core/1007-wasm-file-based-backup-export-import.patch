@@ -17,116 +17,129 @@ The backup DB swap was hardwired to MemVfsUtil; with the OPFS sahpool
 VFS as default it silently targeted the wrong VFS. Route through the
 shim's sqlite_vfs_import/take, which dispatch to whichever VFS is
 default.
+
+Since v2.64.0: export_database() lost its timestamp argument and no
+longer writes backup_time upstream (1721c0316); the wasm variant
+follows. Scheduler::stop() now aborts a task that misses the 30s
+shutdown timeout (#8832); the sequential wasm path does the same.
 ---
- Cargo.lock       | 14 ++++++--
+ Cargo.lock       | 18 ++++++------
  Cargo.toml       |  6 +++-
- src/imex.rs      | 84 +++++++++++++++++++++++++++++++++++++++++++++---
- src/scheduler.rs | 48 ++++++++++++++++++---------
- src/sql.rs       | 40 +++++++++++++++++++++++
+ src/imex.rs      | 74 ++++++++++++++++++++++++++++++++++++++++++++----
+ src/scheduler.rs | 69 ++++++++++++++++++++++++++++++--------------
+ src/sql.rs       | 40 ++++++++++++++++++++++++++
  src/tools.rs     |  4 +++
- 6 files changed, 172 insertions(+), 24 deletions(-)
+ 6 files changed, 174 insertions(+), 37 deletions(-)
 
 diff --git a/Cargo.lock b/Cargo.lock
-index 04697b57101667f994cfda5eb18d992c86ddb526..a5493caefab1568ff12f4015e0554f141b2b9f94 100644
+index 926ad4a8ae23c94ab9a52f20c73953e27337097c..9e56c5a73985287dcd8c3384641cefbc80c94591 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -195,16 +195,14 @@ dependencies = [
+@@ -207,16 +207,14 @@ dependencies = [
  [[package]]
  name = "astral-tokio-tar"
- version = "0.6.3"
+ version = "0.7.0"
 -source = "registry+https://github.com/rust-lang/crates.io-index"
--checksum = "08648fef353ab39a9d26f909ad53fc4f071be4c91853b78523f5cc3d9e5ebffd"
+-checksum = "6f2e989b33246fe9240d39accf4dd9a01e0b6c1f3ce9dd095e0a47fa02505523"
  dependencies = [
   "futures-core",
   "libc",
   "portable-atomic",
   "rustc-hash",
-  "rustix 0.38.44",
+  "rustix 1.1.4",
 - "tokio",
   "tokio-stream",
 + "tokio-wasm-shim",
+  "zerocopy 0.8.59",
+ ]
+ 
+@@ -1732,7 +1730,7 @@ dependencies = [
+  "libc",
+  "option-ext",
+  "redox_users",
+- "windows-sys 0.59.0",
++ "windows-sys 0.61.1",
  ]
  
  [[package]]
-@@ -288,6 +286,7 @@ dependencies = [
-  "stop-token",
-  "thiserror 1.0.69",
-  "tokio",
-+ "wasmtimer",
- ]
- 
- [[package]]
-@@ -855,8 +854,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
- checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
+@@ -1971,7 +1969,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
  dependencies = [
-  "iana-time-zone",
-+ "js-sys",
-  "num-traits",
-  "serde",
-+ "wasm-bindgen",
-  "windows-link",
- ]
- 
-@@ -1435,7 +1436,9 @@ dependencies = [
-  "url",
-  "uuid",
-  "walkdir",
-+ "wasm-bindgen-futures",
-  "webpki-roots",
-+ "ws_stream_wasm",
+  "libc",
+- "windows-sys 0.59.0",
++ "windows-sys 0.52.0",
  ]
  
  [[package]]
-@@ -4335,6 +4338,7 @@ dependencies = [
-  "elliptic-curve",
-  "flate2",
-  "generic-array",
-+ "getrandom 0.2.16",
-  "hex",
-  "hkdf",
-  "idea",
-@@ -4366,6 +4370,7 @@ dependencies = [
-  "snafu 0.9.1",
-  "subtle",
-  "twofish",
-+ "web-time",
-  "x25519-dalek",
-  "zeroize",
+@@ -2078,7 +2076,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
+ dependencies = [
+  "cfg-if",
+  "rustix 1.1.4",
+- "windows-sys 0.59.0",
++ "windows-sys 0.52.0",
  ]
-@@ -5001,6 +5006,9 @@ dependencies = [
- [[package]]
- name = "ratelimit"
- version = "1.0.0"
-+dependencies = [
-+ "deltachat-time",
-+]
  
  [[package]]
- name = "rayon"
+@@ -3315,7 +3313,7 @@ dependencies = [
+  "once_cell",
+  "socket2 0.5.9",
+  "tracing",
+- "windows-sys 0.59.0",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -4060,7 +4058,7 @@ version = "0.50.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
+ dependencies = [
+- "windows-sys 0.59.0",
++ "windows-sys 0.61.1",
+ ]
+ 
+ [[package]]
+@@ -5038,7 +5036,7 @@ dependencies = [
+  "once_cell",
+  "socket2 0.5.9",
+  "tracing",
+- "windows-sys 0.59.0",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -5498,7 +5496,7 @@ dependencies = [
+  "errno",
+  "libc",
+  "linux-raw-sys 0.4.14",
+- "windows-sys 0.59.0",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
 diff --git a/Cargo.toml b/Cargo.toml
-index e7ef01fa49709d65739cd9ef7f771fac40b239fc..20aef82065854343a0808a3fb353b38e676bcad1 100644
+index 12b59006a16f5159dd15a9679756f89e156dd4fa..703fabb6d54c954b6078419d40ab7ffe5eaf26ee 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -105,8 +105,10 @@ uuid = { version = "1", features = ["serde", "v4"] }
+@@ -101,8 +101,10 @@ uuid = { version = "1", features = ["serde", "v4"] }
  walkdir = "2.5.0"
  webpki-roots = "0.26.8"
  
 -[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 +# file-based backup IMEX works on wasm too via the vendored fork (see [patch.crates-io])
- astral-tokio-tar = { version = "0.6.3", default-features = false }
+ astral-tokio-tar = { version = "0.7.0", default-features = false }
 +
 +[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
  async-native-tls = { version = "0.6", default-features = false, features = ["runtime-tokio"] }
  async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio-fs"] }
  fast-socks5 = "1"
-@@ -239,3 +241,5 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+@@ -240,3 +242,5 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
  # fork that drops async-imap's unused tokio/net feature (breaks wasm32);
  # path is relative to the build/ worktree in the slothfulchat-web repo
  async-imap = { path = "../../vendor-crates/async-imap" }
 +# fork that routes tokio through the tokio-wasm-shim facade so tar works on wasm32
 +astral-tokio-tar = { path = "../../vendor-crates/astral-tokio-tar" }
 diff --git a/src/imex.rs b/src/imex.rs
-index 718c53c3db1d20964dde0ddc79ccc6d549319982..4f2927fd1f795d6717192eb6c83e4815d5e1bba8 100644
+index a7e90f36d6c0532e37940068ba847a788bccf757..3425718a3e93f973f38dd7c8223b0b33e2e2f37c 100644
 --- a/src/imex.rs
 +++ b/src/imex.rs
 @@ -23,8 +23,8 @@
@@ -140,7 +153,7 @@ index 718c53c3db1d20964dde0ddc79ccc6d549319982..4f2927fd1f795d6717192eb6c83e4815
  };
  
  mod transfer;
-@@ -343,8 +343,9 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+@@ -344,8 +344,9 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
              continue;
          }
          // async_tar unpacked to $BLOBDIR/BLOBS_BACKUP_NAME/, so we move the file afterwards.
@@ -151,7 +164,7 @@ index 718c53c3db1d20964dde0ddc79ccc6d549319982..4f2927fd1f795d6717192eb6c83e4815
              if let Some(name) = from_path.file_name() {
                  let to_path = context.get_blobdir().join(name);
                  if let Err(e) = fs::rename(&from_path, &to_path).await {
-@@ -467,10 +468,11 @@ async fn export_backup(context: &Context, dir: &Path, passphrase: String) -> Res
+@@ -468,10 +469,11 @@ async fn export_backup(context: &Context, dir: &Path, passphrase: String) -> Res
      let file = File::create(&temp_path).await?;
      let blobdir = BlobDirContents::new(context).await?;
  
@@ -165,7 +178,7 @@ index 718c53c3db1d20964dde0ddc79ccc6d549319982..4f2927fd1f795d6717192eb6c83e4815
      }
  
      export_backup_stream(context, &temp_db_path, blobdir, file, file_size)
-@@ -737,6 +739,78 @@ async fn export_key_to_asc_file<T>(
+@@ -736,6 +738,68 @@ async fn export_key_to_asc_file<T>(
  /// overwritten.
  ///
  /// This also verifies that IO is not running during the export.
@@ -175,12 +188,7 @@ index 718c53c3db1d20964dde0ddc79ccc6d549319982..4f2927fd1f795d6717192eb6c83e4815
 +/// into the tokio memfs so the tar builder can read them.
 +/// ponytail: encrypted export is unsupported on wasm (needs sqlcipher).
 +#[cfg(target_arch = "wasm32")]
-+async fn export_database(
-+    context: &Context,
-+    dest: &Path,
-+    passphrase: String,
-+    timestamp: i64,
-+) -> Result<()> {
++async fn export_database(context: &Context, dest: &Path, passphrase: String) -> Result<()> {
 +    ensure!(
 +        !context.scheduler.is_running().await,
 +        "cannot export backup, IO is running"
@@ -189,17 +197,12 @@ index 718c53c3db1d20964dde0ddc79ccc6d549319982..4f2927fd1f795d6717192eb6c83e4815
 +        passphrase.is_empty(),
 +        "encrypted backup export is not supported on wasm"
 +    );
-+    let timestamp = timestamp.try_into().context("32-bit UNIX time overflow")?;
 +    let dest_str = dest
 +        .to_str()
 +        .with_context(|| format!("path {} is not valid unicode", dest.display()))?
 +        .to_string();
 +
 +    context.set_config(Config::BccSelf, Some("1")).await?;
-+    context
-+        .sql
-+        .set_raw_config_int("backup_time", timestamp)
-+        .await?;
 +    context
 +        .sql
 +        .set_raw_config_int("backup_version", DCBACKUP_VERSION)
@@ -241,66 +244,91 @@ index 718c53c3db1d20964dde0ddc79ccc6d549319982..4f2927fd1f795d6717192eb6c83e4815
 +///
 +/// This also verifies that IO is not running during the export.
 +#[cfg(not(target_arch = "wasm32"))]
- async fn export_database(
-     context: &Context,
-     dest: &Path,
+ async fn export_database(context: &Context, dest: &Path, passphrase: String) -> Result<()> {
+     ensure!(
+         !context.scheduler.is_running().await,
 diff --git a/src/scheduler.rs b/src/scheduler.rs
-index 4c81caa194925c35d718face6a33df419ccd0666..a2324ae9a691272b74086f08c27de986f4d9bdfa 100644
+index d57084be2ef661e6407901d882a98c375016acce..82235cc27a6f205849b7273ff3683a5bd9c567ad 100644
 --- a/src/scheduler.rs
 +++ b/src/scheduler.rs
-@@ -753,25 +753,43 @@ pub(crate) async fn stop(self, context: &Context) {
+@@ -850,10 +850,44 @@ pub(crate) async fn stop(self, context: &Context) {
          // Actually shutdown tasks.
          let timeout_duration = std::time::Duration::from_secs(30);
  
 -        let tracker = TaskTracker::new();
--        for b in self.inboxes {
+-        for mut b in self.inboxes {
 -            let context = context.clone();
 -            tracker.spawn(async move {
--                tokio::time::timeout(timeout_duration, b.handle)
--                    .await
--                    .log_err(&context)
--            });
 +        #[cfg(not(target_arch = "wasm32"))]
 +        {
 +            let tracker = TaskTracker::new();
-+            for b in self.inboxes {
++            for mut b in self.inboxes {
 +                let context = context.clone();
 +                tracker.spawn(async move {
-+                    tokio::time::timeout(timeout_duration, b.handle)
++                    if tokio::time::timeout(timeout_duration, &mut b.handle)
 +                        .await
-+                        .log_err(&context)
++                        .is_err()
++                    {
++                        warn!(context, "IMAP shutdown timed out; aborting task.");
++                        b.handle.abort();
++                        b.handle.await.ok();
++                    }
 +                });
 +            }
 +            {
 +                let context = context.clone();
 +                tracker.spawn(async move {
-+                    tokio::time::timeout(timeout_duration, self.smtp_handle)
++                    let mut handle = self.smtp_handle;
++                    if tokio::time::timeout(timeout_duration, &mut handle)
 +                        .await
-+                        .log_err(&context)
++                        .is_err()
++                    {
++                        warn!(context, "SMTP shutdown timed out; aborting task.");
++                        handle.abort();
++                        handle.await.ok();
++                    }
 +                });
 +            }
 +            tracker.close();
 +            tracker.wait().await;
-         }
++        }
 +        // tokio_util::TaskTracker::spawn needs a real tokio runtime (panics on
 +        // wasm); await the handles sequentially on the JS event loop instead.
 +        #[cfg(target_arch = "wasm32")]
-         {
++        {
++            for mut b in self.inboxes {
+                 if tokio::time::timeout(timeout_duration, &mut b.handle)
+                     .await
+                     .is_err()
+@@ -862,24 +896,17 @@ pub(crate) async fn stop(self, context: &Context) {
+                     b.handle.abort();
+                     b.handle.await.ok();
+                 }
+-            });
+-        }
+-        {
 -            let context = context.clone();
 -            tracker.spawn(async move {
--                tokio::time::timeout(timeout_duration, self.smtp_handle)
-+            for b in self.inboxes {
-+                tokio::time::timeout(timeout_duration, b.handle)
-                     .await
--                    .log_err(&context)
+-                let mut handle = self.smtp_handle;
+-                if tokio::time::timeout(timeout_duration, &mut handle)
+-                    .await
+-                    .is_err()
+-                {
+-                    warn!(context, "SMTP shutdown timed out; aborting task.");
+-                    handle.abort();
+-                    handle.await.ok();
+-                }
 -            });
-+                    .log_err(context)
-+                    .ok();
 +            }
-+            tokio::time::timeout(timeout_duration, self.smtp_handle)
++            let mut handle = self.smtp_handle;
++            if tokio::time::timeout(timeout_duration, &mut handle)
 +                .await
-+                .log_err(context)
-+                .ok();
++                .is_err()
++            {
++                warn!(context, "SMTP shutdown timed out; aborting task.");
++                handle.abort();
++                handle.await.ok();
++            }
          }
 -        tracker.close();
 -        tracker.wait().await;
@@ -308,7 +336,7 @@ index 4c81caa194925c35d718face6a33df419ccd0666..a2324ae9a691272b74086f08c27de986
          // Abort tasks, then await them to ensure the `Future` is dropped.
          // Just aborting the task may keep resources such as `Context` clone
 diff --git a/src/sql.rs b/src/sql.rs
-index 9dab4c708cce5b8358111f3227fa790555e07883..433cfacf1bc05afb59be9d8185fe7ba8e5b05aec 100644
+index 89c7d881e07c356d08287c361b4be1028e4d9b72..18fd534dd2e319ccc9ec6c459194910af8f498b6 100644
 --- a/src/sql.rs
 +++ b/src/sql.rs
 @@ -123,6 +123,46 @@ pub(crate) async fn close(&self) {
@@ -359,10 +387,10 @@ index 9dab4c708cce5b8358111f3227fa790555e07883..433cfacf1bc05afb59be9d8185fe7ba8
          let path_str = path
              .to_str()
 diff --git a/src/tools.rs b/src/tools.rs
-index 4640cefd3c67da5f0367124320e0b7710aa3e0ef..f2984f7844f632da8f2a0a7c8236631464099615 100644
+index 14f26601c6b543095333407f85992bbc1950a0b7..a2e5579f182dac9f7f10e328196e744601938dae 100644
 --- a/src/tools.rs
 +++ b/src/tools.rs
-@@ -425,7 +425,11 @@ pub(crate) fn new(path: PathBuf) -> Self {
+@@ -423,7 +423,11 @@ pub(crate) fn new(path: PathBuf) -> Self {
  impl Drop for TempPathGuard {
      fn drop(&mut self) {
          let path = self.path.clone();

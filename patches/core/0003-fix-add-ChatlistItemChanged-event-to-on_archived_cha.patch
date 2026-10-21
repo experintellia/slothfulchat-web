@@ -12,10 +12,10 @@ Patch-Range: upstream-fix
  1 file changed, 7 insertions(+), 2 deletions(-)
 
 diff --git a/src/chat.rs b/src/chat.rs
-index 7c2a855a6b6b3ea96a9b7c9c55a55be4535ce2b4..2b56149b4939da820e94439707a67bd5d1c4ebcf 100644
+index eb8526a5358269238db48efb659a1ee8d9b8f243..3bdab250c0f61db8cfffd31b8642af77f79a8943 100644
 --- a/src/chat.rs
 +++ b/src/chat.rs
-@@ -3305,7 +3305,10 @@ pub async fn marknoticed_chat(context: &Context, chat_id: ChatId) -> Result<()>
+@@ -3275,7 +3275,10 @@ pub async fn marknoticed_chat(context: &Context, chat_id: ChatId) -> Result<()>
  
      context.emit_event(EventType::MsgsNoticed(chat_id));
      chatlist_events::emit_chatlist_item_changed(context, chat_id);
@@ -27,7 +27,7 @@ index 7c2a855a6b6b3ea96a9b7c9c55a55be4535ce2b4..2b56149b4939da820e94439707a67bd5
      Ok(())
  }
  
-@@ -5326,12 +5329,14 @@ pub(crate) async fn sync_alter_chat(&self, id: &SyncId, action: &SyncAction) ->
+@@ -5291,12 +5294,14 @@ pub(crate) async fn sync_alter_chat(&self, id: &SyncId, action: &SyncAction) ->
          }
      }
  
@@ -38,8 +38,8 @@ index 7c2a855a6b6b3ea96a9b7c9c55a55be4535ce2b4..2b56149b4939da820e94439707a67bd5
      /// a noticed chat is archived. Emitting events should be cheap, a false-positive `MsgsChanged`
      /// is ok.
      pub(crate) fn on_archived_chats_maybe_noticed(&self) {
-         self.emit_msgs_changed_without_msg_id(DC_CHAT_ID_ARCHIVED_LINK);
-+        chatlist_events::emit_chatlist_item_changed(self, DC_CHAT_ID_ARCHIVED_LINK);
+         self.emit_msgs_changed_without_msg_id(ChatId::ARCHIVED_LINK);
++        chatlist_events::emit_chatlist_item_changed(self, ChatId::ARCHIVED_LINK);
      }
  }
  

@@ -32,10 +32,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  1 file changed, 20 insertions(+)
 
 diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
-index 88847652e5db7cc868eba7ec4812a879260d2b6c..92b75f68892b243fb774eb0cc135521fd0d9cb50 100644
+index 785c5176d4ed71ac2af47df9c2e26224e01b0fcf..981be122543143337f4b180efd0187285542df69 100644
 --- a/deltachat-jsonrpc/src/api/types/message.rs
 +++ b/deltachat-jsonrpc/src/api/types/message.rs
-@@ -623,6 +623,20 @@ pub struct MessageData {
+@@ -631,6 +631,20 @@ pub struct MessageData {
      /// Quoted message id. Takes preference over `quoted_text` (see below).
      pub quoted_message_id: Option<u32>,
      pub quoted_text: Option<String>,
@@ -56,7 +56,7 @@ index 88847652e5db7cc868eba7ec4812a879260d2b6c..92b75f68892b243fb774eb0cc135521f
  }
  
  impl MessageData {
-@@ -652,6 +666,12 @@ pub(crate) async fn create_message(self, context: &Context) -> Result<Message> {
+@@ -660,6 +674,12 @@ pub(crate) async fn create_message(self, context: &Context) -> Result<Message> {
          if let Some((latitude, longitude)) = self.location {
              message.set_location(latitude, longitude);
          }

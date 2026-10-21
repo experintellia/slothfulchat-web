@@ -31,20 +31,20 @@ index e2e5fa90e2dc79647fe8aa162eda34b641296071..e443b86fd7affea124a97b64d21f5d91
 +[target.wasm32-unknown-unknown]
 +rustflags = ["--cfg", 'getrandom_backend="wasm_js"']
 diff --git a/Cargo.toml b/Cargo.toml
-index e4eba3b68d3fb480bf4e0c892a487671fc732c44..0a752768c8f793d89a7a72bd15fae533c72f7918 100644
+index 027a4792a7debac0152e47c09331bf9fdccdb2e3..7946648d48716d3c67f01dfc6dbc3771e409b5d3 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -45,9 +45,7 @@ anyhow = { workspace = true }
+@@ -44,9 +44,7 @@ anyhow = { workspace = true }
  async-broadcast = "0.7.2"
  async-channel = { workspace = true }
- async-imap = { version = "0.11.1", default-features = false, features = ["runtime-tokio", "compress"] }
+ async-imap = { version = "0.12.0", default-features = false, features = ["runtime-tokio", "compress"] }
 -async-native-tls = { version = "0.6", default-features = false, features = ["runtime-tokio"] }
  async-smtp = { version = "0.10.2", default-features = false, features = ["runtime-tokio"] }
 -async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio-fs"] }
  base64 = { workspace = true }
  blake3 = "1.8.2"
  brotli = { version = "8", default-features=false, features = ["std"] }
-@@ -56,15 +54,10 @@ chrono = { workspace = true, features = ["alloc", "clock", "std"] }
+@@ -55,15 +53,10 @@ chrono = { workspace = true, features = ["alloc", "clock", "std"] }
  colorutils-rs = { version = "0.8.0", default-features = false }
  data-encoding = "2.9.0"
  escaper = "0.1"
@@ -60,16 +60,14 @@ index e4eba3b68d3fb480bf4e0c892a487671fc732c44..0a752768c8f793d89a7a72bd15fae533
  image = { version = "0.25.6", default-features=false, features = ["gif", "jpeg", "ico", "png", "pnm", "webp", "bmp"] }
  iroh-gossip = { version = "0.35", default-features = false, features = ["net"] }
  iroh = { version = "0.35", default-features = false }
-@@ -85,7 +78,7 @@ quick-xml = { version = "0.41", features = ["escape-html"] }
+@@ -84,13 +77,12 @@ quick-xml = { version = "0.41", features = ["escape-html"] }
  rand-old = { package = "rand", version = "0.8" }
  rand = { workspace = true }
  regex = { workspace = true }
 -rusqlite = { workspace = true, features = ["sqlcipher"] }
 +rusqlite = { workspace = true, features = ["sqlcipher", "fallible_uint"] }
  sanitize-filename = { workspace = true }
- sdp = "0.17.1"
  serde_json = { workspace = true }
-@@ -93,7 +86,6 @@ serde_urlencoded = "0.7.1"
  serde = { workspace = true, features = ["derive"] }
  sha-1 = "0.10"
  sha2 = "0.10"
@@ -77,13 +75,13 @@ index e4eba3b68d3fb480bf4e0c892a487671fc732c44..0a752768c8f793d89a7a72bd15fae533
  smallvec = "1.15.1"
  strum = "0.28"
  strum_macros = "0.28"
-@@ -101,11 +93,11 @@ tagger = "4.3.4"
+@@ -98,17 +90,40 @@ tagger = "4.3.4"
  textwrap = "0.16.2"
  thiserror = { workspace = true }
  tokio-io-timeout = "1.2.1"
--tokio-rustls = { version = "0.26.2", default-features = false, features = ["aws-lc-rs", "tls12"] }
+-tokio-rustls = { version = "0.26.2", default-features = false, features = ["tls12", "brotli"] }
 -tokio-stream = { version = "0.1.17", features = ["fs"] }
--astral-tokio-tar = { version = "0.6.3", default-features = false }
+-astral-tokio-tar = { version = "0.7.0", default-features = false }
 +# tokio facade: real tokio on native, browser shims on wasm32.
 +# Cargo forbids per-target dependency sources, hence one entry for both targets.
 +# Path is relative to the build/ worktree in the slothfulchat-web repo.
@@ -91,14 +89,13 @@ index e4eba3b68d3fb480bf4e0c892a487671fc732c44..0a752768c8f793d89a7a72bd15fae533
  tokio-util = { workspace = true }
 -tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
  toml = "0.9"
- tracing = "0.1.41"
  url = "2"
-@@ -113,6 +105,29 @@ uuid = { version = "1", features = ["serde", "v4"] }
+ uuid = { version = "1", features = ["serde", "v4"] }
  walkdir = "2.5.0"
  webpki-roots = "0.26.8"
  
 +[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-+astral-tokio-tar = { version = "0.6.3", default-features = false }
++astral-tokio-tar = { version = "0.7.0", default-features = false }
 +async-native-tls = { version = "0.6", default-features = false, features = ["runtime-tokio"] }
 +async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio-fs"] }
 +fast-socks5 = "1"
@@ -107,12 +104,12 @@ index e4eba3b68d3fb480bf4e0c892a487671fc732c44..0a752768c8f793d89a7a72bd15fae533
 +hyper = "1"
 +hyper-util = "0.1.16"
 +shadowsocks = { version = "1.23.1", default-features = false, features = ["aead-cipher", "aead-cipher-2022"] }
-+tokio-rustls = { version = "0.26.2", default-features = false, features = ["aws-lc-rs", "tls12"] }
++tokio-rustls = { version = "0.26.2", default-features = false, features = ["tls12", "brotli"] }
 +tokio-stream = { version = "0.1.17", features = ["fs"] }
 +
 +[target.'cfg(target_arch = "wasm32")'.dependencies]
 +async_zip = { version = "0.0.18", default-features = false, features = ["deflate", "tokio"] }
-+tokio-rustls = { version = "0.26.2", default-features = false, features = ["ring", "tls12"] }
++tokio-rustls = { version = "0.26.2", default-features = false, features = ["ring", "tls12", "brotli"] }
 +tokio-stream = { version = "0.1.17" }
 +# transitive getrandom needs its JS backend switched on for wasm
 +getrandom = { version = "0.3", features = ["wasm_js"] }
@@ -123,7 +120,7 @@ index e4eba3b68d3fb480bf4e0c892a487671fc732c44..0a752768c8f793d89a7a72bd15fae533
  [dev-dependencies]
  anyhow = { workspace = true, features = ["backtrace"] } # Enable `backtrace` feature in tests.
  criterion = { version = "0.8.1", features = ["async_tokio"] }
-@@ -123,7 +138,6 @@ pretty_assertions = "1.4.1"
+@@ -120,7 +135,6 @@ pretty_assertions = "1.4.1"
  proptest = { version = "1", default-features = false, features = ["std"] }
  tempfile = { workspace = true }
  testdir = "0.9.3"
@@ -131,7 +128,7 @@ index e4eba3b68d3fb480bf4e0c892a487671fc732c44..0a752768c8f793d89a7a72bd15fae533
  
  [workspace]
  members = [
-@@ -194,7 +208,7 @@ nu-ansi-term = "0.50"
+@@ -192,7 +206,7 @@ nu-ansi-term = "0.50"
  num-traits = "0.2"
  rand = "0.9"
  regex = "1.12"
@@ -140,7 +137,7 @@ index e4eba3b68d3fb480bf4e0c892a487671fc732c44..0a752768c8f793d89a7a72bd15fae533
  sanitize-filename = "0.6"
  serde = "1.0"
  serde_json = "1"
-@@ -215,3 +229,8 @@ vendored = [
+@@ -213,3 +227,8 @@ vendored = [
  
  [lints.rust]
  unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
@@ -150,7 +147,7 @@ index e4eba3b68d3fb480bf4e0c892a487671fc732c44..0a752768c8f793d89a7a72bd15fae533
 +# path is relative to the build/ worktree in the slothfulchat-web repo
 +async-imap = { path = "../../vendor-crates/async-imap" }
 diff --git a/deltachat-jsonrpc/Cargo.toml b/deltachat-jsonrpc/Cargo.toml
-index 7dd46bcb5227907a23ced506497d29219c64fe2f..a41392aa92cf1545e2610c83fac2fbe7f8b73304 100644
+index 35b2ae5d6096675b68aea9ce76d6b2471c8c8b43..1b3739c1ad9d058e060d179b33783f468ac38c1e 100644
 --- a/deltachat-jsonrpc/Cargo.toml
 +++ b/deltachat-jsonrpc/Cargo.toml
 @@ -17,12 +17,13 @@ async-channel = { workspace = true }

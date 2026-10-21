@@ -89,20 +89,20 @@ interrupted and still completes. Exposed over JSON-RPC as abort_download.
  deltachat-jsonrpc/src/api.rs              |    8 +
  deltachat-jsonrpc/src/api/types/events.rs |   14 +
  src/context.rs                            |   10 +-
- src/download.rs                           | 1328 ++++++++++++++++++++-
+ src/download.rs                           | 1336 ++++++++++++++++++++-
  src/events/payload.rs                     |   11 +
  src/imap.rs                               |    6 +-
  src/imap/select_folder.rs                 |    8 +
  src/imap/session.rs                       |  135 ++-
  src/sql.rs                                |   37 +
  src/sql/sql_tests.rs                      |   56 +
- 12 files changed, 1614 insertions(+), 18 deletions(-)
+ 12 files changed, 1620 insertions(+), 20 deletions(-)
 
 diff --git a/deltachat-ffi/deltachat.h b/deltachat-ffi/deltachat.h
-index 223ec31cbe62ad285bc87d89ddd22a4f6fd60011..daec46966292c11e03f51dffb4f6f92373031e76 100644
+index 1bf0ae48235960e708ab2924f05d7cc8370cfe78..6e061138254dd451700f0ecc0550cd326f0be07f 100644
 --- a/deltachat-ffi/deltachat.h
 +++ b/deltachat-ffi/deltachat.h
-@@ -6436,6 +6436,15 @@ void dc_event_unref(dc_event_t* event);
+@@ -6247,6 +6247,15 @@ void dc_event_unref(dc_event_t* event);
  #define DC_EVENT_IMEX_FILE_WRITTEN        2052
  
  
@@ -119,10 +119,10 @@ index 223ec31cbe62ad285bc87d89ddd22a4f6fd60011..daec46966292c11e03f51dffb4f6f923
   * Progress information of a secure-join handshake from the view of the inviter
   * (Alice, the person who shows the QR code).
 diff --git a/deltachat-ffi/src/lib.rs b/deltachat-ffi/src/lib.rs
-index abea9ebbafc35051ec80a6fef9114e38e8194e1f..adcf7f75cdfef75a3f416b9295dcaba74ed03b4e 100644
+index 7c6e3b095affabd91c243bd73fa59b9d00fb93f7..deff16d537a74c17a41bddfb92fbea488707df20 100644
 --- a/deltachat-ffi/src/lib.rs
 +++ b/deltachat-ffi/src/lib.rs
-@@ -537,6 +537,7 @@ fn spawn_configure(ctx: Context) {
+@@ -518,6 +518,7 @@ fn spawn_configure(ctx: Context) {
          EventType::ConfigureProgress { .. } => 2041,
          EventType::ImexProgress(_) => 2051,
          EventType::ImexFileWritten(_) => 2052,
@@ -130,7 +130,7 @@ index abea9ebbafc35051ec80a6fef9114e38e8194e1f..adcf7f75cdfef75a3f416b9295dcaba7
          EventType::SecurejoinInviterProgress { .. } => 2060,
          EventType::SecurejoinJoinerProgress { .. } => 2061,
          EventType::ConnectivityChanged => 2100,
-@@ -626,7 +627,8 @@ fn spawn_configure(ctx: Context) {
+@@ -607,7 +608,8 @@ fn spawn_configure(ctx: Context) {
          | EventType::IncomingCall { msg_id, .. }
          | EventType::IncomingCallAccepted { msg_id, .. }
          | EventType::OutgoingCallAccepted { msg_id, .. }
@@ -140,7 +140,7 @@ index abea9ebbafc35051ec80a6fef9114e38e8194e1f..adcf7f75cdfef75a3f416b9295dcaba7
          EventType::ChatlistItemChanged { chat_id } => {
              chat_id.unwrap_or_default().to_u32() as libc::c_int
          }
-@@ -693,7 +695,10 @@ fn spawn_configure(ctx: Context) {
+@@ -674,7 +676,10 @@ fn spawn_configure(ctx: Context) {
          | EventType::MsgDeleted { msg_id, .. }
          | EventType::MsgReadCountChanged { msg_id, .. } => msg_id.to_u32() as libc::c_int,
          EventType::SecurejoinInviterProgress { progress, .. }
@@ -152,19 +152,19 @@ index abea9ebbafc35051ec80a6fef9114e38e8194e1f..adcf7f75cdfef75a3f416b9295dcaba7
          EventType::ChatEphemeralTimerModified { timer, .. } => timer.to_u32() as libc::c_int,
          EventType::WebxdcStatusUpdate {
              status_update_serial,
-@@ -786,6 +791,7 @@ fn spawn_configure(ctx: Context) {
+@@ -763,6 +768,7 @@ fn spawn_configure(ctx: Context) {
          | EventType::AccountsItemChanged
          | EventType::IncomingCallAccepted { .. }
          | EventType::WebxdcRealtimeAdvertisementReceived { .. }
 +        | EventType::DownloadProgress { .. }
-         | EventType::TransportsModified => ptr::null_mut(),
+         | EventType::TransportsModified
+         | EventType::PinnedMessagesChanged { .. } => ptr::null_mut(),
          EventType::IncomingCall {
-             place_call_info, ..
 diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
-index 8281447d2f7dcfd21b587154d85b8e20193792e9..7393d8231cd72775f105d58eb2e6de013f648e03 100644
+index 46aa52773a8a9fd3b8abb353b09ec2a1cfbaf16d..d545b8579f324f3a6c43cd9f9afe82f4e6e8f507 100644
 --- a/deltachat-jsonrpc/src/api.rs
 +++ b/deltachat-jsonrpc/src/api.rs
-@@ -1612,6 +1612,14 @@ async fn download_full_message(&self, account_id: u32, message_id: u32) -> Resul
+@@ -1645,6 +1645,14 @@ async fn download_full_message(&self, account_id: u32, message_id: u32) -> Resul
          MsgId::new(message_id).download_full(&ctx).await
      }
  
@@ -180,10 +180,10 @@ index 8281447d2f7dcfd21b587154d85b8e20193792e9..7393d8231cd72775f105d58eb2e6de01
      /// Searching can be done globally (chat_id=None) or in a specified chat only (chat_id set).
      ///
 diff --git a/deltachat-jsonrpc/src/api/types/events.rs b/deltachat-jsonrpc/src/api/types/events.rs
-index 64ab1a3a42b4e34b74bf4a7e0eff3e7d363df22d..16f4ee7d8691108f78b2d281a354de07cf3604c4 100644
+index 9ead79a4bff6b7b085e9a18cddac08b29e9782ba..0c2351ca4af9b33a6015e3e1f42f9c9f6e9aa5d4 100644
 --- a/deltachat-jsonrpc/src/api/types/events.rs
 +++ b/deltachat-jsonrpc/src/api/types/events.rs
-@@ -296,6 +296,16 @@ pub enum EventType {
+@@ -302,6 +302,16 @@ pub enum EventType {
          progress: u16,
      },
  
@@ -200,7 +200,7 @@ index 64ab1a3a42b4e34b74bf4a7e0eff3e7d363df22d..16f4ee7d8691108f78b2d281a354de07
      /// A file has been exported. A file has been written by imex().
      /// This event may be sent multiple times by a single call to imex().
      ///
-@@ -587,6 +597,10 @@ fn from(event: CoreEventType) -> Self {
+@@ -598,6 +608,10 @@ fn from(event: CoreEventType) -> Self {
                  ConfigureProgress { progress, comment }
              }
              CoreEventType::ImexProgress(progress) => ImexProgress { progress },
@@ -212,7 +212,7 @@ index 64ab1a3a42b4e34b74bf4a7e0eff3e7d363df22d..16f4ee7d8691108f78b2d281a354de07
                  path: path.to_str().unwrap_or_default().to_owned(),
              },
 diff --git a/src/context.rs b/src/context.rs
-index 5a478ad3905b65c3c3c63a1598e89b07d6cfb492..18877918d676f7343986180980502c8627e74fb9 100644
+index 9f313b94aab1861970a6a4d3af633062785b5ad4..88de46f77669f2639c45c80229e63ff3941b5c68 100644
 --- a/src/context.rs
 +++ b/src/context.rs
 @@ -1,6 +1,6 @@
@@ -223,9 +223,9 @@ index 5a478ad3905b65c3c3c63a1598e89b07d6cfb492..18877918d676f7343986180980502c86
  use std::ffi::OsString;
  use std::ops::Deref;
  use std::path::{Path, PathBuf};
-@@ -269,6 +269,13 @@ pub struct InnerContext {
-     /// IMAP METADATA.
-     pub(crate) metadata: RwLock<Option<ServerMetadata>>,
+@@ -273,6 +273,13 @@ pub struct InnerContext {
+     /// IMAP METADATA, per transport id.
+     pub(crate) metadata: RwLock<BTreeMap<u32, ServerMetadata>>,
  
 +    /// Transports whose IMAP server turned out not to support partial FETCH,
 +    /// so chunked message downloads are disabled for them.
@@ -237,19 +237,19 @@ index 5a478ad3905b65c3c3c63a1598e89b07d6cfb492..18877918d676f7343986180980502c86
      /// ID for this `Context` in the current process.
      ///
      /// This allows for multiple `Context`s open in a single process where each context can
-@@ -496,6 +503,7 @@ pub(crate) fn with_blobdir(
-             new_msgs_notify,
+@@ -498,6 +505,7 @@ pub(crate) fn with_blobdir(
+             restart_io_after_fetch: AtomicBool::new(false),
              server_id: RwLock::new(None),
-             metadata: RwLock::new(None),
+             metadata: RwLock::new(BTreeMap::new()),
 +            chunked_download_disabled: parking_lot::Mutex::new(HashSet::new()),
              creation_time: tools::time_now(),
              last_error: parking_lot::RwLock::new("".to_string()),
              migration_error: parking_lot::RwLock::new(None),
 diff --git a/src/download.rs b/src/download.rs
-index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d8b893051 100644
+index e154fbaaa9d48fb435070e8cc3ddcc4b89a7e236..5c533bb02387a017da0c0de90b4dcfd4e7bb924e 100644
 --- a/src/download.rs
 +++ b/src/download.rs
-@@ -1,17 +1,28 @@
+@@ -1,16 +1,27 @@
  //! # Download large messages manually.
  
  use std::collections::BTreeMap;
@@ -265,7 +265,6 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
 +use tokio::io::AsyncWriteExt;
  
 +use crate::chat::add_device_msg;
- use crate::config::Config;
 +use crate::constants::DC_VERSION_STR;
  use crate::context::Context;
 -use crate::imap::session::Session;
@@ -281,7 +280,7 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
  
  pub(crate) mod post_msg_metadata;
  pub(crate) use post_msg_metadata::PostMsgMetadata;
-@@ -94,6 +105,46 @@ pub async fn download_full(self, context: &Context) -> Result<()> {
+@@ -90,6 +101,46 @@ pub async fn download_full(self, context: &Context) -> Result<()> {
          Ok(())
      }
  
@@ -328,7 +327,7 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
      /// Updates the message download state. Returns `Ok` if the message doesn't exist anymore or has
      /// the download state up to date.
      pub(crate) async fn update_download_state(
-@@ -131,16 +182,333 @@ pub fn download_state(&self) -> DownloadState {
+@@ -127,16 +178,333 @@ pub fn download_state(&self) -> DownloadState {
      }
  }
  
@@ -646,7 +645,7 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
 +}
 +
  /// Actually downloads a message partially downloaded before if the message is available on the
- /// session transport, in which case returns `Some`. If the message is available on another
+ /// session transport, in which case returns `Some`. If the message is not available on this
  /// transport, returns `None`.
  ///
  /// Most messages are downloaded automatically on fetch instead.
@@ -663,11 +662,13 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
      let transport_id = session.transport_id();
      let row = context
          .sql
-@@ -168,7 +536,12 @@ pub(crate) async fn download_msg(
-     if msg_transport_id != transport_id {
+@@ -159,9 +527,12 @@ pub(crate) async fn download_msg(
+         delete_from_available_post_msgs(context, &rfc724_mid).await?;
          return Ok(None);
-     }
--    Box::pin(session.fetch_single_msg(context, &server_folder, server_uid, rfc724_mid)).await?;
+     };
+-    session
+-        .fetch_single_msg(context, &server_folder, server_uid, rfc724_mid)
+-        .await?;
 +    let result =
 +        Box::pin(session.fetch_single_msg(context, &server_folder, server_uid, rfc724_mid, queued))
 +            .await?;
@@ -675,9 +676,9 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
 +        return Ok(Some(FetchMsgResult::Yielded));
 +    }
  
-     let bcc_self = context.get_config_bool(Config::BccSelf).await?;
-     if ephemeral::should_delete_all_downloaded_messages(bcc_self, session.is_chatmail()) {
-@@ -179,7 +552,7 @@ pub(crate) async fn download_msg(
+     if ephemeral::should_delete_all_downloaded_messages(context).await? {
+         // Now that the message was downloaded, it likely needs to be deleted;
+@@ -171,7 +542,7 @@ pub(crate) async fn download_msg(
          context.scheduler.interrupt_inbox().await;
      }
  
@@ -686,7 +687,7 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
  }
  
  impl Session {
-@@ -187,13 +560,19 @@ impl Session {
+@@ -179,13 +550,19 @@ impl Session {
      ///
      /// receive_imf() is not directly aware that this is a result of a call to download_msg(),
      /// however, implicitly knows that as the existing message is flagged as being partly.
@@ -707,7 +708,7 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
          if uid == 0 {
              bail!("Attempt to fetch UID 0");
          }
-@@ -201,7 +580,155 @@ async fn fetch_single_msg(
+@@ -193,7 +570,155 @@ async fn fetch_single_msg(
          let folder_exists = self.select_with_uidvalidity(context, folder).await?;
          ensure!(folder_exists, "No folder {folder}");
  
@@ -863,7 +864,7 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
          info!(context, "Downloading message {}/{} fully...", folder, uid);
  
          let mut uid_message_ids: BTreeMap<u32, String> = BTreeMap::new();
-@@ -219,6 +746,33 @@ async fn fetch_single_msg(
+@@ -211,6 +736,33 @@ async fn fetch_single_msg(
      }
  }
  
@@ -897,25 +898,25 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
  async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()> {
      if let Some(msg_id) = rfc724_mid_exists(context, rfc724_mid).await? {
          // Update download state to failure
-@@ -283,8 +837,15 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
+@@ -275,8 +827,15 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
          .await?;
  
      for rfc724_mid in &rfc724_mids {
--        let res = download_msg(context, rfc724_mid.clone(), session).await;
--        if let Ok(Some(())) = res {
-+        let res = download_msg(context, rfc724_mid.clone(), true, session).await;
-+        if let Ok(Some(FetchMsgResult::Yielded)) = res {
-+            // Let the IMAP loop fetch newly arrived messages; the interrupt
-+            // brings it back here and the download resumes from its staging
-+            // file.
-+            context.scheduler.interrupt_inbox().await;
-+            return Ok(());
-+        }
-+        if let Ok(Some(FetchMsgResult::Done)) = res {
-             delete_from_downloads(context, rfc724_mid).await?;
-             delete_from_available_post_msgs(context, rfc724_mid).await?;
-         }
-@@ -342,8 +903,12 @@ pub(crate) async fn download_known_post_messages_without_pre_message(
+-        match download_msg(context, rfc724_mid.clone(), session).await {
+-            Ok(Some(())) => {
++        match download_msg(context, rfc724_mid.clone(), true, session).await {
++            Ok(Some(FetchMsgResult::Yielded)) => {
++                // Let the IMAP loop fetch newly arrived messages; the interrupt
++                // brings it back here and the download resumes from its staging
++                // file.
++                context.scheduler.interrupt_inbox().await;
++                return Ok(());
++            }
++            Ok(Some(FetchMsgResult::Done)) => {
+                 delete_from_downloads(context, rfc724_mid).await?;
+                 delete_from_available_post_msgs(context, rfc724_mid).await?;
+             }
+@@ -338,8 +897,12 @@ pub(crate) async fn download_known_post_messages_without_pre_message(
          // because the Pre-Message got lost.
          // The message may be in the wrong order,
          // but at least we have it at all.
@@ -930,7 +931,7 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
              delete_from_available_post_msgs(context, rfc724_mid).await?;
          }
          if let Err(err) = res {
-@@ -359,11 +924,14 @@ pub(crate) async fn download_known_post_messages_without_pre_message(
+@@ -355,11 +918,14 @@ pub(crate) async fn download_known_post_messages_without_pre_message(
  
  #[cfg(test)]
  mod tests {
@@ -947,7 +948,7 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
  
      #[test]
      fn test_downloadstate_values() {
-@@ -412,4 +980,738 @@ async fn test_update_download_state() -> Result<()> {
+@@ -408,4 +974,744 @@ async fn test_update_download_state() -> Result<()> {
  
          Ok(())
      }
@@ -1369,6 +1370,8 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
 +        )
 +        .await?;
 +        assert!(matches!(outcome, ChunkOutcome::Unsupported));
++        t.assert_warns_or_errors(&["Partial FETCH returned origin"])
++            .await;
 +        Ok(())
 +    }
 +
@@ -1493,6 +1496,8 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
 +            panic!("expected Complete");
 +        };
 +        assert_eq!(body, small);
++        t.assert_warns_or_errors(&["Partial FETCH returned origin"])
++            .await;
 +        Ok(())
 +    }
 +
@@ -1683,14 +1688,16 @@ index b5f9ec0c1d348f78903322a3414440b20d5b4a14..ebb9a0d0064a60b8def3a9c2bc4cfc8d
 +            1,
 +            "the device message must be added only once across transports"
 +        );
++        t.assert_warns_or_errors(&["does not support partial FETCH"])
++            .await;
 +        Ok(())
 +    }
  }
 diff --git a/src/events/payload.rs b/src/events/payload.rs
-index 8300f02b1c8a0001b2ebe581a9c4d10640829702..8e88e92a78533713013d15e676b87732b5ebe10b 100644
+index 537013a431985247c8d0f6be73b0978b38e17281..ec247b3c5a0a171a7a8ea82716e2a57dfb4b8891 100644
 --- a/src/events/payload.rs
 +++ b/src/events/payload.rs
-@@ -265,6 +265,17 @@ pub enum EventType {
+@@ -269,6 +269,17 @@ pub enum EventType {
      /// @param data2 0
      ImexProgress(u16),
  
@@ -1709,10 +1716,10 @@ index 8300f02b1c8a0001b2ebe581a9c4d10640829702..8e88e92a78533713013d15e676b87732
      /// This event may be sent multiple times by a single call to imex().
      ///
 diff --git a/src/imap.rs b/src/imap.rs
-index 45374e6463aff7e6087f44a206caf44f8c66b242..d780f9fa88033ea6c4921413791d72f751247b2c 100644
+index 31fd6a39062423dac3a1a04312d41122b11bc07f..c04d726a5c2a9373a83a91af5c47b004bd06a9cd 100644
 --- a/src/imap.rs
 +++ b/src/imap.rs
-@@ -1988,7 +1988,11 @@ pub(crate) async fn set_uidvalidity(
+@@ -1659,7 +1659,11 @@ pub(crate) async fn set_uidvalidity(
      Ok(())
  }
  
@@ -1726,10 +1733,10 @@ index 45374e6463aff7e6087f44a206caf44f8c66b242..d780f9fa88033ea6c4921413791d72f7
          .sql
          .query_get_value(
 diff --git a/src/imap/select_folder.rs b/src/imap/select_folder.rs
-index 78c743b33a9cdb5c89144e2924a27ad3a670a108..2fa8bb664a3e6bf92bd14fec5f9f530d9753727f 100644
+index 94de507dbd316f170ae58c9159a268ea3f72d8bd..90957a94e8815d274e54a94a841f6629f579f2c9 100644
 --- a/src/imap/select_folder.rs
 +++ b/src/imap/select_folder.rs
-@@ -219,6 +219,14 @@ pub(crate) async fn select_with_uidvalidity(
+@@ -216,6 +216,14 @@ pub(crate) async fn select_with_uidvalidity(
              )
              .await?;
  
@@ -1745,7 +1752,7 @@ index 78c743b33a9cdb5c89144e2924a27ad3a670a108..2fa8bb664a3e6bf92bd14fec5f9f530d
              self.resync_request_sender.try_send(()).ok();
          }
 diff --git a/src/imap/session.rs b/src/imap/session.rs
-index 65d90d8519366bc146ce39490e1c1a039fbf8f78..d158e1b696aa09b3e333655847c2ffe2cff91fe9 100644
+index fc2976e06879de80abf502d1c1b284d421ac7aea..67d6dc232d11de840d5827f2633d38916eae0801 100644
 --- a/src/imap/session.rs
 +++ b/src/imap/session.rs
 @@ -3,12 +3,46 @@
@@ -1796,7 +1803,7 @@ index 65d90d8519366bc146ce39490e1c1a039fbf8f78..d158e1b696aa09b3e333655847c2ffe2
  /// Prefetch:
  /// - Message-ID to check if we already have the message.
  /// - In-Reply-To and References to check if message is a reply to chat message.
-@@ -146,4 +180,103 @@ pub(crate) async fn prefetch(
+@@ -132,4 +166,103 @@ pub(crate) async fn prefetch(
  
          Ok(Vec::from_iter(msgs))
      }
@@ -1901,10 +1908,10 @@ index 65d90d8519366bc146ce39490e1c1a039fbf8f78..d158e1b696aa09b3e333655847c2ffe2
 +    }
  }
 diff --git a/src/sql.rs b/src/sql.rs
-index 433cfacf1bc05afb59be9d8185fe7ba8e5b05aec..5c6ec77b05eacc83815cd0da56cdbf24e4bb5547 100644
+index 18fd534dd2e319ccc9ec6c459194910af8f498b6..4177ade8f92523c1c4999a9d75860a31b22efb23 100644
 --- a/src/sql.rs
 +++ b/src/sql.rs
-@@ -1029,6 +1029,43 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
+@@ -1076,6 +1076,43 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
          .await
          .context("Failed to SELECT blobname FROM http_cache")?;
  
@@ -1949,10 +1956,10 @@ index 433cfacf1bc05afb59be9d8185fe7ba8e5b05aec..5c6ec77b05eacc83815cd0da56cdbf24
      /* go through directories and delete unused files */
      let blobdir = context.get_blobdir();
 diff --git a/src/sql/sql_tests.rs b/src/sql/sql_tests.rs
-index 1ae651bd762bd2f42277e2883b806a200285c278..944932b948bc3e35ec187f058fd849dd5bb86a42 100644
+index 1d33e78edd26e623d0d894928744dc635d1700b9..4bea6cf209311e82d0d97ee52f0c30f778df6fce 100644
 --- a/src/sql/sql_tests.rs
 +++ b/src/sql/sql_tests.rs
-@@ -367,3 +367,59 @@ async fn test_incremental_vacuum() -> Result<()> {
+@@ -369,3 +369,59 @@ async fn test_incremental_vacuum() -> Result<()> {
  
      Ok(())
  }
