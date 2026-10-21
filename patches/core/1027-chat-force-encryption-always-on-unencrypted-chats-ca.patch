@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Wed, 21 Oct 2026 04:14:20 +0000
+Subject: [PATCH] chat: force encryption always on, unencrypted chats can't
+ send
+
+Plaintext email support is removed from this build (a prototype ahead of
+upstream's planned removal): Config::ForceEncryption always reads as on
+outside core's own tests, so neither a value stored by an older version
+nor one synced from another device turns plaintext sending or fetching
+back on. Normal email accounts keep working, they just carry encrypted
+chats only.
+
+A new CantSendReason::Unencrypted makes can_send() false for unencrypted
+chats (address-contact 1:1s, plain-email groups, mailing lists) while
+encryption is forced, so the UI drops the composer there instead of
+letting a message fail at send time. ForcePlaintext messages (securejoin)
+skip it, as they already skip MissingKey.
+---
+ src/chat.rs            | 14 +++++++++++++-
+ src/chat/chat_tests.rs | 23 ++++++++++++++++++++++-
+ src/config.rs          |  5 +++++
+ 3 files changed, 40 insertions(+), 2 deletions(-)
+
+diff --git a/src/chat.rs b/src/chat.rs
+index d1b0d420344fe63ee4e06da2312f32e1cf8bfc7e..b88b01ac0a35c2776f9b3ccef97918384e616f00 100644
+--- a/src/chat.rs
++++ b/src/chat.rs
+@@ -98,6 +98,9 @@ pub(crate) enum CantSendReason {
+ 
+     /// State for 1:1 chat with a key-contact that does not have a key.
+     MissingKey,
++
++    /// Unencrypted chat while encryption is forced.
++    Unencrypted,
+ }
+ 
+ impl fmt::Display for CantSendReason {
+@@ -117,6 +120,7 @@ fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+             }
+             Self::NotAMember => write!(f, "not a member of the chat"),
+             Self::MissingKey => write!(f, "key is missing"),
++            Self::Unencrypted => write!(f, "the chat is unencrypted"),
+         }
+     }
+ }
+@@ -1520,6 +1524,14 @@ pub(crate) async fn why_cant_send_ex(
+             }
+         }
+ 
++        let reason = Unencrypted;
++        if !skip_fn(&reason)
++            && context.get_config_bool(Config::ForceEncryption).await?
++            && !self.is_encrypted(context).await?
++        {
++            return Ok(Some(reason));
++        }
++
+         Ok(None)
+     }
+ 
+@@ -2680,7 +2692,7 @@ async fn prepare_send_msg(
+                 SystemMessage::MemberRemovedFromGroup | SystemMessage::SecurejoinMessage
+             )
+         }
+-        CantSendReason::MissingKey => msg
++        CantSendReason::MissingKey | CantSendReason::Unencrypted => msg
+             .param
+             .get_bool(Param::ForcePlaintext)
+             .unwrap_or_default(),
+diff --git a/src/chat/chat_tests.rs b/src/chat/chat_tests.rs
+index afc9ae3278a17e2cf82e729c047edea044fa17dc..f16459e68562980c23d36835edbf2fc44275101d 100644
+--- a/src/chat/chat_tests.rs
++++ b/src/chat/chat_tests.rs
+@@ -1006,6 +1006,26 @@ async fn test_device_chat_cannot_sent() {
+     assert!(forward_msgs(&t, &[msg_id], device_chat_id).await.is_err());
+ }
+ 
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_cant_send_unencrypted_when_forced() -> Result<()> {
++    let t = TestContext::new_alice().await;
++    t.set_config_bool(Config::ForceEncryption, false).await?;
++    let bob = Contact::create(&t, "", "bob@example.net").await?;
++    let chat_id = ChatId::create_for_contact(&t, bob).await?;
++    let chat = Chat::load_from_db(&t, chat_id).await?;
++    assert!(!chat.is_encrypted(&t).await?);
++    assert!(chat.can_send(&t).await?);
++
++    t.set_config_bool(Config::ForceEncryption, true).await?;
++    assert_eq!(
++        chat.why_cant_send(&t).await?,
++        Some(CantSendReason::Unencrypted)
++    );
++    assert!(send_text_msg(&t, chat_id, "hi".to_string()).await.is_err());
++    assert!(t.get_self_chat().await.can_send(&t).await?);
++    Ok(())
++}
++
+ #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+ async fn test_device_chat_is_encrypted() {
+     let t = TestContext::new_alice().await;
+@@ -2795,7 +2815,8 @@ async fn test_can_send_group() -> Result<()> {
+     let bob = Contact::create(&alice, "", "bob@f.br").await?;
+     let chat_id = ChatId::create_for_contact(&alice, bob).await?;
+     let chat = Chat::load_from_db(&alice, chat_id).await?;
+-    assert!(chat.can_send(&alice).await?);
++    // Unencrypted 1:1 while encryption is forced (the default).
++    assert!(!chat.can_send(&alice).await?);
+     let chat_id = create_group(&alice, "foo").await?;
+     assert_eq!(
+         Chat::load_from_db(&alice, chat_id)
+diff --git a/src/config.rs b/src/config.rs
+index b55be91c6432c98ce35261d752536a1911294438..0286450e006af914e6d0b442b9abc2da913f48c9 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -534,6 +534,11 @@ pub(crate) async fn get_config_opt(&self, key: Config) -> Result<Option<String>>
+             Config::SysVersion => Some(constants::DC_VERSION_STR.to_string()),
+             Config::SysMsgsizeMaxRecommended => Some(format!("{RECOMMENDED_FILE_SIZE}")),
+             Config::SysConfigKeys => Some(get_config_keys_string()),
++            // Plaintext email is gone from this build: unencrypted mail is
++            // neither sent nor fetched, whatever an older version or another
++            // device stored. Core's own tests still exercise plaintext.
++            #[cfg(not(test))]
++            Config::ForceEncryption => Some("1".to_string()),
+             _ => self.sql.get_raw_config(key.as_ref()).await?,
+         };
+         Ok(value)

@@ -1,0 +1,297 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Wed, 21 Oct 2026 04:16:33 +0000
+Subject: [PATCH] web-app: drop the enforce-E2EE switch and plain-email chat
+ cloning
+
+Plaintext email is removed from this build (core/1027 pins
+force_encryption on). With it pinned, upstream's own force_encryption
+gates already hide "New E-Mail" and adding a contact by bare address;
+this removes the two UI paths left over:
+
+- the "Enforce end-to-end encryption" switch in the advanced login
+  options, plus the state and setCoreSetting plumbing in
+  AccountSetupScreen and EditAccountAndPasswordDialog. Manual login with
+  a normal email account stays as it is.
+- "Clone Chat" on an unencrypted group, which reopened the plain-email
+  draft dialog (subject + address recipients).
+---
+ .../frontend/src/components/LoginForm.tsx     | 24 ----------
+ .../src/components/chat/ChatContextMenu.tsx   |  3 +-
+ .../dialogs/EditAccountAndPasswordDialog.tsx  | 44 ++-----------------
+ .../dialogs/ViewGroup/ViewGroupMenu.tsx       | 19 ++++----
+ .../components/screens/AccountSetupScreen.tsx | 29 +-----------
+ 5 files changed, 17 insertions(+), 102 deletions(-)
+
+diff --git a/packages/frontend/src/components/LoginForm.tsx b/packages/frontend/src/components/LoginForm.tsx
+index 235e92c1fb11614439f7b6cb7d28dbf405782c70..711a6e26b02ec724c9c3f05f6d6597cf8f1c9f06 100644
+--- a/packages/frontend/src/components/LoginForm.tsx
++++ b/packages/frontend/src/components/LoginForm.tsx
+@@ -12,7 +12,6 @@ import { I18nContext } from '../contexts/I18nContext'
+ const log = getLogger('renderer/loginForm')
+ 
+ import type { Credentials } from './Settings/DefaultCredentials'
+-import { useSettingsStore } from '../stores/settings'
+ import Switch from './Switch'
+ 
+ const Socket = {
+@@ -31,8 +30,6 @@ const CertificateChecks = {
+ type LoginProps = React.PropsWithChildren<{
+   credentials: Credentials
+   setCredentials: (credentials: Credentials) => void
+-  forceEncryption?: boolean
+-  setForceEncryption?: (forceEncryption: boolean) => void
+   /** whether editing existing account */
+   isEdit?: true
+ }>
+@@ -40,17 +37,12 @@ type LoginProps = React.PropsWithChildren<{
+ export default function LoginForm({
+   credentials,
+   setCredentials,
+-  forceEncryption: forceEncryptionProp,
+-  setForceEncryption,
+   isEdit,
+ }: LoginProps) {
+   const [uiShowAdvanced, setUiShowAdvanced] = useState<boolean>(false)
+   const [providerInfo, setProviderInfo] = useState<
+     Type.ProviderInfo | undefined
+   >()
+-  const settingsStore = useSettingsStore()[0]
+-  const forceEncryption =
+-    forceEncryptionProp ?? settingsStore?.settings['force_encryption'] === '1'
+ 
+   const handleCredentialsChange = (
+     event: React.ChangeEvent<HTMLInputElement>
+@@ -315,22 +307,6 @@ export default function LoginForm({
+                 />
+               </label>
+             </div>
+-            <div className='delta-form-group delta-switch'>
+-              <label>
+-                <span>{tx('enforce_e2ee')}</span>
+-                {/** be aware that this setting applies to all relays! */}
+-                <Switch
+-                  checked={forceEncryption}
+-                  disabled={settingsStore == null}
+-                  onChange={() => {
+-                    if (setForceEncryption) {
+-                      setForceEncryption(!forceEncryption)
+-                      return
+-                    }
+-                  }}
+-                />
+-              </label>
+-            </div>
+           </Collapse>
+           <br />
+         </div>
+diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+index 5a93f1c7d66db21edcd761d76795be7646d7a401..f21fbd14b0a91b0aa210a2d568104018492cb260 100644
+--- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
++++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
+@@ -527,7 +527,8 @@ export function useChatContextMenu(): {
+       // Clone Group
+       isMainView &&
+         relatedChat &&
+-        isGroup && {
++        isGroup &&
++        relatedChat.isEncrypted && {
+           label: tx('clone_chat'),
+           action: () => {
+             openDialog(CloneChat, {
+diff --git a/packages/frontend/src/components/dialogs/EditAccountAndPasswordDialog.tsx b/packages/frontend/src/components/dialogs/EditAccountAndPasswordDialog.tsx
+index 3a24d28a2eb047585bdb562ccd1f8d0317868e39..3580fa94795d08bd94281ff9ac931977d6fad1da 100644
+--- a/packages/frontend/src/components/dialogs/EditAccountAndPasswordDialog.tsx
++++ b/packages/frontend/src/components/dialogs/EditAccountAndPasswordDialog.tsx
+@@ -16,7 +16,6 @@ import useDialog from '../../hooks/dialog/useDialog'
+ import type { DialogProps } from '../../contexts/DialogContext'
+ import AlertDialog from './AlertDialog'
+ import { T } from '@deltachat/jsonrpc-client'
+-import SettingsStoreInstance, { useSettingsStore } from '../../stores/settings'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ 
+ type AccountAndPasswordDialogProps = DialogProps & {
+@@ -35,20 +34,9 @@ export default function EditAccountAndPasswordDialog({
+ }: AccountAndPasswordDialogProps) {
+   const tx = useTranslationFunction()
+ 
+-  const settingsStore = useSettingsStore()[0]
+-  const forceEncryption = settingsStore?.settings.force_encryption !== '0'
+-
+   return (
+     <Dialog canOutsideClickClose={false} onClose={onClose}>
+-      <DialogHeader
+-        title={
+-          // forceEncryption is false if account is not
+-          // configured yet or the setting is set to false
+-          forceEncryption
+-            ? tx('edit_transport')
+-            : tx('manual_account_setup_option')
+-        }
+-      />
++      <DialogHeader title={tx('edit_transport')} />
+       <EditAccountInner {...{ onClose, addr }} />
+     </Dialog>
+   )
+@@ -61,15 +49,11 @@ function EditAccountInner({
+   onClose: DialogProps['onClose']
+   addr?: string
+ }) {
+-  const settingsStore = useSettingsStore()[0]
+   const [initialSettings, setInitialAccountSettings] =
+     useState<Credentials>(defaultCredentials())
+ 
+   const [accountSettings, setAccountSettings] =
+     useState<Credentials>(defaultCredentials())
+-  const [forceEncryption, setForceEncryption] = useState<boolean>(
+-    settingsStore?.settings['force_encryption'] === '1'
+-  )
+ 
+   const { openDialog } = useDialog()
+   const tx = useTranslationFunction()
+@@ -113,23 +97,10 @@ function EditAccountInner({
+   }, [addr])
+ 
+   const onUpdate = useCallback(async () => {
+-    const onSuccess = async () => {
+-      const forceEncryptionValue = forceEncryption ? '1' : '0'
+-      if (
+-        settingsStore?.settings['force_encryption'] !== forceEncryptionValue
+-      ) {
+-        await SettingsStoreInstance.effect.setCoreSetting(
+-          'force_encryption',
+-          forceEncryptionValue
+-        )
+-      }
+-      onClose()
+-    }
+-
+     const update = () => {
+       openDialog(ConfigureProgressDialog, {
+         credentials: accountSettings,
+-        onSuccess,
++        onSuccess: onClose,
+         onFail: error => {
+           openDialog(AlertDialog, { message: error })
+         },
+@@ -142,14 +113,7 @@ function EditAccountInner({
+     }
+ 
+     update()
+-  }, [
+-    accountSettings,
+-    forceEncryption,
+-    initialSettings,
+-    onClose,
+-    openDialog,
+-    settingsStore,
+-  ])
++  }, [accountSettings, initialSettings, onClose, openDialog])
+ 
+   const onOk = useCallback(async () => {
+     await onUpdate()
+@@ -164,8 +128,6 @@ function EditAccountInner({
+             <LoginForm
+               credentials={accountSettings}
+               setCredentials={setAccountSettings}
+-              forceEncryption={forceEncryption}
+-              setForceEncryption={setForceEncryption}
+               isEdit
+             />
+           )}
+diff --git a/packages/frontend/src/components/dialogs/ViewGroup/ViewGroupMenu.tsx b/packages/frontend/src/components/dialogs/ViewGroup/ViewGroupMenu.tsx
+index 53a6f6f53d95714cd53442102b743517c180487d..6e5d55f3ec79ed0b7d729725e37081012928f91d 100644
+--- a/packages/frontend/src/components/dialogs/ViewGroup/ViewGroupMenu.tsx
++++ b/packages/frontend/src/components/dialogs/ViewGroup/ViewGroupMenu.tsx
+@@ -48,16 +48,17 @@ export default function useViewGroupMenu({
+         openEncryptionInfoDialog({ chatId: chat.id, dmChatContact: null }),
+       dataTestid: 'encryption-info',
+     },
+-    !isBroadcast && {
+-      label: tx('clone_chat'),
+-      action: () => {
+-        openDialog(CloneChat, {
+-          setViewMode: 'createGroup',
+-          chatTemplateId: chat.id,
+-        })
++    !isBroadcast &&
++      chat.isEncrypted && {
++        label: tx('clone_chat'),
++        action: () => {
++          openDialog(CloneChat, {
++            setViewMode: 'createGroup',
++            chatTemplateId: chat.id,
++          })
++        },
++        dataTestid: 'clone-chat',
+       },
+-      dataTestid: 'clone-chat',
+-    },
+   ]
+ 
+   return (event: React.MouseEvent<HTMLButtonElement, MouseEvent>) => {
+diff --git a/packages/frontend/src/components/screens/AccountSetupScreen.tsx b/packages/frontend/src/components/screens/AccountSetupScreen.tsx
+index 5ce5fafa3f50c8bc2ae836eca0c30d6a8f4a3017..ce8eb40a395ccd80bbf70dea768a52df0707af27 100644
+--- a/packages/frontend/src/components/screens/AccountSetupScreen.tsx
++++ b/packages/frontend/src/components/screens/AccountSetupScreen.tsx
+@@ -16,7 +16,6 @@ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import useDialog from '../../hooks/dialog/useDialog'
+ import { DialogId } from '../../contexts/DialogContext'
+ import AlertDialog from '../dialogs/AlertDialog'
+-import SettingsStoreInstance, { useSettingsStore } from '../../stores/settings'
+ 
+ import type ScreenController from '../../ScreenController'
+ 
+@@ -33,26 +32,11 @@ export default function AccountSetupScreen({
+ 
+   const [credentials, setCredentials] =
+     useState<Credentials>(defaultCredentials())
+-  const settingsStore = useSettingsStore()[0]
+-  const [forceEncryption, setForceEncryption] = useState<boolean>(
+-    settingsStore?.settings['force_encryption'] === '1'
+-  )
+ 
+   const onClickLogin = useCallback(() => {
+     openDialog(ConfigureProgressDialog, {
+       credentials,
+-      onSuccess: async () => {
+-        const forceEncryptionValue = forceEncryption ? '1' : '0'
+-        if (
+-          settingsStore?.settings['force_encryption'] !== forceEncryptionValue
+-        ) {
+-          await SettingsStoreInstance.effect.setCoreSetting(
+-            'force_encryption',
+-            forceEncryptionValue
+-          )
+-        }
+-        selectAccount(accountId)
+-      },
++      onSuccess: () => selectAccount(accountId),
+       onFail: (error: string) =>
+         setPromptDialogId(
+           openDialog(AlertDialog, {
+@@ -61,14 +45,7 @@ export default function AccountSetupScreen({
+           })
+         ),
+     })
+-  }, [
+-    accountId,
+-    credentials,
+-    forceEncryption,
+-    openDialog,
+-    selectAccount,
+-    settingsStore,
+-  ])
++  }, [accountId, credentials, openDialog, selectAccount])
+ 
+   // TODO(maxph): we're now using <dialog> and can submit result via input
+   // and not an explicit keyboard handling
+@@ -107,8 +84,6 @@ export default function AccountSetupScreen({
+             <LoginForm
+               credentials={credentials}
+               setCredentials={setCredentials}
+-              forceEncryption={forceEncryption}
+-              setForceEncryption={setForceEncryption}
+             />
+           </DialogContent>
+         </DialogBody>
