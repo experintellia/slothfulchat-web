@@ -122,8 +122,8 @@ runs:
 
     # Mark fork-touched JSON-RPC items with 🦥 in their Rust doc comments, so
     # the generated docs say what is ours. ORDER: after apply-patches (it needs
-    # build/core's per-patch commits to git blame) and BEFORE the `cargo test`
-    # below — that is what turns `///` into both the TS JSDoc and the OpenRPC
+    # build/core's per-patch commits to git blame) and BEFORE the bindings
+    # build below — that is what turns `///` into both the TS JSDoc and the OpenRPC
     # descriptions, so marking any later marks nothing. Node builtins only, so
     # it runs fine before the root `pnpm install`.
     - name: Mark fork-touched API in the generated docs
@@ -131,7 +131,7 @@ runs:
       run: node scripts/mark-fork-api.mjs
 
     # Cache the cargo registry + the build/core and wasm target/ dirs. The
-    # native `cargo test` and the ~10-min release wasm build dominate wall
+    # native bindings build and the ~10-min release wasm build dominate wall
     # time, so this is the cache that matters most.
     # ORDER TRAP #3: this MUST run after apply-patches. rust-cache hashes the
     # workspaces' Cargo.lock files at restore time — build/core only exists
@@ -192,7 +192,7 @@ runs:
     # The generated client is a pure function of the patched core tree, so it
     # only changes when the vendor/core pin or the core patch stack does —
     # roughly never, next to the per-commit churn this job sees. Caching it
-    # skips the `cargo test` below, which compiles all 545 crates of core
+    # skips the bindings build below, which compiles all of core
     # natively (7m27s cold, 79s warm) purely to emit TypeScript bindings.
     #
     # Keyed on the submodule pin + the patch files rather than on build/core's
@@ -210,7 +210,7 @@ runs:
     #
     # The rustc version is in the key even though the TypeScript output does not
     # depend on it, and that is deliberate. This cache is what decides whether
-    # `cargo test` runs, and `cargo test` is the only thing that populates
+    # the bindings build runs, and that build is the only thing that populates
     # build/core/target. Let the two keys drift apart and a stable-rustc bump
     # misses the rust-cache but hits this one: the first main run after it would
     # skip the compile and then save a build/core/target holding nothing but
@@ -273,8 +273,9 @@ runs:
         wasm-pack --version
 
     # ORDER TRAP #1: generate + build the @deltachat/jsonrpc-client TS client
-    # from the patched core at its pinned commit. `cargo test` generates the
-    # TS bindings AND (via patches/core, openrpc_outdir) generated/openrpc.json;
+    # from the patched core at its pinned commit. `cargo build -p
+    # deltachat-jsonrpc-bindings` runs that crate's build.rs, which writes the TS
+    # bindings AND (via patches/core) generated/openrpc.json;
     # then constants, tsc, esbuild bundle, and typedoc (upstream's devDependency,
     # our options file) — assemble.mjs copies docs/ + openrpc.json under
     # dist/api-docs/ next to the two pages web-app/api-docs/ holds, and
