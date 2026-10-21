@@ -485,10 +485,10 @@ index 314ccf944d0009629fd65adbcfeab927cf9af554..f9b8562ae5fd8fe30d65d0c2a6dd11d3
        ev.stopPropagation()
        if (left) {
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 9b7544756fe5bb7c5430073e4546941675ac9720..e75b3f39566a38aaa3a4996cc712e796c95cb8aa 100644
+index 1698fead6a9d1b8cc1183605727e99b74bca5c21..dce5cdce23bdb7a3d316254367128c95bbcbc9fc 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -895,6 +895,11 @@ export default function Message(props: {
+@@ -896,6 +896,11 @@ export default function Message(props: {
        // so, still, we need to ignore such events.
        //
        // The same goes for the `useRovingTabindex` code in Gallery.

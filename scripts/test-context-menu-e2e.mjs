@@ -27,7 +27,8 @@
 //      lists the reactions at its end
 //   5. (desktop/1000) a proxy link pasted into the chat-list search leads to
 //      a "proxies don't work here" alert, not the proxy dialog (all proxy
-//      QR codes and links pass through the same useProcessQr branch)
+//      QR codes and links pass through the same useProcessQr branch); so
+//      does a Shadowsocks ss:// code, which the wasm core's checkQr rejects
 //
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/test-context-menu-e2e.mjs
@@ -539,6 +540,17 @@ try {
     (await proxyAlert.textContent()).includes("Proxies don't work") &&
       !(await rpc('getConfig', aliceId, 'proxy_url')),
     'a proxy link only warns that proxies do not work here, and sets nothing'
+  )
+  await page.keyboard.press('Escape')
+  await proxyAlert.waitFor({ state: 'hidden' })
+  await page.evaluate(
+    (acc) => window.__slothfulProcessQr(acc, 'ss://YWVzLTEyOC1nY206dGVzdA@192.168.100.1:8888#x'),
+    aliceId
+  )
+  await proxyAlert.waitFor({ state: 'visible', timeout: 10_000 })
+  check(
+    !(await page.getByTestId('qr-scan-failed').count()),
+    'a Shadowsocks (ss://) code gets the same proxy alert, not "QR scan failed"'
   )
 
   console.log('PASS: right-click menus — app menu where the app owns one, native elsewhere')

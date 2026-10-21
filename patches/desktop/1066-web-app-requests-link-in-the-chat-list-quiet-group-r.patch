@@ -294,10 +294,10 @@ index b80b611c6ff2da2968a1bacec6786f83aae545b3..08a0f25f9e45a7be3ae45395e27ffa89
          // It has its own `onContextMenu` handler,
          // so here we don't need to do anything.
 diff --git a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
-index 864f6481554c67137b8cabe81d63552ccd4cb836..7449304c799b2f0c75a1fe35bb2a725e201cc6d5 100644
+index 610698bd792719b1026ba7ee28b51ff67c2b9b12..61d018b68f7b1386b46c53426dd6dbae118e0c77 100644
 --- a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
-@@ -18,6 +18,7 @@ import useProxyEnabled from '../../../hooks/useProxyEnabled'
+@@ -19,6 +19,7 @@ import useProxyEnabled from '../../../hooks/useProxyEnabled'
  type Props = {
    accountId?: number
    showArchivedChats: boolean
@@ -305,7 +305,7 @@ index 864f6481554c67137b8cabe81d63552ccd4cb836..7449304c799b2f0c75a1fe35bb2a725e
    onExitArchive: () => void
    searchRef: React.ClassAttributes<HTMLInputElement>['ref']
    onSearchChange: (event: { target: { value: string } }) => void
-@@ -31,6 +32,7 @@ type Props = {
+@@ -32,6 +33,7 @@ type Props = {
  export default function ChatListHeader({
    accountId,
    showArchivedChats,
@@ -313,7 +313,7 @@ index 864f6481554c67137b8cabe81d63552ccd4cb836..7449304c799b2f0c75a1fe35bb2a725e
    onExitArchive,
    searchRef,
    onSearchChange,
-@@ -101,7 +103,7 @@ export default function ChatListHeader({
+@@ -106,7 +108,7 @@ export default function ChatListHeader({
  
    return (
      <section className={styles.chatListHeader} data-tauri-drag-region>
@@ -322,7 +322,7 @@ index 864f6481554c67137b8cabe81d63552ccd4cb836..7449304c799b2f0c75a1fe35bb2a725e
          <>
            <span data-no-drag-region>
              <Button
-@@ -114,11 +116,13 @@ export default function ChatListHeader({
+@@ -119,11 +121,13 @@ export default function ChatListHeader({
              </Button>
            </span>
            <div className={styles.archivedChatsTitle}>

@@ -35,12 +35,12 @@ and so is the Reactions stylesheet's pointer to the dialog's pill class.
  .../components/Reactions/styles.module.scss   |   6 +-
  .../components/ReactionsBar/ReactionsBar.tsx  |   5 -
  .../MessageDetail/BasicMessageInfo.tsx        |  14 +
- .../dialogs/MessageDetail/MessageDetail.tsx   |   8 +-
+ .../dialogs/MessageDetail/MessageDetail.tsx   |  44 ++-
  .../ReactionsList.module.scss}                |  30 +-
  .../dialogs/MessageDetail/ReactionsList.tsx   | 153 ++++++++
  .../dialogs/ReactionsDialog/index.tsx         | 340 ------------------
  .../src/components/message/Message.tsx        |  13 +-
- 10 files changed, 230 insertions(+), 399 deletions(-)
+ 10 files changed, 263 insertions(+), 402 deletions(-)
  rename packages/frontend/src/components/dialogs/{ReactionsDialog/styles.module.scss => MessageDetail/ReactionsList.module.scss} (55%)
  create mode 100644 packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.tsx
  delete mode 100644 packages/frontend/src/components/dialogs/ReactionsDialog/index.tsx
@@ -256,11 +256,20 @@ index 364ff384c69cd9beaae1b060b975bc61fdd9e388..9d49482d6e87691ade62ccd4edda2922
    )
  }
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/MessageDetail.tsx b/packages/frontend/src/components/dialogs/MessageDetail/MessageDetail.tsx
-index f4e66b91b1fff943cdad564d0e4f50f8d557ecac..f287df61a0e837334adf4ec06c7fa61ddc3efd06 100644
+index f4e66b91b1fff943cdad564d0e4f50f8d557ecac..5ab89df0d8bc42956f79f68401f4a20502c0970e 100644
 --- a/packages/frontend/src/components/dialogs/MessageDetail/MessageDetail.tsx
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/MessageDetail.tsx
-@@ -1,7 +1,7 @@
- import React, { useCallback, useContext, useEffect, useState } from 'react'
+@@ -1,7 +1,15 @@
+-import React, { useCallback, useContext, useEffect, useState } from 'react'
++import React, {
++  useCallback,
++  useContext,
++  useEffect,
++  useEffectEvent,
++  useMemo,
++  useState,
++} from 'react'
++import { default as asyncThrottle } from '@jcoreio/async-throttle'
  
  import { selectedAccountId } from '../../../ScreenController'
 -import { BackendRemote } from '../../../backend-com'
@@ -268,19 +277,55 @@ index f4e66b91b1fff943cdad564d0e4f50f8d557ecac..f287df61a0e837334adf4ec06c7fa61d
  import Dialog, { DialogBody, DialogHeader } from '../../Dialog'
  import Callout from '../../Callout'
  import useDialog from '../../../hooks/dialog/useDialog'
-@@ -58,6 +58,12 @@ function MessageInfo({
-       setMessage(message)
-     }
+@@ -12,6 +20,7 @@ import type { T } from '@deltachat/jsonrpc-client'
+ import { ContextMenuContext } from '../../../contexts/ContextMenuContext'
+ import { mouseEventToPosition } from '../../../utils/mouseEventToPosition'
+ import styles from './styles.module.scss'
++import { useRpcFetch } from '../../../hooks/useFetch'
+ 
+ function TechnicalMessageInfoDialog({
+   messageId,
+@@ -60,11 +69,38 @@ function MessageInfo({
      refresh()
-+    // Keeps the reactions list live, like upstream's Reactions dialog was.
-+    return onDCEvent(accountId, 'ReactionsChanged', ({ msgId }) => {
-+      if (msgId === messageId) {
-+        refresh()
-+      }
-+    })
    }, [messageId])
  
++  // Keeps the reactions list live, the way upstream's Reactions dialog did.
++  const [isOutdated, setIsOutdated] = useState(false)
++  const freshMessageFetch = useRpcFetch(
++    useMemo(
++      () =>
++        asyncThrottle(
++          BackendRemote.rpc.getMessage.bind(BackendRemote.rpc),
++          250
++        ),
++      []
++    ),
++    isOutdated ? [selectedAccountId(), messageId] : null
++  )
++  const refreshMessage = useEffectEvent(() => freshMessageFetch?.refresh())
++  useEffect(() => {
++    return onDCEvent(selectedAccountId(), 'ReactionsChanged', ({ msgId }) => {
++      if (msgId !== messageId) {
++        return
++      }
++      setIsOutdated(true)
++      refreshMessage()
++    })
++  }, [messageId])
++  const freshMessage = freshMessageFetch?.lingeringResult?.ok
++    ? freshMessageFetch.lingeringResult.value
++    : message
++
    return (
+     <>
+-      {message && content && (
++      {freshMessage && content && (
+         <BasicMessageInfo
+-          message={message}
++          message={freshMessage}
+           info={content}
+           messageId={messageId}
+           onClose={onClose}
 diff --git a/packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss
 similarity index 55%
 rename from packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss
@@ -841,10 +886,10 @@ index 2af10bf5a4cb553766a3b9003da86417bbb3f64e..00000000000000000000000000000000
 -  )
 -}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 8ef332f47f3c580d03784c106fc19d48f229c5ba..32a326661585ac9f2ad510763e277796864a129e 100644
+index 29550023ab685d0c4cf5632de16a8ad744c375eb..6ea464fe6d7f28bc81b2dd14ca5cf927ea614302 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -1383,18 +1383,17 @@ export default function Message(props: {
+@@ -1384,18 +1384,17 @@ export default function Message(props: {
                }
              />
              <div

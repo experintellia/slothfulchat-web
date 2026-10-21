@@ -71,7 +71,8 @@ Rebased onto v2.62.0: upstream restructured the chat view
 MessageListView is inlined, useMessageList() and the multiselect context
 moved up into ChatViewInner, and the multiselect counter moved into the
 header (19e4825c6). So thread is passed to useMessageList() there, and
-ThreadNav replaces upstream's heading and counter only in thread mode.
+in thread mode ThreadHeading and ThreadNavButtons stand in for upstream's
+heading and buttons, next to its multiselect counter.
 MessageListInner lost its custom memo comparator, so the reply props go
 through plain React.memo. ChatContext and the store's activeView are
 memoized upstream now (e4dedf44f) and carry the thread fields. The
@@ -90,7 +91,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  packages/frontend/scss/message/_message.scss  |   9 +-
  packages/frontend/scss/message/_metadata.scss |  47 +++++-
  packages/frontend/src/backend/replyThreads.ts |  20 +++
- .../src/components/ChatView/ChatView.tsx      | 142 +++++++++++++---
+ .../src/components/ChatView/ChatView.tsx      | 133 +++++++++++++--
  .../frontend/src/components/Icon/index.tsx    |   2 +
  .../Settings/ExperimentalFeatures.tsx         |   6 +
  .../src/components/composer/Composer.tsx      |  79 ++++++++-
@@ -106,7 +107,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  .../frontend/src/utils/replyThreadLayout.ts   |  58 +++++++
  packages/shared/shared-types.d.ts             |   2 +
  packages/shared/state.ts                      |   1 +
- 25 files changed, 885 insertions(+), 77 deletions(-)
+ 25 files changed, 887 insertions(+), 66 deletions(-)
  create mode 100644 images/icons/account_tree.svg
  create mode 100644 images/icons/reply.svg
  create mode 100644 images/icons/thread.svg
@@ -322,7 +323,7 @@ index 0000000000000000000000000000000000000000..e91bb4284c5a0d68e55de8c77bdfc858
 +  ): Promise<ReplyThreadEntry[]>
 +}
 diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
-index 4832fb6ade45fecc0aecf30b2ec7d686130fbdba..f9399a77c67bd0730a37b97ddebfab53631c910a 100644
+index 4832fb6ade45fecc0aecf30b2ec7d686130fbdba..475fff5624b85430ff0ee193573ff951d6985c38 100644
 --- a/packages/frontend/src/components/ChatView/ChatView.tsx
 +++ b/packages/frontend/src/components/ChatView/ChatView.tsx
 @@ -38,6 +38,7 @@ import {
@@ -356,71 +357,48 @@ index 4832fb6ade45fecc0aecf30b2ec7d686130fbdba..f9399a77c67bd0730a37b97ddebfab53
            <span data-no-drag-region>
              <Button
                aria-label={tx('back')}
-@@ -124,30 +126,42 @@ export function ChatViewInner({
-             </Button>
-           </span>
-         )}
--        <div className={styles.chatNavbarHeadingWrapper} data-tauri-drag-region>
--          {chatWithLinger && (
--            <>
--              <div role='status' style={{ display: 'contents' }}>
--                {showMessageMultiselectCounter && (
--                  <div className={styles.messageMultiselectCounter}>
--                    {tx('n_selected', numSelectedMessages.toString(), {
--                      quantity: numSelectedMessages,
--                    })}
-+        {chatWithLinger && thread ? (
-+          <ThreadNav chat={chatWithLinger} thread={thread} />
-+        ) : (
-+          <>
-+            <div
-+              className={styles.chatNavbarHeadingWrapper}
-+              data-tauri-drag-region
-+            >
-+              {chatWithLinger && (
-+                <>
-+                  <div role='status' style={{ display: 'contents' }}>
-+                    {showMessageMultiselectCounter && (
-+                      <div className={styles.messageMultiselectCounter}>
-+                        {tx('n_selected', numSelectedMessages.toString(), {
-+                          quantity: numSelectedMessages,
-+                        })}
-+                      </div>
-+                    )}
+@@ -136,19 +138,30 @@ export function ChatViewInner({
                    </div>
--                )}
--              </div>
+                 )}
+               </div>
 -              <ChatHeading
-+                  <ChatHeading
-+                    chat={chatWithLinger}
-+                    // Why `hidden` instead of simply not rendering?
-+                    // Because this component contains the accessible title
-+                    // for the "ChatView" section (`id='chat-section-heading'`).
-+                    hidden={showMessageMultiselectCounter}
-+                  />
-+                </>
-+              )}
-+            </div>
-+            {chatWithLinger && (
-+              <ChatNavButtons
-                 chat={chatWithLinger}
+-                chat={chatWithLinger}
 -                // Why `hidden` instead of simply not rendering?
 -                // Because this component contains the accessible title
 -                // for the "ChatView" section (`id='chat-section-heading'`).
 -                hidden={showMessageMultiselectCounter}
-+                lastUsedApps={lastUsedApps}
-               />
--            </>
--          )}
--        </div>
+-              />
++              {thread ? (
++                <ThreadHeading
++                  chat={chatWithLinger}
++                  thread={thread}
++                  hidden={showMessageMultiselectCounter}
++                />
++              ) : (
++                <ChatHeading
++                  chat={chatWithLinger}
++                  // Why `hidden` instead of simply not rendering?
++                  // Because this component contains the accessible title
++                  // for the "ChatView" section (`id='chat-section-heading'`).
++                  hidden={showMessageMultiselectCounter}
++                />
++              )}
+             </>
+           )}
+         </div>
 -        {chatWithLinger && (
 -          <ChatNavButtons chat={chatWithLinger} lastUsedApps={lastUsedApps} />
-+            )}
-+          </>
-         )}
+-        )}
++        {chatWithLinger &&
++          (thread ? (
++            <ThreadNavButtons thread={thread} />
++          ) : (
++            <ChatNavButtons chat={chatWithLinger} lastUsedApps={lastUsedApps} />
++          ))}
        </nav>
        <RecoverableCrashScreen reset_on_change_key={chatWithLinger.id}>
-@@ -333,6 +347,86 @@ function ChatHeading({ chat, hidden }: { chat: T.FullChat; hidden: boolean }) {
+         <MessageMultiselectContext.Provider
+@@ -333,6 +346,100 @@ function ChatHeading({ chat, hidden }: { chat: T.FullChat; hidden: boolean }) {
    )
  }
  
@@ -431,14 +409,20 @@ index 4832fb6ade45fecc0aecf30b2ec7d686130fbdba..f9399a77c67bd0730a37b97ddebfab53
 +}
 +
 +/**
-+ * The navbar in thread mode: the chat's avatar and name over the start of
-+ * the thread's first message, then the list/tree toggle and the button
-+ * back to the whole chat.
++ * The navbar heading in thread mode: the chat's avatar and name over the
++ * start of the thread's first message.
 + */
-+function ThreadNav({ chat, thread }: { chat: T.FullChat; thread: ThreadView }) {
++function ThreadHeading({
++  chat,
++  thread,
++  hidden,
++}: {
++  chat: T.FullChat
++  thread: ThreadView
++  hidden: boolean
++}) {
 +  const tx = useTranslationFunction()
 +  const accountId = selectedAccountId()
-+  const { closeThread, setThreadLayout } = useChat()
 +  const rootTextFetch = useRpcFetch(fetchThreadRootText, [
 +    accountId,
 +    thread.msgId,
@@ -446,61 +430,69 @@ index 4832fb6ade45fecc0aecf30b2ec7d686130fbdba..f9399a77c67bd0730a37b97ddebfab53
 +  const rootText = rootTextFetch.lingeringResult?.ok
 +    ? rootTextFetch.lingeringResult.value
 +    : ''
++
++  return (
++    <div
++      className={classNames('navbar-heading', { 'visually-hidden': hidden })}
++      data-no-drag-region
++    >
++      <Avatar
++        displayName={chat.name}
++        color={chat.color}
++        avatarPath={chat.profileImage || undefined}
++        small
++        freshness={chat.freshness}
++        // Decorative, like in `ChatHeading`: the name is right below.
++        aria-hidden={true}
++      />
++      <div style={{ marginInlineStart: '7px', overflow: 'hidden' }}>
++        <div className='navbar-chat-name'>
++          <h2 id='chat-section-heading' className='truncated'>
++            {chat.name}
++            <span className='visually-hidden'>
++              <br />
++              {tx('reply_thread')}
++            </span>
++          </h2>
++        </div>
++        <div className='navbar-chat-subtitle truncated'>{rootText}</div>
++      </div>
++    </div>
++  )
++}
++
++/** Thread mode's navbar buttons: the list/tree toggle and the way back. */
++function ThreadNavButtons({ thread }: { thread: ThreadView }) {
++  const tx = useTranslationFunction()
++  const { closeThread, setThreadLayout } = useChat()
 +  const isTree = thread.layout === 'tree'
 +  const toggleLabel = tx(isTree ? 'thread_show_as_list' : 'thread_show_as_tree')
 +
 +  return (
-+    <>
-+      <div className={styles.chatNavbarHeadingWrapper} data-tauri-drag-region>
-+        <div className='navbar-heading' data-no-drag-region>
-+          <Avatar
-+            displayName={chat.name}
-+            color={chat.color}
-+            avatarPath={chat.profileImage || undefined}
-+            small
-+            freshness={chat.freshness}
-+            // Decorative, like in `ChatHeading`: the name is right below.
-+            aria-hidden={true}
-+          />
-+          <div style={{ marginInlineStart: '7px', overflow: 'hidden' }}>
-+            <div className='navbar-chat-name'>
-+              <h2 id='chat-section-heading' className='truncated'>
-+                {chat.name}
-+                <span className='visually-hidden'>
-+                  <br />
-+                  {tx('reply_thread')}
-+                </span>
-+              </h2>
-+            </div>
-+            <div className='navbar-chat-subtitle truncated'>{rootText}</div>
-+          </div>
-+        </div>
-+      </div>
-+      <div className='views' data-no-drag-region>
-+        <Button
-+          onClick={() => setThreadLayout(isTree ? 'list' : 'tree')}
-+          aria-label={toggleLabel}
-+          title={toggleLabel}
-+          className='navbar-button'
-+          styling='borderless'
-+        >
-+          <Icon
-+            coloring='navbar'
-+            icon={isTree ? 'view_list' : 'account_tree'}
-+            size={18}
-+          />
-+        </Button>
-+        <Button
-+          onClick={() => closeThread()}
-+          aria-label={tx('thread_close')}
-+          title={tx('thread_close')}
-+          className='navbar-button'
-+          styling='borderless'
-+        >
-+          <Icon coloring='navbar' icon='cross' size={18} />
-+        </Button>
-+      </div>
-+    </>
++    <div className='views' data-no-drag-region>
++      <Button
++        onClick={() => setThreadLayout(isTree ? 'list' : 'tree')}
++        aria-label={toggleLabel}
++        title={toggleLabel}
++        className='navbar-button'
++        styling='borderless'
++      >
++        <Icon
++          coloring='navbar'
++          icon={isTree ? 'view_list' : 'account_tree'}
++          size={18}
++        />
++      </Button>
++      <Button
++        onClick={() => closeThread()}
++        aria-label={tx('thread_close')}
++        title={tx('thread_close')}
++        className='navbar-button'
++        styling='borderless'
++      >
++        <Icon coloring='navbar' icon='cross' size={18} />
++      </Button>
++    </div>
 +  )
 +}
 +
@@ -692,7 +684,7 @@ index 43e4212c71609724fc9ce32336d48d28665e7f5e..141f91f0cf2d2a5bdc9062e200b40018
                      log.error(
                        'Tried to send a message while draft is loading or in message editing mode'
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index e75b3f39566a38aaa3a4996cc712e796c95cb8aa..8ef332f47f3c580d03784c106fc19d48f229c5ba 100644
+index dce5cdce23bdb7a3d316254367128c95bbcbc9fc..29550023ab685d0c4cf5632de16a8ad744c375eb 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -279,6 +279,7 @@ function buildContextMenu(
@@ -746,7 +738,7 @@ index e75b3f39566a38aaa3a4996cc712e796c95cb8aa..8ef332f47f3c580d03784c106fc19d48
    const { viewType, text, hasLocation, hasHtml } = message
    const direction = getDirection(message)
    const status = mapCoreMsgStatus2String(message.state)
-@@ -663,6 +683,7 @@ export default function Message(props: {
+@@ -664,6 +684,7 @@ export default function Message(props: {
          privateReply,
          chat: props.chat,
          jumpToMessage,
@@ -754,7 +746,7 @@ index e75b3f39566a38aaa3a4996cc712e796c95cb8aa..8ef332f47f3c580d03784c106fc19d48
        }
        const items = isMultiselectMember
          ? buildMultiselectContextMenu(
-@@ -726,6 +747,7 @@ export default function Message(props: {
+@@ -727,6 +748,7 @@ export default function Message(props: {
        showReactionsBar,
        text,
        jumpToMessage,
@@ -762,7 +754,7 @@ index e75b3f39566a38aaa3a4996cc712e796c95cb8aa..8ef332f47f3c580d03784c106fc19d48
        tx,
      ]
    )
-@@ -1351,6 +1373,14 @@ export default function Message(props: {
+@@ -1352,6 +1374,14 @@ export default function Message(props: {
                viewType={effectiveViewType}
                chatType={chat.chatType}
                tabindexForInteractiveContents={tabindexForInteractiveContents}

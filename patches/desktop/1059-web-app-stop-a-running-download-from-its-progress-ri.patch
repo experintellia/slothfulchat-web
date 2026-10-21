@@ -211,7 +211,7 @@ index b4691aba852cf20861c28ea6eec962bfa645da9a..8d0ccd2f14f5da735b204126e75c9e3c
          <CircleDownloadButton
            messageId={message.id}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 27743a55b7cd53dc6795825dd3eea2889f8a5b3a..6ccbecc24eab6b33f8421d9143ef391e4e26cc68 100644
+index cba73475622d82de5ebf266bd423bb4c79903018..921bcf4995159b32724fb2fba827f49cfb6b2f14 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -48,6 +48,7 @@ import InvalidUnencryptedMailDialog from '../dialogs/InvalidUnencryptedMail'
@@ -222,7 +222,7 @@ index 27743a55b7cd53dc6795825dd3eea2889f8a5b3a..6ccbecc24eab6b33f8421d9143ef391e
    DownloadFailedLabel,
    getPostMessageViewType,
    placeholderCaption,
-@@ -1121,6 +1122,15 @@ export default function Message(props: {
+@@ -1122,6 +1123,15 @@ export default function Message(props: {
                {downloadPercent !== null && ` ${downloadPercent}%`}
              </span>
            )}

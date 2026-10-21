@@ -42,23 +42,25 @@ exposed on `MessageMultiselectContext`, and both the menu and the
 keyboard handler filter those.
 
 Rebased onto v2.62.0: the multiselect context value is memoized upstream
-now (e4dedf44f, #6542), so messageIds is added inside that useMemo. The
-hunk for the Tauri runtime is dropped with packages/target-tauri
+now (e4dedf44f, #6542), so the ids sit behind a ref and a stable
+getMessageIds() getter: the array itself in that value re-rendered every
+message whenever the list changed. The hunk for the Tauri runtime is
+dropped with packages/target-tauri
 (f839866f4, #6656).
 ---
- .../src/components/message/Message.tsx        | 69 ++++++++++++++++++-
- .../message/focusAndMultiselect.tsx           |  9 ++-
+ .../src/components/message/Message.tsx        | 70 ++++++++++++++++++-
+ .../message/focusAndMultiselect.tsx           | 18 ++++-
  .../frontend/src/tests/copyMessages.test.ts   | 43 ++++++++++++
  packages/frontend/src/utils/copyMessages.ts   | 32 +++++++++
  packages/runtime/runtime.ts                   |  7 +-
  .../target-browser/runtime-browser/runtime.ts | 11 ++-
  .../runtime-electron/runtime.ts               |  4 +-
- 7 files changed, 166 insertions(+), 9 deletions(-)
+ 7 files changed, 175 insertions(+), 10 deletions(-)
  create mode 100644 packages/frontend/src/tests/copyMessages.test.ts
  create mode 100644 packages/frontend/src/utils/copyMessages.ts
 
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 930511d7c58a4ed7700f5f4749704f05e68baf6f..d6e0baf0620f50c3020cd9735b3cb1a3ddc5ddf8 100644
+index 930511d7c58a4ed7700f5f4749704f05e68baf6f..4ffc596051de09fc95bc3f5b19b938807f33df77 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -64,6 +64,7 @@ import type { PrivateReply } from '../../hooks/chat/usePrivateReply'
@@ -120,28 +122,36 @@ index 930511d7c58a4ed7700f5f4749704f05e68baf6f..d6e0baf0620f50c3020cd9735b3cb1a3
      {
        label: tx('delete'),
        action: () =>
-@@ -655,7 +693,11 @@ export default function Message(props: {
+@@ -590,6 +628,7 @@ export default function Message(props: {
+ 
+   const focusAndMultiselect = useMessageFocusAndMultiselect(message.id, ref)
+   const resetSelection = focusAndMultiselect.resetSelection
++  const getMessageIds = focusAndMultiselect.getMessageIds
+   const isMultiselectMember =
+     focusAndMultiselect.selectedItems.size > 1 &&
+     focusAndMultiselect.selectedItems.has(message.id)
+@@ -655,7 +694,11 @@ export default function Message(props: {
          ? buildMultiselectContextMenu(
              {
                ...common,
 -              messageIds: [...focusAndMultiselect.selectedItems],
-+              // Display order, not click order — see `messageIds` on
++              // Display order, not click order — see `getMessageIds` on
 +              // `MessageMultiselectContext`.
-+              messageIds: focusAndMultiselect.messageIds.filter(id =>
++              messageIds: getMessageIds().filter(id =>
 +                focusAndMultiselect.selectedItems.has(id)
 +              ),
              },
              target
            )
-@@ -675,6 +717,7 @@ export default function Message(props: {
+@@ -675,6 +718,7 @@ export default function Message(props: {
        conversationType,
        message,
        isMultiselectMember,
-+      focusAndMultiselect.messageIds,
++      getMessageIds,
        focusAndMultiselect.selectedItems,
        resetSelection,
        openContextMenu,
-@@ -700,6 +743,11 @@ export default function Message(props: {
+@@ -700,6 +744,11 @@ export default function Message(props: {
            : focusAndMultiselect.selectedItems
        const thisMsgSelected = messageIds.has(message.id)
        const onlyThisMsgSelected = thisMsgSelected && messageIds.size === 1
@@ -149,11 +159,11 @@ index 930511d7c58a4ed7700f5f4749704f05e68baf6f..d6e0baf0620f50c3020cd9735b3cb1a3
 +      // chronological, so filter those to act on the selection in the order
 +      // it is displayed rather than the order it was clicked.
 +      const selectedInDisplayOrder = () =>
-+        focusAndMultiselect.messageIds.filter(id => messageIds.has(id))
++        getMessageIds().filter(id => messageIds.has(id))
        // Handle letter shortcuts with Ctrl/Cmd modifier
        const isCtrlOrMetaKeyPress =
          (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && message
-@@ -756,6 +804,23 @@ export default function Message(props: {
+@@ -756,6 +805,23 @@ export default function Message(props: {
          return
        }
  
@@ -177,7 +187,7 @@ index 930511d7c58a4ed7700f5f4749704f05e68baf6f..d6e0baf0620f50c3020cd9735b3cb1a3
        // Check if Ctrl/Cmd+Shift+"s" is pressed to unsave message
        if (
          onlyThisMsgSelected &&
-@@ -786,7 +851,7 @@ export default function Message(props: {
+@@ -786,7 +852,7 @@ export default function Message(props: {
          e.stopPropagation()
          openDialog(ConfirmDeleteMessageDialog, {
            accountId,
@@ -187,36 +197,51 @@ index 930511d7c58a4ed7700f5f4749704f05e68baf6f..d6e0baf0620f50c3020cd9735b3cb1a3
            chat,
          })
 diff --git a/packages/frontend/src/components/message/focusAndMultiselect.tsx b/packages/frontend/src/components/message/focusAndMultiselect.tsx
-index bcfd5ae4c0d0e5a1d717512f202cf4d58fcd1d66..7824ab7efbd09e12d90ec244c009f94f3fe0c608 100644
+index bcfd5ae4c0d0e5a1d717512f202cf4d58fcd1d66..603de779eed6db9cc681295ebecf260467bf255c 100644
 --- a/packages/frontend/src/components/message/focusAndMultiselect.tsx
 +++ b/packages/frontend/src/components/message/focusAndMultiselect.tsx
-@@ -10,6 +10,10 @@ type MessageMultiselectContextValue = ReturnType<
+@@ -1,4 +1,4 @@
+-import React, { useCallback, useMemo, useState } from 'react'
++import React, { useCallback, useMemo, useRef, useState } from 'react'
+ import type { T } from '@deltachat/jsonrpc-client'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { useRovingTabindex } from '../../contexts/RovingTabindex'
+@@ -10,6 +10,12 @@ type MessageMultiselectContextValue = ReturnType<
    typeof useMultiselect<T.Message['id']>
  > & {
    resetSelection: () => void
 +  /** Every message in the list, in display (chronological) order.
 +   * `selectedItems` is a `Set` in click order, so filter this to get a
-+   * selection that isn't reversed by a bottom-up Ctrl + click. */
-+  messageIds: Array<T.Message['id']>
++   * selection that isn't reversed by a bottom-up Ctrl + click.
++   * A getter so the context value (and every message) doesn't change with
++   * the list; only call it in event handlers. */
++  getMessageIds: () => Array<T.Message['id']>
  }
  export const MessageMultiselectContext =
    React.createContext<MessageMultiselectContextValue>({
-@@ -18,6 +22,7 @@ export const MessageMultiselectContext =
+@@ -18,6 +24,7 @@ export const MessageMultiselectContext =
      onKeyDown: () => false,
      selectedItems: new Set(),
      resetSelection: () => {},
-+    messageIds: [],
++    getMessageIds: () => [],
    })
  
  export function useMessageFocusAndMultiselectContextValue(props: {
-@@ -63,8 +68,8 @@ export function useMessageFocusAndMultiselectContextValue(props: {
+@@ -61,10 +68,15 @@ export function useMessageFocusAndMultiselectContextValue(props: {
+     // to focus it or to select text or something.
+     { onNormalClick: 'unselectAll' }
    )
++  const messageIdsRef = useRef(props.messageIds)
++  // eslint-disable-next-line react-hooks/refs
++  messageIdsRef.current = props.messageIds
++  const getMessageIds = useCallback(() => messageIdsRef.current, [])
++
    // Memoized because it is used as a context value.
    return useMemo(
 -    () => ({ ...multiselect, resetSelection }),
 -    [multiselect, resetSelection]
-+    () => ({ ...multiselect, resetSelection, messageIds: props.messageIds }),
-+    [multiselect, resetSelection, props.messageIds]
++    () => ({ ...multiselect, resetSelection, getMessageIds }),
++    [multiselect, resetSelection, getMessageIds]
    )
  }
  

@@ -883,7 +883,7 @@ index 146bfda2ca2515c7bb22cb82018fe2cc940d4aaa..8e7e0fcc8042f908cf4473dfdf9cd11c
    border-radius: 100%;
    height: 40px;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 6ccbecc24eab6b33f8421d9143ef391e4e26cc68..9b7544756fe5bb7c5430073e4546941675ac9720 100644
+index 921bcf4995159b32724fb2fba827f49cfb6b2f14..1698fead6a9d1b8cc1183605727e99b74bca5c21 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -40,7 +40,11 @@ import useOpenViewProfileDialog from '../../hooks/dialog/useOpenViewProfileDialo
@@ -937,7 +937,7 @@ index 6ccbecc24eab6b33f8421d9143ef391e4e26cc68..9b7544756fe5bb7c5430073e45469416
      showEdit && {
        // Not `tx('edit_message')`.
        // See https://github.com/deltachat/deltachat-desktop/issues/4695#issuecomment-2688716592
-@@ -651,32 +645,6 @@ export default function Message(props: {
+@@ -652,32 +646,6 @@ export default function Message(props: {
  
        const showContextMenuEventPos = mouseEventToPosition(event)
  
@@ -970,7 +970,7 @@ index 6ccbecc24eab6b33f8421d9143ef391e4e26cc68..9b7544756fe5bb7c5430073e45469416
        if (!isMultiselectMember) {
          resetSelection()
        }
-@@ -693,7 +661,6 @@ export default function Message(props: {
+@@ -694,7 +662,6 @@ export default function Message(props: {
          conversationType,
          openDialog,
          privateReply,
@@ -978,7 +978,7 @@ index 6ccbecc24eab6b33f8421d9143ef391e4e26cc68..9b7544756fe5bb7c5430073e45469416
          chat: props.chat,
          jumpToMessage,
        }
-@@ -711,9 +678,34 @@ export default function Message(props: {
+@@ -712,9 +679,34 @@ export default function Message(props: {
            )
          : buildContextMenu(common, target)
  
@@ -1013,7 +1013,7 @@ index 6ccbecc24eab6b33f8421d9143ef391e4e26cc68..9b7544756fe5bb7c5430073e45469416
          ariaAttrs: {
            'aria-label': tx('a11y_message_context_menu_btn_label'),
          },
-@@ -866,6 +858,27 @@ export default function Message(props: {
+@@ -867,6 +859,27 @@ export default function Message(props: {
          return
        }
  
@@ -1041,7 +1041,7 @@ index 6ccbecc24eab6b33f8421d9143ef391e4e26cc68..9b7544756fe5bb7c5430073e45469416
        // Audio / video elements have controls that utilize
        // arrows. That is seeking, changing volume.
        // So we don't want to switch focus if all user wanted to do
-@@ -1180,6 +1193,7 @@ export default function Message(props: {
+@@ -1181,6 +1194,7 @@ export default function Message(props: {
      <div
        onContextMenu={showContextMenu}
        aria-haspopup='menu'
@@ -1049,7 +1049,7 @@ index 6ccbecc24eab6b33f8421d9143ef391e4e26cc68..9b7544756fe5bb7c5430073e45469416
        className={classNames(
          'message',
          direction,
-@@ -1357,7 +1371,6 @@ export default function Message(props: {
+@@ -1358,7 +1372,6 @@ export default function Message(props: {
          </div>
        </div>
        <ShortcutMenu

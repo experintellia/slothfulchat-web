@@ -137,10 +137,10 @@ index 1be49fcf34739adfaa278a67fd6c2653552f4c11..144fa6c27243c3b01f26fd59e497d6e0
      useLogicVirtualChatList(chatListIds)
  
 diff --git a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
-index 55274ede2c41ad1fbe69976d480130cad2b2fd3a..864f6481554c67137b8cabe81d63552ccd4cb836 100644
+index 559f59e8ccae9e636266b357cd685d357bc27c5a..610698bd792719b1026ba7ee28b51ff67c2b9b12 100644
 --- a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
-@@ -24,6 +24,8 @@ type Props = {
+@@ -25,6 +25,8 @@ type Props = {
    onSearchClear: () => void
    queryStr: string
    queryChatId: number | null
@@ -149,7 +149,7 @@ index 55274ede2c41ad1fbe69976d480130cad2b2fd3a..864f6481554c67137b8cabe81d63552c
  }
  
  export default function ChatListHeader({
-@@ -35,6 +37,8 @@ export default function ChatListHeader({
+@@ -36,6 +38,8 @@ export default function ChatListHeader({
    onSearchClear,
    queryStr,
    queryChatId,
@@ -158,7 +158,7 @@ index 55274ede2c41ad1fbe69976d480130cad2b2fd3a..864f6481554c67137b8cabe81d63552c
  }: Props) {
    const tx = useTranslationFunction()
    const { openDialog } = useDialog()
-@@ -123,6 +127,16 @@ export default function ChatListHeader({
+@@ -128,6 +132,16 @@ export default function ChatListHeader({
              onClear={queryChatId ? () => onSearchClear() : undefined}
              value={queryStr}
            />
