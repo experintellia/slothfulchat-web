@@ -37,10 +37,10 @@ Patch-Range: upstream-fix
  2 files changed, 14 insertions(+), 1 deletion(-)
 
 diff --git a/packages/frontend/src/components/ChatView/ChatView.tsx b/packages/frontend/src/components/ChatView/ChatView.tsx
-index 19fbda5c2cb99910c57b6000e39a610afa58c96b..85f2b388c7216502468b7400f1259ecd2578448f 100644
+index 9b3a843d3bb4b8c0e155fb9bf6b8b8546d7ab0c2..def01437ec8836fd946e87850f76721fcf013c36 100644
 --- a/packages/frontend/src/components/ChatView/ChatView.tsx
 +++ b/packages/frontend/src/components/ChatView/ChatView.tsx
-@@ -389,6 +389,12 @@ function AppIcon({ accountId, app }: { accountId: number; app: T.Message }) {
+@@ -455,6 +455,12 @@ function AppIcon({ accountId, app }: { accountId: number; app: T.Message }) {
          )
        }}
        onContextMenu={event => {
@@ -53,7 +53,7 @@ index 19fbda5c2cb99910c57b6000e39a610afa58c96b..85f2b388c7216502468b7400f1259ecd
          openContextMenu({
            ...mouseEventToPosition(event),
            items: [
-@@ -415,7 +421,6 @@ function AppIcon({ accountId, app }: { accountId: number; app: T.Message }) {
+@@ -481,7 +487,6 @@ function AppIcon({ accountId, app }: { accountId: number; app: T.Message }) {
          className={styles.webxdcIcon}
          src={runtime.getWebxdcIconURL(accountId, app.id)}
          alt={appName}
@@ -62,7 +62,7 @@ index 19fbda5c2cb99910c57b6000e39a610afa58c96b..85f2b388c7216502468b7400f1259ecd
      </Button>
    )
 diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
-index ec54fd20028c6eb6967a8e9012df0e0f68d7f6db..a3be0976acbd468e7e78a9e42ec63d4bf787df3b 100644
+index 7fc9643254756223a8a1663f0448bb4e511e1124..8e79386b93e155c441d43a9bfaf07d6b3f0cb8b4 100644
 --- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
 +++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
 @@ -325,6 +325,14 @@ export function useChatContextMenu(): {
@@ -78,5 +78,5 @@ index ec54fd20028c6eb6967a8e9012df0e0f68d7f6db..a3be0976acbd468e7e78a9e42ec63d4b
 +    // the web build.)
 +    event.preventDefault()
      // only if chatListItems contains a single chat, we need the full chat
-     const selectedChat =
-       chatListItems.length === 1
+     const singleChatItem =
+       chatListItems.length === 1 ? chatListItems[0] : undefined

@@ -17,7 +17,7 @@ Patch-Range: upstream-fix
  1 file changed, 25 insertions(+), 8 deletions(-)
 
 diff --git a/packages/frontend/src/components/Dialog/Dialog.tsx b/packages/frontend/src/components/Dialog/Dialog.tsx
-index d89b22a191f39a8d82c8384c23a31809cf3e86e3..ebb9b23a6066f1f5b6dbb23f6e46d872705ac09b 100644
+index 6aee1dfd17ed5019a669b3cea047c0ce02473f20..6c20d81697e5b28683a3ee29b48e729fab09d6dc 100644
 --- a/packages/frontend/src/components/Dialog/Dialog.tsx
 +++ b/packages/frontend/src/components/Dialog/Dialog.tsx
 @@ -53,6 +53,29 @@ const Dialog = React.memo<Props>(
@@ -66,7 +66,7 @@ index d89b22a191f39a8d82c8384c23a31809cf3e86e3..ebb9b23a6066f1f5b6dbb23f6e46d872
              const cancelEvent = new Event('cancel')
              dialog.current.dispatchEvent(cancelEvent)
              // cancel event doesn't trigger dialog close
-@@ -130,6 +146,7 @@ const Dialog = React.memo<Props>(
+@@ -147,6 +163,7 @@ const Dialog = React.memo<Props>(
      }
      return (
        <dialog

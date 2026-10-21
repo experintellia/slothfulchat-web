@@ -28,21 +28,27 @@ building the webimapaccount: QR payload, instead of a naive scheme-strip
 that left paths/query strings behind. Falls back to the raw trimmed input
 if it isn't URL-parseable so bad input still surfaces the normal
 checkQr error.
+
+Rebased onto v2.62.0: UserAgreement.tsx is gone upstream (6d50a231b,
+#6746: onboarding links a generic privacy policy instead of a
+relay-specific one), so the hunk that built an https:// link for webimap
+QR codes there is dropped. OAuth was removed upstream (oauth2 is no
+longer a login param), so only webimap: null is seeded in
+defaultCredentials().
 ---
  .../frontend/src/components/LoginForm.tsx     |  17 +++
  .../components/Settings/DefaultCredentials.ts |   5 +-
  .../components/dialogs/ConnectivityDialog.tsx |   7 +
  .../WelcomeScreen/OnboardingScreen.tsx        |  13 ++
  .../WelcomeScreen/UseWebimapServerDialog.tsx  | 122 ++++++++++++++++++
- .../screens/WelcomeScreen/UserAgreement.tsx   |   6 +
- 6 files changed, 169 insertions(+), 1 deletion(-)
+ 5 files changed, 163 insertions(+), 1 deletion(-)
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/UseWebimapServerDialog.tsx
 
 diff --git a/packages/frontend/src/components/LoginForm.tsx b/packages/frontend/src/components/LoginForm.tsx
-index 32c11202eba4d538779babe916357ebe59e67676..235e92c1fb11614439f7b6cb7d28dbf405782c70 100644
+index ff36ecd5cde32ff023fd32ade533d0bb324d8edc..06ca9b2cb79b9078ff618c91d4b018921dba5389 100644
 --- a/packages/frontend/src/components/LoginForm.tsx
 +++ b/packages/frontend/src/components/LoginForm.tsx
-@@ -298,6 +298,23 @@ export default function LoginForm({
+@@ -239,6 +239,23 @@ export default function LoginForm({
                  {tx('accept_invalid_certificates')}
                </option>
              </DeltaSelect>
@@ -67,7 +73,7 @@ index 32c11202eba4d538779babe916357ebe59e67676..235e92c1fb11614439f7b6cb7d28dbf4
                <label>
                  <span>{tx('enforce_e2ee')}</span>
 diff --git a/packages/frontend/src/components/Settings/DefaultCredentials.ts b/packages/frontend/src/components/Settings/DefaultCredentials.ts
-index bd2016aae13169016776ea469fe57587dbfbdb07..6ab6dffccd9172ca1d6c09dd2182a1ffc8707493 100644
+index 61e6784ee95622a597b8501db5709d5d36abaee6..01971118acf1eee215cdcf227497111bcf132166 100644
 --- a/packages/frontend/src/components/Settings/DefaultCredentials.ts
 +++ b/packages/frontend/src/components/Settings/DefaultCredentials.ts
 @@ -1,6 +1,8 @@
@@ -75,15 +81,15 @@ index bd2016aae13169016776ea469fe57587dbfbdb07..6ab6dffccd9172ca1d6c09dd2182a1ff
  
 -export type Credentials = T.EnteredLoginParam
 +// `webimap` is added by the regenerated local jsonrpc bindings; the published
-+// 2.53.0 package does not have it yet, so widen locally to keep tsc green.
++// package does not have it yet, so widen locally to keep tsc green.
 +export type Credentials = T.EnteredLoginParam & { webimap?: boolean | null }
  
- export type ProxySettings = {
-   proxyEnabled: boolean
-@@ -28,6 +30,7 @@ export function defaultCredentials(credentials?: Credentials): Credentials {
+ export enum Proxy {
+   DISABLED = '0',
+@@ -22,6 +24,7 @@ export function defaultCredentials(credentials?: Credentials): Credentials {
+     smtpServer: null,
      smtpPort: null,
      smtpSecurity: null,
-     oauth2: null,
 +    webimap: null,
    }
  
@@ -275,20 +281,3 @@ index 0000000000000000000000000000000000000000..65caf9bbc91d50b4f776def34bd50be5
 +    </Dialog>
 +  )
 +}
-diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-index bbfe900afbddbf4270a880ef08310e18a49af50a..6e40c33aed989db41270825519fd4d6af0ac4cd9 100644
---- a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-+++ b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-@@ -24,6 +24,12 @@ function extractLinkFromQrCode(qrWithUrl: QrWithUrl<AccountQr>) {
-     return origin
-   }
- 
-+  // webimap QR codes are `webimapaccount:host` (bare host, no scheme) — the
-+  // server is always reached over https, so make the link a real URL.
-+  if ((qrWithUrl.qr as any).webimap) {
-+    return `https://${qrWithUrl.qr.domain}`
-+  }
-+
-   return qrWithUrl.qr.domain
- }
- 

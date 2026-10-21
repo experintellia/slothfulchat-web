@@ -18,10 +18,10 @@ mode where only one pane is visible anyway.
  2 files changed, 87 insertions(+), 1 deletion(-)
 
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index 1eb14a8cb57a2f04d88433b5dd84907055f40b76..c0c8ac59909486fa4433234841b170fbdc80180b 100644
+index b40f6f847140416e45f1b33ca86cf59c6548c31f..fb5aa9caa7afb6bcd1b5122c5d5fc7a5c1da2f83 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-@@ -34,6 +34,13 @@ import { GlobalVoiceMessagePlayer } from '../../GlobalVoiceMessagePlayer/GlobalV
+@@ -35,6 +35,13 @@ import { GlobalVoiceMessagePlayer } from '../../GlobalVoiceMessagePlayer/GlobalV
  
  const log = getLogger('MainScreen')
  
@@ -35,7 +35,7 @@ index 1eb14a8cb57a2f04d88433b5dd84907055f40b76..c0c8ac59909486fa4433234841b170fb
  type Props = {
    accountId?: number
  }
-@@ -51,6 +58,21 @@ export default function MainScreen({ accountId }: Props) {
+@@ -54,6 +61,21 @@ export default function MainScreen({ accountId }: Props) {
    const { chatId, chatWithLinger, selectChat, unselectChat } = useChat()
    const { smallScreenMode } = useContext(ScreenContext)
  
@@ -57,7 +57,7 @@ index 1eb14a8cb57a2f04d88433b5dd84907055f40b76..c0c8ac59909486fa4433234841b170fb
    // Small hack/misuse of keyBindingAction to setArchivedChatsSelected from
    // other components (especially ViewProfile when selecting a shared chat/group)
    useKeyBindingAction(KeybindAction.ChatList_SwitchToArchiveView, () =>
-@@ -276,7 +298,18 @@ export default function MainScreen({ accountId }: Props) {
+@@ -279,7 +301,18 @@ export default function MainScreen({ accountId }: Props) {
          !messageSectionShouldBeHidden ? 'chat-view-open' : ''
        }`}
      >
@@ -77,7 +77,7 @@ index 1eb14a8cb57a2f04d88433b5dd84907055f40b76..c0c8ac59909486fa4433234841b170fb
          <section
            className={styles.chatListAndHeader}
            role='region'
-@@ -321,6 +354,42 @@ export default function MainScreen({ accountId }: Props) {
+@@ -324,6 +357,42 @@ export default function MainScreen({ accountId }: Props) {
  
          <GlobalVoiceMessagePlayer />
        </div>
@@ -121,10 +121,10 @@ index 1eb14a8cb57a2f04d88433b5dd84907055f40b76..c0c8ac59909486fa4433234841b170fb
          className={styles.chatView}
          accountId={accountId}
 diff --git a/packages/frontend/src/components/screens/MainScreen/styles.module.scss b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
-index d12e23b5a34aa7aca80af2fb889cf9b774156027..ecb61801bc2e495b961ff69b8a00e309f4f2d1da 100644
+index bc1698940c8644d9454a4967e4cb975eee93df21..b1f63c8abb76cd3af51751451ad3601ea0527c61 100644
 --- a/packages/frontend/src/components/screens/MainScreen/styles.module.scss
 +++ b/packages/frontend/src/components/screens/MainScreen/styles.module.scss
-@@ -50,6 +50,23 @@
+@@ -65,6 +65,23 @@
      }
    }
  }

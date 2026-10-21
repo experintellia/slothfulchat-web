@@ -34,10 +34,10 @@ for something it doesn't ship.
  2 files changed, 54 insertions(+), 1 deletion(-)
 
 diff --git a/packages/frontend/src/ScreenController.tsx b/packages/frontend/src/ScreenController.tsx
-index 9157df1e03c6aed3554c778298742dd5e2d2ed99..393034c9b40983790190e5aa46cc3fdb207d69e6 100644
+index 5aaa325d11a65107041cd21f2bce91838b65dfd6..058f3982c92938f92d8247b3ca0fb0f59b97350f 100644
 --- a/packages/frontend/src/ScreenController.tsx
 +++ b/packages/frontend/src/ScreenController.tsx
-@@ -8,7 +8,11 @@ import { getLogger } from '@deltachat-desktop/shared/logger'
+@@ -7,7 +7,11 @@ import { getLogger } from '@deltachat-desktop/shared/logger'
  import AccountSetupScreen from './components/screens/AccountSetupScreen'
  import WelcomeScreen from './components/screens/WelcomeScreen'
  import { BackendRemote, EffectfulBackendActions } from './backend-com'
@@ -50,7 +50,7 @@ index 9157df1e03c6aed3554c778298742dd5e2d2ed99..393034c9b40983790190e5aa46cc3fdb
  import { runtime } from '@deltachat-desktop/runtime-interface'
  import { updateTimestamps } from './components/conversations/Timestamp'
  import { ScreenContext } from './contexts/ScreenContext'
-@@ -272,6 +276,18 @@ export default class ScreenController extends Component {
+@@ -250,6 +254,18 @@ export default class ScreenController extends Component {
  
    changeScreen(screen: Screens) {
      log.debug('Changing screen to:', screen)
@@ -68,9 +68,9 @@ index 9157df1e03c6aed3554c778298742dd5e2d2ed99..393034c9b40983790190e5aa46cc3fdb
 +    }
      this.setState({ screen })
      window.__screen = screen
-     if (Screens.Welcome) {
+   }
 diff --git a/packages/frontend/src/deviceMessages.ts b/packages/frontend/src/deviceMessages.ts
-index 6e9bd09a3d76e5d72a63c5e1c90fb8c85d1d4378..3b180fa34f632724ad097211f3086dd24d0570d5 100644
+index f0a61e77db37ab0723994003e7c8e3a640b148ff..76745b8e76aea4c2d27e88cebf41969e9bbb35e5 100644
 --- a/packages/frontend/src/deviceMessages.ts
 +++ b/packages/frontend/src/deviceMessages.ts
 @@ -1,5 +1,6 @@
@@ -80,7 +80,7 @@ index 6e9bd09a3d76e5d72a63c5e1c90fb8c85d1d4378..3b180fa34f632724ad097211f3086dd2
  
  export async function updateDeviceChat(
    accountId: number,
-@@ -32,6 +33,42 @@ export async function updateDeviceChat(
+@@ -37,6 +38,42 @@ export async function updateDeviceChat(
    })
  }
  

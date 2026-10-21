@@ -36,15 +36,22 @@ onto genuine `<li>`s no matter how specifically we scope our own class.
 
 Both share a new PeopleHoverInfo component (the hover trigger, the card
 shell, a lazy contacts-by-id fetch and a relative-time helper).
+
+Rebased onto v2.62.0: Avatar's wasSeenRecently prop became freshness
+(1171b3e4a), and Reactions now renders every pill and hides the
+overflowing ones with visually-hidden so resizes don't trigger aria-live
+announcements (781bedd9f); the hover wrapper now carries that class, and
+the +N pill keeps upstream's aria-hidden. reactionsByContact is read
+from props.message.reactions (cbd1aa522).
 ---
  packages/frontend/scss/misc/_avatar.scss      |   7 +
- .../frontend/src/components/Avatar/index.tsx  |   5 +-
+ .../frontend/src/components/Avatar/index.tsx  |  10 +-
  .../src/components/PeopleHoverInfo/index.tsx  | 181 ++++++++++++++++++
  .../PeopleHoverInfo/styles.module.scss        |  95 +++++++++
- .../src/components/Reactions/index.tsx        | 113 ++++++++++-
+ .../src/components/Reactions/index.tsx        | 120 ++++++++++--
  .../components/Reactions/styles.module.scss   |  22 ++-
  .../components/message/MessageMetaData.tsx    | 125 +++++++++---
- 7 files changed, 511 insertions(+), 37 deletions(-)
+ 7 files changed, 520 insertions(+), 40 deletions(-)
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/index.tsx
  create mode 100644 packages/frontend/src/components/PeopleHoverInfo/styles.module.scss
 
@@ -67,7 +74,7 @@ index a8ad9fd17313267df69c7c7d3153a70b2cdc1fee..948ff4e7c8924446ef4bef99c70ae013
  .avatar.large {
    --local-avatar-size: 64px;
 diff --git a/packages/frontend/src/components/Avatar/index.tsx b/packages/frontend/src/components/Avatar/index.tsx
-index a452c04eeb54a56114a3f98525924a4c5b48de09..f6110be3c429102e4f9071d7e863863926e94149 100644
+index 77ccc45dc6dbed06fde93c916ecbbfd1d034a1bb..0bfc2259453ac2d66aba53badf495aaf23b5ce0b 100644
 --- a/packages/frontend/src/components/Avatar/index.tsx
 +++ b/packages/frontend/src/components/Avatar/index.tsx
 @@ -38,6 +38,8 @@ export function Avatar(props: {
@@ -76,7 +83,7 @@ index a452c04eeb54a56114a3f98525924a4c5b48de09..f6110be3c429102e4f9071d7e8638639
    small?: boolean
 +  /** 24px variant, e.g. for compact inline lists like hover popovers. */
 +  xSmall?: boolean
-   wasSeenRecently?: boolean
+   freshness?: T.ContactFreshness
    style?: htmlDivProps['style']
    onClick?: () => void
 @@ -57,6 +59,7 @@ export function Avatar(props: {
@@ -84,15 +91,20 @@ index a452c04eeb54a56114a3f98525924a4c5b48de09..f6110be3c429102e4f9071d7e8638639
      large,
      small,
 +    xSmall,
-     wasSeenRecently,
+     freshness,
      onClick,
      tabIndex,
-@@ -87,7 +90,7 @@ export function Avatar(props: {
-         // If at some point we make `wasSeenRecently` accessible,
-         // we should only apply `aria-hidden` to the avatar / initial itself
-         // (and perhaps rename the prop).
--        { large, small, wasSeenRecently },
-+        { large, small, 'x-small': xSmall, wasSeenRecently },
+@@ -86,7 +89,12 @@ export function Avatar(props: {
+         // it is safe to apply aria-hidden to the entire component.
+         // If at some point we make it accessible,
+         // we should only apply `aria-hidden` to the avatar / initial itself.
+-        { large, small, wasSeenRecently: freshness === 'RecentlySeen' },
++        {
++          large,
++          small,
++          'x-small': xSmall,
++          wasSeenRecently: freshness === 'RecentlySeen',
++        },
          className
        )}
        onClick={onClick}
@@ -385,7 +397,7 @@ index 0000000000000000000000000000000000000000..d95e0c580335bafa9d4aae1b1bbc74f4
 +  font-size: 11.5px;
 +}
 diff --git a/packages/frontend/src/components/Reactions/index.tsx b/packages/frontend/src/components/Reactions/index.tsx
-index ddc10364bfed8ce3acb3ce8e013613442f1eaec3..1c9bc983b3282eadfbc971be2416c86286a915b4 100644
+index f4f72789a7ab8e5ef4b727aee112314d09cbcede..8dbaea418d5fca331e5192c498cc6eab45106a3f 100644
 --- a/packages/frontend/src/components/Reactions/index.tsx
 +++ b/packages/frontend/src/components/Reactions/index.tsx
 @@ -3,6 +3,12 @@ import classNames from 'classnames'
@@ -401,7 +413,16 @@ index ddc10364bfed8ce3acb3ce8e013613442f1eaec3..1c9bc983b3282eadfbc971be2416c862
  
  import styles from './styles.module.scss'
  
-@@ -58,25 +64,55 @@ export default function Reactions(props: Props) {
+@@ -27,7 +33,7 @@ export default function Reactions(props: Props) {
+   const { messageWidth, chatType } = props
+ 
+   const { openDialog } = useDialog()
+-  const { reactions } = props.message.reactions
++  const { reactions, reactionsByContact } = props.message.reactions
+ 
+   // Compute visibleEmojis and hiddenReactionsCount from props
+   const { visibleEmojis, hiddenReactionsCount } = useMemo(() => {
+@@ -64,32 +70,63 @@ export default function Reactions(props: Props) {
      })
    }
  
@@ -410,16 +431,21 @@ index ddc10364bfed8ce3acb3ce8e013613442f1eaec3..1c9bc983b3282eadfbc971be2416c862
 +
    return (
      <div className={styles.reactions}>
-       {reactions.slice(0, visibleEmojis).map(({ emoji, isFromSelf, count }) => {
+       {reactions.map(({ emoji, isFromSelf, count }, index) => {
          return (
 -          <span
 -            className={classNames(styles.emoji, {
 -              [styles.isFromSelf]: isFromSelf,
--            })}
 +          <HoverInfoTrigger
-             key={emoji}
++            key={emoji}
 +            align='start'
-+            className={styles.emojiTrigger}
++            className={classNames(styles.emojiTrigger, {
+               // Instead of not rendering hidden reactions at all,
+               // hide them with CSS,
+               // so as to not trigger `aria-live` announcements on resize.
+               'visually-hidden': index >= visibleEmojis,
+             })}
+-            key={emoji}
 +            onClick={handleClick}
 +            card={
 +              <ReactorsHoverCard
@@ -444,9 +470,9 @@ index ddc10364bfed8ce3acb3ce8e013613442f1eaec3..1c9bc983b3282eadfbc971be2416c862
          )
        })}
        {reactions.length > visibleEmojis && (
--        <span className={classNames(styles.emoji, styles.emojiCount)}>
--          +{hiddenReactionsCount}
--        </span>
+-        <span
+-          aria-hidden
+-          className={classNames(styles.emoji, styles.emojiCount)}
 +        <HoverInfoTrigger
 +          align='start'
 +          className={styles.emojiTrigger}
@@ -459,15 +485,20 @@ index ddc10364bfed8ce3acb3ce8e013613442f1eaec3..1c9bc983b3282eadfbc971be2416c862
 +              showEmoji={true}
 +            />
 +          }
-+        >
-+          <span className={classNames(styles.emoji, styles.emojiCount)}>
+         >
+-          +{hiddenReactionsCount}
+-        </span>
++          <span
++            aria-hidden
++            className={classNames(styles.emoji, styles.emojiCount)}
++          >
 +            +{hiddenReactionsCount}
 +          </span>
 +        </HoverInfoTrigger>
        )}
        <button
          type='button'
-@@ -88,3 +124,60 @@ export default function Reactions(props: Props) {
+@@ -101,3 +138,60 @@ export default function Reactions(props: Props) {
      </div>
    )
  }
@@ -529,10 +560,10 @@ index ddc10364bfed8ce3acb3ce8e013613442f1eaec3..1c9bc983b3282eadfbc971be2416c862
 +  return <PeopleHoverCard title={props.title} rows={rows} loading={loading} />
 +}
 diff --git a/packages/frontend/src/components/Reactions/styles.module.scss b/packages/frontend/src/components/Reactions/styles.module.scss
-index 6d5f26360f328dc8e3c8c47e894f12a912c82a59..52d2acff2602782f90dbbd1df1cba8c15b3549b9 100644
+index 5008017e9d3aa690788f3eccae6f3f2188003f9c..e8f692edc6d014c392cedf02582cc45894d28c07 100644
 --- a/packages/frontend/src/components/Reactions/styles.module.scss
 +++ b/packages/frontend/src/components/Reactions/styles.module.scss
-@@ -6,6 +6,24 @@
+@@ -5,6 +5,24 @@
    top: 16px;
  }
  
@@ -555,9 +586,9 @@ index 6d5f26360f328dc8e3c8c47e894f12a912c82a59..52d2acff2602782f90dbbd1df1cba8c1
 +}
 +
  .emoji {
-   background-color: var(--messageIncomingBg);
-   border-radius: 24px;
-@@ -13,10 +31,6 @@
+   // Basically the same as with `.accumulatedReactionsButton`
+   // in the "Reactions" dialog.
+@@ -14,10 +32,6 @@
    font-size: 16px;
    padding: 2px 6px;
  
@@ -569,7 +600,7 @@ index 6d5f26360f328dc8e3c8c47e894f12a912c82a59..52d2acff2602782f90dbbd1df1cba8c1
      background-color: var(--messageOutgoingBg);
    }
 diff --git a/packages/frontend/src/components/message/MessageMetaData.tsx b/packages/frontend/src/components/message/MessageMetaData.tsx
-index 2627443c516d18bb641cce791f267a1d5bd6b98a..4c86c98ff2ed1657e5f90504945b8a356d942715 100644
+index 2a57dfa949470596397dc37d797b8a00be98f410..dd730cce38d3721d0210e2943178fc2f18356f5b 100644
 --- a/packages/frontend/src/components/message/MessageMetaData.tsx
 +++ b/packages/frontend/src/components/message/MessageMetaData.tsx
 @@ -1,5 +1,6 @@

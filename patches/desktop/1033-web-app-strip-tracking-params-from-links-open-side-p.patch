@@ -40,17 +40,22 @@ consent prompt: one setting, on by default.
   undo, dismiss, send, and chat switch.
 - tests/trackingParams.test.ts: mocha/chai over the strip rules and the
   paste rewrite / single-URL fallback.
+
+Rebased onto v2.62.0: stripTrackingLinks is read from the new
+desktop-settings store (95f5a1e1d), and the cleaned link is cast to the
+http(s) template type runtime.openLink() now requires (56f5a6877);
+stripping only removes query parameters, so the scheme is unchanged.
 ---
  images/icons/cleaning_services.svg            |   1 +
  .../frontend/src/components/Icon/index.tsx    |   1 +
  .../src/components/Settings/ChatsAndMedia.tsx |   5 +
  .../src/components/composer/Composer.tsx      |  82 ++++++++++-
- .../frontend/src/hooks/useOpenLinkSafely.ts   |  11 +-
+ .../frontend/src/hooks/useOpenLinkSafely.ts   |  12 +-
  .../frontend/src/tests/trackingParams.test.ts | 105 ++++++++++++++
  packages/frontend/src/utils/trackingParams.ts | 135 ++++++++++++++++++
  packages/shared/shared-types.d.ts             |   2 +
  packages/shared/state.ts                      |   1 +
- 9 files changed, 340 insertions(+), 3 deletions(-)
+ 9 files changed, 341 insertions(+), 3 deletions(-)
  create mode 100644 images/icons/cleaning_services.svg
  create mode 100644 packages/frontend/src/tests/trackingParams.test.ts
  create mode 100644 packages/frontend/src/utils/trackingParams.ts
@@ -64,7 +69,7 @@ index 0000000000000000000000000000000000000000..c60f83365bb3e8cadd8f22293cebfbdc
 +<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path d="M120-40v-280q0-83 58.5-141.5T320-520h40v-320q0-33 23.5-56.5T440-920h80q33 0 56.5 23.5T600-840v320h40q83 0 141.5 58.5T840-320v280H120Zm80-80h80v-120q0-17 11.5-28.5T320-280q17 0 28.5 11.5T360-240v120h80v-120q0-17 11.5-28.5T480-280q17 0 28.5 11.5T520-240v120h80v-120q0-17 11.5-28.5T640-280q17 0 28.5 11.5T680-240v120h80v-200q0-50-35-85t-85-35H320q-50 0-85 35t-35 85v200Zm320-400v-320h-80v320h80Zm0 0h-80 80Z"/></svg>
 \ No newline at end of file
 diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
-index 32bff710b04652a168460bb9e96fa789b877fa53..0affbd317085ba73d79da5258401ce42f0c640a9 100644
+index e737cd8c6fb9c9dce49f6b40e7b6fb7c4b88eaf1..5d2c37addbca7d3db19d2abdc24a3cfe0dd439cd 100644
 --- a/packages/frontend/src/components/Icon/index.tsx
 +++ b/packages/frontend/src/components/Icon/index.tsx
 @@ -14,6 +14,7 @@ export type IconName =
@@ -92,10 +97,10 @@ index 934ab9c4a6e77bfcf62d29b41ccc5cbf3d3acbfb..b7df4da27fe3516e14ac52bb22017983
        (SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS), these toggles are moot —
        hide them too. */}
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index c2977f97ae547ea5643bdc961eabcfe6f5b2e7ec..097705511fd37227f20ad08672e8d035231bdd97 100644
+index cc00682c937fce6a30b3576acc4f9e8b298724ee..78747ad142356230a4603f2b306c1e6ab0e81bfa 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
-@@ -14,7 +14,10 @@ import { extension } from 'mime-types'
+@@ -13,7 +13,10 @@ import { extension } from 'mime-types'
  import MenuAttachment from './menuAttachment'
  import ComposerMessageInput from './ComposerMessageInput'
  import LinkPreviewGhost from './linkPreview/LinkPreviewGhost'
@@ -167,7 +172,7 @@ index c2977f97ae547ea5643bdc961eabcfe6f5b2e7ec..097705511fd37227f20ad08672e8d035
 +        // mode (its input has no onPaste wired), so the chip is compose-only by
 +        // construction — smaller diff, and edit mode rarely gets fresh links.
          if (!e.clipboardData.files.length) {
-+          if (settingsStore?.desktopSettings.stripTrackingLinks) {
++          if (desktopSettingsStore?.stripTrackingLinks) {
 +            const pasted = e.clipboardData.getData('text/plain')
 +            const result = pasted ? stripTrackingFromPaste(pasted) : null
 +            if (result) {
@@ -184,7 +189,7 @@ index c2977f97ae547ea5643bdc961eabcfe6f5b2e7ec..097705511fd37227f20ad08672e8d035
            return
          }
          // when there is a file then don't paste text
-@@ -680,6 +730,36 @@ const Composer = forwardRef<
+@@ -698,6 +748,36 @@ const Composer = forwardRef<
                    </section>
                  )}
                <LinkPreviewGhost preview={linkPreview} />
@@ -222,14 +227,14 @@ index c2977f97ae547ea5643bdc961eabcfe6f5b2e7ec..097705511fd37227f20ad08672e8d035
                  <section
                    className='attachment-quote-section is-attachment'
 diff --git a/packages/frontend/src/hooks/useOpenLinkSafely.ts b/packages/frontend/src/hooks/useOpenLinkSafely.ts
-index c8dbb9e7749aefc590fd2e70daa24b42f8a5e0cd..08b502ca344961fc54889a8246c9878d7273c6fe 100644
+index 01b6f481873be2fbb6b3de3a80ed2c37e1f05f7d..952311f3dc38f393c9ca1b9abc12ba63cb9b9c07 100644
 --- a/packages/frontend/src/hooks/useOpenLinkSafely.ts
 +++ b/packages/frontend/src/hooks/useOpenLinkSafely.ts
 @@ -4,6 +4,8 @@ import useConfirmationDialog from './dialog/useConfirmationDialog'
  import useOpenMailtoLink from './useOpenMailtoLink'
  import useTranslationFunction from './useTranslationFunction'
  import { runtime } from '@deltachat-desktop/runtime-interface'
-+import { useSettingsStore } from '../stores/settings'
++import { useDesktopSettingsStore } from '../stores/settings'
 +import { stripTrackingParams } from '../utils/trackingParams'
  
  /**
@@ -238,29 +243,30 @@ index c8dbb9e7749aefc590fd2e70daa24b42f8a5e0cd..08b502ca344961fc54889a8246c9878d
  export function useOpenNonMailtoLinkSafely() {
    const tx = useTranslationFunction()
    const openConfirmationDialog = useConfirmationDialog()
-+  const settingsStore = useSettingsStore()[0]
++  const desktopSettings = useDesktopSettingsStore()[0]
  
    return useCallback(
      async (url: string) => {
-@@ -38,7 +41,11 @@ export function useOpenNonMailtoLinkSafely() {
+@@ -38,7 +41,12 @@ export function useOpenNonMailtoLinkSafely() {
          url.toLowerCase().startsWith('http:') ||
          url.toLowerCase().startsWith('https:')
        ) {
--        runtime.openLink(url)
+-        runtime.openLink(url as `http:${string}` | `https:${string}`)
 +        // webapp: silently drop known tracking params when the setting is on.
-+        const cleaned = settingsStore?.desktopSettings.stripTrackingLinks
-+          ? stripTrackingParams(url) ?? url
++        const cleaned = desktopSettings?.stripTrackingLinks
++          ? (stripTrackingParams(url) ?? url)
 +          : url
-+        runtime.openLink(cleaned)
++        // only query params are stripped, so the scheme is still http(s)
++        runtime.openLink(cleaned as `http:${string}` | `https:${string}`)
        } else {
          const userConfirmed = await openConfirmationDialog({
            message: tx('ask_copy_unopenable_link_to_clipboard', url),
-@@ -51,6 +58,6 @@ export function useOpenNonMailtoLinkSafely() {
+@@ -51,6 +59,6 @@ export function useOpenNonMailtoLinkSafely() {
          }
        }
      },
 -    [openConfirmationDialog, tx]
-+    [openConfirmationDialog, tx, settingsStore]
++    [openConfirmationDialog, tx, desktopSettings]
    )
  }
 diff --git a/packages/frontend/src/tests/trackingParams.test.ts b/packages/frontend/src/tests/trackingParams.test.ts
@@ -516,7 +522,7 @@ index 0000000000000000000000000000000000000000..7d4aa9447f8c35e1af2a4d1c956eeaa3
 +  return { cleaned: text.replace(originalUrl, () => cleanedUrl), originalUrl, cleanedUrl }
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 35a6e9c8393bbcf37428c18cde4fed06acced5bc..00c76415d55c111fafbc54e203e1fb05ed1eef1f 100644
+index a7ee958b12f7ca1c42afbe8411a25286b35a1762..38c622d82b406c0933ad2900973fe5d4c99fae09 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -41,6 +41,8 @@ export interface DesktopSettingsType {
@@ -529,7 +535,7 @@ index 35a6e9c8393bbcf37428c18cde4fed06acced5bc..00c76415d55c111fafbc54e203e1fb05
    experimentalCompletionMenu: boolean
    /** webapp: estimated time-to-read next to the unread badge. Off by default (experimental). */
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 6c1979c92d766b061f0241b7973d5adc2a972fb9..7488ea78b1a73d16f34324d53b04df028df914a2 100644
+index bad744ba41f55753c7a689b6bef1987349db39e1..f7217c367367973c36850029e30092e76bdc3ba2 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -15,6 +15,7 @@ export function getDefaultState(): DesktopSettingsType {

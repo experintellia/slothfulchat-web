@@ -31,89 +31,128 @@ return undefined so the caller falls back to the upstream default.
   user didn't scan a specific account/login QR — so the privacy policy
   the user agrees to matches the relay the address is created on.
 
+Rebased onto v2.62.0: upstream dropped its default instance. Without a
+scanned code it passes null to core's initTransports, which probes
+core's built-in relays on TCP 443 and picks one (1171b3e4a, #6774), and
+the onboarding links a generic delta.chat/gdpr policy (6d50a231b, #6746;
+UserAgreement.tsx and chatmailInstances.ts are gone). The WS→TCP bridge
+only tunnels the mail ports, so that probe can't work in the browser:
+this patch now keeps the old default (DEFAULT_CHATMAIL_HOSTNAME =
+nine.testrun.org) and always hands initTransports a concrete dcaccount:
+code, either the configured relay or that default, also for securejoin
+invites. Only a scanned dcaccount:/dclogin:/webimapaccount: code is
+passed through. InstantOnboardingScreen links that relay's
+/privacy.html.
+
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
- .../screens/WelcomeScreen/UserAgreement.tsx   | 21 ++++++-
- .../src/hooks/useInstantOnboarding.ts         |  9 ++-
- .../src/utils/slothfulInstanceConfig.ts       | 58 +++++++++++++++++++
- 3 files changed, 86 insertions(+), 2 deletions(-)
+ .../WelcomeScreen/InstantOnboardingScreen.tsx | 23 ++++++-
+ .../src/hooks/useInstantOnboarding.ts         | 18 ++++-
+ .../src/utils/slothfulInstanceConfig.ts       | 68 +++++++++++++++++++
+ 3 files changed, 107 insertions(+), 2 deletions(-)
 
-diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-index 6e40c33aed989db41270825519fd4d6af0ac4cd9..de5acd99db378fbac3821190d16bd44138cd874d 100644
---- a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-+++ b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-@@ -8,6 +8,7 @@ import {
-   DEFAULT_INSTANCE_PRIVACY_POLICY_URL,
-   isQRWithDefaultInstance,
- } from './chatmailInstances'
-+import { instanceDefaultChatmailHost } from '../../../utils/slothfulInstanceConfig'
+diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+index fad23d60ba11e65a0e1aef5a98c6ca20e482a95e..8f0ef60f7b30b94a43844183c673370b1abefcd8 100644
+--- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
++++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
+@@ -17,6 +17,10 @@ import styles from './styles.module.scss'
+ import useDialog from '../../../hooks/dialog/useDialog'
+ import UseOtherServerDialog from './UseOtherServerDialog'
+ import { BackendRemote } from '../../../backend-com'
++import {
++  DEFAULT_CHATMAIL_HOSTNAME,
++  instanceDefaultChatmailHost,
++} from '../../../utils/slothfulInstanceConfig'
  
- import type { AccountQr, QrWithUrl } from '../../../backend/qr-types'
+ import { ContextMenuContext } from '../../../contexts/ContextMenuContext'
+ import { mouseEventToPosition } from '../../../utils/mouseEventToPosition'
+@@ -208,6 +212,16 @@ export default function InstantOnboardingScreen({
+     openDialog(UseOtherServerDialog)
+   }
  
-@@ -38,9 +39,27 @@ export default function UserAgreement() {
-   const { welcomeQr } = useInstantOnboarding()
-   const isDefaultInstance = isQRWithDefaultInstance(welcomeQr)
- 
-+  // slothfulchat-web: when the operator configured their own default chatmail
-+  // relay (SLOTHFUL_DEFAULT_CHATMAIL) and the account is actually created on
-+  // it — i.e. the user didn't scan a specific account/login QR — the consent
-+  // link must name that relay and point at ITS privacy policy, not upstream's
-+  // default instance. `configurationQR` in useInstantOnboarding keeps the
-+  // configured default for exactly these (non-account, non-login) cases.
++  // slothfulchat-web: unless a scanned account/login QR pins the server, the
++  // address is created on a known relay — the operator's own default
++  // (SLOTHFUL_DEFAULT_CHATMAIL) or the fallback one, matching
++  // `configurationQR` in useInstantOnboarding — so the consent link names
++  // that relay and points at ITS privacy policy, not the generic one.
 +  const configuredHost =
-+    isDefaultInstance &&
-+    welcomeQr?.qr.kind !== 'account' &&
-+    welcomeQr?.qr.kind !== 'login'
-+      ? instanceDefaultChatmailHost()
++    welcomeQr?.qr.kind !== 'account' && welcomeQr?.qr.kind !== 'login'
++      ? (instanceDefaultChatmailHost() ?? DEFAULT_CHATMAIL_HOSTNAME)
 +      : undefined
 +
-   return (
-     <>
--      {isDefaultInstance && (
-+      {isDefaultInstance && configuredHost && (
-+        <ClickableLink href={`https://${configuredHost}/privacy.html`}>
-+          {tx('instant_onboarding_agree_default2', configuredHost)}
-+        </ClickableLink>
-+      )}
-+      {isDefaultInstance && !configuredHost && (
-         <ClickableLink href={DEFAULT_INSTANCE_PRIVACY_POLICY_URL}>
-           {tx('instant_onboarding_agree_default2', DEFAULT_CHATMAIL_HOSTNAME)}
-         </ClickableLink>
+   const onClickBack = () => {
+     saveDisplayName()
+     // Yes, stuff like the avatar and name are preserved,
+@@ -256,7 +270,14 @@ export default function InstantOnboardingScreen({
+             <p>{tx('set_name_and_avatar_explain')}</p>
+             <div className={styles.welcomeScreenButtonGroup}>
+               <div className={styles.instantOnboardingAgreement}>
+-                {welcomeQr?.qr.kind !== 'login' && (
++                {welcomeQr?.qr.kind !== 'login' && configuredHost && (
++                  <ClickableLink
++                    href={`https://${configuredHost}/privacy.html`}
++                  >
++                    {tx('instant_onboarding_agree_default2', configuredHost)}
++                  </ClickableLink>
++                )}
++                {welcomeQr?.qr.kind !== 'login' && !configuredHost && (
+                   <ClickableLink href={PRIVACY_POLICY_URL}>
+                     {tx('privacy_policy')}
+                   </ClickableLink>
 diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
-index 1aabccd89bf8fb50ef85686a95843fe56c75c2c4..17d65c0f8fee3c4b5d500a5429770cc9f467b253 100644
+index 870edff1bcf95e32c59b12352c9505092d0e828a..6b1d6d70dc4efab50379fdb49e22891ab5beb954 100644
 --- a/packages/frontend/src/hooks/useInstantOnboarding.ts
 +++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
-@@ -5,6 +5,7 @@ import useSecureJoin from './useSecureJoin'
+@@ -4,6 +4,10 @@ import useDialog from './dialog/useDialog'
+ import useSecureJoin from './useSecureJoin'
  import { ConfigureProgressDialog } from '../components/dialogs/ConfigureProgressDialog'
- import { DEFAULT_CHATMAIL_HOSTNAME } from '../components/screens/WelcomeScreen/chatmailInstances'
  import { InstantOnboardingContext } from '../contexts/InstantOnboardingContext'
-+import { instanceDefaultChatmailQr } from '../utils/slothfulInstanceConfig'
++import {
++  DEFAULT_CHATMAIL_HOSTNAME,
++  instanceDefaultChatmailQr,
++} from '../utils/slothfulInstanceConfig'
  
  import type { T } from '@deltachat/jsonrpc-client'
  import type { WelcomeQrWithUrl } from '../contexts/InstantOnboardingContext'
-@@ -76,7 +77,13 @@ export default function useInstantOnboarding(): InstantOnboarding {
-       // DCACCOUNT is the default QR code which is used if the user
-       // didn't scan a code but just clicked the button to create a
-       // new account on the welcome screen.
--      let configurationQR = `dcaccount:${DEFAULT_CHATMAIL_HOSTNAME}`
+@@ -69,7 +73,19 @@ export default function useInstantOnboarding(): InstantOnboarding {
+   const createInstantAccount = useCallback(
+     async (accountId: number): Promise<T.FullChat['id'] | null> => {
+       // Without a code core picks a chatmail relay on its own.
+-      const configurationQR = welcomeQr?.url ?? null
 +      //
-+      // slothfulchat-web: self-hosters can point the "create new account"
-+      // flow at their own chatmail relay via SLOTHFUL_DEFAULT_CHATMAIL
-+      // (baked into window.__slothfulConfig.defaultChatmailInstance). When
-+      // that isn't set we keep upstream's default instance.
-+      let configurationQR =
-+        instanceDefaultChatmailQr() ?? `dcaccount:${DEFAULT_CHATMAIL_HOSTNAME}`
++      // slothfulchat-web: not in the browser — core's relay probe needs TCP
++      // 443, which the WS→TCP bridge doesn't tunnel (see
++      // DEFAULT_CHATMAIL_HOSTNAME). So unless a scanned dcaccount:/dclogin:
++      // (or webimapaccount:) code pins the server, sign up on a concrete
++      // relay: the operator's own (SLOTHFUL_DEFAULT_CHATMAIL, baked into
++      // window.__slothfulConfig.defaultChatmailInstance) or the fallback
++      // default. That includes invites, whose relays core would probe too.
++      const configurationQR =
++        welcomeQr?.qr.kind === 'account' || welcomeQr?.qr.kind === 'login'
++          ? welcomeQr.url
++          : (instanceDefaultChatmailQr() ??
++            `dcaccount:${DEFAULT_CHATMAIL_HOSTNAME}`)
  
-       if (welcomeQr) {
-         if (welcomeQr.qr.kind === 'account') {
+       return new Promise((resolve, reject) => {
+         // show the configure progress dialog where
 diff --git a/packages/frontend/src/utils/slothfulInstanceConfig.ts b/packages/frontend/src/utils/slothfulInstanceConfig.ts
-index c519d5a38434fc072896f4a6eeb7f9a0f8d0dcb9..3e44735537a63deabd0be2e64a791a0b8979a89e 100644
+index c519d5a38434fc072896f4a6eeb7f9a0f8d0dcb9..855bfde5b2c77bb28ed05a738a5bfd7305c64465 100644
 --- a/packages/frontend/src/utils/slothfulInstanceConfig.ts
 +++ b/packages/frontend/src/utils/slothfulInstanceConfig.ts
-@@ -12,3 +12,61 @@
+@@ -12,3 +12,71 @@
  export function instanceHidesPublicSuggestions(): boolean {
    return (window as any).__slothfulConfig?.hidePublicSuggestions === true
  }
++
++/**
++ * The relay the "create new account" flow signs up on when the operator set no
++ * `SLOTHFUL_DEFAULT_CHATMAIL`: upstream's old default instance. Upstream
++ * dropped it in 2.62 and passes no code at all, letting core probe its
++ * built-in relays on TCP 443 and pick one; the WS→TCP bridge only tunnels the
++ * mail ports (143/465/587/993), so in the browser that probe can't succeed and
++ * we always hand core a concrete `dcaccount:` code instead.
++ */
++export const DEFAULT_CHATMAIL_HOSTNAME = 'nine.testrun.org'
 +
 +/**
 + * `SLOTHFUL_DEFAULT_CHATMAIL`: parse the operator-configured default chatmail
@@ -129,7 +168,7 @@ index c519d5a38434fc072896f4a6eeb7f9a0f8d0dcb9..3e44735537a63deabd0be2e64a791a0b
 + *    address on first login against that domain (upstream's default form).
 + *
 + * Returns `undefined` when unset, blank, or degenerate (no host), so callers
-+ * fall back to upstream's default instance instead of a broken QR.
++ * fall back to {@link DEFAULT_CHATMAIL_HOSTNAME} instead of a broken QR.
 + */
 +function parseDefaultChatmail(): { qr: string; host: string } | undefined {
 +  const value = (window as any).__slothfulConfig?.defaultChatmailInstance
@@ -158,7 +197,7 @@ index c519d5a38434fc072896f4a6eeb7f9a0f8d0dcb9..3e44735537a63deabd0be2e64a791a0b
 +/**
 + * The `dcaccount:` QR the "create new account" flow should sign up with when
 + * the operator set `SLOTHFUL_DEFAULT_CHATMAIL`, or `undefined` to fall back to
-+ * upstream's default instance.
++ * {@link DEFAULT_CHATMAIL_HOSTNAME}.
 + */
 +export function instanceDefaultChatmailQr(): string | undefined {
 +  return parseDefaultChatmail()?.qr
@@ -166,8 +205,8 @@ index c519d5a38434fc072896f4a6eeb7f9a0f8d0dcb9..3e44735537a63deabd0be2e64a791a0b
 +
 +/**
 + * Bare host of the operator-configured default chatmail relay, for the consent
-+ * text / privacy-policy link on the create-account flow. `undefined` when the
-+ * upstream default is in use.
++ * text / privacy-policy link on the create-account flow. `undefined` when
++ * {@link DEFAULT_CHATMAIL_HOSTNAME} is in use.
 + */
 +export function instanceDefaultChatmailHost(): string | undefined {
 +  return parseDefaultChatmail()?.host

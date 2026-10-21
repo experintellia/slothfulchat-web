@@ -55,24 +55,29 @@ desktop/1054's long-press fallback, so the menu never opened on iPhone. "Copy
 Text" copies the message, as in other messengers. Message links get
 -webkit-touch-callout: none so iOS's preview sheet doesn't cover the
 menu.
+
+Rebased onto v2.62.0: the provider's callbacks and context value are
+memoized upstream now (e4dedf44f, #6542), so the refocus logic lives
+inside those useCallbacks. toggleReaction keeps upstream's error alert
+for a failed sendReaction but still closes the bar before the RPC.
 ---
  packages/frontend/scss/message/_message.scss  |  21 +++
  .../frontend/scss/misc/_context_menu.scss     |  29 +++-
  .../AbsolutePositioningHelper/index.tsx       |  10 +-
  .../frontend/src/components/ContextMenu.tsx   | 133 ++++++++++++++++--
  .../src/components/KeyboardShortcutHint.tsx   |   4 +
- .../components/ReactionsBar/ReactionsBar.tsx  |  35 +++--
- .../ReactionsBar/ReactionsBarContext.tsx      |  26 +++-
+ .../components/ReactionsBar/ReactionsBar.tsx  |  27 +++-
+ .../ReactionsBar/ReactionsBarContext.tsx      |  22 ++-
  .../src/components/ReactionsBar/index.ts      |   6 +-
  .../ReactionsBar/styles.module.scss           |  12 ++
  .../ReactionsBar/useReactionsBar.ts           |   6 +-
  .../src/components/ShortcutMenu/index.tsx     |  53 +------
  .../ShortcutMenu/styles.module.scss           |  63 ++++-----
  .../src/components/message/Message.tsx        |  91 +++++++-----
- 13 files changed, 334 insertions(+), 155 deletions(-)
+ 13 files changed, 328 insertions(+), 149 deletions(-)
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index d2c58bdb11ceb847746b1eff26e8d67022c197e3..7b22e087bc4689a7753405916eb2e46d73b320ba 100644
+index 5411b10d1572f328bc09a2021c0b46e9b8ba3d8b..a62a613f17f3a66c14b6cd13abc01dffa08e137e 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
 @@ -13,6 +13,27 @@ $info-text-max-width: 400px;
@@ -473,10 +478,10 @@ index 0d4a1ed5c28f0181692c3a18f86c7a6bde7ea4aa..79d402768c3a8f626d4781fd79b0f908
    ]
  }
 diff --git a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx b/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
-index f2331b6f63c455a346c5a9b78f85c3d663c2f68c..695008e1953090f3e0ae4f2e33e7521cae8ebecf 100644
+index cd8389fa676720952f6cb04d42b5b88a6d53727d..eba8553dfb6b34dba08b9750ff1d768f6f442a33 100644
 --- a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
 +++ b/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
-@@ -22,6 +22,13 @@ type Props = {
+@@ -27,6 +27,13 @@ type Props = {
    messageId: number
    myReaction?: string
    onClick: () => void
@@ -490,7 +495,7 @@ index f2331b6f63c455a346c5a9b78f85c3d663c2f68c..695008e1953090f3e0ae4f2e33e7521c
  }
  
  const DEFAULT_EMOJIS = ['👍', '👎', '❤️', '😂', '🙁']
-@@ -30,11 +37,17 @@ export default function ReactionsBar({
+@@ -38,13 +45,19 @@ export default function ReactionsBar({
    onClick,
    messageId,
    myReaction,
@@ -499,6 +504,8 @@ index f2331b6f63c455a346c5a9b78f85c3d663c2f68c..695008e1953090f3e0ae4f2e33e7521c
  }: Props) {
 +  const autoFocus = !onShowAllEmojis
    const tx = useTranslationFunction()
+   const { chatWithLinger } = useChat()
+   const openAlertDialog = useAlertDialog()
  
    const reactionsBarRef = useRef<HTMLDivElement>(null)
    useEffect(() => {
@@ -508,7 +515,7 @@ index f2331b6f63c455a346c5a9b78f85c3d663c2f68c..695008e1953090f3e0ae4f2e33e7521c
      // IDK why, but `focus()` doesn't work if it's the first time
      // that we open the reactions bar for a chat.
      setTimeout(() => {
-@@ -46,26 +59,30 @@ export default function ReactionsBar({
+@@ -56,12 +69,14 @@ export default function ReactionsBar({
        }
        firstButton.focus()
      })
@@ -520,22 +527,21 @@ index f2331b6f63c455a346c5a9b78f85c3d663c2f68c..695008e1953090f3e0ae4f2e33e7521c
    const accountId = selectedAccountId()
  
    const toggleReaction = async (emoji: string) => {
--    if (emoji === myReaction) {
--      await BackendRemote.rpc.sendReaction(accountId, messageId, [])
--    } else {
--      await BackendRemote.rpc.sendReaction(accountId, messageId, [emoji])
--    }
--
 +    // Close first: a second tap during the RPC must not react again.
-     onClick()
-+    await BackendRemote.rpc.sendReaction(
-+      accountId,
-+      messageId,
-+      emoji === myReaction ? [] : [emoji]
-+    )
++    onClick()
+     try {
+       await BackendRemote.rpc.sendReaction(
+         accountId,
+@@ -73,8 +88,6 @@ export default function ReactionsBar({
+       void openAlertDialog({
+         message: tx('error_x', unknownErrorToString(error)),
+       })
+-    } finally {
+-      onClick()
+     }
    }
  
-   const handleShowAllEmojis = (
+@@ -82,7 +95,11 @@ export default function ReactionsBar({
      event: React.MouseEvent<HTMLButtonElement, MouseEvent>
    ) => {
      event.stopPropagation()
@@ -549,12 +555,12 @@ index f2331b6f63c455a346c5a9b78f85c3d663c2f68c..695008e1953090f3e0ae4f2e33e7521c
  
    const isMyReactionDefault = myReaction
 diff --git a/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx b/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
-index 0456b32e36cb8f768bcdce53b036e5ed746b87d4..2a1dac86091f24ccba0b22c2b2e91af4905b643a 100644
+index 3ff9c1ee8203782a5dc52ede29246d3462ada0e2..ae71840efe038b3b3f7eaa9533ddd13b73c472db 100644
 --- a/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
 +++ b/packages/frontend/src/components/ReactionsBar/ReactionsBarContext.tsx
 @@ -1,4 +1,4 @@
--import React, { useEffect, useState } from 'react'
-+import React, { useCallback, useEffect, useRef, useState } from 'react'
+-import React, { useCallback, useEffect, useMemo, useState } from 'react'
++import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
  
  import AbsolutePositioningHelper from '../AbsolutePositioningHelper'
  import OutsideClickHelper from '../OutsideClickHelper'
@@ -566,25 +572,23 @@ index 0456b32e36cb8f768bcdce53b036e5ed746b87d4..2a1dac86091f24ccba0b22c2b2e91af4
    x: number
    y: number
  }
-@@ -24,14 +25,26 @@ export const ReactionsBarContext =
+@@ -24,15 +25,27 @@ export const ReactionsBarContext =
  
  export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
    const [barArgs, setBarArgs] = useState<ShowReactionBar | null>(null)
 +  const restoreFocusTo = useRef<HTMLElement | null>(null)
  
-   const showReactionsBar = (args: ShowReactionBar) => {
+   const showReactionsBar = useCallback((args: ShowReactionBar) => {
 +    restoreFocusTo.current = document.activeElement as HTMLElement | null
      setBarArgs(args)
-   }
+   }, [])
  
--  const hideReactionsBar = () => {
 +  // Click/tap/scroll elsewhere: leave focus where the user took it.
-+  const hideReactionsBar = useCallback(() => {
+   const hideReactionsBar = useCallback(() => {
 +    restoreFocusTo.current = null
      setBarArgs(null)
--  }
-+  }, [])
-+
+   }, [])
+ 
 +  // Pick or Escape: the focused emoji/search field goes away with the bar,
 +  // so put keyboard users back on the message it was opened from.
 +  const closeAndRefocus = useCallback(() => {
@@ -592,10 +596,11 @@ index 0456b32e36cb8f768bcdce53b036e5ed746b87d4..2a1dac86091f24ccba0b22c2b2e91af4
 +    hideReactionsBar()
 +    el?.focus()
 +  }, [hideReactionsBar])
++
+   const isReactionsBarShown = barArgs !== null
  
-   const value: ReactionsBarValue = {
-     showReactionsBar,
-@@ -42,14 +55,14 @@ export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
+   const value: ReactionsBarValue = useMemo(
+@@ -47,14 +60,14 @@ export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
    useEffect(() => {
      const hideOnEscape = (event: KeyboardEvent) => {
        if (event.key === 'Escape' && barArgs !== null) {
@@ -607,12 +612,12 @@ index 0456b32e36cb8f768bcdce53b036e5ed746b87d4..2a1dac86091f24ccba0b22c2b2e91af4
      return () => {
        window.removeEventListener('keyup', hideOnEscape)
      }
--  }, [barArgs])
+-  }, [barArgs, hideReactionsBar])
 +  }, [barArgs, closeAndRefocus])
  
    return (
      <ReactionsBarContext.Provider value={value}>
-@@ -63,7 +76,8 @@ export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
+@@ -68,7 +81,8 @@ export const ReactionsBarProvider = ({ children }: PropsWithChildren<{}>) => {
                key={barArgs.messageId}
                messageId={barArgs.messageId}
                myReaction={barArgs.myReaction}
@@ -668,7 +673,7 @@ index 72fe1c942bf717477fa66ebda6a4b4fa8a36161d..130a43d41c188724d692fc02d4192fd4
    background-color: rgb(120, 120, 120);
  }
 diff --git a/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts b/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts
-index fd313fb48ce39403558c7cb529e2e4d61894a535..b8465b5da6ab0c63299826425694ec52dcbaf11d 100644
+index 2b33de894aa49ec77a69fa0fdbfb3b0545440089..33cb4e669e079850bf4efa91099abaf4ddeaee8c 100644
 --- a/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts
 +++ b/packages/frontend/src/components/ReactionsBar/useReactionsBar.ts
 @@ -11,7 +11,7 @@ type UseReactionsBar = Pick<
@@ -680,8 +685,8 @@ index fd313fb48ce39403558c7cb529e2e4d61894a535..b8465b5da6ab0c63299826425694ec52
        reactions: T.Message['reactions']
      }
    ) => void
-@@ -49,7 +49,9 @@ export function showReactionsUi(message: T.Message, chat: T.FullChat): boolean {
-   return chat.canSend && !message.isInfo && message.originalMsgId === null
+@@ -56,7 +56,9 @@ export function showReactionsUi(message: T.Message, chat: T.FullChat): boolean {
+   )
  }
  
 -function getMyReaction(reactions: T.Message['reactions']): string | undefined {
@@ -878,7 +883,7 @@ index 146bfda2ca2515c7bb22cb82018fe2cc940d4aaa..8e7e0fcc8042f908cf4473dfdf9cd11c
    border-radius: 100%;
    height: 40px;
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478d77d9bcc 100644
+index 6ccbecc24eab6b33f8421d9143ef391e4e26cc68..9b7544756fe5bb7c5430073e4546941675ac9720 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -40,7 +40,11 @@ import useOpenViewProfileDialog from '../../hooks/dialog/useOpenViewProfileDialo
@@ -894,7 +899,7 @@ index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478
  import { ContextMenuContext } from '../../contexts/ContextMenuContext'
  import Reactions from '../Reactions'
  import ShortcutMenu from '../ShortcutMenu'
-@@ -272,7 +276,6 @@ function buildContextMenu(
+@@ -273,7 +277,6 @@ function buildContextMenu(
      conversationType,
      openDialog,
      privateReply,
@@ -902,7 +907,7 @@ index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478
      chat,
      jumpToMessage,
    }: {
-@@ -282,7 +285,6 @@ function buildContextMenu(
+@@ -283,7 +286,6 @@ function buildContextMenu(
      conversationType: ConversationType
      openDialog: OpenDialog
      privateReply: PrivateReply
@@ -910,7 +915,7 @@ index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478
      chat: T.FullChat
      jumpToMessage: JumpToMessage
    },
-@@ -363,9 +365,6 @@ function buildContextMenu(
+@@ -364,9 +366,6 @@ function buildContextMenu(
    // - https://github.com/deltachat/deltachat-android/blob/fd4a377752cc6778f161590fde2f9ab29c5d3011/src/main/java/org/thoughtcrime/securesms/ConversationFragment.java#L334
    const showEdit = isMessageEditable(message, chat)
  
@@ -920,7 +925,7 @@ index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478
    // Only show in groups, don't show on info messages or outgoing messages
    const showReplyPrivately =
      (conversationType.chatType === 'Group' ||
-@@ -416,11 +415,6 @@ function buildContextMenu(
+@@ -417,11 +416,6 @@ function buildContextMenu(
          }
        },
      },
@@ -932,7 +937,7 @@ index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478
      showEdit && {
        // Not `tx('edit_message')`.
        // See https://github.com/deltachat/deltachat-desktop/issues/4695#issuecomment-2688716592
-@@ -650,32 +644,6 @@ export default function Message(props: {
+@@ -651,32 +645,6 @@ export default function Message(props: {
  
        const showContextMenuEventPos = mouseEventToPosition(event)
  
@@ -965,7 +970,7 @@ index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478
        if (!isMultiselectMember) {
          resetSelection()
        }
-@@ -692,7 +660,6 @@ export default function Message(props: {
+@@ -693,7 +661,6 @@ export default function Message(props: {
          conversationType,
          openDialog,
          privateReply,
@@ -973,7 +978,7 @@ index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478
          chat: props.chat,
          jumpToMessage,
        }
-@@ -710,9 +677,34 @@ export default function Message(props: {
+@@ -711,9 +678,34 @@ export default function Message(props: {
            )
          : buildContextMenu(common, target)
  
@@ -1008,7 +1013,7 @@ index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478
          ariaAttrs: {
            'aria-label': tx('a11y_message_context_menu_btn_label'),
          },
-@@ -865,6 +857,27 @@ export default function Message(props: {
+@@ -866,6 +858,27 @@ export default function Message(props: {
          return
        }
  
@@ -1036,7 +1041,7 @@ index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478
        // Audio / video elements have controls that utilize
        // arrows. That is seeking, changing volume.
        // So we don't want to switch focus if all user wanted to do
-@@ -1181,6 +1194,7 @@ export default function Message(props: {
+@@ -1180,6 +1193,7 @@ export default function Message(props: {
      <div
        onContextMenu={showContextMenu}
        aria-haspopup='menu'
@@ -1044,7 +1049,7 @@ index b32107fb4d2604d27965d2fcb73696a977ac0300..f46f8df2c0f5d5b2e84156b62ea8e478
        className={classNames(
          'message',
          direction,
-@@ -1355,7 +1369,6 @@ export default function Message(props: {
+@@ -1357,7 +1371,6 @@ export default function Message(props: {
          </div>
        </div>
        <ShortcutMenu

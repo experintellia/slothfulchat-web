@@ -47,7 +47,7 @@ index 144b0ce8389357a2ff1f0834987d0f9b05348704..5054c2da25930346bb3be57a4e681c7a
        dismissedRef.current = url
      }
 diff --git a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
-index 259404e4354acd5696b1d287c30b67d3e61fe5c7..5d4a2e94b2595252e3bdec8aa6c7be8a422dbdd8 100644
+index 6c2392b8d9cec69fbc6b74f0fd33ef4511156b08..fb3b42368b4918bee4f931b2b4d36e283e70c379 100644
 --- a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 +++ b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 @@ -49,6 +49,8 @@ function ChannelSourceItem({

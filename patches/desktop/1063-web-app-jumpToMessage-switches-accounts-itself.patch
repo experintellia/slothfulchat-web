@@ -30,10 +30,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  5 files changed, 58 insertions(+), 96 deletions(-)
 
 diff --git a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
-index d6a6da1f7840604fef5a694bbb69640a7686e2ac..e949e4172bca713ac279f72517411862693afceb 100644
+index 2ea200b8b55e8ace948d13b80ced01bae65a46b4..ce6870cc8f75bc4dd2f373e9503f1d7bd4fad814 100644
 --- a/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
 +++ b/packages/frontend/src/components/GlobalVoiceMessagePlayer/GlobalVoiceMessagePlayer.tsx
-@@ -14,23 +14,16 @@ import { useSettingsStore } from '../../stores/settings'
+@@ -14,23 +14,16 @@ import { useDesktopSettingsStore } from '../../stores/settings'
  import { useRpcFetch } from '../../hooks/useFetch'
  import { BackendRemote } from '../../backend-com'
  import useMessage from '../../hooks/chat/useMessage'
@@ -155,7 +155,7 @@ index 5780e6dab0f9a2c3d4bdb4322e6cfd86c2d1e0ab..78b06e34f999a90f95f041e61d7dc611
          </div>
        </VideoPlayer>
 diff --git a/packages/frontend/src/components/dialogs/CommandPalette/index.tsx b/packages/frontend/src/components/dialogs/CommandPalette/index.tsx
-index 18988603c7e7e11da71f2a479a9c3a1ecdcbf72e..5525ac4d4b297b4355566def8ca383e22cbd6fd0 100644
+index 3bb403afae09b74ae4d827418c9cee62df7ce0a3..c4a7cca1e4cc94c8680654f699f8ab7c1129b327 100644
 --- a/packages/frontend/src/components/dialogs/CommandPalette/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CommandPalette/index.tsx
 @@ -132,34 +132,15 @@ export default function CommandPalette({ mode = 'search', onClose }: Props) {
@@ -203,10 +203,10 @@ index 18988603c7e7e11da71f2a479a9c3a1ecdcbf72e..5525ac4d4b297b4355566def8ca383e2
          if (scopeAccountId === currentAccountId) {
            await createChatByContactId(scopeAccountId, contactId)
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index 5c77d5f8bef2fe7f42dfcd49a03eb38ba0f6ccee..6bc7536059269c87f8437c7ceeb7426ecae7dc38 100644
+index 80ef7522ed76db5d1938d59a4c479fd82cd8cc82..ed8f5d177b68f3c303713d3031e3e9fef95aedeb 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-@@ -307,7 +307,7 @@ export default function MainScreen({ accountId }: Props) {
+@@ -310,7 +310,7 @@ export default function MainScreen({ accountId }: Props) {
            while sitting visually below it — acceptable for four controls; if
            it bothers AT users, move the strip after the columns and switch
            the reservation rule to a class on `.main-screen`. */}
@@ -215,7 +215,7 @@ index 5c77d5f8bef2fe7f42dfcd49a03eb38ba0f6ccee..6bc7536059269c87f8437c7ceeb7426e
        <div
          className={styles.chatListAndHeaderAndAudioPlayer}
          ref={chatListSidebarRef}
-@@ -362,7 +362,7 @@ export default function MainScreen({ accountId }: Props) {
+@@ -365,7 +365,7 @@ export default function MainScreen({ accountId }: Props) {
            />
          </section>
  

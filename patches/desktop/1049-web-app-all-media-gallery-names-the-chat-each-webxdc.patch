@@ -133,7 +133,7 @@ index edb2bf633c1108acc042a8ab4e9a28e3712e2f74..bbe5f56b0befee9c547a7832cb99bbab
      }
      .name {
 diff --git a/packages/frontend/src/components/Gallery.tsx b/packages/frontend/src/components/Gallery.tsx
-index f9c891db1994597f88d454ab031933a6fb74e24e..f73a52fcd2d87777692d791962e23ac987796a28 100644
+index 9d889118db7e7c38ea13c017662770accb33d125..66fa39e17f80973eaad126e3521c171dd0bbce1e 100644
 --- a/packages/frontend/src/components/Gallery.tsx
 +++ b/packages/frontend/src/components/Gallery.tsx
 @@ -406,6 +406,7 @@ export default class Gallery extends Component<
@@ -193,7 +193,7 @@ index f9c891db1994597f88d454ab031933a6fb74e24e..f73a52fcd2d87777692d791962e23ac9
      </div>
    )
 diff --git a/packages/frontend/src/components/attachment/galleryAttachment.tsx b/packages/frontend/src/components/attachment/galleryAttachment.tsx
-index 5e21ff935e1da44b04b0ae79d9a4df51489dfd76..e0f5e8499c932ef778d50372eb0712983d77f584 100644
+index 61052c99743489bf80feb962e0ad73dd5f6f7611..9ce45ca41cea5b6abc9a10a8092ab735b0a48d5f 100644
 --- a/packages/frontend/src/components/attachment/galleryAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/galleryAttachment.tsx
 @@ -19,6 +19,7 @@ import useTranslationFunction from '../../hooks/useTranslationFunction'
@@ -222,9 +222,9 @@ index 5e21ff935e1da44b04b0ae79d9a4df51489dfd76..e0f5e8499c932ef778d50372eb071298
    loadResult,
 +  showChat,
  }: GalleryAttachmentElementProps) {
+   const tx = useTranslationFunction()
    const { openDialog } = useDialog()
-   const contextMenu = useContext(ContextMenuContext)
-@@ -629,6 +636,19 @@ export function WebxdcAttachment({
+@@ -630,6 +637,19 @@ export function WebxdcAttachment({
      ? webxdcInfoFetch.result.value
      : null
  
@@ -244,7 +244,7 @@ index 5e21ff935e1da44b04b0ae79d9a4df51489dfd76..e0f5e8499c932ef778d50372eb071298
    if (webxdcInfoFetch?.loading) {
      const onContextMenu = getBrokenMediaContextMenu(
        contextMenu.openContextMenu,
-@@ -704,10 +724,22 @@ export function WebxdcAttachment({
+@@ -705,10 +725,22 @@ export function WebxdcAttachment({
          onClick={openWebxdc.bind(null, loadResult, webxdcInfo ?? undefined)}
          {...rovingTabindexProps}
        >
@@ -271,7 +271,7 @@ index 5e21ff935e1da44b04b0ae79d9a4df51489dfd76..e0f5e8499c932ef778d50372eb071298
          <div className='text-part'>
            <div
              className='name'
-@@ -716,7 +748,11 @@ export function WebxdcAttachment({
+@@ -717,7 +749,11 @@ export function WebxdcAttachment({
              {document && truncateText(document, 25) + ' - '}
              {name}
            </div>

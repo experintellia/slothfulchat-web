@@ -15,6 +15,10 @@ While the filter is active a "Unread: N chats" heading (a search-result-divider,
 mirroring search-in-chat) is shown above the list. The toggle uses a Material
 filter_list icon.
 
+Rebased onto v2.62.0: the header now also has upstream's QR-scan button
+and an IconButton proxy indicator (f7da2748c #6527, 6714bf709 #6534);
+the toggle sits between the search field and those.
+
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
  images/icons/filter-list.svg                  |  1 +
@@ -34,7 +38,7 @@ index 0000000000000000000000000000000000000000..326db315766eebad615b5c5c755d6446
 +<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24"><path d="M400-240v-80h160v80H400ZM240-440v-80h480v80H240ZM120-640v-80h720v80H120Z"/></svg>
 \ No newline at end of file
 diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
-index 0b368d2e5c1926e83aa2257742b25eecd1ee1b4b..6225d0d3c6da343086066571e0f52ce25f4c6223 100644
+index 0c0307cc8037090e37444812329074b405c67558..449e6f1af89dac1483d10c1848fa0a377194ef16 100644
 --- a/packages/frontend/src/components/Icon/index.tsx
 +++ b/packages/frontend/src/components/Icon/index.tsx
 @@ -21,6 +21,7 @@ export type IconName =
@@ -46,10 +50,10 @@ index 0b368d2e5c1926e83aa2257742b25eecd1ee1b4b..6225d0d3c6da343086066571e0f52ce2
    | 'image'
    | 'image_outline'
 diff --git a/packages/frontend/src/components/chat/ChatList.tsx b/packages/frontend/src/components/chat/ChatList.tsx
-index c80488b2ddfde51e05d7445e98e640802bb72ba5..f21eaeda8a707f52b72522221c9d9b921d064b1e 100644
+index 1be49fcf34739adfaa278a67fd6c2653552f4c11..144fa6c27243c3b01f26fd59e497d6e08201a3e9 100644
 --- a/packages/frontend/src/components/chat/ChatList.tsx
 +++ b/packages/frontend/src/components/chat/ChatList.tsx
-@@ -190,6 +190,7 @@ export default function ChatList(props: {
+@@ -193,6 +193,7 @@ export default function ChatList(props: {
    queryChatId: number | null
    onExitSearch?: () => void
    onChatClick: (chatId: number) => void
@@ -57,7 +61,7 @@ index c80488b2ddfde51e05d7445e98e640802bb72ba5..f21eaeda8a707f52b72522221c9d9b92
  }) {
    const accountId = selectedAccountId()
  
-@@ -201,10 +202,13 @@ export default function ChatList(props: {
+@@ -204,10 +205,13 @@ export default function ChatList(props: {
      queryChatId,
    } = props
    const isSearchActive = queryStr && queryStr !== ''
@@ -71,8 +75,8 @@ index c80488b2ddfde51e05d7445e98e640802bb72ba5..f21eaeda8a707f52b72522221c9d9b92
 +    props.unreadOnly
    )
  
-   const { openContextMenu, activeContextMenuChatIds } = useChatContextMenu()
-@@ -237,7 +241,7 @@ export default function ChatList(props: {
+   const qrSearchResult = useQrSearchResult(accountId, queryStr ?? '')
+@@ -242,7 +246,7 @@ export default function ChatList(props: {
            height / 3 - DIVIDER_HEIGHT,
            chatListIds.length * CHATLISTITEM_CHAT_HEIGHT
          )
@@ -81,7 +85,7 @@ index c80488b2ddfde51e05d7445e98e640802bb72ba5..f21eaeda8a707f52b72522221c9d9b92
  
    const chatListRef = useRef<List<any>>(null)
    const scrollChatIntoView = useCallback((index: number) => {
-@@ -394,6 +398,14 @@ export default function ChatList(props: {
+@@ -399,6 +403,14 @@ export default function ChatList(props: {
                  {translate_n('n_chats', chatListIds.length)}
                </div>
              )}
@@ -96,7 +100,7 @@ index c80488b2ddfde51e05d7445e98e640802bb72ba5..f21eaeda8a707f52b72522221c9d9b92
              {/* TODO RovingTabindex doesn't work well with virtualized
                lists, because the currently active element might get removed
                from DOM if scrolled out of view. */}
-@@ -424,7 +436,9 @@ export default function ChatList(props: {
+@@ -429,7 +441,9 @@ export default function ChatList(props: {
  
                      'aria-labelledby': isSearchActive
                        ? 'search-result-divider-chats'
@@ -107,7 +111,7 @@ index c80488b2ddfde51e05d7445e98e640802bb72ba5..f21eaeda8a707f52b72522221c9d9b92
                      // When `!isSearchActive`, the wrapper `<section>` label
                      // is enough.
                    }}
-@@ -877,12 +891,22 @@ export function useLogicVirtualChatList(
+@@ -883,12 +897,22 @@ export function useLogicVirtualChatList(
  
  function useLogicChatPart(
    queryStr: string | undefined,
@@ -133,10 +137,10 @@ index c80488b2ddfde51e05d7445e98e640802bb72ba5..f21eaeda8a707f52b72522221c9d9b92
      useLogicVirtualChatList(chatListIds)
  
 diff --git a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
-index 3387f63fab1a6dbf4ba372910742c1fb994227d3..adf8f3c1905caf7361bbd4dbbd8a4fe421e2d180 100644
+index 55274ede2c41ad1fbe69976d480130cad2b2fd3a..864f6481554c67137b8cabe81d63552ccd4cb836 100644
 --- a/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/ChatListHeader.tsx
-@@ -21,6 +21,8 @@ type Props = {
+@@ -24,6 +24,8 @@ type Props = {
    onSearchClear: () => void
    queryStr: string
    queryChatId: number | null
@@ -145,7 +149,7 @@ index 3387f63fab1a6dbf4ba372910742c1fb994227d3..adf8f3c1905caf7361bbd4dbbd8a4fe4
  }
  
  export default function ChatListHeader({
-@@ -32,6 +34,8 @@ export default function ChatListHeader({
+@@ -35,6 +37,8 @@ export default function ChatListHeader({
    onSearchClear,
    queryStr,
    queryChatId,
@@ -154,7 +158,7 @@ index 3387f63fab1a6dbf4ba372910742c1fb994227d3..adf8f3c1905caf7361bbd4dbbd8a4fe4
  }: Props) {
    const tx = useTranslationFunction()
    const { openDialog } = useDialog()
-@@ -91,6 +95,16 @@ export default function ChatListHeader({
+@@ -123,6 +127,16 @@ export default function ChatListHeader({
              onClear={queryChatId ? () => onSearchClear() : undefined}
              value={queryStr}
            />
@@ -168,14 +172,14 @@ index 3387f63fab1a6dbf4ba372910742c1fb994227d3..adf8f3c1905caf7361bbd4dbbd8a4fe4
 +          >
 +            <Icon coloring='navbar' icon='filter-list' size={18}></Icon>
 +          </Button>
-           {proxyEnabled && (
-             <Button
-               onClick={openProxyDialog}
+           {!hasSearchValue && (
+             <IconButton
+               className={styles.highlight}
 diff --git a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-index 40e2ac55dc1434af81faba89b511daab6c0cbe49..1eb14a8cb57a2f04d88433b5dd84907055f40b76 100644
+index c55d4d4be7004325c87465b12a58c974e52ac9a4..b40f6f847140416e45f1b33ca86cf59c6548c31f 100644
 --- a/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
 +++ b/packages/frontend/src/components/screens/MainScreen/MainScreen.tsx
-@@ -47,6 +47,7 @@ export default function MainScreen({ accountId }: Props) {
+@@ -50,6 +50,7 @@ export default function MainScreen({ accountId }: Props) {
    const [queryStr, setQueryStr] = useState('')
    const [queryChatId, setQueryChatId] = useState<null | number>(null)
    const [archivedChatsSelected, setArchivedChatsSelected] = useState(false)
@@ -183,7 +187,7 @@ index 40e2ac55dc1434af81faba89b511daab6c0cbe49..1eb14a8cb57a2f04d88433b5dd849070
    const { chatId, chatWithLinger, selectChat, unselectChat } = useChat()
    const { smallScreenMode } = useContext(ScreenContext)
  
-@@ -301,10 +302,13 @@ export default function MainScreen({ accountId }: Props) {
+@@ -304,10 +305,13 @@ export default function MainScreen({ accountId }: Props) {
              onSearchClear={handleSearchClear}
              queryStr={queryStr}
              queryChatId={queryChatId}

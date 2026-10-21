@@ -66,7 +66,7 @@ index 1c6e35c2ca0cbad1bfefc5ffa4a9857cd0a0a95b..6ba14188c6fac4d1c10c5bc051f9937b
    }
  }
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 877772c2035e35e395e47982304d342a943a677b..4e50db2120e7f5b7958d2b729c4cb8cd294ffe14 100644
+index f056dee527dbc933ecac85299c4b181a11aa7fe2..14e49bb32a39f32851cc5958ae0f8c066f9caaf6 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -64,6 +64,7 @@ import { avatarInitial } from '@deltachat-desktop/shared/avatarInitial'

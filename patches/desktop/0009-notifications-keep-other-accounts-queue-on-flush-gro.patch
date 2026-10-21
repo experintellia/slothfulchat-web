@@ -21,10 +21,10 @@ Patch-Range: upstream-fix
  1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/packages/frontend/src/system-integration/notifications.ts b/packages/frontend/src/system-integration/notifications.ts
-index a3e640de0317fd9b3cffcca0839e3f0532369dbe..2b2be36eabc2085db9bd256b644b4c1273c9d82e 100644
+index 4f7edcc9550b5ae425b3d477c8841f4c0a4be228..db55ca4300c35d45eabe6f8d5bc9756c089090bd 100644
 --- a/packages/frontend/src/system-integration/notifications.ts
 +++ b/packages/frontend/src/system-integration/notifications.ts
-@@ -74,7 +74,7 @@ type QueuedNotification = {
+@@ -110,7 +110,7 @@ type QueuedNotification = {
    contactId?: number // for reactions
  }
  
@@ -33,7 +33,7 @@ index a3e640de0317fd9b3cffcca0839e3f0532369dbe..2b2be36eabc2085db9bd256b644b4c12
    [accountId: number]: QueuedNotification[]
  } = {}
  
-@@ -333,7 +333,7 @@ async function flushNotifications(accountId: number) {
+@@ -376,7 +376,7 @@ async function flushNotifications(accountId: number) {
      queuedNotifications[accountId] = []
    }
    const notifications = [...queuedNotifications[accountId]]
@@ -42,7 +42,7 @@ index a3e640de0317fd9b3cffcca0839e3f0532369dbe..2b2be36eabc2085db9bd256b644b4c12
  
    // filter out muted chats:
    const uniqueChats = [...new Set(notifications.map(n => n.chatId))]
-@@ -388,7 +388,7 @@ async function flushNotifications(accountId: number) {
+@@ -434,7 +434,7 @@ async function flushNotifications(accountId: number) {
    ).filter(notification => notification !== null)
  
    if (filteredNotifications.length > notificationLimit) {

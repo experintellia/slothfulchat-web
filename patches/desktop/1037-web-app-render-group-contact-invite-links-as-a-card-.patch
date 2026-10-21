@@ -64,10 +64,10 @@ since textContent has no CSS awareness and would mangle wider selections.
  create mode 100644 packages/frontend/src/utils/inviteLink.ts
 
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index a5d349d020464f5b4bb0e5153927a63848c6c8bd..40ecad8c2cb27eb104ca3c43fa5b825cb5b98301 100644
+index 049538711c097afef76c77ec23217536e6863e6e..0333ce27e939b0be5b1028f39b8293ae047d275c 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
-@@ -641,6 +641,92 @@ $info-text-max-width: 400px;
+@@ -647,6 +647,92 @@ $info-text-max-width: 400px;
    }
  }
  
@@ -161,10 +161,10 @@ index a5d349d020464f5b4bb0e5153927a63848c6c8bd..40ecad8c2cb27eb104ca3c43fa5b825c
     have an appereance like the rest of text in there */
  .quoted-text > a {
 diff --git a/packages/frontend/src/components/dialogs/PublicBots/index.tsx b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
-index ef081ffef8ad0b042cef1569bd2d1f6934a00644..7dc586b0b1fd556bdd5a2d6a8af2f69ddc45819b 100644
+index c066fb01cce3d16cd2acff499575137ca4004eaf..ffd02f5e5f677d306a7051e11b1f2d1d42537bb7 100644
 --- a/packages/frontend/src/components/dialogs/PublicBots/index.tsx
 +++ b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
-@@ -20,6 +20,7 @@ import useProcessQR, { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
+@@ -21,6 +21,7 @@ import useProcessQR, { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
  import { useFetchGeneric } from '../../../hooks/useFetch'
  import useTranslationFunction from '../../../hooks/useTranslationFunction'
  import { getJsonFromBase64 } from '../../../utils/getJsonFromBase64'
@@ -172,7 +172,7 @@ index ef081ffef8ad0b042cef1569bd2d1f6934a00644..7dc586b0b1fd556bdd5a2d6a8af2f69d
  import { instanceHidesPublicSuggestions } from '../../../utils/slothfulInstanceConfig'
  import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
  import { getLogger } from '@deltachat-desktop/shared/logger'
-@@ -56,17 +57,6 @@ interface BotEntry {
+@@ -57,17 +58,6 @@ interface BotEntry {
    url: string
  }
  
@@ -191,7 +191,7 @@ index ef081ffef8ad0b042cef1569bd2d1f6934a00644..7dc586b0b1fd556bdd5a2d6a8af2f69d
  function parseBotsJson(base64: string): {
    bots: BotEntry[]
 diff --git a/packages/frontend/src/components/message/Link.tsx b/packages/frontend/src/components/message/Link.tsx
-index cd138a0bf38ec7499708de8b72fbcf39ff31809b..a952441ff8459c1982a62385715ff10f3c532912 100644
+index 2d8f46234f5ea620e9813d271b358d11cedb2ef1..baca0d0e0d5cd501fae532389caafca9081c9410 100644
 --- a/packages/frontend/src/components/message/Link.tsx
 +++ b/packages/frontend/src/components/message/Link.tsx
 @@ -14,6 +14,9 @@ import useProcessQr from '../../hooks/useProcessQr'
@@ -203,8 +203,8 @@ index cd138a0bf38ec7499708de8b72fbcf39ff31809b..a952441ff8459c1982a62385715ff10f
 +import { colorFromString } from '../../utils/colorFromString'
  
  import type { DialogProps } from '../../contexts/DialogContext'
- import { SCAN_CONTEXT_TYPE } from '../../hooks/useProcessQr'
-@@ -40,6 +43,7 @@ export const Link = ({
+ import type { LinkDestination } from '../../utils/linkify/getLinkDestination.js'
+@@ -28,6 +31,7 @@ export const Link = ({
  }) => {
    const { openDialog } = useDialog()
    const openLinkSafely = useOpenLinkSafely()
@@ -212,7 +212,7 @@ index cd138a0bf38ec7499708de8b72fbcf39ff31809b..a952441ff8459c1982a62385715ff10f
    const accountId = selectedAccountId()
    const { target, punycode, scheme, linkText } = destination
  
-@@ -68,6 +72,51 @@ export const Link = ({
+@@ -56,6 +60,51 @@ export const Link = ({
      }
    }
  
@@ -265,7 +265,7 @@ index cd138a0bf38ec7499708de8b72fbcf39ff31809b..a952441ff8459c1982a62385715ff10f
      <a
        href={asciiUrl}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 65171d5ea8c2e9b7428fb7304d6f681d9cf777bc..877772c2035e35e395e47982304d342a943a677b 100644
+index 05c168bf5a5520115469a75db86a4e6828518169..f056dee527dbc933ecac85299c4b181a11aa7fe2 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -218,6 +218,45 @@ const ForwardedTitle = ({

@@ -24,18 +24,27 @@ hides both entries per user. Instance operators can hide them for
 everyone (including the settings toggle) by setting
 window.__slothfulConfig.hidePublicSuggestions, baked in via the
 SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS build/customize variable.
+
+Rebased onto v2.62.0: the New Chat list's invite-link item became
+upstream's QR_SEARCH_RESULT (072f22838, #6752); the suggestions sit next
+to it as before. Desktop settings now live in their own store
+(95f5a1e1d: useDesktopSettingsStore /
+DesktopSettingsStoreInstance.effect.set), ClickableNonMailtoLink was
+removed (695649f82, #6607) so the dialog uses ClickableLink (an account
+is always selected here), and runtime.openLink() needs http(s) literal
+types, so CHANNEL_SOURCES is declared as const.
 ---
  .../src/components/AppPicker/index.tsx        |  17 +-
  .../src/components/Settings/ChatsAndMedia.tsx |  18 +
- .../components/dialogs/CreateChat/index.tsx   | 113 +++++-
- .../components/dialogs/PublicBots/index.tsx   | 374 ++++++++++++++++++
+ .../components/dialogs/CreateChat/index.tsx   | 119 +++++-
+ .../components/dialogs/PublicBots/index.tsx   | 367 ++++++++++++++++++
  .../dialogs/PublicBots/styles.module.scss     |  93 +++++
- .../dialogs/PublicChannels/index.tsx          | 106 +++++
+ .../dialogs/PublicChannels/index.tsx          | 102 +++++
  .../frontend/src/utils/getJsonFromBase64.ts   |  23 ++
  .../src/utils/slothfulInstanceConfig.ts       |  14 +
  packages/shared/shared-types.d.ts             |  11 +
  packages/shared/state.ts                      |   2 +
- 10 files changed, 754 insertions(+), 17 deletions(-)
+ 10 files changed, 748 insertions(+), 18 deletions(-)
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/index.tsx
  create mode 100644 packages/frontend/src/components/dialogs/PublicBots/styles.module.scss
  create mode 100644 packages/frontend/src/components/dialogs/PublicChannels/index.tsx
@@ -43,11 +52,11 @@ SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS build/customize variable.
  create mode 100644 packages/frontend/src/utils/slothfulInstanceConfig.ts
 
 diff --git a/packages/frontend/src/components/AppPicker/index.tsx b/packages/frontend/src/components/AppPicker/index.tsx
-index 2af48537b7c9cb108f92e09ab2fd352d5096462a..730f70fd23dc99304b68ff3ac937a414a91d0d8a 100644
+index 0f292d477ec3392aa9c6a56c88da8f9d8652f2e4..7ca464f73b5be352578f50bbb323fee0c739f824 100644
 --- a/packages/frontend/src/components/AppPicker/index.tsx
 +++ b/packages/frontend/src/components/AppPicker/index.tsx
 @@ -24,6 +24,7 @@ import {
- import SearchInputButton from '../SearchInput/SearchInputButton'
+ import { IconButton } from '../Icon'
  import { ClickableLink } from '../helpers/ClickableLink'
  import { useFetch, useRpcFetch } from '../../hooks/useFetch'
 +import { getJsonFromBase64 } from '../../utils/getJsonFromBase64'
@@ -114,10 +123,10 @@ index 4e131b72344a8442f5b01eefb875426ae8f43b43..934ab9c4a6e77bfcf62d29b41ccc5cbf
        <DownloadOnDemand settings={settingsStore.settings} />
  
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index 41213436d874059504485102da88b717bd0fee95..d0e05391a8157656989fc2ad6d11f258005ac998 100644
+index 54ce503fe70afd06050b2468d8ed41149282b7d6..d62fa66c2ab538a471fcdfa1e9f5627073c10c4c 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-@@ -21,7 +21,7 @@ import {
+@@ -21,10 +21,13 @@ import {
  } from '../../helpers/PseudoListItem'
  import GroupImage from '../../GroupImage'
  import { runtime } from '@deltachat-desktop/runtime-interface'
@@ -125,18 +134,25 @@ index 41213436d874059504485102da88b717bd0fee95..d0e05391a8157656989fc2ad6d11f258
 +import { Avatar, QRAvatar } from '../../Avatar'
  import { AddMemberDialog } from '../AddMember/AddMemberDialog'
  import { ContactListItem } from '../../contact/ContactListItem'
- import { useSettingsStore } from '../../../stores/settings'
-@@ -59,6 +59,9 @@ import ImageCropper from '../../ImageCropper'
+-import { useSettingsStore } from '../../../stores/settings'
++import {
++  useDesktopSettingsStore,
++  useSettingsStore,
++} from '../../../stores/settings'
+ import { BackendRemote, Type } from '../../../backend-com'
+ import { selectedAccountId } from '../../../ScreenController'
+ import Dialog, {
+@@ -58,6 +61,9 @@ import { ContextMenuContext } from '../../../contexts/ContextMenuContext'
+ import ImageCropper from '../../ImageCropper'
  import { RovingTabindexProvider } from '../../../contexts/RovingTabindex'
  import ViewProfile from '../ViewProfile'
- import { isInviteLink } from '@deltachat-desktop/shared/util'
 +import PublicBotsDialog from '../PublicBots'
 +import PublicChannelsDialog from '../PublicChannels'
 +import { instanceHidesPublicSuggestions } from '../../../utils/slothfulInstanceConfig'
  import { copyToBlobDir } from '../../../utils/copyToBlobDir'
  import { DeltaTextarea } from '../../Login-Styles'
  import { useRpcFetch } from '../../../hooks/useFetch'
-@@ -138,6 +141,24 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
+@@ -140,6 +146,24 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
    )
  }
  
@@ -161,19 +177,20 @@ index 41213436d874059504485102da88b717bd0fee95..d0e05391a8157656989fc2ad6d11f258
  type CreateChatMainProps = {
    onClose: DialogProps['onClose']
  }
-@@ -178,6 +199,32 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -180,6 +204,33 @@ function CreateChatMain(props: CreateChatMainProps) {
    const showAddBroadcastList = queryStr.length === 0
    const showAddContactQRScan = queryStr.length === 0
  
 +  // Suggestions pointing at community resources (public bots directory,
 +  // public channel sites); can be hidden per user via "Settings → Chats and
 +  // Media", or for the whole instance via the SLOTHFUL_HIDE_PUBLIC_SUGGESTIONS
-+  // build/customize variable. `settingsStore != null` keeps them hidden while
-+  // the store still loads, so an opted-out user never sees them flash in.
++  // build/customize variable. `desktopSettings != null` keeps them hidden
++  // while the store still loads, so an opted-out user never sees them flash in.
++  const desktopSettings = useDesktopSettingsStore()[0]
 +  const showPublicSuggestions =
 +    queryStr.length === 0 &&
-+    settingsStore != null &&
-+    settingsStore.desktopSettings.hideNewChatSuggestions !== true &&
++    desktopSettings != null &&
++    desktopSettings.hideNewChatSuggestions !== true &&
 +    !instanceHidesPublicSuggestions()
 +
 +  // Drop the "contact the developer" shortcut once a contact with the
@@ -194,7 +211,7 @@ index 41213436d874059504485102da88b717bd0fee95..d0e05391a8157656989fc2ad6d11f258
    // Don't offer the classic email / add-contact options if
    // forceEncryption is set (default)
  
-@@ -205,6 +252,15 @@ function CreateChatMain(props: CreateChatMainProps) {
+@@ -206,6 +257,15 @@ function CreateChatMain(props: CreateChatMainProps) {
          ? [CreateChatExtraItemType.ADD_BROADCAST_LIST]
          : []),
        ...(showNewEmail ? [CreateChatExtraItemType.NEW_EMAIL] : []),
@@ -210,16 +227,16 @@ index 41213436d874059504485102da88b717bd0fee95..d0e05391a8157656989fc2ad6d11f258
        ...contactIds,
        ...(showAddContact ? [CreateChatExtraItemType.ADD_CONTACT] : []),
      ],
-@@ -215,6 +271,8 @@ function CreateChatMain(props: CreateChatMainProps) {
-       showAddContactQRScan,
+@@ -217,6 +277,8 @@ function CreateChatMain(props: CreateChatMainProps) {
        showAddGroup,
        showNewEmail,
+       qrSearchResult,
 +      showContactDeveloper,
 +      showPublicSuggestions,
-       showPseudoListItemAddContactFromInviteLink,
      ]
    )
-@@ -446,6 +504,7 @@ function CreateChatMainRow({
+ 
+@@ -450,6 +512,7 @@ function CreateChatMainRow({
    const tx = useTranslationFunction()
    const accountId = selectedAccountId()
    const { openDialog } = useDialog()
@@ -227,7 +244,7 @@ index 41213436d874059504485102da88b717bd0fee95..d0e05391a8157656989fc2ad6d11f258
  
    const el = (() => {
      switch (item) {
-@@ -504,6 +563,55 @@ function CreateChatMainRow({
+@@ -508,6 +571,55 @@ function CreateChatMainRow({
            </PseudoListItem>
          )
        }
@@ -283,10 +300,10 @@ index 41213436d874059504485102da88b717bd0fee95..d0e05391a8157656989fc2ad6d11f258
        case CreateChatExtraItemType.ADD_CONTACT: {
          return (
            <PseudoListItemAddContact
-@@ -558,6 +666,9 @@ const enum CreateChatExtraItemType {
+@@ -565,6 +677,9 @@ const enum CreateChatExtraItemType {
    NEW_EMAIL,
    ADD_CONTACT,
-   INVITE_LINK,
+   QR_SEARCH_RESULT,
 +  CONTACT_DEVELOPER,
 +  PUBLIC_BOTS,
 +  PUBLIC_CHANNELS,
@@ -295,10 +312,10 @@ index 41213436d874059504485102da88b717bd0fee95..d0e05391a8157656989fc2ad6d11f258
  type CreateGroupProps = {
 diff --git a/packages/frontend/src/components/dialogs/PublicBots/index.tsx b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..ef081ffef8ad0b042cef1569bd2d1f6934a00644
+index 0000000000000000000000000000000000000000..c066fb01cce3d16cd2acff499575137ca4004eaf
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
-@@ -0,0 +1,374 @@
+@@ -0,0 +1,367 @@
 +import React, { useCallback, useMemo, useState } from 'react'
 +
 +import Dialog, {
@@ -310,12 +327,13 @@ index 0000000000000000000000000000000000000000..ef081ffef8ad0b042cef1569bd2d1f69
 +  FooterActions,
 +} from '../../Dialog'
 +import { Avatar } from '../../Avatar'
-+import { ClickableNonMailtoLink } from '../../helpers/ClickableLink'
++import { ClickableLink } from '../../helpers/ClickableLink'
 +import { PseudoListItemNoSearchResults } from '../../helpers/PseudoListItem'
 +import { BackendRemote } from '../../../backend-com'
 +import { selectedAccountId } from '../../../ScreenController'
-+import SettingsStoreInstance, {
-+  useSettingsStore,
++import {
++  DesktopSettingsStoreInstance,
++  useDesktopSettingsStore,
 +} from '../../../stores/settings'
 +import useProcessQR, { SCAN_CONTEXT_TYPE } from '../../../hooks/useProcessQr'
 +import { useFetchGeneric } from '../../../hooks/useFetch'
@@ -428,7 +446,7 @@ index 0000000000000000000000000000000000000000..ef081ffef8ad0b042cef1569bd2d1f69
 + */
 +export default function PublicBotsDialog(props: DialogProps) {
 +  const { onClose } = props
-+  const settingsStore = useSettingsStore()[0]
++  const desktopSettings = useDesktopSettingsStore()[0]
 +
 +  if (instanceHidesPublicSuggestions()) {
 +    // Nothing should open this dialog when the operator hid the community
@@ -438,18 +456,13 @@ index 0000000000000000000000000000000000000000..ef081ffef8ad0b042cef1569bd2d1f69
 +  }
 +
 +  return (
-+    <Dialog
-+      width={400}
-+      onClose={onClose}
-+      fixed
-+      dataTestid='public-bots-dialog'
-+    >
-+      {settingsStore == null ? (
++    <Dialog width={400} onClose={onClose} fixed dataTestid='public-bots-dialog'>
++      {desktopSettings == null ? (
 +        // Wait for the settings store: the consent state is unknown, and
 +        // accepting couldn't be stored yet anyway (the store's reducer
 +        // no-ops while its state is null).
 +        <DialogHeader title='Public Bots' onClose={onClose} />
-+      ) : settingsStore.desktopSettings.publicBotsRemoteLoadConsent === true ? (
++      ) : desktopSettings.publicBotsRemoteLoadConsent === true ? (
 +        <PublicBotsList onClose={onClose} />
 +      ) : (
 +        <PublicBotsConsent onClose={onClose} />
@@ -464,10 +477,7 @@ index 0000000000000000000000000000000000000000..ef081ffef8ad0b042cef1569bd2d1f69
 +  const accept = () => {
 +    // Flipping the setting swaps this screen for the list right away
 +    // (the dialog re-renders on the settings store update).
-+    SettingsStoreInstance.effect.setDesktopSetting(
-+      'publicBotsRemoteLoadConsent',
-+      true
-+    )
++    DesktopSettingsStoreInstance.effect.set('publicBotsRemoteLoadConsent', true)
 +  }
 +
 +  return (
@@ -484,17 +494,17 @@ index 0000000000000000000000000000000000000000..ef081ffef8ad0b042cef1569bd2d1f69
 +            </p>
 +            <p>
 +              The list is loaded from a third-party site:{' '}
-+              <ClickableNonMailtoLink href={PUBLIC_BOTS_REPO_URL}>
++              <ClickableLink href={PUBLIC_BOTS_REPO_URL}>
 +                github.com/deltachat-bot/public-bots
-+              </ClickableNonMailtoLink>
++              </ClickableLink>
 +              . Continuing will fetch data from there.
 +            </p>
 +            <p>
 +              If you have an issue with one of the bots, please complain
 +              directly over there, in that project's{' '}
-+              <ClickableNonMailtoLink href={PUBLIC_BOTS_ISSUES_URL}>
++              <ClickableLink href={PUBLIC_BOTS_ISSUES_URL}>
 +                GitHub issues
-+              </ClickableNonMailtoLink>
++              </ClickableLink>
 +              .
 +            </p>
 +          </div>
@@ -585,13 +595,13 @@ index 0000000000000000000000000000000000000000..ef081ffef8ad0b042cef1569bd2d1f69
 +        <div className={styles.footerNote}>
 +          Community-made list, not endorsed by us — report problems with a bot
 +          in the{' '}
-+          <ClickableNonMailtoLink href={PUBLIC_BOTS_ISSUES_URL}>
++          <ClickableLink href={PUBLIC_BOTS_ISSUES_URL}>
 +            GitHub issues
-+          </ClickableNonMailtoLink>{' '}
++          </ClickableLink>{' '}
 +          of{' '}
-+          <ClickableNonMailtoLink href={PUBLIC_BOTS_REPO_URL}>
++          <ClickableLink href={PUBLIC_BOTS_REPO_URL}>
 +            deltachat-bot/public-bots
-+          </ClickableNonMailtoLink>
++          </ClickableLink>
 +          .
 +        </div>
 +      </DialogFooter>
@@ -774,10 +784,10 @@ index 0000000000000000000000000000000000000000..e2c490fda7fb752624b1f2af8005ef72
 +}
 diff --git a/packages/frontend/src/components/dialogs/PublicChannels/index.tsx b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..259404e4354acd5696b1d287c30b67d3e61fe5c7
+index 0000000000000000000000000000000000000000..6c2392b8d9cec69fbc6b74f0fd33ef4511156b08
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/PublicChannels/index.tsx
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,102 @@
 +import React from 'react'
 +
 +import Dialog, { DialogBody, DialogHeader } from '../../Dialog'
@@ -814,7 +824,7 @@ index 0000000000000000000000000000000000000000..259404e4354acd5696b1d287c30b67d3
 +    emoji: '🌦️',
 +    color: 'hsl(207, 54%, 46%)',
 +  },
-+]
++] as const
 +
 +function ChannelSourceItem({
 +  source,
@@ -860,11 +870,7 @@ index 0000000000000000000000000000000000000000..259404e4354acd5696b1d287c30b67d3
 +  }
 +
 +  return (
-+    <Dialog
-+      width={400}
-+      onClose={onClose}
-+      dataTestid='public-channels-dialog'
-+    >
++    <Dialog width={400} onClose={onClose} dataTestid='public-channels-dialog'>
 +      <DialogHeader title='Public Channels' onClose={onClose} />
 +      <DialogBody>
 +        <ol className={styles.botList}>
@@ -934,10 +940,10 @@ index 0000000000000000000000000000000000000000..c519d5a38434fc072896f4a6eeb7f9a0
 +  return (window as any).__slothfulConfig?.hidePublicSuggestions === true
 +}
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index a131321a23c3055819d694410f4b595f33876051..9310b6de851c57e2d67370a9af42e88515e38934 100644
+index 5dc25d8577a577e63f942d7bfa6ea356d3fcbedd..91412aadddfc915edf173488dcf7661d77284e61 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
-@@ -95,6 +95,17 @@ export interface DesktopSettingsType {
+@@ -96,6 +96,17 @@ export interface DesktopSettingsType {
     * {@linkcode defaultAppStoreBaseUrl}.
     */
    appStoreBaseUrl?: string
@@ -956,12 +962,12 @@ index a131321a23c3055819d694410f4b595f33876051..9310b6de851c57e2d67370a9af42e885
  
  export interface RC_Config {
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 5ac60b22e99b073742e9188f15d809620769d02a..49969df628f78d51a2bcc89a37b4802bd2e57862 100644
+index b3ff9d264b0b0cc1a4a3fd008cc90c6b7e1b3192..be17a78d9501cfc68b535886d499e13011f6825f 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -31,6 +31,8 @@ export function getDefaultState(): DesktopSettingsType {
-     autostart: true,
      autostartElectron: false,
+     hideMenuBar: false,
      appStoreBaseUrl: undefined,
 +    hideNewChatSuggestions: false,
 +    publicBotsRemoteLoadConsent: false,

@@ -18,10 +18,10 @@ Patch-Range: upstream-fix
  2 files changed, 42 insertions(+), 9 deletions(-)
 
 diff --git a/packages/frontend/src/ScreenController.tsx b/packages/frontend/src/ScreenController.tsx
-index bdcf338a803cc078a324ebcdcc79daf6343294ff..9157df1e03c6aed3554c778298742dd5e2d2ed99 100644
+index 546ecc1b93eb129e9661dc0887b896b563323cad..5aaa325d11a65107041cd21f2bce91838b65dfd6 100644
 --- a/packages/frontend/src/ScreenController.tsx
 +++ b/packages/frontend/src/ScreenController.tsx
-@@ -56,6 +56,7 @@ export default class ScreenController extends Component {
+@@ -50,6 +50,7 @@ export default class ScreenController extends Component {
    }
    selectedAccountId: number | undefined
    lastAccountBeforeAddingNewAccount: number | null = null
@@ -29,7 +29,7 @@ index bdcf338a803cc078a324ebcdcc79daf6343294ff..9157df1e03c6aed3554c778298742dd5
    unselectChatRef = createRef<UnselectChat>()
  
    constructor(public props: {}) {
-@@ -198,13 +199,27 @@ export default class ScreenController extends Component {
+@@ -190,13 +191,27 @@ export default class ScreenController extends Component {
    }
  
    async addAndSelectAccount(): Promise<number> {

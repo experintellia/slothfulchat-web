@@ -47,6 +47,10 @@ formats the browser can't decode.
   send error stay. Lifting the bar needs one rule on an internal skin
   class (no public setting); the e2e layout checks catch a rename.
 
+Rebased onto v2.62.0: pnpm-lock.yaml was regenerated with pnpm install
+on top of upstream's lockfile. It adds the same @videojs/* 10.0.0
+package set as before.
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  packages/frontend/package.json                |   1 +
@@ -60,15 +64,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  .../src/contexts/MediaPlayerMutexContext.tsx  |   3 +-
  packages/frontend/src/keybindings.ts          |   2 +
  packages/frontend/src/types.d.ts              |   1 +
- pnpm-lock.yaml                                | 172 +++++++++++++--
- 12 files changed, 458 insertions(+), 31 deletions(-)
+ pnpm-lock.yaml                                | 139 ++++++++++++
+ 12 files changed, 447 insertions(+), 9 deletions(-)
  create mode 100644 packages/frontend/src/components/attachment/VideoPlayer.tsx
 
 diff --git a/packages/frontend/package.json b/packages/frontend/package.json
-index b43f0ff5989c90660b50aaa9dd81cabe66808f3b..e143f941e6a2157239c132fa17664f79068efb53 100644
+index 44cbd7114e578dffdd0552cf8c13dd1d94c2f9c6..d647d500e3d3204b7c482b8e5ed1a7223ba30feb 100644
 --- a/packages/frontend/package.json
 +++ b/packages/frontend/package.json
-@@ -30,6 +30,7 @@
+@@ -33,6 +33,7 @@
      "@emoji-mart/data": "1.2.1",
      "@jcoreio/async-throttle": "^1.6.1",
      "@types/linkifyjs": "^2.1.7",
@@ -117,10 +121,10 @@ index ebe85c19d598567ad2d8f7c9ef45ef3032d38aff..db7d8606d0cd2a9311a75e0f1808e531
 +  opacity: 0;
 +}
 diff --git a/packages/frontend/scss/message/_message-attachment.scss b/packages/frontend/scss/message/_message-attachment.scss
-index 7a3d6102211899cf15662e2d56194c6f570cfc56..af80545c82d46cc3a560b42ed559963a4e2be966 100644
+index 5ee6b527a71c0908310bfab6ba11c62f67cd01fb..be5a1c4724e8b7e3b195f4e78b7949bb0fa59772 100644
 --- a/packages/frontend/scss/message/_message-attachment.scss
 +++ b/packages/frontend/scss/message/_message-attachment.scss
-@@ -60,11 +60,17 @@
+@@ -62,11 +62,17 @@
      // redundant with attachment-container, but we get cursor flashing on move otherwise
      cursor: pointer;
  
@@ -140,10 +144,10 @@ index 7a3d6102211899cf15662e2d56194c6f570cfc56..af80545c82d46cc3a560b42ed559963a
    }
  
 diff --git a/packages/frontend/scss/message/_message.scss b/packages/frontend/scss/message/_message.scss
-index 7b22e087bc4689a7753405916eb2e46d73b320ba..770ebc9da4dcb8abea2690093989532dccc3a436 100644
+index a62a613f17f3a66c14b6cd13abc01dffa08e137e..e763cb9edc9849dd85a918d34e275986a36fdbd8 100644
 --- a/packages/frontend/scss/message/_message.scss
 +++ b/packages/frontend/scss/message/_message.scss
-@@ -375,6 +375,37 @@ $info-text-max-width: 400px;
+@@ -382,6 +382,37 @@ $info-text-max-width: 400px;
    }
  }
  
@@ -389,7 +393,7 @@ index 0000000000000000000000000000000000000000..35e6f8fcffcb2e9c5f6b2baee7e00b48
 +  )
 +}
 diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
-index 206d0909719b61961eef3fa12ac3fae2c9d0f5a2..b5ab46390466199b3d51cb1348e6a3a82178d87e 100644
+index 4b673097e4c5577c18bc4a0601db9c3508c4d323..0987b199c4f1ef1c9d51df5a4c589ad4b1e377b7 100644
 --- a/packages/frontend/src/components/attachment/messageAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
 @@ -19,6 +19,7 @@ import useDialog from '../../hooks/dialog/useDialog'
@@ -481,10 +485,10 @@ index 314ccf944d0009629fd65adbcfeab927cf9af554..f9b8562ae5fd8fe30d65d0c2a6dd11d3
        ev.stopPropagation()
        if (left) {
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index f46f8df2c0f5d5b2e84156b62ea8e478d77d9bcc..a02b2f6689d03f6132a25090bdd06cbdd31a2a6f 100644
+index 9b7544756fe5bb7c5430073e4546941675ac9720..e75b3f39566a38aaa3a4996cc712e796c95cb8aa 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -894,6 +894,11 @@ export default function Message(props: {
+@@ -895,6 +895,11 @@ export default function Message(props: {
        // so, still, we need to ignore such events.
        //
        // The same goes for the `useRovingTabindex` code in Gallery.
@@ -536,10 +540,10 @@ index 32664c4e0934124f52f7bcc6a97780c06c63fd6b..87475e285b6f2c2eb75047a03314fe16
  type todo = any
  
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index 1817bc4a8f9bc8d47fce91e003c700cb52560178..66c6ad8bcfb4c649ab9edeb4267ca696da7fa623 100644
+index 3f0c37ce455a43c32cd643d786368a353d8cdbd2..ce251b79c2d06386deb3b8809f3eeb1cf2fd6119 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
-@@ -156,6 +156,9 @@ importers:
+@@ -154,6 +154,9 @@ importers:
        '@types/linkifyjs':
          specifier: ^2.1.7
          version: 2.1.7
@@ -549,17 +553,7 @@ index 1817bc4a8f9bc8d47fce91e003c700cb52560178..66c6ad8bcfb4c649ab9edeb4267ca696
        classnames:
          specifier: ^2.5.1
          version: 2.5.1
-@@ -1442,9 +1445,6 @@ packages:
-   '@types/node@24.10.9':
-     resolution: {integrity: sha512-ne4A0IpG3+2ETuREInjPNhUGis1SFjv1d5asp8MzEAGtOZeTeHVDOYqOgqfhvseqg/iXty2hjBf1zAOb7RNiNw==}
- 
--  '@types/node@26.0.1':
--    resolution: {integrity: sha512-fc3KiUoBt6kie0N9bIW3E47vZsuaMf0PM2AaUpLCLT0s/LvX1nxAim6Fc049cNxODPpGm6qRAuUOB86SkRuPQw==}
--
-   '@types/plist@3.0.5':
-     resolution: {integrity: sha512-E6OCaRmAe4WDmWNsL/9RMqdkkzDCY1etutkflWk4c+AcjDU07Pcz1fQwTX0TQz+Pxqn9i4L1TU3UFpjnrcDgxA==}
- 
-@@ -1554,16 +1554,93 @@ packages:
+@@ -1423,6 +1426,81 @@ packages:
      resolution: {integrity: sha512-6fJ9MHWtK14C1DSkiMlHUSOmrVebL7150xZJBlJiL62jjhIA4JmOq6flwBgDxIdBKKdoiZRel+dfPD5MLfny3w==}
      engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
  
@@ -641,27 +635,7 @@ index 1817bc4a8f9bc8d47fce91e003c700cb52560178..66c6ad8bcfb4c649ab9edeb4267ca696
    '@webxdc/types@2.1.2':
      resolution: {integrity: sha512-oklcyHvUXqCS5JwbPVaN8tt7nSB8ffRmyrUlVt0HeSn4kDyNE46oKSbw3KtrDzl530KHnm67LfcK/AjWbBoXUA==}
  
-   '@xmldom/xmldom@0.8.13':
-     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
-     engines: {node: '>=10.0.0'}
-+    deprecated: this version has critical issues, please update to the latest version
- 
-   '@xmldom/xmldom@0.9.10':
-     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
-     engines: {node: '>=14.6'}
-+    deprecated: this version has critical issues, please update to the latest version
- 
-   abbrev@4.0.0:
-     resolution: {integrity: sha512-a1wflyaL0tHtJSmLSOVybYhy22vRih4eduhhrkcjgrWGnRfrZtovJ2FRjxuTtkkj47O/baf0R86QU5OuYpz8fA==}
-@@ -2262,6 +2339,7 @@ packages:
-   eslint@9.39.2:
-     resolution: {integrity: sha512-LEyamqS7W5HB3ujJyvi0HQK/dtVINZvd5mAAp9eT5S/ujByGjiZLCzPcHVzuXbpJDJF/cxwHlfceVUDZ2lnSTw==}
-     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
-+    deprecated: This version is no longer supported. Please see https://eslint.org/version-support for other options.
-     hasBin: true
-     peerDependencies:
-       jiti: '*'
-@@ -3494,6 +3572,11 @@ packages:
+@@ -3337,6 +3415,11 @@ packages:
      resolution: {integrity: sha512-y3bGgqKj3QBdxLbLkomlohkvsA8gdAiUQlSBJnBhfn+BPxg4bc62d8TcBW15wavDfgexCgccckhcZvywyQYPOw==}
      hasBin: true
  
@@ -673,7 +647,7 @@ index 1817bc4a8f9bc8d47fce91e003c700cb52560178..66c6ad8bcfb4c649ab9edeb4267ca696
    react-dom@19.2.0:
      resolution: {integrity: sha512-UlbRu4cAiGaIewkPyiRGJk0imDN2T3JjieT6spoL2UeSf5od4n5LB/mQ4ejmxhCFT1tYe8IvaFulzynWovsEFQ==}
      peerDependencies:
-@@ -3724,6 +3807,9 @@ packages:
+@@ -3590,6 +3673,9 @@ packages:
      resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
      engines: {node: '>=14'}
  
@@ -683,86 +657,7 @@ index 1817bc4a8f9bc8d47fce91e003c700cb52560178..66c6ad8bcfb4c649ab9edeb4267ca696
    simple-update-notifier@2.0.0:
      resolution: {integrity: sha512-a2B9Y0KlNXl9u/vsW6sTIu9vGEpfKu2wRV6l1H3XEas/0gUIzGzBoP/IouTcUQbm9JWZLH3COxyn03TYlFax6w==}
      engines: {node: '>=10'}
-@@ -3981,9 +4067,6 @@ packages:
-   undici-types@7.16.0:
-     resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
- 
--  undici-types@8.3.0:
--    resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
--
-   undici@6.27.0:
-     resolution: {integrity: sha512-YmfV3YnEDzXRC5lZ2jWtWWHKGUm1zIt8AhesR1tens+HTNv+YZlN/dp6G727LOvMJ8xjP9Be7Y2Sdr96LDm+pg==}
-     engines: {node: '>=18.17'}
-@@ -4429,7 +4512,7 @@ snapshots:
-       fs-extra: 10.1.0
-       isbinaryfile: 4.0.10
-       minimist: 1.2.8
--      plist: 3.1.0
-+      plist: 3.1.1
-     transitivePeerDependencies:
-       - supports-color
- 
-@@ -4452,7 +4535,7 @@ snapshots:
-       dir-compare: 4.2.0
-       fs-extra: 11.3.5
-       minimatch: 9.0.9
--      plist: 3.1.0
-+      plist: 3.1.1
-     transitivePeerDependencies:
-       - supports-color
- 
-@@ -4919,7 +5002,7 @@ snapshots:
-     dependencies:
-       '@types/http-cache-semantics': 4.2.0
-       '@types/keyv': 3.1.4
--      '@types/node': 26.0.1
-+      '@types/node': 22.19.3
-       '@types/responselike': 1.0.3
- 
-   '@types/chai@4.3.20': {}
-@@ -4958,7 +5041,7 @@ snapshots:
- 
-   '@types/fs-extra@9.0.13':
-     dependencies:
--      '@types/node': 26.0.1
-+      '@types/node': 22.19.3
- 
-   '@types/http-cache-semantics@4.2.0': {}
- 
-@@ -4972,7 +5055,7 @@ snapshots:
- 
-   '@types/keyv@3.1.4':
-     dependencies:
--      '@types/node': 26.0.1
-+      '@types/node': 22.19.3
- 
-   '@types/linkifyjs@2.1.7':
-     dependencies:
-@@ -5008,13 +5091,9 @@ snapshots:
-     dependencies:
-       undici-types: 7.16.0
- 
--  '@types/node@26.0.1':
--    dependencies:
--      undici-types: 8.3.0
--
-   '@types/plist@3.0.5':
-     dependencies:
--      '@types/node': 26.0.1
-+      '@types/node': 22.19.3
-       xmlbuilder: 15.1.1
-     optional: true
- 
-@@ -5055,7 +5134,7 @@ snapshots:
- 
-   '@types/responselike@1.0.3':
-     dependencies:
--      '@types/node': 26.0.1
-+      '@types/node': 22.19.3
- 
-   '@types/send@0.17.4':
-     dependencies:
-@@ -5166,12 +5245,58 @@ snapshots:
+@@ -4972,6 +5058,53 @@ snapshots:
        '@typescript-eslint/types': 8.61.1
        eslint-visitor-keys: 5.0.1
  
@@ -815,23 +710,8 @@ index 1817bc4a8f9bc8d47fce91e003c700cb52560178..66c6ad8bcfb4c649ab9edeb4267ca696
 +
    '@webxdc/types@2.1.2': {}
  
-   '@xmldom/xmldom@0.8.13': {}
- 
--  '@xmldom/xmldom@0.9.10':
--    optional: true
-+  '@xmldom/xmldom@0.9.10': {}
- 
-   abbrev@4.0.0: {}
- 
-@@ -7279,7 +7404,6 @@ snapshots:
-       '@xmldom/xmldom': 0.9.10
-       base64-js: 1.5.1
-       xmlbuilder: 15.1.1
--    optional: true
- 
-   possible-typed-array-names@1.1.0: {}
- 
-@@ -7399,6 +7523,10 @@ snapshots:
+   '@xmldom/xmldom@0.8.15': {}
+@@ -7170,6 +7303,10 @@ snapshots:
        minimist: 1.2.6
        strip-json-comments: 2.0.1
  
@@ -842,7 +722,7 @@ index 1817bc4a8f9bc8d47fce91e003c700cb52560178..66c6ad8bcfb4c649ab9edeb4267ca696
    react-dom@19.2.0(react@19.2.0):
      dependencies:
        react: 19.2.0
-@@ -7677,6 +7805,8 @@ snapshots:
+@@ -7477,6 +7614,8 @@ snapshots:
  
    signal-exit@4.1.0: {}
  
@@ -850,13 +730,4 @@ index 1817bc4a8f9bc8d47fce91e003c700cb52560178..66c6ad8bcfb4c649ab9edeb4267ca696
 +
    simple-update-notifier@2.0.0:
      dependencies:
-       semver: 7.7.3
-@@ -7992,8 +8122,6 @@ snapshots:
- 
-   undici-types@7.16.0: {}
- 
--  undici-types@8.3.0: {}
--
-   undici@6.27.0: {}
- 
-   undici@7.28.0:
+       semver: 7.7.4

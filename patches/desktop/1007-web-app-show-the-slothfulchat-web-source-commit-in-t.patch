@@ -19,10 +19,10 @@ runtime fills GIT_REF with the same commit hash, so it isn't "unknown".
  2 files changed, 24 insertions(+)
 
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index 105c89b66eda7a7c06c87dfd8ccee088846ccf47..d4222f46cb8146d2dae1849ade048b767b2c8954 100644
+index 40633cfc1a45844191be9e520bebb2e8751d4203..d9ac7e40bdd394998f418c5a7cbd7594c6f06398 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
-@@ -34,6 +34,7 @@ export default function About({ onClose }: DialogProps) {
+@@ -38,6 +38,7 @@ export default function About({ onClose }: DialogProps) {
  
    const runtimeInfo = runtime.getRuntimeInfo()
    const { VERSION, GIT_REF } = runtimeInfo.buildInfo
@@ -30,7 +30,7 @@ index 105c89b66eda7a7c06c87dfd8ccee088846ccf47..d4222f46cb8146d2dae1849ade048b76
  
    return (
      <DialogWithHeader
-@@ -57,6 +58,24 @@ export default function About({ onClose }: DialogProps) {
+@@ -61,6 +62,24 @@ export default function About({ onClose }: DialogProps) {
                    <small>git: {GIT_REF}</small>
                  </>
                )}

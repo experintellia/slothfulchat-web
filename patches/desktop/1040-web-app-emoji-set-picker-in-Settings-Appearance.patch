@@ -39,10 +39,10 @@ index 4a1c0245143b02160ae482e64e802e98fe142ee1..4b313e0cf0536074b6e245318477971d
      return () => {
        shadowRoot.removeChild(style)
 diff --git a/packages/frontend/src/components/Settings/Appearance.tsx b/packages/frontend/src/components/Settings/Appearance.tsx
-index c3a932aba43b9e15334e9ce1c1df4ca178f3425f..598f3e04e198a2fbb5395ea3d3c7de93616e17e4 100644
+index b4d953e0e8ca5085c8ba25a065aa64dd2a7ac8ea..25f17392f80948ed37f09f86373030b19a757e6e 100644
 --- a/packages/frontend/src/components/Settings/Appearance.tsx
 +++ b/packages/frontend/src/components/Settings/Appearance.tsx
-@@ -13,6 +13,7 @@ import SettingsStoreInstance, {
+@@ -14,6 +14,7 @@ import {
  import { getLogger } from '@deltachat-desktop/shared/logger'
  import SettingsSelector from './SettingsSelector'
  import DesktopSettingsSwitch from './DesktopSettingsSwitch'
@@ -50,7 +50,7 @@ index c3a932aba43b9e15334e9ce1c1df4ca178f3425f..598f3e04e198a2fbb5395ea3d3c7de93
  import SmallSelectDialog, { SelectDialogOption } from '../SmallSelectDialog'
  import SettingsHeading from './SettingsHeading'
  import { DialogContent } from '../Dialog'
-@@ -124,6 +125,7 @@ export default function Appearance({
+@@ -125,6 +126,7 @@ export default function Appearance({
            }}
          />
        </DialogContent>

@@ -75,10 +75,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/utils/videoPoster.ts
 
 diff --git a/packages/frontend/src/components/message/MessageListAndComposer.tsx b/packages/frontend/src/components/message/MessageListAndComposer.tsx
-index 219c344f3d43a3ec9093f067456f56505131d5cb..8ca2c10f974c92a7e74edabdaa82186b594f0f17 100644
+index 60bb38afb01fcc0d47ebb49631dc8e783f21d748..be04265974e9d1bbd96ac1309e2590e011461cb7 100644
 --- a/packages/frontend/src/components/message/MessageListAndComposer.tsx
 +++ b/packages/frontend/src/components/message/MessageListAndComposer.tsx
-@@ -176,7 +176,11 @@ export default function MessageListAndComposer({ accountId, chat }: Props) {
+@@ -181,7 +181,11 @@ export default function MessageListAndComposer({
              const msgViewType: T.Viewtype = isImage(file.parsed)
                ? 'Image'
                : 'File'
@@ -92,7 +92,7 @@ index 219c344f3d43a3ec9093f067456f56505131d5cb..8ca2c10f974c92a7e74edabdaa82186b
                filename: file.parsed.name + file.parsed.ext,
                viewtype: msgViewType,
 diff --git a/packages/frontend/src/hooks/chat/useDraft.ts b/packages/frontend/src/hooks/chat/useDraft.ts
-index 4412bf25962a33fac5212cd802266ffd932d4e79..fc88fe14b95198b3c0cbc44ab32f3439e043f2a1 100644
+index cba16c8f0611ceac00fd2f96f334bbf514859802..339fa69fb45888ab37c4c1f17b783969477104ed 100644
 --- a/packages/frontend/src/hooks/chat/useDraft.ts
 +++ b/packages/frontend/src/hooks/chat/useDraft.ts
 @@ -18,6 +18,7 @@ import { type MessageListStore } from '../../stores/messagelist'
@@ -142,17 +142,17 @@ index 4412bf25962a33fac5212cd802266ffd932d4e79..fc88fe14b95198b3c0cbc44ab32f3439
  export function useDraft(
    messageListState: MessageListStore['state'],
    accountId: number,
-@@ -206,6 +239,7 @@ export function useDraft(
+@@ -222,6 +255,7 @@ export function useDraft(
            text: old.text,
          }))
        }
 +      return newDraft
      },
-     [accountId]
+     [accountId, setDraftState]
    )
-@@ -319,7 +353,10 @@ export function useDraft(
-       // because it doesn't return the Promise.
-       setDraftState(newDraftState)
+@@ -349,7 +383,10 @@ export function useDraft(
+         fileMime: null,
+       }))
        debouncedSaveAndRefetchDraft?.clear()
 -      return saveAndRefetchDraft(newDraftState)
 +      const savedDraft = await saveAndRefetchDraft(newDraftState)
@@ -160,7 +160,7 @@ index 4412bf25962a33fac5212cd802266ffd932d4e79..fc88fe14b95198b3c0cbc44ab32f3439
 +        await addVideoPosterToDraft(savedDraft)
 +      }
      },
-     [draftState, saveAndRefetchDraft, debouncedSaveAndRefetchDraft]
+     [setDraftState, saveAndRefetchDraft, debouncedSaveAndRefetchDraft]
    )
 diff --git a/packages/frontend/src/hooks/chat/useMessage.ts b/packages/frontend/src/hooks/chat/useMessage.ts
 index 523d1ed9895871f497ab259b1eebf862920037a4..4d28cc4e06c644e495d25d9b36e537042efec56c 100644
@@ -439,10 +439,10 @@ index 0000000000000000000000000000000000000000..52af6c798164f1a3b4a1ef177f1a31ab
 +  }
 +}
 diff --git a/packages/runtime/runtime.ts b/packages/runtime/runtime.ts
-index 800a95df7ad33c4309255e0d83e5e6e54788e029..ff03f4509343a9e074375c210bdaac5f9a1b3488 100644
+index 3c5bb0b4f232bf91ff6a546eb61d122db28a3cfa..4364da51f467e57e59f661a2b0c1a05d8a818d50 100644
 --- a/packages/runtime/runtime.ts
 +++ b/packages/runtime/runtime.ts
-@@ -174,6 +174,14 @@ export interface Runtime {
+@@ -182,6 +182,14 @@ export interface Runtime {
      sourcePath: string
    ): Promise<string>
    removeTempFile(path: string): Promise<void>

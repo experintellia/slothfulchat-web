@@ -32,13 +32,14 @@ at the start of a line, which overflow: hidden would cut off (every
  2 files changed, 77 insertions(+), 2 deletions(-)
 
 diff --git a/packages/frontend/src/components/ProfileInfoHeader/index.tsx b/packages/frontend/src/components/ProfileInfoHeader/index.tsx
-index a8ed840bdc0c99058c1d93b5f1d2159b7743f024..54e41275e87714aa099d2ad4d344e2b48bfa2f3e 100644
+index 175518c270712e8f5217a83f9ee9df49afb13886..8fab265d7042e325ffaa12ccd7a69973d2a0771b 100644
 --- a/packages/frontend/src/components/ProfileInfoHeader/index.tsx
 +++ b/packages/frontend/src/components/ProfileInfoHeader/index.tsx
-@@ -1,7 +1,9 @@
+@@ -1,8 +1,10 @@
 -import React from 'react'
 +import React, { useEffect, useRef, useState } from 'react'
 +import classNames from 'classnames'
+ import type { T } from '@deltachat/jsonrpc-client'
  
  import { Avatar, ClickForFullscreenAvatarWrapper } from '../Avatar'
  import { parseAndRenderMessage } from '../message/MessageParser'
@@ -46,7 +47,7 @@ index a8ed840bdc0c99058c1d93b5f1d2159b7743f024..54e41275e87714aa099d2ad4d344e2b4
  
  import styles from './styles.module.scss'
  
-@@ -27,6 +29,34 @@ export default function ProfileInfoHeader({
+@@ -28,6 +30,34 @@ export default function ProfileInfoHeader({
    subtitle,
    disableFullscreen,
  }: Props) {
@@ -81,7 +82,7 @@ index a8ed840bdc0c99058c1d93b5f1d2159b7743f024..54e41275e87714aa099d2ad4d344e2b4
    return (
      <div className={styles.profileInfoHeader}>
        <ClickForFullscreenAvatarWrapper
-@@ -47,10 +77,28 @@ export default function ProfileInfoHeader({
+@@ -48,10 +78,28 @@ export default function ProfileInfoHeader({
          </p>
          {subtitle}
          {description && (

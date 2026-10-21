@@ -14,11 +14,18 @@ indicator to signal they leave the app; Changelog and Imprint (both
 local pages served alongside the app) and Help/View Log do not. Adds
 buttons for the SlothfulChat GitHub repo and the changelog viewer we
 ship at /changelog/, replacing the old link to GitHub releases.
+
+Rebased onto v2.62.0: the onboarding screen's context menu now also
+carries upstream's (experimental) Team Profile toggle (7ee712dbd), so
+the menu stays and only its "Use Proxy" item is removed.
+runtime.openLink() only takes http:/https: template strings since
+56f5a6877, so the Changelog/Imprint URLs built from document.baseURI are
+narrowed via a small localPage() helper.
 ---
  .../src/components/Settings/Advanced.tsx      | 15 ----
  .../src/components/dialogs/About/index.tsx    | 88 ++++++++++++++-----
- .../WelcomeScreen/InstantOnboardingScreen.tsx | 42 ---------
- 3 files changed, 64 insertions(+), 81 deletions(-)
+ .../WelcomeScreen/InstantOnboardingScreen.tsx | 13 +--
+ 3 files changed, 65 insertions(+), 51 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/Advanced.tsx b/packages/frontend/src/components/Settings/Advanced.tsx
 index 96699ecdc6586d27a16846671909837f596c2da0..15e418e7e2239a0b0f5941ba27d85212e399e4b3 100644
@@ -61,10 +68,10 @@ index 96699ecdc6586d27a16846671909837f596c2da0..15e418e7e2239a0b0f5941ba27d85212
          label={tx('pref_multidevice')}
          settingsKey='bcc_self'
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index fb81947daa1383ede4e31a58491a4847fa4355aa..f7911abe211b8894421c3a0ab53e9ce900f081b8 100644
+index fb81947daa1383ede4e31a58491a4847fa4355aa..2860788bada28d421fd6ebb02d22a72d61fe7607 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
-@@ -1,22 +1,19 @@
+@@ -1,22 +1,23 @@
  import React, { useEffect } from 'react'
  
  import { runtime } from '@deltachat-desktop/runtime-interface'
@@ -90,10 +97,14 @@ index fb81947daa1383ede4e31a58491a4847fa4355aa..f7911abe211b8894421c3a0ab53e9ce9
 +
 +const GITHUB_URL = 'https://github.com/experintellia/slothfulchat-web'
 +const DELTA_CHAT_URL = 'https://delta.chat'
++// A page served next to the app. Its scheme is the app's own (http: or
++// https:), which is what `runtime.openLink` accepts.
++const localPage = (path: string) =>
++  new URL(path, document.baseURI).href as `https:${string}`
  
  export default function About({ onClose }: DialogProps) {
    const tx = useTranslationFunction()
-@@ -63,24 +60,67 @@ export default function About({ onClose }: DialogProps) {
+@@ -63,24 +64,63 @@ export default function About({ onClose }: DialogProps) {
                  </>
                )}
              </div>
@@ -123,9 +134,7 @@ index fb81947daa1383ede4e31a58491a4847fa4355aa..f7911abe211b8894421c3a0ab53e9ce9
 +        </SettingsIconButton>
 +        <SettingsIconButton
 +          icon='sell'
-+          onClick={() =>
-+            runtime.openLink(new URL('changelog/', document.baseURI).href)
-+          }
++          onClick={() => runtime.openLink(localPage('changelog/'))}
 +          dataTestid='about-changelog'
 +        >
 +          {'Changelog'}
@@ -140,9 +149,7 @@ index fb81947daa1383ede4e31a58491a4847fa4355aa..f7911abe211b8894421c3a0ab53e9ce9
 +        </SettingsIconButton>
 +        <SettingsIconButton
 +          icon='info'
-+          onClick={() =>
-+            runtime.openLink(new URL('imprint.html', document.baseURI).href)
-+          }
++          onClick={() => runtime.openLink(localPage('imprint.html'))}
 +          dataTestid='about-imprint'
 +        >
 +          {'Imprint'}
@@ -177,30 +184,24 @@ index fb81947daa1383ede4e31a58491a4847fa4355aa..f7911abe211b8894421c3a0ab53e9ce9
    )
  }
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
-index 030556968ad30c83475f7ecdb127677fa8110e30..58ab5d86d32572eaa4c9ad4a3325a1ab3f46bc11 100644
+index 1d90af853868793ffb184d5bdaef62792a84a64a..fad23d60ba11e65a0e1aef5a98c6ca20e482a95e 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
-@@ -18,36 +18,11 @@ import useDialog from '../../../hooks/dialog/useDialog'
- import UseOtherServerDialog from './UseOtherServerDialog'
- import { BackendRemote } from '../../../backend-com'
- 
--import { ContextMenuContext } from '../../../contexts/ContextMenuContext'
--import { mouseEventToPosition } from '../../../utils/mouseEventToPosition'
--import { OpenDialog } from '../../../contexts/DialogContext'
+@@ -21,8 +21,6 @@ import { BackendRemote } from '../../../backend-com'
+ import { ContextMenuContext } from '../../../contexts/ContextMenuContext'
+ import { mouseEventToPosition } from '../../../utils/mouseEventToPosition'
+ import { OpenDialog } from '../../../contexts/DialogContext'
 -import ProxyConfiguration from '../../dialogs/ProxyConfiguration'
 -import { selectedAccountId } from '../../../ScreenController'
--import { TranslationKey } from '@deltachat-desktop/shared/translationKeyType'
--
- type Props = {
-   onCancel: () => void
-   selectedAccountId: number
- }
- 
--function buildContextMenu(
--  openDialog: OpenDialog,
--  tx: (key: TranslationKey) => string
--) {
--  return [
+ import { TranslationKey } from '@deltachat-desktop/shared/translationKeyType'
+ import SettingsStoreInstance from '../../../stores/settings'
+ import type { ContextMenuItem } from '../../ContextMenu'
+@@ -41,17 +39,8 @@ function buildContextMenu(
+   isTeamProfile: boolean,
+   setIsTeamProfile: (newValue: boolean) => void
+ ): ContextMenuItem[] {
++  // slothfulchat: no "Use Proxy" entry, proxies are not implemented on wasm.
+   return [
 -    {
 -      label: tx('proxy_use_proxy'),
 -      action: () => {
@@ -211,40 +212,6 @@ index 030556968ad30c83475f7ecdb127677fa8110e30..58ab5d86d32572eaa4c9ad4a3325a1ab
 -      },
 -      dataTestid: 'proxy-context-menu-item',
 -    },
--  ]
--}
--
- /**
-  * Sub component of WelcomeScreen to set a Displayname to create an account
-  * or open a dialog with some options to use another server
-@@ -76,22 +51,6 @@ export default function InstantOnboardingScreen({
-   const [profilePicture, setProfilePicture] = useState<string | null>(null)
-   const [showMissingNameError, setShowMissingNameError] = useState(false)
- 
--  const { openContextMenu } = useContext(ContextMenuContext)
--
--  const showMenu = (
--    event: React.MouseEvent<
--      HTMLDivElement | HTMLAnchorElement | HTMLLIElement,
--      MouseEvent
--    >
--  ) => {
--    const items = buildContextMenu(openDialog, tx)
--
--    openContextMenu({
--      ...mouseEventToPosition(event),
--      items,
--    })
--  }
--
-   useEffect(() => {
-     ;(async () => {
-       const { displayname, selfavatar } =
-@@ -185,7 +144,6 @@ export default function InstantOnboardingScreen({
-     <>
-       <DialogHeader
-         onClickBack={onClickBack}
--        onContextMenuClick={showMenu}
-         title={tx('instant_onboarding_title')}
-       />
-       <DialogBody className={styles.welcomeScreenBody}>
+     isTeamProfile
+       ? {
+           // TODO fix a11y: the menu item needs to be `role="menuitemcheckbox"`.

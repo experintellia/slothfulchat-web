@@ -26,7 +26,7 @@ touch them.
  1 file changed, 26 insertions(+)
 
 diff --git a/packages/frontend/src/components/RuntimeAdapter.tsx b/packages/frontend/src/components/RuntimeAdapter.tsx
-index 88876b50dd4757a9c206e6d8f99aa4b3e14bc63c..42bcdd0f7a07d5f530a195c227436b09dff64b10 100644
+index e86e9844c30fd86aa51af455db0edee814e1d114..8cac028ee6128b6b0b61946329722ae8dd2b3f44 100644
 --- a/packages/frontend/src/components/RuntimeAdapter.tsx
 +++ b/packages/frontend/src/components/RuntimeAdapter.tsx
 @@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react'

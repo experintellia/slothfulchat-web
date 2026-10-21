@@ -24,10 +24,10 @@ renders it.
  create mode 100644 packages/frontend/src/components/attachment/LottieSticker.tsx
 
 diff --git a/packages/frontend/package.json b/packages/frontend/package.json
-index 69f2d3505707b112efe648d6c809adafc0709c92..b43f0ff5989c90660b50aaa9dd81cabe66808f3b 100644
+index a5e49e27745014829a00c379771cc61d4aab348b..44cbd7114e578dffdd0552cf8c13dd1d94c2f9c6 100644
 --- a/packages/frontend/package.json
 +++ b/packages/frontend/package.json
-@@ -37,6 +37,7 @@
+@@ -40,6 +40,7 @@
      "jsqr": "^1.4.0",
      "linkify-plugin-hashtag": "^4.3.2",
      "linkifyjs": "^4.3.2",
@@ -215,7 +215,7 @@ index 0000000000000000000000000000000000000000..f4dacab535405ccad3a5bf880d3a0875
 +  }
 +}
 diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
-index 6c763d74c1ca40b79ee145448b5ea5d1789f0fb6..3447fe74c32c362be7c047fd57b16b001f40cbe9 100644
+index eb7abd1a7e8dfa2bd57d58758d10375ecbb1cea0..d0813b1776574cad87ed9b066b2feaeabffb006f 100644
 --- a/packages/frontend/src/components/attachment/messageAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
 @@ -18,6 +18,7 @@ import FullscreenMedia, {
@@ -301,10 +301,10 @@ index cf683d32e87d3ff308fa7088faf1d2ac08706bb1..32664c4e0934124f52f7bcc6a97780c0
  // https://www.typescriptlang.org/tsconfig/#noUncheckedSideEffectImports.
  declare module 'moment/min/locales'
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index 4638681596e32861cd7faec4f46500bee1ef4b6d..1817bc4a8f9bc8d47fce91e003c700cb52560178 100644
+index 65c8e53634b122e182c8329fd3cc98ba32c221c4..3f0c37ce455a43c32cd643d786368a353d8cdbd2 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
-@@ -177,6 +177,9 @@ importers:
+@@ -175,6 +175,9 @@ importers:
        linkifyjs:
          specifier: ^4.3.2
          version: 4.3.2
@@ -314,7 +314,7 @@ index 4638681596e32861cd7faec4f46500bee1ef4b6d..1817bc4a8f9bc8d47fce91e003c700cb
        mime-types:
          specifier: 'catalog:'
          version: 2.1.35
-@@ -2993,6 +2996,9 @@ packages:
+@@ -2830,6 +2833,9 @@ packages:
      resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
      hasBin: true
  
@@ -324,7 +324,7 @@ index 4638681596e32861cd7faec4f46500bee1ef4b6d..1817bc4a8f9bc8d47fce91e003c700cb
    loupe@3.1.1:
      resolution: {integrity: sha512-edNu/8D5MKVfGVFRhFf8aAxiTM6Wumfz5XsaatSxlD3w4R1d/WEKUTydCdPGbl9K7QG/Ca3GnDV2sIKIpXRQcw==}
  
-@@ -6909,6 +6915,8 @@ snapshots:
+@@ -6672,6 +6678,8 @@ snapshots:
      dependencies:
        js-tokens: 4.0.0
  

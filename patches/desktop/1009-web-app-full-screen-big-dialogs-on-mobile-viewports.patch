@@ -46,7 +46,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  11 files changed, 121 insertions(+), 8 deletions(-)
 
 diff --git a/packages/frontend/scss/dialogs/_qr-code.scss b/packages/frontend/scss/dialogs/_qr-code.scss
-index 604d2dfea9d85a7d0191941f82598ca149cc011a..eaa0427e15580ef320cf5f454c1e9e1bb056304d 100644
+index 03dbf4a5557e9814bb017d5e84c00f771ec60796..61a64a6abad3fba1b8ecdb36e3a837b74e2d42e4 100644
 --- a/packages/frontend/scss/dialogs/_qr-code.scss
 +++ b/packages/frontend/scss/dialogs/_qr-code.scss
 @@ -1,4 +1,5 @@
@@ -79,7 +79,7 @@ index 604d2dfea9d85a7d0191941f82598ca149cc011a..eaa0427e15580ef320cf5f454c1e9e1b
  
  .copy-link-icon {
 diff --git a/packages/frontend/src/components/Dialog/styles.module.scss b/packages/frontend/src/components/Dialog/styles.module.scss
-index 3eeed1a83f358bdacd13f7fd0ba24e02b9219040..f6da5903bf9916047d3a7d8ab19fc6727b362674 100644
+index 79151e4059f4aad49a63365a53599fe81db39bb2..f32268e6ada5d448704fa9b357985b7d9e5215a7 100644
 --- a/packages/frontend/src/components/Dialog/styles.module.scss
 +++ b/packages/frontend/src/components/Dialog/styles.module.scss
 @@ -45,6 +45,53 @@ $paddingVertical: 20px;
@@ -174,10 +174,10 @@ index c423a781c26066b9b0e1a5b59c808e68d7415cdf..d43ad0b19fbafe86b668b2bbeb99ed51
      background-color: gray;
    }
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 749b5afe283dcb9a60d9072355e9067108e5ca55..331019147238142ab6fb76d318a4c0a1c317753d 100644
+index ee2865a740ff7ea18a76d864abb9719a9eab8492..32b2843711ac83292481d80105f4e1b37e7f823a 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
-@@ -156,7 +156,12 @@ function SettingsSectionDialog(
+@@ -160,7 +160,12 @@ function SettingsSectionDialog(
    } as const satisfies Partial<Parameters<typeof DialogHeader>[0]>
  
    return (
@@ -192,10 +192,10 @@ index 749b5afe283dcb9a60d9072355e9067108e5ca55..331019147238142ab6fb76d318a4c0a1
          <>
            <DialogHeader title={tx('pref_chats')} {...commonHeaderProps} />
 diff --git a/packages/frontend/src/components/dialogs/About/index.tsx b/packages/frontend/src/components/dialogs/About/index.tsx
-index d4222f46cb8146d2dae1849ade048b767b2c8954..e0248c77e3c8112216066a4f0ed5eed7faf82823 100644
+index d9ac7e40bdd394998f418c5a7cbd7594c6f06398..b4e754250941c71ede5d581313a37c5a8db144e4 100644
 --- a/packages/frontend/src/components/dialogs/About/index.tsx
 +++ b/packages/frontend/src/components/dialogs/About/index.tsx
-@@ -41,6 +41,7 @@ export default function About({ onClose }: DialogProps) {
+@@ -45,6 +45,7 @@ export default function About({ onClose }: DialogProps) {
        width={400}
        title={tx('global_menu_help_about_desktop')}
        onClose={onClose}
@@ -221,10 +221,10 @@ index 3ec99b6f5c5791025cbb753c8a3ecf09cc26a049..d9c3b182aaeea3ee944f2369bbc20028
        <ConnectivityDialogInner />
      </Dialog>
 diff --git a/packages/frontend/src/components/dialogs/CreateChat/index.tsx b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-index b20726be583f97b9453206647e84dbe77f9be3f5..41213436d874059504485102da88b717bd0fee95 100644
+index 3556710637e146a7a994df1afb473dac5bdc57f6..54ce503fe70afd06050b2468d8ed41149282b7d6 100644
 --- a/packages/frontend/src/components/dialogs/CreateChat/index.tsx
 +++ b/packages/frontend/src/components/dialogs/CreateChat/index.tsx
-@@ -116,7 +116,7 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
+@@ -118,7 +118,7 @@ export function CloneChat(props: { chatTemplateId: number } & DialogProps) {
      : undefined
  
    if (!chat || description === undefined) {
@@ -233,7 +233,7 @@ index b20726be583f97b9453206647e84dbe77f9be3f5..41213436d874059504485102da88b717
    }
  
    return (
-@@ -681,7 +681,13 @@ export function CreateGroup(props: CreateGroupProps) {
+@@ -688,7 +688,13 @@ export function CreateGroup(props: CreateGroupProps) {
    }
  
    return (
@@ -248,7 +248,7 @@ index b20726be583f97b9453206647e84dbe77f9be3f5..41213436d874059504485102da88b717
        <DialogHeader
          title={
            titleOverride ??
-@@ -799,7 +805,13 @@ export function CreateBroadcastList(props: CreateBroadcastListProps) {
+@@ -806,7 +812,13 @@ export function CreateBroadcastList(props: CreateBroadcastListProps) {
    }
  
    return (
@@ -264,7 +264,7 @@ index b20726be583f97b9453206647e84dbe77f9be3f5..41213436d874059504485102da88b717
        <form onSubmit={submitForm}>
          <DialogBody>
 diff --git a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
-index 31e8b4a679674c7acc10d0a69d84329138ee181d..99ea87af1eca7548de03b462385db079cd687eaa 100644
+index fb962ce6c00caac4ee15b1cc66e937463033133a..50c9fbdfc3b6c117f71054e627a4d43bdc1c8fd1 100644
 --- a/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 +++ b/packages/frontend/src/components/dialogs/EditProfileDialog/index.tsx
 @@ -32,7 +32,11 @@ export default function EditProfileDialog({ onClose, ...props }: Props) {
@@ -277,9 +277,9 @@ index 31e8b4a679674c7acc10d0a69d84329138ee181d..99ea87af1eca7548de03b462385db079
 +      onClose={onClose}
 +      dataTestid='edit-profile-dialog'
 +    >
-       <DialogHeader title={tx('pref_profile_info_headline')} />
-       <EditProfileDialogInner onClose={onClose} {...props} />
-     </Dialog>
+       <DialogHeader
+         title={
+           props.settingsStore.settings.team_profile === '1'
 diff --git a/packages/frontend/src/components/dialogs/MediaView/index.tsx b/packages/frontend/src/components/dialogs/MediaView/index.tsx
 index 2c17308e7bcbd7e7981438c569d7f8aee0bccd06..378b39c47919481cbe320c0487dce1cbbcd417db 100644
 --- a/packages/frontend/src/components/dialogs/MediaView/index.tsx
@@ -298,10 +298,10 @@ index 2c17308e7bcbd7e7981438c569d7f8aee0bccd06..378b39c47919481cbe320c0487dce1cb
        <DialogBody className={styles.mediaViewDialogBody}>
          <Gallery chatId={chatId} />
 diff --git a/packages/frontend/src/components/dialogs/QrCode.tsx b/packages/frontend/src/components/dialogs/QrCode.tsx
-index 2a278f1e02cc966794aeb40549e2d074649fb678..7859f2c66158cf380ac54ba6d762f971a028cba8 100644
+index 6cf8008bc5f34eeca23999003221abd0c281c3cf..ede2ca75c2c184d110eb403910dcc9dbfe98f02c 100644
 --- a/packages/frontend/src/components/dialogs/QrCode.tsx
 +++ b/packages/frontend/src/components/dialogs/QrCode.tsx
-@@ -292,7 +292,7 @@ export function QrCodeScanQrInner({
+@@ -288,7 +288,7 @@ export function QrCodeScanQrInner({
  
    return (
      <>
@@ -311,10 +311,10 @@ index 2a278f1e02cc966794aeb40549e2d074649fb678..7859f2c66158cf380ac54ba6d762f971
            onScanSuccess={handleScan}
            onError={handleError}
 diff --git a/packages/frontend/src/components/dialogs/ViewProfile/index.tsx b/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
-index 2fca89070235f952cc49def39af9804de13b259d..d5ab9c0526a3de0a0630a6b936662f0a14367266 100644
+index bad69a1923705d6f446332dd995f9e81e677c30e..2709cf46e1ef98cec0dc34c49b9d202d43ac6ee6 100644
 --- a/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
 +++ b/packages/frontend/src/components/dialogs/ViewProfile/index.tsx
-@@ -89,6 +89,7 @@ export default function ViewProfile(
+@@ -59,6 +59,7 @@ export default function ViewProfile(
        onClose={onClose}
        fixed
        className={styles.viewProfileDialog}

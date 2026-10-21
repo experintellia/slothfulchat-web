@@ -21,6 +21,9 @@ Pure estimate math lives in readTimeEstimate.ts with a mocha test
 ChatListItem.tsx. Settings key experimentalUnreadReadTime mirrors the
 existing experimentalCompletionMenu flag.
 
+Rebased onto v2.62.0: the setting is read from the new desktop-settings
+store (useDesktopSettingsStore, 95f5a1e1d).
+
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01TAwiEcYimwGkrDn3JKgRn3
 ---
@@ -36,7 +39,7 @@ Claude-Session: https://claude.ai/code/session_01TAwiEcYimwGkrDn3JKgRn3
  create mode 100644 packages/frontend/src/tests/readTimeEstimate.test.ts
 
 diff --git a/packages/frontend/scss/chat/_chat-list-item.scss b/packages/frontend/scss/chat/_chat-list-item.scss
-index c379846ca1dbd1f83a0604f23574815521dcbe48..acddfbead126bc8fc0c23142b08942338ad41885 100644
+index 60b90ede4a79ef6b93a35344019c4bf05e31ce3e..dfc3b39e11f12632b36b41a35d233053772a5ca5 100644
 --- a/packages/frontend/scss/chat/_chat-list-item.scss
 +++ b/packages/frontend/scss/chat/_chat-list-item.scss
 @@ -41,6 +41,16 @@
@@ -57,10 +60,10 @@ index c379846ca1dbd1f83a0604f23574815521dcbe48..acddfbead126bc8fc0c23142b0894233
      // Ensure it's as wide as the parent allows, but doesn't overflow
      // the parent if the content is too long.
 diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-index 7f020792a6ac162bad0993fc11067247e44f1cb2..5995b3e5e8e2284642f7fcf3650ad66f1a0553c9 100644
+index 55764bcbd83f3c2d86dd344623f73a2cb5a441ba..86863f98aa70f4dc523c20bfb9b4354447f298fd 100644
 --- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
 +++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
-@@ -81,6 +81,11 @@ export function ExperimentalFeatures() {
+@@ -79,6 +79,11 @@ export function ExperimentalFeatures() {
          label='Emoji completion menu'
          description='Type a colon and a name in the composer (e.g. :smile) to pick an emoji from a pop-up menu. On by default.'
        />
@@ -73,7 +76,7 @@ index 7f020792a6ac162bad0993fc11067247e44f1cb2..5995b3e5e8e2284642f7fcf3650ad66f
          <DesktopSettingsSwitch
            settingsKey='contentProtectionEnabled'
 diff --git a/packages/frontend/src/components/chat/ChatListItem.tsx b/packages/frontend/src/components/chat/ChatListItem.tsx
-index 780c2f1b9460b6329e4ba9ea60e6a279ccf6b7c7..38fedad2c99a7ce4cfbb4ce96a9fc14c1f51a021 100644
+index e5fcaceea8b5accc81311fafd2a0cf6f7c42e552..56ed0759bc6739439f976d4cdaeef6c541c94a99 100644
 --- a/packages/frontend/src/components/chat/ChatListItem.tsx
 +++ b/packages/frontend/src/components/chat/ChatListItem.tsx
 @@ -1,11 +1,13 @@
@@ -87,7 +90,7 @@ index 780c2f1b9460b6329e4ba9ea60e6a279ccf6b7c7..38fedad2c99a7ce4cfbb4ce96a9fc14c
  import Icon from '../Icon'
 -import { Type } from '../../backend-com'
 +import { BackendRemote, Type } from '../../backend-com'
-+import { useSettingsStore } from '../../stores/settings'
++import { useDesktopSettingsStore } from '../../stores/settings'
 +import { unreadSeconds, readTimeLabel } from './readTimeEstimate'
  import { marknoticedChat } from '../../backend/chat'
  import { mapCoreMsgStatus2String } from '../helpers/MapMsgStatus'
@@ -139,7 +142,7 @@ index 780c2f1b9460b6329e4ba9ea60e6a279ccf6b7c7..38fedad2c99a7ce4cfbb4ce96a9fc14c
 +
 +function useUnreadReadTime(chatId: number, counter: number): string | null {
 +  const enabled =
-+    useSettingsStore()[0]?.desktopSettings.experimentalUnreadReadTime === true
++    useDesktopSettingsStore()[0]?.experimentalUnreadReadTime === true
 +  const [label, setLabel] = useState<string | null>(null)
 +  useEffect(() => {
 +    if (!enabled || counter === 0) {
@@ -199,7 +202,7 @@ index 780c2f1b9460b6329e4ba9ea60e6a279ccf6b7c7..38fedad2c99a7ce4cfbb4ce96a9fc14c
        {!isContactRequest && (
          <FreshMessageCounter counter={freshMessageCounter} visible={true} />
        )}
-@@ -406,6 +478,7 @@ function RegularChatListItem({
+@@ -409,6 +481,7 @@ function RegularChatListItem({
            freshMessageCounter={chat.freshMessageCounter}
          />
          <Message
@@ -318,7 +321,7 @@ index 0000000000000000000000000000000000000000..f6bb7b53421b5422ec4bc65164da436e
 +  })
 +})
 diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
-index 575687a9c75ab2d418e81c98f94bb126e70a91dd..35a6e9c8393bbcf37428c18cde4fed06acced5bc 100644
+index 66532669f35c22a669a5aff08708bb0e0d906ff8..a7ee958b12f7ca1c42afbe8411a25286b35a1762 100644
 --- a/packages/shared/shared-types.d.ts
 +++ b/packages/shared/shared-types.d.ts
 @@ -43,6 +43,8 @@ export interface DesktopSettingsType {
@@ -331,7 +334,7 @@ index 575687a9c75ab2d418e81c98f94bb126e70a91dd..35a6e9c8393bbcf37428c18cde4fed06
    locale: string | null
    notifications: boolean
 diff --git a/packages/shared/state.ts b/packages/shared/state.ts
-index 3d2255672370d81b99c162a81546413cce803aec..6c1979c92d766b061f0241b7973d5adc2a972fb9 100644
+index 0bf2feedb8c618150ac70a6dc0c084fc23885c22..bad744ba41f55753c7a689b6bef1987349db39e1 100644
 --- a/packages/shared/state.ts
 +++ b/packages/shared/state.ts
 @@ -16,6 +16,7 @@ export function getDefaultState(): DesktopSettingsType {

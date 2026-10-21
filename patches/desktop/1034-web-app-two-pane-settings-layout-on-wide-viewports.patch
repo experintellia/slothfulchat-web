@@ -14,23 +14,27 @@ The nav list and the per-section bodies are extracted into shared
 SettingsNav/SettingsSectionBody components so both layouts render the
 exact same content; SettingsIconButton gains an 'active' highlight
 (aria-current) for the sidebar.
+
+Rebased onto v2.62.0: the shared SettingsSectionBody reads desktop
+settings from the new desktop-settings store (95f5a1e1d), as upstream's
+stacked section dialog now does.
 ---
- .../src/components/Settings/Settings.tsx      | 347 +++++++++++-------
+ .../src/components/Settings/Settings.tsx      | 351 +++++++++++-------
  .../Settings/SettingsIconButton.tsx           |   9 +-
  .../components/Settings/styles.module.scss    |  67 ++++
- 3 files changed, 293 insertions(+), 130 deletions(-)
+ 3 files changed, 296 insertions(+), 131 deletions(-)
 
 diff --git a/packages/frontend/src/components/Settings/Settings.tsx b/packages/frontend/src/components/Settings/Settings.tsx
-index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5f07dbeb1 100644
+index 32b2843711ac83292481d80105f4e1b37e7f823a..1792b4ed1914a2243516218ece4e675c35f3ef21 100644
 --- a/packages/frontend/src/components/Settings/Settings.tsx
 +++ b/packages/frontend/src/components/Settings/Settings.tsx
 @@ -1,4 +1,4 @@
 -import React, { useEffect, useCallback } from 'react'
 +import React, { useEffect, useCallback, useState } from 'react'
  
- import { useSettingsStore } from '../../stores/settings'
- import { SendBackupDialog } from '../dialogs/SetupMultiDevice'
-@@ -17,6 +17,9 @@ import EditProfileDialog from '../dialogs/EditProfileDialog'
+ import {
+   useDesktopSettingsStore,
+@@ -20,6 +20,9 @@ import EditProfileDialog from '../dialogs/EditProfileDialog'
  import SettingsSeparator, { SettingsEndSeparator } from './SettingsSeparator'
  import useDialog from '../../hooks/dialog/useDialog'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
@@ -40,7 +44,7 @@ index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5
  
  import type { DialogProps } from '../../contexts/DialogContext'
  
-@@ -26,11 +29,166 @@ type SettingsView =
+@@ -29,11 +32,169 @@ type SettingsView =
    | 'appearance'
    | 'advanced'
  
@@ -90,7 +94,7 @@ index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5
    const { openDialog } = useDialog()
 +  const settingsStore = useSettingsStore()[0]
 +  const tx = useTranslationFunction()
-+
+ 
 +  return (
 +    <>
 +      {settingsStore != null && (
@@ -166,7 +170,7 @@ index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5
 +    </>
 +  )
 +}
- 
++
 +/** The content of one settings section, shared by both layouts. */
 +function SettingsSectionBody({
 +  section,
@@ -177,22 +181,25 @@ index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5
 +  closeSettings: () => void
 +}) {
    const settingsStore = useSettingsStore()[0]
++  const desktopSettingsStore = useDesktopSettingsStore()[0]
 +
 +  return (
 +    <>
 +      {section === 'chats_and_media' && settingsStore != null && (
 +        <ChatsAndMedia settingsStore={settingsStore} />
 +      )}
-+      {section === 'notifications' && settingsStore != null && (
-+        <Notifications desktopSettings={settingsStore.desktopSettings} />
++      {section === 'notifications' && desktopSettingsStore != null && (
++        <Notifications desktopSettings={desktopSettingsStore} />
 +      )}
-+      {section === 'appearance' && settingsStore != null && (
-+        <Appearance
-+          rc={settingsStore.rc}
-+          desktopSettings={settingsStore.desktopSettings}
-+          settingsStore={settingsStore}
-+        />
-+      )}
++      {section === 'appearance' &&
++        settingsStore != null &&
++        desktopSettingsStore != null && (
++          <Appearance
++            rc={settingsStore.rc}
++            desktopSettings={desktopSettingsStore}
++            settingsStore={settingsStore}
++          />
++        )}
 +      {section === 'advanced' && <Advanced onClose={closeSettings} />}
 +      <SettingsEndSeparator />
 +    </>
@@ -208,7 +215,7 @@ index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5
  
    useEffect(() => {
      if (window.__settingsOpened) {
-@@ -54,6 +212,46 @@ export default function Settings({ onClose }: DialogProps) {
+@@ -57,6 +218,46 @@ export default function Settings({ onClose }: DialogProps) {
      [onClose, openDialog]
    )
  
@@ -255,7 +262,7 @@ index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5
    return (
      <Dialog onClose={onClose} fixed width={400} dataTestid='settings-dialog'>
        <DialogHeader
-@@ -62,75 +260,10 @@ export default function Settings({ onClose }: DialogProps) {
+@@ -65,75 +266,10 @@ export default function Settings({ onClose }: DialogProps) {
          dataTestid='settings'
        />
        <DialogBody>
@@ -335,11 +342,12 @@ index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5
        </DialogBody>
      </Dialog>
    )
-@@ -144,16 +277,11 @@ function SettingsSectionDialog(
+@@ -147,17 +283,11 @@ function SettingsSectionDialog(
  ) {
    const { settingsMode, onClose: closeThisDialog } = props
    const tx = useTranslationFunction()
 -  const settingsStore = useSettingsStore()[0]
+-  const desktopSettingsStore = useDesktopSettingsStore()[0]
  
    const closeThisAndParent = useCallback(() => {
      closeThisDialog()
@@ -352,7 +360,7 @@ index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5
  
    return (
      <Dialog
-@@ -162,59 +290,20 @@ function SettingsSectionDialog(
+@@ -166,59 +296,20 @@ function SettingsSectionDialog(
        width={400}
        dataTestid='settings-section-dialog'
      >
@@ -374,8 +382,8 @@ index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5
 -            {...commonHeaderProps}
 -          />
 -          <DialogBody>
--            {settingsStore != null && (
--              <Notifications desktopSettings={settingsStore.desktopSettings} />
+-            {desktopSettingsStore != null && (
+-              <Notifications desktopSettings={desktopSettingsStore} />
 -            )}
 -            <SettingsEndSeparator />
 -          </DialogBody>
@@ -385,10 +393,10 @@ index 331019147238142ab6fb76d318a4c0a1c317753d..786ea5822eabe0d8c0e60450d4a6caf5
 -        <>
 -          <DialogHeader title={tx('pref_appearance')} {...commonHeaderProps} />
 -          <DialogBody>
--            {settingsStore != null && (
+-            {settingsStore != null && desktopSettingsStore != null && (
 -              <Appearance
 -                rc={settingsStore.rc}
--                desktopSettings={settingsStore.desktopSettings}
+-                desktopSettings={desktopSettingsStore}
 -                settingsStore={settingsStore}
 -              />
 -            )}

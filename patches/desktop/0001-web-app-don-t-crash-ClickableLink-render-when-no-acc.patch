@@ -17,10 +17,10 @@ Patch-Range: upstream-fix
  1 file changed, 2 insertions(+), 3 deletions(-)
 
 diff --git a/packages/frontend/src/components/helpers/ClickableLink.tsx b/packages/frontend/src/components/helpers/ClickableLink.tsx
-index e177847457144dad852417c7d798e0468b714edd..c26e21348a4ab6e15ce5c4d092bb3cd2eab783c1 100644
+index cd74d778cbfbcf39af1214dd2328ec7aefa5f0eb..b9ee6e5c0c37a8a52878113f12ba233e5feba5fd 100644
 --- a/packages/frontend/src/components/helpers/ClickableLink.tsx
 +++ b/packages/frontend/src/components/helpers/ClickableLink.tsx
-@@ -8,18 +8,17 @@ import { selectedAccountId } from '../../ScreenController'
+@@ -6,18 +6,17 @@ import { selectedAccountId } from '../../ScreenController'
  import type { PropsWithChildren } from 'react'
  
  /**

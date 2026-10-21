@@ -778,8 +778,6 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   stays a scroll, resting still opens the context menu. Mouse reordering keeps
   using the browser's drag and drop; both end in one pure `reorderedAccounts()`
   covered by `scripts/test-account-reorder-touch.mjs`. `desktop/1054`
-- The QR reader defaults to the rear camera — you scan someone else's code,
-  not your own face. `desktop/1006`
 - The connectivity view shows a loading state instead of a blank iframe while
   the core is busy, and displays the WS bridge address with an edit button.
   `desktop/1001`
@@ -851,11 +849,8 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   release predates that. `core/1020`, `desktop/1051`, `desktop/1055`
 - **Hidden upstream UI that can't work in this build** — proxy settings
   (unimplemented on wasm), the second-device / multi-device backup
-  transfer flow (iroh doesn't run in browsers yet), and the experimental
-  "Enable Webxdc Devtools" switch (it only toggles Electron's DevTools on a
-  webxdc iframe — a browser's built-in dev tools can't be gated by the app,
-  and webxdc apps don't run in this build anyway). `desktop/1000`,
-  `desktop/1021`; the second-device entry points are hidden by
+  transfer flow (iroh doesn't run in browsers yet). `desktop/1000`; the
+  second-device entry points are hidden by
   `packages/web-app/static/overrides.css`, not a patch
 - **Long message text is stored in full** — core truncates message text to
   38 lines × 100 chars when writing `msgs.txt`, stashing the full body in

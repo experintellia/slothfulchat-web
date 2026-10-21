@@ -39,15 +39,22 @@ account-creation endpoint survives; the confirm dialog still shows the bare host
 All new strings are hardcoded English, matching this fork's relay-picker patch
 convention (no locale files touched).
 
+Rebased onto v2.62.0: the Transports dialog now lists listTransports()
+entries (addr instead of param.addr; cf13c0588, #6763), and
+useAddTransportDialog lost its multiDeviceMode argument together with
+the 2.33 multi-device note (d9a00bdf1), so that argument is gone here
+and only the one-line confirm message remains of this patch's change
+there.
+
 Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
 ---
  .../dialogs/Transports/contactRelays.ts       |  42 +++++
- .../components/dialogs/Transports/index.tsx   | 117 ++++++++++++-
+ .../components/dialogs/Transports/index.tsx   | 120 +++++++++++--
  .../WelcomeScreen/RelayPickerDialog.tsx       | 160 +++++++++++++++++-
  .../screens/WelcomeScreen/styles.module.scss  |  46 ++++-
  .../src/hooks/dialog/useAddTransportDialog.ts |   2 +-
  .../frontend/src/tests/contactRelays.test.ts  |  66 ++++++++
- 6 files changed, 413 insertions(+), 20 deletions(-)
+ 6 files changed, 415 insertions(+), 21 deletions(-)
  create mode 100644 packages/frontend/src/components/dialogs/Transports/contactRelays.ts
  create mode 100644 packages/frontend/src/tests/contactRelays.test.ts
 
@@ -100,19 +107,27 @@ index 0000000000000000000000000000000000000000..87f51f3798d021ba140b388766893d0d
 +  )
 +}
 diff --git a/packages/frontend/src/components/dialogs/Transports/index.tsx b/packages/frontend/src/components/dialogs/Transports/index.tsx
-index 3f6386b9c75d4243fe7c9dd8b744642a22fde447..1ed96300e3a8656f51f95f2696f0fc2e799e4d4b 100644
+index f99055b3abbe63d72c0126e2334eda84d6f3bc98..768e67c35c01e0f454d36806debaeaab5509338d 100644
 --- a/packages/frontend/src/components/dialogs/Transports/index.tsx
 +++ b/packages/frontend/src/components/dialogs/Transports/index.tsx
-@@ -1,4 +1,4 @@
+@@ -1,6 +1,11 @@
 -import React, { useCallback, useEffect, useState } from 'react'
 +import React, { useCallback, useEffect, useRef, useState } from 'react'
  import { DialogProps } from '../../../contexts/DialogContext'
- import Dialog, {
-   DialogBody,
-@@ -22,6 +22,16 @@ import { T } from '@deltachat/jsonrpc-client'
- import classNames from 'classnames'
+-import Dialog, { DialogBody, DialogHeader, DialogFooter } from '../../Dialog'
++import Dialog, {
++  DialogBody,
++  DialogHeader,
++  DialogFooter,
++  FooterActions,
++} from '../../Dialog'
+ import { BackendRemote, onDCEvent } from '../../../backend-com'
+ 
+ import useTranslationFunction from '../../../hooks/useTranslationFunction'
+@@ -15,6 +20,16 @@ import classNames from 'classnames'
  import useDialog from '../../../hooks/dialog/useDialog'
  import useAddTransportDialog from '../../../hooks/dialog/useAddTransportDialog'
+ import useConfirmationDialog from '../../../hooks/dialog/useConfirmationDialog'
 +// ponytail: deliberate reach into the WelcomeScreen instant-onboarding patch —
 +// the relay picker dialog lives there and is reused as-is. Moving it out would
 +// break rebasing of the patch stack, so we import across the tree instead.
@@ -124,9 +139,9 @@ index 3f6386b9c75d4243fe7c9dd8b744642a22fde447..1ed96300e3a8656f51f95f2696f0fc2e
 +import { contactRelayCandidates } from './contactRelays'
 +import { instanceDefaultChatmailQr } from '../../../utils/slothfulInstanceConfig'
  
- /**
-  * Dialog for transports configuration
-@@ -123,6 +133,88 @@ export default function TransportsDialog(
+ type Transport = Awaited<
+   ReturnType<typeof BackendRemote.rpc.listTransports>
+@@ -83,6 +98,84 @@ export default function TransportsDialog(
      addTransportDialog,
    ])
  
@@ -144,8 +159,8 @@ index 3f6386b9c75d4243fe7c9dd8b744642a22fde447..1ed96300e3a8656f51f95f2696f0fc2e
 +      // Last-'@' segment, lowercased, to match contactRelayCandidates' hosts.
 +      const excludeHosts = transports
 +        .map(t => {
-+          const at = t.param.addr.lastIndexOf('@')
-+          return at < 0 ? undefined : t.param.addr.slice(at + 1).toLowerCase()
++          const at = t.addr.lastIndexOf('@')
++          return at < 0 ? undefined : t.addr.slice(at + 1).toLowerCase()
 +        })
 +        .filter((h): h is string => !!h)
 +
@@ -192,14 +207,10 @@ index 3f6386b9c75d4243fe7c9dd8b744642a22fde447..1ed96300e3a8656f51f95f2696f0fc2e
 +              ? 'dcaccount:' + host
 +              : (instanceDefaultChatmailQr() ??
 +                'dcaccount:' + defaultRelayHost())
-+          // multiDeviceMode false: this dialog's body always shows the
-+          // multi-device min-version warning (transport_list_hint), so the
-+          // confirmation skips the redundant hardcoded note.
 +          const transportAdded = await addTransportDialog(
 +            accountId,
 +            qr,
-+            host ?? defaultRelayHost(),
-+            false
++            host ?? defaultRelayHost()
 +          )
 +          if (transportAdded) {
 +            // refresh transport list
@@ -215,7 +226,7 @@ index 3f6386b9c75d4243fe7c9dd8b744642a22fde447..1ed96300e3a8656f51f95f2696f0fc2e
    useEffect(() => {
      getTransports()
    }, [getTransports])
-@@ -242,14 +334,21 @@ export default function TransportsDialog(
+@@ -181,14 +274,21 @@ export default function TransportsDialog(
          </div>
        </DialogBody>
        <DialogFooter>
@@ -531,18 +542,18 @@ index 1654f4006fb8907fcf0ed1edfb42f1a551736b93..70c7b254b6291ad84544985f25f7af5c
  
  .relayDialogCustomInput {
 diff --git a/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts b/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
-index 6f011dfe094d415829e352fa9d20a0ec796bc481..a979b8f62cb91d71b7f8d90ef48794d89eaacb2d 100644
+index 633f8be6bc0fd425ae2bc916b9cd6372795f4d39..8ea7f3f449856d73380a847bcb07071cb9fefa54 100644
 --- a/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
 +++ b/packages/frontend/src/hooks/dialog/useAddTransportDialog.ts
-@@ -26,7 +26,7 @@ export default function useAddTransportDialog(): AddTransportDialogFn {
-       multiDeviceMode,
+@@ -27,7 +27,7 @@ export default function useAddTransportDialog(): AddTransportDialogFn {
        confirmLabel = tx('confirm_add_transport')
      ) => {
--      let message = `${confirmLabel}\n ${domainOrAddress}`
-+      let message = `${confirmLabel} ${domainOrAddress}`
-       if (multiDeviceMode) {
-         message +=
-           '\n\nNote if using multi-device:\nbefore changing or adding transports make sure all other devices have at least version 2.33.0 installed. Otherwise they will run out of sync.'
+       const confirmed = await openConfirmationDialog({
+-        message: `${confirmLabel}\n ${domainOrAddress}`,
++        message: `${confirmLabel} ${domainOrAddress}`,
+       })
+       if (!confirmed) {
+         return false
 diff --git a/packages/frontend/src/tests/contactRelays.test.ts b/packages/frontend/src/tests/contactRelays.test.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..a9db017934cbece1835bc47b0ea30b4fbfdfa28e

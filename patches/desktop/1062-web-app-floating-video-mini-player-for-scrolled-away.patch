@@ -43,80 +43,86 @@ The 30/60 gap keeps it from flapping at the edge.
   in, which this avoids. The bar is marked data-interactive, which
   Video.js's tap gesture skips, so a drag or click on it doesn't pause.
 
+Rebased onto v2.62.0: VideoMiniPlayerProvider now sits inside upstream's
+new ToastContextProvider (3fff48670, #6714), which has to stay above
+DialogContextProvider.
+
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- packages/frontend/src/ScreenController.tsx    |  43 ++--
+ packages/frontend/src/ScreenController.tsx    |  45 ++--
  .../src/components/VideoMiniPlayer/index.tsx  | 238 ++++++++++++++++++
  .../VideoMiniPlayer/styles.module.scss        |  64 +++++
  .../src/components/attachment/VideoPlayer.tsx | 105 +++++++-
  .../attachment/messageAttachment.tsx          |   1 +
- 5 files changed, 430 insertions(+), 21 deletions(-)
+ 5 files changed, 432 insertions(+), 21 deletions(-)
  create mode 100644 packages/frontend/src/components/VideoMiniPlayer/index.tsx
  create mode 100644 packages/frontend/src/components/VideoMiniPlayer/styles.module.scss
 
 diff --git a/packages/frontend/src/ScreenController.tsx b/packages/frontend/src/ScreenController.tsx
-index 393034c9b40983790190e5aa46cc3fdb207d69e6..0082e5171782af29c02f8cabe82f4d82939062aa 100644
+index 058f3982c92938f92d8247b3ca0fb0f59b97350f..fdbb6e80c0194094228cb6c5bb39073b90e14518 100644
 --- a/packages/frontend/src/ScreenController.tsx
 +++ b/packages/frontend/src/ScreenController.tsx
-@@ -29,6 +29,7 @@ import { InstantOnboardingProvider } from './contexts/InstantOnboardingContext'
- import { MediaPlayerMutexProvider } from './contexts/MediaPlayerMutexContext'
+@@ -29,6 +29,7 @@ import { MediaPlayerMutexProvider } from './contexts/MediaPlayerMutexContext'
  import { SmallScreenModeMacOSTitleBar } from './components/SmallScreenModeMacOSTitleBar'
  import { NextVoiceMessagePlayerProvider } from './contexts/NextVoiceMessagePlayerContext'
+ import { ToastContextProvider } from './contexts/ToastContext'
 +import { VideoMiniPlayerProvider } from './components/VideoMiniPlayer'
  
  const log = getLogger('renderer/ScreenController')
  
-@@ -417,28 +418,30 @@ export default class ScreenController extends Component {
-                 inside of `DialogContextProvider`. */}
+@@ -365,28 +366,32 @@ export default class ScreenController extends Component {
                  <MediaPlayerMutexProvider>
                    <NextVoiceMessagePlayerProvider>
--                    <DialogContextProvider>
--                      <RuntimeAdapter accountId={this.selectedAccountId} />
--                      <KeybindingsContextProvider>
--                        <div className='main-container-container'>
--                          {this.state.smallScreenMode &&
--                            runtime.getRuntimeInfo().isMac && (
--                              <SmallScreenModeMacOSTitleBar />
--                            )}
--                          <div className='main-container'>
--                            <AccountListSidebar
--                              selectedAccountId={this.selectedAccountId}
--                              onAddAccount={this.addAndSelectAccount}
--                              onSelectAccount={this.selectAccount.bind(this)}
--                              openAccountDeletionScreen={this.openAccountDeletionScreen.bind(
--                                this
-+                    <VideoMiniPlayerProvider>
-+                      <DialogContextProvider>
-+                        <RuntimeAdapter accountId={this.selectedAccountId} />
-+                        <KeybindingsContextProvider>
-+                          <div className='main-container-container'>
-+                            {this.state.smallScreenMode &&
-+                              runtime.getRuntimeInfo().isMac && (
-+                                <SmallScreenModeMacOSTitleBar />
-                               )}
--                            />
--                            {this.renderScreen(this.selectedAccountId)}
-+                            <div className='main-container'>
-+                              <AccountListSidebar
-+                                selectedAccountId={this.selectedAccountId}
-+                                onAddAccount={this.addAndSelectAccount}
-+                                onSelectAccount={this.selectAccount.bind(this)}
-+                                openAccountDeletionScreen={this.openAccountDeletionScreen.bind(
-+                                  this
-+                                )}
-+                              />
-+                              {this.renderScreen(this.selectedAccountId)}
-+                            </div>
-                           </div>
--                        </div>
--                      </KeybindingsContextProvider>
--                    </DialogContextProvider>
-+                        </KeybindingsContextProvider>
-+                      </DialogContextProvider>
-+                    </VideoMiniPlayerProvider>
+                     <ToastContextProvider>
+-                      <DialogContextProvider>
+-                        <RuntimeAdapter accountId={this.selectedAccountId} />
+-                        <KeybindingsContextProvider>
+-                          <div className='main-container-container'>
+-                            {this.state.smallScreenMode &&
+-                              runtime.getRuntimeInfo().isMac && (
+-                                <SmallScreenModeMacOSTitleBar />
+-                              )}
+-                            <div className='main-container'>
+-                              <AccountListSidebar
+-                                selectedAccountId={this.selectedAccountId}
+-                                onAddAccount={this.addAndSelectAccount}
+-                                onSelectAccount={this.selectAccount.bind(this)}
+-                                openAccountDeletionScreen={this.openAccountDeletionScreen.bind(
+-                                  this
++                      <VideoMiniPlayerProvider>
++                        <DialogContextProvider>
++                          <RuntimeAdapter accountId={this.selectedAccountId} />
++                          <KeybindingsContextProvider>
++                            <div className='main-container-container'>
++                              {this.state.smallScreenMode &&
++                                runtime.getRuntimeInfo().isMac && (
++                                  <SmallScreenModeMacOSTitleBar />
+                                 )}
+-                              />
+-                              {this.renderScreen(this.selectedAccountId)}
++                              <div className='main-container'>
++                                <AccountListSidebar
++                                  selectedAccountId={this.selectedAccountId}
++                                  onAddAccount={this.addAndSelectAccount}
++                                  onSelectAccount={this.selectAccount.bind(
++                                    this
++                                  )}
++                                  openAccountDeletionScreen={this.openAccountDeletionScreen.bind(
++                                    this
++                                  )}
++                                />
++                                {this.renderScreen(this.selectedAccountId)}
++                              </div>
+                             </div>
+-                          </div>
+-                        </KeybindingsContextProvider>
+-                      </DialogContextProvider>
++                          </KeybindingsContextProvider>
++                        </DialogContextProvider>
++                      </VideoMiniPlayerProvider>
+                     </ToastContextProvider>
                    </NextVoiceMessagePlayerProvider>
                  </MediaPlayerMutexProvider>
-               </ContextMenuProvider>
 diff --git a/packages/frontend/src/components/VideoMiniPlayer/index.tsx b/packages/frontend/src/components/VideoMiniPlayer/index.tsx
 new file mode 100644
 index 0000000000000000000000000000000000000000..5780e6dab0f9a2c3d4bdb4322e6cfd86c2d1e0ab
@@ -588,7 +594,7 @@ index 35e6f8fcffcb2e9c5f6b2baee7e00b48702f09bf..ff00b77e0fa32020c19021f5f382948c
        </VjsPlayer>
      </I18nContext.Provider>
 diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
-index b5ab46390466199b3d51cb1348e6a3a82178d87e..44fb2ad631397503c3cc78995270caf6850f0d00 100644
+index 0987b199c4f1ef1c9d51df5a4c589ad4b1e377b7..bf28f39fc239ed91e220ccbd7810b1da2c8b5221 100644
 --- a/packages/frontend/src/components/attachment/messageAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
 @@ -239,6 +239,7 @@ export default function Attachment({

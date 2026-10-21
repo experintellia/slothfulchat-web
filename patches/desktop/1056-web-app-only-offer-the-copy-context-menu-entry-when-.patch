@@ -27,7 +27,7 @@ dead code.
  1 file changed, 13 insertions(+), 7 deletions(-)
 
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index 9ebcadb657afb62f29da8273ae95226ab2e7df84..ac2645c545784c199532c61215a2c2962a075058 100644
+index d6e0baf0620f50c3020cd9735b3cb1a3ddc5ddf8..e83c3a729c7c64bfe156132facb8ddddbbf783b3 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -301,7 +301,7 @@ function buildContextMenu(

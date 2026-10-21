@@ -36,19 +36,29 @@ shows. The choice lives in InstantOnboardingContext so account creation
 and the consent link always agree; a scanned account/login QR still
 overrides everything.
 
+Rebased onto v2.62.0: upstream dropped its default instance, and without
+a scanned code it lets core probe its built-in relays on TCP 443
+(initTransports, 1171b3e4a #6774), which the WS→TCP bridge doesn't
+tunnel. desktop/1020 therefore keeps the old default (nine.testrun.org)
+as DEFAULT_CHATMAIL_HOSTNAME in slothfulInstanceConfig, and the picker's
+default row is that relay or the operator's, exactly as before. Account
+creation always passes a concrete dcaccount: code. UserAgreement.tsx and
+chatmailInstances.ts are gone upstream (6d50a231b #6746), so the
+consent-link override lives in InstantOnboardingScreen next to
+upstream's generic link.
+
 Co-Authored-By: Claude <noreply@anthropic.com>
 ---
- .../WelcomeScreen/InstantOnboardingScreen.tsx |   5 +
+ .../WelcomeScreen/InstantOnboardingScreen.tsx |  14 +-
  .../screens/WelcomeScreen/RelayPicker.tsx     |  95 ++++++
  .../WelcomeScreen/RelayPickerDialog.tsx       | 238 ++++++++++++++
- .../screens/WelcomeScreen/UserAgreement.tsx   |  29 +-
- .../screens/WelcomeScreen/relayDirectory.ts   | 290 ++++++++++++++++++
+ .../screens/WelcomeScreen/relayDirectory.ts   | 292 ++++++++++++++++++
  .../WelcomeScreen/relayDirectoryParse.ts      |  51 +++
  .../screens/WelcomeScreen/styles.module.scss  | 264 ++++++++++++++++
  .../src/contexts/InstantOnboardingContext.tsx |  14 +
- .../src/hooks/useInstantOnboarding.ts         |  21 +-
+ .../src/hooks/useInstantOnboarding.ts         |  24 +-
  .../frontend/src/tests/relayDirectory.test.ts | 102 ++++++
- 10 files changed, 1096 insertions(+), 13 deletions(-)
+ 9 files changed, 1086 insertions(+), 8 deletions(-)
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/RelayPickerDialog.tsx
  create mode 100644 packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
@@ -56,7 +66,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
  create mode 100644 packages/frontend/src/tests/relayDirectory.test.ts
 
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
-index 58ab5d86d32572eaa4c9ad4a3325a1ab3f46bc11..1407c267366bcceb7349d317713b4d4687721121 100644
+index 8f0ef60f7b30b94a43844183c673370b1abefcd8..aba5074e02fe568b43fb58dd9a5ec5dd3379d561 100644
 --- a/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/InstantOnboardingScreen.tsx
 @@ -3,6 +3,7 @@ import React, { useContext, useEffect, useState } from 'react'
@@ -64,20 +74,48 @@ index 58ab5d86d32572eaa4c9ad4a3325a1ab3f46bc11..1407c267366bcceb7349d317713b4d46
  import Button from '../../Button'
  import ProfileImageSelector from '../../dialogs/EditProfileDialog/ProfileImageSelector'
 +import RelayPicker from './RelayPicker'
- import UserAgreement from './UserAgreement'
+ import { ClickableLink } from '../../helpers/ClickableLink'
  import useAlertDialog from '../../../hooks/dialog/useAlertDialog'
  import useChat from '../../../hooks/chat/useChat'
-@@ -169,6 +170,10 @@ export default function InstantOnboardingScreen({
+@@ -96,7 +97,7 @@ export default function InstantOnboardingScreen({
+   const { createInstantAccount, resetInstantOnboarding } =
+     useInstantOnboarding()
+   const { selectChat } = useChat()
+-  const { welcomeQr } = useInstantOnboarding()
++  const { welcomeQr, selectedRelayHost } = useInstantOnboarding()
+   const { openDialog } = useDialog()
+ 
+   const [displayName, setDisplayName] = useState('')
+@@ -213,13 +214,16 @@ export default function InstantOnboardingScreen({
+   }
+ 
+   // slothfulchat-web: unless a scanned account/login QR pins the server, the
+-  // address is created on a known relay — the operator's own default
++  // address is created on a known relay — the one picked in the onboarding
++  // relay dropdown (RelayPicker), the operator's own default
+   // (SLOTHFUL_DEFAULT_CHATMAIL) or the fallback one, matching
+   // `configurationQR` in useInstantOnboarding — so the consent link names
+   // that relay and points at ITS privacy policy, not the generic one.
+   const configuredHost =
+     welcomeQr?.qr.kind !== 'account' && welcomeQr?.qr.kind !== 'login'
+-      ? (instanceDefaultChatmailHost() ?? DEFAULT_CHATMAIL_HOSTNAME)
++      ? (selectedRelayHost ??
++        instanceDefaultChatmailHost() ??
++        DEFAULT_CHATMAIL_HOSTNAME)
+       : undefined
+ 
+   const onClickBack = () => {
+@@ -269,6 +273,10 @@ export default function InstantOnboardingScreen({
              <AdditionalActionInfo accountId={selectedAccountId} />
              <p>{tx('set_name_and_avatar_explain')}</p>
              <div className={styles.welcomeScreenButtonGroup}>
 +              {/* slothfulchat-web: pick the chatmail relay the address is
 +                  created on — right above the privacy-policy consent so the
-+                  policy link (UserAgreement) always matches the choice */}
++                  policy link always matches the choice */}
 +              <RelayPicker />
                <div className={styles.instantOnboardingAgreement}>
-                 {welcomeQr?.qr.kind !== 'login' && <UserAgreement />}
-                 {welcomeQr?.qr.kind === 'login' && (
+                 {welcomeQr?.qr.kind !== 'login' && configuredHost && (
+                   <ClickableLink
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx b/packages/frontend/src/components/screens/WelcomeScreen/RelayPicker.tsx
 new file mode 100644
 index 0000000000000000000000000000000000000000..5cb5ecf495a39f5a3cb7ec386308641828a6d68a
@@ -423,55 +461,12 @@ index 0000000000000000000000000000000000000000..509b69162d8b32bab314c1e1668d1343
 +    </Dialog>
 +  )
 +}
-diff --git a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-index de5acd99db378fbac3821190d16bd44138cd874d..f5438b4d09b4256d1ac781c395bd0d38641735a9 100644
---- a/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-+++ b/packages/frontend/src/components/screens/WelcomeScreen/UserAgreement.tsx
-@@ -36,21 +36,26 @@ function extractLinkFromQrCode(qrWithUrl: QrWithUrl<AccountQr>) {
- 
- export default function UserAgreement() {
-   const tx = useTranslationFunction()
--  const { welcomeQr } = useInstantOnboarding()
-+  const { welcomeQr, selectedRelayHost } = useInstantOnboarding()
-   const isDefaultInstance = isQRWithDefaultInstance(welcomeQr)
- 
--  // slothfulchat-web: when the operator configured their own default chatmail
--  // relay (SLOTHFUL_DEFAULT_CHATMAIL) and the account is actually created on
--  // it — i.e. the user didn't scan a specific account/login QR — the consent
--  // link must name that relay and point at ITS privacy policy, not upstream's
--  // default instance. `configurationQR` in useInstantOnboarding keeps the
--  // configured default for exactly these (non-account, non-login) cases.
--  const configuredHost =
--    isDefaultInstance &&
--    welcomeQr?.qr.kind !== 'account' &&
--    welcomeQr?.qr.kind !== 'login'
--      ? instanceDefaultChatmailHost()
-+  // slothfulchat-web: the relay actually signed up on can differ from
-+  // upstream's default instance — because the operator configured their own
-+  // default relay (SLOTHFUL_DEFAULT_CHATMAIL), or because the user picked one
-+  // in the onboarding relay dropdown (RelayPicker). Both only apply when the
-+  // account is really created on that relay — i.e. the user didn't scan a
-+  // specific account/login QR (matching `configurationQR` in
-+  // useInstantOnboarding) — and then the consent link must name that relay
-+  // and point at ITS privacy policy. The dropdown choice wins over the
-+  // configured default, exactly like it does for account creation.
-+  const relayChoosable =
-+    welcomeQr?.qr.kind !== 'account' && welcomeQr?.qr.kind !== 'login'
-+  const pickedHost =
-+    isDefaultInstance && relayChoosable
-+      ? (selectedRelayHost ?? instanceDefaultChatmailHost())
-       : undefined
-+  const configuredHost =
-+    pickedHost === DEFAULT_CHATMAIL_HOSTNAME ? undefined : pickedHost
- 
-   return (
-     <>
 diff --git a/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..a37fe2ea36d996ce1baf9b8b7f492bd498d747a4
+index 0000000000000000000000000000000000000000..66cb2891c77e66101bffa1ebc08fd0bd0297e6b7
 --- /dev/null
 +++ b/packages/frontend/src/components/screens/WelcomeScreen/relayDirectory.ts
-@@ -0,0 +1,290 @@
+@@ -0,0 +1,292 @@
 +// slothfulchat-web: live directory of public chatmail relays for the
 +// instant-onboarding relay picker.
 +//
@@ -491,9 +486,11 @@ index 0000000000000000000000000000000000000000..a37fe2ea36d996ce1baf9b8b7f492bd4
 +
 +import { getLogger } from '@deltachat-desktop/shared/logger'
 +
-+import { DEFAULT_CHATMAIL_HOSTNAME } from './chatmailInstances'
 +import { parseRelayDirectory } from './relayDirectoryParse'
-+import { instanceDefaultChatmailHost } from '../../../utils/slothfulInstanceConfig'
++import {
++  DEFAULT_CHATMAIL_HOSTNAME,
++  instanceDefaultChatmailHost,
++} from '../../../utils/slothfulInstanceConfig'
 +
 +const log = getLogger('renderer/WelcomeScreen/relayDirectory')
 +
@@ -532,7 +529,7 @@ index 0000000000000000000000000000000000000000..a37fe2ea36d996ce1baf9b8b7f492bd4
 +
 +/** The relay the "create profile" button signs up on when the user doesn't
 + * pick anything else: the operator-configured SLOTHFUL_DEFAULT_CHATMAIL relay,
-+ * falling back to upstream's default instance. */
++ * falling back to the fork's default instance (upstream's old one). */
 +export function defaultRelayHost(): string {
 +  return instanceDefaultChatmailHost() ?? DEFAULT_CHATMAIL_HOSTNAME
 +}
@@ -1129,18 +1126,18 @@ index 9c2fc6e2957eb7c7af51f516ba44dbbba3a93285..a92312f69d22da0b2348816baf1c1cb3
  
    return (
 diff --git a/packages/frontend/src/hooks/useInstantOnboarding.ts b/packages/frontend/src/hooks/useInstantOnboarding.ts
-index 17d65c0f8fee3c4b5d500a5429770cc9f467b253..6c95d7208c6186caa91bea5ccdc177815e00d4bd 100644
+index 6b1d6d70dc4efab50379fdb49e22891ab5beb954..141352a0f8d34b9838da613c928ad3b65168b12c 100644
 --- a/packages/frontend/src/hooks/useInstantOnboarding.ts
 +++ b/packages/frontend/src/hooks/useInstantOnboarding.ts
-@@ -6,6 +6,7 @@ import { ConfigureProgressDialog } from '../components/dialogs/ConfigureProgress
- import { DEFAULT_CHATMAIL_HOSTNAME } from '../components/screens/WelcomeScreen/chatmailInstances'
- import { InstantOnboardingContext } from '../contexts/InstantOnboardingContext'
- import { instanceDefaultChatmailQr } from '../utils/slothfulInstanceConfig'
+@@ -8,6 +8,7 @@ import {
+   DEFAULT_CHATMAIL_HOSTNAME,
+   instanceDefaultChatmailQr,
+ } from '../utils/slothfulInstanceConfig'
 +import { defaultRelayHost } from '../components/screens/WelcomeScreen/relayDirectory'
  
  import type { T } from '@deltachat/jsonrpc-client'
  import type { WelcomeQrWithUrl } from '../contexts/InstantOnboardingContext'
-@@ -29,6 +30,11 @@ type InstantOnboarding = {
+@@ -25,6 +26,11 @@ type InstantOnboarding = {
     */
    startInstantOnboardingFlow: (qrWithUrl?: WelcomeQrWithUrl) => Promise<void>
    welcomeQr?: WelcomeQrWithUrl
@@ -1152,7 +1149,7 @@ index 17d65c0f8fee3c4b5d500a5429770cc9f467b253..6c95d7208c6186caa91bea5ccdc17781
  }
  
  /*
-@@ -51,6 +57,8 @@ export default function useInstantOnboarding(): InstantOnboarding {
+@@ -47,6 +53,8 @@ export default function useInstantOnboarding(): InstantOnboarding {
      setWelcomeQr,
      showInstantOnboarding,
      welcomeQr,
@@ -1161,22 +1158,29 @@ index 17d65c0f8fee3c4b5d500a5429770cc9f467b253..6c95d7208c6186caa91bea5ccdc17781
    } = context
  
    const startInstantOnboardingFlow = useCallback(
-@@ -85,6 +93,14 @@ export default function useInstantOnboarding(): InstantOnboarding {
-       let configurationQR =
-         instanceDefaultChatmailQr() ?? `dcaccount:${DEFAULT_CHATMAIL_HOSTNAME}`
+@@ -78,14 +86,17 @@ export default function useInstantOnboarding(): InstantOnboarding {
+       // 443, which the WS→TCP bridge doesn't tunnel (see
+       // DEFAULT_CHATMAIL_HOSTNAME). So unless a scanned dcaccount:/dclogin:
+       // (or webimapaccount:) code pins the server, sign up on a concrete
+-      // relay: the operator's own (SLOTHFUL_DEFAULT_CHATMAIL, baked into
+-      // window.__slothfulConfig.defaultChatmailInstance) or the fallback
++      // relay: the one picked in the onboarding relay dropdown (RelayPicker),
++      // else the operator's own (SLOTHFUL_DEFAULT_CHATMAIL, baked into
++      // window.__slothfulConfig.defaultChatmailInstance), else the fallback
+       // default. That includes invites, whose relays core would probe too.
+       const configurationQR =
+         welcomeQr?.qr.kind === 'account' || welcomeQr?.qr.kind === 'login'
+           ? welcomeQr.url
+-          : (instanceDefaultChatmailQr() ??
+-            `dcaccount:${DEFAULT_CHATMAIL_HOSTNAME}`)
++          : selectedRelayHost && selectedRelayHost !== defaultRelayHost()
++            ? `dcaccount:${selectedRelayHost}`
++            : (instanceDefaultChatmailQr() ??
++              `dcaccount:${DEFAULT_CHATMAIL_HOSTNAME}`)
  
-+      // slothfulchat-web: a relay picked in the onboarding dropdown replaces
-+      // the default signup target. Deliberately BEFORE the welcomeQr handling:
-+      // a scanned dcaccount:/dclogin: QR pins the server and must keep
-+      // winning over the dropdown (which isn't shown in those flows anyway).
-+      if (selectedRelayHost && selectedRelayHost !== defaultRelayHost()) {
-+        configurationQR = `dcaccount:${selectedRelayHost}`
-+      }
-+
-       if (welcomeQr) {
-         if (welcomeQr.qr.kind === 'account') {
-           // override the default chatmail instance set above
-@@ -179,12 +195,13 @@ export default function useInstantOnboarding(): InstantOnboarding {
+       return new Promise((resolve, reject) => {
+         // show the configure progress dialog where
+@@ -161,12 +172,13 @@ export default function useInstantOnboarding(): InstantOnboarding {
          })
        })
      },
@@ -1191,7 +1195,7 @@ index 17d65c0f8fee3c4b5d500a5429770cc9f467b253..6c95d7208c6186caa91bea5ccdc17781
    }
  
    return {
-@@ -193,5 +210,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
+@@ -175,5 +187,7 @@ export default function useInstantOnboarding(): InstantOnboarding {
      showInstantOnboarding,
      startInstantOnboardingFlow,
      welcomeQr,

@@ -14,17 +14,32 @@ The Reactions dialog is gone: its contact list (avatar, name, emoji,
 click-through to the profile) now renders as a "Reactions" section at the
 end of the message info dialog, after read receipts and attachment details,
 so who-reacted and who-read live in one place.
+
+Rebased onto v2.62.0: upstream rewrote the Reactions dialog meanwhile
+(49a33099d, aaf99cad2, ee7433f49, 0a31d3a6a: emoji pills that toggle
+your reaction, a total count, live updates). This patch still removes
+it, since the pills under the message toggle directly and the
+who-reacted list lives in Message Info, so upstream's dialog code
+(pills, live refresh) is deleted with it and its stylesheet loses the
+pill classes. Reactions keeps upstream's render-all and visually-hidden
+overflow (781bedd9f). ReactionsBar's doc-link import of the deleted
+dialog is dropped too.
 ---
- .../src/components/PeopleHoverInfo/index.tsx  |  8 +++-
- .../src/components/Reactions/index.tsx        | 40 +++++++++++++++----
- .../components/Reactions/styles.module.scss   |  4 +-
- .../MessageDetail/BasicMessageInfo.tsx        | 14 +++++++
- .../ReactionsList.module.scss}                |  3 +-
- .../ReactionsList.tsx}                        | 31 ++------------
- .../src/components/message/Message.tsx        |  4 +-
- 7 files changed, 63 insertions(+), 41 deletions(-)
- rename packages/frontend/src/components/dialogs/{ReactionsDialog/styles.module.scss => MessageDetail/ReactionsList.module.scss} (94%)
- rename packages/frontend/src/components/dialogs/{ReactionsDialog/index.tsx => MessageDetail/ReactionsList.tsx} (81%)
+ .../src/components/PeopleHoverInfo/index.tsx  |   8 +-
+ .../src/components/Reactions/index.tsx        |  52 ++-
+ .../components/Reactions/styles.module.scss   |   4 +-
+ .../components/ReactionsBar/ReactionsBar.tsx  |   5 -
+ .../MessageDetail/BasicMessageInfo.tsx        |  14 +
+ .../MessageDetail/ReactionsList.module.scss   |  39 ++
+ .../dialogs/MessageDetail/ReactionsList.tsx   | 129 +++++++
+ .../dialogs/ReactionsDialog/index.tsx         | 340 ------------------
+ .../ReactionsDialog/styles.module.scss        |  69 ----
+ .../src/components/message/Message.tsx        |  13 +-
+ 10 files changed, 232 insertions(+), 441 deletions(-)
+ create mode 100644 packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss
+ create mode 100644 packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.tsx
+ delete mode 100644 packages/frontend/src/components/dialogs/ReactionsDialog/index.tsx
+ delete mode 100644 packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss
 
 diff --git a/packages/frontend/src/components/PeopleHoverInfo/index.tsx b/packages/frontend/src/components/PeopleHoverInfo/index.tsx
 index b4ff74629aa984a070942fa82397ed7bd08279dd..3ee863f8378e95fef8b153ea004972114858ccbe 100644
@@ -46,7 +61,7 @@ index b4ff74629aa984a070942fa82397ed7bd08279dd..3ee863f8378e95fef8b153ea00497211
        {props.children}
        {open && (
 diff --git a/packages/frontend/src/components/Reactions/index.tsx b/packages/frontend/src/components/Reactions/index.tsx
-index 1c9bc983b3282eadfbc971be2416c86286a915b4..773d813724b0d4c5959f9c1388cfdd62e46116fe 100644
+index 8dbaea418d5fca331e5192c498cc6eab45106a3f..df85fc846e1450043cf38d4f9cee93206b5bea63 100644
 --- a/packages/frontend/src/components/Reactions/index.tsx
 +++ b/packages/frontend/src/components/Reactions/index.tsx
 @@ -2,7 +2,9 @@ import React, { useMemo } from 'react'
@@ -60,7 +75,7 @@ index 1c9bc983b3282eadfbc971be2416c86286a915b4..773d813724b0d4c5959f9c1388cfdd62
  import {
    HoverInfoTrigger,
    PeopleHoverCard,
-@@ -14,11 +16,17 @@ import styles from './styles.module.scss'
+@@ -14,15 +16,18 @@ import styles from './styles.module.scss'
  
  import type { T } from '@deltachat/jsonrpc-client'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
@@ -72,19 +87,40 @@ index 1c9bc983b3282eadfbc971be2416c86286a915b4..773d813724b0d4c5959f9c1388cfdd62
  // most used emojis come first in this list.
  
  type Props = {
+-  message: Pick<T.Message, 'id' | 'reactions'> & {
+-    reactions: NonNullable<T.Message['reactions']>
+-  }
+-  chatType: T.FullChat['chatType']
 +  messageId: number
 +  /** Whether the reactions bar would be offered here (`showReactionsUi`). */
 +  canReact: boolean
-   reactions: T.Reactions
++  reactions: T.Reactions
    tabindexForInteractiveContents: -1 | 0
    messageWidth: number
-@@ -58,10 +66,26 @@ export default function Reactions(props: Props) {
+ }
+@@ -30,10 +35,10 @@ type Props = {
+ export default function Reactions(props: Props) {
+   const tx = useTranslationFunction()
+ 
+-  const { messageWidth, chatType } = props
++  const { messageWidth } = props
+ 
+   const { openDialog } = useDialog()
+-  const { reactions, reactionsByContact } = props.message.reactions
++  const { reactions, reactionsByContact } = props.reactions
+ 
+   // Compute visibleEmojis and hiddenReactionsCount from props
+   const { visibleEmojis, hiddenReactionsCount } = useMemo(() => {
+@@ -61,13 +66,26 @@ export default function Reactions(props: Props) {
      }
    }, [messageWidth, reactions])
  
 -  const handleClick = () => {
 -    openDialog(ReactionsDialog, {
--      reactionsByContact,
+-      message: props.message,
+-      // Subscribers of a channel only get to know the accumulated reactions,
+-      // not who reacted with what.
+-      showContacts: chatType !== 'InBroadcast',
 -    })
 +  const openMessageInfo = () => {
 +    openDialog(MessageDetail, { id: props.messageId })
@@ -109,16 +145,16 @@ index 1c9bc983b3282eadfbc971be2416c86286a915b4..773d813724b0d4c5959f9c1388cfdd62
    }
  
    // Emojis that don't fit and are collapsed into the "+N" pill.
-@@ -75,7 +99,7 @@ export default function Reactions(props: Props) {
-             key={emoji}
-             align='start'
-             className={styles.emojiTrigger}
+@@ -86,7 +104,7 @@ export default function Reactions(props: Props) {
+               // so as to not trigger `aria-live` announcements on resize.
+               'visually-hidden': index >= visibleEmojis,
+             })}
 -            onClick={handleClick}
 +            onClick={() => toggleReaction(emoji, isFromSelf)}
              card={
                <ReactorsHoverCard
                  reactionsByContact={reactionsByContact}
-@@ -99,7 +123,7 @@ export default function Reactions(props: Props) {
+@@ -110,7 +128,7 @@ export default function Reactions(props: Props) {
          <HoverInfoTrigger
            align='start'
            className={styles.emojiTrigger}
@@ -127,7 +163,7 @@ index 1c9bc983b3282eadfbc971be2416c86286a915b4..773d813724b0d4c5959f9c1388cfdd62
            card={
              <ReactorsHoverCard
                reactionsByContact={reactionsByContact}
-@@ -118,7 +142,7 @@ export default function Reactions(props: Props) {
+@@ -132,7 +150,7 @@ export default function Reactions(props: Props) {
          type='button'
          className={styles.openReactionsListDialogButton}
          aria-label={tx('more_info_desktop')}
@@ -137,10 +173,10 @@ index 1c9bc983b3282eadfbc971be2416c86286a915b4..773d813724b0d4c5959f9c1388cfdd62
        ></button>
      </div>
 diff --git a/packages/frontend/src/components/Reactions/styles.module.scss b/packages/frontend/src/components/Reactions/styles.module.scss
-index 52d2acff2602782f90dbbd1df1cba8c15b3549b9..33ad06b754716f468a06d09637743890d56f9ed8 100644
+index e8f692edc6d014c392cedf02582cc45894d28c07..01165842e044f741fd3c55e5dd44a519b176444f 100644
 --- a/packages/frontend/src/components/Reactions/styles.module.scss
 +++ b/packages/frontend/src/components/Reactions/styles.module.scss
-@@ -12,8 +12,8 @@
+@@ -11,8 +11,8 @@
  }
  
  // Each pill is wrapped in a hover trigger. Raise it above the
@@ -151,8 +187,31 @@ index 52d2acff2602782f90dbbd1df1cba8c15b3549b9..33ad06b754716f468a06d09637743890
  .emojiTrigger {
    position: relative;
    z-index: 1;
+diff --git a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx b/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
+index eba8553dfb6b34dba08b9750ff1d768f6f442a33..75c88b98a06f1633475d27e3bab45e4fe8422d59 100644
+--- a/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
++++ b/packages/frontend/src/components/ReactionsBar/ReactionsBar.tsx
+@@ -18,8 +18,6 @@ import {
+ import useChat from '../../hooks/chat/useChat'
+ import useAlertDialog from '../../hooks/dialog/useAlertDialog'
+ import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
+-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+-import ReactionsDialog from '../dialogs/ReactionsDialog'
+ 
+ const log = getLogger('ReactionsBar')
+ 
+@@ -38,9 +36,6 @@ type Props = {
+ 
+ const DEFAULT_EMOJIS = ['👍', '👎', '❤️', '😂', '🙁']
+ 
+-/**
+- * This is very similar to {@linkcode ReactionsDialog}.
+- */
+ export default function ReactionsBar({
+   onClick,
+   messageId,
 diff --git a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
-index b6e27a62a1879eef2daaab7681b3cdd0cff2a725..6b8937738076bd21378d5f7f41b2924d2ce22b25 100644
+index 364ff384c69cd9beaae1b060b975bc61fdd9e388..a3ec45619a8e9bc677026da4121ce6946fbd8b1c 100644
 --- a/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/BasicMessageInfo.tsx
 @@ -11,6 +11,7 @@ import useTranslationFunction from '../../../hooks/useTranslationFunction'
@@ -183,105 +242,633 @@ index b6e27a62a1879eef2daaab7681b3cdd0cff2a725..6b8937738076bd21378d5f7f41b2924d
      </div>
    )
  }
-diff --git a/packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss
-similarity index 94%
-rename from packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss
-rename to packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss
-index 6428172a3e1ba5d59107e0915dfb7136e297ff20..22f4aab8e7b0591ffa28c4c5f9380a7c8fa87b0d 100644
---- a/packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss
+diff --git a/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss
+new file mode 100644
+index 0000000000000000000000000000000000000000..22f4aab8e7b0591ffa28c4c5f9380a7c8fa87b0d
+--- /dev/null
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.module.scss
-@@ -1,8 +1,7 @@
- @use '../../../../scss/mixins';
- 
- .reactionsDialogList {
--  margin: 0;
--  margin-bottom: 1rem;
+@@ -0,0 +1,39 @@
++@use '../../../../scss/mixins';
++
++.reactionsDialogList {
 +  margin: 0 10px;
- }
- 
- .reactionsDialogListItem {
-diff --git a/packages/frontend/src/components/dialogs/ReactionsDialog/index.tsx b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.tsx
-similarity index 81%
-rename from packages/frontend/src/components/dialogs/ReactionsDialog/index.tsx
-rename to packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.tsx
-index 5db62c002d3621dc79ba5e600e852edb7837e9de..1619fed29b2057d1341b3328e4390ddf57880c6c 100644
---- a/packages/frontend/src/components/dialogs/ReactionsDialog/index.tsx
++}
++
++.reactionsDialogListItem {
++  @include mixins.button-reset;
++
++  width: 100%;
++  align-items: center;
++  display: flex;
++  justify-content: space-between;
++  border-radius: 10px;
++}
++
++.reactionsDialogListClickable {
++  &:hover,
++  &:focus {
++    background-color: var(--chatListItemBgHover);
++  }
++}
++
++.reactionsDialogAvatar {
++  flex: 0 0 48px;
++  margin-inline: 10px;
++}
++
++.reactionsDialogContactName {
++  flex: 1;
++  margin-inline-end: 10px;
++  overflow: hidden;
++}
++
++.reactionsDialogEmoji {
++  flex: 0 0 50px;
++  font-size: 20px;
++  text-align: center;
++}
+diff --git a/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.tsx b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..1619fed29b2057d1341b3328e4390ddf57880c6c
+--- /dev/null
 +++ b/packages/frontend/src/components/dialogs/MessageDetail/ReactionsList.tsx
-@@ -1,16 +1,13 @@
- import React, { useEffect, useRef, useState } from 'react'
- import classNames from 'classnames'
- 
+@@ -0,0 +1,129 @@
++import React, { useEffect, useRef, useState } from 'react'
++import classNames from 'classnames'
++
++import { selectedAccountId } from '../../../ScreenController'
++import { BackendRemote } from '../../../backend-com'
++import { AvatarFromContact } from '../../Avatar'
++import ContactName from '../../ContactName'
++
++import styles from './ReactionsList.module.scss'
++
++import { type T, C } from '@deltachat/jsonrpc-client'
++
++import useOpenViewProfileDialog from '../../../hooks/dialog/useOpenViewProfileDialog'
++import {
++  RovingTabindexProvider,
++  useRovingTabindex,
++} from '../../../contexts/RovingTabindex'
++
++type Props = {
++  reactionsByContact: T.Reactions['reactionsByContact']
++  onClose?: () => void
++}
++
++type ContactWithReaction = T.Contact & {
++  emoji: string
++}
++
++/** Who reacted with what, shown at the end of the message info dialog. */
++export function ReactionsList({ reactionsByContact, onClose }: Props) {
++  const accountId = selectedAccountId()
++  const [contacts, setContacts] = useState<ContactWithReaction[]>([])
++  const openViewProfileDialog = useOpenViewProfileDialog({ onAction: onClose })
++
++  const ref = useRef<HTMLUListElement>(null)
++
++  useEffect(() => {
++    const resolveContacts = async () => {
++      const contactIds = Object.keys(reactionsByContact).map(contactId =>
++        parseInt(contactId, 10)
++      )
++
++      const result = await BackendRemote.rpc.getContactsByIds(
++        accountId,
++        contactIds
++      )
++
++      setContacts(
++        Object.values(result).map(contact => {
++          return {
++            ...contact,
++            // Even though multiple reactions are supported by the core we do
++            // not display or support them here in the UI. Currently we only
++            // pick the "first" reaction by that user
++            emoji: reactionsByContact[contact.id][0],
++          }
++        })
++      )
++    }
++
++    resolveContacts()
++  }, [accountId, reactionsByContact])
++
++  return (
++    <ul ref={ref} className={styles.reactionsDialogList}>
++      <RovingTabindexProvider wrapperElementRef={ref}>
++        {contacts.map(contact => (
++          <li key={contact.id}>
++            <ReactionsDialogListItem
++              contact={contact}
++              onClickNonSelf={contactId =>
++                openViewProfileDialog(accountId, contactId)
++              }
++            />
++          </li>
++        ))}
++      </RovingTabindexProvider>
++    </ul>
++  )
++}
++
++function ReactionsDialogListItem(props: {
++  contact: ContactWithReaction
++  onClickNonSelf: (contactId: number) => void
++}) {
++  const { contact, onClickNonSelf } = props
++  const notFromSelf = C.DC_CONTACT_ID_SELF !== contact.id
++
++  const ref = useRef<HTMLButtonElement>(null)
++  const rovingTabindex = useRovingTabindex(ref)
++
++  return (
++    <button
++      type='button'
++      ref={ref}
++      onClick={() => {
++        if (notFromSelf) {
++          onClickNonSelf(contact.id)
++        }
++      }}
++      // `aria-disabled` instead of just `disabled` because we probably
++      // still want to keep it focusable for screen-readers.
++      aria-disabled={!notFromSelf}
++      className={classNames(
++        styles.reactionsDialogListItem,
++        rovingTabindex.className,
++        {
++          [styles.reactionsDialogListClickable]: notFromSelf,
++        }
++      )}
++      tabIndex={rovingTabindex.tabIndex}
++      onKeyDown={rovingTabindex.onKeydown}
++      onFocus={rovingTabindex.setAsActiveElement}
++    >
++      <div className={styles.reactionsDialogAvatar}>
++        <AvatarFromContact
++          contact={contact}
++          // Avatar is purely decorative here,
++          // and is redundant accessibility-wise,
++          // because we display the contact name below.
++          aria-hidden={true}
++        />
++      </div>
++      <div className={styles.reactionsDialogContactName}>
++        <ContactName displayName={contact.displayName} />
++      </div>
++      <div className={styles.reactionsDialogEmoji}>{contact.emoji}</div>
++    </button>
++  )
++}
+diff --git a/packages/frontend/src/components/dialogs/ReactionsDialog/index.tsx b/packages/frontend/src/components/dialogs/ReactionsDialog/index.tsx
+deleted file mode 100644
+index 2af10bf5a4cb553766a3b9003da86417bbb3f64e..0000000000000000000000000000000000000000
+--- a/packages/frontend/src/components/dialogs/ReactionsDialog/index.tsx
++++ /dev/null
+@@ -1,340 +0,0 @@
+-import React, {
+-  useEffect,
+-  useEffectEvent,
+-  useMemo,
+-  useRef,
+-  useState,
+-} from 'react'
+-import classNames from 'classnames'
+-
 -import Dialog, { DialogBody, DialogContent, DialogHeader } from '../../Dialog'
 -import useTranslationFunction from '../../../hooks/useTranslationFunction'
- import { selectedAccountId } from '../../../ScreenController'
- import { BackendRemote } from '../../../backend-com'
- import { AvatarFromContact } from '../../Avatar'
- import ContactName from '../../ContactName'
- 
+-import { selectedAccountId } from '../../../ScreenController'
+-import { BackendRemote, onDCEvent } from '../../../backend-com'
+-import { AvatarFromContact } from '../../Avatar'
+-import ContactName from '../../ContactName'
+-
 -import styles from './styles.module.scss'
-+import styles from './ReactionsList.module.scss'
- 
+-
 -import type { DialogProps } from '../../../contexts/DialogContext'
- import { type T, C } from '@deltachat/jsonrpc-client'
- 
- import useOpenViewProfileDialog from '../../../hooks/dialog/useOpenViewProfileDialog'
-@@ -19,7 +16,7 @@ import {
-   useRovingTabindex,
- } from '../../../contexts/RovingTabindex'
- 
+-import { type T, C } from '@deltachat/jsonrpc-client'
+-
+-import useOpenViewProfileDialog from '../../../hooks/dialog/useOpenViewProfileDialog'
+-import {
+-  RovingTabindexProvider,
+-  useRovingTabindex,
+-} from '../../../contexts/RovingTabindex'
+-import { useRpcFetch } from '../../../hooks/useFetch'
+-import { default as asyncThrottle } from '@jcoreio/async-throttle'
+-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+-import { BasicMessageInfo } from '../MessageDetail/BasicMessageInfo'
+-import { unknownErrorToString } from '@deltachat-desktop/shared/unknownErrorToString'
+-import useAlertDialog from '../../../hooks/dialog/useAlertDialog'
+-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+-import ReactionsBar from '../../ReactionsBar'
+-
 -export type Props = {
-+type Props = {
-   reactionsByContact: T.Reactions['reactionsByContact']
-   onClose?: () => void
- }
-@@ -28,28 +25,8 @@ type ContactWithReaction = T.Contact & {
-   emoji: string
- }
- 
+-  message: Pick<T.Message, 'id' | 'reactions'>
+-  /**
+-   * Whether it is known who reacted with what. This is not the case for
+-   * subscribers of a channel, they only know the accumulated reactions.
+-   */
+-  showContacts: boolean
+-  onClose?: () => void
+-}
+-
+-type ContactWithReaction = T.Contact & {
+-  emoji: string
+-}
+-
 -export default function ReactionsDialog({
--  reactionsByContact,
+-  message: originalMessage,
+-  showContacts,
 -  onClose,
 -}: Props & DialogProps) {
 -  const tx = useTranslationFunction()
 -
+-  /**
+-   * The `originalMessage` prop will not update as reactions change,
+-   * so we have to update it ourselves.
+-   * Similar to {@linkcode BasicMessageInfo}.
+-   */
+-  const [originalIsOutdated, setOriginalIsOutdated] = useState(false)
+-  const freshMessageFetch = useRpcFetch(
+-    useMemo(
+-      () =>
+-        asyncThrottle(
+-          BackendRemote.rpc.getMessage.bind(BackendRemote.rpc),
+-          250
+-        ),
+-      []
+-    ),
+-    originalIsOutdated ? [selectedAccountId(), originalMessage.id] : null
+-  )
+-  const refresh = useEffectEvent(() => freshMessageFetch?.refresh())
+-  useEffect(() => {
+-    return onDCEvent(selectedAccountId(), 'ReactionsChanged', ({ msgId }) => {
+-      if (msgId !== originalMessage.id) {
+-        return
+-      }
+-
+-      setOriginalIsOutdated(true)
+-      refresh()
+-    })
+-  }, [originalMessage.id])
+-  const message = freshMessageFetch?.lingeringResult?.ok
+-    ? freshMessageFetch.lingeringResult.value
+-    : originalMessage
+-
+-  const totalReactions =
+-    message.reactions == null
+-      ? 0
+-      : message.reactions.reactions
+-          .values()
+-          .map(r => r.count)
+-          .reduce((a, v) => a + v, 0)
+-
 -  return (
 -    <Dialog width={400} onClose={onClose}>
--      <DialogHeader title={tx('reactions')} onClose={onClose} />
+-      <DialogHeader
+-        title={
+-          <span aria-live='polite'>
+-            {tx('n_reactions', totalReactions.toLocaleString(), {
+-              quantity: totalReactions,
+-            })}
+-          </span>
+-        }
+-        onClose={onClose}
+-      />
 -      <DialogBody>
--        <DialogContent>
--          <ReactionsDialogList
--            reactionsByContact={reactionsByContact}
--            onClose={onClose}
--          />
--        </DialogContent>
+-        <div
+-          aria-live='polite'
+-          aria-relevant='all'
+-          style={{ display: 'contents' }}
+-        >
+-          <DialogContent>
+-            {message.reactions == null ||
+-            message.reactions.reactions.length === 0 ? (
+-              <></>
+-            ) : (
+-              <>
+-                <AccumulatedReactionsList
+-                  message={
+-                    message as typeof message & {
+-                      reactions: typeof message.reactions
+-                    }
+-                  }
+-                />
+-                {showContacts && (
+-                  <ReactionsDialogList
+-                    reactionsByContact={message.reactions.reactionsByContact}
+-                    onClose={onClose}
+-                  />
+-                )}
+-              </>
+-            )}
+-          </DialogContent>
+-        </div>
 -      </DialogBody>
 -    </Dialog>
 -  )
 -}
 -
--function ReactionsDialogList({ reactionsByContact, onClose }: Props) {
-+/** Who reacted with what, shown at the end of the message info dialog. */
-+export function ReactionsList({ reactionsByContact, onClose }: Props) {
-   const accountId = selectedAccountId()
-   const [contacts, setContacts] = useState<ContactWithReaction[]>([])
-   const openViewProfileDialog = useOpenViewProfileDialog({ onAction: onClose })
+-/**
+- * This is very similar to {@linkcode ReactionsBar}.
+- */
+-function AccumulatedReactionsList({
+-  message,
+-}: {
+-  message: Pick<T.Message, 'id' | 'reactions'> & {
+-    reactions: NonNullable<T.Message['reactions']>
+-  }
+-}) {
+-  const ref = useRef<HTMLUListElement>(null)
+-  const tx = useTranslationFunction()
+-  const openAlertDialog = useAlertDialog()
+-
+-  const toggleReaction = async (emoji: string) => {
+-    try {
+-      await BackendRemote.rpc.sendReaction(
+-        selectedAccountId(),
+-        message.id,
+-        emoji === message.reactions.reactions.find(v => v.isFromSelf)?.emoji
+-          ? []
+-          : [emoji]
+-      )
+-    } catch (error) {
+-      openAlertDialog({
+-        message: tx(
+-          'error_x',
+-          'failed to send reaction: ' + unknownErrorToString(error)
+-        ),
+-      })
+-    }
+-  }
+-
+-  return (
+-    <ul
+-      ref={ref}
+-      className={styles.accumulatedReactionsList}
+-      role='menubar'
+-      aria-label={tx('react')}
+-      aria-orientation='horizontal'
+-    >
+-      <RovingTabindexProvider wrapperElementRef={ref} direction='horizontal'>
+-        {message.reactions.reactions.map(({ emoji, count, isFromSelf }) => (
+-          <li role='presentation' key={emoji}>
+-            <ReactionButton
+-              key={emoji}
+-              emoji={emoji}
+-              count={count}
+-              isChecked={isFromSelf}
+-              onClick={() => toggleReaction(emoji)}
+-            />
+-          </li>
+-        ))}
+-      </RovingTabindexProvider>
+-    </ul>
+-  )
+-}
+-
+-function ReactionButton(props: {
+-  emoji: string
+-  count: number
+-  isChecked: boolean
+-  onClick: () => void
+-}) {
+-  const ref = useRef<HTMLButtonElement>(null)
+-  const rovingTabindex = useRovingTabindex(ref)
+-
+-  return (
+-    <button
+-      ref={ref}
+-      type='button'
+-      role='menuitemradio'
+-      aria-checked={props.isChecked}
+-      onClick={props.onClick}
+-      className={classNames(
+-        rovingTabindex.className,
+-        styles.accumulatedReactionsButton,
+-        {
+-          [styles.isFromSelf]: props.isChecked,
+-        }
+-      )}
+-      tabIndex={rovingTabindex.tabIndex}
+-      onKeyDown={rovingTabindex.onKeydown}
+-      onFocus={rovingTabindex.setAsActiveElement}
+-    >
+-      <span className={styles.accumulatedReactionsEmoji}>{props.emoji}</span>{' '}
+-      <span className={styles.accumulatedReactionsCount}>{props.count}</span>
+-    </button>
+-  )
+-}
+-
+-function ReactionsDialogList({
+-  reactionsByContact,
+-  onClose,
+-}: {
+-  reactionsByContact: T.Reactions['reactionsByContact']
+-  onClose?: () => void
+-}) {
+-  const accountId = selectedAccountId()
+-  const [contacts, setContacts] = useState<ContactWithReaction[]>([])
+-  const openViewProfileDialog = useOpenViewProfileDialog({ onAction: onClose })
+-
+-  const ref = useRef<HTMLUListElement>(null)
+-
+-  useEffect(() => {
+-    const resolveContacts = async () => {
+-      const contactIds = Object.keys(reactionsByContact).map(contactId =>
+-        parseInt(contactId, 10)
+-      )
+-
+-      const result = await BackendRemote.rpc.getContactsByIds(
+-        accountId,
+-        contactIds
+-      )
+-
+-      setContacts(
+-        Object.values(result).map(contact => {
+-          return {
+-            ...contact,
+-            // Even though multiple reactions are supported by the core we do
+-            // not display or support them here in the UI. Currently we only
+-            // pick the "first" reaction by that user
+-            emoji: reactionsByContact[contact.id][0],
+-          }
+-        })
+-      )
+-    }
+-
+-    resolveContacts()
+-  }, [accountId, reactionsByContact])
+-
+-  return (
+-    <ul ref={ref} className={styles.reactionsDialogList}>
+-      <RovingTabindexProvider wrapperElementRef={ref}>
+-        {contacts.map(contact => (
+-          <li key={contact.id}>
+-            <ReactionsDialogListItem
+-              contact={contact}
+-              onClickNonSelf={contactId =>
+-                openViewProfileDialog(accountId, contactId)
+-              }
+-            />
+-          </li>
+-        ))}
+-      </RovingTabindexProvider>
+-    </ul>
+-  )
+-}
+-
+-function ReactionsDialogListItem(props: {
+-  contact: ContactWithReaction
+-  onClickNonSelf: (contactId: number) => void
+-}) {
+-  const { contact, onClickNonSelf } = props
+-  const notFromSelf = C.DC_CONTACT_ID_SELF !== contact.id
+-
+-  const ref = useRef<HTMLButtonElement>(null)
+-  const rovingTabindex = useRovingTabindex(ref)
+-
+-  return (
+-    <button
+-      type='button'
+-      ref={ref}
+-      onClick={() => {
+-        if (notFromSelf) {
+-          onClickNonSelf(contact.id)
+-        }
+-      }}
+-      // `aria-disabled` instead of just `disabled` because we probably
+-      // still want to keep it focusable for screen-readers.
+-      aria-disabled={!notFromSelf}
+-      className={classNames(
+-        styles.reactionsDialogListItem,
+-        rovingTabindex.className,
+-        {
+-          [styles.reactionsDialogListClickable]: notFromSelf,
+-        }
+-      )}
+-      tabIndex={rovingTabindex.tabIndex}
+-      onKeyDown={rovingTabindex.onKeydown}
+-      onFocus={rovingTabindex.setAsActiveElement}
+-    >
+-      <div className={styles.reactionsDialogAvatar}>
+-        <AvatarFromContact
+-          contact={contact}
+-          // Avatar is purely decorative here,
+-          // and is redundant accessibility-wise,
+-          // because we display the contact name below.
+-          aria-hidden={true}
+-        />
+-      </div>
+-      <div className={styles.reactionsDialogContactName}>
+-        <ContactName displayName={contact.displayName} />
+-      </div>
+-      <div className={styles.reactionsDialogEmoji}>{contact.emoji}</div>
+-    </button>
+-  )
+-}
+diff --git a/packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss b/packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss
+deleted file mode 100644
+index b3e7de97b9eccdb6c156f57784564f7212ed35fa..0000000000000000000000000000000000000000
+--- a/packages/frontend/src/components/dialogs/ReactionsDialog/styles.module.scss
++++ /dev/null
+@@ -1,69 +0,0 @@
+-@use '../../../../scss/mixins';
+-
+-.reactionsDialogList {
+-  margin: 0;
+-  margin-bottom: 1rem;
+-}
+-
+-.reactionsDialogListItem {
+-  @include mixins.button-reset;
+-
+-  width: 100%;
+-  align-items: center;
+-  display: flex;
+-  justify-content: space-between;
+-  border-radius: 10px;
+-}
+-
+-.reactionsDialogListClickable {
+-  &:hover,
+-  &:focus {
+-    background-color: var(--chatListItemBgHover);
+-  }
+-}
+-
+-.reactionsDialogAvatar {
+-  flex: 0 0 48px;
+-  margin-inline: 10px;
+-}
+-
+-.reactionsDialogContactName {
+-  flex: 1;
+-  margin-inline-end: 10px;
+-  overflow: hidden;
+-}
+-
+-.reactionsDialogEmoji {
+-  flex: 0 0 50px;
+-  font-size: 20px;
+-  text-align: center;
+-}
+-
+-.accumulatedReactionsList {
+-  display: flex;
+-  flex-wrap: wrap;
+-  gap: 0.5rem 0.625rem;
+-}
+-
+-.accumulatedReactionsButton {
+-  @include mixins.button-reset;
+-
+-  padding: 0.125rem 0.5rem;
+-
+-  // Basically the same as with `.emoji` on message bubbles
+-  border-radius: 999999px;
+-  border: solid 1px rgba(100, 100, 100, 0.3);
+-  background-color: var(--messageIncomingBg);
+-  &.isFromSelf {
+-    background-color: var(--messageOutgoingBg);
+-  }
+-}
+-
+-.accumulatedReactionsEmoji {
+-  font-size: 1.125rem;
+-}
+-
+-.accumulatedReactionsCount {
+-  margin-inline: 0.125rem;
+-  overflow: hidden;
+-}
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index a4ef84c2f10e0471ebc2ab5d2f93819ad7b0a47e..22e222cef62f3be8daa0acaa667d5c40451a4c6c 100644
+index 8ef332f47f3c580d03784c106fc19d48f229c5ba..32a326661585ac9f2ad510763e277796864a129e 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
-@@ -1386,12 +1386,14 @@ export default function Message(props: {
+@@ -1383,18 +1383,17 @@ export default function Message(props: {
+               }
+             />
              <div
-               // TODO the "+1" count aria-live announcment is perhaps not great
-               // out of context.
--              // Also the "show ReactionsDialog" button gets announced.
+-              // TODO the "show ReactionsDialog" button also gets announced.
++              // TODO the "+1" count aria-live announcment is perhaps not great
++              // out of context.
 +              // Also the "show message info" button gets announced.
                aria-live='polite'
                aria-relevant='all'
              >
                {message.reactions && (
                  <Reactions
+-                  message={
+-                    message as typeof message & {
+-                      reactions: typeof message.reactions
+-                    }
+-                  }
+-                  chatType={chat.chatType}
 +                  messageId={message.id}
 +                  canReact={showReactionsUi(message, props.chat)}
-                   reactions={message.reactions}
++                  reactions={message.reactions}
                    tabindexForInteractiveContents={
                      tabindexForInteractiveContents
+                   }

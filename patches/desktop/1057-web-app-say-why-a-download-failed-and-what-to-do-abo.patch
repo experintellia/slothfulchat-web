@@ -113,7 +113,7 @@ index 73525b8c220eef70f69c51e25086809cc7c6cccd..b4691aba852cf20861c28ea6eec962bf
        </div>
      </div>
 diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
-index ac2645c545784c199532c61215a2c2962a075058..f1080982f4c2cb1f44f17afbfe6d363c0c43da8b 100644
+index e83c3a729c7c64bfe156132facb8ddddbbf783b3..27743a55b7cd53dc6795825dd3eea2889f8a5b3a 100644
 --- a/packages/frontend/src/components/message/Message.tsx
 +++ b/packages/frontend/src/components/message/Message.tsx
 @@ -48,6 +48,7 @@ import InvalidUnencryptedMailDialog from '../dialogs/InvalidUnencryptedMail'

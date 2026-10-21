@@ -35,6 +35,11 @@ exporter applies them to the viewer, messages.json, messages.txt and
 the bundled media alike.
 
 New strings live in packages/web-app/fork-strings.json.
+
+Rebased onto v2.62.0: window.__userFeedback is gone upstream (d6165f5c1
+#6700, 31d9f8a5a #6701). The success message is now a toast (useToast,
+3fff48670 #6714) and a failure opens an AlertDialog, as upstream now
+does for errors.
 ---
  .../src/components/chat/ChatContextMenu.tsx   |  11 ++
  .../components/dialogs/ExportChatToHtml.tsx   | 162 ++++++++++++++++++
@@ -42,7 +47,7 @@ New strings live in packages/web-app/fork-strings.json.
  create mode 100644 packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 
 diff --git a/packages/frontend/src/components/chat/ChatContextMenu.tsx b/packages/frontend/src/components/chat/ChatContextMenu.tsx
-index a3be0976acbd468e7e78a9e42ec63d4bf787df3b..5a93f1c7d66db21edcd761d76795be7646d7a401 100644
+index 8e79386b93e155c441d43a9bfaf07d6b3f0cb8b4..de0ef3607ba3b0e6ea518640aebcd14e16cc2733 100644
 --- a/packages/frontend/src/components/chat/ChatContextMenu.tsx
 +++ b/packages/frontend/src/components/chat/ChatContextMenu.tsx
 @@ -15,6 +15,7 @@ import useOpenViewGroupDialog from '../../hooks/dialog/useOpenViewGroupDialog'
@@ -53,7 +58,7 @@ index a3be0976acbd468e7e78a9e42ec63d4bf787df3b..5a93f1c7d66db21edcd761d76795be76
  import type { UnselectChat } from '../../contexts/ChatContext'
  import { mouseEventToPosition } from '../../utils/mouseEventToPosition'
  import { getLogger } from '@deltachat-desktop/shared/logger'
-@@ -421,6 +422,12 @@ export function useChatContextMenu(): {
+@@ -439,6 +440,12 @@ export function useChatContextMenu(): {
        })
      }
  
@@ -66,7 +71,7 @@ index a3be0976acbd468e7e78a9e42ec63d4bf787df3b..5a93f1c7d66db21edcd761d76795be76
      const onSearchInChat = () => {
        window.__chatlistSetSearch?.('', activeChatId)
        setTimeout(
-@@ -484,6 +491,10 @@ export function useChatContextMenu(): {
+@@ -502,6 +509,10 @@ export function useChatContextMenu(): {
          label: tx('search_in_chat'),
          action: onSearchInChat,
        },
@@ -79,7 +84,7 @@ index a3be0976acbd468e7e78a9e42ec63d4bf787df3b..5a93f1c7d66db21edcd761d76795be76
          (chatListItems.some(c => c.freshMessageCounter > 0)
 diff --git a/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..d6d25d068756d98cc24bc3b60bfe071b16924099
+index 0000000000000000000000000000000000000000..49950fc711e9b3da55b150be6a9aa62db622f73b
 --- /dev/null
 +++ b/packages/frontend/src/components/dialogs/ExportChatToHtml.tsx
 @@ -0,0 +1,162 @@
@@ -99,6 +104,8 @@ index 0000000000000000000000000000000000000000..d6d25d068756d98cc24bc3b60bfe071b
 +} from '../Dialog'
 +import { DeltaProgressBar } from '../Login-Styles'
 +import useTranslationFunction from '../../hooks/useTranslationFunction'
++import useAlertDialog from '../../hooks/dialog/useAlertDialog'
++import useToast from '../../hooks/useToast'
 +// unused, but it keeps esbuild's css-module order (and with it bundle.css's
 +// cascade and class-name suffixes) the same as when the zip was built here
 +import '../message/Message'
@@ -125,6 +132,8 @@ index 0000000000000000000000000000000000000000..d6d25d068756d98cc24bc3b60bfe071b
 + */
 +export default function ExportChatToHtml({ chat, onClose }: Props) {
 +  const tx = useTranslationFunction()
++  const openAlertDialog = useAlertDialog()
++  const showToast = useToast()
 +  const accountId = selectedAccountId()
 +  const [phase, setPhase] = useState<'configure' | 'running'>('configure')
 +  const [progress, setProgress] = useState(0)
@@ -160,19 +169,15 @@ index 0000000000000000000000000000000000000000..d6d25d068756d98cc24bc3b60bfe071b
 +        signal,
 +      })
 +      .then((filename: string) => {
-+        window.__userFeedback?.({
-+          type: 'success',
-+          text: tx('chat_exported_as_x', filename),
-+        })
++        showToast(tx('chat_exported_as_x', filename))
 +      })
 +      .catch((error: any) => {
 +        if (signal.aborted) {
 +          return
 +        }
 +        log.error('chat export failed:', error)
-+        window.__userFeedback?.({
-+          type: 'error',
-+          text: 'Chat export failed: ' + (error?.message || String(error)),
++        openAlertDialog({
++          message: 'Chat export failed: ' + (error?.message || String(error)),
 +        })
 +      })
 +      .finally(onClose)
