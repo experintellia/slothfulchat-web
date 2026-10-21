@@ -18,9 +18,9 @@ letting a message fail at send time. ForcePlaintext messages (securejoin)
 skip it, as they already skip MissingKey.
 ---
  src/chat.rs            | 14 +++++++++++++-
- src/chat/chat_tests.rs | 19 +++++++++++++++++++
+ src/chat/chat_tests.rs | 20 ++++++++++++++++++++
  src/config.rs          |  5 +++++
- 3 files changed, 37 insertions(+), 1 deletion(-)
+ 3 files changed, 38 insertions(+), 1 deletion(-)
 
 diff --git a/src/chat.rs b/src/chat.rs
 index d1b0d420344fe63ee4e06da2312f32e1cf8bfc7e..b88b01ac0a35c2776f9b3ccef97918384e616f00 100644
@@ -69,16 +69,17 @@ index d1b0d420344fe63ee4e06da2312f32e1cf8bfc7e..b88b01ac0a35c2776f9b3ccef9791838
              .get_bool(Param::ForcePlaintext)
              .unwrap_or_default(),
 diff --git a/src/chat/chat_tests.rs b/src/chat/chat_tests.rs
-index afc9ae3278a17e2cf82e729c047edea044fa17dc..584f61aa6367f88344a7489dad8b6175b4cb10fb 100644
+index afc9ae3278a17e2cf82e729c047edea044fa17dc..9d7b394781a181287781bebceadd88d4e472ed02 100644
 --- a/src/chat/chat_tests.rs
 +++ b/src/chat/chat_tests.rs
-@@ -1006,6 +1006,25 @@ async fn test_device_chat_cannot_sent() {
+@@ -1006,6 +1006,26 @@ async fn test_device_chat_cannot_sent() {
      assert!(forward_msgs(&t, &[msg_id], device_chat_id).await.is_err());
  }
  
 +#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 +async fn test_cant_send_unencrypted_when_forced() -> Result<()> {
 +    let t = TestContext::new_alice().await;
++    t.set_config_bool(Config::ForceEncryption, false).await?;
 +    let bob = Contact::create(&t, "", "bob@example.net").await?;
 +    let chat_id = ChatId::create_for_contact(&t, bob).await?;
 +    let chat = Chat::load_from_db(&t, chat_id).await?;
