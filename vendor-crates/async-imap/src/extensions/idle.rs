@@ -9,8 +9,10 @@ use async_std::{
     future::timeout,
     io::{Read, Write},
 };
-use futures::prelude::*;
-use futures::task::{Context, Poll};
+use futures_util::{
+    Stream, StreamExt as _, TryStreamExt as _,
+    task::{Context, Poll},
+};
 use imap_proto::{RequestId, Response, Status};
 use stop_token::prelude::*;
 #[cfg(feature = "runtime-tokio")]
@@ -75,7 +77,9 @@ impl<'a, St: Stream + Unpin> IdleStream<'a, St> {
     }
 }
 
-impl<St: futures::stream::FusedStream + Unpin> futures::stream::FusedStream for IdleStream<'_, St> {
+impl<St: futures_util::stream::FusedStream + Unpin> futures_util::stream::FusedStream
+    for IdleStream<'_, St>
+{
     fn is_terminated(&self) -> bool {
         self.stream.is_terminated()
     }
@@ -193,17 +197,17 @@ impl<T: Read + Write + Unpin + fmt::Debug + Send> Handle<T> {
                 Response::Done {
                     tag,
                     status,
-                    information,
+                    outcome,
                     ..
                 } => {
-                    if tag == self.id.as_ref().unwrap() {
-                        if let Status::Bad = status {
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::ConnectionRefused,
-                                information.as_ref().unwrap().to_string(),
-                            )
-                            .into());
-                        }
+                    if tag == self.id.as_ref().unwrap()
+                        && let Status::Bad = status
+                    {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::ConnectionRefused,
+                            outcome.information.as_ref().unwrap().to_string(),
+                        )
+                        .into());
                     }
                     handle_unilateral(res, self.session.unsolicited_responses_tx.clone());
                 }
