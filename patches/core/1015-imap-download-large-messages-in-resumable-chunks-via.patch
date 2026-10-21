@@ -89,14 +89,14 @@ interrupted and still completes. Exposed over JSON-RPC as abort_download.
  deltachat-jsonrpc/src/api.rs              |    8 +
  deltachat-jsonrpc/src/api/types/events.rs |   14 +
  src/context.rs                            |   10 +-
- src/download.rs                           | 1336 ++++++++++++++++++++-
+ src/download.rs                           | 1343 ++++++++++++++++++++-
  src/events/payload.rs                     |   11 +
  src/imap.rs                               |    6 +-
  src/imap/select_folder.rs                 |    8 +
  src/imap/session.rs                       |  135 ++-
  src/sql.rs                                |   37 +
  src/sql/sql_tests.rs                      |   56 +
- 12 files changed, 1620 insertions(+), 20 deletions(-)
+ 12 files changed, 1627 insertions(+), 20 deletions(-)
 
 diff --git a/deltachat-ffi/deltachat.h b/deltachat-ffi/deltachat.h
 index 1bf0ae48235960e708ab2924f05d7cc8370cfe78..6e061138254dd451700f0ecc0550cd326f0be07f 100644
@@ -246,7 +246,7 @@ index 9f313b94aab1861970a6a4d3af633062785b5ad4..88de46f77669f2639c45c80229e63ff3
              last_error: parking_lot::RwLock::new("".to_string()),
              migration_error: parking_lot::RwLock::new(None),
 diff --git a/src/download.rs b/src/download.rs
-index e154fbaaa9d48fb435070e8cc3ddcc4b89a7e236..5c533bb02387a017da0c0de90b4dcfd4e7bb924e 100644
+index e154fbaaa9d48fb435070e8cc3ddcc4b89a7e236..9a8f7ff5942425f5383926e3cd5cacf7f727e72c 100644
 --- a/src/download.rs
 +++ b/src/download.rs
 @@ -1,16 +1,27 @@
@@ -708,7 +708,7 @@ index e154fbaaa9d48fb435070e8cc3ddcc4b89a7e236..5c533bb02387a017da0c0de90b4dcfd4
          if uid == 0 {
              bail!("Attempt to fetch UID 0");
          }
-@@ -193,7 +570,155 @@ async fn fetch_single_msg(
+@@ -193,7 +570,162 @@ async fn fetch_single_msg(
          let folder_exists = self.select_with_uidvalidity(context, folder).await?;
          ensure!(folder_exists, "No folder {folder}");
  
@@ -823,6 +823,13 @@ index e154fbaaa9d48fb435070e8cc3ddcc4b89a7e236..5c533bb02387a017da0c0de90b4dcfd4
 +            // meanwhile via another transport) — that is success here.
 +            receive_imf_inner(context, &rfc724_mid, &body, meta.seen).await
 +        };
++        // Like `fetch_many_msgs()`: the transport delivered a message, whatever
++        // receive_imf made of it.
++        crate::sql::update_transport_last_rcvd_timestamp(context, transport_id)
++            .await
++            .context(format!(
++                "Failed to update last_rcvd_timestamp of transport {transport_id}"
++            ))?;
 +        match res {
 +            Err(err) => {
 +                warn!(context, "receive_imf error: {err:#}.");
@@ -864,7 +871,7 @@ index e154fbaaa9d48fb435070e8cc3ddcc4b89a7e236..5c533bb02387a017da0c0de90b4dcfd4
          info!(context, "Downloading message {}/{} fully...", folder, uid);
  
          let mut uid_message_ids: BTreeMap<u32, String> = BTreeMap::new();
-@@ -211,6 +736,33 @@ async fn fetch_single_msg(
+@@ -211,6 +743,33 @@ async fn fetch_single_msg(
      }
  }
  
@@ -898,7 +905,7 @@ index e154fbaaa9d48fb435070e8cc3ddcc4b89a7e236..5c533bb02387a017da0c0de90b4dcfd4
  async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()> {
      if let Some(msg_id) = rfc724_mid_exists(context, rfc724_mid).await? {
          // Update download state to failure
-@@ -275,8 +827,15 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
+@@ -275,8 +834,15 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
          .await?;
  
      for rfc724_mid in &rfc724_mids {
@@ -916,7 +923,7 @@ index e154fbaaa9d48fb435070e8cc3ddcc4b89a7e236..5c533bb02387a017da0c0de90b4dcfd4
                  delete_from_downloads(context, rfc724_mid).await?;
                  delete_from_available_post_msgs(context, rfc724_mid).await?;
              }
-@@ -338,8 +897,12 @@ pub(crate) async fn download_known_post_messages_without_pre_message(
+@@ -338,8 +904,12 @@ pub(crate) async fn download_known_post_messages_without_pre_message(
          // because the Pre-Message got lost.
          // The message may be in the wrong order,
          // but at least we have it at all.
@@ -931,7 +938,7 @@ index e154fbaaa9d48fb435070e8cc3ddcc4b89a7e236..5c533bb02387a017da0c0de90b4dcfd4
              delete_from_available_post_msgs(context, rfc724_mid).await?;
          }
          if let Err(err) = res {
-@@ -355,11 +918,14 @@ pub(crate) async fn download_known_post_messages_without_pre_message(
+@@ -355,11 +925,14 @@ pub(crate) async fn download_known_post_messages_without_pre_message(
  
  #[cfg(test)]
  mod tests {
@@ -948,7 +955,7 @@ index e154fbaaa9d48fb435070e8cc3ddcc4b89a7e236..5c533bb02387a017da0c0de90b4dcfd4
  
      #[test]
      fn test_downloadstate_values() {
-@@ -408,4 +974,744 @@ async fn test_update_download_state() -> Result<()> {
+@@ -408,4 +981,744 @@ async fn test_update_download_state() -> Result<()> {
  
          Ok(())
      }

@@ -90,7 +90,7 @@ the Done-arm failure as an arm of upstream's new match.
  2 files changed, 374 insertions(+), 27 deletions(-)
 
 diff --git a/src/download.rs b/src/download.rs
-index 5c533bb02387a017da0c0de90b4dcfd4e7bb924e..5e490453167aa9718e1907f740a4187e4b0d01ce 100644
+index 9a8f7ff5942425f5383926e3cd5cacf7f727e72c..2523690d8a27dbebce1378ed2b107789929bb1ac 100644
 --- a/src/download.rs
 +++ b/src/download.rs
 @@ -91,7 +91,7 @@ pub async fn download_full(self, context: &Context) -> Result<()> {
@@ -203,7 +203,7 @@ index 5c533bb02387a017da0c0de90b4dcfd4e7bb924e..5e490453167aa9718e1907f740a4187e
                  bail!("Failed to fetch UID {uid}");
              }
              ChunkOutcome::TooLarge => {
-@@ -765,6 +782,16 @@ async fn disable_chunked_download(context: &Context, transport_id: u32) -> Resul
+@@ -772,6 +789,16 @@ async fn disable_chunked_download(context: &Context, transport_id: u32) -> Resul
  
  async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()> {
      if let Some(msg_id) = rfc724_mid_exists(context, rfc724_mid).await? {
@@ -220,7 +220,7 @@ index 5c533bb02387a017da0c0de90b4dcfd4e7bb924e..5e490453167aa9718e1907f740a4187e
          // Update download state to failure
          // so it can be retried.
          //
-@@ -778,6 +805,133 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
+@@ -785,6 +812,133 @@ async fn set_state_to_failure(context: &Context, rfc724_mid: &str) -> Result<()>
      Ok(())
  }
  
@@ -354,7 +354,7 @@ index 5c533bb02387a017da0c0de90b4dcfd4e7bb924e..5e490453167aa9718e1907f740a4187e
  async fn available_post_msgs_contains_rfc724_mid(
      context: &Context,
      rfc724_mid: &str,
-@@ -836,6 +990,11 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
+@@ -843,6 +997,11 @@ pub(crate) async fn download_msgs(context: &Context, session: &mut Session) -> R
                  return Ok(());
              }
              Ok(Some(FetchMsgResult::Done)) => {
@@ -366,7 +366,7 @@ index 5c533bb02387a017da0c0de90b4dcfd4e7bb924e..5e490453167aa9718e1907f740a4187e
                  delete_from_downloads(context, rfc724_mid).await?;
                  delete_from_available_post_msgs(context, rfc724_mid).await?;
              }
-@@ -975,6 +1134,190 @@ async fn test_update_download_state() -> Result<()> {
+@@ -982,6 +1141,190 @@ async fn test_update_download_state() -> Result<()> {
          Ok(())
      }
  
