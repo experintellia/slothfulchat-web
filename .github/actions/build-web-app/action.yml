@@ -228,9 +228,9 @@ runs:
         # warns when they are missing. Caching dist/ alone therefore ships no
         # API docs at all, silently, from the second run with a warm key on.
         path: |
-          build/core/deltachat-jsonrpc/typescript/dist
-          build/core/deltachat-jsonrpc/typescript/docs
-          build/core/deltachat-jsonrpc/typescript/generated
+          build/core/deltachat-jsonrpc-bindings/typescript/dist
+          build/core/deltachat-jsonrpc-bindings/typescript/docs
+          build/core/deltachat-jsonrpc-bindings/typescript/generated
         # Every input to the cached output is in the key, because the step that
         # produces it is skipped wholesale on a hit — anything left out restores
         # stale content and the change appears to have done nothing:
@@ -295,13 +295,13 @@ runs:
     # `pnpm install --lockfile-only`, and commit the pnpm-lock.yaml it writes.
     - name: Generate + build @deltachat/jsonrpc-client (before root install)
       if: steps.jsonrpc-client.outputs.cache-hit != 'true'
-      working-directory: build/core/deltachat-jsonrpc/typescript
+      working-directory: build/core/deltachat-jsonrpc-bindings/typescript
       shell: bash
       run: |
         printf 'allowBuilds:\n  esbuild: false\n' > pnpm-workspace.yaml
         cp "$GITHUB_ACTION_PATH/jsonrpc-client-pnpm-lock.yaml" pnpm-lock.yaml
         pnpm install --frozen-lockfile
-        cargo test -p deltachat-jsonrpc
+        cargo build -p deltachat-jsonrpc-bindings
         node scripts/generate-constants.js
         ./node_modules/.bin/tsc
         ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js

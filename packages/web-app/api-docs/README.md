@@ -6,7 +6,7 @@ pinned `vendor/core` commit with `patches/core` applied, which is the core the
 shipped wasm bundle actually runs.
 
 Nothing here is written by hand. Both references are generated from that
-patched Rust source by `cargo test -p deltachat-jsonrpc` and typedoc; this
+patched Rust source by `cargo build -p deltachat-jsonrpc-bindings` and typedoc; this
 folder only holds the framing (project name, index pages, cross-links).
 
 ## Files
@@ -46,8 +46,8 @@ folder only holds the framing (project name, index pages, cross-links).
 
 ```sh
 scripts/apply-patches.sh                 # build/core = pin + patches/core
-cd build/core/deltachat-jsonrpc/typescript
-pnpm install && cargo test -p deltachat-jsonrpc   # generated/{client,types}.ts + openrpc.json
+cd build/core/deltachat-jsonrpc-bindings/typescript
+pnpm install && cargo build -p deltachat-jsonrpc-bindings   # generated/{client,types}.ts + openrpc.json
 node scripts/generate-constants.js && ./node_modules/.bin/tsc
 cd - && pnpm api-docs                    # typedoc, with typedoc.json above
 pnpm --filter @slothfulchat/web-app assemble

@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@deltachat/jsonrpc-client': file:build/core/deltachat-jsonrpc/typescript
+  '@deltachat/jsonrpc-client': file:build/core/deltachat-jsonrpc-bindings/typescript
 
 importers:
 
@@ -50,8 +50,8 @@ importers:
         version: 0.6.4
     devDependencies:
       '@deltachat/jsonrpc-client':
-        specifier: file:../../build/core/deltachat-jsonrpc/typescript
-        version: file:build/core/deltachat-jsonrpc/typescript(ws@8.21.0)
+        specifier: file:../../build/core/deltachat-jsonrpc-bindings/typescript
+        version: file:build/core/deltachat-jsonrpc-bindings/typescript(ws@8.21.0)
       esbuild:
         specifier: ^0.25.5
         version: 0.25.12
@@ -170,8 +170,8 @@ packages:
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
 
-  '@deltachat/jsonrpc-client@file:build/core/deltachat-jsonrpc/typescript':
-    resolution: {directory: build/core/deltachat-jsonrpc/typescript, type: directory}
+  '@deltachat/jsonrpc-client@file:build/core/deltachat-jsonrpc-bindings/typescript':
+    resolution: {directory: build/core/deltachat-jsonrpc-bindings/typescript, type: directory}
 
   '@deltachat/tiny-emitter@3.0.0':
     resolution: {integrity: sha512-iapvwGCEWFjXtObQ/vNzXS0+M9hrZrY2tMdV7SaX8kHXKVm3oIuJUVmUj5jhABTL7GstO6uKzV+36FUZVGOqCA==}
@@ -1481,7 +1481,7 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@deltachat/jsonrpc-client@file:build/core/deltachat-jsonrpc/typescript(ws@8.21.0)':
+  '@deltachat/jsonrpc-client@file:build/core/deltachat-jsonrpc-bindings/typescript(ws@8.21.0)':
     dependencies:
       '@deltachat/tiny-emitter': 3.0.0
       isomorphic-ws: 5.0.0(ws@8.21.0)

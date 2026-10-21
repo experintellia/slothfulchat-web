@@ -95,7 +95,7 @@ function getDefaultSettings() {
     minimizeToTray: false,
     syncAllAccounts: true,
     lastSaveDialogLocation: undefined,
-    enableWebxdcDevTools: false,
+    hideMenuBar: false,
     HTMLEmailAskForRemoteLoadingConfirmation: true,
     HTMLEmailAlwaysLoadRemoteContent: false,
     galleryImageKeepAspectRatio: false,
@@ -1356,7 +1356,8 @@ class BrowserRuntime {
     accountId: number
     chatId: number
     messageId: number
-    title: string
+    // desktop omits it when notification content is hidden
+    title?: string
     body: string
     icon: string | null
   }): Promise<void> {
@@ -1393,7 +1394,7 @@ class BrowserRuntime {
       }
     }
 
-    const notification = new Notification(title, {
+    const notification = new Notification(title ?? APP_NAME, {
       body,
       icon,
       tag: `${accountId}.${chatId}.${messageId}`,
@@ -1704,6 +1705,7 @@ class BrowserRuntime {
       theme: undefined,
       'theme-watch': false,
       'translation-watch': false,
+      'allow-custom-rpc-server-path': false,
       'allow-unsafe-core-replacement': false,
       minimized: false,
       version: false,

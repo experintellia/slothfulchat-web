@@ -44,7 +44,7 @@ export const EVENTS: readonly CatalogEvent[] = [
   {
     name: 'send',
     what: 'That a message was sent, and of what kind (never its content).',
-    props: 'type = text · image · voice · audio · file · sticker · video · other; transport = imap · webimap; chatmail = yes · no',
+    props: 'type = text · image · voice · audio · file · sticker · video · other; transport = imap · webimap',
   },
   {
     name: 'qr_scan',

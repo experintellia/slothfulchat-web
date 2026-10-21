@@ -4,7 +4,7 @@ packages:
 # client; dev builds against the freshly generated one so types match the
 # patched core.
 overrides:
-  "@deltachat/jsonrpc-client": file:build/core/deltachat-jsonrpc/typescript
+  "@deltachat/jsonrpc-client": file:build/core/deltachat-jsonrpc-bindings/typescript
 # pnpm 11 auto-runs `pnpm install` before any script (verifyDepsBeforeRun:
 # install); that install fails in CI before `apply-patches` has created
 # build/core, which the lockfile references as a file: dep.

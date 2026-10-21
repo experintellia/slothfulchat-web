@@ -59,8 +59,8 @@ await core.fsRemove('/tmp/a/b.bin') // file or directory tree
 
 ```sh
 pnpm apply-patches                                # patched core in build/core
-cd build/core/deltachat-jsonrpc/typescript
-pnpm install --ignore-workspace && cargo test -p deltachat-jsonrpc \
+cd build/core/deltachat-jsonrpc-bindings/typescript
+pnpm install --ignore-workspace && cargo build -p deltachat-jsonrpc-bindings \
   && node scripts/generate-constants.js && ./node_modules/.bin/tsc \
   && ./node_modules/.bin/esbuild --format=esm --bundle dist/deltachat.js --outfile=dist/deltachat.bundle.js
 cd -                                              # generated TS client at the pinned commit

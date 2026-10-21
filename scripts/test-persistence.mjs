@@ -96,6 +96,8 @@ try {
     throw new Error(`account ${accountId} missing after reload (got ${ids})`)
   }
   const info = await rpc('getAccountInfo', accountId)
+  // Account.addr is gone since core 2.64; the address lives in the config
+  info.addr = await rpc('getConfig', accountId, 'configured_addr')
   if (info.kind !== 'Configured' || info.addr !== alice.email) {
     throw new Error(`account not configured after reload: ${JSON.stringify(info)}`)
   }
@@ -171,7 +173,7 @@ try {
     )
   }
   const survivedInfo = await rpc('getAccountInfo', accountId)
-  if (survivedInfo.kind !== 'Configured' || survivedInfo.addr !== alice.email) {
+  if (survivedInfo.kind !== 'Configured' || (await rpc('getConfig', accountId, 'configured_addr')) !== alice.email) {
     throw new Error(`account not intact after memfs-dir drop: ${JSON.stringify(survivedInfo)}`)
   }
   if (consoleTail.some(l => l.includes('accounts.toml is corrupt'))) {
@@ -215,7 +217,7 @@ try {
     )
   }
   const healedDbInfo = await rpc('getAccountInfo', accountId)
-  if (healedDbInfo.kind !== 'Configured' || healedDbInfo.addr !== alice.email) {
+  if (healedDbInfo.kind !== 'Configured' || (await rpc('getConfig', accountId, 'configured_addr')) !== alice.email) {
     throw new Error(`account not rebuilt from its db: ${JSON.stringify(healedDbInfo)}`)
   }
   console.log(`OK: account ${accountId} rebuilt from its sahpool db after dir loss + toml corruption`)
@@ -246,7 +248,7 @@ try {
     throw new Error(`expected 1 healed account, got ${healedIds}`)
   }
   const healedInfo = await rpc('getAccountInfo', healedIds[0])
-  if (healedInfo.kind !== 'Configured' || healedInfo.addr !== alice.email) {
+  if (healedInfo.kind !== 'Configured' || (await rpc('getConfig', healedIds[0], 'configured_addr')) !== alice.email) {
     throw new Error(`account not healed: ${JSON.stringify(healedInfo)}`)
   }
   // quarantine file lands in OPFS via the async flusher — poll from node

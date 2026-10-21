@@ -10,9 +10,9 @@
   // Everything the site says about itself is set here rather than by
   // post-processing the emitted HTML.
 
-  "entryPoints": ["../../../build/core/deltachat-jsonrpc/typescript/deltachat.ts"],
-  "tsconfig": "../../../build/core/deltachat-jsonrpc/typescript/tsconfig.json",
-  "out": "../../../build/core/deltachat-jsonrpc/typescript/docs",
+  "entryPoints": ["../../../build/core/deltachat-jsonrpc-bindings/typescript/deltachat.ts"],
+  "tsconfig": "../../../build/core/deltachat-jsonrpc-bindings/typescript/tsconfig.json",
+  "out": "../../../build/core/deltachat-jsonrpc-bindings/typescript/docs",
 
   // The site is a fork's API reference, not upstream's package docs.
   "name": "SlothfulChat core API — a fork of chatmail core",
