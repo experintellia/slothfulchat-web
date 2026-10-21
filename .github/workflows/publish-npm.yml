@@ -3,7 +3,7 @@
 # the prod GitHub Pages deploy (web.slothful.chat).
 #
 # ONE BUILD, THREE OUTPUTS. deploy-pages.yml used to run its own copy of the
-# same ~20-min build (patched core, native `cargo test` for the jsonrpc client,
+# same ~20-min build (patched core, native bindings build for the jsonrpc client,
 # upstream desktop bundle, ~10-min wasm) on the same commit, because its output
 # differs from the release zip's — prod bakes in the flagship branding, the zip
 # stays generic so every self-hoster can use it. But branding only enters at

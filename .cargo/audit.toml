@@ -48,6 +48,8 @@ ignore = [
   # core/1002 routes the wasm non-strict branch to wrap_rustls too), so the
   # verifier that actually validates mail-server certificates is 0.103.16 —
   # at or above every patched range below (0.103.10 / .12 / .12 / .13 / .16).
+  # cargo-audit ignores these ids for EVERY version, so CI's "Live rustls-webpki
+  # is at or above 0.103.16" step holds the live copy there.
   #
   # The 0.102.8 copy is iroh's, and iroh imports exactly three things from it:
   # `Error`, `ring_algs` (algorithm constants handed to rustls) and a

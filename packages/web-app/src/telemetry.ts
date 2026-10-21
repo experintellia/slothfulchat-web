@@ -117,10 +117,19 @@ function handle(method: string, params: unknown, p: Promise<unknown>, raw: Reque
       const qr = Array.isArray(params) ? String(params[1] ?? '') : ''
       if (/^webimapaccount:/i.test(qr)) setSuppressBridgeWarning(true)
       else if (/^dcaccount:/i.test(qr)) setSuppressBridgeWarning(false)
-      if (!qrScanSent) {
-        qrScanSent = true
-        analytics.event('qr_scan')
-      }
+      // Since desktop 2.62 the chat-list search and message links run check_qr
+      // on any text with a colon ("10:30", a web link), so only a code core can
+      // act on counts as a scan.
+      const actionable =
+        method === 'check_qr'
+          ? p.then((r: any) => r?.kind !== 'text' && r?.kind !== 'url', () => false)
+          : Promise.resolve(true)
+      actionable.then(yes => {
+        if (yes && !qrScanSent) {
+          qrScanSent = true
+          analytics.event('qr_scan')
+        }
+      })
       break
     }
 

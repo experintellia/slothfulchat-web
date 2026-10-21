@@ -234,10 +234,11 @@ runs:
         # Every input to the cached output is in the key, because the step that
         # produces it is skipped wholesale on a hit — anything left out restores
         # stale content and the change appears to have done nothing:
-        # mark-fork-api.mjs (docs/ and generated/ carry its 🦥 marks), and
+        # mark-fork-api.mjs (docs/ and generated/ carry its 🦥 marks), the
+        # client's pnpm lock (what tsc, esbuild and typedoc run as), and
         # typedoc.json + typedoc-readme.md (the only inputs to the typedoc run
         # that writes docs/).
-        key: jsonrpc-client-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ steps.core-rev.outputs.sha }}-${{ hashFiles('patches/core/*.patch', 'scripts/mark-fork-api.mjs', 'packages/web-app/api-docs/typedoc.json', 'packages/web-app/api-docs/typedoc-readme.md') }}
+        key: jsonrpc-client-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ steps.core-rev.outputs.sha }}-${{ hashFiles('patches/core/*.patch', '.github/actions/build-web-app/jsonrpc-client-pnpm-lock.yaml', 'scripts/mark-fork-api.mjs', 'packages/web-app/api-docs/typedoc.json', 'packages/web-app/api-docs/typedoc-readme.md') }}
 
     # rustwasm's prebuilt musl binary, pinned by version AND sha256, replacing
     # the upstream `curl … installer/init.sh | sh` — which was unversioned

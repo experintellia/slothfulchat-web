@@ -312,8 +312,8 @@ for (const pkg of ['web-app', 'core-wasm', 'ws-tcp-proxy', 'customize']) {
 //                               types @slothfulchat/core-wasm re-exports.
 //   api-docs/openrpc/           page + bundled @open-rpc/docs-react viewer
 //                               (ours is only the shell) for…
-//   api-docs/openrpc.json       …yerpc's OpenRPC document, switched on by
-//                               patches/core (openrpc_outdir). Kept raw next to
+//   api-docs/openrpc.json       …yerpc's OpenRPC document, written by the
+//                               bindings build.rs (core/1021). Kept raw next to
 //                               the viewer so tools can be pointed at it.
 // Skipped with a warning when the core TS build hasn't run — `pnpm assemble`
 // alone must not require a native cargo build. Both halves are gated, not just

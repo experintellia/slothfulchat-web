@@ -1,10 +1,10 @@
 # Changelog
 
-- **Now on Delta Chat Desktop 2.62 and chatmail core 2.64.** A profile can
-  use several relays, so one going down no longer stops your messages;
-  channel posts take reactions; chats can have a description and be marked
-  unread; sent images are sharper. Proxy links and QR codes now say that
-  proxies don't work in the browser instead of failing quietly.
+- **Now on Delta Chat Desktop 2.62 and chatmail core 2.64.** With several
+  relays on a profile, messages now go out through another one when a relay
+  is down; channel posts take reactions; sent images are sharper. Proxy links
+  and QR codes now say that proxies don't work in the browser instead of
+  failing quietly.
 - **Write to the developer right away.** "Sloth (Slothful.chat Developer)" in
   New Chat now opens the chat immediately, instead of waiting for an invite
   handshake to finish first.

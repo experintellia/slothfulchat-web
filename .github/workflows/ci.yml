@@ -253,6 +253,19 @@ jobs:
           cargo audit -D unsound --no-yanked --file packages/core-wasm/rust/Cargo.lock
           cargo audit -D unsound --no-yanked --file crates/tokio-wasm-shim/Cargo.lock
 
+      # cargo-audit ignores an advisory id for every version, so the
+      # rustls-webpki ids .cargo/audit.toml excepts for iroh's 0.102.8 copy
+      # would also hide them on the live verifier. Hold that one at or above
+      # the release that fixes all of them.
+      - name: Live rustls-webpki is at or above 0.103.16
+        run: |
+          node -e '
+            const lock = require("fs").readFileSync("packages/core-wasm/rust/Cargo.lock", "utf8")
+            const vs = [...lock.matchAll(/name = "rustls-webpki"\nversion = "([^"]+)"/g)].map(m => m[1])
+            const bad = vs.filter(v => v !== "0.102.8" && !(v.startsWith("0.103.") && +v.split(".")[2] >= 16))
+            if (bad.length) { console.error(`::error::rustls-webpki ${bad} is below 0.103.16; .cargo/audit.toml ignores would hide its advisories`); process.exit(1) }
+          '
+
   # ---- real test suite: full build + headless smoke/E2E tests ----
   # The build half is the same composite action the deploy workflows run, so
   # what CI tests and what ships are built by one sequence, not two that have
