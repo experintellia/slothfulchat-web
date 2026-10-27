@@ -37,14 +37,14 @@ patch); this is the UI for them.
  packages/frontend/src/backend/stickerPacks.ts |  52 ++
  .../src/components/Settings/Backup.tsx        |  12 +-
  .../src/components/Settings/ChatsAndMedia.tsx |   2 +-
- .../StickerPacks/ManageStickers.tsx           | 479 ++++++++++++++++++
+ .../StickerPacks/ManageStickers.tsx           | 490 ++++++++++++++++++
  .../src/components/StickerPacks/index.tsx     | 195 +++++++
  .../StickerPacks/styles.module.scss           | 213 ++++++++
  .../attachment/messageAttachment.tsx          |  12 +-
  .../composer/EmojiAndStickerPicker.tsx        | 120 ++++-
  .../components/dialogs/PublicBots/index.tsx   |  33 +-
  .../src/components/message/Message.tsx        |  12 +
- 10 files changed, 1094 insertions(+), 36 deletions(-)
+ 10 files changed, 1105 insertions(+), 36 deletions(-)
  create mode 100644 packages/frontend/src/backend/stickerPacks.ts
  create mode 100644 packages/frontend/src/components/StickerPacks/ManageStickers.tsx
  create mode 100644 packages/frontend/src/components/StickerPacks/index.tsx
@@ -154,10 +154,10 @@ index 3e76a2c458e5d678daae7219ece178ccfa8408c5..3d1229506136dcd8d7cd7b7617659442
            <DesktopSettingsSwitch
 diff --git a/packages/frontend/src/components/StickerPacks/ManageStickers.tsx b/packages/frontend/src/components/StickerPacks/ManageStickers.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..5f2995c3415f2459ab799da47c34e135587a1231
+index 0000000000000000000000000000000000000000..7fa6bb922db9933a7953c55378d1b8e0d2b112f1
 --- /dev/null
 +++ b/packages/frontend/src/components/StickerPacks/ManageStickers.tsx
-@@ -0,0 +1,479 @@
+@@ -0,0 +1,490 @@
 +import React, { useCallback, useContext, useEffect, useState } from 'react'
 +import classNames from 'classnames'
 +import { basename } from 'path'
@@ -613,21 +613,32 @@ index 0000000000000000000000000000000000000000..5f2995c3415f2459ab799da47c34e135
 +                      )}
 +                    </div>
 +                  </div>
-+                  <button
-+                    type='button'
-+                    className={styles.toolButton}
-+                    onClick={() =>
-+                      run(() =>
-+                        rpc.copyStickerPackFromAccount(
-+                          accountId,
-+                          profile.id,
-+                          pack.id
++                  {packs.some(
++                    // same "already there" check as the chat's pack card
++                    p =>
++                      p.name === pack.name &&
++                      p.stickers.length === pack.stickers.length
++                  ) ? (
++                    <span className={styles.packCount}>
++                      {tx('sticker_packs_added')}
++                    </span>
++                  ) : (
++                    <button
++                      type='button'
++                      className={styles.toolButton}
++                      onClick={() =>
++                        run(() =>
++                          rpc.copyStickerPackFromAccount(
++                            accountId,
++                            profile.id,
++                            pack.id
++                          )
 +                        )
-+                      )
-+                    }
-+                  >
-+                    {tx('sticker_packs_import')}
-+                  </button>
++                      }
++                    >
++                      {tx('sticker_packs_import')}
++                    </button>
++                  )}
 +                </div>
 +              ))
 +            )}

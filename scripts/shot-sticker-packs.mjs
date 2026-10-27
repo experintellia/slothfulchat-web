@@ -210,12 +210,14 @@ try {
   expect(true, 'the saved sticker left "Recently Seen"')
 
   // Import the other profile's pack.
-  await dialog.getByRole('button', { name: 'Import' }).click()
+  await dialog.getByRole('button', { name: 'Import', exact: true }).click()
   await until(
     async () => (await packs()).find(p => p.name === 'Office Life')?.stickers.length === 4,
     'Office Life imported'
   )
   expect(true, "the other profile's pack was imported")
+  await dialog.locator('section', { hasText: 'From Your Other Profiles' }).getByText('Added').waitFor()
+  expect(true, 'an imported profile pack shows as Added')
   await page.waitForTimeout(500)
   await shot('06-manage-after-edits')
 
