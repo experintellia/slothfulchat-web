@@ -17,6 +17,87 @@
   "chat_exported_as_x": {
     "message": "Chat exported as %1$s"
   },
+  "sticker_packs_manage": {
+    "message": "Manage Stickers"
+  },
+  "sticker_packs_find": {
+    "message": "Find Sticker Packs"
+  },
+  "sticker_packs_find_note": {
+    "message": "Sticker packs come from community-run bots such as StickersBot. They are run by volunteers, not checked or endorsed by us."
+  },
+  "sticker_packs_import_zip": {
+    "message": "Import Pack (.zip)"
+  },
+  "sticker_packs_import_as": {
+    "message": "Import as Sticker Pack"
+  },
+  "sticker_packs_imported": {
+    "message": "Added sticker pack \"%1$s\""
+  },
+  "sticker_packs_imported_skipped": {
+    "message": "Added sticker pack \"%1$s\": %2$s stickers, %3$s files skipped"
+  },
+  "sticker_packs_not_a_pack": {
+    "message": "This zip is not a sticker pack. A pack is a zip of PNG, WebP, GIF or TGS stickers, at most in one folder."
+  },
+  "sticker_packs_files_skipped": {
+    "message": "%1$s files were skipped: only PNG, WebP, GIF and TGS stickers up to 5 MiB can be added."
+  },
+  "sticker_packs_new": {
+    "message": "New Pack"
+  },
+  "sticker_packs_name": {
+    "message": "Pack name"
+  },
+  "sticker_packs_rename": {
+    "message": "Rename Pack"
+  },
+  "sticker_packs_delete_ask": {
+    "message": "Delete the sticker pack \"%1$s\" with its %2$s stickers?"
+  },
+  "sticker_packs_export": {
+    "message": "Export as .zip"
+  },
+  "sticker_packs_add_images": {
+    "message": "Add Images"
+  },
+  "sticker_packs_empty": {
+    "message": "No stickers yet. Drag stickers here or add images."
+  },
+  "sticker_packs_move_to": {
+    "message": "Move to"
+  },
+  "sticker_packs_copy_to": {
+    "message": "Copy to"
+  },
+  "sticker_packs_add_to": {
+    "message": "Add to Pack"
+  },
+  "sticker_packs_recent": {
+    "message": "Recently Seen"
+  },
+  "sticker_packs_recent_hint": {
+    "message": "Stickers from your chats that are not in a pack yet. Tap one or drag it onto a pack."
+  },
+  "sticker_packs_from_profiles": {
+    "message": "From Your Other Profiles"
+  },
+  "sticker_packs_import": {
+    "message": "Import"
+  },
+  "sticker_packs_add_pack": {
+    "message": "Add Sticker Pack"
+  },
+  "sticker_packs_added": {
+    "message": "Added"
+  },
+  "sticker_packs_n_stickers": {
+    "message": "%1$s stickers"
+  },
+  "sticker_packs_backup_note": {
+    "message": "Your sticker packs are included and come back when you import this backup into SlothfulChat. Other Delta Chat apps don't know about sticker packs, so importing the backup there loses them."
+  },
   "message_info_file_type": {
     "message": "Type"
   },

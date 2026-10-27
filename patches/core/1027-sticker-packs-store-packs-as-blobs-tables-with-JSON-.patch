@@ -1,0 +1,1043 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Tue, 27 Oct 2026 22:50:44 +0000
+Subject: [PATCH] sticker packs: store packs as blobs + tables, with JSON-RPC
+ to manage them
+
+Upstream keeps saved stickers as files in <account>/stickers/<pack>/,
+outside the blobdir, so they are missing from backups and second-device
+transfers, and saving a received sticker copies it. Packs are now rows in
+slothfulchat_sticker_packs and stickers rows in slothfulchat_stickers
+naming ordinary deduplicated blobs: saving a received sticker shares its
+blob, and packs travel with the database.
+
+- Tables are created with CREATE TABLE IF NOT EXISTS, not a numbered
+  migration, like the reply index: a fork-claimed version number would make
+  a database skip upstream's real migration later.
+- Housekeeping keeps every blob named in slothfulchat_stickers.
+  test_housekeeping_keeps_sticker_pack_blobs fails if a rebase drops that
+  query (checked by removing it) and also checks the blob goes once no pack
+  holds it.
+- Files added from disk are checked: extension png/webp/gif/tgs, the
+  content's magic bytes must match it (the UI picks the renderer by
+  extension), at most 5 MiB. Paths inside the blobdir are refused, because
+  create_and_deduplicate would move them away from their message.
+- The old stickers/ folders are moved in on first use, then removed.
+- misc_get_stickers / misc_save_sticker keep their signatures and read and
+  write the packs.
+- New RPCs: get/create/rename/delete_sticker_pack, add_sticker_from_file,
+  add_sticker_from_message, move/copy/remove_sticker,
+  copy_sticker_pack_from_account (another profile's pack, deduplicated in
+  the target), get_unsaved_sticker_messages (recent stickers in no pack;
+  scans the newest 1000 sticker messages).
+
+FORK-ONLY: if upstream implements sticker packs, migrate these tables to
+upstream's storage instead of keeping both.
+---
+ deltachat-jsonrpc/src/api.rs               | 196 ++++++----
+ deltachat-jsonrpc/src/api/types/message.rs |  38 ++
+ src/lib.rs                                 |   1 +
+ src/sql.rs                                 |  22 ++
+ src/sql/migrations.rs                      |  20 +
+ src/sql/sql_tests.rs                       |  38 ++
+ src/sticker_packs.rs                       | 427 +++++++++++++++++++++
+ src/sticker_packs/sticker_packs_tests.rs   | 142 +++++++
+ 8 files changed, 813 insertions(+), 71 deletions(-)
+ create mode 100644 src/sticker_packs.rs
+ create mode 100644 src/sticker_packs/sticker_packs_tests.rs
+
+diff --git a/deltachat-jsonrpc/src/api.rs b/deltachat-jsonrpc/src/api.rs
+index fe585cf2f1bacfd85b674c051089fd13317f6543..ff0272c7dda3eaca02a1159464c4b884a09d8f8a 100644
+--- a/deltachat-jsonrpc/src/api.rs
++++ b/deltachat-jsonrpc/src/api.rs
+@@ -34,13 +34,13 @@
+ use deltachat::qr_code_generator::{create_qr_svg, generate_backup_qr, get_securejoin_qr_svg};
+ use deltachat::reaction::{get_msg_reactions, send_reaction};
+ use deltachat::securejoin;
++use deltachat::sticker_packs;
+ use deltachat::stock_str::{emit_events_for_updated_stock_strings, StockMessage};
+ #[cfg(not(target_arch = "wasm32"))]
+ use deltachat::storage_usage::get_blobdir_storage_usage;
+ use deltachat::storage_usage::get_storage_usage;
+ use deltachat::webxdc::StatusUpdateSerial;
+ use deltachat::EventEmitter;
+-use sanitize_filename::is_sanitized;
+ use tokio::fs;
+ use tokio::sync::{watch, Mutex, RwLock};
+ use types::login_param::EnteredLoginParam;
+@@ -55,7 +55,9 @@
+ use types::contact::{ContactObject, VcardContact};
+ use types::events::Event;
+ use types::http::HttpResponse;
+-use types::message::{MessageData, MessageObject, MessageReadReceipt, ReplyThreadEntry};
++use types::message::{
++    MessageData, MessageObject, MessageReadReceipt, ReplyThreadEntry, StickerPackObject,
++};
+ use types::notify_state::JsonrpcNotifyState;
+ use types::provider_info::ProviderInfo;
+ use types::reactions::JsonrpcReactions;
+@@ -2617,6 +2619,9 @@ async fn misc_get_sticker_folder(&self, account_id: u32) -> Result<String> {
+     }
+ 
+     /// Saves a sticker to a collection/folder in the account's sticker folder.
++    ///
++    /// slothfulchat: saves into the sticker pack named `collection` (created if
++    /// missing), see `get_sticker_packs`.
+     async fn misc_save_sticker(
+         &self,
+         account_id: u32,
+@@ -2624,84 +2629,133 @@ async fn misc_save_sticker(
+         collection: String,
+     ) -> Result<()> {
+         let ctx = self.get_context(account_id).await?;
+-        let message = Message::load_from_db(&ctx, MsgId::new(msg_id)).await?;
+-        ensure!(
+-            message.get_viewtype() == Viewtype::Sticker,
+-            "message {msg_id} is not a sticker"
+-        );
+-        let account_folder = ctx
+-            .get_dbfile()
+-            .parent()
+-            .context("account folder not found")?;
+-        ensure!(
+-            is_sanitized(&collection),
+-            "illegal characters in collection name"
+-        );
+-        let destination_path = account_folder.join("stickers").join(collection);
+-        fs::create_dir_all(&destination_path).await?;
+-        let file = message.get_filename().context("no file?")?;
+-        message
+-            .save_file(
+-                &ctx,
+-                &destination_path.join(format!(
+-                    "{}.{}",
+-                    msg_id,
+-                    Path::new(&file)
+-                        .extension()
+-                        .unwrap_or_default()
+-                        .to_str()
+-                        .unwrap_or_default()
+-                )),
+-            )
+-            .await?;
++        let packs = sticker_packs::get_packs(&ctx).await?;
++        let pack_id = match packs.iter().find(|p| p.name == collection.trim()) {
++            Some(pack) => pack.id,
++            None => sticker_packs::create_pack(&ctx, &collection).await?,
++        };
++        sticker_packs::add_sticker_from_msg(&ctx, pack_id, MsgId::new(msg_id)).await?;
+         Ok(())
+     }
+ 
+     /// for desktop, get stickers from stickers folder,
+     /// grouped by the collection/folder they are in.
++    ///
++    /// slothfulchat: reads the sticker packs instead, see `get_sticker_packs`.
+     async fn misc_get_stickers(&self, account_id: u32) -> Result<HashMap<String, Vec<String>>> {
+         let ctx = self.get_context(account_id).await?;
+-        let account_folder = ctx
+-            .get_dbfile()
+-            .parent()
+-            .context("account folder not found")?;
+-        let sticker_folder_path = account_folder.join("stickers");
+-        fs::create_dir_all(&sticker_folder_path).await?;
+-        let mut result = HashMap::new();
++        Ok(sticker_packs::get_packs(&ctx)
++            .await?
++            .into_iter()
++            .filter(|p| !p.stickers.is_empty())
++            .map(|p| (p.name, p.stickers.into_iter().map(|s| s.path).collect()))
++            .collect())
++    }
+ 
+-        let mut packs = tokio::fs::read_dir(sticker_folder_path).await?;
+-        while let Some(entry) = packs.next_entry().await? {
+-            if !entry.file_type().await?.is_dir() {
+-                continue;
+-            }
+-            let pack_name = entry.file_name().into_string().unwrap_or_default();
+-            let mut stickers = tokio::fs::read_dir(entry.path()).await?;
+-            let mut sticker_paths = Vec::new();
+-            while let Some(sticker_entry) = stickers.next_entry().await? {
+-                if !sticker_entry.file_type().await?.is_file() {
+-                    continue;
+-                }
+-                let sticker_name = sticker_entry.file_name().into_string().unwrap_or_default();
+-                if sticker_name.ends_with(".png")
+-                    || sticker_name.ends_with(".webp")
+-                    || sticker_name.ends_with(".gif")
+-                    || sticker_name.ends_with(".tgs")
+-                {
+-                    sticker_paths.push(
+-                        sticker_entry
+-                            .path()
+-                            .to_str()
+-                            .map(|s| s.to_owned())
+-                            .context("path conversion to string failed")?,
+-                    );
+-                }
+-            }
+-            if !sticker_paths.is_empty() {
+-                result.insert(pack_name, sticker_paths);
+-            }
+-        }
++    // ---------------------------------------------
++    //   sticker packs (slothfulchat, fork-only)
++    //   FORK-ONLY: if upstream implements sticker packs, migrate to its API.
++    // ---------------------------------------------
+ 
+-        Ok(result)
++    /// All sticker packs of the account, sorted by name. Stickers are blobs, so
++    /// packs are part of backups. Packs saved by older versions in the
++    /// account's `stickers/` folder are moved in on the first call.
++    async fn get_sticker_packs(&self, account_id: u32) -> Result<Vec<StickerPackObject>> {
++        let ctx = self.get_context(account_id).await?;
++        Ok(sticker_packs::get_packs(&ctx)
++            .await?
++            .into_iter()
++            .map(Into::into)
++            .collect())
++    }
++
++    /// Creates an empty sticker pack and returns its id. A taken name gets
++    /// " (2)", " (3)", … appended.
++    async fn create_sticker_pack(&self, account_id: u32, name: String) -> Result<u32> {
++        let ctx = self.get_context(account_id).await?;
++        sticker_packs::create_pack(&ctx, &name).await
++    }
++
++    /// Renames a sticker pack; fails if another pack has that name.
++    async fn rename_sticker_pack(&self, account_id: u32, pack_id: u32, name: String) -> Result<()> {
++        let ctx = self.get_context(account_id).await?;
++        sticker_packs::rename_pack(&ctx, pack_id, &name).await
++    }
++
++    /// Deletes a sticker pack with all its stickers.
++    async fn delete_sticker_pack(&self, account_id: u32, pack_id: u32) -> Result<()> {
++        let ctx = self.get_context(account_id).await?;
++        sticker_packs::delete_pack(&ctx, pack_id).await
++    }
++
++    /// Adds the file at `path` to a pack and returns the sticker's id. `name`
++    /// supplies the extension (png, webp, gif or tgs), which the content must
++    /// match. The file is copied; a sticker already in the pack is not added twice.
++    async fn add_sticker_from_file(
++        &self,
++        account_id: u32,
++        pack_id: u32,
++        path: String,
++        name: String,
++    ) -> Result<u32> {
++        let ctx = self.get_context(account_id).await?;
++        sticker_packs::add_sticker_from_file(&ctx, pack_id, Path::new(&path), &name).await
++    }
++
++    /// Adds the sticker of a sticker message to a pack and returns its id.
++    async fn add_sticker_from_message(
++        &self,
++        account_id: u32,
++        pack_id: u32,
++        msg_id: u32,
++    ) -> Result<u32> {
++        let ctx = self.get_context(account_id).await?;
++        sticker_packs::add_sticker_from_msg(&ctx, pack_id, MsgId::new(msg_id)).await
++    }
++
++    /// Moves a sticker to another pack.
++    async fn move_sticker(&self, account_id: u32, sticker_id: u32, to_pack_id: u32) -> Result<()> {
++        let ctx = self.get_context(account_id).await?;
++        sticker_packs::move_sticker(&ctx, sticker_id, to_pack_id).await
++    }
++
++    /// Copies a sticker into another pack and returns the copy's id.
++    async fn copy_sticker(&self, account_id: u32, sticker_id: u32, to_pack_id: u32) -> Result<u32> {
++        let ctx = self.get_context(account_id).await?;
++        sticker_packs::copy_sticker(&ctx, sticker_id, to_pack_id).await
++    }
++
++    /// Removes a sticker from its pack.
++    async fn remove_sticker(&self, account_id: u32, sticker_id: u32) -> Result<()> {
++        let ctx = self.get_context(account_id).await?;
++        sticker_packs::remove_sticker(&ctx, sticker_id).await
++    }
++
++    /// Copies pack `pack_id` of account `from_account_id` into `account_id` as a
++    /// new pack and returns its id.
++    async fn copy_sticker_pack_from_account(
++        &self,
++        account_id: u32,
++        from_account_id: u32,
++        pack_id: u32,
++    ) -> Result<u32> {
++        ensure!(account_id != from_account_id, "same account");
++        let ctx = self.get_context(account_id).await?;
++        let from = self.get_context(from_account_id).await?;
++        sticker_packs::copy_pack_from(&ctx, &from, pack_id).await
++    }
++
++    /// Ids of recent sticker messages whose sticker is in no pack yet, newest
++    /// first, one per distinct sticker, at most `limit`.
++    async fn get_unsaved_sticker_messages(&self, account_id: u32, limit: u32) -> Result<Vec<u32>> {
++        let ctx = self.get_context(account_id).await?;
++        Ok(
++            sticker_packs::get_unsaved_sticker_msgs(&ctx, limit as usize)
++                .await?
++                .into_iter()
++                .map(|id| id.to_u32())
++                .collect(),
++        )
+     }
+ 
+     /// Returns the messageid of the sent message
+diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
+index 9fe1ef9db885d59c81394a575dd2b4140060a949..cc9865c5029e454892f3aacf8f8873849b5f73fb 100644
+--- a/deltachat-jsonrpc/src/api/types/message.rs
++++ b/deltachat-jsonrpc/src/api/types/message.rs
+@@ -704,6 +704,44 @@ pub struct ReplyThreadEntry {
+     pub parent_id: Option<u32>,
+ }
+ 
++/// A sticker in a pack, see `get_sticker_packs`.
++#[derive(Serialize, TypeDef, schemars::JsonSchema)]
++#[serde(rename_all = "camelCase")]
++pub struct StickerObject {
++    /// Id to move, copy or remove the sticker with.
++    pub id: u32,
++    /// Absolute path of the sticker's blob; pass it to `send_msg` to send it.
++    pub path: String,
++}
++
++/// A sticker pack, see `get_sticker_packs`.
++#[derive(Serialize, TypeDef, schemars::JsonSchema)]
++#[serde(rename_all = "camelCase")]
++pub struct StickerPackObject {
++    pub id: u32,
++    /// Unique among the account's packs.
++    pub name: String,
++    /// Oldest first.
++    pub stickers: Vec<StickerObject>,
++}
++
++impl From<deltachat::sticker_packs::StickerPack> for StickerPackObject {
++    fn from(pack: deltachat::sticker_packs::StickerPack) -> Self {
++        Self {
++            id: pack.id,
++            name: pack.name,
++            stickers: pack
++                .stickers
++                .into_iter()
++                .map(|s| StickerObject {
++                    id: s.id,
++                    path: s.path,
++                })
++                .collect(),
++        }
++    }
++}
++
+ #[derive(Serialize, TypeDef, schemars::JsonSchema)]
+ #[serde(rename_all = "camelCase")]
+ pub struct MessageInfo {
+diff --git a/src/lib.rs b/src/lib.rs
+index 6b1e2a0d4041d4a079e2dd04c8066b9e3f80771a..00c26370db39f7976a2e9edfae29fbedde5a14b7 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -92,6 +92,7 @@
+ pub mod securejoin;
+ mod simplify;
+ mod smtp;
++pub mod sticker_packs;
+ pub mod stock_str;
+ pub mod storage_usage;
+ mod sync;
+diff --git a/src/sql.rs b/src/sql.rs
+index 6ffa5f1a9dabdb9cb8972c0fe3ef26fd272064d7..a75d5a52f11ddf70f6557b76ed77dece7bffb8c9 100644
+--- a/src/sql.rs
++++ b/src/sql.rs
+@@ -1072,6 +1072,28 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
+         .await
+         .context("Failed to SELECT blobname FROM http_cache")?;
+ 
++    // slothfulchat: stickers saved in a pack are blobs no message may reference
++    // any more. FORK-ONLY, see `crate::sticker_packs`; guarded by
++    // `test_housekeeping_keeps_sticker_pack_blobs`.
++    context
++        .sql
++        .query_map(
++            "SELECT blobname FROM slothfulchat_stickers",
++            (),
++            |row| {
++                let row: String = row.get(0)?;
++                Ok(row)
++            },
++            |rows| {
++                for row in rows {
++                    maybe_add_file(&mut files_in_use, &row?);
++                }
++                Ok(())
++            },
++        )
++        .await
++        .context("Failed to SELECT blobname FROM slothfulchat_stickers")?;
++
+     // Keep staging files of pending chunked downloads
+     // (see `download::StagingFile`); interrupted downloads resume from them.
+     context
+diff --git a/src/sql/migrations.rs b/src/sql/migrations.rs
+index e4ff13b3947bac6dbe7a0cd9ad9030ce97122c19..3fe8e48dccbb01b01b88256f5fc49dc72496555c 100644
+--- a/src/sql/migrations.rs
++++ b/src/sql/migrations.rs
+@@ -2468,6 +2468,26 @@ pub async fn run(context: &Context, sql: &Sql) -> Result<bool> {
+     )
+     .await?;
+ 
++    // slothfulchat: sticker packs (see `crate::sticker_packs`). Not a numbered
++    // migration, for the reason given at the reply index above. FORK-ONLY: if
++    // upstream implements sticker packs, migrate these rows to its storage.
++    sql.call_write(|conn| {
++        conn.execute_batch(
++            "CREATE TABLE IF NOT EXISTS slothfulchat_sticker_packs (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            name TEXT NOT NULL UNIQUE
++        );
++        CREATE TABLE IF NOT EXISTS slothfulchat_stickers (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            pack_id INTEGER NOT NULL REFERENCES slothfulchat_sticker_packs(id) ON DELETE CASCADE,
++            blobname TEXT NOT NULL,
++            UNIQUE(pack_id, blobname)
++        );",
++        )?;
++        Ok(())
++    })
++    .await?;
++
+     let new_version = sql
+         .get_raw_config_int(VERSION_CFG)
+         .await?
+diff --git a/src/sql/sql_tests.rs b/src/sql/sql_tests.rs
+index 4914dd653e9131e2245bc7f45e9f5e3ed86a2f42..b66492f3b454539b6738d014f15008a8ed9a4cf2 100644
+--- a/src/sql/sql_tests.rs
++++ b/src/sql/sql_tests.rs
+@@ -461,3 +461,41 @@ async fn test_housekeeping_video_preview_follows_the_blob() -> Result<()> {
+ 
+     Ok(())
+ }
++
++/// slothfulchat: a sticker saved to a pack must outlive the message it came from,
++/// and go once no pack has it. This is the tripwire for the fork-only
++/// `slothfulchat_stickers` query in `remove_unused_files`: if an upstream rebase
++/// rewrites housekeeping and drops it, saved stickers would silently vanish.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_housekeeping_keeps_sticker_pack_blobs() -> Result<()> {
++    let t = TestContext::new_alice().await;
++    let mut msg = Message::new(Viewtype::Sticker);
++    msg.set_file_from_bytes(
++        &t,
++        "s.gif",
++        include_bytes!("../../test-data/image/image100x50.gif"),
++        None,
++    )?;
++    let chat = t.get_self_chat().await;
++    let msg_id = t.send_msg(chat.id, &mut msg).await.sender_msg_id;
++    let blob = Message::load_from_db(&t, msg_id)
++        .await?
++        .get_file(&t)
++        .context("sticker has a file")?;
++    let pack = crate::sticker_packs::create_pack(&t, "Saved").await?;
++    crate::sticker_packs::add_sticker_from_msg(&t, pack, msg_id).await?;
++
++    crate::message::delete_msgs(&t, &[msg_id]).await?;
++    SystemTime::shift(Duration::from_secs(65 * 60));
++    remove_unused_files(&t).await?;
++    assert!(
++        blob.exists(),
++        "housekeeping deleted a sticker saved in a pack"
++    );
++
++    crate::sticker_packs::delete_pack(&t, pack).await?;
++    SystemTime::shift(Duration::from_secs(65 * 60));
++    remove_unused_files(&t).await?;
++    assert!(!blob.exists(), "sticker blob outlived its pack");
++    Ok(())
++}
+diff --git a/src/sticker_packs.rs b/src/sticker_packs.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..b1e672d40c8040fa68973501f12d64edd132ad73
+--- /dev/null
++++ b/src/sticker_packs.rs
+@@ -0,0 +1,427 @@
++//! # Sticker packs (slothfulchat fork)
++//!
++//! Upstream keeps saved stickers as plain files in `<account>/stickers/<pack>/`,
++//! outside the blobdir, so they are missing from backups and second-device
++//! transfers. Here a pack is a row in `slothfulchat_sticker_packs`, and each
++//! sticker is a row in `slothfulchat_stickers` that names an ordinary,
++//! deduplicated blob. Saving a received sticker therefore costs no bytes,
++//! sending one needs no copy, and packs travel with the database.
++//!
++//! The blobs are kept alive by one extra query in
++//! [`crate::sql::remove_unused_files`]; `sql_tests::test_housekeeping_keeps_sticker_pack_blobs`
++//! fails if a rebase drops it.
++//!
++//! FORK-ONLY: if upstream ever implements sticker packs, migrate these tables to
++//! upstream's storage instead of keeping both.
++
++use std::path::Path;
++
++use anyhow::{Context as _, Result, bail, ensure};
++
++use crate::blob::BlobObject;
++use crate::constants::DC_CHAT_ID_LAST_SPECIAL;
++use crate::context::Context;
++use crate::log::warn;
++use crate::message::{Message, MsgId, Viewtype};
++use crate::param::{Param, Params};
++
++/// File types a sticker may have; the same list upstream's folder listing accepted.
++const STICKER_EXTENSIONS: [&str; 4] = ["png", "webp", "gif", "tgs"];
++
++/// Largest sticker file accepted. Signal stickers are a few hundred KiB, `.tgs`
++/// at most 64 KiB; the headroom is for GIFs.
++const MAX_STICKER_BYTES: u64 = 5 * 1024 * 1024;
++
++/// A sticker in a pack.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct Sticker {
++    /// Row id, used to move, copy or remove it.
++    pub id: u32,
++    /// Absolute path of the blob.
++    pub path: String,
++}
++
++/// A sticker pack with its stickers, in the order they were added.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct StickerPack {
++    /// Row id.
++    pub id: u32,
++    /// Unique name, shown as the pack's title.
++    pub name: String,
++    /// The stickers, oldest first.
++    pub stickers: Vec<Sticker>,
++}
++
++/// Lowercase extension of `name` if it is one a sticker may have.
++fn sticker_extension(name: &str) -> Option<String> {
++    let ext = Path::new(name).extension()?.to_str()?.to_ascii_lowercase();
++    STICKER_EXTENSIONS.contains(&ext.as_str()).then_some(ext)
++}
++
++/// Whether `head` (the first bytes of a file) matches what `ext` promises.
++/// The extension alone decides how the UI renders a sticker, so a file must not
++/// be able to lie about it.
++fn magic_matches(ext: &str, head: &[u8]) -> bool {
++    match ext {
++        "png" => head.starts_with(b"\x89PNG"),
++        "gif" => head.starts_with(b"GIF8"),
++        "webp" => head.starts_with(b"RIFF") && head.get(8..12) == Some(b"WEBP"),
++        "tgs" => head.starts_with(b"\x1f\x8b"),
++        _ => false,
++    }
++}
++
++/// Lists all packs, sorted by name. Packs from the old `stickers/` folder are
++/// moved in on first use.
++pub async fn get_packs(context: &Context) -> Result<Vec<StickerPack>> {
++    migrate_sticker_folder(context).await?;
++    let rows: Vec<(u32, String, Option<u32>, Option<String>)> = context
++        .sql
++        .query_map_vec(
++            "SELECT p.id, p.name, s.id, s.blobname
++               FROM slothfulchat_sticker_packs p
++               LEFT JOIN slothfulchat_stickers s ON s.pack_id=p.id
++              ORDER BY p.name COLLATE NOCASE, p.id, s.id",
++            (),
++            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
++        )
++        .await?;
++    let mut packs: Vec<StickerPack> = Vec::new();
++    for (pack_id, name, sticker_id, blobname) in rows {
++        if packs.last().is_none_or(|p| p.id != pack_id) {
++            packs.push(StickerPack {
++                id: pack_id,
++                name,
++                stickers: Vec::new(),
++            });
++        }
++        if let (Some(id), Some(blobname), Some(pack)) = (sticker_id, blobname, packs.last_mut()) {
++            let path = BlobObject::from_name(context, &blobname)?.to_abs_path();
++            pack.stickers.push(Sticker {
++                id,
++                path: path.to_str().context("non-UTF-8 blob path")?.to_string(),
++            });
++        }
++    }
++    Ok(packs)
++}
++
++/// Creates a pack. If `name` is taken, " (2)", " (3)", … is appended.
++pub async fn create_pack(context: &Context, name: &str) -> Result<u32> {
++    let name = name.trim();
++    ensure!(!name.is_empty(), "empty sticker pack name");
++    for n in 1u32.. {
++        let candidate = if n == 1 {
++            name.to_string()
++        } else {
++            format!("{name} ({n})")
++        };
++        let inserted = context
++            .sql
++            .execute(
++                "INSERT OR IGNORE INTO slothfulchat_sticker_packs (name) VALUES (?)",
++                (&candidate,),
++            )
++            .await?;
++        if inserted == 1 {
++            return pack_id_by_name(context, &candidate)
++                .await?
++                .context("pack vanished after insert");
++        }
++    }
++    unreachable!()
++}
++
++async fn pack_id_by_name(context: &Context, name: &str) -> Result<Option<u32>> {
++    context
++        .sql
++        .query_get_value(
++            "SELECT id FROM slothfulchat_sticker_packs WHERE name=?",
++            (name,),
++        )
++        .await
++}
++
++/// Renames a pack. Fails if another pack already has that name.
++pub async fn rename_pack(context: &Context, pack_id: u32, name: &str) -> Result<()> {
++    let name = name.trim();
++    ensure!(!name.is_empty(), "empty sticker pack name");
++    if let Some(other) = pack_id_by_name(context, name).await?
++        && other != pack_id
++    {
++        bail!("a sticker pack named {name:?} already exists");
++    }
++    let changed = context
++        .sql
++        .execute(
++            "UPDATE slothfulchat_sticker_packs SET name=? WHERE id=?",
++            (name, pack_id),
++        )
++        .await?;
++    ensure!(changed == 1, "no sticker pack {pack_id}");
++    Ok(())
++}
++
++/// Deletes a pack and its stickers. The blobs go with the next housekeeping
++/// unless a message or another pack still uses them.
++pub async fn delete_pack(context: &Context, pack_id: u32) -> Result<()> {
++    context
++        .sql
++        .transaction(|t| {
++            t.execute(
++                "DELETE FROM slothfulchat_stickers WHERE pack_id=?",
++                (pack_id,),
++            )?;
++            t.execute(
++                "DELETE FROM slothfulchat_sticker_packs WHERE id=?",
++                (pack_id,),
++            )?;
++            Ok(())
++        })
++        .await
++}
++
++/// Adds the file at `path` to a pack, copying it into the blobdir.
++/// `name` gives the extension, which must be a sticker type the content matches.
++/// Adding a sticker the pack already has is a no-op; returns the sticker's id.
++pub async fn add_sticker_from_file(
++    context: &Context,
++    pack_id: u32,
++    path: &Path,
++    name: &str,
++) -> Result<u32> {
++    let ext = sticker_extension(name).with_context(|| format!("{name:?} is not a sticker"))?;
++    // `create_and_deduplicate` *moves* a file that is already in the blobdir,
++    // which would take it away from the message using it.
++    ensure!(
++        !path.starts_with(context.get_blobdir()),
++        "blobdir files are added with add_sticker_from_msg"
++    );
++    let size = tokio::fs::metadata(path).await?.len();
++    ensure!(size <= MAX_STICKER_BYTES, "sticker too big ({size} bytes)");
++    let mut head = [0u8; 12];
++    let n = {
++        use tokio::io::AsyncReadExt;
++        let mut f = tokio::fs::File::open(path).await?;
++        let mut n = 0;
++        while n < head.len() {
++            let read = f.read(&mut head[n..]).await?;
++            if read == 0 {
++                break;
++            }
++            n += read;
++        }
++        n
++    };
++    ensure!(
++        magic_matches(&ext, &head[..n]),
++        "{name:?} is not a valid {ext} file"
++    );
++    let blob = BlobObject::create_and_deduplicate(context, path, Path::new(&format!("x.{ext}")))?;
++    insert_sticker(context, pack_id, blob.as_name()).await
++}
++
++/// Adds the sticker of message `msg_id` to a pack. The pack shares the
++/// message's blob, so this copies nothing.
++pub async fn add_sticker_from_msg(context: &Context, pack_id: u32, msg_id: MsgId) -> Result<u32> {
++    let msg = Message::load_from_db(context, msg_id).await?;
++    ensure!(
++        msg.get_viewtype() == Viewtype::Sticker,
++        "message {msg_id} is not a sticker"
++    );
++    let blobname = msg.param.get(Param::File).context("sticker has no file")?;
++    // A received sticker's blob is named by content like any other, but the
++    // extension comes from the sender: check it like a file from disk.
++    let blob = BlobObject::from_name(context, blobname)?;
++    let ext = blob.suffix().and_then(sticker_extension_of_suffix);
++    ensure!(
++        ext.is_some(),
++        "sticker {msg_id} has an unsupported file type"
++    );
++    insert_sticker(context, pack_id, blob.as_name()).await
++}
++
++fn sticker_extension_of_suffix(suffix: &str) -> Option<String> {
++    sticker_extension(&format!("x.{suffix}"))
++}
++
++async fn insert_sticker(context: &Context, pack_id: u32, blobname: &str) -> Result<u32> {
++    context
++        .sql
++        .transaction(|t| {
++            let exists: bool = t.query_row(
++                "SELECT COUNT(*) FROM slothfulchat_sticker_packs WHERE id=?",
++                (pack_id,),
++                |row| row.get(0),
++            )?;
++            ensure!(exists, "no sticker pack {pack_id}");
++            t.execute(
++                "INSERT OR IGNORE INTO slothfulchat_stickers (pack_id, blobname) VALUES (?, ?)",
++                (pack_id, blobname),
++            )?;
++            let id = t.query_row(
++                "SELECT id FROM slothfulchat_stickers WHERE pack_id=? AND blobname=?",
++                (pack_id, blobname),
++                |row| row.get(0),
++            )?;
++            Ok(id)
++        })
++        .await
++}
++
++/// Moves a sticker to another pack. If that pack already has it, the moved
++/// one is simply dropped.
++pub async fn move_sticker(context: &Context, sticker_id: u32, to_pack_id: u32) -> Result<()> {
++    let blobname = sticker_blobname(context, sticker_id).await?;
++    insert_sticker(context, to_pack_id, &blobname).await?;
++    let new_id = sticker_id_in_pack(context, to_pack_id, &blobname).await?;
++    if new_id != sticker_id {
++        remove_sticker(context, sticker_id).await?;
++    }
++    Ok(())
++}
++
++/// Copies a sticker into another pack; returns the copy's id.
++pub async fn copy_sticker(context: &Context, sticker_id: u32, to_pack_id: u32) -> Result<u32> {
++    let blobname = sticker_blobname(context, sticker_id).await?;
++    insert_sticker(context, to_pack_id, &blobname).await
++}
++
++/// Removes a sticker from its pack.
++pub async fn remove_sticker(context: &Context, sticker_id: u32) -> Result<()> {
++    context
++        .sql
++        .execute(
++            "DELETE FROM slothfulchat_stickers WHERE id=?",
++            (sticker_id,),
++        )
++        .await?;
++    Ok(())
++}
++
++async fn sticker_blobname(context: &Context, sticker_id: u32) -> Result<String> {
++    context
++        .sql
++        .query_get_value(
++            "SELECT blobname FROM slothfulchat_stickers WHERE id=?",
++            (sticker_id,),
++        )
++        .await?
++        .with_context(|| format!("no sticker {sticker_id}"))
++}
++
++async fn sticker_id_in_pack(context: &Context, pack_id: u32, blobname: &str) -> Result<u32> {
++    context
++        .sql
++        .query_get_value(
++            "SELECT id FROM slothfulchat_stickers WHERE pack_id=? AND blobname=?",
++            (pack_id, blobname),
++        )
++        .await?
++        .context("sticker not in pack")
++}
++
++/// Copies pack `pack_id` of profile `from` into `to` as a new pack with the
++/// same name (suffixed if taken there). Returns the new pack's id in `to`.
++pub async fn copy_pack_from(context: &Context, from: &Context, pack_id: u32) -> Result<u32> {
++    let pack = get_packs(from)
++        .await?
++        .into_iter()
++        .find(|p| p.id == pack_id)
++        .with_context(|| format!("no sticker pack {pack_id}"))?;
++    let new_id = create_pack(context, &pack.name).await?;
++    for sticker in &pack.stickers {
++        add_sticker_from_file(context, new_id, Path::new(&sticker.path), &sticker.path).await?;
++    }
++    Ok(new_id)
++}
++
++/// Sticker messages, newest first, whose sticker is in no pack yet; one
++/// message per distinct sticker, at most `limit`.
++pub async fn get_unsaved_sticker_msgs(context: &Context, limit: usize) -> Result<Vec<MsgId>> {
++    // ponytail: scans the newest 1000 sticker messages; older ones never show up,
++    // fine for a "recently seen" strip.
++    let rows: Vec<(MsgId, String)> = context
++        .sql
++        .query_map_vec(
++            "SELECT id, param FROM msgs
++              WHERE chat_id>? AND type=? AND hidden=0
++              ORDER BY timestamp DESC, id DESC
++              LIMIT 1000",
++            (DC_CHAT_ID_LAST_SPECIAL, Viewtype::Sticker),
++            |row| Ok((row.get(0)?, row.get(1)?)),
++        )
++        .await?;
++    let saved: std::collections::HashSet<String> = context
++        .sql
++        .query_map_collect(
++            "SELECT DISTINCT blobname FROM slothfulchat_stickers",
++            (),
++            |row| Ok(row.get(0)?),
++        )
++        .await?;
++    let mut seen = std::collections::HashSet::new();
++    let mut result = Vec::new();
++    for (id, param) in rows {
++        let param: Params = param.parse().unwrap_or_default();
++        let Some(file) = param.get(Param::File) else {
++            continue; // not downloaded yet
++        };
++        let Ok(blob) = BlobObject::from_name(context, file) else {
++            continue;
++        };
++        if blob
++            .suffix()
++            .and_then(sticker_extension_of_suffix)
++            .is_none()
++            || saved.contains(blob.as_name())
++            || !seen.insert(blob.as_name().to_string())
++            || !crate::tools::path_exists(blob.to_abs_path())
++        {
++            continue;
++        }
++        result.push(id);
++        if result.len() >= limit {
++            break;
++        }
++    }
++    Ok(result)
++}
++
++/// Moves packs from upstream's `<account>/stickers/<pack>/` folders into the
++/// tables, then deletes the folder. Files that are not valid stickers are
++/// dropped with the folder: upstream would not have listed them either.
++async fn migrate_sticker_folder(context: &Context) -> Result<()> {
++    let Some(folder) = context.get_dbfile().parent().map(|p| p.join("stickers")) else {
++        return Ok(());
++    };
++    let Ok(mut packs) = tokio::fs::read_dir(&folder).await else {
++        return Ok(()); // nothing to migrate
++    };
++    while let Some(entry) = packs.next_entry().await? {
++        if !entry.file_type().await?.is_dir() {
++            continue;
++        }
++        let name = entry.file_name().to_string_lossy().into_owned();
++        let pack_id = match pack_id_by_name(context, &name).await? {
++            Some(id) => id,
++            None => create_pack(context, &name).await?,
++        };
++        let mut files = tokio::fs::read_dir(entry.path()).await?;
++        while let Some(file) = files.next_entry().await? {
++            let file_name = file.file_name().to_string_lossy().into_owned();
++            if file.file_type().await?.is_file() && sticker_extension(&file_name).is_some() {
++                if let Err(err) =
++                    add_sticker_from_file(context, pack_id, &file.path(), &file_name).await
++                {
++                    warn!(context, "Sticker migration: skipping {file_name}: {err:#}.");
++                }
++            }
++        }
++    }
++    tokio::fs::remove_dir_all(&folder).await?;
++    Ok(())
++}
++
++#[cfg(test)]
++mod sticker_packs_tests;
+diff --git a/src/sticker_packs/sticker_packs_tests.rs b/src/sticker_packs/sticker_packs_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..3306c21e06ef2d77bb0ea0c553694685dc946be3
+--- /dev/null
++++ b/src/sticker_packs/sticker_packs_tests.rs
+@@ -0,0 +1,142 @@
++use super::*;
++use crate::test_utils::TestContext;
++
++const GIF: &[u8] = include_bytes!("../../test-data/image/image100x50.gif");
++
++/// Sends the test GIF as a sticker to the self chat; returns the message id.
++async fn send_sticker(t: &TestContext) -> Result<MsgId> {
++    let mut msg = Message::new(Viewtype::Sticker);
++    msg.set_file_from_bytes(t, "s.gif", GIF, None)?;
++    let chat = t.get_self_chat().await;
++    Ok(t.send_msg(chat.id, &mut msg).await.sender_msg_id)
++}
++
++async fn write_tmp(t: &TestContext, name: &str, data: &[u8]) -> Result<std::path::PathBuf> {
++    let path = t.dir.path().join(name);
++    tokio::fs::write(&path, data).await?;
++    Ok(path)
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_pack_names() -> Result<()> {
++    let t = TestContext::new().await;
++    let a = create_pack(&t, "Cats").await?;
++    let b = create_pack(&t, " Cats ").await?;
++    let c = create_pack(&t, "Cats").await?;
++    let names: Vec<_> = get_packs(&t).await?.into_iter().map(|p| p.name).collect();
++    assert_eq!(names, ["Cats", "Cats (2)", "Cats (3)"]);
++    assert!(create_pack(&t, "  ").await.is_err());
++
++    assert!(
++        rename_pack(&t, b, "Cats").await.is_err(),
++        "rename onto a taken name"
++    );
++    rename_pack(&t, b, "Dogs").await?;
++    rename_pack(&t, a, "Cats").await?; // to its own name is fine
++    delete_pack(&t, c).await?;
++    let names: Vec<_> = get_packs(&t).await?.into_iter().map(|p| p.name).collect();
++    assert_eq!(names, ["Cats", "Dogs"]);
++    Ok(())
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_add_from_file_checks_content() -> Result<()> {
++    let t = TestContext::new().await;
++    let pack = create_pack(&t, "p").await?;
++
++    let fake = write_tmp(&t, "fake.png", b"GIF89a not a png").await?;
++    assert!(
++        add_sticker_from_file(&t, pack, &fake, "fake.png")
++            .await
++            .is_err()
++    );
++    let exe = write_tmp(&t, "x.exe", GIF).await?;
++    assert!(
++        add_sticker_from_file(&t, pack, &exe, "x.exe")
++            .await
++            .is_err()
++    );
++
++    let gif = write_tmp(&t, "a.gif", GIF).await?;
++    let id = add_sticker_from_file(&t, pack, &gif, "a.GIF").await?;
++    // The same content again is the same sticker.
++    let again = write_tmp(&t, "b.gif", GIF).await?;
++    assert_eq!(add_sticker_from_file(&t, pack, &again, "b.gif").await?, id);
++
++    let packs = get_packs(&t).await?;
++    assert_eq!(packs[0].stickers.len(), 1);
++    assert!(packs[0].stickers[0].path.ends_with(".gif"));
++    assert!(Path::new(&packs[0].stickers[0].path).starts_with(t.get_blobdir()));
++    Ok(())
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_move_and_copy() -> Result<()> {
++    let t = TestContext::new_alice().await;
++    let a = create_pack(&t, "a").await?;
++    let b = create_pack(&t, "b").await?;
++    let sticker = add_sticker_from_msg(&t, a, send_sticker(&t).await?).await?;
++
++    let copy = copy_sticker(&t, sticker, b).await?;
++    assert_ne!(copy, sticker);
++    let counts = |p: Vec<StickerPack>| p.iter().map(|p| p.stickers.len()).collect::<Vec<_>>();
++    assert_eq!(counts(get_packs(&t).await?), [1, 1]);
++
++    // b already has it, so moving a's copy there just drops a's.
++    move_sticker(&t, sticker, b).await?;
++    assert_eq!(counts(get_packs(&t).await?), [0, 1]);
++
++    move_sticker(&t, copy, a).await?;
++    assert_eq!(counts(get_packs(&t).await?), [1, 0]);
++    Ok(())
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_unsaved_sticker_msgs() -> Result<()> {
++    let t = TestContext::new_alice().await;
++    let first = send_sticker(&t).await?;
++    let second = send_sticker(&t).await?; // same sticker again
++
++    // One entry per distinct sticker, the newest message.
++    assert_eq!(get_unsaved_sticker_msgs(&t, 10).await?, [second]);
++
++    let pack = create_pack(&t, "p").await?;
++    add_sticker_from_msg(&t, pack, first).await?;
++    assert!(get_unsaved_sticker_msgs(&t, 10).await?.is_empty());
++    Ok(())
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_copy_pack_between_profiles() -> Result<()> {
++    let from = TestContext::new().await;
++    let to = TestContext::new().await;
++    let pack = create_pack(&from, "Shared").await?;
++    let gif = write_tmp(&from, "a.gif", GIF).await?;
++    add_sticker_from_file(&from, pack, &gif, "a.gif").await?;
++    create_pack(&to, "Shared").await?;
++
++    let new = copy_pack_from(&to, &from, pack).await?;
++    let packs = get_packs(&to).await?;
++    let copied = packs.iter().find(|p| p.id == new).unwrap();
++    assert_eq!(copied.name, "Shared (2)");
++    assert_eq!(copied.stickers.len(), 1);
++    assert!(Path::new(&copied.stickers[0].path).starts_with(to.get_blobdir()));
++    Ok(())
++}
++
++/// Packs saved by upstream's folder layout move into the tables on first use.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_migrate_sticker_folder() -> Result<()> {
++    let t = TestContext::new().await;
++    let folder = t.get_dbfile().parent().unwrap().join("stickers");
++    tokio::fs::create_dir_all(folder.join("Saved")).await?;
++    tokio::fs::write(folder.join("Saved/1.gif"), GIF).await?;
++    tokio::fs::write(folder.join("Saved/notes.txt"), b"x").await?;
++
++    let packs = get_packs(&t).await?;
++    assert_eq!(packs.len(), 1);
++    assert_eq!(packs[0].name, "Saved");
++    assert_eq!(packs[0].stickers.len(), 1);
++    assert!(!folder.exists(), "old sticker folder left behind");
++    Ok(())
++}

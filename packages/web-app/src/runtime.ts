@@ -42,6 +42,7 @@ import {
 import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
 import { initChatExport } from './chat-export'
+import { initStickerPacks } from './sticker-packs'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
 
 // earliest boot milestone we control: our runtime bundle has finished loading
@@ -1602,6 +1603,12 @@ class BrowserRuntime {
     return this.transformBlobURL(sticker_path)
   }
   async deleteSticker(stickerPath: string): Promise<void> {
+    // Stickers are blobs now (core sticker packs), shared with the messages
+    // that sent them: removing one goes through the core's remove_sticker.
+    // Deleting the file here would take it from those messages too.
+    if (stickerPath.includes('dc.db-blobs')) {
+      throw new Error('deleteSticker: use the remove_sticker RPC for pack stickers')
+    }
     // the frontend passes the pack directory; fs_remove deletes a tree
     await getCore().fsRemove(stickerPath)
   }
@@ -1740,6 +1747,16 @@ class BrowserRuntime {
     // chat export (three-dot menu → Export Chat): the desktop patch keeps the
     // dialogs and calls window.__slothfulExportChat; the zip is built here
     initChatExport(() => getCore().dc.rpc, this.transformBlobURL.bind(this), saveFile)
+    initStickerPacks(() => getCore().dc.rpc, {
+      read: path => getCore().fsRead(path),
+      stage: async (name, data) => {
+        const path = this.tmpPath(name)
+        await getCore().fsWrite(path, data)
+        return path
+      },
+      unstage: path => this.removeTempFile(path),
+      save: saveFile,
+    })
 
     // onboarding funnel hook: WelcomeScreen (desktop patch) calls this for the
     // top-of-funnel "welcome" step; the chosen method and success/failure are

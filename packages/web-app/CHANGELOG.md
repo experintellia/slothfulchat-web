@@ -1,5 +1,10 @@
 # Changelog
 
+- **Sticker packs.** Sticker pack zips you receive (for example from
+  StickersBot) show up as a pack you can add with one tap, and the new
+  Manage Stickers dialog lets you create, rename, export and rearrange packs,
+  save stickers from your chats and copy packs from your other profiles.
+  Packs are now part of your backups.
 - **Write to the developer right away.** "Sloth (Slothful.chat Developer)" in
   New Chat now opens the chat immediately, instead of waiting for an invite
   handshake to finish first.

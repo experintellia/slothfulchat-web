@@ -17,6 +17,8 @@ See [SELFHOSTING.md](SELFHOSTING.md) to run your own instance, [PLAN.md](PLAN.md
 - 🔗 **Privacy-preserving link previews** — baked on the *sender's* device;
   recipients never contact the site
 - 🦥 **Animated stickers** — Telegram `.tgs`/Lottie stickers render and send
+- 🗂️ **Sticker packs** — add pack zips from chats with one tap, manage and
+  export packs, and keep them in your backups
 - 📦 **Export Chat** — a self-contained HTML viewer + media zip, per chat
 - 😀 **`:emoji:` completion** in the composer — on by default
 - 🌍 **In-app translation editor** — edit UI strings live, export, create

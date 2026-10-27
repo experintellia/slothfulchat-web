@@ -323,6 +323,31 @@ exists:
   gzip-bomb size cap) in both messages and the composer sticker picker (which
   now lists `.tgs` too). Mirrors ArcaneChat's animated-sticker support.
   `core/1011`, `core/1012`, `desktop/1014`, `desktop/1016`
+- **Sticker packs** — packs are stored by the core as rows in
+  `slothfulchat_sticker_packs` / `slothfulchat_stickers` that name ordinary,
+  deduplicated blobs, instead of upstream's loose files in
+  `<account>/stickers/<pack>/`. That puts them in backups and second-device
+  transfers (upstream's folder is in neither), makes saving a received
+  sticker free, and lets sending one skip the copy. Housekeeping keeps every
+  blob a pack names; `test_housekeeping_keeps_sticker_pack_blobs` fails if a
+  rebase drops that query. The tables are created with `IF NOT EXISTS`
+  outside the numbered migrations, like the reply index; old folder packs
+  move in on first use; `misc_get_stickers` / `misc_save_sticker` keep
+  working on top. New RPCs manage packs (create, rename, delete, add from
+  file or message, move, copy, remove), copy a pack from another profile,
+  and list recent chat stickers that are in no pack. Files are checked by
+  extension, magic bytes and size before they become stickers. FORK-ONLY:
+  if upstream implements packs, migrate to its storage.
+  The UI: a Manage Stickers dialog (packs, drag and drop between them,
+  Move/Copy to, add images, "Recently Seen" chat stickers, packs of other
+  profiles, export as zip); in chats, a received zip holding a pack
+  (StickersBot's `<title>/<files>` layout, or flat) shows as a pack card
+  with four stickers and an "Add" button — checked in the web runtime only
+  for downloaded zips up to 15 MiB, once in view, one at a time, cached;
+  the empty sticker tab links the Public Bots directory pre-searched for
+  "sticker" (hidden with the other community suggestions). Backup export
+  notes that other Delta Chat apps don't restore sticker packs.
+  `core/1027`, `desktop/1070`
 - **Export Chat** — the three-dot menu exports the open chat as a
   Telegram-style zip: a standalone `index.html` viewer that renders the chat
   with the app's own stylesheets and message markup (embedded JSON data +
