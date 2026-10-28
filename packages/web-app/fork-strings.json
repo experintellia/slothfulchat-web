@@ -125,5 +125,122 @@
   },
   "thread_show": {
     "message": "Show thread"
+  },
+  "calendar": {
+    "message": "Calendar"
+  },
+  "calendar_month": {
+    "message": "Month"
+  },
+  "calendar_agenda": {
+    "message": "Agenda"
+  },
+  "calendar_new_event": {
+    "message": "New event"
+  },
+  "calendar_select_chat": {
+    "message": "Send event to…"
+  },
+  "calendar_no_events": {
+    "message": "No events in this month. Events from shared .ics files and email invitations show up here."
+  },
+  "calendar_no_chats": {
+    "message": "No chat has events yet."
+  },
+  "calendar_all_day": {
+    "message": "All day"
+  },
+  "calendar_event_title": {
+    "message": "Title"
+  },
+  "calendar_title_missing": {
+    "message": "Please enter a title."
+  },
+  "calendar_starts": {
+    "message": "Starts"
+  },
+  "calendar_ends": {
+    "message": "Ends"
+  },
+  "calendar_end_before_start": {
+    "message": "The event ends before it starts."
+  },
+  "calendar_repeat": {
+    "message": "Repeat"
+  },
+  "calendar_repeat_daily": {
+    "message": "Daily"
+  },
+  "calendar_repeat_weekly": {
+    "message": "Weekly"
+  },
+  "calendar_repeat_monthly": {
+    "message": "Monthly"
+  },
+  "calendar_repeat_yearly": {
+    "message": "Yearly"
+  },
+  "calendar_description": {
+    "message": "Description"
+  },
+  "calendar_message": {
+    "message": "Message (optional)"
+  },
+  "calendar_cancelled": {
+    "message": "This event was cancelled."
+  },
+  "calendar_recurring": {
+    "message": "Repeating event"
+  },
+  "calendar_event": {
+    "message": "Event"
+  },
+  "calendar_attach": {
+    "message": "Attach"
+  },
+  "calendar_edit_event": {
+    "message": "Edit event"
+  },
+  "calendar_cancelled_short": {
+    "message": "Cancelled"
+  },
+  "calendar_rsvp": {
+    "message": "Your answer"
+  },
+  "calendar_rsvp_yes": {
+    "message": "Going"
+  },
+  "calendar_rsvp_maybe": {
+    "message": "Maybe"
+  },
+  "calendar_rsvp_no": {
+    "message": "Can't go"
+  },
+  "calendar_hint": {
+    "message": "%1$s, %2$s. React with 👍 to accept, 🤔 for maybe or 👎 to decline."
+  },
+  "calendar_hint_cancelled": {
+    "message": "Cancelled: %1$s, %2$s"
+  },
+  "calendar_cancel_event": {
+    "message": "Cancel event"
+  },
+  "calendar_cancel_confirm": {
+    "message": "Cancel “%1$s” for everyone in this chat?"
+  },
+  "calendar_cancel_series_confirm": {
+    "message": "Cancel every occurrence of “%1$s” for everyone in this chat?"
+  },
+  "calendar_previous_month": {
+    "message": "Previous month"
+  },
+  "calendar_next_month": {
+    "message": "Next month"
+  },
+  "calendar_you_cancelled": {
+    "message": "You cancelled “%1$s”"
+  },
+  "calendar_cancelled_by": {
+    "message": "%1$s cancelled “%2$s”"
   }
 }
