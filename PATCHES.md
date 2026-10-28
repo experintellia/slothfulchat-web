@@ -338,9 +338,12 @@ exists:
   and list recent chat stickers that are in no pack. Files are checked by
   extension, magic bytes and size before they become stickers. FORK-ONLY:
   if upstream implements packs, migrate to its storage.
-  The UI: a Manage Stickers dialog (packs, drag and drop between them,
-  Move/Copy to, add images, "Recently Seen" chat stickers, packs of other
-  profiles, export as zip); in chats, a received zip holding a pack
+  The UI: the sticker tab gets a bottom bar like the emoji picker's
+  categories (each pack's first sticker; drop a sticker on one to move it
+  there) with Manage at its end; a Manage Stickers dialog (packs, drag and
+  drop between them — mouse, or rest a finger and drag on touch — image
+  files dropped in from other apps, Move/Copy to, add images, "Recently
+  Seen" chat stickers, packs of other profiles, export as zip); in chats, a received zip holding a pack
   (StickersBot's `<title>/<files>` layout, or flat) shows as a pack card
   with four stickers and an "Add" button — checked in the web runtime only
   for downloaded zips up to 15 MiB, once in view, one at a time, cached;

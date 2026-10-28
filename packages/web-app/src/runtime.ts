@@ -1465,7 +1465,11 @@ class BrowserRuntime {
     showWebxdcNotImplementedDialog()
   }
   async openPath(path: string): Promise<string> {
-    if (path.includes('dc.db-blobs')) {
+    // /tmp/: openAttachmentInShell first copies the file there
+    // (copyFileToInternalTmpDir) — every click on a generic file tile goes
+    // that way, so refusing temp paths broke opening plain attachments. The
+    // blobs SW serves /blob-path/ with the same sandbox CSP as /blobs/.
+    if (path.includes('dc.db-blobs') || path.startsWith('/tmp/')) {
       // 'noopener': the opened document is sender-controlled content on our own
       // origin, so it must not keep a window.opener handle on the messenger tab
       // (an opener handle can navigate that tab away, e.g. to a login phish).
@@ -1755,6 +1759,7 @@ class BrowserRuntime {
         return path
       },
       unstage: path => this.removeTempFile(path),
+      stageFile: file => this.stageFile(file),
       save: saveFile,
     })
 

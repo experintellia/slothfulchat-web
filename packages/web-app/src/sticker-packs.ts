@@ -27,6 +27,8 @@ type Fs = {
   /** writes to a fresh temp path and returns it */
   stage(name: string, data: Uint8Array): Promise<string>
   unstage(path: string): Promise<void>
+  /** a File (e.g. dropped from another app) to a temp path; size-capped */
+  stageFile(file: File): Promise<string>
   save(data: Uint8Array, name: string): Promise<unknown>
 }
 
@@ -152,5 +154,10 @@ export function initStickerPacks(rpc: () => Rpc, fs: Fs): void {
     await fs.save(zipSync(files, { level: 0 }), `${folder}.zip`)
   }
 
-  ;(window as any).__slothfulStickers = { inspect, importZip, exportPack }
+  ;(window as any).__slothfulStickers = {
+    inspect,
+    importZip,
+    exportPack,
+    stage: fs.stageFile,
+  }
 }

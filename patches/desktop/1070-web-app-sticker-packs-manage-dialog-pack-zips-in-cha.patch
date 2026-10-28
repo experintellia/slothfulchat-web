@@ -37,14 +37,14 @@ patch); this is the UI for them.
  packages/frontend/src/backend/stickerPacks.ts |  52 ++
  .../src/components/Settings/Backup.tsx        |  12 +-
  .../src/components/Settings/ChatsAndMedia.tsx |   2 +-
- .../StickerPacks/ManageStickers.tsx           | 490 ++++++++++++++++++
- .../src/components/StickerPacks/index.tsx     | 195 +++++++
- .../StickerPacks/styles.module.scss           | 213 ++++++++
+ .../StickerPacks/ManageStickers.tsx           | 619 ++++++++++++++++++
+ .../src/components/StickerPacks/index.tsx     | 208 ++++++
+ .../StickerPacks/styles.module.scss           | 302 +++++++++
  .../attachment/messageAttachment.tsx          |  12 +-
- .../composer/EmojiAndStickerPicker.tsx        | 120 ++++-
+ .../composer/EmojiAndStickerPicker.tsx        | 216 +++++-
  .../components/dialogs/PublicBots/index.tsx   |  33 +-
  .../src/components/message/Message.tsx        |  12 +
- 10 files changed, 1105 insertions(+), 36 deletions(-)
+ 10 files changed, 1430 insertions(+), 38 deletions(-)
  create mode 100644 packages/frontend/src/backend/stickerPacks.ts
  create mode 100644 packages/frontend/src/components/StickerPacks/ManageStickers.tsx
  create mode 100644 packages/frontend/src/components/StickerPacks/index.tsx
@@ -154,10 +154,10 @@ index 3e76a2c458e5d678daae7219ece178ccfa8408c5..3d1229506136dcd8d7cd7b7617659442
            <DesktopSettingsSwitch
 diff --git a/packages/frontend/src/components/StickerPacks/ManageStickers.tsx b/packages/frontend/src/components/StickerPacks/ManageStickers.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..7fa6bb922db9933a7953c55378d1b8e0d2b112f1
+index 0000000000000000000000000000000000000000..b829ccd35f21dc596b3084261a0e979a80092838
 --- /dev/null
 +++ b/packages/frontend/src/components/StickerPacks/ManageStickers.tsx
-@@ -0,0 +1,490 @@
+@@ -0,0 +1,619 @@
 +import React, { useCallback, useContext, useEffect, useState } from 'react'
 +import classNames from 'classnames'
 +import { basename } from 'path'
@@ -189,6 +189,21 @@ index 0000000000000000000000000000000000000000..7fa6bb922db9933a7953c55378d1b8e0
 +type OtherProfile = { id: number; name: string; packs: Pack[] }
 +
 +const THUMB = 64
++/** A finger resting this long on a sticker picks it up; shorter than the
++ * ~500ms long press that opens its menu, like the account sidebar's reorder. */
++const TOUCH_ARM_MS = 250
++/** Movement below this is the finger being imprecise, not a gesture. */
++const TOUCH_SLOP_PX = 8
++
++type DragData = { stickerId?: number; msgId?: number }
++
++/** the pack section under a point, for touch drops */
++const packAt = (x: number, y: number) => {
++  const el = document
++    .elementFromPoint(x, y)
++    ?.closest<HTMLElement>('[data-pack-id]')
++  return el ? Number(el.dataset.packId) : null
++}
 +/** how many unsaved stickers "Recently seen" offers */
 +const RECENT_LIMIT = 40
 +
@@ -253,6 +268,11 @@ index 0000000000000000000000000000000000000000..7fa6bb922db9933a7953c55378d1b8e0
 +  const [recent, setRecent] = useState<Type.Message[]>([])
 +  const [others, setOthers] = useState<OtherProfile[]>([])
 +  const [dropTarget, setDropTarget] = useState<number | null>(null)
++  const [touchDrag, setTouchDrag] = useState<{
++    path: string
++    x: number
++    y: number
++  } | null>(null)
 +
 +  const refresh = useCallback(async () => {
 +    setPacks(await rpc.getStickerPacks(accountId))
@@ -450,31 +470,125 @@ index 0000000000000000000000000000000000000000..7fa6bb922db9933a7953c55378d1b8e0
 +    })
 +  }
 +
-+  const onDrop = (ev: React.DragEvent, pack: Pack) => {
-+    ev.preventDefault()
-+    setDropTarget(null)
-+    const data = ev.dataTransfer.getData('application/x-slothful-sticker')
-+    if (!data) return
-+    const { stickerId, msgId } = JSON.parse(data)
-+    if (stickerId != null) {
-+      // copy with Ctrl/Alt held, like a file manager
++  const dropSticker = (data: DragData, packId: number, copy: boolean) => {
++    if (data.stickerId != null) {
++      const id = data.stickerId
 +      run(() =>
-+        ev.ctrlKey || ev.altKey
-+          ? rpc.copySticker(accountId, stickerId, pack.id)
-+          : rpc.moveSticker(accountId, stickerId, pack.id)
++        copy
++          ? rpc.copySticker(accountId, id, packId)
++          : rpc.moveSticker(accountId, id, packId)
 +      )
-+    } else if (msgId != null) {
-+      run(() => rpc.addStickerFromMessage(accountId, pack.id, msgId))
++    } else if (data.msgId != null) {
++      const id = data.msgId
++      run(() => rpc.addStickerFromMessage(accountId, packId, id))
 +    }
 +  }
 +
-+  const dragData = (data: object) => (ev: React.DragEvent) => {
++  /** Images (or a pack zip) dropped in from another app. */
++  const dropFiles = async (files: File[], packId: number) => {
++    const api = stickersApi()
++    if (!api) return
++    let failed = 0
++    for (const file of files) {
++      let path: string | null = null
++      try {
++        path = await api.stage(file)
++        if (/\.zip$/i.test(file.name)) {
++          await importStickerZip(tx, path, file.name)
++        } else {
++          await rpc.addStickerFromFile(accountId, packId, path, file.name)
++        }
++      } catch {
++        failed++
++      } finally {
++        if (path) await runtime.removeTempFile(path).catch(() => {})
++      }
++    }
++    if (failed > 0) {
++      window.__userFeedback({
++        type: 'error',
++        text: tx('sticker_packs_files_skipped', String(failed)),
++      })
++    }
++    refresh()
++  }
++
++  const onDrop = (ev: React.DragEvent, pack: Pack) => {
++    ev.preventDefault()
++    // the runtime's chat drop handler must not take files meant for a pack
++    ev.stopPropagation()
++    setDropTarget(null)
++    const data = ev.dataTransfer.getData('application/x-slothful-sticker')
++    if (data) {
++      // copy with Ctrl/Alt held, like a file manager
++      dropSticker(JSON.parse(data), pack.id, ev.ctrlKey || ev.altKey)
++    } else if (ev.dataTransfer.files.length > 0) {
++      dropFiles([...ev.dataTransfer.files], pack.id)
++    }
++  }
++
++  const dragData = (data: DragData) => (ev: React.DragEvent) => {
 +    ev.dataTransfer.setData(
 +      'application/x-slothful-sticker',
 +      JSON.stringify(data)
 +    )
 +    ev.dataTransfer.effectAllowed = 'copyMove'
 +  }
++
++  /**
++   * HTML5 drag and drop never starts from a touch, so on touch screens a
++   * sticker is picked up by resting a finger on it, then dragged onto a pack.
++   * A finger that moves right away scrolls; one that stays put gets the
++   * context menu, which also ends the drag.
++   */
++  const touchDragStart =
++    (data: DragData, path: string) => (ev: React.TouchEvent) => {
++      const touch = ev.touches[0]
++      if (ev.touches.length !== 1 || !touch) return
++      const start = { x: touch.clientX, y: touch.clientY }
++      let pos: { x: number; y: number } | null = null
++      const arm = setTimeout(() => {
++        pos = start
++        setTouchDrag({ path, ...start })
++      }, TOUCH_ARM_MS)
++      const end = () => {
++        clearTimeout(arm)
++        document.removeEventListener('touchmove', move)
++        document.removeEventListener('touchend', up)
++        document.removeEventListener('touchcancel', end)
++        document.removeEventListener('contextmenu', end, true)
++        setTouchDrag(null)
++        setDropTarget(null)
++      }
++      const move = (e: TouchEvent) => {
++        const t = e.touches[0]
++        if (!t) return
++        if (!pos) {
++          const moved = Math.hypot(t.clientX - start.x, t.clientY - start.y)
++          if (moved > TOUCH_SLOP_PX) end() // a scroll, not a drag
++          return
++        }
++        e.preventDefault() // dragging, so don't scroll
++        pos = { x: t.clientX, y: t.clientY }
++        setTouchDrag({ path, ...pos })
++        setDropTarget(packAt(pos.x, pos.y))
++      }
++      const up = (e: TouchEvent) => {
++        if (
++          pos &&
++          Math.hypot(pos.x - start.x, pos.y - start.y) > TOUCH_SLOP_PX
++        ) {
++          e.preventDefault() // no click on the sticker
++          const to = packAt(pos.x, pos.y)
++          if (to != null) dropSticker(data, to, false)
++        }
++        end()
++      }
++      document.addEventListener('touchmove', move, { passive: false })
++      document.addEventListener('touchend', up, { passive: false })
++      document.addEventListener('touchcancel', end)
++      document.addEventListener('contextmenu', end, true)
++    }
 +
 +  return (
 +    <Dialog
@@ -484,6 +598,15 @@ index 0000000000000000000000000000000000000000..7fa6bb922db9933a7953c55378d1b8e0
 +      dataTestid='manage-stickers-dialog'
 +    >
 +      <DialogHeader title={tx('sticker_packs_manage')} onClose={onClose} />
++      {touchDrag && (
++        <div
++          className={styles.touchGhost}
++          style={{ left: touchDrag.x, top: touchDrag.y }}
++          aria-hidden
++        >
++          <StickerThumb path={touchDrag.path} size={THUMB} />
++        </div>
++      )}
 +      <DialogBody>
 +        <div className={styles.toolbar}>
 +          <button type='button' className={styles.toolButton} onClick={newPack}>
@@ -512,6 +635,7 @@ index 0000000000000000000000000000000000000000..7fa6bb922db9933a7953c55378d1b8e0
 +            }}
 +            onDragLeave={() => setDropTarget(null)}
 +            onDrop={ev => onDrop(ev, pack)}
++            data-pack-id={pack.id}
 +            data-testid='sticker-pack'
 +          >
 +            <div className={styles.packHeader}>
@@ -545,6 +669,10 @@ index 0000000000000000000000000000000000000000..7fa6bb922db9933a7953c55378d1b8e0
 +                  className={styles.sticker}
 +                  draggable
 +                  onDragStart={dragData({ stickerId: sticker.id })}
++                  onTouchStart={touchDragStart(
++                    { stickerId: sticker.id },
++                    sticker.path
++                  )}
 +                  onClick={ev => stickerMenu(ev, pack, sticker)}
 +                  onContextMenu={ev => stickerMenu(ev, pack, sticker)}
 +                  aria-haspopup='menu'
@@ -573,6 +701,7 @@ index 0000000000000000000000000000000000000000..7fa6bb922db9933a7953c55378d1b8e0
 +                  className={styles.sticker}
 +                  draggable
 +                  onDragStart={dragData({ msgId: msg.id })}
++                  onTouchStart={touchDragStart({ msgId: msg.id }, msg.file!)}
 +                  onClick={ev => recentMenu(ev, msg)}
 +                  onContextMenu={ev => recentMenu(ev, msg)}
 +                  aria-haspopup='menu'
@@ -650,10 +779,10 @@ index 0000000000000000000000000000000000000000..7fa6bb922db9933a7953c55378d1b8e0
 +}
 diff --git a/packages/frontend/src/components/StickerPacks/index.tsx b/packages/frontend/src/components/StickerPacks/index.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..adab9fe13563ddc22863cdc093dc9b8a85bd8338
+index 0000000000000000000000000000000000000000..77a25e7ad356ac2bb7130165337a87e0a6989887
 --- /dev/null
 +++ b/packages/frontend/src/components/StickerPacks/index.tsx
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,208 @@
 +import React, { useEffect, useRef, useState } from 'react'
 +import classNames from 'classnames'
 +
@@ -662,6 +791,7 @@ index 0000000000000000000000000000000000000000..adab9fe13563ddc22863cdc093dc9b8a
 +import { rpcStickers } from '../../backend/stickerPacks'
 +import { selectedAccountId } from '../../ScreenController'
 +import LottieSticker from '../attachment/LottieSticker'
++import { openAttachmentInShell } from '../message/messageFunctions'
 +import useTranslationFunction from '../../hooks/useTranslationFunction'
 +
 +import styles from './styles.module.scss'
@@ -685,6 +815,8 @@ index 0000000000000000000000000000000000000000..adab9fe13563ddc22863cdc093dc9b8a
 +    zipName: string
 +  ): Promise<{ packId: number; name: string; added: number; skipped: number }>
 +  exportPack(accountId: number, packId: number): Promise<void>
++  /** copies a dropped File to a temp path the core can read */
++  stage(file: File): Promise<string>
 +}
 +
 +/** undefined on runtimes without the zip half (upstream Electron/Tauri) */
@@ -815,7 +947,17 @@ index 0000000000000000000000000000000000000000..adab9fe13563ddc22863cdc093dc9b8a
 +
 +  return (
 +    <div className={styles.zipCard} data-testid='sticker-pack-card'>
-+      <div className={styles.zipCardGrid}>
++      {/* the preview opens the zip like the file tile it replaces */}
++      <button
++        type='button'
++        className={styles.zipCardGrid}
++        onClick={ev => {
++          ev.stopPropagation()
++          openAttachmentInShell(message)
++        }}
++        aria-label={tx('open_attachment')}
++        title={message.fileName ?? undefined}
++      >
 +        {pack.previews.map((url, i) =>
 +          url ? (
 +            <img key={i} src={url} alt='' />
@@ -825,7 +967,7 @@ index 0000000000000000000000000000000000000000..adab9fe13563ddc22863cdc093dc9b8a
 +            </div>
 +          )
 +        )}
-+      </div>
++      </button>
 +      <div className={styles.zipCardText}>
 +        <div className={styles.zipCardName}>{pack.name}</div>
 +        <div className={styles.zipCardCount}>
@@ -851,10 +993,10 @@ index 0000000000000000000000000000000000000000..adab9fe13563ddc22863cdc093dc9b8a
 +}
 diff --git a/packages/frontend/src/components/StickerPacks/styles.module.scss b/packages/frontend/src/components/StickerPacks/styles.module.scss
 new file mode 100644
-index 0000000000000000000000000000000000000000..cc68dc653ae57967d67c646cb5eb4ec9aa09383a
+index 0000000000000000000000000000000000000000..8ea5013af514b33825831a5abeb5c28b9461ede7
 --- /dev/null
 +++ b/packages/frontend/src/components/StickerPacks/styles.module.scss
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,302 @@
 +// Manage Stickers dialog
 +
 +.toolbar {
@@ -954,6 +1096,9 @@ index 0000000000000000000000000000000000000000..cc68dc653ae57967d67c646cb5eb4ec9
 +  border-radius: 8px;
 +  background: transparent;
 +  cursor: grab;
++  // a long press picks the sticker up (or opens its menu), not iOS's image callout
++  -webkit-touch-callout: none;
++  user-select: none;
 +
 +  &:hover,
 +  &:focus-visible {
@@ -968,6 +1113,14 @@ index 0000000000000000000000000000000000000000..cc68dc653ae57967d67c646cb5eb4ec9
 +
 +.thumbLottie {
 +  display: block;
++}
++
++.touchGhost {
++  position: fixed;
++  z-index: 10;
++  transform: translate(-50%, -50%) scale(1.15);
++  opacity: 0.85;
++  pointer-events: none;
 +}
 +
 +.hint {
@@ -1013,6 +1166,16 @@ index 0000000000000000000000000000000000000000..cc68dc653ae57967d67c646cb5eb4ec9
 +  grid-auto-rows: 48px;
 +  gap: 2px;
 +  flex-shrink: 0;
++  padding: 2px;
++  border: none;
++  border-radius: 8px;
++  background: transparent;
++  cursor: pointer;
++
++  &:hover,
++  &:focus-visible {
++    background: var(--chatListItemBgHover);
++  }
 +
 +  img {
 +    width: 48px;
@@ -1052,7 +1215,75 @@ index 0000000000000000000000000000000000000000..cc68dc653ae57967d67c646cb5eb4ec9
 +  color: var(--messageAttachmentFileInfo);
 +}
 +
-+// Composer sticker picker (empty state and its "Manage" entry)
++// Composer sticker picker: bottom bar (like the emoji picker's categories)
++// and the empty state
++
++.pickerBar {
++  display: flex;
++  flex-shrink: 0;
++  align-items: center;
++  height: 44px;
++  padding: 0 4px;
++  border-top: 1px solid var(--separatorColor);
++  background: var(--emojiMartBg);
++}
++
++.pickerBarPacks {
++  display: flex;
++  flex-grow: 1;
++  min-width: 0;
++  height: 100%;
++  overflow-x: auto;
++  scrollbar-width: none;
++}
++
++.pickerBarPack {
++  position: relative;
++  display: flex;
++  flex-shrink: 0;
++  align-items: center;
++  justify-content: center;
++  width: 40px;
++  height: 100%;
++  padding: 0;
++  border: none;
++  background: transparent;
++  cursor: pointer;
++  opacity: 0.6;
++
++  &:hover,
++  &:focus-visible {
++    opacity: 1;
++  }
++
++  // the emoji picker marks its current category with a bar along the edge
++  &.selected {
++    opacity: 1;
++
++    &::after {
++      content: '';
++      position: absolute;
++      top: 0;
++      left: 6px;
++      right: 6px;
++      height: 3px;
++      border-radius: 0 0 3px 3px;
++      background: var(--colorPrimary);
++    }
++  }
++
++  &.dropTarget {
++    opacity: 1;
++    border-radius: 8px;
++    outline: 2px dashed var(--colorPrimary);
++    outline-offset: -4px;
++  }
++}
++
++.pickerBarManage {
++  flex-shrink: 0;
++  margin-inline-start: 4px;
++}
 +
 +.pickerActions {
 +  display: flex;
@@ -1106,7 +1337,7 @@ index 44fb2ad631397503c3cc78995270caf6850f0d00..16f3dabaaef6b43ce737587cbc0f475a
  /**
   * @see also {@linkcode GalleryAudioAttachment}.
 diff --git a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
-index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c4f2e530c 100644
+index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a8725e10af1 100644
 --- a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
 +++ b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
 @@ -9,7 +9,6 @@ import React, {
@@ -1117,7 +1348,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c
  import { selectedAccountId } from '../../ScreenController'
  import { runtime } from '@deltachat-desktop/runtime-interface'
  import EmojiPicker from '../EmojiPicker'
-@@ -17,6 +16,18 @@ import LottieSticker from '../attachment/LottieSticker'
+@@ -17,6 +16,19 @@ import LottieSticker from '../attachment/LottieSticker'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
  import { ContextMenuContext } from '../../contexts/ContextMenuContext'
  import useConfirmationDialog from '../../hooks/dialog/useConfirmationDialog'
@@ -1125,7 +1356,8 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c
 +import { useSettingsStore } from '../../stores/settings'
 +import { instanceHidesPublicSuggestions } from '../../utils/slothfulInstanceConfig'
 +import ManageStickersDialog from '../StickerPacks/ManageStickers'
-+import { importStickerZip, stickersApi } from '../StickerPacks'
++import { StickerThumb, importStickerZip, stickersApi } from '../StickerPacks'
++import { IconButton } from '../Icon'
 +import PublicBotsDialog from '../dialogs/PublicBots'
 +import stickerStyles from '../StickerPacks/styles.module.scss'
 +import {
@@ -1136,16 +1368,36 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c
  
  import styles from './styles.module.scss'
  
-@@ -28,7 +39,7 @@ import {
+@@ -27,14 +39,18 @@ import {
+ } from '../../contexts/RovingTabindex'
  
  type Props = {
++  packId: number
    stickerPackName: string
 -  stickerPackImages: string[]
 +  stickerPackImages: StickerObject[]
    setShowEmojiPicker: (enabled: boolean) => void
    onStickerDeleted: () => void
    onStickerClick: (stickerPath: string) => void
-@@ -60,11 +71,12 @@ const DisplayedStickerPack = ({
+ }
+ 
++const STICKER_DRAG_TYPE = 'application/x-slothful-picker-sticker'
++
+ const DisplayedStickerPack = ({
++  packId,
+   stickerPackName,
+   stickerPackImages,
+   setShowEmojiPicker,
+@@ -50,7 +66,7 @@ const DisplayedStickerPack = ({
+   }
+ 
+   return (
+-    <div className='sticker-pack'>
++    <div className='sticker-pack' data-pack-id={packId}>
+       <div className='title'>{stickerPackName}</div>
+       <div ref={listRef} className='container'>
+         {/* Yes, we have separate `RovingTabindexProvider` for each
+@@ -60,11 +76,12 @@ const DisplayedStickerPack = ({
            wrapperElementRef={listRef}
            direction='horizontal'
          >
@@ -1162,7 +1414,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c
                onStickerDeleted={onStickerDeleted}
              />
            ))}
-@@ -75,11 +87,12 @@ const DisplayedStickerPack = ({
+@@ -75,11 +92,12 @@ const DisplayedStickerPack = ({
  }
  
  function StickersListItem(props: {
@@ -1176,7 +1428,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c
    const ref = useRef<HTMLButtonElement>(null)
    const rovingTabindex = useRovingTabindex(ref)
    const { openContextMenu } = useContext(ContextMenuContext)
-@@ -116,7 +129,9 @@ function StickersListItem(props: {
+@@ -116,7 +134,9 @@ function StickersListItem(props: {
                isConfirmDanger: true,
              })
              if (confirmed) {
@@ -1187,7 +1439,19 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c
                onStickerDeleted()
              }
            },
-@@ -164,14 +179,37 @@ export const StickerPicker = ({
+@@ -132,6 +152,11 @@ function StickersListItem(props: {
+       className={'sticker ' + rovingTabindex.className}
+       onClick={onClick}
+       onContextMenu={onContextMenu}
++      // drop it on a pack's icon in the bar below to move it there
++      draggable
++      onDragStart={ev =>
++        ev.dataTransfer.setData(STICKER_DRAG_TYPE, String(stickerId))
++      }
+       aria-haspopup='menu'
+       tabIndex={rovingTabindex.tabIndex}
+       onKeyDown={rovingTabindex.onKeydown}
+@@ -164,14 +189,87 @@ export const StickerPicker = ({
    role: 'tabpanel' | undefined
    id: string
    labelledBy: string
@@ -1200,8 +1464,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c
    const tx = useTranslationFunction()
 +  const { openDialog } = useDialog()
 +  const settingsStore = useSettingsStore()[0]
- 
--  const stickerPackNames = Object.keys(stickers)
++
 +  const packs = stickers.filter(p => p.stickers.length > 0)
 +  // The bots are community-run: hidden with the other community
 +  // suggestions (Settings → Chats and Media, or instance-wide).
@@ -1209,11 +1472,62 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c
 +    settingsStore != null &&
 +    settingsStore.desktopSettings.hideNewChatSuggestions !== true &&
 +    !instanceHidesPublicSuggestions()
-+
+ 
+-  const stickerPackNames = Object.keys(stickers)
 +  const openManage = () => {
 +    setShowEmojiPicker(false)
 +    openDialog(ManageStickersDialog)
 +  }
++
++  // Bottom bar like the emoji picker's categories: one icon per pack (its
++  // first sticker) that scrolls there, the current pack highlighted.
++  const containerRef = useRef<HTMLDivElement>(null)
++  const [activePack, setActivePack] = useState<number | null>(null)
++  const [dropPack, setDropPack] = useState<number | null>(null)
++  // a clicked pack stays marked while it is in view: the last packs can't
++  // scroll up to the top, so position alone would mark one before them
++  const clickedPack = useRef<number | null>(null)
++  const onScroll = () => {
++    const container = containerRef.current
++    if (!container) return
++    const top = (el: HTMLElement) => el.offsetTop - container.offsetTop
++    const els = [...container.querySelectorAll<HTMLElement>('[data-pack-id]')]
++    const clicked = els.find(
++      el => Number(el.dataset.packId) === clickedPack.current
++    )
++    if (
++      clicked &&
++      top(clicked) < container.scrollTop + container.clientHeight &&
++      top(clicked) + clicked.offsetHeight > container.scrollTop
++    ) {
++      return
++    }
++    clickedPack.current = null
++    let current: number | null = null
++    for (const el of els) {
++      if (top(el) <= container.scrollTop + 8)
++        current = Number(el.dataset.packId)
++    }
++    setActivePack(current)
++  }
++  const scrollToPack = (packId: number) => {
++    clickedPack.current = packId
++    setActivePack(packId)
++    containerRef.current
++      ?.querySelector(`[data-pack-id="${packId}"]`)
++      ?.scrollIntoView({ block: 'start' })
++  }
++  const onDropOnPack = (ev: React.DragEvent, packId: number) => {
++    ev.preventDefault()
++    setDropPack(null)
++    const stickerId = Number(ev.dataTransfer.getData(STICKER_DRAG_TYPE))
++    if (!stickerId) return
++    rpcStickers
++      .moveSticker(selectedAccountId(), stickerId, packId)
++      .catch(() => {})
++      .finally(onStickerDeleted) // reloads the packs
++  }
++  const current = activePack ?? packs[0]?.id
 +  const importZip = async () => {
 +    const [path] = await runtime.showOpenFileDialog({
 +      filters: [{ name: 'zip', extensions: ['zip'] }],
@@ -1227,21 +1541,27 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c
  
    return (
      <div
-@@ -180,19 +218,28 @@ export const StickerPicker = ({
+@@ -180,26 +278,102 @@ export const StickerPicker = ({
        aria-labelledby={labelledBy}
        className='sticker-picker'
      >
 -      {stickerPackNames.length > 0 ? (
 +      {packs.length > 0 ? (
          <>
-           <div className='sticker-container'>
+-          <div className='sticker-container'>
 -            {stickerPackNames.map(name => (
++          <div
++            className='sticker-container'
++            ref={containerRef}
++            onScroll={onScroll}
++          >
 +            {packs.map(pack => (
                <DisplayedStickerPack
 -                key={name}
 -                stickerPackName={name}
 -                stickerPackImages={stickers[name]}
 +                key={pack.id}
++                packId={pack.id}
 +                stickerPackName={pack.name}
 +                stickerPackImages={pack.stickers}
                  setShowEmojiPicker={setShowEmojiPicker}
@@ -1249,19 +1569,46 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c
                  onStickerClick={onStickerClick}
                />
              ))}
-+            <div className={stickerStyles.pickerActions}>
-+              <button
-+                type='button'
-+                className={stickerStyles.toolButton}
-+                onClick={openManage}
-+              >
-+                {tx('sticker_packs_manage')}
-+              </button>
-+            </div>
            </div>
++          <nav className={stickerStyles.pickerBar}>
++            <div className={stickerStyles.pickerBarPacks}>
++              {packs.map(pack => (
++                <button
++                  type='button'
++                  key={pack.id}
++                  className={classNames(stickerStyles.pickerBarPack, {
++                    [stickerStyles.selected]: pack.id === current,
++                    [stickerStyles.dropTarget]: pack.id === dropPack,
++                  })}
++                  onClick={() => scrollToPack(pack.id)}
++                  onDragOver={ev => {
++                    if (ev.dataTransfer.types.includes(STICKER_DRAG_TYPE)) {
++                      ev.preventDefault()
++                      setDropPack(pack.id)
++                    }
++                  }}
++                  onDragLeave={() => setDropPack(null)}
++                  onDrop={ev => onDropOnPack(ev, pack.id)}
++                  aria-label={pack.name}
++                  title={pack.name}
++                  aria-current={pack.id === current}
++                >
++                  <StickerThumb path={pack.stickers[0].path} size={24} />
++                </button>
++              ))}
++            </div>
++            <IconButton
++              icon='settings'
++              size={20}
++              className={stickerStyles.pickerBarManage}
++              aria-label={tx('sticker_packs_manage')}
++              title={tx('sticker_packs_manage')}
++              onClick={openManage}
++            />
++          </nav>
          </>
        ) : (
-@@ -200,6 +247,41 @@ export const StickerPicker = ({
+         <div className='sticker-container'>
            <div className='sticker-hint'>
              <p>{tx('sticker_picker_empty_hint')}</p>
            </div>
@@ -1303,7 +1650,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..0bb48070e15201cf7c6ea1382e818e6c
          </div>
        )}
      </div>
-@@ -253,13 +335,11 @@ export const EmojiAndStickerPicker = forwardRef<
+@@ -253,13 +427,11 @@ export const EmojiAndStickerPicker = forwardRef<
  
    const [_showSticker, setShowSticker] = useState(false)
    const showSticker = hideStickerPicker ? false : _showSticker

@@ -5,6 +5,8 @@
   Manage Stickers dialog lets you create, rename, export and rearrange packs,
   save stickers from your chats and copy packs from your other profiles.
   Packs are now part of your backups.
+- **Opening file attachments works again.** Clicking a file such as a PDF
+  or a zip in a chat did nothing; it now opens or downloads the file.
 - **Write to the developer right away.** "Sloth (Slothful.chat Developer)" in
   New Chat now opens the chat immediately, instead of waiting for an invite
   handshake to finish first.

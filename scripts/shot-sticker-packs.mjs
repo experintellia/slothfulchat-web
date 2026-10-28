@@ -147,6 +147,22 @@ try {
   )
   await shot('01-pack-card-in-chat')
 
+  // The card still is the zip: its preview opens it, the menu exports it.
+  const [opened] = await Promise.all([
+    page.waitForEvent('download'),
+    card.getByRole('button', { name: 'Open Attachment' }).click(),
+  ])
+  expect(opened.suggestedFilename().endsWith('.zip'), 'clicking the preview opens the zip')
+  await card.click({ button: 'right' })
+  const [exportedZip] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('menuitem', { name: 'Export Attachment' }).click(),
+  ])
+  expect(
+    Object.keys(unzipSync(new Uint8Array(await readFile(await exportedZip.path())))).length === 8,
+    'Export Attachment saves the received zip intact'
+  )
+
   // Empty sticker tab: find packs + import + manage.
   await page.getByRole('button', { name: 'Emoji' }).last().click()
   await page.getByRole('tab', { name: 'Sticker', exact: true }).click()
@@ -171,6 +187,9 @@ try {
   await page.getByRole('button', { name: 'Emoji' }).last().click()
   await page.getByRole('tab', { name: 'Sticker', exact: true }).click()
   await page.locator('.sticker-pack .title', { hasText: 'Cute Animals' }).waitFor()
+  const bar = page.locator('nav', { has: page.getByRole('button', { name: 'Manage Stickers' }) })
+  await bar.getByRole('button', { name: 'Cute Animals' }).waitFor()
+  expect(true, 'the sticker tab has a pack bar with a Manage button')
   await shot('04-picker-with-pack')
 
   // Manage Stickers.
@@ -218,6 +237,55 @@ try {
   expect(true, "the other profile's pack was imported")
   await dialog.locator('section', { hasText: 'From Your Other Profiles' }).getByText('Added').waitFor()
   expect(true, 'an imported profile pack shows as Added')
+
+  // An image dropped in from another app lands in the pack it is dropped on.
+  const starB64 = await stickerWebp('⭐')
+  await favorites.evaluate((el, b64) => {
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+    const dt = new DataTransfer()
+    dt.items.add(new File([bytes], 'star.webp', { type: 'image/webp' }))
+    el.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }))
+  }, starB64)
+  await until(
+    async () => (await packs()).find(p => p.name === 'Favorites')?.stickers.length === 3,
+    'the dropped file in Favorites'
+  )
+  expect(true, 'a file dropped from outside was added to the pack')
+
+  // Touch: rest a finger on a sticker, drag it onto another pack.
+  await animalsPack.locator('button[draggable]').first().evaluate(async (from, toSel) => {
+    const to = document.querySelector(toSel).getBoundingClientRect()
+    const a = from.getBoundingClientRect()
+    const touch = (x, y) =>
+      new Touch({ identifier: 1, target: from, clientX: x, clientY: y })
+    const fire = (type, x, y, target = document) =>
+      target.dispatchEvent(
+        new TouchEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          touches: type === 'touchend' ? [] : [touch(x, y)],
+          changedTouches: [touch(x, y)],
+        })
+      )
+    const [x0, y0] = [a.x + a.width / 2, a.y + a.height / 2]
+    const [x1, y1] = [to.x + to.width / 2, to.y + 20]
+    fire('touchstart', x0, y0, from)
+    await new Promise(r => setTimeout(r, 350))
+    for (let i = 1; i <= 5; i++) {
+      fire('touchmove', x0 + ((x1 - x0) * i) / 5, y0 + ((y1 - y0) * i) / 5)
+      await new Promise(r => setTimeout(r, 30))
+    }
+    fire('touchend', x1, y1)
+  }, '[data-testid="sticker-pack"][data-pack-id="' +
+    (await packs()).find(p => p.name === 'Office Life').id + '"]')
+  await until(
+    async () => (await packs()).find(p => p.name === 'Office Life')?.stickers.length === 5,
+    'the touch-dragged sticker in Office Life'
+  )
+  expect(
+    (await packs()).find(p => p.name === 'Cute Animals').stickers.length === 6,
+    'a touch drag moved a sticker between packs'
+  )
   await page.waitForTimeout(500)
   await shot('06-manage-after-edits')
 
@@ -231,11 +299,30 @@ try {
   const names = Object.keys(exported)
   expect(download.suggestedFilename() === 'Cute Animals.zip', 'export is named after the pack')
   expect(
-    names.length === 7 && names.every(n => /^Cute Animals\/\d+\.webp$/.test(n)),
-    'export holds the 7 stickers in one folder'
+    names.length === 6 && names.every(n => /^Cute Animals\/\d+\.webp$/.test(n)),
+    'export holds the 6 remaining stickers in one folder'
   )
   await page.keyboard.press('Escape')
   await dialog.waitFor({ state: 'detached' })
+
+  // In the sticker tab, a sticker dropped on a pack's icon moves there.
+  await page.getByRole('button', { name: 'Emoji' }).last().click()
+  await page.getByRole('tab', { name: 'Sticker', exact: true }).click()
+  await page.locator('.sticker-pack', { hasText: 'Cute Animals' }).locator('button.sticker').first()
+    .dragTo(bar.getByRole('button', { name: 'Favorites' }))
+  await until(
+    async () => (await packs()).find(p => p.name === 'Favorites')?.stickers.length === 4,
+    'the sticker dropped on the Favorites icon'
+  )
+  expect(true, "dropping a sticker on a pack's icon in the bar moves it")
+  await bar.getByRole('button', { name: 'Office Life' }).click()
+  await page.waitForTimeout(400)
+  expect(
+    (await bar.getByRole('button', { name: 'Office Life' }).getAttribute('aria-current')) === 'true',
+    'clicking a pack icon scrolls there and marks it'
+  )
+  await shot('08-picker-bar')
+  await page.keyboard.press('Escape')
 
   // Backup export mentions the packs.
   await page.getByTestId('open-settings-button').click()
