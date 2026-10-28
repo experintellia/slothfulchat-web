@@ -30,14 +30,14 @@ like webxdc and vCard drafts do.
 ---
  images/icons/calendar.svg                     |    1 +
  .../AccountListSidebar/AccountItem.tsx        |   10 +
- .../src/components/Calendar/index.tsx         | 1083 +++++++++++++++++
- .../components/Calendar/styles.module.scss    |  551 +++++++++
+ .../src/components/Calendar/index.tsx         | 1105 +++++++++++++++++
+ .../components/Calendar/styles.module.scss    |  556 +++++++++
  .../src/components/ChatView/ChatView.tsx      |   15 +
- packages/frontend/src/components/Gallery.tsx  |  157 ++-
+ packages/frontend/src/components/Gallery.tsx  |   45 +-
  .../frontend/src/components/Icon/index.tsx    |    1 +
  .../src/components/KeyboardShortcutHint.tsx   |    4 +
- .../src/components/composer/Composer.tsx      |   64 +-
- .../components/composer/menuAttachment.tsx    |   21 +
+ .../src/components/composer/Composer.tsx      |   74 +-
+ .../components/composer/menuAttachment.tsx    |   22 +
  .../components/dialogs/MediaView/index.tsx    |   13 +-
  .../src/components/message/Message.tsx        |   33 +-
  .../screens/MainScreen/MainScreen.tsx         |    7 +
@@ -45,7 +45,7 @@ like webxdc and vCard drafts do.
  .../frontend/src/hooks/chat/useMessage.ts     |    2 +-
  packages/frontend/src/keybindings.ts          |    7 +
  packages/frontend/src/stockStrings.ts         |    2 +
- 17 files changed, 1903 insertions(+), 74 deletions(-)
+ 17 files changed, 1884 insertions(+), 19 deletions(-)
  create mode 100644 images/icons/calendar.svg
  create mode 100644 packages/frontend/src/components/Calendar/index.tsx
  create mode 100644 packages/frontend/src/components/Calendar/styles.module.scss
@@ -80,11 +80,11 @@ index 1b6742647c9e289891e17fc9979b6f392f883362..5e178c0164c4505175512cc493069215
          action: async () => {
 diff --git a/packages/frontend/src/components/Calendar/index.tsx b/packages/frontend/src/components/Calendar/index.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b730672871e247000
+index 0000000000000000000000000000000000000000..2721ee9681d311c24ac63d749f44595b3ca428d9
 --- /dev/null
 +++ b/packages/frontend/src/components/Calendar/index.tsx
-@@ -0,0 +1,1083 @@
-+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+@@ -0,0 +1,1105 @@
++import React, { useEffect, useMemo, useState } from 'react'
 +import moment from 'moment'
 +import classNames from 'classnames'
 +import { C, T } from '@deltachat/jsonrpc-client'
@@ -132,8 +132,8 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +/**
 + * Answering an event in a chat is a reaction on its message: works with every Delta Chat
 + * client, which also lets people answer that only see the `.ics` as a file.
-+ * ponytail: takes the reaction slot, so an RSVP replaces e.g. a 🎂; a dedicated answer
-+ * message (webxdc-style status update or METHOD:REPLY) would free it.
++ * Your other reactions (e.g. a 🎂) stay. ponytail: a reaction is not an answer to
++ * classic clients' eyes; a dedicated answer message (METHOD:REPLY) would be.
 + */
 +export const RSVP = [
 +  { emoji: '👍', label: 'calendar_rsvp_yes' },
@@ -247,7 +247,9 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +    const bump = () => setReload(r => r + 1)
 +    const cleanups = [
 +      onDCEvent(accountId, 'IncomingMsg', bump),
++      onDCEvent(accountId, 'MsgsChanged', bump),
 +      onDCEvent(accountId, 'MsgDeleted', bump),
++      onDCEvent(accountId, 'ChatDeleted', bump),
 +    ]
 +    return () => cleanups.forEach(f => f())
 +  }, [accountId])
@@ -268,20 +270,26 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +  }, [accountId, all, chatId, from, to, reload])
 +
 +  useEffect(() => {
++    let cancelled = false
 +    ;(all
 +      ? BackendRemote.rpc.getCalendarChats(accountId)
 +      : Promise.resolve([{ chatId: chatId as number, count: 0 }])
 +    )
 +      .then(async counts => {
-+        setChatCounts(counts)
 +        const infos = await Promise.all(
 +          counts.map(c =>
 +            BackendRemote.rpc.getBasicChatInfo(accountId, c.chatId)
 +          )
 +        )
-+        setChats(Object.fromEntries(infos.map(c => [c.id, c])))
++        if (!cancelled) {
++          setChatCounts(counts)
++          setChats(Object.fromEntries(infos.map(c => [c.id, c])))
++        }
 +      })
 +      .catch(log.error)
++    return () => {
++      cancelled = true
++    }
 +  }, [accountId, all, chatId, reload])
 +
 +  const toggleChat = (id: number) => {
@@ -296,7 +304,7 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +  }
 +
 +  const visible = all ? events.filter(ev => !hidden.has(ev.chatId)) : events
-+  const colorOf = (ev: T.CalendarEvent) => chats[ev.chatId]?.color
++  const chatOf = (ev: T.CalendarEvent) => chats[ev.chatId]
 +
 +  const openEvent = (ev: Occurrence) =>
 +    openDialog(EventDetails, { event: ev, chat: chats[ev.chatId] })
@@ -338,11 +346,19 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +  return (
 +    <div className={styles.calendar}>
 +      <div className={styles.toolbar}>
-+        <Button onClick={() => step(-1)} aria-label='←' styling='borderless'>
++        <Button
++          onClick={() => step(-1)}
++          aria-label={tx('calendar_previous_month')}
++          styling='borderless'
++        >
 +          <Icon icon='chevron-left' size={18} />
 +        </Button>
 +        <Button onClick={goToday}>{tx('today')}</Button>
-+        <Button onClick={() => step(1)} aria-label='→' styling='borderless'>
++        <Button
++          onClick={() => step(1)}
++          aria-label={tx('calendar_next_month')}
++          styling='borderless'
++        >
 +          <Icon icon='chevron-right' size={18} />
 +        </Button>
 +        <h3 className={styles.title}>{cursor.format('MMMM YYYY')}</h3>
@@ -393,7 +409,7 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +            selectedDay={selectedDay}
 +            onSelectDay={setSelectedDay}
 +            onOpenEvent={openEvent}
-+            colorOf={colorOf}
++            chatOf={chatOf}
 +          />
 +        ) : (
 +          <Agenda
@@ -401,7 +417,7 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +            to={to}
 +            events={visible}
 +            onOpenEvent={openEvent}
-+            colorOf={colorOf}
++            chatOf={chatOf}
 +          />
 +        )}
 +      </div>
@@ -411,12 +427,12 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +
 +function EventChip({
 +  ev,
-+  color,
++  chat,
 +  onOpen,
 +  showTime,
 +}: {
 +  ev: Occurrence
-+  color?: string
++  chat?: T.BasicChat
 +  onOpen: (ev: Occurrence) => void
 +  showTime: boolean
 +}) {
@@ -424,12 +440,13 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +    <button
 +      type='button'
 +      className={classNames(styles.chip, ev.cancelled && styles.cancelled)}
-+      style={{ '--chat-color': color } as React.CSSProperties}
++      style={{ '--chat-color': chat?.color } as React.CSSProperties}
 +      onClick={e => {
 +        e.stopPropagation()
 +        onOpen(ev)
 +      }}
-+      title={ev.summary}
++      // the chat is otherwise only told by colour
++      title={[ev.summary, chat?.name].filter(Boolean).join(' · ')}
 +    >
 +      {showTime && !ev.allDay && (
 +        <span className={styles.time}>{moment(ev.s).format('LT')}</span>
@@ -446,7 +463,7 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +  selectedDay,
 +  onSelectDay,
 +  onOpenEvent,
-+  colorOf,
++  chatOf,
 +}: {
 +  cursor: moment.Moment
 +  gridStart: moment.Moment
@@ -454,23 +471,21 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +  selectedDay: moment.Moment
 +  onSelectDay: (day: moment.Moment) => void
 +  onOpenEvent: (ev: Occurrence) => void
-+  colorOf: (ev: Occurrence) => string | undefined
++  chatOf: (ev: Occurrence) => T.BasicChat | undefined
 +}) {
 +  const days = Array.from({ length: 42 }, (_, i) =>
 +    gridStart.clone().add(i, 'days')
 +  )
 +  return (
-+    <div className={styles.month} role='grid'>
++    <div className={styles.month}>
 +      {days.slice(0, 7).map(d => (
-+        <div key={d.format('d')} className={styles.weekday} role='columnheader'>
++        <div key={d.format('d')} className={styles.weekday} aria-hidden>
 +          {d.format('ddd')}
 +        </div>
 +      ))}
 +      {days.map(day => (
 +        <div
 +          key={day.format('YYYY-MM-DD')}
-+          role='gridcell'
-+          aria-selected={day.isSame(selectedDay, 'day')}
 +          className={classNames(styles.day, {
 +            [styles.otherMonth]: !day.isSame(cursor, 'month'),
 +            [styles.today]: day.isSame(moment(), 'day'),
@@ -478,14 +493,25 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +          })}
 +          onClick={() => onSelectDay(day)}
 +        >
-+          <span className={styles.dayNumber}>{day.date()}</span>
++          <button
++            type='button'
++            className={styles.dayNumber}
++            aria-label={day.format('LL')}
++            aria-pressed={day.isSame(selectedDay, 'day')}
++            onClick={e => {
++              e.stopPropagation()
++              onSelectDay(day)
++            }}
++          >
++            {day.date()}
++          </button>
 +          {events
 +            .filter(ev => overlapsDay(ev, day))
 +            .map(ev => (
 +              <EventChip
 +                key={`${ev.uid}-${ev.start}`}
 +                ev={ev}
-+                color={colorOf(ev)}
++                chat={chatOf(ev)}
 +                onOpen={onOpenEvent}
 +                showTime
 +              />
@@ -501,13 +527,13 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +  to,
 +  events,
 +  onOpenEvent,
-+  colorOf,
++  chatOf,
 +}: {
 +  from: moment.Moment
 +  to: moment.Moment
 +  events: Occurrence[]
 +  onOpenEvent: (ev: Occurrence) => void
-+  colorOf: (ev: Occurrence) => string | undefined
++  chatOf: (ev: Occurrence) => T.BasicChat | undefined
 +}) {
 +  const tx = useTranslationFunction()
 +  const days: moment.Moment[] = []
@@ -538,7 +564,9 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +                styles.agendaItem,
 +                ev.cancelled && styles.cancelled
 +              )}
-+              style={{ '--chat-color': colorOf(ev) } as React.CSSProperties}
++              style={
++                { '--chat-color': chatOf(ev)?.color } as React.CSSProperties
++              }
 +              onClick={() => onOpenEvent(ev)}
 +            >
 +              <span className={styles.time}>
@@ -569,24 +597,27 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +  const accountId = selectedAccountId()
 +
 +  const openConfirmation = useConfirmationDialog()
-+  const [isOwn, setIsOwn] = useState(false)
++  const [msg, setMsg] = useState<T.Message | null>(null)
 +  useEffect(() => {
 +    BackendRemote.rpc
 +      .getMessage(accountId, ev.msgId)
-+      .then(msg => setIsOwn(msg.fromId === C.DC_CONTACT_ID_SELF))
++      .then(setMsg)
 +      .catch(log.error)
 +  }, [accountId, ev.msgId])
++  const isOwn = msg?.fromId === C.DC_CONTACT_ID_SELF
 +
-+  const open = async () => {
-+    const msg = await BackendRemote.rpc.getMessage(accountId, ev.msgId)
-+    openAttachmentInShell(msg).catch(log.error)
-+  }
++  const open = () => msg && openAttachmentInShell(msg).catch(log.error)
 +
 +  // Sends the same events with METHOD:CANCEL to the chat; every client that knows the
 +  // event (and any calendar it was added to) marks it cancelled.
 +  const cancelEvent = async () => {
 +    const confirmed = await openConfirmation({
-+      message: tx('calendar_cancel_confirm', ev.summary),
++      message: tx(
++        ev.recurring
++          ? 'calendar_cancel_series_confirm'
++          : 'calendar_cancel_confirm',
++        ev.summary
++      ),
 +      confirmLabel: tx('calendar_cancel_event'),
 +      isConfirmDanger: true,
 +    })
@@ -594,6 +625,11 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +      return
 +    }
 +    try {
++      // the whole series is cancelled, so the hint names its first date, not this one
++      const first =
++        (await BackendRemote.rpc.getCalendarMsgEvents(accountId, ev.msgId))
++          .map(toOccurrence)
++          .find(e => e.uid === ev.uid) ?? ev
 +      const ics = await BackendRemote.rpc.makeCalendarCancelIcs(
 +        accountId,
 +        ev.msgId
@@ -606,7 +642,7 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +        viewtype: 'Calendar',
 +        // a reply to the invite, so every client shows which event it cancels
 +        quotedMessageId: ev.msgId,
-+        text: calendarHint(ev.summary, ev.s, ev.allDay, tx, true),
++        text: calendarHint(ev.summary, first.s, ev.allDay, tx, true),
 +      })
 +      if (runtime.getRuntimeInfo().target === 'browser') {
 +        runtime.removeTempFile(file)
@@ -716,6 +752,15 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +  YEARLY: 'calendar_repeat_yearly',
 +} as const
 +
++const freqOf = (rrule?: string | null) =>
++  rrule?.match(/FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)/)?.[1] as
++    | keyof typeof REPEAT
++    | undefined
++
++const CLOCK = 'M12 7v5l3 2 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0'
++const PIN =
++  'M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z M12 7.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5'
++
 +/**
 + * Form for a new event, or for editing `initial` (an unsent draft's event). Hands the
 + * written `.ics` (a temp file) and, `withMessage`, the message text to `onCreate`, which
@@ -742,7 +787,7 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +  const first = initial && toOccurrence(initial)
 +  const start0 = first
 +    ? moment(first.s)
-+    : day.clone().set({ hour: moment().hour() + 1, minute: 0 })
++    : day.clone().set({ hour: Math.min(moment().hour() + 1, 23), minute: 0 })
 +  const end0 = first
 +    ? // all-day ends are exclusive midnights; the form shows the last day
 +      moment(first.e).subtract(first.allDay ? 1 : 0, 'day')
@@ -758,27 +803,29 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +  // ponytail: the form knows FREQ only; editing keeps the frequency and drops
 +  // COUNT/UNTIL/BYDAY etc. of a picked-in .ics
 +  const [repeat, setRepeat] = useState<keyof typeof REPEAT>(
-+    (initial?.rrule?.match(/FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)/)?.[1] as
-+      | keyof typeof REPEAT
-+      | undefined) ?? ''
++    freqOf(initial?.rrule) ?? ''
 +  )
 +  const [text, setText] = useState('')
 +  const [error, setError] = useState<string | null>(null)
 +  const [sending, setSending] = useState(false)
 +
-+  const send = useCallback(async () => {
-+    // All-day: UTC midnights, end exclusive. Timed: local wall clock → instant.
-+    const utcMidnight = (d: string) => Date.parse(`${d}T00:00:00Z`) / 1000
-+    const start = allDay
-+      ? utcMidnight(startDate)
-+      : new Date(`${startDate}T${startTime}`).getTime() / 1000
-+    const end = allDay
-+      ? utcMidnight(endDate) + 86400
-+      : new Date(`${endDate}T${endTime}`).getTime() / 1000
++  // All-day: UTC midnights, end exclusive. Timed: local wall clock → instant.
++  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
++  const startMs = allDay
++    ? Date.parse(`${startDate}T00:00:00Z`)
++    : new Date(`${startDate}T${startTime}`).getTime()
++  const endMs = allDay
++    ? Date.parse(`${endDate}T00:00:00Z`) + 86400_000
++    : new Date(`${endDate}T${endTime}`).getTime()
++
++  const send = async () => {
++    if (sending) {
++      return
++    }
 +    if (!summary.trim()) {
 +      return setError(tx('calendar_title_missing'))
 +    }
-+    if (!(end >= start)) {
++    if (!(endMs >= startMs)) {
 +      return setError(tx('calendar_end_before_start'))
 +    }
 +    setSending(true)
@@ -787,16 +834,16 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +        summary: summary.trim(),
 +        location: location.trim() || null,
 +        description: description.trim() || null,
-+        start,
-+        end,
++        start: startMs / 1000,
++        end: endMs / 1000,
 +        allDay,
-+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
++        timezone: timezone || null,
 +        rrule: repeat ? `FREQ=${repeat}` : null,
 +      })
 +      const file = await runtime.writeTempFile('event.ics', ics)
 +      const hint = calendarHint(
 +        summary.trim(),
-+        allDay ? moment(startDate).toDate() : new Date(start * 1000),
++        allDay ? moment(startDate).toDate() : new Date(startMs),
 +        allDay,
 +        tx
 +      )
@@ -806,29 +853,8 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +      setError(err?.message ?? String(err))
 +      setSending(false)
 +    }
-+  }, [
-+    allDay,
-+    description,
-+    endDate,
-+    endTime,
-+    location,
-+    onClose,
-+    onCreate,
-+    repeat,
-+    startDate,
-+    startTime,
-+    summary,
-+    text,
-+    tx,
-+  ])
++  }
 +
-+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
-+  const startMs = allDay
-+    ? Date.parse(`${startDate}T00:00:00Z`)
-+    : new Date(`${startDate}T${startTime}`).getTime()
-+  const endMs = allDay
-+    ? Date.parse(`${endDate}T00:00:00Z`) + 86400_000
-+    : new Date(`${endDate}T${endTime}`).getTime()
 +  // "an hour · Europe/Berlin"; nothing while the range is invalid
 +  const durationHint =
 +    endMs > startMs
@@ -862,7 +888,7 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +              onChange={e => setSummary(e.target.value)}
 +            />
 +            <div className={styles.section}>
-+              <FormIcon d='M12 7v5l3 2 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0' />
++              <FormIcon d={CLOCK} />
 +              <div className={styles.sectionBody}>
 +                <div className={styles.switchRow}>
 +                  <label htmlFor='event-all-day'>
@@ -948,7 +974,7 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +              </div>
 +            </div>
 +            <div className={styles.section}>
-+              <FormIcon d='M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z M12 7.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5' />
++              <FormIcon d={PIN} />
 +              <input
 +                className={styles.plain}
 +                aria-label={tx('location')}
@@ -1043,9 +1069,7 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +}) {
 +  const tx = useTranslationFunction()
 +  const ev = toOccurrence(event)
-+  const freq = ev.rrule?.match(/FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)/)?.[1] as
-+    | keyof typeof REPEAT
-+    | undefined
++  const freq = freqOf(ev.rrule)
 +  const Tag = onClick ? 'button' : 'div'
 +  return (
 +    <Tag
@@ -1070,10 +1094,7 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +        ) : (
 +          <>
 +            <span className={styles.cardLine}>
-+              <FormIcon
-+                className={styles.lineIcon}
-+                d='M12 7v5l3 2 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0'
-+              />
++              <FormIcon className={styles.lineIcon} d={CLOCK} />
 +              <span>{cardTime(ev, tx)}</span>
 +              {freq && (
 +                <span className={styles.repeatChip}>{tx(REPEAT[freq])}</span>
@@ -1081,10 +1102,7 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +            </span>
 +            {ev.location && (
 +              <span className={styles.cardLine}>
-+                <FormIcon
-+                  className={styles.lineIcon}
-+                  d='M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z M12 7.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5'
-+                />
++                <FormIcon className={styles.lineIcon} d={PIN} />
 +                <span className={styles.cardLocation}>{ev.location}</span>
 +              </span>
 +            )}
@@ -1150,11 +1168,15 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +            className={classNames(styles.rsvpButton, on && styles.rsvpOn)}
 +            onClick={() =>
 +              BackendRemote.rpc
-+                .sendReaction(
-+                  selectedAccountId(),
-+                  message.id,
-+                  on ? [] : [r.emoji]
-+                )
++                .sendReaction(selectedAccountId(), message.id, [
++                  // keep e.g. a 🎂, swap only the answer
++                  ...reactions
++                    .filter(
++                      x => x.isFromSelf && !RSVP.some(o => o.emoji === x.emoji)
++                    )
++                    .map(x => x.emoji),
++                  ...(on ? [] : [r.emoji]),
++                ])
 +                .catch(log.error)
 +            }
 +          >
@@ -1169,10 +1191,10 @@ index 0000000000000000000000000000000000000000..92e37ec3039a7e9ebe974b8b73067287
 +}
 diff --git a/packages/frontend/src/components/Calendar/styles.module.scss b/packages/frontend/src/components/Calendar/styles.module.scss
 new file mode 100644
-index 0000000000000000000000000000000000000000..30dde744644c3f7582cdb8e9a61c1e314ce6028a
+index 0000000000000000000000000000000000000000..47cea9fa98122d0af35f2c696d76f40f7dba0478
 --- /dev/null
 +++ b/packages/frontend/src/components/Calendar/styles.module.scss
-@@ -0,0 +1,551 @@
+@@ -0,0 +1,556 @@
 +.calendar {
 +  display: flex;
 +  flex-direction: column;
@@ -1305,6 +1327,11 @@ index 0000000000000000000000000000000000000000..30dde744644c3f7582cdb8e9a61c1e31
 +  border-radius: 1em;
 +  text-align: center;
 +  font-size: 0.85em;
++  border: 0;
++  background: transparent;
++  color: inherit;
++  font-family: inherit;
++  cursor: pointer;
 +
 +  .today & {
 +    background: var(--colorPrimary);
@@ -1758,7 +1785,7 @@ index ff8d2509f9a67145bef1dc01bce50896552ed30f..45802ad1b91a08f660b4abb656bc0ce2
          <Button
            onClick={() => openMapWebxdc(selectedAccountId(), chatId)}
 diff --git a/packages/frontend/src/components/Gallery.tsx b/packages/frontend/src/components/Gallery.tsx
-index f73a52fcd2d87777692d791962e23ac987796a28..53c28840dc0ecb6a6cecd686b0e4354642c88adc 100644
+index f73a52fcd2d87777692d791962e23ac987796a28..acde82483e19cd8c5fc9263558044cb70a476e90 100644
 --- a/packages/frontend/src/components/Gallery.tsx
 +++ b/packages/frontend/src/components/Gallery.tsx
 @@ -33,10 +33,16 @@ import {
@@ -1819,7 +1846,7 @@ index f73a52fcd2d87777692d791962e23ac987796a28..53c28840dc0ecb6a6cecd686b0e43546
      }
    }
  
-@@ -215,11 +227,20 @@ export default class Gallery extends Component<
+@@ -215,6 +227,15 @@ export default class Gallery extends Component<
      const newElement = MediaTabs[tab].element
      const accountId = selectedAccountId()
      const chatId = this.props.chatId !== 'all' ? this.props.chatId : null
@@ -1835,12 +1862,6 @@ index f73a52fcd2d87777692d791962e23ac987796a28..53c28840dc0ecb6a6cecd686b0e43546
      this.setState({ loading: true })
  
      BackendRemote.rpc
-       .getChatMedia(accountId, chatId, msgTypes[0], msgTypes[1], msgTypes[2])
--      .then(async media_ids => {
-+      .then(async (media_ids: number[]) => {
-         const mediaLoadResult =
-           tab !== 'files'
-             ? // This state is unused if the tab is not 'files'.
 @@ -311,7 +332,9 @@ export default class Gallery extends Component<
            })
  
@@ -1863,129 +1884,20 @@ index f73a52fcd2d87777692d791962e23ac987796a28..53c28840dc0ecb6a6cecd686b0e43546
          </ul>
          <div
            role='tabpanel'
-@@ -360,63 +385,67 @@ export default class Gallery extends Component<
+@@ -360,10 +385,12 @@ export default class Gallery extends Component<
            // See https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/Roles/tab_role#example
            id={`gallery-tabpanel-${currentTab}`}
            aria-labelledby={`gallery-tab-${currentTab}`}
 -          style={{ flexGrow: 1 }}
 +          style={{ flexGrow: 1, minHeight: 0 }}
          >
--          <div
--            ref={this.galleryItemsRef}
--            className={`gallery gallery-image-object-fit_${
--              galleryImageKeepAspectRatio ? 'contain' : 'cover'
--            }`}
--          >
--            {mediaMessageIds.length < 1 && !loading && (
--              <div className='empty-screen'>
--                {/* IDEA: when we have someone doing illustrations this would be a great place to add some */}
--                <p className='no-media-message'>{emptyTabMessage}</p>
--              </div>
--            )}
--
--            {currentTab === 'files' && (
--              <>
--                <AutoSizer disableWidth>
--                  {({ height }) => (
--                    <RovingTabindexProvider
--                      wrapperElementRef={this.galleryItemsRef}
--                      direction='vertical'
--                    >
--                      <FileTable
--                        width={'100%'}
--                        height={height}
--                        mediaLoadResult={mediaLoadResult}
--                        mediaMessageIds={filteredMediaMessageIds}
--                        queryText={queryText}
--                      ></FileTable>
--                    </RovingTabindexProvider>
-+          {currentTab === 'calendar' ? (
-+            <Calendar chatId={this.props.chatId} />
-+          ) : (
-+            <div
-+              ref={this.galleryItemsRef}
-+              className={`gallery gallery-image-object-fit_${
-+                galleryImageKeepAspectRatio ? 'contain' : 'cover'
-+              }`}
-+            >
-+              {mediaMessageIds.length < 1 && !loading && (
-+                <div className='empty-screen'>
-+                  {/* IDEA: when we have someone doing illustrations this would be a great place to add some */}
-+                  <p className='no-media-message'>{emptyTabMessage}</p>
-+                </div>
-+              )}
-+
-+              {currentTab === 'files' && (
-+                <>
-+                  <AutoSizer disableWidth>
-+                    {({ height }) => (
-+                      <RovingTabindexProvider
-+                        wrapperElementRef={this.galleryItemsRef}
-+                        direction='vertical'
-+                      >
-+                        <FileTable
-+                          width={'100%'}
-+                          height={height}
-+                          mediaLoadResult={mediaLoadResult}
-+                          mediaMessageIds={filteredMediaMessageIds}
-+                          queryText={queryText}
-+                        ></FileTable>
-+                      </RovingTabindexProvider>
-+                    )}
-+                  </AutoSizer>
-+                  {filteredMediaMessageIds.length === 0 && (
-+                    <div className='empty-screen'>
-+                      <p className='no-media-message'>
-+                        {tx('search_no_result_for_x', queryText)}
-+                      </p>
-+                    </div>
-+                  )}
-+                </>
-+              )}
-+
-+              {currentTab !== 'files' && (
-+                <GridGallery
-+                  currentTab={currentTab}
-+                  showChat={this.props.chatId === 'all'}
-+                  element={this.state.element}
-+                  openFullscreenMedia={this.openFullscreenMedia.bind(this)}
-+                  mediaMessageIds={mediaMessageIds}
-+                  galleryItemsRef={this.galleryItemsRef}
-+                  updateFirstVisibleMessage={this.updateFirstVisibleMessage.bind(
-+                    this
-                   )}
--                </AutoSizer>
--                {filteredMediaMessageIds.length === 0 && (
--                  <div className='empty-screen'>
--                    <p className='no-media-message'>
--                      {tx('search_no_result_for_x', queryText)}
--                    </p>
--                  </div>
--                )}
--              </>
--            )}
--
--            {currentTab !== 'files' && (
--              <GridGallery
--                currentTab={currentTab}
--                showChat={this.props.chatId === 'all'}
--                element={this.state.element}
--                openFullscreenMedia={this.openFullscreenMedia.bind(this)}
--                mediaMessageIds={mediaMessageIds}
--                galleryItemsRef={this.galleryItemsRef}
--                updateFirstVisibleMessage={this.updateFirstVisibleMessage.bind(
--                  this
--                )}
--              />
--            )}
--          </div>
-+                />
-+              )}
-+            </div>
-+          )}
-         </div>
-       </div>
-     )
++          {currentTab === 'calendar' && <Calendar chatId={this.props.chatId} />}
+           <div
+             ref={this.galleryItemsRef}
++            style={currentTab === 'calendar' ? { display: 'none' } : undefined}
+             className={`gallery gallery-image-object-fit_${
+               galleryImageKeepAspectRatio ? 'contain' : 'cover'
+             }`}
 diff --git a/packages/frontend/src/components/Icon/index.tsx b/packages/frontend/src/components/Icon/index.tsx
 index e86224ed9968a2a4b6c7ea9da81e9531f480725c..85c5713a4417706da0d97a8e0af9b1e71f8e354a 100644
 --- a/packages/frontend/src/components/Icon/index.tsx
@@ -2014,7 +1926,7 @@ index 79d402768c3a8f626d4781fd79b0f90870d00a7e..9a51a034ea4b1cfbab3e637aa94ed9d7
      {
        title: tx('message_input_shortcut_section'),
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..955e9df6d805810e3fe7e453c9ea64f7284157db 100644
+index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0209671bc796c8414132d02758ca9077f400c592 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
 @@ -17,7 +17,8 @@ import { languageToolConfig } from './languageToolCheck'
@@ -2041,7 +1953,18 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..955e9df6d805810e3fe7e453c9ea64f7
  import { ActionEmitter, KeybindAction } from '../../keybindings'
  import useKeyBindingAction from '../../hooks/useKeyBindingAction'
  import { CloseButton } from '../Dialog'
-@@ -329,8 +337,20 @@ const Composer = forwardRef<
+@@ -109,6 +117,10 @@ const Composer = forwardRef<
+   } = props
+ 
+   const chatId = selectedChat.id
++  // The event form saves long after it was opened: by then the draft (text typed meanwhile)
++  // is newer than the `addFileToDraft` it was opened with.
++  const latestAddFileToDraft = useRef(addFileToDraft)
++  latestAddFileToDraft.current = addFileToDraft
+   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+   const [showAppPicker, setShowAppPicker] = useState(false)
+   const [recording, setRecording] = useState(false)
+@@ -329,8 +341,20 @@ const Composer = forwardRef<
            }
  
            const preSendDraftState = draftState
@@ -2063,7 +1986,7 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..955e9df6d805810e3fe7e453c9ea64f7
              file: draftState.file || undefined,
              filename: draftState.fileName || undefined,
              quotedMessageId:
-@@ -770,6 +790,7 @@ const Composer = forwardRef<
+@@ -770,6 +794,7 @@ const Composer = forwardRef<
                )}
                {draftState.file &&
                  !draftState.vcardContact &&
@@ -2071,7 +1994,7 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..955e9df6d805810e3fe7e453c9ea64f7
                  !linkPreview.isPreviewActive && (
                    <section
                      className='attachment-quote-section is-attachment'
-@@ -864,6 +885,45 @@ const Composer = forwardRef<
+@@ -864,6 +889,51 @@ const Composer = forwardRef<
                    />
                  </section>
                )}
@@ -2102,8 +2025,14 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..955e9df6d805810e3fe7e453c9ea64f7
 +                          initial: draftState.calendarEvent,
 +                          withMessage: false,
 +                          // replaces the draft's .ics, the text stays
-+                          onCreate: (file: string) =>
-+                            addFileToDraft(file, 'event.ics', 'Calendar'),
++                          onCreate: async (file: string) => {
++                            await latestAddFileToDraft.current(
++                              file,
++                              'event.ics',
++                              'Calendar'
++                            )
++                            await runtime.removeTempFile(file)
++                          },
 +                        })
 +                      }
 +                    />
@@ -2118,7 +2047,7 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..955e9df6d805810e3fe7e453c9ea64f7
            ) : (
              <div className='attachment-quote-section is-quote'>
 diff --git a/packages/frontend/src/components/composer/menuAttachment.tsx b/packages/frontend/src/components/composer/menuAttachment.tsx
-index 2a4b8b5085d410f2a16e391c419a410c45bdec18..d7612e39abbbd8a765ffc137e75fe936c1f60f52 100644
+index 2a4b8b5085d410f2a16e391c419a410c45bdec18..2a21137c7a80bb354979d49f2ba5d6ad16f24f90 100644
 --- a/packages/frontend/src/components/composer/menuAttachment.tsx
 +++ b/packages/frontend/src/components/composer/menuAttachment.tsx
 @@ -21,6 +21,8 @@ import type { T } from '@deltachat/jsonrpc-client'
@@ -2139,7 +2068,7 @@ index 2a4b8b5085d410f2a16e391c419a410c45bdec18..d7612e39abbbd8a765ffc137e75fe936
        }
        addFileToDraft(files[0], null, viewType)
        focusMessageInput()
-@@ -171,6 +175,17 @@ export default function MenuAttachment({
+@@ -171,6 +175,18 @@ export default function MenuAttachment({
      dialogId = openDialog(SelectContactDialog, { onOk: addContactAsVcard })
    }
  
@@ -2147,8 +2076,9 @@ index 2a4b8b5085d410f2a16e391c419a410c45bdec18..d7612e39abbbd8a765ffc137e75fe936
 +    openDialog(NewEventDialog, {
 +      day: moment().startOf('day'),
 +      withMessage: false,
-+      onCreate: (file: string) => {
-+        addFileToDraft(file, 'event.ics', 'Calendar')
++      onCreate: async (file: string) => {
++        await addFileToDraft(file, 'event.ics', 'Calendar')
++        await runtime.removeTempFile(file)
 +        setTimeout(() => focusMessageInput())
 +      },
 +    })
@@ -2157,7 +2087,7 @@ index 2a4b8b5085d410f2a16e391c419a410c45bdec18..d7612e39abbbd8a765ffc137e75fe936
    const selectAppPicker = async () => {
      showAppPicker(true)
    }
-@@ -187,6 +202,12 @@ export default function MenuAttachment({
+@@ -187,6 +203,12 @@ export default function MenuAttachment({
        label: tx('file'),
        action: addFilenameFile.bind(null),
      },

@@ -287,15 +287,24 @@ exists:
   a Calendar tab in apps & media (month grid + agenda), an all-chats calendar
   (account menu, Ctrl/Cmd+Shift+Y) with a per-chat colour/toggle sidebar, a
   calendar button in the chat header, and a "New event" form there.
-  RSVP is a reaction (👍 🤔 👎) on the event message, so every Delta Chat
-  client can answer; the sender can cancel (a new `.ics` with `METHOD:CANCEL`,
-  `SEQUENCE` + 1), which marks the original message cancelled too. The
-  cancellation is a reply to the invite and, once indexed, an info message
-  (`SystemMessage::CalendarCancelled`, 7000, set locally and never sent) that
-  says "Bob cancelled “Title”" in the chat, the chat list and the notification,
-  and jumps to the invite when clicked. Only the
-  sender of an event's first message can update or cancel it, and attendee
-  `METHOD:REPLY` files are not read as versions. Sent events carry a last
+  RSVP is a reaction (👍 🤔 👎) on the event message (other reactions of
+  yours stay), so every Delta Chat client can answer; the sender can cancel (a
+  new `.ics` with `METHOD:CANCEL`, `SEQUENCE` + 1), which marks the original
+  message cancelled too. The cancellation is a reply to the invite and shows
+  as an info message that says "Bob cancelled “Title”" in the chat, the chat
+  list and the notification, and jumps to the invite when clicked. That is
+  decided when the message is read (JSON-RPC `isInfo` /
+  `systemMessageType: CalendarCancelled`), not stored as a core system message
+  type, which core would refuse to resend, keep from new broadcast subscribers
+  and send no read receipt for. Only an event's organizer — the sender of its
+  first non-forwarded message, kept in `slothfulchat_calendar_organizers` so
+  deleting that message or forwarding it hands the event to nobody — can update
+  or cancel it, and attendee `METHOD:REPLY` files are not read as versions.
+  Hostile files stay cheap: sub-hourly series aren't expanded, one query steps
+  through at most 200k occurrences, durations are capped and overflow-checked,
+  and TZID path prefixes are matched on their last three parts only. Over
+  pre-messages a Calendar goes out as `File` in the metadata, since other
+  clients don't know the viewtype. Sent events carry a last
   paragraph starting with "📅 " that tells clients without calendar support
   what the event is and how to answer; core strips it from the text and the
   chat list. `core/1027`, `desktop/1070`

@@ -228,6 +228,15 @@
   "calendar_cancel_confirm": {
     "message": "Cancel “%1$s” for everyone in this chat?"
   },
+  "calendar_cancel_series_confirm": {
+    "message": "Cancel every occurrence of “%1$s” for everyone in this chat?"
+  },
+  "calendar_previous_month": {
+    "message": "Previous month"
+  },
+  "calendar_next_month": {
+    "message": "Next month"
+  },
   "calendar_you_cancelled": {
     "message": "You cancelled “%1$s”"
   },

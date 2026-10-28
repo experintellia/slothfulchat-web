@@ -23,55 +23,14 @@
 // Requires packages/core-wasm built and packages/web-app assembled+built.
 // Run:  node scripts/test-calendar-e2e.mjs
 // (CHROMIUM_BIN=/path/to/chrome overrides the playwright-managed browser.)
-import { createServer } from 'node:http'
-import { randomBytes } from 'node:crypto'
 import { chromium } from 'playwright'
-import { startServers } from './harness.mjs'
+import { freezeEval, startServers } from './harness.mjs'
+import { startMockMadmail } from './mock-madmail.mjs'
 
 const APP_PORT = Number(process.env.APP_PORT ?? 8679)
 
-// --- mock madmail server (no mail ever arrives; just enough to configure) ---
-const users = new Map()
-let userSeq = 0
-const json = (res, code, obj) => {
-  res.statusCode = code
-  res.setHeader('content-type', 'application/json')
-  res.end(JSON.stringify(obj))
-}
-const mock = createServer((req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Headers', 'X-Email, X-Password, Content-Type')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
-  if (req.method === 'OPTIONS') {
-    res.statusCode = 204
-    res.end()
-    return
-  }
-  const url = new URL(req.url, 'http://mock')
-  if (req.method === 'POST' && url.pathname === '/new') {
-    const email = `u${++userSeq}@webimap.example`
-    const password = randomBytes(9).toString('hex')
-    users.set(email, password)
-    return json(res, 200, { email, password, dclogin_url: '' })
-  }
-  if (url.pathname.startsWith('/webimap/')) {
-    const pw = users.get(req.headers['x-email'])
-    if (!pw || pw !== req.headers['x-password']) {
-      return json(res, 401, { error: 'bad credentials' })
-    }
-    if (url.pathname === '/webimap/mailboxes') {
-      return json(res, 200, [{ name: 'INBOX', messages: 0, unseen: 0 }])
-    }
-    if (url.pathname === '/webimap/messages') {
-      const wait = Math.min(Number(url.searchParams.get('wait') ?? '0') || 0, 25)
-      setTimeout(() => json(res, 200, []), wait * 1000)
-      return
-    }
-  }
-  json(res, 404, { error: 'not found' })
-})
-await new Promise((r) => mock.listen(0, '127.0.0.1', r))
-const QR = `webimapaccount:127.0.0.1:${mock.address().port}`
+const mock = await startMockMadmail()
+const QR = `webimapaccount:127.0.0.1:${mock.port}`
 
 // The 10th of the current month, so it is always inside the month grid.
 const now = new Date()
@@ -106,9 +65,7 @@ const launchOpts = process.env.CHROMIUM_BIN
 const browser = await chromium.launch(launchOpts)
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
 page.on('pageerror', (e) => console.error('[pageerror]', e.message))
-await page.addInitScript(() => {
-  Object.defineProperty(window, 'eval', { value: window.eval, writable: false })
-})
+await freezeEval(page)
 const rpc = (method, ...args) =>
   page.evaluate(([m, a]) => window.exp.rpc[m](...a), [method, args])
 const check = (ok, what) => {
@@ -116,7 +73,7 @@ const check = (ok, what) => {
   console.log(`OK: ${what}`)
 }
 const dialog = page.getByTestId('media-view-dialog')
-const chip = (title) => dialog.locator(`button[title="${title}"]`)
+const chip = (title) => dialog.locator(`button[title^="${title}"]`)
 
 let failed = false
 try {
@@ -212,7 +169,7 @@ try {
     await dialog.getByRole('button', { name: /Dinner/ }).first().isVisible(),
     'agenda view lists it'
   )
-  const events = await rpc('getCalendarEvents', aliceId, familyId, day(1), day(28))
+  const events = await rpc('getCalendarEvents', aliceId, familyId, day(1), day(28) + 86400 * 40)
   check(
     events.some((e) => e.summary === 'Dinner'),
     'core indexed the event sent from the UI'

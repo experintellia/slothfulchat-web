@@ -52,28 +52,48 @@ JSON-RPC: `Calendar` viewtype and `calendar_event` (first event) on
 MessageObject; get_calendar_events(chat?, from, to), get_calendar_chats(),
 get_calendar_msg_events(msg) and make_calendar_ics(event), which writes the
 .ics to send or draft as a Calendar message (like make_vcard).
+
+Only an event's organizer can update or cancel it: the sender of its
+first non-forwarded message, kept in slothfulchat_calendar_organizers
+(never pruned), so deleting that message or forwarding it doesn't hand
+the event to someone else. A cancellation from the organizer reads as
+an info message ("Bob cancelled “Title”", stock strings 7000/7001) in
+JSON-RPC, the summary and notifications. This is decided on read, not
+stored as Param::Cmd, which would make core refuse to resend it, skip it
+when re-sending a broadcast to new subscribers, and send no read receipt.
+Over pre-messages a Calendar goes out as File in the metadata.
+
+Hostile input: sub-hourly series are not expanded. One query steps
+through at most 200k occurrences, because rrule can't start mid-series.
+Durations and SEQUENCE are capped or overflow-checked. TZID path
+prefixes are matched on their last three parts (it was quadratic), and
+an odd TZOFFSETTO no longer panics. TEXT is unescaped once, by the
+parser; we used to unescape it a second time. Also fixed: all-day and
+floating series with a DATE or local UNTIL keep their recurrence, a
+time in a DST gap means the time after it, and a cancelled or
+rescheduled series takes its older overrides along.
 ---
  Cargo.lock                                    |  156 +-
  Cargo.toml                                    |    2 +
- deltachat-ffi/deltachat.h                     |   11 +
+ deltachat-ffi/deltachat.h                     |   10 +
  deltachat-jsonrpc/src/api.rs                  |   62 +
  deltachat-jsonrpc/src/api/types/calendar.rs   |   88 +
- deltachat-jsonrpc/src/api/types/message.rs    |   29 +-
+ deltachat-jsonrpc/src/api/types/message.rs    |   37 +-
  deltachat-jsonrpc/src/api/types/mod.rs        |    1 +
  deltachat-jsonrpc/typescript/pnpm-lock.yaml   | 2864 +++++++++++++++++
  .../typescript/pnpm-workspace.yaml            |    2 +
- src/calendar.rs                               |  977 ++++++
- src/calendar/calendar_tests.rs                |  565 ++++
+ src/calendar.rs                               | 1057 ++++++
+ src/calendar/calendar_tests.rs                |  709 ++++
  src/chat.rs                                   |   18 +-
+ src/download/post_msg_metadata.rs             |    7 +-
  src/lib.rs                                    |    1 +
- src/message.rs                                |   34 +-
- src/mimefactory.rs                            |    1 +
- src/mimeparser.rs                             |   15 +-
+ src/message.rs                                |   33 +-
+ src/mimeparser.rs                             |   11 +-
  src/receive_imf.rs                            |    4 +
  src/sql.rs                                    |   10 +
  src/stock_str.rs                              |   19 +
- src/summary.rs                                |   22 +-
- 20 files changed, 4845 insertions(+), 36 deletions(-)
+ src/summary.rs                                |   29 +-
+ 20 files changed, 5078 insertions(+), 42 deletions(-)
  create mode 100644 deltachat-jsonrpc/src/api/types/calendar.rs
  create mode 100644 deltachat-jsonrpc/typescript/pnpm-lock.yaml
  create mode 100644 deltachat-jsonrpc/typescript/pnpm-workspace.yaml
@@ -519,18 +539,10 @@ index 4106fde890d6d1e0153972420813c11e1d45ad66..37f1e9c47201e229964441ab9e0d515f
  data-encoding = "2.9.0"
  escaper = "0.1"
 diff --git a/deltachat-ffi/deltachat.h b/deltachat-ffi/deltachat.h
-index 552be54daf540f5d37a479c3cf3f507d7497a3d7..cddf9689fb2a8db32e470efa4c988742fff56402 100644
+index 552be54daf540f5d37a479c3cf3f507d7497a3d7..5e5691c3b297f38d2fdaea0bd8315c72588a6e0f 100644
 --- a/deltachat-ffi/deltachat.h
 +++ b/deltachat-ffi/deltachat.h
-@@ -4593,6 +4593,7 @@ uint32_t        dc_msg_get_info_contact_id    (const dc_msg_t* msg);
- #define         DC_INFO_WEBXDC_INFO_MESSAGE       32
- #define         DC_INFO_CHAT_E2EE                 50
- #define         DC_INFO_GROUP_DESCRIPTION_CHANGED 70
-+#define         DC_INFO_CALENDAR_CANCELLED     7000
- 
- 
- /**
-@@ -7501,6 +7502,16 @@ void dc_event_unref(dc_event_t* event);
+@@ -7501,6 +7501,16 @@ void dc_event_unref(dc_event_t* event);
  /// Used when creating text for the "Encryption Info" dialogs.
  #define DC_STR_MESSAGES_ARE_E2EE 242
  
@@ -722,7 +734,7 @@ index 0000000000000000000000000000000000000000..052a21970ffd71a7122dad00932c3fab
 +    }
 +}
 diff --git a/deltachat-jsonrpc/src/api/types/message.rs b/deltachat-jsonrpc/src/api/types/message.rs
-index 9fe1ef9db885d59c81394a575dd2b4140060a949..73f5f890c5eb7f78140138f423025ee4973f43b4 100644
+index 9fe1ef9db885d59c81394a575dd2b4140060a949..dfe1398e26a32a023bd52c81cfdff426219c2b2a 100644
 --- a/deltachat-jsonrpc/src/api/types/message.rs
 +++ b/deltachat-jsonrpc/src/api/types/message.rs
 @@ -17,6 +17,7 @@
@@ -756,7 +768,14 @@ index 9fe1ef9db885d59c81394a575dd2b4140060a949..73f5f890c5eb7f78140138f423025ee4
          let vcard_contacts: Vec<VcardContact> = message
              .vcard_contacts(context)
              .await?
-@@ -210,7 +220,12 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Option<Self
+@@ -204,13 +214,19 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Option<Self
+             .map(Into::into)
+             .collect();
+ 
++        let is_cancellation = deltachat::calendar::is_cancellation(context, &message).await;
+         let message_object = MessageObject {
+             id: msg_id.to_u32(),
+             chat_id: message.get_chat_id().to_u32(),
              from_id: message.get_from_id().to_u32(),
              quote,
              parent_id,
@@ -770,7 +789,24 @@ index 9fe1ef9db885d59c81394a575dd2b4140060a949..73f5f890c5eb7f78140138f423025ee4
              is_edited: message.is_edited(),
              has_location: message.has_location(),
              has_html: message.has_html(),
-@@ -272,6 +287,8 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Option<Self
+@@ -229,10 +245,14 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Option<Self
+ 
+             subject: message.get_subject().to_owned(),
+             show_padlock: message.get_showpadlock(),
+-            is_info: message.is_info(),
++            is_info: message.is_info() || is_cancellation,
+             is_forwarded: message.is_forwarded(),
+             is_bot: message.is_bot(),
+-            system_message_type: message.get_info_type().into(),
++            system_message_type: if is_cancellation {
++                SystemMessageType::CalendarCancelled
++            } else {
++                message.get_info_type().into()
++            },
+             info_contact_id: message
+                 .get_info_contact_id(context)
+                 .await?
+@@ -272,6 +292,8 @@ pub async fn from_msg_id(context: &Context, msg_id: MsgId) -> Result<Option<Self
              reactions,
  
              vcard_contact: vcard_contacts.first().cloned(),
@@ -779,7 +815,7 @@ index 9fe1ef9db885d59c81394a575dd2b4140060a949..73f5f890c5eb7f78140138f423025ee4
          };
          Ok(Some(message_object))
      }
-@@ -321,6 +338,10 @@ pub enum MessageViewtype {
+@@ -321,6 +343,10 @@ pub enum MessageViewtype {
      /// with email addresses and possibly other fields.
      /// Use `parse_vcard()` to retrieve them.
      Vcard,
@@ -790,7 +826,7 @@ index 9fe1ef9db885d59c81394a575dd2b4140060a949..73f5f890c5eb7f78140138f423025ee4
  }
  
  impl From<Viewtype> for MessageViewtype {
-@@ -338,6 +359,7 @@ fn from(viewtype: Viewtype) -> Self {
+@@ -338,6 +364,7 @@ fn from(viewtype: Viewtype) -> Self {
              Viewtype::Call => MessageViewtype::Call,
              Viewtype::Webxdc => MessageViewtype::Webxdc,
              Viewtype::Vcard => MessageViewtype::Vcard,
@@ -798,7 +834,7 @@ index 9fe1ef9db885d59c81394a575dd2b4140060a949..73f5f890c5eb7f78140138f423025ee4
          }
      }
  }
-@@ -357,6 +379,7 @@ fn from(viewtype: MessageViewtype) -> Self {
+@@ -357,6 +384,7 @@ fn from(viewtype: MessageViewtype) -> Self {
              MessageViewtype::Call => Viewtype::Call,
              MessageViewtype::Webxdc => Viewtype::Webxdc,
              MessageViewtype::Vcard => Viewtype::Vcard,
@@ -806,7 +842,7 @@ index 9fe1ef9db885d59c81394a575dd2b4140060a949..73f5f890c5eb7f78140138f423025ee4
          }
      }
  }
-@@ -431,6 +454,9 @@ pub enum SystemMessageType {
+@@ -431,6 +459,9 @@ pub enum SystemMessageType {
  
      CallAccepted,
      CallEnded,
@@ -816,14 +852,6 @@ index 9fe1ef9db885d59c81394a575dd2b4140060a949..73f5f890c5eb7f78140138f423025ee4
  }
  
  impl From<deltachat::mimeparser::SystemMessage> for SystemMessageType {
-@@ -460,6 +486,7 @@ fn from(system_message_type: deltachat::mimeparser::SystemMessage) -> Self {
-             SystemMessage::SecurejoinWaitTimeout => SystemMessageType::SecurejoinWaitTimeout,
-             SystemMessage::CallAccepted => SystemMessageType::CallAccepted,
-             SystemMessage::CallEnded => SystemMessageType::CallEnded,
-+            SystemMessage::CalendarCancelled => SystemMessageType::CalendarCancelled,
-         }
-     }
- }
 diff --git a/deltachat-jsonrpc/src/api/types/mod.rs b/deltachat-jsonrpc/src/api/types/mod.rs
 index c71a995c8fcf5a7e3c7a9e615c04ffce8b687897..9b16a9b16da844e9ad1d3aa47e424c737daab9b4 100644
 --- a/deltachat-jsonrpc/src/api/types/mod.rs
@@ -3714,10 +3742,10 @@ index 0000000000000000000000000000000000000000..49c0ad74208df0f3edd27c0dc970067b
 +  esbuild: false
 diff --git a/src/calendar.rs b/src/calendar.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f2803866b
+index 0000000000000000000000000000000000000000..18e89ecec1b8991f58af78ae2073dbff3c2c4529
 --- /dev/null
 +++ b/src/calendar.rs
-@@ -0,0 +1,977 @@
+@@ -0,0 +1,1057 @@
 +//! # Calendar.
 +//!
 +//! iCalendar attachments (`.ics` files and the `text/calendar` part of email invitations) are
@@ -3743,8 +3771,8 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +use std::str::FromStr;
 +
 +use anyhow::{Context as _, Result};
-+use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone};
-+use icalendar::rrule::{RRule, RRuleSet, Tz, Unvalidated};
++use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeDelta, TimeZone};
++use icalendar::rrule::{Frequency, RRule, RRuleSet, Tz, Unvalidated};
 +use icalendar::{Calendar, CalendarDateTime, Component, DatePerhapsTime, EventLike};
 +
 +use crate::chat::ChatId;
@@ -3753,7 +3781,6 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +use crate::context::Context;
 +use crate::log::{LogExt, warn};
 +use crate::message::{Message, MsgId, Viewtype};
-+use crate::mimeparser::SystemMessage;
 +use crate::param::Param;
 +use crate::stock_str;
 +use crate::tools::{create_id, time};
@@ -3783,6 +3810,12 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +  ON slothfulchat_calendar_events (msg_id);
 +-- Messages already looked at, with or without events, so they are not parsed again.
 +CREATE TABLE IF NOT EXISTS slothfulchat_calendar_indexed (msg_id INTEGER PRIMARY KEY);
++-- The sender of the first (non-forwarded) message with each UID: only they can update or
++-- cancel the event. Not pruned, so deleting that message hands the event to nobody.
++CREATE TABLE IF NOT EXISTS slothfulchat_calendar_organizers (
++  uid TEXT PRIMARY KEY,
++  from_id INTEGER NOT NULL
++);
 +";
 +
 +/// SQL condition (on `msgs`) preselecting messages that may carry an iCalendar file:
@@ -3811,8 +3844,16 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +/// far off in either direction from the real instant; range queries are widened by it.
 +const FLOATING_SLACK: i64 = 14 * 3600;
 +
-+/// Upper bound for expanding a series, both for finding its last occurrence and per query.
++/// Upper bound for expanding a series when finding its last occurrence.
 +const MAX_OCCURRENCES: u16 = 5000;
++
++/// Occurrences one query may step through, from each series' start (rrule cannot start in the
++/// middle). ponytail: a series with more occurrences before the shown range than this shows
++/// nothing there, e.g. a daily event from before 1750; shift DTSTART if that matters.
++const MAX_STEPS: usize = 200_000;
++
++/// Longest event, so start + duration can't overflow on hostile input.
++const MAX_DURATION: i64 = 10 * 366 * 86400;
 +
 +/// One occurrence of a calendar event.
 +#[derive(Debug, Clone, PartialEq, Eq)]
@@ -4000,11 +4041,11 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +}
 +
 +/// The text a Calendar message shows: without the hint, and for a cancellation
-+/// ([`SystemMessage::CalendarCancelled`]) the info line ("Bob cancelled “Lunch”") followed by
++/// ([`is_cancellation`]) the info line ("Bob cancelled “Lunch”") followed by
 +/// the sender's note.
 +pub async fn text(context: &Context, msg: &Message) -> String {
 +    let note = strip_hint(&msg.text);
-+    if msg.param.get_cmd() != SystemMessage::CalendarCancelled {
++    if !is_cancellation(context, msg).await {
 +        return note.to_string();
 +    }
 +    let line = cancelled_line(context, msg).await;
@@ -4012,6 +4053,29 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +        "" => line,
 +        note => format!("{line} – {note}"),
 +    }
++}
++
++/// Whether `msg` cancels events of their organizer: it is then shown as an info message
++/// ("Bob cancelled …") that leads to the invite it replies to. Decided on read rather than
++/// stored as a system message type, which core would refuse to resend, keep from broadcast
++/// subscribers and send no read receipt for.
++pub async fn is_cancellation(context: &Context, msg: &Message) -> bool {
++    msg.viewtype == Viewtype::Calendar
++        && context
++            .sql
++            .query_row_optional(
++                "SELECT MIN(e.cancelled), MAX(IFNULL(o.from_id!=?, 0))
++                 FROM slothfulchat_calendar_events e
++                 LEFT JOIN slothfulchat_calendar_organizers o ON o.uid=e.uid
++                 WHERE e.msg_id=?",
++                (msg.from_id, msg.id),
++                |row| Ok(row.get::<_, Option<bool>>(0)? == Some(true) && !row.get::<_, bool>(1)?),
++            )
++            .await
++            .log_err(context)
++            .ok()
++            .flatten()
++            .unwrap_or_default()
 +}
 +
 +pub(crate) async fn cancelled_line(context: &Context, msg: &Message) -> String {
@@ -4045,7 +4109,7 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +        match c {
 +            icalendar::CalendarComponent::Event(ev) => {
 +                let mut ev = ev.clone();
-+                let sequence = ev.get_sequence().unwrap_or(0) + 1;
++                let sequence = ev.get_sequence().unwrap_or(0).saturating_add(1);
 +                ev.sequence(sequence)
 +                    .status(icalendar::EventStatus::Cancelled)
 +                    .timestamp(now);
@@ -4089,32 +4153,15 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +        Vec::new()
 +    };
 +    // A plain .ics File with events becomes a Calendar message (e.g. from before the viewtype).
-+    let mut param = msg.param.clone();
-+    let retype = msg.viewtype == Viewtype::File && !rows.is_empty();
-+    if retype {
++    let retype = (msg.viewtype == Viewtype::File && !rows.is_empty()).then(|| {
++        let mut param = msg.param.clone();
 +        param.set(Param::Summary1, &rows[0].summary);
-+    }
-+    // A cancellation from the event's organizer shows as an info message, pointing at the
-+    // invite it replies to.
-+    let cancels = !rows.is_empty()
-+        && rows.iter().all(|r| r.cancelled)
-+        && param.get_cmd() == SystemMessage::Unknown
-+        && context
-+            .sql
-+            .query_get_value::<ContactId>(
-+                "SELECT m.from_id FROM slothfulchat_calendar_events e
-+                 JOIN msgs m ON m.id=e.msg_id
-+                 WHERE e.uid=? AND m.id<? AND m.chat_id!=?
-+                 ORDER BY m.id LIMIT 1",
-+                (&rows[0].uid, msg_id, DC_CHAT_ID_TRASH),
-+            )
-+            .await?
-+            .is_none_or(|organizer| organizer == msg.from_id);
-+    if cancels {
-+        param.set_cmd(SystemMessage::CalendarCancelled);
-+    }
-+    let changed = (retype || cancels).then(|| param.to_string());
-+    let retyped = changed.is_some();
++        param.to_string()
++    });
++    // A forward is a copy, not the organizer's own invite.
++    let organizer = (!msg.is_forwarded()).then_some(msg.from_id);
++    // Redraw a retyped message, and a cancellation, which turns into an info line.
++    let changed = retype.is_some() || rows.iter().any(|r| r.cancelled);
 +    let cancelled_uids: Vec<String> = rows
 +        .iter()
 +        .filter(|r| r.cancelled)
@@ -4123,7 +4170,7 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +    context
 +        .sql
 +        .transaction(move |t| {
-+            if let Some(param) = changed {
++            if let Some(param) = retype {
 +                t.execute(
 +                    "UPDATE msgs SET type=?, param=? WHERE id=?",
 +                    (Viewtype::Calendar, param, msg_id),
@@ -4134,6 +4181,13 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +                (msg_id,),
 +            )?;
 +            for r in rows {
++                if let Some(from_id) = organizer {
++                    t.execute(
++                        "INSERT OR IGNORE INTO slothfulchat_calendar_organizers (uid, from_id)
++                         VALUES (?, ?)",
++                        (&r.uid, from_id),
++                    )?;
++                }
 +                t.execute(
 +                    "INSERT INTO slothfulchat_calendar_events (msg_id, uid, recurrence_id,
 +                       sequence, cancelled, start, end, until, all_day, floating, summary,
@@ -4164,7 +4218,7 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +            Ok(())
 +        })
 +        .await?;
-+    if retyped {
++    if changed {
 +        context.emit_msgs_changed(msg.chat_id, msg_id);
 +    }
 +    // Earlier messages of a cancelled event show it cancelled now (see `msg_events`).
@@ -4189,11 +4243,9 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +/// Brings the index in line with `msgs`: drops entries of deleted messages (see the module
 +/// docs) and of messages whose attachment is no longer a downloaded calendar, then indexes what
 +/// is not indexed yet — messages from before this index existed and attachments that finished
-+/// downloading later. Runs in housekeeping and before every read.
-+///
-+/// ponytail: the second step scans `msgs`; fine per calendar open, revisit if reminders need it
-+/// more often.
-+pub(crate) async fn reconcile(context: &Context) -> Result<()> {
++/// downloading later. Runs in housekeeping (`full`) and before every read, which only looks at
++/// messages newer than the last indexed one: receiving a download indexes it right away.
++pub(crate) async fn reconcile(context: &Context, full: bool) -> Result<()> {
 +    for table in [
 +        "slothfulchat_calendar_events",
 +        "slothfulchat_calendar_indexed",
@@ -4214,11 +4266,26 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +        .sql
 +        .query_map_vec(
 +            &format!(
-+                "SELECT id FROM msgs WHERE chat_id>? AND {}
-+                 AND id NOT IN (SELECT msg_id FROM slothfulchat_calendar_indexed)",
++                "SELECT id FROM msgs WHERE chat_id>? AND {} AND id>?
++                 AND id NOT IN (SELECT msg_id FROM slothfulchat_calendar_indexed)
++                 ORDER BY id",
 +                maybe_calendar()
 +            ),
-+            (DC_CHAT_ID_LAST_SPECIAL,),
++            (
++                DC_CHAT_ID_LAST_SPECIAL,
++                if full {
++                    0
++                } else {
++                    context
++                        .sql
++                        .query_get_value::<i64>(
++                            "SELECT IFNULL(MAX(msg_id), 0) FROM slothfulchat_calendar_indexed",
++                            (),
++                        )
++                        .await?
++                        .unwrap_or_default()
++                },
++            ),
 +            |row| Ok(row.get::<_, MsgId>(0)?),
 +        )
 +        .await?;
@@ -4239,18 +4306,19 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +    from: i64,
 +    to: i64,
 +) -> Result<Vec<CalendarEvent>> {
-+    reconcile(context).await?;
++    reconcile(context, false).await?;
 +    let chat_filter = chat_id.map_or(0, |c| c.to_u32());
 +    // All versions of every event that has some row in the (widened) range.
-+    let rows: Vec<(MsgId, ChatId, Row, ContactId)> = context
++    let rows: Vec<(MsgId, ChatId, Row, ContactId, Option<ContactId>)> = context
 +        .sql
 +        .query_map_vec(
 +            &format!(
 +                "SELECT e.msg_id, m.chat_id, e.uid, e.recurrence_id, e.sequence, e.cancelled,
 +                    e.start, e.end, e.until, e.all_day, e.floating,
-+                    e.summary, e.location, e.description, e.rrule, m.from_id
++                    e.summary, e.location, e.description, e.rrule, m.from_id, o.from_id
 +                 FROM slothfulchat_calendar_events e
 +                 JOIN msgs m ON m.id=e.msg_id JOIN chats c ON c.id=m.chat_id
++                 LEFT JOIN slothfulchat_calendar_organizers o ON o.uid=e.uid
 +                 WHERE {} AND (?1=0 OR m.chat_id=?1) AND e.uid IN (
 +                   SELECT e2.uid FROM slothfulchat_calendar_events e2
 +                   JOIN msgs m2 ON m2.id=e2.msg_id JOIN chats c2 ON c2.id=m2.chat_id
@@ -4283,6 +4351,7 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +                        rrule: row.get(14)?,
 +                    },
 +                    row.get(15)?,
++                    row.get(16)?,
 +                ))
 +            },
 +        )
@@ -4292,19 +4361,26 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +
 +/// Picks the current version of each event and expands recurring ones within `[from, to)`.
 +///
-+/// Only the sender of an event's first message (its organizer) can update or cancel it;
-+/// versions with the same `UID` from anyone else are ignored, so a chat member cannot
-+/// hijack someone else's event.
-+fn expand(rows: Vec<(MsgId, ChatId, Row, ContactId)>, from: i64, to: i64) -> Vec<CalendarEvent> {
++/// Only an event's organizer (see `slothfulchat_calendar_organizers`; for events indexed
++/// before that table, the sender of its oldest message) can update or cancel it; versions
++/// with the same `UID` from anyone else are ignored, so a chat member cannot hijack someone
++/// else's event.
++fn expand(
++    rows: Vec<(MsgId, ChatId, Row, ContactId, Option<ContactId>)>,
++    from: i64,
++    to: i64,
++) -> Vec<CalendarEvent> {
 +    let mut owner: HashMap<String, (MsgId, ContactId)> = HashMap::new();
-+    for (msg_id, _, row, from_id) in &rows {
-+        let first = owner.entry(row.uid.clone()).or_insert((*msg_id, *from_id));
-+        if *msg_id < first.0 {
++    for (msg_id, _, row, from_id, organizer) in &rows {
++        let first = owner
++            .entry(row.uid.clone())
++            .or_insert((*msg_id, organizer.unwrap_or(*from_id)));
++        if organizer.is_none() && *msg_id < first.0 {
 +            *first = (*msg_id, *from_id);
 +        }
 +    }
 +    let mut latest: HashMap<(String, i64), (MsgId, ChatId, Row)> = HashMap::new();
-+    for (msg_id, chat_id, row, from_id) in rows {
++    for (msg_id, chat_id, row, from_id, _) in rows {
 +        if owner.get(&row.uid).is_some_and(|(_, o)| *o != from_id) {
 +            continue;
 +        }
@@ -4316,6 +4392,16 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +            latest.insert(key, (msg_id, chat_id, row));
 +        }
 +    }
++    // An override older than the current series (e.g. the whole series was cancelled or
++    // rescheduled since) is gone: its occurrence comes from the series again.
++    let series: HashMap<String, i64> = latest
++        .iter()
++        .filter(|((_, rid), _)| *rid == 0)
++        .map(|((uid, _), (_, _, r))| (uid.clone(), r.sequence))
++        .collect();
++    latest.retain(|(uid, rid), (_, _, r)| {
++        *rid == 0 || series.get(uid).is_none_or(|seq| r.sequence >= *seq)
++    });
 +    // Occurrences replaced by a RECURRENCE-ID override are not generated from the series.
 +    let overridden: HashSet<(String, i64)> = latest
 +        .keys()
@@ -4323,24 +4409,30 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +        .cloned()
 +        .collect();
 +
++    let mut steps = 0;
 +    let mut events = Vec::new();
 +    for (msg_id, chat_id, r) in latest.into_values() {
 +        let duration = r.end - r.start;
 +        let slack = if r.floating { FLOATING_SLACK } else { 0 };
-+        let starts = match r.rrule.as_deref().and_then(|s| RRuleSet::from_str(s).ok()) {
-+            Some(set) => set
-+                .after(utc(from.saturating_sub(duration + slack)))
-+                .before(utc(to.saturating_add(slack)))
-+                .all(MAX_OCCURRENCES)
-+                .dates
-+                .iter()
-+                .map(|d| d.timestamp())
-+                .filter(|s| !overridden.contains(&(r.uid.clone(), *s)))
-+                .collect(),
-+            None => vec![r.start],
-+        };
++        let (lo, hi) = (from.saturating_sub(slack), to.saturating_add(slack));
++        let mut starts = Vec::new();
++        match r.rrule.as_deref().and_then(|s| RRuleSet::from_str(s).ok()) {
++            Some(set) => {
++                for d in &set {
++                    steps += 1;
++                    let start = d.timestamp();
++                    if start >= hi || steps > MAX_STEPS {
++                        break;
++                    }
++                    if !overridden.contains(&(r.uid.clone(), start)) {
++                        starts.push(start);
++                    }
++                }
++            }
++            None => starts.push(r.start),
++        }
 +        for start in starts {
-+            if start < to.saturating_add(slack) && start + duration > from.saturating_sub(slack) {
++            if start < hi && start.saturating_add(duration) > lo {
 +                events.push(r.clone().into_event(msg_id, chat_id, start));
 +            }
 +        }
@@ -4351,7 +4443,7 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +
 +/// Returns the chats having calendar events, with the number of distinct events in each.
 +pub async fn get_chats(context: &Context) -> Result<Vec<(ChatId, usize)>> {
-+    reconcile(context).await?;
++    reconcile(context, false).await?;
 +    context
 +        .sql
 +        .query_map_vec(
@@ -4466,12 +4558,15 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +    let end = match prop_dt("DTEND") {
 +        Some((end, ..)) => end.timestamp(),
 +        None => match ev.property_value("DURATION").and_then(parse_duration) {
-+            Some(d) => start.timestamp() + d,
++            Some(d) => start.timestamp().saturating_add(d.min(MAX_DURATION)),
 +            None if all_day => start.timestamp() + 86400,
 +            None => start.timestamp(),
 +        },
 +    }
-+    .max(start.timestamp());
++    .clamp(
++        start.timestamp(),
++        start.timestamp().saturating_add(MAX_DURATION),
++    );
 +    let duration = end - start.timestamp();
 +
 +    let rrule = ev.property_value("RRULE").and_then(|rule| {
@@ -4492,17 +4587,33 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +                    .collect::<Vec<_>>()
 +            })
 +            .collect();
-+        RRule::<Unvalidated>::from_str(rule)
-+            .ok()?
-+            .build(start)
-+            .ok()
-+            .map(|set| set.set_exdates(exdates))
++        // rrule wants UNTIL in UTC; a floating or all-day series has it as wall clock (and
++        // a DATE), which is what its UTC-encoded start means too.
++        let rule = rule
++            .split(';')
++            .map(|part| match part.split_once('=') {
++                Some((k, v))
++                    if floating && k.eq_ignore_ascii_case("UNTIL") && !v.ends_with('Z') =>
++                {
++                    format!("UNTIL={v}{}", if v.len() == 8 { "T000000Z" } else { "Z" })
++                }
++                _ => part.to_string(),
++            })
++            .collect::<Vec<_>>()
++            .join(";");
++        let rrule = RRule::<Unvalidated>::from_str(&rule).ok()?;
++        // ponytail: sub-hourly series would cost a step per second/minute on every query
++        // (see MAX_STEPS); nobody invites to those, so they show their first occurrence.
++        if matches!(rrule.get_freq(), Frequency::Secondly | Frequency::Minutely) {
++            return None;
++        }
++        rrule.build(start).ok().map(|set| set.set_exdates(exdates))
 +    });
 +    let until = match &rrule {
 +        Some(set) => {
 +            let r = set.clone().all(MAX_OCCURRENCES);
 +            match r.dates.last() {
-+                Some(last) if !r.limited => last.timestamp() + duration,
++                Some(last) if !r.limited => last.timestamp().saturating_add(duration),
 +                Some(_) => i64::MAX,
 +                None => end,
 +            }
@@ -4510,7 +4621,8 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +        None => end,
 +    };
 +
-+    let text = |key: &str| ev.property_value(key).map(unescape).unwrap_or_default();
++    // The parser already undid the TEXT escaping.
++    let text = |key: &str| ev.property_value(key).unwrap_or_default().to_string();
 +    Some(Row {
 +        uid,
 +        recurrence_id: prop_dt("RECURRENCE-ID").map_or(0, |d| d.0.timestamp()),
@@ -4563,7 +4675,15 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +    }
 +    let naive = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok()?;
 +    match tzid.and_then(|t| resolve_tz(t, timezones)) {
-+        Some(tz) => Some((tz.from_local_datetime(&naive).earliest()?, false, false)),
++        // A wall-clock time in a DST gap means the time after it (RFC 5545 3.3.5).
++        Some(tz) => Some((
++            tz.from_local_datetime(&naive).earliest().or_else(|| {
++                tz.from_local_datetime(&(naive + TimeDelta::hours(1)))
++                    .earliest()
++            })?,
++            false,
++            false,
++        )),
 +        None => Some((Tz::UTC.from_utc_datetime(&naive), false, true)),
 +    }
 +}
@@ -4578,8 +4698,13 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +        .ok()
 +        .or_else(|| {
 +            let (_, tail) = name.split_once('/')?;
-+            let parts: Vec<&str> = tail.split('/').collect();
-+            (0..parts.len()).find_map(|i| parts[i..].join("/").parse::<chrono_tz::Tz>().ok())
++            let parts: Vec<&str> = tail.rsplitn(4, '/').collect();
++            // IANA names have at most three parts (America/Argentina/Buenos_Aires).
++            (1..=parts.len().min(3)).find_map(|n| {
++                let mut name: Vec<&str> = parts[..n].to_vec();
++                name.reverse();
++                name.join("/").parse::<chrono_tz::Tz>().ok()
++            })
 +        })
 +        .or_else(|| {
 +            WINDOWS_ZONES
@@ -4593,7 +4718,7 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +    // ponytail: fixed offset, so events in unknown zones are an hour off during DST and
 +    // half-hour offsets fall back to UTC; add VTIMEZONE transition rules if that shows up.
 +    let (_, offset) = timezones.iter().find(|(id, _)| id == tzid)?;
-+    let (sign, digits) = offset.split_at(1);
++    let (sign, digits) = (offset.get(..1)?, offset.get(1..)?);
 +    let hours: i32 = digits.get(..2)?.parse().ok()?;
 +    if digits.get(2..4) != Some("00") {
 +        return None;
@@ -4661,7 +4786,7 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +            _ => {
 +                let n: i64 = num.parse().ok()?;
 +                num.clear();
-+                total += n * match c {
++                let unit = match c {
 +                    'W' => 7 * 86400,
 +                    'D' => 86400,
 +                    'H' => 3600,
@@ -4669,38 +4794,21 @@ index 0000000000000000000000000000000000000000..907677482f57710bad2384def5bbd29f
 +                    'S' => 1,
 +                    _ => return None,
 +                };
++                total = total.checked_add(n.checked_mul(unit)?)?;
 +            }
 +        }
 +    }
 +    Some(sign * total)
 +}
 +
-+/// Undoes iCalendar TEXT escaping (RFC 5545 3.3.11).
-+fn unescape(s: &str) -> String {
-+    let mut out = String::with_capacity(s.len());
-+    let mut chars = s.chars();
-+    while let Some(c) = chars.next() {
-+        if c == '\\' {
-+            match chars.next() {
-+                Some('n' | 'N') => out.push('\n'),
-+                Some(other) => out.push(other),
-+                None => {}
-+            }
-+        } else {
-+            out.push(c);
-+        }
-+    }
-+    out
-+}
-+
 +#[cfg(test)]
 +mod calendar_tests;
 diff --git a/src/calendar/calendar_tests.rs b/src/calendar/calendar_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4843b353f51b3f601dd24c38c276e3b0f824e86
+index 0000000000000000000000000000000000000000..1eab42678b818942e7f5a82f006a4e3d7f389227
 --- /dev/null
 +++ b/src/calendar/calendar_tests.rs
-@@ -0,0 +1,565 @@
+@@ -0,0 +1,709 @@
 +use super::*;
 +use crate::chat;
 +use crate::contact::ContactId;
@@ -4716,10 +4824,10 @@ index 0000000000000000000000000000000000000000..f4843b353f51b3f601dd24c38c276e3b
 +        .replace("\r\r", "\r")
 +}
 +
-+fn rows_of(text: &str) -> Vec<(MsgId, ChatId, Row, ContactId)> {
++fn rows_of(text: &str) -> Vec<(MsgId, ChatId, Row, ContactId, Option<ContactId>)> {
 +    parse_ics(text)
 +        .into_iter()
-+        .map(|r| (MsgId::new(10), ChatId::new(10), r, ContactId::new(10)))
++        .map(|r| (MsgId::new(10), ChatId::new(10), r, ContactId::new(10), None))
 +        .collect()
 +}
 +
@@ -4866,6 +4974,7 @@ index 0000000000000000000000000000000000000000..f4843b353f51b3f601dd24c38c276e3b
 +                ChatId::new(10),
 +                r,
 +                ContactId::new(10),
++                None,
 +            ));
 +        }
 +    }
@@ -4975,7 +5084,7 @@ index 0000000000000000000000000000000000000000..f4843b353f51b3f601dd24c38c276e3b
 +
 +/// Whether `msg_id` is out of the index after the next read.
 +async fn gone(t: &TestContext, msg_id: MsgId) -> Result<bool> {
-+    reconcile(t).await?;
++    reconcile(t, true).await?;
 +    Ok(!in_index(t, msg_id).await?)
 +}
 +
@@ -5187,11 +5296,11 @@ index 0000000000000000000000000000000000000000..f4843b353f51b3f601dd24c38c276e3b
 +    };
 +    let mut rows = Vec::new();
 +    for r in parse_ics(&event("Party", 0)) {
-+        rows.push((MsgId::new(10), ChatId::new(10), r, ContactId::new(20)));
++        rows.push((MsgId::new(10), ChatId::new(10), r, ContactId::new(20), None));
 +    }
 +    // a different chat member re-sends the UID with a higher SEQUENCE
 +    for r in parse_ics(&event("Hijacked", 5)) {
-+        rows.push((MsgId::new(11), ChatId::new(10), r, ContactId::new(21)));
++        rows.push((MsgId::new(11), ChatId::new(10), r, ContactId::new(21), None));
 +    }
 +    let ev = expand(rows, ts("2026-10-01T00:00:00Z"), ts("2026-10-31T00:00:00Z"));
 +    assert_eq!(ev.len(), 1);
@@ -5248,12 +5357,18 @@ index 0000000000000000000000000000000000000000..f4843b353f51b3f601dd24c38c276e3b
 +    }
 +    // the cancellation is an info message that points at the invite, and says what happened
 +    let last = Message::load_from_db(bob, bob.get_last_msg_in(bob_chat).await.id).await?;
-+    assert!(last.is_info());
-+    assert_eq!(last.get_info_type(), SystemMessage::CalendarCancelled);
++    assert!(is_cancellation(bob, &last).await);
++    assert!(
++        !last.is_info(),
++        "core can still resend it, send receipts for it etc."
++    );
 +    assert_eq!(last.parent(bob).await?.unwrap().id, bob_invite.id);
 +    let line = "alice@example.org cancelled “Party”";
 +    assert_eq!(text(bob, &last).await, line, "the hint is not shown");
-+    assert_eq!(last.get_summary(bob, None).await?.text, format!("📅 {line}"));
++    assert_eq!(
++        last.get_summary(bob, None).await?.text,
++        format!("📅 {line}")
++    );
 +    let own = Message::load_from_db(alice, alice.get_last_msg_in(chat_id).await.id).await?;
 +    assert_eq!(text(alice, &own).await, "You cancelled “Party”");
 +
@@ -5263,7 +5378,144 @@ index 0000000000000000000000000000000000000000..f4843b353f51b3f601dd24c38c276e3b
 +    chat::send_msg(bob, bob_chat, &mut fake).await?;
 +    let fake = alice.recv_msg(&bob.pop_sent_msg().await).await;
 +    assert_eq!(fake.viewtype, Viewtype::Calendar);
-+    assert!(!fake.is_info());
++    assert!(!is_cancellation(alice, &fake).await);
++    Ok(())
++}
++
++#[test]
++fn test_hostile_input() {
++    // text is unescaped once, by the parser
++    let r = &parse_ics(&ics("BEGIN:VEVENT
++UID:esc
++DTSTART:20261005T080000Z
++SUMMARY:C:\\\\new\\, ok
++END:VEVENT
++"))[0];
++    assert_eq!(r.summary, "C:\\new, ok");
++    // no panics or overflow on absurd values, and quick despite a long TZID
++    let long_tzid = format!("/x{}", "/a".repeat(20_000));
++    let rows = parse_ics(&ics(&format!(
++        "BEGIN:VEVENT
++UID:big
++DTSTART;TZID={long_tzid}:20261005T080000
++DURATION:P99999999999999W
++END:VEVENT
++BEGIN:VTIMEZONE
++TZID:{long_tzid}
++BEGIN:STANDARD
++TZOFFSETTO:é100
++END:STANDARD
++END:VTIMEZONE
++"
++    )));
++    assert_eq!(
++        rows[0].end, rows[0].start,
++        "an unparseable duration is ignored"
++    );
++    // a sub-hourly series is not expanded every second on each query
++    let r = &parse_ics(&ics("BEGIN:VEVENT
++UID:fast
++DTSTART:19700101T000000Z
++RRULE:FREQ=SECONDLY
++END:VEVENT
++"));
++    assert!(r[0].rrule.is_none());
++    // a daily series from year 1 stays cheap: bounded steps per query
++    let started = std::time::Instant::now();
++    expand(
++        rows_of(&ics("BEGIN:VEVENT
++UID:old
++DTSTART:00010101T000000Z
++RRULE:FREQ=DAILY
++END:VEVENT
++")),
++        ts("2026-10-01T00:00:00Z"),
++        ts("2026-11-01T00:00:00Z"),
++    );
++    assert!(started.elapsed().as_secs() < 2);
++}
++
++#[test]
++fn test_all_day_until_and_dst_gap() {
++    // all-day series with a DATE UNTIL, as Google and Apple send them
++    let ev = expand(
++        rows_of(&ics("BEGIN:VEVENT
++UID:allday
++DTSTART;VALUE=DATE:20261014
++RRULE:FREQ=WEEKLY;UNTIL=20261104
++END:VEVENT
++")),
++        ts("2026-10-01T00:00:00Z"),
++        ts("2026-12-01T00:00:00Z"),
++    );
++    assert_eq!(ev.len(), 4);
++    // 02:30 doesn't exist on that day in Berlin: the time after the gap is meant
++    let r = &parse_ics(&ics("BEGIN:VEVENT
++UID:gap
++DTSTART;TZID=Europe/Berlin:20260329T023000
++END:VEVENT
++"))[0];
++    assert_eq!(r.start, ts("2026-03-29T03:30:00+02:00"));
++}
++
++#[test]
++fn test_cancelled_series_takes_its_overrides_along() {
++    let mut rows = rows_of(&ics("BEGIN:VEVENT
++UID:standup
++DTSTART:20261005T080000Z
++RRULE:FREQ=DAILY;COUNT=3
++SUMMARY:Standup
++END:VEVENT
++BEGIN:VEVENT
++UID:standup
++RECURRENCE-ID:20261006T080000Z
++DTSTART:20261006T120000Z
++SUMMARY:Standup (moved)
++END:VEVENT
++"));
++    // Outlook cancels a series with only its master VEVENT
++    for r in parse_ics(&ics("METHOD:CANCEL
++BEGIN:VEVENT
++UID:standup
++SEQUENCE:1
++DTSTART:20261005T080000Z
++RRULE:FREQ=DAILY;COUNT=3
++END:VEVENT
++"))
++    {
++        rows.push((MsgId::new(11), ChatId::new(10), r, ContactId::new(10), None));
++    }
++    let ev = expand(rows, ts("2026-10-01T00:00:00Z"), ts("2026-10-31T00:00:00Z"));
++    assert_eq!(ev.len(), 3);
++    assert!(ev.iter().all(|e| e.cancelled));
++}
++
++/// The organizer stays the organizer when their message is gone, and a forward does not
++/// make the forwarder one.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_organizer_survives_deletion_and_forwards() -> Result<()> {
++    let mut tcm = TestContextManager::new();
++    let alice = &tcm.alice().await;
++    let bob = &tcm.bob().await;
++    let fiona = &tcm.fiona().await;
++    let alice_chat = alice.create_chat_id(bob).await;
++    bob.create_chat_id(alice).await;
++    let invite_id = send_event(alice, alice_chat, "Party").await?;
++    let invite = bob.recv_msg(&alice.pop_sent_msg().await).await;
++    let bob_fiona = bob.create_chat_id(fiona).await;
++    chat::forward_msgs(bob, &[invite.id], bob_fiona).await?;
++    reconcile(bob, true).await?;
++    crate::message::delete_msgs(bob, &[invite.id]).await?;
++
++    let cancel = make_cancel_ics(alice, invite_id).await?;
++    let mut msg = Message::new(Viewtype::File);
++    msg.set_file_from_bytes(alice, "cancel.ics", cancel.as_bytes(), None)?;
++    chat::send_msg(alice, alice_chat, &mut msg).await?;
++    let cancel = bob.recv_msg(&alice.pop_sent_msg().await).await;
++
++    let ev = get_events(bob, None, ts(DEC.0), ts(DEC.1)).await?;
++    assert!(!ev.is_empty() && ev.iter().all(|e| e.cancelled), "{ev:?}");
++    assert!(is_cancellation(bob, &cancel).await);
 +    Ok(())
 +}
 diff --git a/src/chat.rs b/src/chat.rs
@@ -5316,6 +5568,24 @@ index d1b0d420344fe63ee4e06da2312f32e1cf8bfc7e..853ef89db43a92e23afd3ac509d15a55
      Ok(row_ids)
  }
  
+diff --git a/src/download/post_msg_metadata.rs b/src/download/post_msg_metadata.rs
+index 8d46cd387aa93c0bf33b49a1df0e1268627415e3..72814d109133c8c007817dfa7b6cf036dc30699a 100644
+--- a/src/download/post_msg_metadata.rs
++++ b/src/download/post_msg_metadata.rs
+@@ -79,7 +79,12 @@ pub(crate) async fn from_msg(context: &Context, message: &Message) -> Result<Opt
+         Ok(Some(Self {
+             size,
+             filename,
+-            viewtype: message.viewtype,
++            // Calendar is ours alone; other clients parse the metadata too, and the
++            // receiver tells a Calendar apart by its text/calendar file anyway.
++            viewtype: match message.viewtype {
++                Viewtype::Calendar => Viewtype::File,
++                v => v,
++            },
+             wh,
+             duration,
+             mime,
 diff --git a/src/lib.rs b/src/lib.rs
 index 6b1e2a0d4041d4a079e2dd04c8066b9e3f80771a..c482ed753574232640c2b653cc3aa2673dd8d229 100644
 --- a/src/lib.rs
@@ -5329,18 +5599,10 @@ index 6b1e2a0d4041d4a079e2dd04c8066b9e3f80771a..c482ed753574232640c2b653cc3aa267
  pub mod chat;
  pub mod chatlist;
 diff --git a/src/message.rs b/src/message.rs
-index 222de7f560520ee14c7bf1c62213fd31626ada10..4cd1479abf28d37f1391693d5b985be5ae8bdf52 100644
+index 222de7f560520ee14c7bf1c62213fd31626ada10..e643d910e7a681a61adff33cd418b5f268ae05d3 100644
 --- a/src/message.rs
 +++ b/src/message.rs
-@@ -1081,6 +1081,7 @@ pub async fn get_info_contact_id(&self, context: &Context) -> Result<Option<Cont
-             | SystemMessage::IrohNodeAddr
-             | SystemMessage::CallAccepted
-             | SystemMessage::CallEnded
-+            | SystemMessage::CalendarCancelled
-             | SystemMessage::Unknown => Ok(None),
-         }
-     }
-@@ -1186,6 +1187,21 @@ pub(crate) async fn try_set_vcard(&mut self, context: &Context, path: &Path) ->
+@@ -1186,6 +1186,21 @@ pub(crate) async fn try_set_vcard(&mut self, context: &Context, path: &Path) ->
          Ok(())
      }
  
@@ -5362,7 +5624,7 @@ index 222de7f560520ee14c7bf1c62213fd31626ada10..4cd1479abf28d37f1391693d5b985be5
      /// Set different sender name for a message.
      /// This overrides the name set by the `set_config()`-option `displayname`.
      pub fn set_override_sender_name(&mut self, name: Option<String>) {
-@@ -1268,7 +1284,13 @@ pub async fn set_quote(&mut self, context: &Context, quote: Option<&Message>) ->
+@@ -1268,7 +1283,13 @@ pub async fn set_quote(&mut self, context: &Context, quote: Option<&Message>) ->
  
              // The quote goes out on the wire as `> `-prefixed lines and into `msgs.param`,
              // so bound it here, the single funnel all quote producers pass through.
@@ -5377,7 +5639,7 @@ index 222de7f560520ee14c7bf1c62213fd31626ada10..4cd1479abf28d37f1391693d5b985be5
              let text = if text.is_empty() {
                  // Use summary, similar to "Image" to avoid sending empty quote.
                  quote
-@@ -1740,6 +1762,7 @@ pub(crate) fn guess_msgtype_from_path_suffix(path: &Path) -> Option<(Viewtype, &
+@@ -1740,6 +1761,7 @@ pub(crate) fn guess_msgtype_from_path_suffix(path: &Path) -> Option<(Viewtype, &
          "heic" => (Viewtype::File, "image/heic"), // supported since Android 10 / iOS 11
          "heif" => (Viewtype::File, "image/heif"), // supported since Android 10 / iOS 11
          "html" => (Viewtype::File, "text/html"),
@@ -5385,7 +5647,7 @@ index 222de7f560520ee14c7bf1c62213fd31626ada10..4cd1479abf28d37f1391693d5b985be5
          "htm" => (Viewtype::File, "text/html"),
          "ico" => (Viewtype::File, "image/vnd.microsoft.icon"),
          "jar" => (Viewtype::File, "application/java-archive"),
-@@ -2504,6 +2527,14 @@ pub enum Viewtype {
+@@ -2504,6 +2526,14 @@ pub enum Viewtype {
      /// with email addresses and possibly other fields.
      /// Use `parse_vcard()` to retrieve them.
      Vcard = 90,
@@ -5400,7 +5662,7 @@ index 222de7f560520ee14c7bf1c62213fd31626ada10..4cd1479abf28d37f1391693d5b985be5
  }
  
  impl Viewtype {
-@@ -2522,6 +2553,7 @@ pub fn has_file(&self) -> bool {
+@@ -2522,6 +2552,7 @@ pub fn has_file(&self) -> bool {
              Viewtype::Call => false,
              Viewtype::Webxdc => true,
              Viewtype::Vcard => true,
@@ -5408,34 +5670,11 @@ index 222de7f560520ee14c7bf1c62213fd31626ada10..4cd1479abf28d37f1391693d5b985be5
          }
      }
  }
-diff --git a/src/mimefactory.rs b/src/mimefactory.rs
-index 3ee7f35920b11f00634cef088909df5d6d1ce855..daf5c2859f86c87875fb7a4f3cec3619887a5c5b 100644
---- a/src/mimefactory.rs
-+++ b/src/mimefactory.rs
-@@ -1463,6 +1463,7 @@ async fn render_message(
-                 SystemMessage::ChatE2ee => {}
-                 SystemMessage::CallAccepted => {}
-                 SystemMessage::CallEnded => {}
-+                SystemMessage::CalendarCancelled => {}
-             }
- 
-             if command == SystemMessage::GroupDescriptionChanged
 diff --git a/src/mimeparser.rs b/src/mimeparser.rs
-index ebd4053b14b16f85edcc4973f2daa5013c4936ab..31a33ad7bb61c874667d4b3ea2270663d914433e 100644
+index ebd4053b14b16f85edcc4973f2daa5013c4936ab..98f5e120a22a558df00654f4dc6f9d00b3fc5fc1 100644
 --- a/src/mimeparser.rs
 +++ b/src/mimeparser.rs
-@@ -259,6 +259,10 @@ pub enum SystemMessage {
- 
-     /// Group or broadcast channel description changed.
-     GroupDescriptionChanged = 70,
-+
-+    /// A calendar event was cancelled by its organizer. Set locally on the cancelling Calendar
-+    /// message when it is indexed (`calendar.rs`), never sent; numbered far from upstream's.
-+    CalendarCancelled = 7000,
- }
- 
- impl MimeMessage {
-@@ -811,6 +815,7 @@ fn squash_attachment_parts(&mut self) {
+@@ -811,6 +811,7 @@ fn squash_attachment_parts(&mut self) {
                      | Viewtype::Voice
                      | Viewtype::Video
                      | Viewtype::Vcard
@@ -5443,7 +5682,7 @@ index ebd4053b14b16f85edcc4973f2daa5013c4936ab..31a33ad7bb61c874667d4b3ea2270663
                      | Viewtype::File
                      | Viewtype::Webxdc => true,
                      Viewtype::Unknown | Viewtype::Text | Viewtype::Call => false,
-@@ -1182,7 +1187,7 @@ async fn handle_multiple(
+@@ -1182,7 +1183,7 @@ async fn handle_multiple(
                              .unwrap_or_else(|| "calendar.ics".to_string());
                          self.do_add_single_file_part(
                              context,
@@ -5452,7 +5691,7 @@ index ebd4053b14b16f85edcc4973f2daa5013c4936ab..31a33ad7bb61c874667d4b3ea2270663
                              mimetype,
                              &mail.ctype.mimetype.to_lowercase(),
                              &mail.get_body_raw()?,
-@@ -1548,6 +1553,13 @@ async fn do_add_single_file_part(
+@@ -1548,6 +1549,13 @@ async fn do_add_single_file_part(
              } else {
                  Viewtype::File
              }
@@ -5466,7 +5705,7 @@ index ebd4053b14b16f85edcc4973f2daa5013c4936ab..31a33ad7bb61c874667d4b3ea2270663
          } else if msg_type == Viewtype::Image
              || msg_type == Viewtype::Gif
              || msg_type == Viewtype::Sticker
-@@ -2279,6 +2291,7 @@ fn get_mime_type(
+@@ -2279,6 +2287,7 @@ fn get_mime_type(
      let viewtype = match mimetype.type_() {
          mime::TEXT => match mimetype.subtype() {
              mime::VCARD => Viewtype::Vcard,
@@ -5490,7 +5729,7 @@ index 6e51913ca8ecd63564379ac553d4a68736e3b9ec..89122e905b96dc3c938126670949978e
              chat_id.emit_msg_event(context, *msg_id, important);
          }
 diff --git a/src/sql.rs b/src/sql.rs
-index 6ffa5f1a9dabdb9cb8972c0fe3ef26fd272064d7..74b138e99c0051131e5dde9d1e065cc18ebd3662 100644
+index 6ffa5f1a9dabdb9cb8972c0fe3ef26fd272064d7..523ab4fd85375567ba8c14717cc381cc4514d1d9 100644
 --- a/src/sql.rs
 +++ b/src/sql.rs
 @@ -298,6 +298,10 @@ pub async fn run_migrations(&self, context: &Context) -> Result<()> {
@@ -5508,7 +5747,7 @@ index 6ffa5f1a9dabdb9cb8972c0fe3ef26fd272064d7..74b138e99c0051131e5dde9d1e065cc1
          .log_err(context)
          .ok();
  
-+    crate::calendar::reconcile(context)
++    crate::calendar::reconcile(context, true)
 +        .await
 +        .context("failed to update calendar index")
 +        .log_err(context)
@@ -5562,17 +5801,41 @@ index b71bcfb2597ce68080599764c5341fe2949dbb45..d2c1df8bfdce8393f8e21bf1a44eed43
              Viewtype::Unknown | Viewtype::Text | Viewtype::Call => self.to_string(),
          }
 diff --git a/src/summary.rs b/src/summary.rs
-index d209b39a6b52a5a98d57e0ecd912693cfc016e04..811abe904868134620c0dbd796780bbe34abb47f 100644
+index d209b39a6b52a5a98d57e0ecd912693cfc016e04..e3c7521b632b0a999e75fa6489822290c7d78493 100644
 --- a/src/summary.rs
 +++ b/src/summary.rs
-@@ -245,6 +245,21 @@ async fn get_summary_text_without_prefix(&self, context: &Context) -> String {
+@@ -97,11 +97,12 @@ pub async fn new(
+         chat: &Chat,
+         contact: Option<&Contact>,
+     ) -> Result<Summary> {
++        // a calendar cancellation reads as an info line ("Bob cancelled …"), no sender prefix
++        let is_info = msg.is_info() || crate::calendar::is_cancellation(context, msg).await;
+         let prefix = if msg.state == MessageState::OutDraft {
+             Some(SummaryPrefix::Draft(stock_str::draft(context)))
+         } else if msg.from_id == ContactId::SELF {
+-            if msg.is_info() || msg.viewtype == Viewtype::Call || chat.typ == Chattype::OutBroadcast
+-            {
++            if is_info || msg.viewtype == Viewtype::Call || chat.typ == Chattype::OutBroadcast {
+                 None
+             } else {
+                 Some(SummaryPrefix::Me(stock_str::self_msg(context)))
+@@ -110,7 +111,7 @@ pub async fn new(
+             || chat.typ == Chattype::Mailinglist
+             || chat.is_self_talk()
+         {
+-            if msg.is_info() || contact.is_none() {
++            if is_info || contact.is_none() {
+                 None
+             } else {
+                 msg.get_override_sender_name()
+@@ -245,6 +246,21 @@ async fn get_summary_text_without_prefix(&self, context: &Context) -> String {
                  }
                  append_text = true;
              }
 +            Viewtype::Calendar => {
 +                emoji = Some("📅");
 +                type_name = None;
-+                type_file = if self.param.get_cmd() == SystemMessage::CalendarCancelled {
++                type_file = if crate::calendar::is_cancellation(context, self).await {
 +                    Some(crate::calendar::cancelled_line(context, self).await)
 +                } else if self.viewtype == Viewtype::Calendar {
 +                    self.param
@@ -5587,7 +5850,7 @@ index d209b39a6b52a5a98d57e0ecd912693cfc016e04..811abe904868134620c0dbd796780bbe
              Viewtype::Call => {
                  let call_info = context.load_call_by_id(self.id).await.unwrap_or(None);
                  let has_video = call_info.is_some_and(|c| c.has_video_initially());
-@@ -284,7 +299,12 @@ async fn get_summary_text_without_prefix(&self, context: &Context) -> String {
+@@ -284,7 +300,12 @@ async fn get_summary_text_without_prefix(&self, context: &Context) -> String {
          // A summary is a preview: bound it here, before the concatenation and the
          // whitespace-collapsing pass below, so neither allocates a copy of a whole
          // multi-megabyte message text.
