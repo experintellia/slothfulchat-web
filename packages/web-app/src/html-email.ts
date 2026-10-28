@@ -63,6 +63,9 @@ export type HtmlEmailInit = {
   /** account the mail was opened from; tags relayed links so app links run
    * under the originating account, not whatever is selected now (#3) */
   accountId?: number
+  /** the message the HTML belongs to: an address-less mailto: link in it
+   * drafts its body in that message's chat (bots like StickersBot use them) */
+  messageId?: number
 }
 
 type RemoteState = 'never' | 'once' | 'always'
@@ -89,9 +92,11 @@ const RELAY_URL = new URL('./html-email.html', location.href).href
 // the module-level rewrite hook can tag every relayed link with it (#3). The
 // hook runs synchronously inside sanitize(), so a plain module var is safe.
 let currentAccountId: number | undefined
+let currentMessageId: number | undefined
 const relayHref = (href: string) =>
   `${RELAY_URL}#open=${encodeURIComponent(href)}` +
-  (currentAccountId != null ? `&acct=${currentAccountId}` : '')
+  (currentAccountId != null ? `&acct=${currentAccountId}` : '') +
+  (currentMessageId != null ? `&msg=${currentMessageId}` : '')
 
 // DOMPurify's default ALLOWED_URI_REGEXP would strip the QR schemes before
 // the hook below can see them — same regexp with those schemes added
@@ -172,6 +177,7 @@ let currentBlobUrl: string | undefined // survives re-init so the old email's bl
 
 function init(payload: HtmlEmailInit): void {
   currentAccountId = payload.accountId // tag relayed links before we sanitize (#3)
+  currentMessageId = payload.messageId
   const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
   document.title = `${payload.subject} – ${payload.from}`
   $('subject').textContent = payload.subject
@@ -273,18 +279,27 @@ function init(payload: HtmlEmailInit): void {
 // hosts it — window.opener when it's a popup window, window.parent when it's
 // the dialog iframe. The chain terminates at the app window, where runtime.ts
 // installs the real handler (which re-validates the URL).
-;(window as any).__slothfulOpenAppLink = (url: string, accountId?: number) => {
+;(window as any).__slothfulOpenAppLink = (
+  url: string,
+  accountId?: number,
+  messageId?: number
+) => {
   const host: any = window.opener ?? (window.parent !== window ? window.parent : undefined)
-  host?.__slothfulOpenAppLink?.(url, accountId)
+  host?.__slothfulOpenAppLink?.(url, accountId, messageId)
 }
 // `#open=<enc-url>&acct=<id>` — the encoded URL never contains a raw '&'
 // (encodeURIComponent escapes it), so [^&]* captures it whole; acct is the
 // originating account (#3), optional for backward safety.
-const openMatch = /^#open=([^&]*)(?:&acct=(\d+))?$/.exec(location.hash)
+const openMatch = /^#open=([^&]*)(?:&acct=(\d+))?(?:&msg=(\d+))?$/.exec(location.hash)
 if (openMatch) {
   const acct = openMatch[2] ? Number(openMatch[2]) : undefined
+  const msg = openMatch[3] ? Number(openMatch[3]) : undefined
   try {
-    ;(window.opener?.top as any)?.__slothfulOpenAppLink?.(decodeURIComponent(openMatch[1]), acct)
+    ;(window.opener?.top as any)?.__slothfulOpenAppLink?.(
+      decodeURIComponent(openMatch[1]),
+      acct,
+      msg
+    )
   } catch {
     // opener gone or cross-origin (page opened outside the viewer): nothing to do
   }

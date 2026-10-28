@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Wed, 28 Oct 2026 02:49:21 +0000
+Subject: [PATCH] web-app: an address-less mailto: in an HTML message drafts in
+ its chat
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bots like StickersBot put `mailto:?body=<command>` links in their HTML
+messages: no address, because the reply goes to the bot. Upstream asks
+which chat to draft the body in. When the link comes from a message, the
+answer is that message's chat, so draft there directly; the user still
+reviews and sends it, so a mail can prefill the composer of its own chat
+and nothing more.
+
+The HTML viewer's link relay now carries the message id next to the
+account (`#open=…&acct=…&msg=…`, slothfulchat-web's html-email.ts and
+runtime.ts), and __slothfulProcessQr takes it as an optional third
+argument, routing such mailto: links to useOpenMailtoLink with it.
+Links with an address keep the existing flow.
+---
+ .../frontend/src/components/RuntimeAdapter.tsx    | 15 +++++++++++++--
+ packages/frontend/src/hooks/useOpenMailtoLink.ts  | 14 ++++++++++++--
+ 2 files changed, 25 insertions(+), 4 deletions(-)
+
+diff --git a/packages/frontend/src/components/RuntimeAdapter.tsx b/packages/frontend/src/components/RuntimeAdapter.tsx
+index 42bcdd0f7a07d5f530a195c227436b09dff64b10..01e5428286e96f19110e66c8104bd4e48c72d1c3 100644
+--- a/packages/frontend/src/components/RuntimeAdapter.tsx
++++ b/packages/frontend/src/components/RuntimeAdapter.tsx
+@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react'
+ 
+ import useMessage from '../hooks/chat/useMessage'
+ import useProcessQr from '../hooks/useProcessQr'
++import useOpenMailtoLink from '../hooks/useOpenMailtoLink'
+ import { useOpenNonMailtoLinkSafely } from '../hooks/useOpenLinkSafely'
+ import { clearNotificationsForChat } from '../system-integration/notifications'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+@@ -29,6 +30,7 @@ export default function RuntimeAdapter({
+   children,
+ }: PropsWithChildren<Props>) {
+   const processQr = useProcessQr()
++  const openMailtoLink = useOpenMailtoLink()
+   const { jumpToMessage } = useMessage()
+   const { selectChat } = useChat()
+ 
+@@ -51,14 +53,23 @@ export default function RuntimeAdapter({
+     ;(window as any).__slothfulOpenLinkSafely = (url: string) => {
+       void openNonMailtoLinkSafely(url)
+     }
+-    ;(window as any).__slothfulProcessQr = (qrAccountId: number, url: string) => {
++    ;(window as any).__slothfulProcessQr = (
++      qrAccountId: number,
++      url: string,
++      fromMessageId?: number
++    ) => {
++      // a mailto: link in a message: an address-less one drafts there
++      if (fromMessageId != null && url.toLowerCase().startsWith('mailto:')) {
++        void openMailtoLink(qrAccountId, url, fromMessageId)
++        return
++      }
+       processQr(qrAccountId, url, SCAN_CONTEXT_TYPE.DEFAULT)
+     }
+     return () => {
+       delete (window as any).__slothfulOpenLinkSafely
+       delete (window as any).__slothfulProcessQr
+     }
+-  }, [openNonMailtoLinkSafely, processQr])
++  }, [openNonMailtoLinkSafely, processQr, openMailtoLink])
+ 
+   useEffect(() => {
+     runtime.onOpenQrUrl = (url: string) => {
+diff --git a/packages/frontend/src/hooks/useOpenMailtoLink.ts b/packages/frontend/src/hooks/useOpenMailtoLink.ts
+index 3e035879b4f7ea77917bebb67b36b3726a2311c7..11a042784872b330204a06b3753e6a9d312d59b0 100644
+--- a/packages/frontend/src/hooks/useOpenMailtoLink.ts
++++ b/packages/frontend/src/hooks/useOpenMailtoLink.ts
+@@ -9,6 +9,7 @@ import useDialog from './dialog/useDialog'
+ import useTranslationFunction from './useTranslationFunction'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { parseMailto } from '@deltachat-desktop/shared/parse_mailto'
++import { BackendRemote } from '../backend-com'
+ 
+ const log = getLogger('renderer/hooks/useOpenMailtoLink')
+ 
+@@ -19,7 +20,10 @@ const log = getLogger('renderer/hooks/useOpenMailtoLink')
+  *
+  * In case this link contains a subject and / or body a draft message will be
+  * created. If no email address was given, the user is asked to select a
+- * receiver.
++ * receiver — unless the link comes from a message (`fromMessageId`, e.g. an
++ * HTML message's link): then the draft goes into that message's chat. Bots
++ * like StickersBot use `mailto:?body=<command>` links that way; the user
++ * still reviews and sends the draft.
+  */
+ export default function useOpenMailtoLink() {
+   const createChatByEmail = useCreateChatByEmail()
+@@ -30,7 +34,7 @@ export default function useOpenMailtoLink() {
+   const { selectChat } = useChat()
+ 
+   return useCallback(
+-    async (accountId: number, url: string) => {
++    async (accountId: number, url: string, fromMessageId?: number) => {
+       log.debug('processing mailto url:', url)
+ 
+       try {
+@@ -52,6 +56,12 @@ export default function useOpenMailtoLink() {
+               selectChat(accountId, chatId)
+             }
+           }
++        } else if (messageText && fromMessageId != null) {
++          const { chatId } = await BackendRemote.rpc.getMessage(
++            accountId,
++            fromMessageId
++          )
++          await createDraftMessage(accountId, chatId, messageText)
+         } else {
+           if (messageText) {
+             // Body but no email address was given in link, show a dialogue to

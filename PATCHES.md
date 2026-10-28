@@ -789,6 +789,14 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   same window were lost; and the grouped "N new messages" notification counted
   messages from muted chats, which were only filtered out of the ungrouped
   path. `desktop/0009`
+- `mailto:` links without an address (`mailto:?body=…`, how bots such as
+  StickersBot offer commands in their HTML messages) failed with "QR code
+  could not be decoded": processQr asked core's `checkQr`, which only parses
+  a mailto: with an address, before checking for mailto: at all. They now go
+  to the mailto handler first, which asks which chat to draft the body in.
+  When the link is in an HTML message, the viewer's relay also passes the
+  message id and the body is drafted straight into that message's chat (the
+  user still sends it). `desktop/0010`, `desktop/1071`
 
 ## UI & mobile polish
 

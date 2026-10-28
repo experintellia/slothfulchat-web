@@ -963,6 +963,7 @@ class BrowserRuntime {
       // the main app to another one — the viewer tags every relayed link with
       // it (see html-email.ts) and openAppLink delivers it explicitly.
       accountId,
+      messageId,
       isContactRequest,
       alwaysLoadRemote: false, // patched in below once settings are read
       labels: {
@@ -1060,7 +1061,7 @@ class BrowserRuntime {
    *    openLink opens them with noreferrer so the untrusted mail leaks
    *    neither the app URL nor an opener handle.
    */
-  private openAppLink(url: string, accountId?: number): void {
+  private openAppLink(url: string, accountId?: number, messageId?: number): void {
     const lower = String(url).toLowerCase()
     // check app schemes FIRST: an i.delta.chat invite is also an https: URL,
     // and it must go to the invite flow, not the generic web-link path
@@ -1074,7 +1075,7 @@ class BrowserRuntime {
     }
     this.htmlEmailDialog?.dlg.close() // reveal the app (and its upcoming dialog)
     window.focus() // best effort when the viewer is a popup window
-    if (isApp) return this.deliverAppLinkToAccount(url, accountId)
+    if (isApp) return this.deliverAppLinkToAccount(url, accountId, messageId)
     // #4: web link -> safe-link path (tracking-strip). Falls back to a plain
     // (noreferrer) open if the frontend hook isn't registered yet.
     const safe = (window as any).__slothfulOpenLinkSafely
@@ -1092,11 +1093,16 @@ class BrowserRuntime {
    * needed. Falls back to onOpenQrUrl (current account) only if the hook isn't
    * registered — it always is by the time a viewer can be opened.
    */
-  private deliverAppLinkToAccount(url: string, accountId?: number): void {
+  private deliverAppLinkToAccount(
+    url: string,
+    accountId?: number,
+    messageId?: number
+  ): void {
     const processQr = (window as any).__slothfulProcessQr
     if (typeof processQr === 'function' && accountId != null) {
       try {
-        return void processQr(accountId, url)
+        // messageId: the mail the link is in, for address-less mailto: links
+        return void processQr(accountId, url, messageId)
       } catch (err) {
         this.log.error('app-link delivery failed', err)
         return
@@ -1699,8 +1705,11 @@ class BrowserRuntime {
 
     // app-link relay target for the HTML email viewer (see openAppLink); the
     // second arg is the account the mail was opened from (#3)
-    ;(window as any).__slothfulOpenAppLink = (url: string, accountId?: number) =>
-      this.openAppLink(url, accountId)
+    ;(window as any).__slothfulOpenAppLink = (
+      url: string,
+      accountId?: number,
+      messageId?: number
+    ) => this.openAppLink(url, accountId, messageId)
 
     // no backend: rc_config / runtime_info are built locally,
     // mirroring target-browser/src/rc-config.ts and backendApi.ts.
