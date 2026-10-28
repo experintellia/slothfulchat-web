@@ -48,19 +48,35 @@ export function parsePackListing(
   files: ZipEntryInfo[],
   zipName: string
 ): PackListing | null {
+  const result = checkPackListing(files, zipName)
+  return typeof result === 'string' ? null : result
+}
+
+/** The pack in this zip, or why it isn't one (shown to the user on import). */
+export function checkPackListing(
+  files: ZipEntryInfo[],
+  zipName: string
+): PackListing | string {
   const entries = files.filter(f => !f.name.endsWith('/') && !IGNORED.test(f.name))
-  if (entries.length === 0 || entries.length > MAX_PACK_ENTRIES) return null
+  if (entries.length === 0) return 'no stickers in it'
+  if (entries.length > MAX_PACK_ENTRIES) {
+    return `${entries.length} files, at most ${MAX_PACK_ENTRIES}`
+  }
   let total = 0
   const folders = new Set<string>()
   for (const f of entries) {
-    if (!STICKER_EXT.test(f.name) || f.originalSize > MAX_STICKER_BYTES) return null
+    if (!STICKER_EXT.test(f.name)) return `${f.name} is not a PNG, WebP, GIF or TGS sticker`
+    if (f.originalSize > MAX_STICKER_BYTES) return `${f.name} is too big`
     total += f.originalSize
     const parts = f.name.split('/')
-    if (parts.length > 2 || parts.some(p => p === '..' || p === '')) return null
+    if (parts.length > 2 || parts.some(p => p === '..' || p === '')) {
+      return `${f.name} is in a nested folder`
+    }
     folders.add(parts.length === 2 ? parts[0] : '')
   }
   // all flat, or all in one folder
-  if (folders.size !== 1 || total > MAX_PACK_TOTAL_BYTES) return null
+  if (folders.size !== 1) return 'files in more than one folder'
+  if (total > MAX_PACK_TOTAL_BYTES) return 'too big in total'
   const [folder] = folders
   return {
     name: folder ? cleanPackName(folder) : packNameFromZipName(zipName),
@@ -85,6 +101,19 @@ export function stickerMagicMatches(name: string, head: Uint8Array): boolean {
     default:
       return false
   }
+}
+
+/** StickersBot's `<id>.<desc>+<emoji>.webp`: the emojis after the last '+'. */
+export function emojisFromFileName(name: string): string[] {
+  const base = name.slice(name.lastIndexOf('/') + 1).replace(/\.[^.]*$/, '')
+  const plus = base.lastIndexOf('+')
+  if (plus < 0) return []
+  const segments = new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(
+    base.slice(plus + 1)
+  )
+  return [...segments]
+    .map(s => s.segment)
+    .filter(g => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(g))
 }
 
 export function stickerMime(name: string): string {

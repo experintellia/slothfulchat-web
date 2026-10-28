@@ -1,6 +1,8 @@
 // Self-check for sticker pack zip detection. Run: node src/sticker-pack-zip.test.ts
 import { strict as assert } from 'node:assert'
 import {
+  checkPackListing,
+  emojisFromFileName,
   parsePackListing,
   stickerMagicMatches,
   MAX_PACK_ENTRIES,
@@ -38,6 +40,10 @@ assert.equal(
   'too many entries'
 )
 
+// the reason is shown to the user on import
+assert.equal(checkPackListing([f('a/1.png'), f('b/2.png')], 'x.zip'), 'files in more than one folder')
+assert.match(String(checkPackListing([f('a.png'), f('readme.txt')], 'x.zip')), /readme\.txt is not/)
+
 // magic bytes
 const bytes = (...xs: (number | string)[]) =>
   new Uint8Array(xs.flatMap(x => (typeof x === 'string' ? [...x].map(c => c.charCodeAt(0)) : [x])))
@@ -47,5 +53,13 @@ assert.ok(stickerMagicMatches('a.tgs', bytes(0x1f, 0x8b)))
 assert.ok(stickerMagicMatches('a.gif', bytes('GIF89a')))
 assert.ok(!stickerMagicMatches('a.png', bytes('GIF89a')), 'gif posing as png')
 assert.ok(!stickerMagicMatches('a.webp', bytes('RIFF', 0, 0, 0, 0, 'WAVE')))
+
+// emojis in StickersBot file names
+assert.deepEqual(emojisFromFileName('Cute%20Cats/12.cat+🐱.webp'), ['🐱'])
+assert.deepEqual(emojisFromFileName('1.x+👨‍👩‍👧😺🇩🇪.png'), ['👨‍👩‍👧', '😺', '🇩🇪'], 'ZWJ, several, flag')
+assert.deepEqual(emojisFromFileName('1.a+b+👍🏽.webp'), ['👍🏽'], 'last plus, skin tone')
+assert.deepEqual(emojisFromFileName('1+abc.webp'), [], 'no emoji')
+assert.deepEqual(emojisFromFileName('a+b/1.webp'), [], 'plus only in folder')
+assert.deepEqual(emojisFromFileName('3.png'), [])
 
 console.log('sticker-pack-zip: ok')

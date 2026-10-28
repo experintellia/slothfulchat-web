@@ -343,14 +343,23 @@ exists:
   there) with Manage at its end; a Manage Stickers dialog (packs, drag and
   drop between them — mouse, or rest a finger and drag on touch — image
   files dropped in from other apps, Move/Copy to, add images, "Recently
-  Seen" chat stickers, packs of other profiles, export as zip); in chats, a received zip holding a pack
+  Seen" chat stickers, packs of other profiles, export as zip, emojis per
+  sticker — read from StickersBot's `…+<emoji>.webp` file names, written
+  back on export, editable with the regular emoji picker); in chats, a received zip holding a pack
   (StickersBot's `<title>/<files>` layout, or flat) shows as a pack card
-  with four stickers and an "Add" button — checked in the web runtime only
+  with four stickers whose preview and "Add" button open the whole pack
+  (big preview per sticker) before adding — checked in the web runtime only
   for downloaded zips up to 15 MiB, once in view, one at a time, cached;
   the empty sticker tab links the Public Bots directory pre-searched for
   "sticker" (hidden with the other community suggestions). Backup export
   notes that other Delta Chat apps don't restore sticker packs.
   `core/1027`, `desktop/1070`
+- **Sticker suggestions** (opt-in: Settings → Experimental → Composer) —
+  when the message is exactly one emoji, a strip above the input shows the
+  stickers tagged with it; tapping one sends it and clears the input, but
+  only if the input still holds just that emoji. Also fixes `useDraft`
+  building a second draft edit in the same event from a stale snapshot.
+  `desktop/1072`
 - **Export Chat** — the three-dot menu exports the open chat as a
   Telegram-style zip: a standalone `index.html` viewer that renders the chat
   with the app's own stylesheets and message markup (embedded JSON data +

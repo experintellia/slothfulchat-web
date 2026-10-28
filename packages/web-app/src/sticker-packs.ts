@@ -7,8 +7,9 @@
  */
 import { unzipSync, zipSync } from 'fflate'
 import {
+  emojisFromFileName,
   MAX_PACK_ZIP_BYTES,
-  parsePackListing,
+  checkPackListing,
   stickerMagicMatches,
   stickerMime,
   type PackListing,
@@ -16,10 +17,11 @@ import {
 
 type Rpc = {
   getStickerPacks(accountId: number): Promise<
-    { id: number; name: string; stickers: { id: number; path: string }[] }[]
+    { id: number; name: string; stickers: { id: number; path: string; emojis: string[] }[] }[]
   >
   createStickerPack(accountId: number, name: string): Promise<number>
   addStickerFromFile(accountId: number, packId: number, path: string, name: string): Promise<number>
+  setStickerEmojis(accountId: number, stickerId: number, emojis: string[]): Promise<unknown>
 }
 
 type Fs = {
@@ -39,14 +41,20 @@ export type PackPreview = {
   previews: string[]
 }
 
+/** one sticker of a whole-pack preview: `url` (object URL) for an image,
+ * `path` (staged temp file, playable by LottieSticker) for a .tgs */
+export type PreviewSticker = { name: string; emojis: string[]; url?: string; path?: string }
+export type FullPreview = { name: string; stickers: PreviewSticker[] }
+
 const PREVIEWS = 4
 /** decompress this many stickers at a time, yielding to the UI in between */
 const IMPORT_BATCH = 8
 
 const yieldToUi = () => new Promise(resolve => setTimeout(resolve, 0))
 
-/** Zip entries are read once: the file list, without decompressing. */
-function listPack(data: Uint8Array, zipName: string): PackListing | null {
+/** Zip entries are read once: the file list, without decompressing.
+ * Returns the pack, or why the zip isn't one. */
+function checkPack(data: Uint8Array, zipName: string): PackListing | string {
   const files: { name: string; originalSize: number }[] = []
   try {
     unzipSync(data, {
@@ -55,10 +63,20 @@ function listPack(data: Uint8Array, zipName: string): PackListing | null {
         return false
       },
     })
-  } catch {
-    return null // not a zip after all
+  } catch (error) {
+    return `not a readable zip (${error})`
   }
-  return parsePackListing(files, zipName)
+  return checkPackListing(files, zipName)
+}
+const listPack = (data: Uint8Array, zipName: string) => {
+  const pack = checkPack(data, zipName)
+  return typeof pack === 'string' ? null : pack
+}
+/** the pack, or an Error naming why it isn't one */
+const requirePack = (data: Uint8Array, zipName: string) => {
+  const pack = checkPack(data, zipName)
+  if (typeof pack === 'string') throw new Error(`not a sticker pack: ${pack}`)
+  return pack
 }
 
 function unzipSome(data: Uint8Array, names: string[]): Record<string, Uint8Array> {
@@ -117,8 +135,7 @@ export function initStickerPacks(rpc: () => Rpc, fs: Fs): void {
   /** Imports the pack in the zip at `path`; resolves to the new pack's id. */
   const importZip = async (accountId: number, path: string, zipName: string) => {
     const data = await fs.read(path)
-    const pack = listPack(data, zipName)
-    if (!pack) throw new Error('not a sticker pack')
+    const pack = requirePack(data, zipName)
     const packId = await rpc().createStickerPack(accountId, pack.name)
     let added = 0
     for (let i = 0; i < pack.entries.length; i += IMPORT_BATCH) {
@@ -128,8 +145,10 @@ export function initStickerPacks(rpc: () => Rpc, fs: Fs): void {
         const tmp = await fs.stage(base, bytes)
         try {
           // the core checks type and content again; a bad file is skipped
-          await rpc().addStickerFromFile(accountId, packId, tmp, base)
+          const id = await rpc().addStickerFromFile(accountId, packId, tmp, base)
           added++
+          const emojis = emojisFromFileName(base)
+          if (emojis.length) await rpc().setStickerEmojis(accountId, id, emojis)
         } catch {
           /* skipped */
         } finally {
@@ -141,6 +160,44 @@ export function initStickerPacks(rpc: () => Rpc, fs: Fs): void {
     return { packId, name: pack.name, added, skipped: pack.entries.length - added }
   }
 
+  /** Every sticker of the zip, for looking before adding. Give the result back
+   * to releasePreview. */
+  const previewAll = async (path: string, zipName: string): Promise<FullPreview> => {
+    const data = await fs.read(path)
+    const pack = requirePack(data, zipName)
+    const stickers: PreviewSticker[] = []
+    for (let i = 0; i < pack.entries.length; i += IMPORT_BATCH) {
+      const batch = pack.entries.slice(i, i + IMPORT_BATCH)
+      const files = unzipSome(data, batch)
+      for (const entry of batch) {
+        const bytes = files[entry]
+        // the extension decides the renderer, so it must not lie
+        if (!bytes || !stickerMagicMatches(entry, bytes)) continue
+        const name = entry.slice(entry.lastIndexOf('/') + 1)
+        // LottieSticker fetch()es its src and the CSP has no connect-src blob:,
+        // so a .tgs goes to a temp file the service worker serves instead
+        stickers.push(
+          /\.tgs$/i.test(name)
+            ? { name, emojis: emojisFromFileName(name), path: await fs.stage(name, bytes) }
+            : {
+                name,
+                emojis: emojisFromFileName(name),
+                url: URL.createObjectURL(new Blob([bytes as BlobPart], { type: stickerMime(name) })),
+              }
+        )
+      }
+      await yieldToUi()
+    }
+    return { name: pack.name, stickers }
+  }
+
+  const releasePreview = async ({ stickers }: FullPreview) => {
+    for (const s of stickers) {
+      if (s.url) URL.revokeObjectURL(s.url)
+      if (s.path) await fs.unstage(s.path).catch(() => {})
+    }
+  }
+
   /** Saves a pack as `<name>.zip`, StickersBot's layout, so it re-imports anywhere. */
   const exportPack = async (accountId: number, packId: number) => {
     const pack = (await rpc().getStickerPacks(accountId)).find(p => p.id === packId)
@@ -148,7 +205,10 @@ export function initStickerPacks(rpc: () => Rpc, fs: Fs): void {
     const folder = pack.name.replace(/[/\\]/g, '_')
     const files: Record<string, Uint8Array> = {}
     for (const [i, s] of pack.stickers.entries()) {
-      files[`${folder}/${i + 1}${s.path.slice(s.path.lastIndexOf('.'))}`] = await fs.read(s.path)
+      // StickersBot naming, so the emojis come back on re-import
+      const emojis = s.emojis.length ? `+${s.emojis.join('').replace(/[/\\]/g, '')}` : ''
+      files[`${folder}/${i + 1}${emojis}${s.path.slice(s.path.lastIndexOf('.'))}`] =
+        await fs.read(s.path)
     }
     // stickers are already compressed images; storing them is as small and faster
     await fs.save(zipSync(files, { level: 0 }), `${folder}.zip`)
@@ -156,6 +216,8 @@ export function initStickerPacks(rpc: () => Rpc, fs: Fs): void {
 
   ;(window as any).__slothfulStickers = {
     inspect,
+    previewAll,
+    releasePreview,
     importZip,
     exportPack,
     stage: fs.stageFile,

@@ -71,8 +71,20 @@
   "sticker_packs_copy_to": {
     "message": "Copy to"
   },
+  "sticker_packs_edit_emojis": {
+    "message": "Edit Emojis…"
+  },
+  "sticker_packs_emojis_hint": {
+    "message": "Emojis this sticker stands for. Pick them below."
+  },
+  "sticker_packs_remove_emoji": {
+    "message": "Remove %1$s"
+  },
   "sticker_packs_add_to": {
     "message": "Add to Pack"
+  },
+  "sticker_packs_suggestions": {
+    "message": "Sticker suggestions"
   },
   "sticker_packs_recent": {
     "message": "Recently Seen"
@@ -88,6 +100,9 @@
   },
   "sticker_packs_add_pack": {
     "message": "Add Sticker Pack"
+  },
+  "sticker_packs_view": {
+    "message": "Show Sticker Pack"
   },
   "sticker_packs_added": {
     "message": "Added"

@@ -11,40 +11,46 @@ Sticker packs are stored and managed by the core now (core sticker packs
 patch); this is the UI for them.
 
 - Composer sticker tab: packs come from getStickerPacks (sorted by name,
-  ids instead of paths) and deleting removes the pack entry via
-  removeSticker instead of deleting the file, which is a blob shared with
-  messages now. A "Manage Stickers" button sits under the packs.
+  ids instead of paths); deleting removes the pack entry via removeSticker
+  instead of deleting the file, which is a blob shared with messages now. A
+  bottom bar like the emoji picker's categories shows each pack's first
+  sticker (scrolls there, marks the current pack; dropping a sticker on an
+  icon moves it there) with Manage Stickers as a gear at its end.
 - Empty sticker tab: "Find Sticker Packs" opens the Public Bots directory
   pre-searched for "sticker" (its consent step applies) with a
   community-run note, hidden with the other community suggestions (user
   setting or instance-wide); plus "Import Pack (.zip)" and "Manage".
 - Manage Stickers dialog: new/rename/delete/export packs, drag stickers
-  between packs (Ctrl/Alt copies) or use Move to / Copy to from the context
-  menu (long press on touch), add image files, a "Recently Seen" strip of
-  chat stickers that are in no pack yet, and packs of the user's other
-  profiles to import.
-- A received .zip that holds a sticker pack renders as a pack card (four
-  stickers, name, count, "Add Sticker Pack"). The check runs in the web
-  runtime (window.__slothfulStickers): only for downloaded zips up to
-  15 MiB, only once the message scrolls into view, one zip at a time,
-  cached. Other zips keep the plain file tile, and "Import as Sticker
-  Pack" in the message menu covers bigger ones.
+  between packs (Ctrl/Alt copies; on touch, rest a finger 250ms then drag),
+  files dropped in from other apps go into the pack they land on, Move to /
+  Copy to in the context menu, add image files, a "Recently Seen" strip of
+  chat stickers in no pack yet, packs of the user's other profiles to
+  import, and each sticker's emojis as a badge with "Edit Emojis…" (chips
+  plus the regular emoji picker).
+- A received .zip that holds a sticker pack renders as a pack card. Its
+  preview and "Add Sticker Pack" open an inspector with the whole pack
+  (emojis from the file names, a big preview on hover/click/Enter) and the
+  add button. The check runs in the web runtime (window.__slothfulStickers):
+  only downloaded zips up to 15 MiB, once in view, one at a time, cached.
+  Other zips keep the plain file tile; the message menu's Open/Export
+  Attachment and "Import as Sticker Pack" (also for bigger zips) stay.
+  Import failures say why the zip is no pack.
 - Backup export says that sticker packs only come back in this app when a
   backup is imported elsewhere, shown only to users who have packs.
 - Public Bots dialog takes an initialQuery; the community-suggestions
   setting description names the sticker link too.
 ---
- packages/frontend/src/backend/stickerPacks.ts |  52 ++
+ packages/frontend/src/backend/stickerPacks.ts |  62 ++
  .../src/components/Settings/Backup.tsx        |  12 +-
  .../src/components/Settings/ChatsAndMedia.tsx |   2 +-
- .../StickerPacks/ManageStickers.tsx           | 619 ++++++++++++++++++
- .../src/components/StickerPacks/index.tsx     | 208 ++++++
- .../StickerPacks/styles.module.scss           | 302 +++++++++
+ .../StickerPacks/ManageStickers.tsx           | 694 ++++++++++++++++++
+ .../src/components/StickerPacks/index.tsx     | 405 ++++++++++
+ .../StickerPacks/styles.module.scss           | 402 ++++++++++
  .../attachment/messageAttachment.tsx          |  12 +-
  .../composer/EmojiAndStickerPicker.tsx        | 216 +++++-
  .../components/dialogs/PublicBots/index.tsx   |  33 +-
  .../src/components/message/Message.tsx        |  12 +
- 10 files changed, 1430 insertions(+), 38 deletions(-)
+ 10 files changed, 1812 insertions(+), 38 deletions(-)
  create mode 100644 packages/frontend/src/backend/stickerPacks.ts
  create mode 100644 packages/frontend/src/components/StickerPacks/ManageStickers.tsx
  create mode 100644 packages/frontend/src/components/StickerPacks/index.tsx
@@ -52,10 +58,10 @@ patch); this is the UI for them.
 
 diff --git a/packages/frontend/src/backend/stickerPacks.ts b/packages/frontend/src/backend/stickerPacks.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..738c90bfa5937175b79324699bb5cc8de5e5324e
+index 0000000000000000000000000000000000000000..24e328b82874cf3f0299c406eb7ec675b869bb9b
 --- /dev/null
 +++ b/packages/frontend/src/backend/stickerPacks.ts
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,62 @@
 +import { BackendRemote } from '../backend-com'
 +
 +// The sticker pack RPCs come from the fork's regenerated local jsonrpc
@@ -63,7 +69,12 @@ index 0000000000000000000000000000000000000000..738c90bfa5937175b79324699bb5cc8d
 +// pinned in this workspace's catalog predates them, so they're typed locally
 +// here to keep tsc green (same pattern as replyThreads.ts).
 +
-+export type StickerObject = { id: number; path: string }
++export type StickerObject = {
++  id: number
++  path: string
++  /** emojis the sticker stands for, shared by every pack entry of its image */
++  emojis: string[]
++}
 +export type StickerPackObject = {
 +  id: number
 +  name: string
@@ -101,6 +112,11 @@ index 0000000000000000000000000000000000000000..738c90bfa5937175b79324699bb5cc8d
 +    toPackId: number
 +  ): Promise<number>
 +  removeSticker(accountId: number, stickerId: number): Promise<void>
++  setStickerEmojis(
++    accountId: number,
++    stickerId: number,
++    emojis: string[]
++  ): Promise<void>
 +  copyStickerPackFromAccount(
 +    accountId: number,
 +    fromAccountId: number,
@@ -154,10 +170,10 @@ index 3e76a2c458e5d678daae7219ece178ccfa8408c5..3d1229506136dcd8d7cd7b7617659442
            <DesktopSettingsSwitch
 diff --git a/packages/frontend/src/components/StickerPacks/ManageStickers.tsx b/packages/frontend/src/components/StickerPacks/ManageStickers.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..b829ccd35f21dc596b3084261a0e979a80092838
+index 0000000000000000000000000000000000000000..1be68a7f1e4b59b9ff685acaf3d7c8d8bf5e981a
 --- /dev/null
 +++ b/packages/frontend/src/components/StickerPacks/ManageStickers.tsx
-@@ -0,0 +1,619 @@
+@@ -0,0 +1,694 @@
 +import React, { useCallback, useContext, useEffect, useState } from 'react'
 +import classNames from 'classnames'
 +import { basename } from 'path'
@@ -173,6 +189,7 @@ index 0000000000000000000000000000000000000000..b829ccd35f21dc596b3084261a0e979a
 +  OkCancelFooterAction,
 +} from '../Dialog'
 +import { DeltaInput } from '../Login-Styles'
++import EmojiPicker from '../EmojiPicker'
 +import { ContextMenuContext } from '../../contexts/ContextMenuContext'
 +import useDialog from '../../hooks/dialog/useDialog'
 +import useConfirmationDialog from '../../hooks/dialog/useConfirmationDialog'
@@ -246,6 +263,65 @@ index 0000000000000000000000000000000000000000..b829ccd35f21dc596b3084261a0e979a
 +        </DialogBody>
 +        <OkCancelFooterAction onCancel={() => close(null)} onOk='submit' />
 +      </form>
++    </Dialog>
++  )
++}
++
++/** the core keeps at most this many per sticker */
++const MAX_EMOJIS = 16
++
++/** Edits the emojis a sticker stands for: removable chips plus a picker. */
++function StickerEmojisDialog({
++  onClose,
++  initial,
++  onDone,
++}: DialogProps & {
++  initial: string[]
++  onDone: (emojis: string[]) => void
++}) {
++  const tx = useTranslationFunction()
++  const [emojis, setEmojis] = useState(initial)
++  return (
++    <Dialog onClose={onClose} canOutsideClickClose={false}>
++      <DialogHeader title={tx('sticker_packs_edit_emojis')} />
++      <DialogBody>
++        <DialogContent>
++          <div className={styles.hint}>{tx('sticker_packs_emojis_hint')}</div>
++          <div className={styles.emojiChips}>
++            {emojis.map(e => (
++              <button
++                type='button'
++                key={e}
++                className={styles.emojiChip}
++                aria-label={tx('sticker_packs_remove_emoji', e)}
++                onClick={() => setEmojis(emojis.filter(x => x !== e))}
++              >
++                {e} ×
++              </button>
++            ))}
++          </div>
++          <EmojiPicker
++            role={undefined}
++            id={undefined}
++            labelledBy={undefined}
++            onSelect={({ native }) =>
++              setEmojis(list =>
++                list.includes(native) || list.length >= MAX_EMOJIS
++                  ? list
++                  : [...list, native]
++              )
++            }
++          />
++        </DialogContent>
++      </DialogBody>
++      <OkCancelFooterAction
++        onCancel={onClose}
++        confirmLabel={tx('save')}
++        onOk={() => {
++          onDone(emojis)
++          onClose()
++        }}
++      />
 +    </Dialog>
 +  )
 +}
@@ -444,6 +520,15 @@ index 0000000000000000000000000000000000000000..b829ccd35f21dc596b3084261a0e979a
 +          subitems: packTargets(pack.id, to =>
 +            rpc.copySticker(accountId, sticker.id, to)
 +          ),
++        },
++        {
++          label: tx('sticker_packs_edit_emojis'),
++          action: () =>
++            openDialog(StickerEmojisDialog, {
++              initial: sticker.emojis,
++              onDone: (emojis: string[]) =>
++                run(() => rpc.setStickerEmojis(accountId, sticker.id, emojis)),
++            }),
 +        },
 +        { type: 'separator' },
 +        {
@@ -676,9 +761,15 @@ index 0000000000000000000000000000000000000000..b829ccd35f21dc596b3084261a0e979a
 +                  onClick={ev => stickerMenu(ev, pack, sticker)}
 +                  onContextMenu={ev => stickerMenu(ev, pack, sticker)}
 +                  aria-haspopup='menu'
-+                  aria-label={tx('sticker')}
++                  aria-label={[tx('sticker'), ...sticker.emojis].join(' ')}
 +                >
 +                  <StickerThumb path={sticker.path} size={THUMB} />
++                  {sticker.emojis.length > 0 && (
++                    <span className={styles.emojiBadge} aria-hidden>
++                      {sticker.emojis.slice(0, 3).join('')}
++                      {sticker.emojis.length > 3 && '…'}
++                    </span>
++                  )}
 +                </button>
 +              ))}
 +            </div>
@@ -779,10 +870,10 @@ index 0000000000000000000000000000000000000000..b829ccd35f21dc596b3084261a0e979a
 +}
 diff --git a/packages/frontend/src/components/StickerPacks/index.tsx b/packages/frontend/src/components/StickerPacks/index.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..77a25e7ad356ac2bb7130165337a87e0a6989887
+index 0000000000000000000000000000000000000000..54f5a4829ddaaa3379f3b350c57c2e8e1393fee3
 --- /dev/null
 +++ b/packages/frontend/src/components/StickerPacks/index.tsx
-@@ -0,0 +1,208 @@
+@@ -0,0 +1,405 @@
 +import React, { useEffect, useRef, useState } from 'react'
 +import classNames from 'classnames'
 +
@@ -791,8 +882,17 @@ index 0000000000000000000000000000000000000000..77a25e7ad356ac2bb7130165337a87e0
 +import { rpcStickers } from '../../backend/stickerPacks'
 +import { selectedAccountId } from '../../ScreenController'
 +import LottieSticker from '../attachment/LottieSticker'
-+import { openAttachmentInShell } from '../message/messageFunctions'
++import Dialog, {
++  DialogBody,
++  DialogFooter,
++  DialogHeader,
++  FooterActionButton,
++  FooterActions,
++} from '../Dialog'
++import useDialog from '../../hooks/dialog/useDialog'
 +import useTranslationFunction from '../../hooks/useTranslationFunction'
++
++import type { DialogProps } from '../../contexts/DialogContext'
 +
 +import styles from './styles.module.scss'
 +
@@ -803,12 +903,24 @@ index 0000000000000000000000000000000000000000..77a25e7ad356ac2bb7130165337a87e0
 + * packages/web-app/src/sticker-packs.ts as window.__slothfulStickers.
 + */
 +type PackPreview = { name: string; count: number; previews: string[] }
++/** an image as object URL, a .tgs as temp file path (LottieSticker can't
++ * fetch object URLs under the CSP) */
++type PreviewSticker = {
++  name: string
++  emojis: string[]
++  url?: string
++  path?: string
++}
++type FullPreview = { name: string; stickers: PreviewSticker[] }
 +type StickersApi = {
 +  inspect(
 +    path: string,
 +    zipName: string,
 +    size: number
 +  ): Promise<PackPreview | null>
++  /** every sticker in the zip; hand the result to releasePreview when done */
++  previewAll(path: string, zipName: string): Promise<FullPreview>
++  releasePreview(preview: FullPreview): Promise<void>
 +  importZip(
 +    accountId: number,
 +    path: string,
@@ -825,6 +937,17 @@ index 0000000000000000000000000000000000000000..77a25e7ad356ac2bb7130165337a87e0
 +
 +export const isZipFile = (name: string | null | undefined) =>
 +  /\.zip$/i.test(name ?? '')
++
++/** What to tell the user when a zip can't be previewed or imported: why it
++ * is no sticker pack, or the error itself when something else failed. */
++function stickerZipError(
++  tx: ReturnType<typeof useTranslationFunction>,
++  error: unknown
++): string {
++  const message = error instanceof Error ? error.message : String(error)
++  const reason = /^not a sticker pack: (.*)$/s.exec(message)
++  return reason ? `${tx('sticker_packs_not_a_pack')}\n(${reason[1]})` : message
++}
 +
 +/** Imports a zip and tells the user how it went. */
 +export async function importStickerZip(
@@ -848,11 +971,8 @@ index 0000000000000000000000000000000000000000..77a25e7ad356ac2bb7130165337a87e0
 +          : tx('sticker_packs_imported', result.name),
 +    })
 +    return result.packId
-+  } catch {
-+    window.__userFeedback({
-+      type: 'error',
-+      text: tx('sticker_packs_not_a_pack'),
-+    })
++  } catch (error) {
++    window.__userFeedback({ type: 'error', text: stickerZipError(tx, error) })
 +    return null
 +  }
 +}
@@ -894,7 +1014,8 @@ index 0000000000000000000000000000000000000000..77a25e7ad356ac2bb7130165337a87e0
 +  const tx = useTranslationFunction()
 +  const ref = useRef<HTMLDivElement>(null)
 +  const [pack, setPack] = useState<PackPreview | null>(null)
-+  const [state, setState] = useState<'idle' | 'importing' | 'added'>('idle')
++  const [added, setAdded] = useState(false)
++  const { openDialog } = useDialog()
 +
 +  useEffect(() => {
 +    const api = stickersApi()
@@ -928,7 +1049,7 @@ index 0000000000000000000000000000000000000000..77a25e7ad356ac2bb7130165337a87e0
 +            p => p.name === pack.name && p.stickers.length === pack.count
 +          )
 +        ) {
-+          setState('added')
++          setAdded(true)
 +        }
 +      })
 +      .catch(() => {})
@@ -938,24 +1059,26 @@ index 0000000000000000000000000000000000000000..77a25e7ad356ac2bb7130165337a87e0
 +    return <div ref={ref}>{fallback}</div>
 +  }
 +
-+  const onAdd = async (ev: React.MouseEvent) => {
++  const openInspector = (ev: React.MouseEvent) => {
 +    ev.stopPropagation()
-+    setState('importing')
-+    const id = await importStickerZip(tx, message.file, message.fileName ?? '')
-+    setState(id == null ? 'idle' : 'added')
++    openDialog(StickerPackInspector, {
++      path: message.file,
++      zipName: message.fileName ?? '',
++      name: pack.name,
++      added,
++      onAdded: () => setAdded(true),
++    })
 +  }
 +
 +  return (
 +    <div className={styles.zipCard} data-testid='sticker-pack-card'>
-+      {/* the preview opens the zip like the file tile it replaces */}
++      {/* the zip itself stays reachable through the message menu
++          (Open / Export Attachment) */}
 +      <button
 +        type='button'
 +        className={styles.zipCardGrid}
-+        onClick={ev => {
-+          ev.stopPropagation()
-+          openAttachmentInShell(message)
-+        }}
-+        aria-label={tx('open_attachment')}
++        onClick={openInspector}
++        aria-label={tx('sticker_packs_view')}
 +        title={message.fileName ?? undefined}
 +      >
 +        {pack.previews.map((url, i) =>
@@ -976,27 +1099,192 @@ index 0000000000000000000000000000000000000000..77a25e7ad356ac2bb7130165337a87e0
 +        <button
 +          type='button'
 +          className={classNames(styles.zipCardButton, {
-+            [styles.added]: state === 'added',
++            [styles.added]: added,
 +          })}
-+          disabled={state !== 'idle'}
-+          onClick={onAdd}
++          disabled={added}
++          onClick={openInspector}
 +        >
-+          {state === 'added'
-+            ? tx('sticker_packs_added')
-+            : state === 'importing'
-+              ? '…'
-+              : tx('sticker_packs_add_pack')}
++          {added ? tx('sticker_packs_added') : tx('sticker_packs_add_pack')}
 +        </button>
 +      </div>
 +    </div>
 +  )
 +}
++
++const BIG = 240
++
++/**
++ * The whole pack of a received zip, before adding it: every sticker with its
++ * emojis; hovering (mouse) or clicking/Enter shows one big.
++ */
++function StickerPackInspector({
++  onClose,
++  path,
++  zipName,
++  name,
++  added: wasAdded,
++  onAdded,
++}: DialogProps & {
++  path: string
++  zipName: string
++  name: string
++  added: boolean
++  onAdded: () => void
++}) {
++  const tx = useTranslationFunction()
++  const [preview, setPreview] = useState<FullPreview | null>(null)
++  const [importing, setImporting] = useState(false)
++  const [hovered, setHovered] = useState<number | null>(null)
++  const [pinned, setPinned] = useState<number | null>(null)
++  const shown = pinned ?? hovered
++
++  useEffect(() => {
++    const api = stickersApi()
++    if (!api) return
++    let cancelled = false
++    let result: FullPreview | null = null
++    api.previewAll(path, zipName).then(
++      p => {
++        if (cancelled) api.releasePreview(p)
++        else setPreview((result = p))
++      },
++      error => {
++        if (cancelled) return
++        window.__userFeedback({
++          type: 'error',
++          text: stickerZipError(tx, error),
++        })
++        onClose()
++      }
++    )
++    return () => {
++      cancelled = true
++      if (result) api.releasePreview(result)
++    }
++  }, [path, zipName, tx, onClose])
++
++  useEffect(() => {
++    if (shown == null) return
++    const onKey = (ev: KeyboardEvent) => {
++      if (ev.key !== 'Escape') return
++      setPinned(null)
++      setHovered(null)
++    }
++    window.addEventListener('keydown', onKey)
++    return () => window.removeEventListener('keydown', onKey)
++  }, [shown])
++
++  const onAdd = async () => {
++    setImporting(true)
++    const id = await importStickerZip(tx, path, zipName)
++    setImporting(false)
++    if (id == null) return
++    onAdded()
++    onClose()
++  }
++
++  const thumb = (s: PreviewSticker, size: number) =>
++    s.path ? (
++      <StickerThumb path={s.path} size={size} />
++    ) : (
++      <img
++        src={s.url}
++        width={size}
++        height={size}
++        className={styles.thumbImg}
++        alt=''
++      />
++    )
++  const big = shown != null ? preview?.stickers[shown] : undefined
++
++  return (
++    <Dialog
++      width={560}
++      onClose={onClose}
++      fixed
++      // Escape closes the big preview first
++      canEscapeKeyClose={shown == null}
++      dataTestid='sticker-pack-inspector'
++    >
++      <DialogHeader title={preview?.name ?? name} onClose={onClose} />
++      <DialogBody>
++        <div className={styles.inspectCount}>
++          {preview
++            ? tx('sticker_packs_n_stickers', String(preview.stickers.length))
++            : '…'}
++        </div>
++        {/* a click beside the stickers closes the big preview */}
++        <div className={styles.inspectGrid} onClick={() => setPinned(null)}>
++          {preview?.stickers.map((s, i) => (
++            <button
++              type='button'
++              key={i}
++              className={styles.inspectSticker}
++              aria-label={s.emojis.join(' ') || s.name}
++              onClick={ev => {
++                ev.stopPropagation()
++                setPinned(p => (p === i ? null : i))
++              }}
++              onPointerEnter={ev => ev.pointerType === 'mouse' && setHovered(i)}
++              onPointerLeave={ev =>
++                ev.pointerType === 'mouse' && setHovered(null)
++              }
++            >
++              {thumb(s, 72)}
++              {s.emojis.length > 0 && (
++                <span className={styles.inspectEmojis} aria-hidden>
++                  {s.emojis.join('')}
++                </span>
++              )}
++            </button>
++          ))}
++        </div>
++      </DialogBody>
++      {big && (
++        // ponytail: centered over the grid, so it covers the stickers around
++        // the hovered one; place it beside the pointer if that annoys people.
++        // Purely visual (the buttons carry the emojis), hence aria-hidden.
++        <div className={styles.bigPreviewLayer} aria-hidden>
++          <div
++            className={classNames(styles.bigPreview, {
++              [styles.pinned]: pinned != null,
++            })}
++            data-testid='sticker-big-preview'
++            onClick={() => setPinned(null)}
++          >
++            {thumb(big, BIG)}
++            {big.emojis.length > 0 && (
++              <div className={styles.bigPreviewEmojis}>
++                {big.emojis.join(' ')}
++              </div>
++            )}
++          </div>
++        </div>
++      )}
++      <DialogFooter>
++        <FooterActions>
++          <FooterActionButton
++            styling='primary'
++            disabled={wasAdded || importing || !preview}
++            onClick={onAdd}
++          >
++            {wasAdded
++              ? tx('sticker_packs_added')
++              : importing
++                ? '…'
++                : tx('sticker_packs_add_pack')}
++          </FooterActionButton>
++        </FooterActions>
++      </DialogFooter>
++    </Dialog>
++  )
++}
 diff --git a/packages/frontend/src/components/StickerPacks/styles.module.scss b/packages/frontend/src/components/StickerPacks/styles.module.scss
 new file mode 100644
-index 0000000000000000000000000000000000000000..8ea5013af514b33825831a5abeb5c28b9461ede7
+index 0000000000000000000000000000000000000000..b2d3e6867a8a42ff91220b3dbb008c212b375c4f
 --- /dev/null
 +++ b/packages/frontend/src/components/StickerPacks/styles.module.scss
-@@ -0,0 +1,302 @@
+@@ -0,0 +1,402 @@
 +// Manage Stickers dialog
 +
 +.toolbar {
@@ -1090,6 +1378,7 @@ index 0000000000000000000000000000000000000000..8ea5013af514b33825831a5abeb5c28b
 +}
 +
 +.sticker {
++  position: relative;
 +  flex-shrink: 0;
 +  padding: 4px;
 +  border: none;
@@ -1099,6 +1388,42 @@ index 0000000000000000000000000000000000000000..8ea5013af514b33825831a5abeb5c28b
 +  // a long press picks the sticker up (or opens its menu), not iOS's image callout
 +  -webkit-touch-callout: none;
 +  user-select: none;
++
++  &:hover,
++  &:focus-visible {
++    background: var(--chatListItemBgHover);
++  }
++}
++
++.emojiBadge {
++  position: absolute;
++  right: 0;
++  bottom: 0;
++  padding: 0 3px;
++  border-radius: 8px;
++  background: var(--bgPrimary);
++  font-size: 0.8em;
++  line-height: 1.4;
++  pointer-events: none;
++}
++
++.emojiChips {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 6px;
++  min-height: 32px;
++  padding: 8px 0;
++}
++
++.emojiChip {
++  padding: 2px 8px;
++  border: 1px solid var(--separatorColor);
++  border-radius: 16px;
++  background: transparent;
++  color: var(--globalText);
++  font: inherit;
++  font-size: 1.2em;
++  cursor: pointer;
 +
 +  &:hover,
 +  &:focus-visible {
@@ -1213,6 +1538,69 @@ index 0000000000000000000000000000000000000000..8ea5013af514b33825831a5abeb5c28b
 +
 +.added {
 +  color: var(--messageAttachmentFileInfo);
++}
++
++// Pack inspector: the whole pack of a received .zip
++
++.inspectCount {
++  @extend .packCount;
++  padding: 0 16px 8px;
++}
++
++.inspectGrid {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 4px;
++  padding: 0 12px 12px;
++}
++
++.inspectSticker {
++  @extend .sticker;
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  cursor: pointer;
++}
++
++.inspectEmojis {
++  max-width: 72px;
++  overflow: hidden;
++  font-size: 0.8em;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++
++.bigPreviewLayer {
++  position: absolute;
++  inset: 0;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  // hover previews must not steal the pointer from the sticker underneath
++  pointer-events: none;
++}
++
++.bigPreview {
++  padding: 16px;
++  border-radius: 16px;
++  background: var(--bgPrimary);
++  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
++  text-align: center;
++
++  &.pinned {
++    pointer-events: auto;
++    cursor: pointer;
++  }
++
++  img {
++    max-width: 70vw;
++    height: auto;
++  }
++}
++
++.bigPreviewEmojis {
++  padding-top: 8px;
++  font-size: 1.6em;
 +}
 +
 +// Composer sticker picker: bottom bar (like the emoji picker's categories)

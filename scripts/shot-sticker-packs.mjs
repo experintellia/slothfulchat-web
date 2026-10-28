@@ -3,7 +3,8 @@
 // in-process mock madmail server provides the accounts.
 //
 // Bob sends Alice a StickersBot-style pack zip, a zip that is no pack, and a
-// sticker. Alice sees a pack card for the first zip only, adds the pack, finds
+// sticker. Alice sees a pack card for the first zip only, looks through the
+// whole pack (big preview on hover / Enter), adds it from there, finds
 // it in the picker, and in Manage Stickers makes a pack, drags a sticker into
 // it, saves the sticker Bob sent from "Recently Seen", imports the pack of her
 // other profile, and exports a pack as a zip that is a pack again. The backup
@@ -147,12 +148,37 @@ try {
   )
   await shot('01-pack-card-in-chat')
 
-  // The card still is the zip: its preview opens it, the menu exports it.
+  // "Add Sticker Pack" on the card first shows the whole pack.
+  await card.getByRole('button', { name: 'Add Sticker Pack' }).click()
+  const inspector = page.getByTestId('sticker-pack-inspector')
+  await inspector.waitFor({ timeout: 30_000 })
+  for (const e of animals) await inspector.getByRole('button', { name: e, exact: true }).waitFor()
+  expect(true, 'the inspector shows all 8 stickers, labeled with their file-name emojis')
+  expect((await inspector.textContent()).includes('8 stickers'), 'the inspector counts 8 stickers')
+  await shot('01b-pack-inspector')
+  const big = page.getByTestId('sticker-big-preview')
+  await inspector.getByRole('button', { name: '🦊', exact: true }).hover()
+  await big.waitFor()
+  expect((await big.textContent()).includes('🦊'), 'hovering a sticker shows it big with its emoji')
+  await shot('01c-big-preview')
+  await page.mouse.move(1, 1)
+  await big.waitFor({ state: 'detached' })
+  await inspector.getByRole('button', { name: '🐼', exact: true }).focus()
+  await page.keyboard.press('Enter')
+  await big.waitFor()
+  await page.keyboard.press('Escape')
+  await big.waitFor({ state: 'detached' })
+  expect(await inspector.isVisible(), 'Enter opens the big preview, Escape closes only it')
+  await page.keyboard.press('Escape')
+  await inspector.waitFor({ state: 'detached' })
+
+  // The card still is the zip: the message menu opens and exports it.
+  await card.click({ button: 'right' })
   const [opened] = await Promise.all([
     page.waitForEvent('download'),
-    card.getByRole('button', { name: 'Open Attachment' }).click(),
+    page.getByRole('menuitem', { name: 'Open Attachment' }).click(),
   ])
-  expect(opened.suggestedFilename().endsWith('.zip'), 'clicking the preview opens the zip')
+  expect(opened.suggestedFilename().endsWith('.zip'), 'Open Attachment opens the zip')
   await card.click({ button: 'right' })
   const [exportedZip] = await Promise.all([
     page.waitForEvent('download'),
@@ -170,8 +196,11 @@ try {
   await shot('02-empty-sticker-tab')
   await page.keyboard.press('Escape')
 
-  // Add the pack from the card.
-  await card.getByRole('button', { name: 'Add Sticker Pack' }).click()
+  // Add the pack: the card's preview opens the inspector, its button adds.
+  await card.getByRole('button', { name: 'Show Sticker Pack' }).click()
+  await inspector.getByRole('button', { name: '🐵', exact: true }).waitFor({ timeout: 30_000 })
+  await inspector.getByRole('button', { name: 'Add Sticker Pack' }).click()
+  await inspector.waitFor({ state: 'detached', timeout: 30_000 })
   await card.getByRole('button', { name: 'Added' }).waitFor({ timeout: 30_000 })
   const packs = async () => rpc('getStickerPacks', aliceId)
   expect(
@@ -299,8 +328,8 @@ try {
   const names = Object.keys(exported)
   expect(download.suggestedFilename() === 'Cute Animals.zip', 'export is named after the pack')
   expect(
-    names.length === 6 && names.every(n => /^Cute Animals\/\d+\.webp$/.test(n)),
-    'export holds the 6 remaining stickers in one folder'
+    names.length === 6 && names.every(n => /^Cute Animals\/\d+\+\S+\.webp$/u.test(n)),
+    'export holds the 6 remaining stickers in one folder, emojis in the names'
   )
   await page.keyboard.press('Escape')
   await dialog.waitFor({ state: 'detached' })
@@ -323,6 +352,51 @@ try {
   )
   await shot('08-picker-bar')
   await page.keyboard.press('Escape')
+
+  // Sticker suggestions (experimental, off by default): a lone emoji in the
+  // composer offers the pack stickers tagged with it (🐱 from the zip's names).
+  const settingOn = () =>
+    page.evaluate(async () => (await window.exp.runtime.getDesktopSettings()).experimentalStickerSuggestions)
+  expect(!(await settingOn()), 'sticker suggestions are off by default')
+  await page.getByTestId('open-settings-button').click()
+  await page.getByText('Experimental Features').click()
+  await page.getByText(/^Sticker suggestions/).click()
+  await until(settingOn, 'the sticker suggestions setting on')
+  await page.keyboard.press('Escape')
+  await page.locator('.chat-list-item', { hasText: 'Bob Martinez' }).first().click()
+  const input = page.locator('#composer-textarea-non-edit')
+  const suggestions = page.getByTestId('sticker-suggestions')
+  const lastMsg = async () => {
+    const ids = await rpc('getMessageIds', aliceId, chatAtAlice, false, false)
+    return rpc('getMessage', aliceId, ids[ids.length - 1])
+  }
+  const before = await lastMsg()
+  await input.fill('🐱')
+  await suggestions.getByRole('button').first().waitFor()
+  await shot('09-sticker-suggestions')
+  await suggestions.getByRole('button').first().click()
+  await until(async () => (await lastMsg()).id !== before.id, 'the suggested sticker sent')
+  const sent = await lastMsg()
+  expect(sent.viewType === 'Sticker' && sent.fromId === 1, 'tapping a suggestion sends that sticker')
+  await until(async () => (await input.inputValue()) === '', 'the composer cleared')
+  expect((await suggestions.count()) === 0, 'the input is empty and the strip gone after sending')
+
+  await input.fill('hello 🐱')
+  await page.waitForTimeout(700)
+  expect((await suggestions.count()) === 0, 'no suggestions for an emoji inside text')
+
+  await input.fill('🐱')
+  await suggestions.getByRole('button').first().waitFor()
+  await input.press('End')
+  await input.pressSequentially('x')
+  await suggestions.getByRole('button').first().click({ timeout: 1000 }).catch(() => {})
+  await suggestions.waitFor({ state: 'detached' })
+  await page.waitForTimeout(700)
+  expect(
+    (await lastMsg()).id === sent.id && (await input.inputValue()) === '🐱x',
+    'once more text is typed the strip is gone and nothing is sent or cleared'
+  )
+  await input.fill('')
 
   // Backup export mentions the packs.
   await page.getByTestId('open-settings-button').click()
