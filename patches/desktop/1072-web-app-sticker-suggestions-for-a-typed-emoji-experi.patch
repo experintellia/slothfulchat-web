@@ -1,0 +1,457 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Wed, 28 Oct 2026 03:38:49 +0000
+Subject: [PATCH] web-app: sticker suggestions for a typed emoji (experimental)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Settings → Experimental → Composer → "Sticker suggestions" (off by
+default, experimentalStickerSuggestions). When the draft is exactly one
+emoji (one grapheme, U+FE0F ignored) with no attachment and not in edit
+mode, a strip above the input lists the stickers associated with that
+emoji (core sticker packs: emojis per sticker). Tapping one sends it the
+same way the picker does and then clears the input, but only if the text
+at that moment still is exactly that emoji; otherwise nothing is sent or
+cleared and the strip goes away. Enter still sends the text; Escape hides
+the strip until the text changes; pressing a suggestion keeps the
+input's focus.
+
+useDraft: removeQuote and updateDraftText built the new draft from a stale
+snapshot, so two edits in one event (send with a quote, then clear) brought
+the quote back; both now build on the latest draft via a ref.
+---
+ .../scss/composer/_completion-menu.scss       | 30 +++++++
+ .../Settings/ExperimentalFeatures.tsx         |  6 ++
+ .../src/components/composer/Composer.tsx      | 77 +++++++++++++++++-
+ .../composer/StickerSuggestions.tsx           | 80 +++++++++++++++++++
+ .../src/components/composer/singleEmoji.ts    | 23 ++++++
+ packages/frontend/src/hooks/chat/useDraft.ts  | 21 ++---
+ .../frontend/src/tests/singleEmoji.test.ts    | 31 +++++++
+ packages/shared/shared-types.d.ts             |  2 +
+ packages/shared/state.ts                      |  1 +
+ 9 files changed, 260 insertions(+), 11 deletions(-)
+ create mode 100644 packages/frontend/src/components/composer/StickerSuggestions.tsx
+ create mode 100644 packages/frontend/src/components/composer/singleEmoji.ts
+ create mode 100644 packages/frontend/src/tests/singleEmoji.test.ts
+
+diff --git a/packages/frontend/scss/composer/_completion-menu.scss b/packages/frontend/scss/composer/_completion-menu.scss
+index cad4f00e8cf47972f81a1b81c075cd05d0c507e9..081a2266b599280dcb4e278642fd6037e4652d2b 100644
+--- a/packages/frontend/scss/composer/_completion-menu.scss
++++ b/packages/frontend/scss/composer/_completion-menu.scss
+@@ -74,3 +74,33 @@
+     font-size: 0.9em;
+   }
+ }
++
++// Sticker suggestions reuse the menu's float + box, laid out as one
++// horizontally scrolling row (see StickerSuggestions.tsx).
++.completion-menu.sticker-suggestions {
++  display: flex;
++  gap: 4px;
++  padding: 4px;
++  min-width: 0;
++  overflow-x: auto;
++  overflow-y: hidden;
++
++  button {
++    flex: 0 0 auto;
++    display: flex;
++    padding: 4px;
++    background: none;
++    border: none;
++    border-radius: 6px;
++    cursor: pointer;
++
++    &:hover,
++    &:focus-visible {
++      background-color: color-mix(
++        in srgb,
++        var(--textPrimary) 16%,
++        var(--bgPrimary)
++      );
++    }
++  }
++}
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index cc431cfabe557c0d47b21f9049fa7caad1853fe5..a5399360b73112c35fd4db74628caca7a7bdeb66 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -86,6 +86,12 @@ export function ExperimentalFeatures() {
+         description='When your message contains a link and has no image, offer to attach a preview card. Off by default; turn on to be prompted.'
+         forkAdded
+       />
++      <DesktopSettingsSwitch
++        settingsKey='experimentalStickerSuggestions'
++        label='Sticker suggestions'
++        description='Typing a single emoji shows your stickers for it; tap one to send it instead. Off by default.'
++        forkAdded
++      />
+       <DesktopSettingsSwitch
+         settingsKey='grammarCheck'
+         label='Grammar & spelling checker'
+diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
+index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0c2a2fcaa5c73131e60c10e1359a0b33ae8d6ffa 100644
+--- a/packages/frontend/src/components/composer/Composer.tsx
++++ b/packages/frontend/src/components/composer/Composer.tsx
+@@ -16,6 +16,8 @@ import ComposerMessageInput from './ComposerMessageInput'
+ import { languageToolConfig } from './languageToolCheck'
+ import { parseBotCommandsFromStatus } from './completion/botCommandProvider'
+ import LinkPreviewGhost from './linkPreview/LinkPreviewGhost'
++import { StickerSuggestions } from './StickerSuggestions'
++import { singleEmoji } from './singleEmoji'
+ import ghostStyles from './linkPreview/styles.module.scss'
+ import Icon from '../Icon'
+ import { useLinkPreview } from './linkPreview/useLinkPreview'
+@@ -407,7 +409,7 @@ const Composer = forwardRef<
+   const onStickerClick = useCallback(
+     async (stickerPath: string) => {
+       if (threadQuoteMissing) {
+-        return
++        return false
+       }
+       const quotedMessageId =
+         draftState.quote?.kind === 'WithMessage'
+@@ -421,6 +423,7 @@ const Composer = forwardRef<
+       if (quotedMessageId) {
+         removeQuote()
+       }
++      return true
+     },
+     [
+       accountId,
+@@ -431,6 +434,62 @@ const Composer = forwardRef<
+       threadQuoteMissing,
+     ]
+   )
++
++  // Sticker suggestions: the draft is exactly one emoji → offer pack stickers
++  // tagged with it. Escape hides them until the text changes.
++  const [suggestionsDismissed, setSuggestionsDismissed] = useState(false)
++  if (useHasChanged2(draftState.text) && suggestionsDismissed) {
++    setSuggestionsDismissed(false)
++  }
++  // an IME candidate can be a single emoji; never offer (or clear) mid-composition
++  const [composing, setComposing] = useState(false)
++  useEffect(() => {
++    const textarea = regularMessageInputRef.current?.textareaRef.current
++    if (!textarea) return
++    const start = () => setComposing(true)
++    const end = () => setComposing(false)
++    textarea.addEventListener('compositionstart', start)
++    textarea.addEventListener('compositionend', end)
++    return () => {
++      textarea.removeEventListener('compositionstart', start)
++      textarea.removeEventListener('compositionend', end)
++    }
++  })
++  const suggestionEmoji =
++    settingsStore?.desktopSettings.experimentalStickerSuggestions === true &&
++    !suggestionsDismissed &&
++    !composing &&
++    !draftState.file &&
++    !messageEditing.isEditingModeActive
++      ? singleEmoji(draftState.text)
++      : null
++  const suggestionText = draftState.text
++  const onSuggestionPick = async (stickerPath: string) => {
++    // the textarea is the live truth; React may not have re-rendered yet
++    const liveText = regularMessageInputRef.current?.textareaRef.current?.value
++    if (liveText !== suggestionText || threadQuoteMissing) {
++      // typed on meanwhile: send nothing, just get out of the way
++      setSuggestionsDismissed(true)
++      return
++    }
++    // Clear first, like sending text does: while the send is in flight a
++    // second tap or Enter must find no emoji left to send again.
++    updateDraftText('', chatId)
++    try {
++      await onStickerClick(stickerPath)
++    } catch (error) {
++      // not sent: give the emoji back, unless something was typed since
++      if (!regularMessageInputRef.current?.textareaRef.current?.value) {
++        updateDraftText(suggestionText, chatId)
++      }
++      throw error
++    }
++    regularMessageInputRef.current?.focus()
++  }
++  /** whether the strip is on screen (it renders nothing without matches) */
++  const suggestionsShown = () =>
++    !!document.querySelector('[data-testid="sticker-suggestions"]')
++
+   const shiftPressed = useRef(false)
+   const onEmojiSelect = (emoji: EmojiMartData) => {
+     log.debug(`EmojiPicker: Selected ${emoji.id}`)
+@@ -453,7 +512,9 @@ const Composer = forwardRef<
+             (ev.target as any).id
+           ) &&
+           !showEmojiPicker &&
+-          !showAppPicker
++          !showAppPicker &&
++          // a focused suggestion button counts as the composer
++          !(ev.target as Element).closest?.('.sticker-suggestions')
+         ) {
+           // only handle escape events in composer or related components here
+           return
+@@ -467,6 +528,10 @@ const Composer = forwardRef<
+           setShowAppPicker(false)
+           handled = true
+         }
++        if (!handled && suggestionEmoji && suggestionsShown()) {
++          setSuggestionsDismissed(true)
++          handled = true
++        }
+         if (!handled && messageEditing.isEditingModeActive) {
+           messageEditing.cancelEditing()
+           handled = true
+@@ -510,6 +575,7 @@ const Composer = forwardRef<
+     editMessageInputRef,
+     showEmojiPicker,
+     showAppPicker,
++    suggestionEmoji,
+     draftState.quote,
+     removeQuote,
+   ])
+@@ -920,6 +986,13 @@ const Composer = forwardRef<
+           )}
+           {settingsStore && !recording && (
+             <>
++              {suggestionEmoji && (
++                <StickerSuggestions
++                  accountId={accountId}
++                  emoji={suggestionEmoji}
++                  onPick={onSuggestionPick}
++                />
++              )}
+               <ComposerMessageInput
+                 text={draftState.text}
+                 // We use `hidden` instead of simply conditionally rendering
+diff --git a/packages/frontend/src/components/composer/StickerSuggestions.tsx b/packages/frontend/src/components/composer/StickerSuggestions.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..4d26512dd46efd1b57a37596de5315e01b941921
+--- /dev/null
++++ b/packages/frontend/src/components/composer/StickerSuggestions.tsx
+@@ -0,0 +1,80 @@
++import React, { useEffect, useReducer } from 'react'
++
++import { rpcStickers, type StickerObject } from '../../backend/stickerPacks'
++import { StickerThumb } from '../StickerPacks'
++import { normalizeEmoji } from './singleEmoji'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
++import { getLogger } from '@deltachat-desktop/shared/logger'
++
++const log = getLogger('renderer/composer/StickerSuggestions')
++
++// Last fetched packs per account: shown instantly, refreshed on every mount /
++// emoji, so picker or manager edits show up next time (getStickerPacks is cheap).
++const packsCache = new Map<number, StickerObject[]>()
++
++/**
++ * Strip of the pack stickers tagged with `emoji` (already normalized), above
++ * the composer input. Mounted only while the draft is exactly that emoji.
++ */
++export function StickerSuggestions({
++  accountId,
++  emoji,
++  onPick,
++}: {
++  accountId: number
++  emoji: string
++  onPick: (path: string) => void
++}) {
++  const tx = useTranslationFunction()
++  const [, rerender] = useReducer((x: number) => x + 1, 0)
++
++  useEffect(() => {
++    let live = true
++    rpcStickers
++      .getStickerPacks(accountId)
++      .then(packs => {
++        packsCache.set(
++          accountId,
++          packs.flatMap(p => p.stickers)
++        )
++        if (live) rerender()
++      })
++      .catch(err => log.error('getStickerPacks failed', err))
++    return () => {
++      live = false
++    }
++  }, [accountId, emoji])
++
++  // one button per image even when it sits in several packs
++  const matches = [
++    ...new Map(
++      (packsCache.get(accountId) ?? [])
++        .filter(s => s.emojis.some(e => normalizeEmoji(e) === emoji))
++        .map(s => [s.path, s])
++    ).values(),
++  ]
++  if (matches.length === 0) return null
++
++  return (
++    <div
++      className='completion-menu sticker-suggestions'
++      role='group'
++      aria-label={tx('sticker_packs_suggestions')}
++      data-testid='sticker-suggestions'
++    >
++      {matches.map(s => (
++        <button
++          key={s.path}
++          type='button'
++          aria-label={`${tx('sticker')} ${s.emojis.join(' ')}`}
++          // keep focus in the textarea on mouse/touch; click still fires,
++          // and Tab + Enter/Space still reach the button
++          onMouseDown={e => e.preventDefault()}
++          onClick={() => onPick(s.path)}
++        >
++          <StickerThumb path={s.path} size={64} />
++        </button>
++      ))}
++    </div>
++  )
++}
+diff --git a/packages/frontend/src/components/composer/singleEmoji.ts b/packages/frontend/src/components/composer/singleEmoji.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..eee6e0c2ef0609a7e70a8327fcc5290d497a7c3d
+--- /dev/null
++++ b/packages/frontend/src/components/composer/singleEmoji.ts
+@@ -0,0 +1,23 @@
++/// <reference lib="es2022.intl" />
++// ponytail: RegExp() + the lib reference only so the mocha/ts-node test run
++// (ES5 default target) type-checks this file; the app itself targets ES2022.
++const isEmoji = new RegExp(
++  '\\p{Extended_Pictographic}|\\p{Regional_Indicator}',
++  'u'
++)
++
++/** Drop U+FE0F so "❤️" and "❤" (and sticker emoji lists) compare equal. */
++export const normalizeEmoji = (s: string) => s.replace(/\uFE0F/g, '')
++
++/**
++ * The normalized emoji if `text`, trimmed, is exactly one emoji (one grapheme
++ * cluster, so ZWJ sequences, skin tones and flags count as one), else null.
++ */
++export function singleEmoji(text: string): string | null {
++  const t = text.trim()
++  // cheap bail-out before segmenting: no emoji is longer than ~35 code units
++  if (t === '' || t.length > 40) return null
++  const first = new Intl.Segmenter().segment(t).containing(0)
++  if (first?.segment !== t || !isEmoji.test(t)) return null
++  return normalizeEmoji(t)
++}
+diff --git a/packages/frontend/src/hooks/chat/useDraft.ts b/packages/frontend/src/hooks/chat/useDraft.ts
+index fc88fe14b95198b3c0cbc44ab32f3439e043f2a1..7fc699841fc2ec7aa69c275702974e15828f6b91 100644
+--- a/packages/frontend/src/hooks/chat/useDraft.ts
++++ b/packages/frontend/src/hooks/chat/useDraft.ts
+@@ -5,6 +5,7 @@ import {
+   useMemo,
+   useEffectEvent,
+   useRef,
++  useLayoutEffect,
+ } from 'react'
+ import { T } from '@deltachat/jsonrpc-client'
+ 
+@@ -139,6 +140,12 @@ export function useDraft(
+      */
+     setDraftState,
+   ] = useState<DraftObject>(() => emptyDraft())
++  // Latest draft, so two edits in one event (send a sticker, drop the quote,
++  // clear the text) build on each other instead of on the render's stale copy.
++  const latestDraft = useRef(draftState)
++  useLayoutEffect(() => {
++    latestDraft.current = draftState
++  })
+ 
+   const clearDraftState = useCallback(() => {
+     setDraftState(emptyDraft())
+@@ -303,20 +310,16 @@ export function useDraft(
+     if (chatId !== InputChatId) {
+       log.warn("chat Id and InputChatId don't match, do nothing")
+     } else {
+-      setAndDebouncedSaveAndRefetchDraft?.({
+-        ...draftState,
+-        text,
+-      })
++      latestDraft.current = { ...latestDraft.current, text }
++      setAndDebouncedSaveAndRefetchDraft?.(latestDraft.current)
+     }
+   }
+ 
+   const removeQuote = useCallback(() => {
+-    setAndDebouncedSaveAndRefetchDraft?.({
+-      ...draftState,
+-      quote: null,
+-    })
++    latestDraft.current = { ...latestDraft.current, quote: null }
++    setAndDebouncedSaveAndRefetchDraft?.(latestDraft.current)
+     inputRef.current?.focus()
+-  }, [draftState, inputRef, setAndDebouncedSaveAndRefetchDraft])
++  }, [inputRef, setAndDebouncedSaveAndRefetchDraft])
+ 
+   const removeFile = useCallback(() => {
+     setAndDebouncedSaveAndRefetchDraft?.({
+diff --git a/packages/frontend/src/tests/singleEmoji.test.ts b/packages/frontend/src/tests/singleEmoji.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..96f7e716387d115cb14ecdc76b7e80f75af8108f
+--- /dev/null
++++ b/packages/frontend/src/tests/singleEmoji.test.ts
+@@ -0,0 +1,31 @@
++import { expect } from 'chai'
++import { describe, it } from 'mocha'
++
++import { singleEmoji } from '../components/composer/singleEmoji.js'
++
++describe('singleEmoji', () => {
++  it('accepts exactly one emoji, trimmed, FE0F-insensitive', () => {
++    expect(singleEmoji('🐱')).to.equal('🐱')
++    expect(singleEmoji('  🐱\n')).to.equal('🐱')
++    expect(singleEmoji('❤️')).to.equal('❤')
++    expect(singleEmoji('❤')).to.equal('❤')
++    expect(singleEmoji('👍🏽')).to.equal('👍🏽')
++    expect(singleEmoji('👨‍👩‍👧')).to.equal('👨‍👩‍👧')
++    expect(singleEmoji('🇩🇪')).to.equal('🇩🇪')
++  })
++  it('rejects text, several emojis and non-emoji symbols', () => {
++    for (const s of [
++      '',
++      '  ',
++      'a',
++      'hello 🐱',
++      '🐱x',
++      '🐱🐶',
++      '🐱 🐱',
++      '1',
++      '#',
++      '©x',
++    ])
++      expect(singleEmoji(s), s).to.equal(null)
++  })
++})
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index 69d2e7284980e3535086226a6af883f6d3857b5f..705dd1d397c32719675ad8dfba2bb10c9d3beb3d 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -49,6 +49,8 @@ export interface DesktopSettingsType {
+   experimentalUnreadReadTime: boolean
+   /** webapp: Telegram-style reply threads (reply badge, thread mode in the message list). Off by default (experimental). */
+   experimentalReplyThreads: boolean
++  /** webapp: a single emoji in the composer suggests matching pack stickers. Off by default (experimental). */
++  experimentalStickerSuggestions: boolean
+   /** webapp: spelling/grammar check in the composer. Off by default. */
+   grammarCheck: boolean
+   /** webapp: which checker: Harper (English only, runs on this device) or LanguageTool (sends the draft to the server below) */
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index efe6b51aa9c95d088f39bc49beceaf73b924dd49..255439e396417f8d67f44143375c78702d187b5f 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -19,6 +19,7 @@ export function getDefaultState(): DesktopSettingsType {
+     experimentalCompletionMenu: true,
+     experimentalUnreadReadTime: false,
+     experimentalReplyThreads: false,
++    experimentalStickerSuggestions: false,
+     grammarCheck: false,
+     grammarCheckEngine: 'harper',
+     languageToolServer: undefined,

@@ -323,6 +323,43 @@ exists:
   gzip-bomb size cap) in both messages and the composer sticker picker (which
   now lists `.tgs` too). Mirrors ArcaneChat's animated-sticker support.
   `core/1011`, `core/1012`, `desktop/1014`, `desktop/1016`
+- **Sticker packs** — packs are stored by the core as rows in
+  `slothfulchat_sticker_packs` / `slothfulchat_stickers` that name ordinary,
+  deduplicated blobs, instead of upstream's loose files in
+  `<account>/stickers/<pack>/`. That puts them in backups and second-device
+  transfers (upstream's folder is in neither), makes saving a received
+  sticker free, and lets sending one skip the copy. Housekeeping keeps every
+  blob a pack names; `test_housekeeping_keeps_sticker_pack_blobs` fails if a
+  rebase drops that query. The tables are created with `IF NOT EXISTS`
+  outside the numbered migrations, like the reply index; old folder packs
+  move in on first use; `misc_get_stickers` / `misc_save_sticker` keep
+  working on top. New RPCs manage packs (create, rename, delete, add from
+  file or message, move, copy, remove), copy a pack from another profile,
+  and list recent chat stickers that are in no pack. Files are checked by
+  extension, magic bytes and size before they become stickers. FORK-ONLY:
+  if upstream implements packs, migrate to its storage.
+  The UI: the sticker tab gets a bottom bar like the emoji picker's
+  categories (each pack's first sticker; drop a sticker on one to move it
+  there) with Manage at its end; a Manage Stickers dialog (packs, drag and
+  drop between them — mouse, or rest a finger and drag on touch — image
+  files dropped in from other apps, Move/Copy to, add images, "Recently
+  Seen" chat stickers, packs of other profiles, export as zip, emojis per
+  sticker — read from StickersBot's `…+<emoji>.webp` file names, written
+  back on export, editable with the regular emoji picker); in chats, a received zip holding a pack
+  (StickersBot's `<title>/<files>` layout, or flat) shows as a pack card
+  with four stickers whose preview and "Add" button open the whole pack
+  (big preview per sticker) before adding — checked in the web runtime only
+  for downloaded zips up to 15 MiB, once in view, one at a time, cached;
+  the empty sticker tab links the Public Bots directory pre-searched for
+  "sticker" (hidden with the other community suggestions). Backup export
+  notes that other Delta Chat apps don't restore sticker packs.
+  `core/1027`, `desktop/1070`
+- **Sticker suggestions** (opt-in: Settings → Experimental → Composer) —
+  when the message is exactly one emoji, a strip above the input shows the
+  stickers tagged with it; tapping one sends it and clears the input, but
+  only if the input still holds just that emoji. Also fixes `useDraft`
+  building a second draft edit in the same event from a stale snapshot.
+  `desktop/1072`
 - **Export Chat** — the three-dot menu exports the open chat as a
   Telegram-style zip: a standalone `index.html` viewer that renders the chat
   with the app's own stylesheets and message markup (embedded JSON data +
@@ -761,6 +798,14 @@ need fork code (webimap, chunked downloads, the wasm port) are in 1000 and up.
   same window were lost; and the grouped "N new messages" notification counted
   messages from muted chats, which were only filtered out of the ungrouped
   path. `desktop/0009`
+- `mailto:` links without an address (`mailto:?body=…`, how bots such as
+  StickersBot offer commands in their HTML messages) failed with "QR code
+  could not be decoded": processQr asked core's `checkQr`, which only parses
+  a mailto: with an address, before checking for mailto: at all. They now go
+  to the mailto handler first, which asks which chat to draft the body in.
+  When the link is in an HTML message, the viewer's relay also passes the
+  message id and the body is drafted straight into that message's chat (the
+  user still sends it). `desktop/0010`, `desktop/1071`
 
 ## UI & mobile polish
 

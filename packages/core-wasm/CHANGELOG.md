@@ -1,5 +1,10 @@
 # Changelog
 
+- **Sticker packs in the database** (core patch 1027): saved stickers are
+  blobs listed in two new tables, so they are in backups, plus JSON-RPC to
+  manage packs (`get_sticker_packs`, `create_sticker_pack`, …,
+  `copy_sticker_pack_from_account`, `get_unsaved_sticker_messages`).
+  Existing `stickers/` folders are moved in on first use.
 - **No `log`→console bridge any more**: core reports Info/Warning/Error both
   through the `log` facade and as JSON-RPC events, so bridging the facade made
   every core log line appear twice on a page that prints the events. The
