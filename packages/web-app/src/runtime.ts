@@ -1606,21 +1606,15 @@ class BrowserRuntime {
     return ''
   }
   transformStickerURL(sticker_path: string): string {
-    // stickers live in <accounts>/<id>/stickers/<pack>/<file>, a sibling of
-    // dc.db-blobs — an absolute memfs path, so transformBlobURL routes it
-    // through /blob-path/ (the dc.db-blobs branch never matches) and the SW
-    // serves it exactly like any other blob.
+    // pack stickers are ordinary blobs (core sticker packs), so they are served
+    // like any other blob
     return this.transformBlobURL(sticker_path)
   }
-  async deleteSticker(stickerPath: string): Promise<void> {
-    // Stickers are blobs now (core sticker packs), shared with the messages
-    // that sent them: removing one goes through the core's remove_sticker.
-    // Deleting the file here would take it from those messages too.
-    if (stickerPath.includes('dc.db-blobs')) {
-      throw new Error('deleteSticker: use the remove_sticker RPC for pack stickers')
-    }
-    // the frontend passes the pack directory; fs_remove deletes a tree
-    await getCore().fsRemove(stickerPath)
+  async deleteSticker(_stickerPath: string): Promise<void> {
+    // Stickers are pack entries over blobs shared with the messages that sent
+    // them; the remove_sticker RPC drops the entry, deleting a file here would
+    // take it from those messages too.
+    throw new Error('deleteSticker: use the remove_sticker RPC')
   }
 
   async showOpenFileDialog(options: {

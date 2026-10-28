@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Wed, 28 Oct 2026 02:48:43 +0000
+Subject: [PATCH] fix: address-less mailto: links fail as "QR code could not be
+ decoded"
+
+processQr asks core's checkQr first, and core only parses a mailto: with
+an address. A link like `mailto:?body=/command` (bots, e.g. StickersBot,
+put these in their HTML messages to prefill a command) therefore failed
+with "QR code could not be decoded" and never reached useOpenMailtoLink,
+which already handles a missing address by asking which chat to draft the
+body in. When checkQr rejects a mailto: link in the default scan context,
+hand it to the mailto handler. Scans on the welcome screen or for a backup
+transfer, and mailto: links with an address, keep their existing checks
+and flow.
+
+Patch-Range: upstream-fix
+---
+ packages/frontend/src/hooks/useProcessQr.ts | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/packages/frontend/src/hooks/useProcessQr.ts b/packages/frontend/src/hooks/useProcessQr.ts
+index 56ab3e586898fb80cf3b44ff0407eb22d2b30735..68a88983a0836946d5f719d669d81576703f19bb 100644
+--- a/packages/frontend/src/hooks/useProcessQr.ts
++++ b/packages/frontend/src/hooks/useProcessQr.ts
+@@ -213,6 +213,16 @@ export default function useProcessQR() {
+       try {
+         qr = await BackendRemote.rpc.checkQr(accountId, url)
+       } catch (err) {
++        // core only parses a mailto: with an address; a `mailto:?body=…`
++        // (bots use them to prefill a command) is still a mailto link, so
++        // hand it to the mailto handler instead of failing it as a QR code
++        if (
++          scanContext === SCAN_CONTEXT_TYPE.DEFAULT &&
++          url.toLowerCase().startsWith('mailto:')
++        ) {
++          await openMailtoLink(accountId, url)
++          return callback?.()
++        }
+         log.error(err)
+ 
+         await openAlertDialog({

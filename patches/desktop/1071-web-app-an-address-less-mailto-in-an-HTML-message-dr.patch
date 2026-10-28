@@ -20,9 +20,9 @@ runtime.ts), and __slothfulProcessQr takes it as an optional third
 argument, routing such mailto: links to useOpenMailtoLink with it.
 Links with an address keep the existing flow.
 ---
- .../frontend/src/components/RuntimeAdapter.tsx    | 15 +++++++++++++--
- packages/frontend/src/hooks/useOpenMailtoLink.ts  | 14 ++++++++++++--
- 2 files changed, 25 insertions(+), 4 deletions(-)
+ .../src/components/RuntimeAdapter.tsx         | 15 ++++++++++--
+ .../frontend/src/hooks/useOpenMailtoLink.ts   | 24 +++++++++++++++++--
+ 2 files changed, 35 insertions(+), 4 deletions(-)
 
 diff --git a/packages/frontend/src/components/RuntimeAdapter.tsx b/packages/frontend/src/components/RuntimeAdapter.tsx
 index 42bcdd0f7a07d5f530a195c227436b09dff64b10..01e5428286e96f19110e66c8104bd4e48c72d1c3 100644
@@ -71,7 +71,7 @@ index 42bcdd0f7a07d5f530a195c227436b09dff64b10..01e5428286e96f19110e66c8104bd4e4
    useEffect(() => {
      runtime.onOpenQrUrl = (url: string) => {
 diff --git a/packages/frontend/src/hooks/useOpenMailtoLink.ts b/packages/frontend/src/hooks/useOpenMailtoLink.ts
-index 3e035879b4f7ea77917bebb67b36b3726a2311c7..11a042784872b330204a06b3753e6a9d312d59b0 100644
+index 3e035879b4f7ea77917bebb67b36b3726a2311c7..c9a0a4940f595cb0a562a027186ba8be9e2e88aa 100644
 --- a/packages/frontend/src/hooks/useOpenMailtoLink.ts
 +++ b/packages/frontend/src/hooks/useOpenMailtoLink.ts
 @@ -9,6 +9,7 @@ import useDialog from './dialog/useDialog'
@@ -103,16 +103,26 @@ index 3e035879b4f7ea77917bebb67b36b3726a2311c7..11a042784872b330204a06b3753e6a9d
        log.debug('processing mailto url:', url)
  
        try {
-@@ -52,6 +56,12 @@ export default function useOpenMailtoLink() {
+@@ -52,6 +56,22 @@ export default function useOpenMailtoLink() {
                selectChat(accountId, chatId)
              }
            }
 +        } else if (messageText && fromMessageId != null) {
++          // the chat of the message the link is in, if one can write there
++          // (not e.g. a contact request); otherwise ask like upstream does
 +          const { chatId } = await BackendRemote.rpc.getMessage(
 +            accountId,
 +            fromMessageId
 +          )
-+          await createDraftMessage(accountId, chatId, messageText)
++          const { canSend } = await BackendRemote.rpc.getFullChatById(
++            accountId,
++            chatId
++          )
++          if (canSend) {
++            await createDraftMessage(accountId, chatId, messageText)
++          } else {
++            openDialog(MailtoDialog, { messageText })
++          }
          } else {
            if (messageText) {
              // Body but no email address was given in link, show a dialogue to

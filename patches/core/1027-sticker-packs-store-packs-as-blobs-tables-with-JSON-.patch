@@ -42,11 +42,11 @@ upstream's storage instead of keeping both.
  deltachat-jsonrpc/src/api/types/message.rs |  41 ++
  src/lib.rs                                 |   1 +
  src/sql.rs                                 |  22 +
- src/sql/migrations.rs                      |  25 ++
+ src/sql/migrations.rs                      |  25 +
  src/sql/sql_tests.rs                       |  38 ++
- src/sticker_packs.rs                       | 485 +++++++++++++++++++++
- src/sticker_packs/sticker_packs_tests.rs   | 180 ++++++++
- 8 files changed, 932 insertions(+), 71 deletions(-)
+ src/sticker_packs.rs                       | 520 +++++++++++++++++++++
+ src/sticker_packs/sticker_packs_tests.rs   | 225 +++++++++
+ 8 files changed, 1012 insertions(+), 71 deletions(-)
  create mode 100644 src/sticker_packs.rs
  create mode 100644 src/sticker_packs/sticker_packs_tests.rs
 
@@ -489,10 +489,10 @@ index 4914dd653e9131e2245bc7f45e9f5e3ed86a2f42..b66492f3b454539b6738d014f15008a8
 +}
 diff --git a/src/sticker_packs.rs b/src/sticker_packs.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..bee01f631f4fe74025a45cffd962edf27376fa4a
+index 0000000000000000000000000000000000000000..456c09c42d6276611e62f28de76ab36f6eff4a3f
 --- /dev/null
 +++ b/src/sticker_packs.rs
-@@ -0,0 +1,485 @@
+@@ -0,0 +1,520 @@
 +//! # Sticker packs (slothfulchat fork)
 +//!
 +//! Upstream keeps saved stickers as plain files in `<account>/stickers/<pack>/`,
@@ -743,7 +743,8 @@ index 0000000000000000000000000000000000000000..bee01f631f4fe74025a45cffd962edf2
 +    );
 +    let blobname = msg.param.get(Param::File).context("sticker has no file")?;
 +    // A received sticker's blob is named by content like any other, but the
-+    // extension comes from the sender: check it like a file from disk.
++    // extension comes from the sender: make sure it is a sticker type. Size and
++    // content are not checked (add_sticker_from_file does that).
 +    let blob = BlobObject::from_name(context, blobname)?;
 +    let ext = blob.suffix().and_then(sticker_extension_of_suffix);
 +    ensure!(
@@ -880,8 +881,21 @@ index 0000000000000000000000000000000000000000..bee01f631f4fe74025a45cffd962edf2
 +        .with_context(|| format!("no sticker pack {pack_id}"))?;
 +    let new_id = create_pack(context, &pack.name).await?;
 +    for sticker in &pack.stickers {
++        // A sticker saved from a message was never size- or content-checked,
++        // so this can refuse it; one bad sticker must not cut the copy short.
 +        let id =
-+            add_sticker_from_file(context, new_id, Path::new(&sticker.path), &sticker.path).await?;
++            match add_sticker_from_file(context, new_id, Path::new(&sticker.path), &sticker.path)
++                .await
++            {
++                Ok(id) => id,
++                Err(err) => {
++                    warn!(
++                        context,
++                        "Copying sticker pack: skipping {}: {err:#}.", sticker.path
++                    );
++                    continue;
++                }
++            };
 +        if !sticker.emojis.is_empty() {
 +            set_sticker_emojis(context, id, &sticker.emojis).await?;
 +        }
@@ -942,15 +956,24 @@ index 0000000000000000000000000000000000000000..bee01f631f4fe74025a45cffd962edf2
 +}
 +
 +/// Moves packs from upstream's `<account>/stickers/<pack>/` folders into the
-+/// tables, then deletes the folder. Files that are not valid stickers are
-+/// dropped with the folder: upstream would not have listed them either.
++/// tables. A pack folder is deleted once all its stickers are in; one with a
++/// file that failed (too big, wrong content, write error) stays on disk and is
++/// retried next time, which only adds what is still missing. Other files are
++/// dropped with their folder: upstream would not have listed them either.
 +async fn migrate_sticker_folder(context: &Context) -> Result<()> {
++    // The UI calls get_packs several times at once; without this, two calls
++    // would both import the same folder.
++    // ponytail: one lock for all profiles; migrating is a read_dir of a missing
++    // folder after the first time, so they hardly ever wait on each other.
++    static MIGRATING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
++    let _guard = MIGRATING.lock().await;
 +    let Some(folder) = context.get_dbfile().parent().map(|p| p.join("stickers")) else {
 +        return Ok(());
 +    };
 +    let Ok(mut packs) = tokio::fs::read_dir(&folder).await else {
 +        return Ok(()); // nothing to migrate
 +    };
++    let mut kept = false;
 +    while let Some(entry) = packs.next_entry().await? {
 +        if !entry.file_type().await?.is_dir() {
 +            continue;
@@ -960,6 +983,7 @@ index 0000000000000000000000000000000000000000..bee01f631f4fe74025a45cffd962edf2
 +            Some(id) => id,
 +            None => create_pack(context, &name).await?,
 +        };
++        let mut failed = false;
 +        let mut files = tokio::fs::read_dir(entry.path()).await?;
 +        while let Some(file) = files.next_entry().await? {
 +            let file_name = file.file_name().to_string_lossy().into_owned();
@@ -968,11 +992,22 @@ index 0000000000000000000000000000000000000000..bee01f631f4fe74025a45cffd962edf2
 +                && let Err(err) =
 +                    add_sticker_from_file(context, pack_id, &file.path(), &file_name).await
 +            {
-+                warn!(context, "Sticker migration: skipping {file_name}: {err:#}.");
++                warn!(
++                    context,
++                    "Sticker migration: keeping {name}/{file_name}: {err:#}."
++                );
++                failed = true;
 +            }
 +        }
++        if failed {
++            kept = true;
++        } else {
++            tokio::fs::remove_dir_all(entry.path()).await?;
++        }
 +    }
-+    tokio::fs::remove_dir_all(&folder).await?;
++    if !kept {
++        tokio::fs::remove_dir_all(&folder).await?;
++    }
 +    Ok(())
 +}
 +
@@ -980,10 +1015,10 @@ index 0000000000000000000000000000000000000000..bee01f631f4fe74025a45cffd962edf2
 +mod sticker_packs_tests;
 diff --git a/src/sticker_packs/sticker_packs_tests.rs b/src/sticker_packs/sticker_packs_tests.rs
 new file mode 100644
-index 0000000000000000000000000000000000000000..5c33227591c9b47fe6a873261e09141456b8186f
+index 0000000000000000000000000000000000000000..abf7972c6e56f4dc51c9663e412534ded6059c3b
 --- /dev/null
 +++ b/src/sticker_packs/sticker_packs_tests.rs
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,225 @@
 +use super::*;
 +use crate::test_utils::TestContext;
 +
@@ -1107,6 +1142,17 @@ index 0000000000000000000000000000000000000000..5c33227591c9b47fe6a873261e091414
 +    assert_eq!(copied.name, "Shared (2)");
 +    assert_eq!(copied.stickers.len(), 1);
 +    assert!(Path::new(&copied.stickers[0].path).starts_with(to.get_blobdir()));
++
++    // A saved sticker add_sticker_from_file refuses (here: not really a PNG)
++    // is skipped, the rest is copied.
++    let bad = BlobObject::create_and_deduplicate_from_bytes(&from, b"not a png", "x.png")?;
++    insert_sticker(&from, pack, bad.as_name()).await?;
++    let new = copy_pack_from(&to, &from, pack).await?;
++    let packs = get_packs(&to).await?;
++    assert_eq!(
++        packs.iter().find(|p| p.id == new).unwrap().stickers.len(),
++        1
++    );
 +    Ok(())
 +}
 +
@@ -1124,6 +1170,40 @@ index 0000000000000000000000000000000000000000..5c33227591c9b47fe6a873261e091414
 +    assert_eq!(packs[0].name, "Saved");
 +    assert_eq!(packs[0].stickers.len(), 1);
 +    assert!(!folder.exists(), "old sticker folder left behind");
++    Ok(())
++}
++
++/// A pack folder with a file that can't be imported stays on disk, and
++/// concurrent or repeated migrations import nothing twice.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn test_migrate_sticker_folder_keeps_failures() -> Result<()> {
++    let t = TestContext::new().await;
++    let folder = t.get_dbfile().parent().unwrap().join("stickers");
++    tokio::fs::create_dir_all(folder.join("Fun")).await?;
++    tokio::fs::write(folder.join("Fun/1.gif"), GIF).await?;
++    tokio::fs::write(folder.join("Fun/2.png"), GIF).await?; // magic mismatch
++    let big = vec![0u8; MAX_STICKER_BYTES as usize + 1];
++    tokio::fs::write(folder.join("Fun/3.gif"), &big).await?;
++    tokio::fs::create_dir_all(folder.join("Ok")).await?;
++    tokio::fs::write(folder.join("Ok/1.gif"), GIF).await?;
++
++    let (a, b) = tokio::join!(get_packs(&t), get_packs(&t));
++    let (a, b) = (a?, b?);
++    assert_eq!(a, b);
++    let summary = |p: &[StickerPack]| {
++        p.iter()
++            .map(|p| (p.name.clone(), p.stickers.len()))
++            .collect::<Vec<_>>()
++    };
++    let expected = [("Fun".to_string(), 1), ("Ok".to_string(), 1)];
++    assert_eq!(summary(&a), expected);
++    assert!(folder.join("Fun/2.png").exists());
++    assert!(folder.join("Fun/3.gif").exists());
++    assert!(!folder.join("Ok").exists());
++
++    // Retrying adds nothing new.
++    assert_eq!(summary(&get_packs(&t).await?), expected);
++    assert!(folder.join("Fun/2.png").exists());
 +    Ok(())
 +}
 +

@@ -23,14 +23,14 @@ the quote back; both now build on the latest draft via a ref.
 ---
  .../scss/composer/_completion-menu.scss       | 30 +++++++
  .../Settings/ExperimentalFeatures.tsx         |  6 ++
- .../src/components/composer/Composer.tsx      | 55 ++++++++++++-
+ .../src/components/composer/Composer.tsx      | 77 +++++++++++++++++-
  .../composer/StickerSuggestions.tsx           | 80 +++++++++++++++++++
  .../src/components/composer/singleEmoji.ts    | 23 ++++++
  packages/frontend/src/hooks/chat/useDraft.ts  | 21 ++---
  .../frontend/src/tests/singleEmoji.test.ts    | 31 +++++++
  packages/shared/shared-types.d.ts             |  2 +
  packages/shared/state.ts                      |  1 +
- 9 files changed, 238 insertions(+), 11 deletions(-)
+ 9 files changed, 260 insertions(+), 11 deletions(-)
  create mode 100644 packages/frontend/src/components/composer/StickerSuggestions.tsx
  create mode 100644 packages/frontend/src/components/composer/singleEmoji.ts
  create mode 100644 packages/frontend/src/tests/singleEmoji.test.ts
@@ -91,7 +91,7 @@ index cc431cfabe557c0d47b21f9049fa7caad1853fe5..a5399360b73112c35fd4db74628caca7
          settingsKey='grammarCheck'
          label='Grammar & spelling checker'
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..c08a7a52e6d8ec9085665909c317e9027212cfbd 100644
+index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0c2a2fcaa5c73131e60c10e1359a0b33ae8d6ffa 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
 @@ -16,6 +16,8 @@ import ComposerMessageInput from './ComposerMessageInput'
@@ -120,7 +120,7 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..c08a7a52e6d8ec9085665909c317e902
      },
      [
        accountId,
-@@ -431,6 +434,37 @@ const Composer = forwardRef<
+@@ -431,6 +434,62 @@ const Composer = forwardRef<
        threadQuoteMissing,
      ]
    )
@@ -131,9 +131,24 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..c08a7a52e6d8ec9085665909c317e902
 +  if (useHasChanged2(draftState.text) && suggestionsDismissed) {
 +    setSuggestionsDismissed(false)
 +  }
++  // an IME candidate can be a single emoji; never offer (or clear) mid-composition
++  const [composing, setComposing] = useState(false)
++  useEffect(() => {
++    const textarea = regularMessageInputRef.current?.textareaRef.current
++    if (!textarea) return
++    const start = () => setComposing(true)
++    const end = () => setComposing(false)
++    textarea.addEventListener('compositionstart', start)
++    textarea.addEventListener('compositionend', end)
++    return () => {
++      textarea.removeEventListener('compositionstart', start)
++      textarea.removeEventListener('compositionend', end)
++    }
++  })
 +  const suggestionEmoji =
 +    settingsStore?.desktopSettings.experimentalStickerSuggestions === true &&
 +    !suggestionsDismissed &&
++    !composing &&
 +    !draftState.file &&
 +    !messageEditing.isEditingModeActive
 +      ? singleEmoji(draftState.text)
@@ -141,49 +156,56 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..c08a7a52e6d8ec9085665909c317e902
 +  const suggestionText = draftState.text
 +  const onSuggestionPick = async (stickerPath: string) => {
 +    // the textarea is the live truth; React may not have re-rendered yet
-+    const liveText = () =>
-+      regularMessageInputRef.current?.textareaRef.current?.value
-+    if (liveText() !== suggestionText) {
++    const liveText = regularMessageInputRef.current?.textareaRef.current?.value
++    if (liveText !== suggestionText || threadQuoteMissing) {
 +      // typed on meanwhile: send nothing, just get out of the way
 +      setSuggestionsDismissed(true)
 +      return
 +    }
-+    // clear only if nothing was typed while sending, so no input is lost
-+    if ((await onStickerClick(stickerPath)) && liveText() === suggestionText) {
-+      updateDraftText('', chatId)
++    // Clear first, like sending text does: while the send is in flight a
++    // second tap or Enter must find no emoji left to send again.
++    updateDraftText('', chatId)
++    try {
++      await onStickerClick(stickerPath)
++    } catch (error) {
++      // not sent: give the emoji back, unless something was typed since
++      if (!regularMessageInputRef.current?.textareaRef.current?.value) {
++        updateDraftText(suggestionText, chatId)
++      }
++      throw error
 +    }
 +    regularMessageInputRef.current?.focus()
 +  }
++  /** whether the strip is on screen (it renders nothing without matches) */
++  const suggestionsShown = () =>
++    !!document.querySelector('[data-testid="sticker-suggestions"]')
 +
    const shiftPressed = useRef(false)
    const onEmojiSelect = (emoji: EmojiMartData) => {
      log.debug(`EmojiPicker: Selected ${emoji.id}`)
-@@ -453,7 +487,12 @@ const Composer = forwardRef<
+@@ -453,7 +512,9 @@ const Composer = forwardRef<
              (ev.target as any).id
            ) &&
            !showEmojiPicker &&
 -          !showAppPicker
 +          !showAppPicker &&
 +          // a focused suggestion button counts as the composer
-+          !(
-+            suggestionEmoji &&
-+            (ev.target as Element).closest?.('.sticker-suggestions')
-+          )
++          !(ev.target as Element).closest?.('.sticker-suggestions')
          ) {
            // only handle escape events in composer or related components here
            return
-@@ -467,6 +506,10 @@ const Composer = forwardRef<
+@@ -467,6 +528,10 @@ const Composer = forwardRef<
            setShowAppPicker(false)
            handled = true
          }
-+        if (!handled && suggestionEmoji) {
++        if (!handled && suggestionEmoji && suggestionsShown()) {
 +          setSuggestionsDismissed(true)
 +          handled = true
 +        }
          if (!handled && messageEditing.isEditingModeActive) {
            messageEditing.cancelEditing()
            handled = true
-@@ -510,6 +553,7 @@ const Composer = forwardRef<
+@@ -510,6 +575,7 @@ const Composer = forwardRef<
      editMessageInputRef,
      showEmojiPicker,
      showAppPicker,
@@ -191,7 +213,7 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..c08a7a52e6d8ec9085665909c317e902
      draftState.quote,
      removeQuote,
    ])
-@@ -920,6 +964,13 @@ const Composer = forwardRef<
+@@ -920,6 +986,13 @@ const Composer = forwardRef<
            )}
            {settingsStore && !recording && (
              <>

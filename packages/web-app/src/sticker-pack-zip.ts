@@ -40,7 +40,8 @@ export function cleanPackName(raw: string): string {
   }
   // eslint-disable-next-line no-control-regex
   name = name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 64)
-  return name || 'Stickers'
+  // '.' or '..' would be a path step in the exported zip
+  return /^\.*$/.test(name) ? 'Stickers' : name
 }
 
 /** The pack in this zip, or null if it is anything else. */

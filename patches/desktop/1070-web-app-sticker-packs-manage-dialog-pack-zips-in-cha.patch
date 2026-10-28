@@ -43,14 +43,14 @@ patch); this is the UI for them.
  packages/frontend/src/backend/stickerPacks.ts |  62 ++
  .../src/components/Settings/Backup.tsx        |  12 +-
  .../src/components/Settings/ChatsAndMedia.tsx |   2 +-
- .../StickerPacks/ManageStickers.tsx           | 694 ++++++++++++++++++
- .../src/components/StickerPacks/index.tsx     | 405 ++++++++++
+ .../StickerPacks/ManageStickers.tsx           | 722 ++++++++++++++++++
+ .../src/components/StickerPacks/index.tsx     | 412 ++++++++++
  .../StickerPacks/styles.module.scss           | 402 ++++++++++
- .../attachment/messageAttachment.tsx          |  12 +-
- .../composer/EmojiAndStickerPicker.tsx        | 216 +++++-
+ .../attachment/messageAttachment.tsx          |  13 +-
+ .../composer/EmojiAndStickerPicker.tsx        | 224 +++++-
  .../components/dialogs/PublicBots/index.tsx   |  33 +-
  .../src/components/message/Message.tsx        |  12 +
- 10 files changed, 1812 insertions(+), 38 deletions(-)
+ 10 files changed, 1856 insertions(+), 38 deletions(-)
  create mode 100644 packages/frontend/src/backend/stickerPacks.ts
  create mode 100644 packages/frontend/src/components/StickerPacks/ManageStickers.tsx
  create mode 100644 packages/frontend/src/components/StickerPacks/index.tsx
@@ -170,11 +170,17 @@ index 3e76a2c458e5d678daae7219ece178ccfa8408c5..3d1229506136dcd8d7cd7b7617659442
            <DesktopSettingsSwitch
 diff --git a/packages/frontend/src/components/StickerPacks/ManageStickers.tsx b/packages/frontend/src/components/StickerPacks/ManageStickers.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..1be68a7f1e4b59b9ff685acaf3d7c8d8bf5e981a
+index 0000000000000000000000000000000000000000..1be94ece844c46671c80a5c42ec83af6fda6878b
 --- /dev/null
 +++ b/packages/frontend/src/components/StickerPacks/ManageStickers.tsx
-@@ -0,0 +1,694 @@
-+import React, { useCallback, useContext, useEffect, useState } from 'react'
+@@ -0,0 +1,722 @@
++import React, {
++  useCallback,
++  useContext,
++  useEffect,
++  useRef,
++  useState,
++} from 'react'
 +import classNames from 'classnames'
 +import { basename } from 'path'
 +
@@ -195,7 +201,12 @@ index 0000000000000000000000000000000000000000..1be68a7f1e4b59b9ff685acaf3d7c8d8
 +import useConfirmationDialog from '../../hooks/dialog/useConfirmationDialog'
 +import useTranslationFunction from '../../hooks/useTranslationFunction'
 +import { mouseEventToPosition } from '../../utils/mouseEventToPosition'
-+import { StickerThumb, importStickerZip, stickersApi } from '.'
++import {
++  StickerThumb,
++  importStickerZip,
++  reportStickerError,
++  stickersApi,
++} from '.'
 +
 +import type { DialogProps } from '../../contexts/DialogContext'
 +import type { ContextMenuItem } from '../ContextMenu'
@@ -350,17 +361,42 @@ index 0000000000000000000000000000000000000000..1be68a7f1e4b59b9ff685acaf3d7c8d8
 +    y: number
 +  } | null>(null)
 +
++  /** reloads; never rejects, failures go to the user */
 +  const refresh = useCallback(async () => {
-+    setPacks(await rpc.getStickerPacks(accountId))
-+    const ids = await rpc.getUnsavedStickerMessages(accountId, RECENT_LIMIT)
-+    const msgs = await rpc.getMessages(accountId, ids)
-+    const loaded: Type.Message[] = []
-+    for (const id of ids) {
-+      const msg = msgs[id]
-+      if (msg?.kind === 'message' && msg.file) loaded.push(msg)
++    try {
++      setPacks(await rpc.getStickerPacks(accountId))
++      const ids = await rpc.getUnsavedStickerMessages(accountId, RECENT_LIMIT)
++      const msgs = await rpc.getMessages(accountId, ids)
++      const loaded: Type.Message[] = []
++      for (const id of ids) {
++        const msg = msgs[id]
++        if (msg?.kind === 'message' && msg.file) loaded.push(msg)
++      }
++      setRecent(loaded)
++    } catch (error) {
++      reportStickerError(error)
 +    }
-+    setRecent(loaded)
 +  }, [accountId, rpc])
++
++  /** the running touch drag's teardown, so unmounting can end it */
++  const endTouchDrag = useRef<(() => void) | null>(null)
++  useEffect(() => () => endTouchDrag.current?.(), [])
++
++  // Files dropped beside a pack (toolbar, Recently Seen, gaps) must not fall
++  // through to the browser, which would open them in place of the app. Pack
++  // sections handle their own drops first (React's root listener runs before
++  // document's).
++  // ponytail: document-wide while the dialog is up; it's modal, so nothing
++  // else takes drops meanwhile.
++  useEffect(() => {
++    const guard = (ev: DragEvent) => ev.preventDefault()
++    document.addEventListener('dragover', guard)
++    document.addEventListener('drop', guard)
++    return () => {
++      document.removeEventListener('dragover', guard)
++      document.removeEventListener('drop', guard)
++    }
++  }, [])
 +
 +  useEffect(() => {
 +    refresh()
@@ -386,14 +422,7 @@ index 0000000000000000000000000000000000000000..1be68a7f1e4b59b9ff685acaf3d7c8d8
 +
 +  /** runs an action, then reloads; failures go to the user, not the console */
 +  const run = (action: () => Promise<unknown>) =>
-+    action()
-+      .catch(error =>
-+        window.__userFeedback({
-+          type: 'error',
-+          text: error instanceof Error ? error.message : String(error),
-+        })
-+      )
-+      .finally(refresh)
++    action().catch(reportStickerError).finally(refresh)
 +
 +  const askName = (title: string, initial = '') =>
 +    new Promise<string | null>(resolve =>
@@ -637,6 +666,7 @@ index 0000000000000000000000000000000000000000..1be68a7f1e4b59b9ff685acaf3d7c8d8
 +        setTouchDrag({ path, ...start })
 +      }, TOUCH_ARM_MS)
 +      const end = () => {
++        endTouchDrag.current = null
 +        clearTimeout(arm)
 +        document.removeEventListener('touchmove', move)
 +        document.removeEventListener('touchend', up)
@@ -673,6 +703,7 @@ index 0000000000000000000000000000000000000000..1be68a7f1e4b59b9ff685acaf3d7c8d8
 +      document.addEventListener('touchend', up, { passive: false })
 +      document.addEventListener('touchcancel', end)
 +      document.addEventListener('contextmenu', end, true)
++      endTouchDrag.current = end
 +    }
 +
 +  return (
@@ -833,12 +864,9 @@ index 0000000000000000000000000000000000000000..1be68a7f1e4b59b9ff685acaf3d7c8d8
 +                      )}
 +                    </div>
 +                  </div>
-+                  {packs.some(
-+                    // same "already there" check as the chat's pack card
-+                    p =>
-+                      p.name === pack.name &&
-+                      p.stickers.length === pack.stickers.length
-+                  ) ? (
++                  {/* same name-only "already there" check as the chat's
++                      pack card (ponytail note there) */}
++                  {packs.some(p => p.name === pack.name) ? (
 +                    <span className={styles.packCount}>
 +                      {tx('sticker_packs_added')}
 +                    </span>
@@ -870,10 +898,10 @@ index 0000000000000000000000000000000000000000..1be68a7f1e4b59b9ff685acaf3d7c8d8
 +}
 diff --git a/packages/frontend/src/components/StickerPacks/index.tsx b/packages/frontend/src/components/StickerPacks/index.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..54f5a4829ddaaa3379f3b350c57c2e8e1393fee3
+index 0000000000000000000000000000000000000000..b6f857b5f28393939d14b8b7ad5f6057b8b80c21
 --- /dev/null
 +++ b/packages/frontend/src/components/StickerPacks/index.tsx
-@@ -0,0 +1,405 @@
+@@ -0,0 +1,412 @@
 +import React, { useEffect, useRef, useState } from 'react'
 +import classNames from 'classnames'
 +
@@ -937,6 +965,13 @@ index 0000000000000000000000000000000000000000..54f5a4829ddaaa3379f3b350c57c2e8e
 +
 +export const isZipFile = (name: string | null | undefined) =>
 +  /\.zip$/i.test(name ?? '')
++
++/** Shows a failed sticker action to the user. */
++export const reportStickerError = (error: unknown) =>
++  window.__userFeedback({
++    type: 'error',
++    text: error instanceof Error ? error.message : String(error),
++  })
 +
 +/** What to tell the user when a zip can't be previewed or imported: why it
 + * is no sticker pack, or the error itself when something else failed. */
@@ -1007,9 +1042,12 @@ index 0000000000000000000000000000000000000000..54f5a4829ddaaa3379f3b350c57c2e8e
 +export function StickerPackZipCard({
 +  message,
 +  fallback,
++  tabindexForInteractiveContents,
 +}: {
 +  message: Type.Message & { file: string }
 +  fallback: React.ReactElement
++  /** the message list's roving tabindex, like the file tile's */
++  tabindexForInteractiveContents: -1 | 0
 +}) {
 +  const tx = useTranslationFunction()
 +  const ref = useRef<HTMLDivElement>(null)
@@ -1038,19 +1076,14 @@ index 0000000000000000000000000000000000000000..54f5a4829ddaaa3379f3b350c57c2e8e
 +
 +  useEffect(() => {
 +    if (!pack) return
-+    // "Added" when a pack of that name and size is already installed.
-+    // ponytail: name+count, not content; a renamed or edited copy shows "Add"
-+    // again, and adding it twice just makes "Name (2)".
++    // "Added" when a pack of that name is already installed. Not the count:
++    // a pack with skipped files is installed with fewer stickers.
++    // ponytail: name only, so a different pack with the same name also reads
++    // as added (the inspector still opens); compare contents if that bites.
 +    rpcStickers
 +      .getStickerPacks(selectedAccountId())
 +      .then(packs => {
-+        if (
-+          packs.some(
-+            p => p.name === pack.name && p.stickers.length === pack.count
-+          )
-+        ) {
-+          setAdded(true)
-+        }
++        if (packs.some(p => p.name === pack.name)) setAdded(true)
 +      })
 +      .catch(() => {})
 +  }, [pack])
@@ -1078,6 +1111,7 @@ index 0000000000000000000000000000000000000000..54f5a4829ddaaa3379f3b350c57c2e8e
 +        type='button'
 +        className={styles.zipCardGrid}
 +        onClick={openInspector}
++        tabIndex={tabindexForInteractiveContents}
 +        aria-label={tx('sticker_packs_view')}
 +        title={message.fileName ?? undefined}
 +      >
@@ -1103,6 +1137,7 @@ index 0000000000000000000000000000000000000000..54f5a4829ddaaa3379f3b350c57c2e8e
 +          })}
 +          disabled={added}
 +          onClick={openInspector}
++          tabIndex={tabindexForInteractiveContents}
 +        >
 +          {added ? tx('sticker_packs_added') : tx('sticker_packs_add_pack')}
 +        </button>
@@ -1688,7 +1723,7 @@ index 0000000000000000000000000000000000000000..b2d3e6867a8a42ff91220b3dbb008c21
 +  text-align: center;
 +}
 diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
-index 44fb2ad631397503c3cc78995270caf6850f0d00..16f3dabaaef6b43ce737587cbc0f475a27cadad7 100644
+index 44fb2ad631397503c3cc78995270caf6850f0d00..dd57815a7bf2bee7091755befb0ad21fa3fc09e3 100644
 --- a/packages/frontend/src/components/attachment/messageAttachment.tsx
 +++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
 @@ -30,6 +30,7 @@ import { useRpcFetch } from '../../hooks/useFetch'
@@ -1708,7 +1743,7 @@ index 44fb2ad631397503c3cc78995270caf6850f0d00..16f3dabaaef6b43ce737587cbc0f475a
      <button
        type='button'
        className={classNames(
-@@ -303,6 +304,15 @@ export default function Attachment({
+@@ -303,6 +304,16 @@ export default function Attachment({
        </div>
      </button>
    )
@@ -1717,6 +1752,7 @@ index 44fb2ad631397503c3cc78995270caf6850f0d00..16f3dabaaef6b43ce737587cbc0f475a
 +    <StickerPackZipCard
 +      message={message as typeof message & { file: string }}
 +      fallback={genericTile}
++      tabindexForInteractiveContents={tabindexForInteractiveContents}
 +    />
 +  ) : (
 +    genericTile
@@ -1725,7 +1761,7 @@ index 44fb2ad631397503c3cc78995270caf6850f0d00..16f3dabaaef6b43ce737587cbc0f475a
  /**
   * @see also {@linkcode GalleryAudioAttachment}.
 diff --git a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
-index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a8725e10af1 100644
+index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..55e0933476c73fc5b29507792986287f8cc6cc7f 100644
 --- a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
 +++ b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
 @@ -9,7 +9,6 @@ import React, {
@@ -1736,7 +1772,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
  import { selectedAccountId } from '../../ScreenController'
  import { runtime } from '@deltachat-desktop/runtime-interface'
  import EmojiPicker from '../EmojiPicker'
-@@ -17,6 +16,19 @@ import LottieSticker from '../attachment/LottieSticker'
+@@ -17,6 +16,24 @@ import LottieSticker from '../attachment/LottieSticker'
  import useTranslationFunction from '../../hooks/useTranslationFunction'
  import { ContextMenuContext } from '../../contexts/ContextMenuContext'
  import useConfirmationDialog from '../../hooks/dialog/useConfirmationDialog'
@@ -1744,7 +1780,12 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
 +import { useSettingsStore } from '../../stores/settings'
 +import { instanceHidesPublicSuggestions } from '../../utils/slothfulInstanceConfig'
 +import ManageStickersDialog from '../StickerPacks/ManageStickers'
-+import { StickerThumb, importStickerZip, stickersApi } from '../StickerPacks'
++import {
++  StickerThumb,
++  importStickerZip,
++  reportStickerError,
++  stickersApi,
++} from '../StickerPacks'
 +import { IconButton } from '../Icon'
 +import PublicBotsDialog from '../dialogs/PublicBots'
 +import stickerStyles from '../StickerPacks/styles.module.scss'
@@ -1756,7 +1797,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
  
  import styles from './styles.module.scss'
  
-@@ -27,14 +39,18 @@ import {
+@@ -27,14 +44,18 @@ import {
  } from '../../contexts/RovingTabindex'
  
  type Props = {
@@ -1776,7 +1817,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
    stickerPackName,
    stickerPackImages,
    setShowEmojiPicker,
-@@ -50,7 +66,7 @@ const DisplayedStickerPack = ({
+@@ -50,7 +71,7 @@ const DisplayedStickerPack = ({
    }
  
    return (
@@ -1785,7 +1826,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
        <div className='title'>{stickerPackName}</div>
        <div ref={listRef} className='container'>
          {/* Yes, we have separate `RovingTabindexProvider` for each
-@@ -60,11 +76,12 @@ const DisplayedStickerPack = ({
+@@ -60,11 +81,12 @@ const DisplayedStickerPack = ({
            wrapperElementRef={listRef}
            direction='horizontal'
          >
@@ -1802,7 +1843,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
                onStickerDeleted={onStickerDeleted}
              />
            ))}
-@@ -75,11 +92,12 @@ const DisplayedStickerPack = ({
+@@ -75,11 +97,12 @@ const DisplayedStickerPack = ({
  }
  
  function StickersListItem(props: {
@@ -1816,18 +1857,20 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
    const ref = useRef<HTMLButtonElement>(null)
    const rovingTabindex = useRovingTabindex(ref)
    const { openContextMenu } = useContext(ContextMenuContext)
-@@ -116,7 +134,9 @@ function StickersListItem(props: {
+@@ -116,7 +139,11 @@ function StickersListItem(props: {
                isConfirmDanger: true,
              })
              if (confirmed) {
 -              await runtime.deleteSticker(filePath)
 +              // slothfulchat: stickers are pack entries over shared blobs
 +              // (core sticker packs); this drops the entry, not the file
-+              await rpcStickers.removeSticker(selectedAccountId(), stickerId)
++              await rpcStickers
++                .removeSticker(selectedAccountId(), stickerId)
++                .catch(reportStickerError)
                onStickerDeleted()
              }
            },
-@@ -132,6 +152,11 @@ function StickersListItem(props: {
+@@ -132,6 +159,11 @@ function StickersListItem(props: {
        className={'sticker ' + rovingTabindex.className}
        onClick={onClick}
        onContextMenu={onContextMenu}
@@ -1839,7 +1882,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
        aria-haspopup='menu'
        tabIndex={rovingTabindex.tabIndex}
        onKeyDown={rovingTabindex.onKeydown}
-@@ -164,14 +189,87 @@ export const StickerPicker = ({
+@@ -164,14 +196,87 @@ export const StickerPicker = ({
    role: 'tabpanel' | undefined
    id: string
    labelledBy: string
@@ -1852,7 +1895,8 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
    const tx = useTranslationFunction()
 +  const { openDialog } = useDialog()
 +  const settingsStore = useSettingsStore()[0]
-+
+ 
+-  const stickerPackNames = Object.keys(stickers)
 +  const packs = stickers.filter(p => p.stickers.length > 0)
 +  // The bots are community-run: hidden with the other community
 +  // suggestions (Settings → Chats and Media, or instance-wide).
@@ -1860,8 +1904,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
 +    settingsStore != null &&
 +    settingsStore.desktopSettings.hideNewChatSuggestions !== true &&
 +    !instanceHidesPublicSuggestions()
- 
--  const stickerPackNames = Object.keys(stickers)
++
 +  const openManage = () => {
 +    setShowEmojiPicker(false)
 +    openDialog(ManageStickersDialog)
@@ -1912,7 +1955,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
 +    if (!stickerId) return
 +    rpcStickers
 +      .moveSticker(selectedAccountId(), stickerId, packId)
-+      .catch(() => {})
++      .catch(reportStickerError)
 +      .finally(onStickerDeleted) // reloads the packs
 +  }
 +  const current = activePack ?? packs[0]?.id
@@ -1929,7 +1972,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
  
    return (
      <div
-@@ -180,26 +278,102 @@ export const StickerPicker = ({
+@@ -180,26 +285,102 @@ export const StickerPicker = ({
        aria-labelledby={labelledBy}
        className='sticker-picker'
      >
@@ -2038,7 +2081,7 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
          </div>
        )}
      </div>
-@@ -253,13 +427,11 @@ export const EmojiAndStickerPicker = forwardRef<
+@@ -253,14 +434,13 @@ export const EmojiAndStickerPicker = forwardRef<
  
    const [_showSticker, setShowSticker] = useState(false)
    const showSticker = hideStickerPicker ? false : _showSticker
@@ -2053,8 +2096,10 @@ index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..51d96e6418961c6d1afee2ac88ec2a87
 +    rpcStickers
 +      .getStickerPacks(accountId)
        .then(stickers => setStickers(stickers))
++      .catch(reportStickerError)
    }, [accountId])
  
+   useEffect(() => {
 diff --git a/packages/frontend/src/components/dialogs/PublicBots/index.tsx b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
 index 7dc586b0b1fd556bdd5a2d6a8af2f69ddc45819b..fadeae3013e19254f7b6f95cf800aaada945684b 100644
 --- a/packages/frontend/src/components/dialogs/PublicBots/index.tsx

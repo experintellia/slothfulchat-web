@@ -2,6 +2,7 @@
 import { strict as assert } from 'node:assert'
 import {
   checkPackListing,
+  cleanPackName,
   emojisFromFileName,
   parsePackListing,
   stickerMagicMatches,
@@ -25,6 +26,12 @@ assert.equal(
   parsePackListing([f('a.png'), f('b.tgs'), f('__MACOSX/._a.png'), f('.DS_Store')], 'my-dogs.zip')?.name,
   'my-dogs'
 )
+
+// pack names never become path steps
+assert.equal(cleanPackName('%2E%2E'), 'Stickers')
+assert.equal(cleanPackName(' . '), 'Stickers')
+assert.equal(cleanPackName(''), 'Stickers')
+assert.equal(cleanPackName('...ok'), '...ok')
 
 // not a pack
 assert.equal(parsePackListing([f('a.png'), f('readme.txt')], 'x.zip'), null, 'other file types')

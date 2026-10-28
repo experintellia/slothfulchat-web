@@ -20,6 +20,7 @@ type Rpc = {
     { id: number; name: string; stickers: { id: number; path: string; emojis: string[] }[] }[]
   >
   createStickerPack(accountId: number, name: string): Promise<number>
+  deleteStickerPack(accountId: number, packId: number): Promise<unknown>
   addStickerFromFile(accountId: number, packId: number, path: string, name: string): Promise<number>
   setStickerEmojis(accountId: number, stickerId: number, emojis: string[]): Promise<unknown>
 }
@@ -59,7 +60,9 @@ function checkPack(data: Uint8Array, zipName: string): PackListing | string {
   try {
     unzipSync(data, {
       filter: f => {
-        files.push({ name: f.name, originalSize: f.originalSize })
+        // a STORED entry unzips to its compressed bytes whatever size it
+        // declares, so a lying originalSize must not get past the size caps
+        files.push({ name: f.name, originalSize: Math.max(f.size, f.originalSize) })
         return false
       },
     })
@@ -157,6 +160,10 @@ export function initStickerPacks(rpc: () => Rpc, fs: Fs): void {
       }
       await yieldToUi()
     }
+    if (!added) {
+      await rpc().deleteStickerPack(accountId, packId)
+      throw new Error('not a sticker pack: none of its files are valid stickers')
+    }
     return { packId, name: pack.name, added, skipped: pack.entries.length - added }
   }
 
@@ -166,27 +173,32 @@ export function initStickerPacks(rpc: () => Rpc, fs: Fs): void {
     const data = await fs.read(path)
     const pack = requirePack(data, zipName)
     const stickers: PreviewSticker[] = []
-    for (let i = 0; i < pack.entries.length; i += IMPORT_BATCH) {
-      const batch = pack.entries.slice(i, i + IMPORT_BATCH)
-      const files = unzipSome(data, batch)
-      for (const entry of batch) {
-        const bytes = files[entry]
-        // the extension decides the renderer, so it must not lie
-        if (!bytes || !stickerMagicMatches(entry, bytes)) continue
-        const name = entry.slice(entry.lastIndexOf('/') + 1)
-        // LottieSticker fetch()es its src and the CSP has no connect-src blob:,
-        // so a .tgs goes to a temp file the service worker serves instead
-        stickers.push(
-          /\.tgs$/i.test(name)
-            ? { name, emojis: emojisFromFileName(name), path: await fs.stage(name, bytes) }
-            : {
-                name,
-                emojis: emojisFromFileName(name),
-                url: URL.createObjectURL(new Blob([bytes as BlobPart], { type: stickerMime(name) })),
-              }
-        )
+    try {
+      for (let i = 0; i < pack.entries.length; i += IMPORT_BATCH) {
+        const batch = pack.entries.slice(i, i + IMPORT_BATCH)
+        const files = unzipSome(data, batch)
+        for (const entry of batch) {
+          const bytes = files[entry]
+          // the extension decides the renderer, so it must not lie
+          if (!bytes || !stickerMagicMatches(entry, bytes)) continue
+          const name = entry.slice(entry.lastIndexOf('/') + 1)
+          // LottieSticker fetch()es its src and the CSP has no connect-src blob:,
+          // so a .tgs goes to a temp file the service worker serves instead
+          stickers.push(
+            /\.tgs$/i.test(name)
+              ? { name, emojis: emojisFromFileName(name), path: await fs.stage(name, bytes) }
+              : {
+                  name,
+                  emojis: emojisFromFileName(name),
+                  url: URL.createObjectURL(new Blob([bytes as BlobPart], { type: stickerMime(name) })),
+                }
+          )
+        }
+        await yieldToUi()
       }
-      await yieldToUi()
+    } catch (error) {
+      await releasePreview({ name: pack.name, stickers })
+      throw error
     }
     return { name: pack.name, stickers }
   }
