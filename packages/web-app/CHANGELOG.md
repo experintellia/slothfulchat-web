@@ -1,5 +1,19 @@
 # Changelog
 
+- **Sticker packs.** Sticker pack zips you receive (for example from
+  StickersBot) show up as a pack you can add with one tap, and the new
+  Manage Stickers dialog lets you create, rename, export and rearrange packs,
+  save stickers from your chats and copy packs from your other profiles.
+  Packs are now part of your backups. Look through a received pack before
+  adding it, and see and edit which emojis each sticker stands for.
+- **Sticker suggestions (experimental).** Turn it on in Settings →
+  Experimental to get your matching stickers offered when you type a single
+  emoji.
+- **Bot links in HTML messages work.** Links like StickersBot's "download
+  this pack" no longer fail with "QR code could not be decoded"; they put the
+  bot command into the chat's message box for you to send.
+- **Opening file attachments works again.** Clicking a file such as a PDF
+  or a zip in a chat did nothing; it now opens or downloads the file.
 - **Write to the developer right away.** "Sloth (Slothful.chat Developer)" in
   New Chat now opens the chat immediately, instead of waiting for an invite
   handshake to finish first.

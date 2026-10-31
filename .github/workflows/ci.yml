@@ -133,6 +133,7 @@ jobs:
           packages/web-app/src/fatal-report.test.ts
           packages/web-app/src/emoji-sets.test.ts
           packages/web-app/src/temp-paths.test.ts
+          packages/web-app/src/sticker-pack-zip.test.ts
           packages/web-app/serve.test.mjs
           packages/web-app/api-docs/openrpc/deref.test.mjs
           packages/web-app/react-isolation.test.mjs

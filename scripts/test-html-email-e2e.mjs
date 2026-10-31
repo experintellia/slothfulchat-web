@@ -51,6 +51,7 @@ const CRAFTED_HTML = `<!doctype html><html><head>
     <p id="e2e-body">${BODY_TEXT}</p>
     <img id="e2e-remote" src="${REMOTE_IMG}">
     <a id="e2e-invite" href="https://i.delta.chat/#e2einvite">join</a>
+    <a id="e2e-mailto" href="mailto:?body=sgnl%3A%2F%2Faddstickers%2F%3Fpack_id%3De2e">get pack</a>
   </body></html>`
 
 // --- mock madmail (shared: scripts/mock-madmail.mjs) ---
@@ -323,6 +324,61 @@ try {
     `app link processed under originating account bob=${bob}, not selected alice=${alice} (checkQr accts: ${accts.join(',') || 'none'})`
   )
   if (!inviteRelay.isClosed()) await inviteRelay.waitForEvent('close', { timeout: 5000 }).catch(() => {})
+
+  // An address-less mailto: (how StickersBot offers commands) drafts its body
+  // in the chat of the message it's in — under the mail's account — instead
+  // of failing as an undecodable QR code.
+  // (the bogus invite left its "could not be decoded" alert, alice selected
+  // and the viewer closed: dismiss it and go back to bob's chat)
+  await page.getByTestId('qr-scan-failed').getByRole('button', { name: 'OK' }).click()
+  await page.evaluate(a => window.__selectAccount(a), bob)
+  await page.getByTestId(`selected-account:${bob}`).waitFor({ state: 'attached', timeout: 30_000 })
+  await page.locator('.chat-list .chat-list-item').filter({ hasText: FALLBACK_TEXT }).first().click()
+  await page.locator('.message .show-html').first().click()
+  await page.locator('dialog[open] iframe[src*="html-email.html"]').waitFor({ timeout: 30_000 })
+  const mailtoFrame = await (async () => {
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      for (const f of page.frames()) {
+        if (f.url().startsWith('blob:')) {
+          try {
+            if (await f.$('#e2e-mailto')) return f
+          } catch {
+            /* frame navigating */
+          }
+        }
+      }
+      await sleep(200)
+    }
+    throw new Error('mailto-link content frame not found')
+  })()
+  await Promise.all([context.waitForEvent('page'), mailtoFrame.click('#e2e-mailto')])
+  const composer = page.locator('#composer-textarea-non-edit')
+  await page
+    .waitForFunction(
+      () => document.querySelector('#composer-textarea-non-edit')?.value?.startsWith('sgnl://'),
+      null,
+      { timeout: 20_000 }
+    )
+    .catch(() => {})
+  check(
+    (await composer.inputValue().catch(() => '')) === 'sgnl://addstickers/?pack_id=e2e',
+    'address-less mailto: drafted its body in the composer'
+  )
+  // the composer saves it as the core draft of the chat the mail is in
+  let draft = null
+  for (let i = 0; i < 40 && draft?.text !== 'sgnl://addstickers/?pack_id=e2e'; i++) {
+    await sleep(250)
+    draft = await rpc('getDraft', bob, found.chatId).catch(() => null)
+  }
+  check(
+    draft?.text === 'sgnl://addstickers/?pack_id=e2e',
+    "…as the draft of the mail's chat, under the mail's account"
+  )
+  check(
+    !(await page.getByTestId('qr-scan-failed').count()),
+    'no "QR code could not be decoded" dialog'
+  )
 
   // #2 (regression guard for PR #157, which this branch's revert could silently
   // undo): opening a file attachment must not keep a window.opener handle back

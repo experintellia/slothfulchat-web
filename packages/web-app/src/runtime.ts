@@ -42,6 +42,7 @@ import {
 import { tempRemovalPath } from './temp-paths.ts'
 import { initDiagnostics } from './diagnostics'
 import { initChatExport } from './chat-export'
+import { initStickerPacks } from './sticker-packs'
 import { applyTxOverlay, initTranslationEditor, localeDir } from './translation-editor'
 
 // earliest boot milestone we control: our runtime bundle has finished loading
@@ -962,6 +963,7 @@ class BrowserRuntime {
       // the main app to another one — the viewer tags every relayed link with
       // it (see html-email.ts) and openAppLink delivers it explicitly.
       accountId,
+      messageId,
       isContactRequest,
       alwaysLoadRemote: false, // patched in below once settings are read
       labels: {
@@ -1059,7 +1061,7 @@ class BrowserRuntime {
    *    openLink opens them with noreferrer so the untrusted mail leaks
    *    neither the app URL nor an opener handle.
    */
-  private openAppLink(url: string, accountId?: number): void {
+  private openAppLink(url: string, accountId?: number, messageId?: number): void {
     const lower = String(url).toLowerCase()
     // check app schemes FIRST: an i.delta.chat invite is also an https: URL,
     // and it must go to the invite flow, not the generic web-link path
@@ -1073,7 +1075,7 @@ class BrowserRuntime {
     }
     this.htmlEmailDialog?.dlg.close() // reveal the app (and its upcoming dialog)
     window.focus() // best effort when the viewer is a popup window
-    if (isApp) return this.deliverAppLinkToAccount(url, accountId)
+    if (isApp) return this.deliverAppLinkToAccount(url, accountId, messageId)
     // #4: web link -> safe-link path (tracking-strip). Falls back to a plain
     // (noreferrer) open if the frontend hook isn't registered yet.
     const safe = (window as any).__slothfulOpenLinkSafely
@@ -1091,11 +1093,16 @@ class BrowserRuntime {
    * needed. Falls back to onOpenQrUrl (current account) only if the hook isn't
    * registered — it always is by the time a viewer can be opened.
    */
-  private deliverAppLinkToAccount(url: string, accountId?: number): void {
+  private deliverAppLinkToAccount(
+    url: string,
+    accountId?: number,
+    messageId?: number
+  ): void {
     const processQr = (window as any).__slothfulProcessQr
     if (typeof processQr === 'function' && accountId != null) {
       try {
-        return void processQr(accountId, url)
+        // messageId: the mail the link is in, for address-less mailto: links
+        return void processQr(accountId, url, messageId)
       } catch (err) {
         this.log.error('app-link delivery failed', err)
         return
@@ -1464,7 +1471,11 @@ class BrowserRuntime {
     showWebxdcNotImplementedDialog()
   }
   async openPath(path: string): Promise<string> {
-    if (path.includes('dc.db-blobs')) {
+    // /tmp/: openAttachmentInShell first copies the file there
+    // (copyFileToInternalTmpDir) — every click on a generic file tile goes
+    // that way, so refusing temp paths broke opening plain attachments. The
+    // blobs SW serves /blob-path/ with the same sandbox CSP as /blobs/.
+    if (path.includes('dc.db-blobs') || path.startsWith('/tmp/')) {
       // 'noopener': the opened document is sender-controlled content on our own
       // origin, so it must not keep a window.opener handle on the messenger tab
       // (an opener handle can navigate that tab away, e.g. to a login phish).
@@ -1595,15 +1606,15 @@ class BrowserRuntime {
     return ''
   }
   transformStickerURL(sticker_path: string): string {
-    // stickers live in <accounts>/<id>/stickers/<pack>/<file>, a sibling of
-    // dc.db-blobs — an absolute memfs path, so transformBlobURL routes it
-    // through /blob-path/ (the dc.db-blobs branch never matches) and the SW
-    // serves it exactly like any other blob.
+    // pack stickers are ordinary blobs (core sticker packs), so they are served
+    // like any other blob
     return this.transformBlobURL(sticker_path)
   }
-  async deleteSticker(stickerPath: string): Promise<void> {
-    // the frontend passes the pack directory; fs_remove deletes a tree
-    await getCore().fsRemove(stickerPath)
+  async deleteSticker(_stickerPath: string): Promise<void> {
+    // Stickers are pack entries over blobs shared with the messages that sent
+    // them; the remove_sticker RPC drops the entry, deleting a file here would
+    // take it from those messages too.
+    throw new Error('deleteSticker: use the remove_sticker RPC')
   }
 
   async showOpenFileDialog(options: {
@@ -1688,8 +1699,11 @@ class BrowserRuntime {
 
     // app-link relay target for the HTML email viewer (see openAppLink); the
     // second arg is the account the mail was opened from (#3)
-    ;(window as any).__slothfulOpenAppLink = (url: string, accountId?: number) =>
-      this.openAppLink(url, accountId)
+    ;(window as any).__slothfulOpenAppLink = (
+      url: string,
+      accountId?: number,
+      messageId?: number
+    ) => this.openAppLink(url, accountId, messageId)
 
     // no backend: rc_config / runtime_info are built locally,
     // mirroring target-browser/src/rc-config.ts and backendApi.ts.
@@ -1740,6 +1754,17 @@ class BrowserRuntime {
     // chat export (three-dot menu → Export Chat): the desktop patch keeps the
     // dialogs and calls window.__slothfulExportChat; the zip is built here
     initChatExport(() => getCore().dc.rpc, this.transformBlobURL.bind(this), saveFile)
+    initStickerPacks(() => getCore().dc.rpc, {
+      read: path => getCore().fsRead(path),
+      stage: async (name, data) => {
+        const path = this.tmpPath(name)
+        await getCore().fsWrite(path, data)
+        return path
+      },
+      unstage: path => this.removeTempFile(path),
+      stageFile: file => this.stageFile(file),
+      save: saveFile,
+    })
 
     // onboarding funnel hook: WelcomeScreen (desktop patch) calls this for the
     // top-of-funnel "welcome" step; the chosen method and success/failure are

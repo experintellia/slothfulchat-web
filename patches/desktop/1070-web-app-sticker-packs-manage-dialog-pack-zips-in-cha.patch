@@ -1,0 +1,2213 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Tue, 27 Oct 2026 22:59:11 +0000
+Subject: [PATCH] =?UTF-8?q?web-app:=20sticker=20packs=20=E2=80=94=20manage?=
+ =?UTF-8?q?=20dialog,=20pack=20zips=20in=20chats,=20find=20packs?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Sticker packs are stored and managed by the core now (core sticker packs
+patch); this is the UI for them.
+
+- Composer sticker tab: packs come from getStickerPacks (sorted by name,
+  ids instead of paths); deleting removes the pack entry via removeSticker
+  instead of deleting the file, which is a blob shared with messages now. A
+  bottom bar like the emoji picker's categories shows each pack's first
+  sticker (scrolls there, marks the current pack; dropping a sticker on an
+  icon moves it there) with Manage Stickers as a gear at its end.
+- Empty sticker tab: "Find Sticker Packs" opens the Public Bots directory
+  pre-searched for "sticker" (its consent step applies) with a
+  community-run note, hidden with the other community suggestions (user
+  setting or instance-wide); plus "Import Pack (.zip)" and "Manage".
+- Manage Stickers dialog: new/rename/delete/export packs, drag stickers
+  between packs (Ctrl/Alt copies; on touch, rest a finger 250ms then drag),
+  files dropped in from other apps go into the pack they land on, Move to /
+  Copy to in the context menu, add image files, a "Recently Seen" strip of
+  chat stickers in no pack yet, packs of the user's other profiles to
+  import, and each sticker's emojis as a badge with "Edit Emojis…" (chips
+  plus the regular emoji picker).
+- A received .zip that holds a sticker pack renders as a pack card. Its
+  preview and "Add Sticker Pack" open an inspector with the whole pack
+  (emojis from the file names, a big preview on hover/click/Enter) and the
+  add button. The check runs in the web runtime (window.__slothfulStickers):
+  only downloaded zips up to 15 MiB, once in view, one at a time, cached.
+  Other zips keep the plain file tile; the message menu's Open/Export
+  Attachment and "Import as Sticker Pack" (also for bigger zips) stay.
+  Import failures say why the zip is no pack.
+- Backup export says that sticker packs only come back in this app when a
+  backup is imported elsewhere, shown only to users who have packs.
+- Public Bots dialog takes an initialQuery; the community-suggestions
+  setting description names the sticker link too.
+---
+ packages/frontend/src/backend/stickerPacks.ts |  62 ++
+ .../src/components/Settings/Backup.tsx        |  12 +-
+ .../src/components/Settings/ChatsAndMedia.tsx |   2 +-
+ .../StickerPacks/ManageStickers.tsx           | 722 ++++++++++++++++++
+ .../src/components/StickerPacks/index.tsx     | 412 ++++++++++
+ .../StickerPacks/styles.module.scss           | 402 ++++++++++
+ .../attachment/messageAttachment.tsx          |  13 +-
+ .../composer/EmojiAndStickerPicker.tsx        | 224 +++++-
+ .../components/dialogs/PublicBots/index.tsx   |  33 +-
+ .../src/components/message/Message.tsx        |  12 +
+ 10 files changed, 1856 insertions(+), 38 deletions(-)
+ create mode 100644 packages/frontend/src/backend/stickerPacks.ts
+ create mode 100644 packages/frontend/src/components/StickerPacks/ManageStickers.tsx
+ create mode 100644 packages/frontend/src/components/StickerPacks/index.tsx
+ create mode 100644 packages/frontend/src/components/StickerPacks/styles.module.scss
+
+diff --git a/packages/frontend/src/backend/stickerPacks.ts b/packages/frontend/src/backend/stickerPacks.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..24e328b82874cf3f0299c406eb7ec675b869bb9b
+--- /dev/null
++++ b/packages/frontend/src/backend/stickerPacks.ts
+@@ -0,0 +1,62 @@
++import { BackendRemote } from '../backend-com'
++
++// The sticker pack RPCs come from the fork's regenerated local jsonrpc
++// bindings (core sticker packs); the published @deltachat/jsonrpc-client
++// pinned in this workspace's catalog predates them, so they're typed locally
++// here to keep tsc green (same pattern as replyThreads.ts).
++
++export type StickerObject = {
++  id: number
++  path: string
++  /** emojis the sticker stands for, shared by every pack entry of its image */
++  emojis: string[]
++}
++export type StickerPackObject = {
++  id: number
++  name: string
++  stickers: StickerObject[]
++}
++
++export const rpcStickers = BackendRemote.rpc as typeof BackendRemote.rpc & {
++  getStickerPacks(accountId: number): Promise<StickerPackObject[]>
++  createStickerPack(accountId: number, name: string): Promise<number>
++  renameStickerPack(
++    accountId: number,
++    packId: number,
++    name: string
++  ): Promise<void>
++  deleteStickerPack(accountId: number, packId: number): Promise<void>
++  addStickerFromFile(
++    accountId: number,
++    packId: number,
++    path: string,
++    name: string
++  ): Promise<number>
++  addStickerFromMessage(
++    accountId: number,
++    packId: number,
++    msgId: number
++  ): Promise<number>
++  moveSticker(
++    accountId: number,
++    stickerId: number,
++    toPackId: number
++  ): Promise<void>
++  copySticker(
++    accountId: number,
++    stickerId: number,
++    toPackId: number
++  ): Promise<number>
++  removeSticker(accountId: number, stickerId: number): Promise<void>
++  setStickerEmojis(
++    accountId: number,
++    stickerId: number,
++    emojis: string[]
++  ): Promise<void>
++  copyStickerPackFromAccount(
++    accountId: number,
++    fromAccountId: number,
++    packId: number
++  ): Promise<number>
++  getUnsavedStickerMessages(accountId: number, limit: number): Promise<number[]>
++}
+diff --git a/packages/frontend/src/components/Settings/Backup.tsx b/packages/frontend/src/components/Settings/Backup.tsx
+index 262c9daa322e3d7c31c861da58b5063dcf3df405..71d9ff4b36045cc3d8141ea157f987ef7b55f988 100644
+--- a/packages/frontend/src/components/Settings/Backup.tsx
++++ b/packages/frontend/src/components/Settings/Backup.tsx
+@@ -5,6 +5,7 @@ import { DeltaProgressBar } from '../Login-Styles'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import { getLogger } from '@deltachat-desktop/shared/logger'
+ import { BackendRemote } from '../../backend-com'
++import { rpcStickers } from '../../backend/stickerPacks'
+ import { selectedAccountId } from '../../ScreenController'
+ import SettingsButton from './SettingsButton'
+ import Dialog, {
+@@ -36,8 +37,17 @@ export default function Backup() {
+   const onBackupExport = useCallback(async () => {
+     const userFeedback = window.__userFeedback
+ 
++    // slothfulchat: sticker packs live in fork-only tables (core sticker
++    // packs), which other Delta Chat apps don't read. Only worth saying to
++    // someone who has packs.
++    const hasStickerPacks = await rpcStickers
++      .getStickerPacks(accountId)
++      .then(packs => packs.length > 0)
++      .catch(() => false)
+     const confirmed = await openConfirmationDialog({
+-      message: tx('pref_backup_export_explain'),
++      message:
++        tx('pref_backup_export_explain') +
++        (hasStickerPacks ? '\n\n' + tx('sticker_packs_backup_note') : ''),
+       confirmLabel: tx('pref_backup_export_start_button'),
+     })
+ 
+diff --git a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
+index 3e76a2c458e5d678daae7219ece178ccfa8408c5..3d1229506136dcd8d7cd7b761765944263aa57a8 100644
+--- a/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
++++ b/packages/frontend/src/components/Settings/ChatsAndMedia.tsx
+@@ -52,7 +52,7 @@ export default function ChatsAndMedia({ settingsStore }: Props) {
+           <DesktopSettingsSwitch
+             settingsKey='hideNewChatSuggestions'
+             label='Hide community suggestions'
+-            description='Hides the "Public Bots" and "Public Channels" entries in the "New Chat" dialog'
++            description='Hides the "Public Bots" and "Public Channels" entries in the "New Chat" dialog, and the "Find sticker packs" link in the sticker picker'
+             forkAdded
+           />
+           <DesktopSettingsSwitch
+diff --git a/packages/frontend/src/components/StickerPacks/ManageStickers.tsx b/packages/frontend/src/components/StickerPacks/ManageStickers.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..1be94ece844c46671c80a5c42ec83af6fda6878b
+--- /dev/null
++++ b/packages/frontend/src/components/StickerPacks/ManageStickers.tsx
+@@ -0,0 +1,722 @@
++import React, {
++  useCallback,
++  useContext,
++  useEffect,
++  useRef,
++  useState,
++} from 'react'
++import classNames from 'classnames'
++import { basename } from 'path'
++
++import { runtime } from '@deltachat-desktop/runtime-interface'
++import { Type } from '../../backend-com'
++import { rpcStickers, type StickerPackObject } from '../../backend/stickerPacks'
++import { selectedAccountId } from '../../ScreenController'
++import Dialog, {
++  DialogBody,
++  DialogContent,
++  DialogHeader,
++  OkCancelFooterAction,
++} from '../Dialog'
++import { DeltaInput } from '../Login-Styles'
++import EmojiPicker from '../EmojiPicker'
++import { ContextMenuContext } from '../../contexts/ContextMenuContext'
++import useDialog from '../../hooks/dialog/useDialog'
++import useConfirmationDialog from '../../hooks/dialog/useConfirmationDialog'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
++import { mouseEventToPosition } from '../../utils/mouseEventToPosition'
++import {
++  StickerThumb,
++  importStickerZip,
++  reportStickerError,
++  stickersApi,
++} from '.'
++
++import type { DialogProps } from '../../contexts/DialogContext'
++import type { ContextMenuItem } from '../ContextMenu'
++
++import styles from './styles.module.scss'
++
++type Pack = StickerPackObject
++type OtherProfile = { id: number; name: string; packs: Pack[] }
++
++const THUMB = 64
++/** A finger resting this long on a sticker picks it up; shorter than the
++ * ~500ms long press that opens its menu, like the account sidebar's reorder. */
++const TOUCH_ARM_MS = 250
++/** Movement below this is the finger being imprecise, not a gesture. */
++const TOUCH_SLOP_PX = 8
++
++type DragData = { stickerId?: number; msgId?: number }
++
++/** the pack section under a point, for touch drops */
++const packAt = (x: number, y: number) => {
++  const el = document
++    .elementFromPoint(x, y)
++    ?.closest<HTMLElement>('[data-pack-id]')
++  return el ? Number(el.dataset.packId) : null
++}
++/** how many unsaved stickers "Recently seen" offers */
++const RECENT_LIMIT = 40
++
++/** Asks for a pack name; resolves to it, or null on cancel. */
++function PackNameDialog({
++  onClose,
++  title,
++  initial,
++  onDone,
++}: DialogProps & {
++  title: string
++  initial: string
++  onDone: (name: string | null) => void
++}) {
++  const tx = useTranslationFunction()
++  const [name, setName] = useState(initial)
++  const close = (result: string | null) => {
++    onDone(result)
++    onClose()
++  }
++  return (
++    <Dialog onClose={() => close(null)} canOutsideClickClose={true}>
++      <DialogHeader title={title} />
++      <form
++        action={() => {
++          if (name.trim()) close(name.trim())
++        }}
++      >
++        <DialogBody>
++          <DialogContent>
++            <DeltaInput
++              id='sticker-pack-name'
++              placeholder={tx('sticker_packs_name')}
++              value={name}
++              onChange={(ev: React.ChangeEvent<HTMLInputElement>) =>
++                setName(ev.target.value)
++              }
++            />
++          </DialogContent>
++        </DialogBody>
++        <OkCancelFooterAction onCancel={() => close(null)} onOk='submit' />
++      </form>
++    </Dialog>
++  )
++}
++
++/** the core keeps at most this many per sticker */
++const MAX_EMOJIS = 16
++
++/** Edits the emojis a sticker stands for: removable chips plus a picker. */
++function StickerEmojisDialog({
++  onClose,
++  initial,
++  onDone,
++}: DialogProps & {
++  initial: string[]
++  onDone: (emojis: string[]) => void
++}) {
++  const tx = useTranslationFunction()
++  const [emojis, setEmojis] = useState(initial)
++  return (
++    <Dialog onClose={onClose} canOutsideClickClose={false}>
++      <DialogHeader title={tx('sticker_packs_edit_emojis')} />
++      <DialogBody>
++        <DialogContent>
++          <div className={styles.hint}>{tx('sticker_packs_emojis_hint')}</div>
++          <div className={styles.emojiChips}>
++            {emojis.map(e => (
++              <button
++                type='button'
++                key={e}
++                className={styles.emojiChip}
++                aria-label={tx('sticker_packs_remove_emoji', e)}
++                onClick={() => setEmojis(emojis.filter(x => x !== e))}
++              >
++                {e} ×
++              </button>
++            ))}
++          </div>
++          <EmojiPicker
++            role={undefined}
++            id={undefined}
++            labelledBy={undefined}
++            onSelect={({ native }) =>
++              setEmojis(list =>
++                list.includes(native) || list.length >= MAX_EMOJIS
++                  ? list
++                  : [...list, native]
++              )
++            }
++          />
++        </DialogContent>
++      </DialogBody>
++      <OkCancelFooterAction
++        onCancel={onClose}
++        confirmLabel={tx('save')}
++        onOk={() => {
++          onDone(emojis)
++          onClose()
++        }}
++      />
++    </Dialog>
++  )
++}
++
++/**
++ * Sticker pack editor: create, rename, delete and export packs, move or copy
++ * stickers between them (drag and drop, or the context menu, which a long
++ * press opens on touch), add image files, add stickers seen in chats, import
++ * zips and packs of the user's other profiles.
++ */
++export default function ManageStickersDialog({ onClose }: DialogProps) {
++  const tx = useTranslationFunction()
++  const accountId = selectedAccountId()
++  const { openDialog } = useDialog()
++  const openConfirmationDialog = useConfirmationDialog()
++  const { openContextMenu } = useContext(ContextMenuContext)
++  const rpc = rpcStickers
++
++  const [packs, setPacks] = useState<Pack[]>([])
++  const [recent, setRecent] = useState<Type.Message[]>([])
++  const [others, setOthers] = useState<OtherProfile[]>([])
++  const [dropTarget, setDropTarget] = useState<number | null>(null)
++  const [touchDrag, setTouchDrag] = useState<{
++    path: string
++    x: number
++    y: number
++  } | null>(null)
++
++  /** reloads; never rejects, failures go to the user */
++  const refresh = useCallback(async () => {
++    try {
++      setPacks(await rpc.getStickerPacks(accountId))
++      const ids = await rpc.getUnsavedStickerMessages(accountId, RECENT_LIMIT)
++      const msgs = await rpc.getMessages(accountId, ids)
++      const loaded: Type.Message[] = []
++      for (const id of ids) {
++        const msg = msgs[id]
++        if (msg?.kind === 'message' && msg.file) loaded.push(msg)
++      }
++      setRecent(loaded)
++    } catch (error) {
++      reportStickerError(error)
++    }
++  }, [accountId, rpc])
++
++  /** the running touch drag's teardown, so unmounting can end it */
++  const endTouchDrag = useRef<(() => void) | null>(null)
++  useEffect(() => () => endTouchDrag.current?.(), [])
++
++  // Files dropped beside a pack (toolbar, Recently Seen, gaps) must not fall
++  // through to the browser, which would open them in place of the app. Pack
++  // sections handle their own drops first (React's root listener runs before
++  // document's).
++  // ponytail: document-wide while the dialog is up; it's modal, so nothing
++  // else takes drops meanwhile.
++  useEffect(() => {
++    const guard = (ev: DragEvent) => ev.preventDefault()
++    document.addEventListener('dragover', guard)
++    document.addEventListener('drop', guard)
++    return () => {
++      document.removeEventListener('dragover', guard)
++      document.removeEventListener('drop', guard)
++    }
++  }, [])
++
++  useEffect(() => {
++    refresh()
++    // Other profiles load once; their packs don't change while this is open.
++    ;(async () => {
++      const result: OtherProfile[] = []
++      for (const account of await rpc.getAllAccounts()) {
++        if (account.kind !== 'Configured' || account.id === accountId) continue
++        const packs = (await rpc.getStickerPacks(account.id)).filter(
++          p => p.stickers.length > 0
++        )
++        if (packs.length > 0) {
++          result.push({
++            id: account.id,
++            name: account.displayName || account.addr || String(account.id),
++            packs,
++          })
++        }
++      }
++      setOthers(result)
++    })().catch(() => {})
++  }, [accountId, refresh, rpc])
++
++  /** runs an action, then reloads; failures go to the user, not the console */
++  const run = (action: () => Promise<unknown>) =>
++    action().catch(reportStickerError).finally(refresh)
++
++  const askName = (title: string, initial = '') =>
++    new Promise<string | null>(resolve =>
++      openDialog(PackNameDialog, { title, initial, onDone: resolve })
++    )
++
++  const newPack = async () => {
++    const name = await askName(tx('sticker_packs_new'))
++    if (name) await run(() => rpc.createStickerPack(accountId, name))
++  }
++
++  const importZip = async () => {
++    const [path] = await runtime.showOpenFileDialog({
++      filters: [{ name: 'zip', extensions: ['zip'] }],
++      properties: ['openFile'],
++    })
++    if (!path) return
++    await importStickerZip(tx, path, basename(path))
++    await runtime.removeTempFile(path).catch(() => {})
++    refresh()
++  }
++
++  const addImages = async (pack: Pack) => {
++    const paths = await runtime.showOpenFileDialog({
++      filters: [
++        { name: 'stickers', extensions: ['png', 'webp', 'gif', 'tgs'] },
++      ],
++      properties: ['openFile', 'multiSelections'],
++    })
++    let failed = 0
++    for (const path of paths) {
++      try {
++        await rpc.addStickerFromFile(accountId, pack.id, path, basename(path))
++      } catch {
++        failed++
++      }
++      await runtime.removeTempFile(path).catch(() => {})
++    }
++    if (failed > 0) {
++      window.__userFeedback({
++        type: 'error',
++        text: tx('sticker_packs_files_skipped', String(failed)),
++      })
++    }
++    refresh()
++  }
++
++  const packMenu = (ev: React.MouseEvent, pack: Pack) => {
++    openContextMenu({
++      ...mouseEventToPosition(ev),
++      items: [
++        {
++          label: tx('sticker_packs_rename'),
++          action: async () => {
++            const name = await askName(tx('sticker_packs_rename'), pack.name)
++            if (name) run(() => rpc.renameStickerPack(accountId, pack.id, name))
++          },
++        },
++        ...(stickersApi() && pack.stickers.length > 0
++          ? [
++              {
++                label: tx('sticker_packs_export'),
++                action: () =>
++                  run(() => stickersApi()!.exportPack(accountId, pack.id)),
++              },
++            ]
++          : []),
++        { type: 'separator' },
++        {
++          label: tx('delete'),
++          danger: true,
++          action: async () => {
++            const confirmed = await openConfirmationDialog({
++              message: tx('sticker_packs_delete_ask', [
++                pack.name,
++                String(pack.stickers.length),
++              ]),
++              confirmLabel: tx('delete'),
++              isConfirmDanger: true,
++            })
++            if (confirmed) run(() => rpc.deleteStickerPack(accountId, pack.id))
++          },
++        },
++      ],
++    })
++  }
++
++  /** "Move to" / "Copy to" submenu items for every pack but `exclude` */
++  const packTargets = (
++    exclude: number | null,
++    action: (packId: number) => Promise<unknown>
++  ): ContextMenuItem[] => [
++    ...packs
++      .filter(p => p.id !== exclude)
++      .map(p => ({ label: p.name, action: () => run(() => action(p.id)) })),
++    {
++      label: tx('sticker_packs_new') + '…',
++      action: async () => {
++        const name = await askName(tx('sticker_packs_new'))
++        if (name) {
++          run(async () => action(await rpc.createStickerPack(accountId, name)))
++        }
++      },
++    },
++  ]
++
++  const stickerMenu = (
++    ev: React.MouseEvent,
++    pack: Pack,
++    sticker: Pack['stickers'][number]
++  ) => {
++    ev.preventDefault()
++    openContextMenu({
++      ...mouseEventToPosition(ev),
++      items: [
++        {
++          label: tx('sticker_packs_move_to'),
++          subitems: packTargets(pack.id, to =>
++            rpc.moveSticker(accountId, sticker.id, to)
++          ),
++        },
++        {
++          label: tx('sticker_packs_copy_to'),
++          subitems: packTargets(pack.id, to =>
++            rpc.copySticker(accountId, sticker.id, to)
++          ),
++        },
++        {
++          label: tx('sticker_packs_edit_emojis'),
++          action: () =>
++            openDialog(StickerEmojisDialog, {
++              initial: sticker.emojis,
++              onDone: (emojis: string[]) =>
++                run(() => rpc.setStickerEmojis(accountId, sticker.id, emojis)),
++            }),
++        },
++        { type: 'separator' },
++        {
++          label: tx('delete'),
++          danger: true,
++          action: () => run(() => rpc.removeSticker(accountId, sticker.id)),
++        },
++      ],
++    })
++  }
++
++  const recentMenu = (ev: React.MouseEvent, msg: Type.Message) => {
++    ev.preventDefault()
++    openContextMenu({
++      ...mouseEventToPosition(ev),
++      items: [
++        {
++          label: tx('sticker_packs_add_to'),
++          subitems: packTargets(null, to =>
++            rpc.addStickerFromMessage(accountId, to, msg.id)
++          ),
++        },
++      ],
++    })
++  }
++
++  const dropSticker = (data: DragData, packId: number, copy: boolean) => {
++    if (data.stickerId != null) {
++      const id = data.stickerId
++      run(() =>
++        copy
++          ? rpc.copySticker(accountId, id, packId)
++          : rpc.moveSticker(accountId, id, packId)
++      )
++    } else if (data.msgId != null) {
++      const id = data.msgId
++      run(() => rpc.addStickerFromMessage(accountId, packId, id))
++    }
++  }
++
++  /** Images (or a pack zip) dropped in from another app. */
++  const dropFiles = async (files: File[], packId: number) => {
++    const api = stickersApi()
++    if (!api) return
++    let failed = 0
++    for (const file of files) {
++      let path: string | null = null
++      try {
++        path = await api.stage(file)
++        if (/\.zip$/i.test(file.name)) {
++          await importStickerZip(tx, path, file.name)
++        } else {
++          await rpc.addStickerFromFile(accountId, packId, path, file.name)
++        }
++      } catch {
++        failed++
++      } finally {
++        if (path) await runtime.removeTempFile(path).catch(() => {})
++      }
++    }
++    if (failed > 0) {
++      window.__userFeedback({
++        type: 'error',
++        text: tx('sticker_packs_files_skipped', String(failed)),
++      })
++    }
++    refresh()
++  }
++
++  const onDrop = (ev: React.DragEvent, pack: Pack) => {
++    ev.preventDefault()
++    // the runtime's chat drop handler must not take files meant for a pack
++    ev.stopPropagation()
++    setDropTarget(null)
++    const data = ev.dataTransfer.getData('application/x-slothful-sticker')
++    if (data) {
++      // copy with Ctrl/Alt held, like a file manager
++      dropSticker(JSON.parse(data), pack.id, ev.ctrlKey || ev.altKey)
++    } else if (ev.dataTransfer.files.length > 0) {
++      dropFiles([...ev.dataTransfer.files], pack.id)
++    }
++  }
++
++  const dragData = (data: DragData) => (ev: React.DragEvent) => {
++    ev.dataTransfer.setData(
++      'application/x-slothful-sticker',
++      JSON.stringify(data)
++    )
++    ev.dataTransfer.effectAllowed = 'copyMove'
++  }
++
++  /**
++   * HTML5 drag and drop never starts from a touch, so on touch screens a
++   * sticker is picked up by resting a finger on it, then dragged onto a pack.
++   * A finger that moves right away scrolls; one that stays put gets the
++   * context menu, which also ends the drag.
++   */
++  const touchDragStart =
++    (data: DragData, path: string) => (ev: React.TouchEvent) => {
++      const touch = ev.touches[0]
++      if (ev.touches.length !== 1 || !touch) return
++      const start = { x: touch.clientX, y: touch.clientY }
++      let pos: { x: number; y: number } | null = null
++      const arm = setTimeout(() => {
++        pos = start
++        setTouchDrag({ path, ...start })
++      }, TOUCH_ARM_MS)
++      const end = () => {
++        endTouchDrag.current = null
++        clearTimeout(arm)
++        document.removeEventListener('touchmove', move)
++        document.removeEventListener('touchend', up)
++        document.removeEventListener('touchcancel', end)
++        document.removeEventListener('contextmenu', end, true)
++        setTouchDrag(null)
++        setDropTarget(null)
++      }
++      const move = (e: TouchEvent) => {
++        const t = e.touches[0]
++        if (!t) return
++        if (!pos) {
++          const moved = Math.hypot(t.clientX - start.x, t.clientY - start.y)
++          if (moved > TOUCH_SLOP_PX) end() // a scroll, not a drag
++          return
++        }
++        e.preventDefault() // dragging, so don't scroll
++        pos = { x: t.clientX, y: t.clientY }
++        setTouchDrag({ path, ...pos })
++        setDropTarget(packAt(pos.x, pos.y))
++      }
++      const up = (e: TouchEvent) => {
++        if (
++          pos &&
++          Math.hypot(pos.x - start.x, pos.y - start.y) > TOUCH_SLOP_PX
++        ) {
++          e.preventDefault() // no click on the sticker
++          const to = packAt(pos.x, pos.y)
++          if (to != null) dropSticker(data, to, false)
++        }
++        end()
++      }
++      document.addEventListener('touchmove', move, { passive: false })
++      document.addEventListener('touchend', up, { passive: false })
++      document.addEventListener('touchcancel', end)
++      document.addEventListener('contextmenu', end, true)
++      endTouchDrag.current = end
++    }
++
++  return (
++    <Dialog
++      width={560}
++      onClose={onClose}
++      fixed
++      dataTestid='manage-stickers-dialog'
++    >
++      <DialogHeader title={tx('sticker_packs_manage')} onClose={onClose} />
++      {touchDrag && (
++        <div
++          className={styles.touchGhost}
++          style={{ left: touchDrag.x, top: touchDrag.y }}
++          aria-hidden
++        >
++          <StickerThumb path={touchDrag.path} size={THUMB} />
++        </div>
++      )}
++      <DialogBody>
++        <div className={styles.toolbar}>
++          <button type='button' className={styles.toolButton} onClick={newPack}>
++            {tx('sticker_packs_new')}
++          </button>
++          {stickersApi() && (
++            <button
++              type='button'
++              className={styles.toolButton}
++              onClick={importZip}
++            >
++              {tx('sticker_packs_import_zip')}
++            </button>
++          )}
++        </div>
++
++        {packs.map(pack => (
++          <section
++            key={pack.id}
++            className={classNames(styles.pack, {
++              [styles.dropTarget]: dropTarget === pack.id,
++            })}
++            onDragOver={ev => {
++              ev.preventDefault()
++              setDropTarget(pack.id)
++            }}
++            onDragLeave={() => setDropTarget(null)}
++            onDrop={ev => onDrop(ev, pack)}
++            data-pack-id={pack.id}
++            data-testid='sticker-pack'
++          >
++            <div className={styles.packHeader}>
++              <span className={styles.packName}>{pack.name}</span>
++              <span className={styles.packCount}>{pack.stickers.length}</span>
++              <button
++                type='button'
++                className={styles.toolButton}
++                onClick={() => addImages(pack)}
++              >
++                {tx('sticker_packs_add_images')}
++              </button>
++              <button
++                type='button'
++                className={styles.moreButton}
++                aria-label={tx('menu_more_options')}
++                aria-haspopup='menu'
++                onClick={ev => packMenu(ev, pack)}
++              >
++                ⋯
++              </button>
++            </div>
++            <div className={styles.grid}>
++              {pack.stickers.length === 0 && (
++                <div className={styles.hint}>{tx('sticker_packs_empty')}</div>
++              )}
++              {pack.stickers.map(sticker => (
++                <button
++                  type='button'
++                  key={sticker.id}
++                  className={styles.sticker}
++                  draggable
++                  onDragStart={dragData({ stickerId: sticker.id })}
++                  onTouchStart={touchDragStart(
++                    { stickerId: sticker.id },
++                    sticker.path
++                  )}
++                  onClick={ev => stickerMenu(ev, pack, sticker)}
++                  onContextMenu={ev => stickerMenu(ev, pack, sticker)}
++                  aria-haspopup='menu'
++                  aria-label={[tx('sticker'), ...sticker.emojis].join(' ')}
++                >
++                  <StickerThumb path={sticker.path} size={THUMB} />
++                  {sticker.emojis.length > 0 && (
++                    <span className={styles.emojiBadge} aria-hidden>
++                      {sticker.emojis.slice(0, 3).join('')}
++                      {sticker.emojis.length > 3 && '…'}
++                    </span>
++                  )}
++                </button>
++              ))}
++            </div>
++          </section>
++        ))}
++
++        {recent.length > 0 && (
++          <section className={styles.pack}>
++            <div className={styles.packHeader}>
++              <span className={styles.packName}>
++                {tx('sticker_packs_recent')}
++              </span>
++            </div>
++            <div className={styles.hint}>{tx('sticker_packs_recent_hint')}</div>
++            <div className={classNames(styles.grid, styles.recent)}>
++              {recent.map(msg => (
++                <button
++                  type='button'
++                  key={msg.id}
++                  className={styles.sticker}
++                  draggable
++                  onDragStart={dragData({ msgId: msg.id })}
++                  onTouchStart={touchDragStart({ msgId: msg.id }, msg.file!)}
++                  onClick={ev => recentMenu(ev, msg)}
++                  onContextMenu={ev => recentMenu(ev, msg)}
++                  aria-haspopup='menu'
++                  aria-label={tx('sticker')}
++                >
++                  <StickerThumb path={msg.file!} size={THUMB} />
++                </button>
++              ))}
++            </div>
++          </section>
++        )}
++
++        {others.length > 0 && (
++          <section className={styles.pack}>
++            <div className={styles.packHeader}>
++              <span className={styles.packName}>
++                {tx('sticker_packs_from_profiles')}
++              </span>
++            </div>
++            {others.map(profile =>
++              profile.packs.map(pack => (
++                <div
++                  key={`${profile.id}-${pack.id}`}
++                  className={styles.otherPack}
++                >
++                  <div className={styles.otherPreview}>
++                    {pack.stickers.slice(0, 4).map(s => (
++                      <StickerThumb key={s.id} path={s.path} size={32} />
++                    ))}
++                  </div>
++                  <div className={styles.otherText}>
++                    <div className={styles.packName}>{pack.name}</div>
++                    <div className={styles.packCount}>
++                      {profile.name} ·{' '}
++                      {tx(
++                        'sticker_packs_n_stickers',
++                        String(pack.stickers.length)
++                      )}
++                    </div>
++                  </div>
++                  {/* same name-only "already there" check as the chat's
++                      pack card (ponytail note there) */}
++                  {packs.some(p => p.name === pack.name) ? (
++                    <span className={styles.packCount}>
++                      {tx('sticker_packs_added')}
++                    </span>
++                  ) : (
++                    <button
++                      type='button'
++                      className={styles.toolButton}
++                      onClick={() =>
++                        run(() =>
++                          rpc.copyStickerPackFromAccount(
++                            accountId,
++                            profile.id,
++                            pack.id
++                          )
++                        )
++                      }
++                    >
++                      {tx('sticker_packs_import')}
++                    </button>
++                  )}
++                </div>
++              ))
++            )}
++          </section>
++        )}
++      </DialogBody>
++    </Dialog>
++  )
++}
+diff --git a/packages/frontend/src/components/StickerPacks/index.tsx b/packages/frontend/src/components/StickerPacks/index.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..b6f857b5f28393939d14b8b7ad5f6057b8b80c21
+--- /dev/null
++++ b/packages/frontend/src/components/StickerPacks/index.tsx
+@@ -0,0 +1,412 @@
++import React, { useEffect, useRef, useState } from 'react'
++import classNames from 'classnames'
++
++import { runtime } from '@deltachat-desktop/runtime-interface'
++import { Type } from '../../backend-com'
++import { rpcStickers } from '../../backend/stickerPacks'
++import { selectedAccountId } from '../../ScreenController'
++import LottieSticker from '../attachment/LottieSticker'
++import Dialog, {
++  DialogBody,
++  DialogFooter,
++  DialogHeader,
++  FooterActionButton,
++  FooterActions,
++} from '../Dialog'
++import useDialog from '../../hooks/dialog/useDialog'
++import useTranslationFunction from '../../hooks/useTranslationFunction'
++
++import type { DialogProps } from '../../contexts/DialogContext'
++
++import styles from './styles.module.scss'
++
++/**
++ * Sticker packs (slothfulchat). The core stores and manages packs
++ * (`getStickerPacks` & co.); what needs a zip library — recognizing a pack in
++ * a chat, previewing, importing and exporting one — lives in slothfulchat-web's
++ * packages/web-app/src/sticker-packs.ts as window.__slothfulStickers.
++ */
++type PackPreview = { name: string; count: number; previews: string[] }
++/** an image as object URL, a .tgs as temp file path (LottieSticker can't
++ * fetch object URLs under the CSP) */
++type PreviewSticker = {
++  name: string
++  emojis: string[]
++  url?: string
++  path?: string
++}
++type FullPreview = { name: string; stickers: PreviewSticker[] }
++type StickersApi = {
++  inspect(
++    path: string,
++    zipName: string,
++    size: number
++  ): Promise<PackPreview | null>
++  /** every sticker in the zip; hand the result to releasePreview when done */
++  previewAll(path: string, zipName: string): Promise<FullPreview>
++  releasePreview(preview: FullPreview): Promise<void>
++  importZip(
++    accountId: number,
++    path: string,
++    zipName: string
++  ): Promise<{ packId: number; name: string; added: number; skipped: number }>
++  exportPack(accountId: number, packId: number): Promise<void>
++  /** copies a dropped File to a temp path the core can read */
++  stage(file: File): Promise<string>
++}
++
++/** undefined on runtimes without the zip half (upstream Electron/Tauri) */
++export const stickersApi = (): StickersApi | undefined =>
++  (window as any).__slothfulStickers
++
++export const isZipFile = (name: string | null | undefined) =>
++  /\.zip$/i.test(name ?? '')
++
++/** Shows a failed sticker action to the user. */
++export const reportStickerError = (error: unknown) =>
++  window.__userFeedback({
++    type: 'error',
++    text: error instanceof Error ? error.message : String(error),
++  })
++
++/** What to tell the user when a zip can't be previewed or imported: why it
++ * is no sticker pack, or the error itself when something else failed. */
++function stickerZipError(
++  tx: ReturnType<typeof useTranslationFunction>,
++  error: unknown
++): string {
++  const message = error instanceof Error ? error.message : String(error)
++  const reason = /^not a sticker pack: (.*)$/s.exec(message)
++  return reason ? `${tx('sticker_packs_not_a_pack')}\n(${reason[1]})` : message
++}
++
++/** Imports a zip and tells the user how it went. */
++export async function importStickerZip(
++  tx: ReturnType<typeof useTranslationFunction>,
++  path: string,
++  zipName: string
++): Promise<number | null> {
++  const api = stickersApi()
++  if (!api) return null
++  try {
++    const result = await api.importZip(selectedAccountId(), path, zipName)
++    window.__userFeedback({
++      type: 'success',
++      text:
++        result.skipped > 0
++          ? tx('sticker_packs_imported_skipped', [
++              result.name,
++              String(result.added),
++              String(result.skipped),
++            ])
++          : tx('sticker_packs_imported', result.name),
++    })
++    return result.packId
++  } catch (error) {
++    window.__userFeedback({ type: 'error', text: stickerZipError(tx, error) })
++    return null
++  }
++}
++
++/** A sticker thumbnail; .tgs plays through the Lottie player. */
++export function StickerThumb({ path, size }: { path: string; size: number }) {
++  const src = runtime.transformStickerURL(path)
++  return /\.tgs$/i.test(path) ? (
++    <LottieSticker
++      key={path}
++      src={src}
++      size={size}
++      className={styles.thumbLottie}
++    />
++  ) : (
++    <img
++      src={src}
++      width={size}
++      height={size}
++      className={styles.thumbImg}
++      alt=''
++    />
++  )
++}
++
++/**
++ * A received .zip that holds a sticker pack, shown as a pack card with a few
++ * stickers and an "Add" button instead of a plain file tile. Until the zip is
++ * checked (only once it scrolls into view, one zip at a time, see
++ * sticker-packs.ts) and whenever it is not a pack, `fallback` is shown.
++ */
++export function StickerPackZipCard({
++  message,
++  fallback,
++  tabindexForInteractiveContents,
++}: {
++  message: Type.Message & { file: string }
++  fallback: React.ReactElement
++  /** the message list's roving tabindex, like the file tile's */
++  tabindexForInteractiveContents: -1 | 0
++}) {
++  const tx = useTranslationFunction()
++  const ref = useRef<HTMLDivElement>(null)
++  const [pack, setPack] = useState<PackPreview | null>(null)
++  const [added, setAdded] = useState(false)
++  const { openDialog } = useDialog()
++
++  useEffect(() => {
++    const api = stickersApi()
++    const el = ref.current
++    if (!api || !el || message.downloadState !== 'Done') return
++    let cancelled = false
++    const io = new IntersectionObserver(([entry]) => {
++      if (!entry.isIntersecting) return
++      io.disconnect()
++      api
++        .inspect(message.file, message.fileName ?? '', message.fileBytes ?? 0)
++        .then(result => !cancelled && setPack(result))
++    })
++    io.observe(el)
++    return () => {
++      cancelled = true
++      io.disconnect()
++    }
++  }, [message.file, message.fileName, message.fileBytes, message.downloadState])
++
++  useEffect(() => {
++    if (!pack) return
++    // "Added" when a pack of that name is already installed. Not the count:
++    // a pack with skipped files is installed with fewer stickers.
++    // ponytail: name only, so a different pack with the same name also reads
++    // as added (the inspector still opens); compare contents if that bites.
++    rpcStickers
++      .getStickerPacks(selectedAccountId())
++      .then(packs => {
++        if (packs.some(p => p.name === pack.name)) setAdded(true)
++      })
++      .catch(() => {})
++  }, [pack])
++
++  if (!pack) {
++    return <div ref={ref}>{fallback}</div>
++  }
++
++  const openInspector = (ev: React.MouseEvent) => {
++    ev.stopPropagation()
++    openDialog(StickerPackInspector, {
++      path: message.file,
++      zipName: message.fileName ?? '',
++      name: pack.name,
++      added,
++      onAdded: () => setAdded(true),
++    })
++  }
++
++  return (
++    <div className={styles.zipCard} data-testid='sticker-pack-card'>
++      {/* the zip itself stays reachable through the message menu
++          (Open / Export Attachment) */}
++      <button
++        type='button'
++        className={styles.zipCardGrid}
++        onClick={openInspector}
++        tabIndex={tabindexForInteractiveContents}
++        aria-label={tx('sticker_packs_view')}
++        title={message.fileName ?? undefined}
++      >
++        {pack.previews.map((url, i) =>
++          url ? (
++            <img key={i} src={url} alt='' />
++          ) : (
++            <div key={i} className={styles.zipCardAnimated} aria-hidden>
++              🎞️
++            </div>
++          )
++        )}
++      </button>
++      <div className={styles.zipCardText}>
++        <div className={styles.zipCardName}>{pack.name}</div>
++        <div className={styles.zipCardCount}>
++          {tx('sticker_packs_n_stickers', String(pack.count))}
++        </div>
++        <button
++          type='button'
++          className={classNames(styles.zipCardButton, {
++            [styles.added]: added,
++          })}
++          disabled={added}
++          onClick={openInspector}
++          tabIndex={tabindexForInteractiveContents}
++        >
++          {added ? tx('sticker_packs_added') : tx('sticker_packs_add_pack')}
++        </button>
++      </div>
++    </div>
++  )
++}
++
++const BIG = 240
++
++/**
++ * The whole pack of a received zip, before adding it: every sticker with its
++ * emojis; hovering (mouse) or clicking/Enter shows one big.
++ */
++function StickerPackInspector({
++  onClose,
++  path,
++  zipName,
++  name,
++  added: wasAdded,
++  onAdded,
++}: DialogProps & {
++  path: string
++  zipName: string
++  name: string
++  added: boolean
++  onAdded: () => void
++}) {
++  const tx = useTranslationFunction()
++  const [preview, setPreview] = useState<FullPreview | null>(null)
++  const [importing, setImporting] = useState(false)
++  const [hovered, setHovered] = useState<number | null>(null)
++  const [pinned, setPinned] = useState<number | null>(null)
++  const shown = pinned ?? hovered
++
++  useEffect(() => {
++    const api = stickersApi()
++    if (!api) return
++    let cancelled = false
++    let result: FullPreview | null = null
++    api.previewAll(path, zipName).then(
++      p => {
++        if (cancelled) api.releasePreview(p)
++        else setPreview((result = p))
++      },
++      error => {
++        if (cancelled) return
++        window.__userFeedback({
++          type: 'error',
++          text: stickerZipError(tx, error),
++        })
++        onClose()
++      }
++    )
++    return () => {
++      cancelled = true
++      if (result) api.releasePreview(result)
++    }
++  }, [path, zipName, tx, onClose])
++
++  useEffect(() => {
++    if (shown == null) return
++    const onKey = (ev: KeyboardEvent) => {
++      if (ev.key !== 'Escape') return
++      setPinned(null)
++      setHovered(null)
++    }
++    window.addEventListener('keydown', onKey)
++    return () => window.removeEventListener('keydown', onKey)
++  }, [shown])
++
++  const onAdd = async () => {
++    setImporting(true)
++    const id = await importStickerZip(tx, path, zipName)
++    setImporting(false)
++    if (id == null) return
++    onAdded()
++    onClose()
++  }
++
++  const thumb = (s: PreviewSticker, size: number) =>
++    s.path ? (
++      <StickerThumb path={s.path} size={size} />
++    ) : (
++      <img
++        src={s.url}
++        width={size}
++        height={size}
++        className={styles.thumbImg}
++        alt=''
++      />
++    )
++  const big = shown != null ? preview?.stickers[shown] : undefined
++
++  return (
++    <Dialog
++      width={560}
++      onClose={onClose}
++      fixed
++      // Escape closes the big preview first
++      canEscapeKeyClose={shown == null}
++      dataTestid='sticker-pack-inspector'
++    >
++      <DialogHeader title={preview?.name ?? name} onClose={onClose} />
++      <DialogBody>
++        <div className={styles.inspectCount}>
++          {preview
++            ? tx('sticker_packs_n_stickers', String(preview.stickers.length))
++            : '…'}
++        </div>
++        {/* a click beside the stickers closes the big preview */}
++        <div className={styles.inspectGrid} onClick={() => setPinned(null)}>
++          {preview?.stickers.map((s, i) => (
++            <button
++              type='button'
++              key={i}
++              className={styles.inspectSticker}
++              aria-label={s.emojis.join(' ') || s.name}
++              onClick={ev => {
++                ev.stopPropagation()
++                setPinned(p => (p === i ? null : i))
++              }}
++              onPointerEnter={ev => ev.pointerType === 'mouse' && setHovered(i)}
++              onPointerLeave={ev =>
++                ev.pointerType === 'mouse' && setHovered(null)
++              }
++            >
++              {thumb(s, 72)}
++              {s.emojis.length > 0 && (
++                <span className={styles.inspectEmojis} aria-hidden>
++                  {s.emojis.join('')}
++                </span>
++              )}
++            </button>
++          ))}
++        </div>
++      </DialogBody>
++      {big && (
++        // ponytail: centered over the grid, so it covers the stickers around
++        // the hovered one; place it beside the pointer if that annoys people.
++        // Purely visual (the buttons carry the emojis), hence aria-hidden.
++        <div className={styles.bigPreviewLayer} aria-hidden>
++          <div
++            className={classNames(styles.bigPreview, {
++              [styles.pinned]: pinned != null,
++            })}
++            data-testid='sticker-big-preview'
++            onClick={() => setPinned(null)}
++          >
++            {thumb(big, BIG)}
++            {big.emojis.length > 0 && (
++              <div className={styles.bigPreviewEmojis}>
++                {big.emojis.join(' ')}
++              </div>
++            )}
++          </div>
++        </div>
++      )}
++      <DialogFooter>
++        <FooterActions>
++          <FooterActionButton
++            styling='primary'
++            disabled={wasAdded || importing || !preview}
++            onClick={onAdd}
++          >
++            {wasAdded
++              ? tx('sticker_packs_added')
++              : importing
++                ? '…'
++                : tx('sticker_packs_add_pack')}
++          </FooterActionButton>
++        </FooterActions>
++      </DialogFooter>
++    </Dialog>
++  )
++}
+diff --git a/packages/frontend/src/components/StickerPacks/styles.module.scss b/packages/frontend/src/components/StickerPacks/styles.module.scss
+new file mode 100644
+index 0000000000000000000000000000000000000000..b2d3e6867a8a42ff91220b3dbb008c212b375c4f
+--- /dev/null
++++ b/packages/frontend/src/components/StickerPacks/styles.module.scss
+@@ -0,0 +1,402 @@
++// Manage Stickers dialog
++
++.toolbar {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 8px;
++  padding: 12px 16px;
++}
++
++.toolButton {
++  flex-shrink: 0;
++  padding: 6px 12px;
++  border: 1px solid var(--separatorColor);
++  border-radius: 16px;
++  background: transparent;
++  color: var(--colorPrimary);
++  font: inherit;
++  cursor: pointer;
++
++  &:hover,
++  &:focus-visible {
++    background: var(--chatListItemBgHover);
++  }
++
++  &:disabled {
++    cursor: default;
++    opacity: 0.6;
++  }
++}
++
++.moreButton {
++  flex-shrink: 0;
++  width: 32px;
++  height: 32px;
++  border: none;
++  border-radius: 50%;
++  background: transparent;
++  color: var(--globalText);
++  font-size: 1.2em;
++  cursor: pointer;
++
++  &:hover,
++  &:focus-visible {
++    background: var(--chatListItemBgHover);
++  }
++}
++
++.pack {
++  margin: 0 8px 8px;
++  padding: 8px;
++  border: 2px solid transparent;
++  border-radius: 8px;
++}
++
++.dropTarget {
++  border-color: var(--colorPrimary);
++  border-style: dashed;
++}
++
++.packHeader {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  padding: 0 4px 6px;
++}
++
++.packName {
++  min-width: 0;
++  flex-grow: 1;
++  font-weight: bold;
++  overflow: hidden;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++
++.packCount {
++  color: var(--contactEmailColor);
++  font-size: 0.9em;
++}
++
++.grid {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 4px;
++  min-height: 48px;
++}
++
++.recent {
++  flex-wrap: nowrap;
++  overflow-x: auto;
++}
++
++.sticker {
++  position: relative;
++  flex-shrink: 0;
++  padding: 4px;
++  border: none;
++  border-radius: 8px;
++  background: transparent;
++  cursor: grab;
++  // a long press picks the sticker up (or opens its menu), not iOS's image callout
++  -webkit-touch-callout: none;
++  user-select: none;
++
++  &:hover,
++  &:focus-visible {
++    background: var(--chatListItemBgHover);
++  }
++}
++
++.emojiBadge {
++  position: absolute;
++  right: 0;
++  bottom: 0;
++  padding: 0 3px;
++  border-radius: 8px;
++  background: var(--bgPrimary);
++  font-size: 0.8em;
++  line-height: 1.4;
++  pointer-events: none;
++}
++
++.emojiChips {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 6px;
++  min-height: 32px;
++  padding: 8px 0;
++}
++
++.emojiChip {
++  padding: 2px 8px;
++  border: 1px solid var(--separatorColor);
++  border-radius: 16px;
++  background: transparent;
++  color: var(--globalText);
++  font: inherit;
++  font-size: 1.2em;
++  cursor: pointer;
++
++  &:hover,
++  &:focus-visible {
++    background: var(--chatListItemBgHover);
++  }
++}
++
++.thumbImg {
++  display: block;
++  object-fit: contain;
++}
++
++.thumbLottie {
++  display: block;
++}
++
++.touchGhost {
++  position: fixed;
++  z-index: 10;
++  transform: translate(-50%, -50%) scale(1.15);
++  opacity: 0.85;
++  pointer-events: none;
++}
++
++.hint {
++  padding: 4px;
++  color: var(--contactEmailColor);
++  font-size: 0.9em;
++}
++
++.otherPack {
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  padding: 6px 4px;
++}
++
++.otherPreview {
++  display: grid;
++  grid-template-columns: repeat(2, 32px);
++  grid-auto-rows: 32px;
++  flex-shrink: 0;
++  width: 64px;
++  height: 64px;
++}
++
++.otherText {
++  min-width: 0;
++  flex-grow: 1;
++}
++
++// Sticker pack card for a received .zip
++
++.zipCard {
++  display: flex;
++  align-items: center;
++  gap: 12px;
++  padding: 8px;
++  max-width: 320px;
++}
++
++.zipCardGrid {
++  display: grid;
++  grid-template-columns: repeat(2, 48px);
++  grid-auto-rows: 48px;
++  gap: 2px;
++  flex-shrink: 0;
++  padding: 2px;
++  border: none;
++  border-radius: 8px;
++  background: transparent;
++  cursor: pointer;
++
++  &:hover,
++  &:focus-visible {
++    background: var(--chatListItemBgHover);
++  }
++
++  img {
++    width: 48px;
++    height: 48px;
++    object-fit: contain;
++  }
++}
++
++.zipCardAnimated {
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  border-radius: 6px;
++  background: var(--chatListItemBgHover);
++}
++
++.zipCardText {
++  min-width: 0;
++}
++
++.zipCardName {
++  font-weight: bold;
++  overflow-wrap: anywhere;
++}
++
++.zipCardCount {
++  margin-bottom: 6px;
++  color: var(--messageAttachmentFileInfo);
++  font-size: 0.9em;
++}
++
++.zipCardButton {
++  @extend .toolButton;
++}
++
++.added {
++  color: var(--messageAttachmentFileInfo);
++}
++
++// Pack inspector: the whole pack of a received .zip
++
++.inspectCount {
++  @extend .packCount;
++  padding: 0 16px 8px;
++}
++
++.inspectGrid {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 4px;
++  padding: 0 12px 12px;
++}
++
++.inspectSticker {
++  @extend .sticker;
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  cursor: pointer;
++}
++
++.inspectEmojis {
++  max-width: 72px;
++  overflow: hidden;
++  font-size: 0.8em;
++  white-space: nowrap;
++  text-overflow: ellipsis;
++}
++
++.bigPreviewLayer {
++  position: absolute;
++  inset: 0;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  // hover previews must not steal the pointer from the sticker underneath
++  pointer-events: none;
++}
++
++.bigPreview {
++  padding: 16px;
++  border-radius: 16px;
++  background: var(--bgPrimary);
++  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
++  text-align: center;
++
++  &.pinned {
++    pointer-events: auto;
++    cursor: pointer;
++  }
++
++  img {
++    max-width: 70vw;
++    height: auto;
++  }
++}
++
++.bigPreviewEmojis {
++  padding-top: 8px;
++  font-size: 1.6em;
++}
++
++// Composer sticker picker: bottom bar (like the emoji picker's categories)
++// and the empty state
++
++.pickerBar {
++  display: flex;
++  flex-shrink: 0;
++  align-items: center;
++  height: 44px;
++  padding: 0 4px;
++  border-top: 1px solid var(--separatorColor);
++  background: var(--emojiMartBg);
++}
++
++.pickerBarPacks {
++  display: flex;
++  flex-grow: 1;
++  min-width: 0;
++  height: 100%;
++  overflow-x: auto;
++  scrollbar-width: none;
++}
++
++.pickerBarPack {
++  position: relative;
++  display: flex;
++  flex-shrink: 0;
++  align-items: center;
++  justify-content: center;
++  width: 40px;
++  height: 100%;
++  padding: 0;
++  border: none;
++  background: transparent;
++  cursor: pointer;
++  opacity: 0.6;
++
++  &:hover,
++  &:focus-visible {
++    opacity: 1;
++  }
++
++  // the emoji picker marks its current category with a bar along the edge
++  &.selected {
++    opacity: 1;
++
++    &::after {
++      content: '';
++      position: absolute;
++      top: 0;
++      left: 6px;
++      right: 6px;
++      height: 3px;
++      border-radius: 0 0 3px 3px;
++      background: var(--colorPrimary);
++    }
++  }
++
++  &.dropTarget {
++    opacity: 1;
++    border-radius: 8px;
++    outline: 2px dashed var(--colorPrimary);
++    outline-offset: -4px;
++  }
++}
++
++.pickerBarManage {
++  flex-shrink: 0;
++  margin-inline-start: 4px;
++}
++
++.pickerActions {
++  display: flex;
++  flex-wrap: wrap;
++  justify-content: center;
++  gap: 8px;
++  padding: 8px;
++}
++
++.pickerNote {
++  padding: 0 16px 8px;
++  color: var(--contactEmailColor);
++  font-size: 0.85em;
++  text-align: center;
++}
+diff --git a/packages/frontend/src/components/attachment/messageAttachment.tsx b/packages/frontend/src/components/attachment/messageAttachment.tsx
+index 44fb2ad631397503c3cc78995270caf6850f0d00..dd57815a7bf2bee7091755befb0ad21fa3fc09e3 100644
+--- a/packages/frontend/src/components/attachment/messageAttachment.tsx
++++ b/packages/frontend/src/components/attachment/messageAttachment.tsx
+@@ -30,6 +30,7 @@ import { useRpcFetch } from '../../hooks/useFetch'
+ import { useHasChanged2 } from '../../hooks/useHasChanged'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import { isCoarsePointer } from '../../utils/isCoarsePointer'
++import { StickerPackZipCard, isZipFile } from '../StickerPacks'
+ 
+ type AttachmentProps = {
+   text?: string
+@@ -275,7 +276,7 @@ export default function Attachment({
+   // Generic file renderer - (also used for oversized images)
+   const { fileName, fileBytes, fileMime, file } = message
+   const extension = getExtension(message)
+-  return (
++  const genericTile = (
+     <button
+       type='button'
+       className={classNames(
+@@ -303,6 +304,16 @@ export default function Attachment({
+       </div>
+     </button>
+   )
++  // slothfulchat: a zip holding a sticker pack becomes a pack card
++  return isZipFile(fileName) ? (
++    <StickerPackZipCard
++      message={message as typeof message & { file: string }}
++      fallback={genericTile}
++      tabindexForInteractiveContents={tabindexForInteractiveContents}
++    />
++  ) : (
++    genericTile
++  )
+ }
+ /**
+  * @see also {@linkcode GalleryAudioAttachment}.
+diff --git a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
+index 9564e8eae54d989bcb7422980aa5bec2ce5bff07..55e0933476c73fc5b29507792986287f8cc6cc7f 100644
+--- a/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
++++ b/packages/frontend/src/components/composer/EmojiAndStickerPicker.tsx
+@@ -9,7 +9,6 @@ import React, {
+ } from 'react'
+ import classNames from 'classnames'
+ 
+-import { BackendRemote } from '../../backend-com'
+ import { selectedAccountId } from '../../ScreenController'
+ import { runtime } from '@deltachat-desktop/runtime-interface'
+ import EmojiPicker from '../EmojiPicker'
+@@ -17,6 +16,24 @@ import LottieSticker from '../attachment/LottieSticker'
+ import useTranslationFunction from '../../hooks/useTranslationFunction'
+ import { ContextMenuContext } from '../../contexts/ContextMenuContext'
+ import useConfirmationDialog from '../../hooks/dialog/useConfirmationDialog'
++import useDialog from '../../hooks/dialog/useDialog'
++import { useSettingsStore } from '../../stores/settings'
++import { instanceHidesPublicSuggestions } from '../../utils/slothfulInstanceConfig'
++import ManageStickersDialog from '../StickerPacks/ManageStickers'
++import {
++  StickerThumb,
++  importStickerZip,
++  reportStickerError,
++  stickersApi,
++} from '../StickerPacks'
++import { IconButton } from '../Icon'
++import PublicBotsDialog from '../dialogs/PublicBots'
++import stickerStyles from '../StickerPacks/styles.module.scss'
++import {
++  rpcStickers,
++  type StickerObject,
++  type StickerPackObject,
++} from '../../backend/stickerPacks'
+ 
+ import styles from './styles.module.scss'
+ 
+@@ -27,14 +44,18 @@ import {
+ } from '../../contexts/RovingTabindex'
+ 
+ type Props = {
++  packId: number
+   stickerPackName: string
+-  stickerPackImages: string[]
++  stickerPackImages: StickerObject[]
+   setShowEmojiPicker: (enabled: boolean) => void
+   onStickerDeleted: () => void
+   onStickerClick: (stickerPath: string) => void
+ }
+ 
++const STICKER_DRAG_TYPE = 'application/x-slothful-picker-sticker'
++
+ const DisplayedStickerPack = ({
++  packId,
+   stickerPackName,
+   stickerPackImages,
+   setShowEmojiPicker,
+@@ -50,7 +71,7 @@ const DisplayedStickerPack = ({
+   }
+ 
+   return (
+-    <div className='sticker-pack'>
++    <div className='sticker-pack' data-pack-id={packId}>
+       <div className='title'>{stickerPackName}</div>
+       <div ref={listRef} className='container'>
+         {/* Yes, we have separate `RovingTabindexProvider` for each
+@@ -60,11 +81,12 @@ const DisplayedStickerPack = ({
+           wrapperElementRef={listRef}
+           direction='horizontal'
+         >
+-          {stickerPackImages.map(filePath => (
++          {stickerPackImages.map(sticker => (
+             <StickersListItem
+-              key={filePath}
+-              filePath={filePath}
+-              onClick={() => onClickSticker(filePath)}
++              key={sticker.id}
++              stickerId={sticker.id}
++              filePath={sticker.path}
++              onClick={() => onClickSticker(sticker.path)}
+               onStickerDeleted={onStickerDeleted}
+             />
+           ))}
+@@ -75,11 +97,12 @@ const DisplayedStickerPack = ({
+ }
+ 
+ function StickersListItem(props: {
++  stickerId: number
+   filePath: string
+   onClick: () => void
+   onStickerDeleted: () => void
+ }) {
+-  const { filePath, onClick, onStickerDeleted } = props
++  const { stickerId, filePath, onClick, onStickerDeleted } = props
+   const ref = useRef<HTMLButtonElement>(null)
+   const rovingTabindex = useRovingTabindex(ref)
+   const { openContextMenu } = useContext(ContextMenuContext)
+@@ -116,7 +139,11 @@ function StickersListItem(props: {
+               isConfirmDanger: true,
+             })
+             if (confirmed) {
+-              await runtime.deleteSticker(filePath)
++              // slothfulchat: stickers are pack entries over shared blobs
++              // (core sticker packs); this drops the entry, not the file
++              await rpcStickers
++                .removeSticker(selectedAccountId(), stickerId)
++                .catch(reportStickerError)
+               onStickerDeleted()
+             }
+           },
+@@ -132,6 +159,11 @@ function StickersListItem(props: {
+       className={'sticker ' + rovingTabindex.className}
+       onClick={onClick}
+       onContextMenu={onContextMenu}
++      // drop it on a pack's icon in the bar below to move it there
++      draggable
++      onDragStart={ev =>
++        ev.dataTransfer.setData(STICKER_DRAG_TYPE, String(stickerId))
++      }
+       aria-haspopup='menu'
+       tabIndex={rovingTabindex.tabIndex}
+       onKeyDown={rovingTabindex.onKeydown}
+@@ -164,14 +196,87 @@ export const StickerPicker = ({
+   role: 'tabpanel' | undefined
+   id: string
+   labelledBy: string
+-  stickers: { [key: string]: string[] }
++  stickers: StickerPackObject[]
+   setShowEmojiPicker: (enabled: boolean) => void
+   onStickerDeleted: () => void
+   onStickerClick: (stickerPath: string) => void
+ }) => {
+   const tx = useTranslationFunction()
++  const { openDialog } = useDialog()
++  const settingsStore = useSettingsStore()[0]
+ 
+-  const stickerPackNames = Object.keys(stickers)
++  const packs = stickers.filter(p => p.stickers.length > 0)
++  // The bots are community-run: hidden with the other community
++  // suggestions (Settings → Chats and Media, or instance-wide).
++  const showFindPacks =
++    settingsStore != null &&
++    settingsStore.desktopSettings.hideNewChatSuggestions !== true &&
++    !instanceHidesPublicSuggestions()
++
++  const openManage = () => {
++    setShowEmojiPicker(false)
++    openDialog(ManageStickersDialog)
++  }
++
++  // Bottom bar like the emoji picker's categories: one icon per pack (its
++  // first sticker) that scrolls there, the current pack highlighted.
++  const containerRef = useRef<HTMLDivElement>(null)
++  const [activePack, setActivePack] = useState<number | null>(null)
++  const [dropPack, setDropPack] = useState<number | null>(null)
++  // a clicked pack stays marked while it is in view: the last packs can't
++  // scroll up to the top, so position alone would mark one before them
++  const clickedPack = useRef<number | null>(null)
++  const onScroll = () => {
++    const container = containerRef.current
++    if (!container) return
++    const top = (el: HTMLElement) => el.offsetTop - container.offsetTop
++    const els = [...container.querySelectorAll<HTMLElement>('[data-pack-id]')]
++    const clicked = els.find(
++      el => Number(el.dataset.packId) === clickedPack.current
++    )
++    if (
++      clicked &&
++      top(clicked) < container.scrollTop + container.clientHeight &&
++      top(clicked) + clicked.offsetHeight > container.scrollTop
++    ) {
++      return
++    }
++    clickedPack.current = null
++    let current: number | null = null
++    for (const el of els) {
++      if (top(el) <= container.scrollTop + 8)
++        current = Number(el.dataset.packId)
++    }
++    setActivePack(current)
++  }
++  const scrollToPack = (packId: number) => {
++    clickedPack.current = packId
++    setActivePack(packId)
++    containerRef.current
++      ?.querySelector(`[data-pack-id="${packId}"]`)
++      ?.scrollIntoView({ block: 'start' })
++  }
++  const onDropOnPack = (ev: React.DragEvent, packId: number) => {
++    ev.preventDefault()
++    setDropPack(null)
++    const stickerId = Number(ev.dataTransfer.getData(STICKER_DRAG_TYPE))
++    if (!stickerId) return
++    rpcStickers
++      .moveSticker(selectedAccountId(), stickerId, packId)
++      .catch(reportStickerError)
++      .finally(onStickerDeleted) // reloads the packs
++  }
++  const current = activePack ?? packs[0]?.id
++  const importZip = async () => {
++    const [path] = await runtime.showOpenFileDialog({
++      filters: [{ name: 'zip', extensions: ['zip'] }],
++      properties: ['openFile'],
++    })
++    if (!path) return
++    await importStickerZip(tx, path, path.slice(path.lastIndexOf('/') + 1))
++    await runtime.removeTempFile(path).catch(() => {})
++    onStickerDeleted() // reloads the packs
++  }
+ 
+   return (
+     <div
+@@ -180,26 +285,102 @@ export const StickerPicker = ({
+       aria-labelledby={labelledBy}
+       className='sticker-picker'
+     >
+-      {stickerPackNames.length > 0 ? (
++      {packs.length > 0 ? (
+         <>
+-          <div className='sticker-container'>
+-            {stickerPackNames.map(name => (
++          <div
++            className='sticker-container'
++            ref={containerRef}
++            onScroll={onScroll}
++          >
++            {packs.map(pack => (
+               <DisplayedStickerPack
+-                key={name}
+-                stickerPackName={name}
+-                stickerPackImages={stickers[name]}
++                key={pack.id}
++                packId={pack.id}
++                stickerPackName={pack.name}
++                stickerPackImages={pack.stickers}
+                 setShowEmojiPicker={setShowEmojiPicker}
+                 onStickerDeleted={onStickerDeleted}
+                 onStickerClick={onStickerClick}
+               />
+             ))}
+           </div>
++          <nav className={stickerStyles.pickerBar}>
++            <div className={stickerStyles.pickerBarPacks}>
++              {packs.map(pack => (
++                <button
++                  type='button'
++                  key={pack.id}
++                  className={classNames(stickerStyles.pickerBarPack, {
++                    [stickerStyles.selected]: pack.id === current,
++                    [stickerStyles.dropTarget]: pack.id === dropPack,
++                  })}
++                  onClick={() => scrollToPack(pack.id)}
++                  onDragOver={ev => {
++                    if (ev.dataTransfer.types.includes(STICKER_DRAG_TYPE)) {
++                      ev.preventDefault()
++                      setDropPack(pack.id)
++                    }
++                  }}
++                  onDragLeave={() => setDropPack(null)}
++                  onDrop={ev => onDropOnPack(ev, pack.id)}
++                  aria-label={pack.name}
++                  title={pack.name}
++                  aria-current={pack.id === current}
++                >
++                  <StickerThumb path={pack.stickers[0].path} size={24} />
++                </button>
++              ))}
++            </div>
++            <IconButton
++              icon='settings'
++              size={20}
++              className={stickerStyles.pickerBarManage}
++              aria-label={tx('sticker_packs_manage')}
++              title={tx('sticker_packs_manage')}
++              onClick={openManage}
++            />
++          </nav>
+         </>
+       ) : (
+         <div className='sticker-container'>
+           <div className='sticker-hint'>
+             <p>{tx('sticker_picker_empty_hint')}</p>
+           </div>
++          <div className={stickerStyles.pickerActions}>
++            {showFindPacks && (
++              <button
++                type='button'
++                className={stickerStyles.toolButton}
++                onClick={() => {
++                  setShowEmojiPicker(false)
++                  openDialog(PublicBotsDialog, { initialQuery: 'sticker' })
++                }}
++              >
++                {tx('sticker_packs_find')}
++              </button>
++            )}
++            {stickersApi() && (
++              <button
++                type='button'
++                className={stickerStyles.toolButton}
++                onClick={importZip}
++              >
++                {tx('sticker_packs_import_zip')}
++              </button>
++            )}
++            <button
++              type='button'
++              className={stickerStyles.toolButton}
++              onClick={openManage}
++            >
++              {tx('sticker_packs_manage')}
++            </button>
++          </div>
++          {showFindPacks && (
++            <p className={stickerStyles.pickerNote}>
++              {tx('sticker_packs_find_note')}
++            </p>
++          )}
+         </div>
+       )}
+     </div>
+@@ -253,14 +434,13 @@ export const EmojiAndStickerPicker = forwardRef<
+ 
+   const [_showSticker, setShowSticker] = useState(false)
+   const showSticker = hideStickerPicker ? false : _showSticker
+-  const [stickers, setStickers] = useState<{
+-    [key: string]: string[]
+-  }>({})
++  const [stickers, setStickers] = useState<StickerPackObject[]>([])
+ 
+   const refreshStickers = useCallback(() => {
+-    BackendRemote.rpc
+-      .miscGetStickers(accountId)
++    rpcStickers
++      .getStickerPacks(accountId)
+       .then(stickers => setStickers(stickers))
++      .catch(reportStickerError)
+   }, [accountId])
+ 
+   useEffect(() => {
+diff --git a/packages/frontend/src/components/dialogs/PublicBots/index.tsx b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
+index 7dc586b0b1fd556bdd5a2d6a8af2f69ddc45819b..fadeae3013e19254f7b6f95cf800aaada945684b 100644
+--- a/packages/frontend/src/components/dialogs/PublicBots/index.tsx
++++ b/packages/frontend/src/components/dialogs/PublicBots/index.tsx
+@@ -57,7 +57,6 @@ interface BotEntry {
+   url: string
+ }
+ 
+-
+ function parseBotsJson(base64: string): {
+   bots: BotEntry[]
+   langs: { [key: string]: string }
+@@ -97,7 +96,9 @@ function parseBotsJson(base64: string): {
+       }
+       return { url, description, admin, lang, name, addr }
+     })
+-    .filter(bot => bot.name !== '' && /^https:\/\/i\.delta\.chat\//i.test(bot.url))
++    .filter(
++      bot => bot.name !== '' && /^https:\/\/i\.delta\.chat\//i.test(bot.url)
++    )
+ 
+   const langs: { [key: string]: string } = {}
+   if (typeof data.langs === 'object' && data.langs != null) {
+@@ -115,8 +116,13 @@ function parseBotsJson(base64: string): {
+  * "New Chat" dialog. The list is loaded from the third-party
+  * deltachat-bot/public-bots repository, so the first use asks for consent.
+  */
+-export default function PublicBotsDialog(props: DialogProps) {
+-  const { onClose } = props
++export default function PublicBotsDialog(
++  props: DialogProps & {
++    /** pre-filled search, e.g. 'sticker' from the empty sticker picker */
++    initialQuery?: string
++  }
++) {
++  const { onClose, initialQuery } = props
+   const settingsStore = useSettingsStore()[0]
+ 
+   if (instanceHidesPublicSuggestions()) {
+@@ -127,19 +133,14 @@ export default function PublicBotsDialog(props: DialogProps) {
+   }
+ 
+   return (
+-    <Dialog
+-      width={400}
+-      onClose={onClose}
+-      fixed
+-      dataTestid='public-bots-dialog'
+-    >
++    <Dialog width={400} onClose={onClose} fixed dataTestid='public-bots-dialog'>
+       {settingsStore == null ? (
+         // Wait for the settings store: the consent state is unknown, and
+         // accepting couldn't be stored yet anyway (the store's reducer
+         // no-ops while its state is null).
+         <DialogHeader title='Public Bots' onClose={onClose} />
+       ) : settingsStore.desktopSettings.publicBotsRemoteLoadConsent === true ? (
+-        <PublicBotsList onClose={onClose} />
++        <PublicBotsList onClose={onClose} initialQuery={initialQuery} />
+       ) : (
+         <PublicBotsConsent onClose={onClose} />
+       )}
+@@ -207,11 +208,17 @@ function PublicBotsConsent({ onClose }: { onClose: () => void }) {
+   )
+ }
+ 
+-function PublicBotsList({ onClose }: { onClose: () => void }) {
++function PublicBotsList({
++  onClose,
++  initialQuery,
++}: {
++  onClose: () => void
++  initialQuery?: string
++}) {
+   const tx = useTranslationFunction()
+   const accountId = selectedAccountId()
+   const processQr = useProcessQR()
+-  const [queryStr, setQueryStr] = useState('')
++  const [queryStr, setQueryStr] = useState(initialQuery ?? '')
+ 
+   const fetchBots = useCallback(async () => {
+     // Through core's HTTP so this works the same on all runtimes
+diff --git a/packages/frontend/src/components/message/Message.tsx b/packages/frontend/src/components/message/Message.tsx
+index 22e222cef62f3be8daa0acaa667d5c40451a4c6c..29cef93aa728f82fb9e149342e57eac1ee844302 100644
+--- a/packages/frontend/src/components/message/Message.tsx
++++ b/packages/frontend/src/components/message/Message.tsx
+@@ -32,6 +32,7 @@ import { getDirection } from '../../utils/getDirection'
+ import { mapCoreMsgStatus2String } from '../helpers/MapMsgStatus'
+ import { ContextMenuItem } from '../ContextMenu'
+ import { onDCEvent, BackendRemote } from '../../backend-com'
++import { importStickerZip, isZipFile, stickersApi } from '../StickerPacks'
+ import { selectedAccountId } from '../../ScreenController'
+ import { ProtectionEnabledDialog } from '../dialogs/ProtectionStatusDialog'
+ import useDialog from '../../hooks/dialog/useDialog'
+@@ -480,6 +481,17 @@ function buildContextMenu(
+           tx('saved')
+         ),
+     },
++    // slothfulchat: import a zip as a sticker pack. Also covers zips too big
++    // for the automatic pack card, which the import still checks.
++    Boolean(
++      stickersApi() &&
++      message.file &&
++      message.downloadState === 'Done' &&
++      isZipFile(message.fileName)
++    ) && {
++      label: tx('sticker_packs_import_as'),
++      action: () => importStickerZip(tx, message.file!, message.fileName ?? ''),
++    },
+     // Resend Message
+     showResend && {
+       label: tx('resend'),
