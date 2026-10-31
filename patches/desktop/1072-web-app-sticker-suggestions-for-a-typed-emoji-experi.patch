@@ -13,33 +13,42 @@ mode, a strip above the input lists the stickers associated with that
 emoji (core sticker packs: emojis per sticker). Tapping one sends it the
 same way the picker does and then clears the input, but only if the text
 at that moment still is exactly that emoji; otherwise nothing is sent or
-cleared and the strip goes away. Enter still sends the text; Escape hides
-the strip until the text changes; pressing a suggestion keeps the
-input's focus.
+cleared and the strip goes away. Pressing a suggestion keeps the input's
+focus.
+
+Keyboard, with focus staying in the input like the :emoji: completion
+menu: nothing is selected at first, so Enter still sends the emoji as
+text. Up selects the first sticker (aria-activedescendant on the input);
+then Left/Right (wrapping) and Home/End move, Enter or Tab send it, Down
+or Escape go back to the input, and any other key deselects and types.
+Without a selection Escape hides the strip until the text changes. The
+composer's capture-phase Escape handler leaves Escape to the strip while
+a sticker is selected.
 
 useDraft: removeQuote and updateDraftText built the new draft from a stale
 snapshot, so two edits in one event (send with a quote, then clear) brought
 the quote back; both now build on the latest draft via a ref.
 ---
- .../scss/composer/_completion-menu.scss       | 30 +++++++
- .../Settings/ExperimentalFeatures.tsx         |  6 ++
- .../src/components/composer/Composer.tsx      | 77 +++++++++++++++++-
- .../composer/StickerSuggestions.tsx           | 80 +++++++++++++++++++
- .../src/components/composer/singleEmoji.ts    | 23 ++++++
- packages/frontend/src/hooks/chat/useDraft.ts  | 21 ++---
- .../frontend/src/tests/singleEmoji.test.ts    | 31 +++++++
- packages/shared/shared-types.d.ts             |  2 +
- packages/shared/state.ts                      |  1 +
- 9 files changed, 260 insertions(+), 11 deletions(-)
+ .../scss/composer/_completion-menu.scss       |  37 ++++
+ .../Settings/ExperimentalFeatures.tsx         |   6 +
+ .../src/components/composer/Composer.tsx      |  94 +++++++++-
+ .../composer/ComposerMessageInput.tsx         |   4 +-
+ .../composer/StickerSuggestions.tsx           | 171 ++++++++++++++++++
+ .../src/components/composer/singleEmoji.ts    |  23 +++
+ packages/frontend/src/hooks/chat/useDraft.ts  |  21 ++-
+ .../frontend/src/tests/singleEmoji.test.ts    |  31 ++++
+ packages/shared/shared-types.d.ts             |   2 +
+ packages/shared/state.ts                      |   1 +
+ 10 files changed, 378 insertions(+), 12 deletions(-)
  create mode 100644 packages/frontend/src/components/composer/StickerSuggestions.tsx
  create mode 100644 packages/frontend/src/components/composer/singleEmoji.ts
  create mode 100644 packages/frontend/src/tests/singleEmoji.test.ts
 
 diff --git a/packages/frontend/scss/composer/_completion-menu.scss b/packages/frontend/scss/composer/_completion-menu.scss
-index cad4f00e8cf47972f81a1b81c075cd05d0c507e9..081a2266b599280dcb4e278642fd6037e4652d2b 100644
+index cad4f00e8cf47972f81a1b81c075cd05d0c507e9..98b40fe1a47425ab9f191034e24bbbcf045f7b1c 100644
 --- a/packages/frontend/scss/composer/_completion-menu.scss
 +++ b/packages/frontend/scss/composer/_completion-menu.scss
-@@ -74,3 +74,33 @@
+@@ -74,3 +74,40 @@
      font-size: 0.9em;
    }
  }
@@ -64,12 +73,19 @@ index cad4f00e8cf47972f81a1b81c075cd05d0c507e9..081a2266b599280dcb4e278642fd6037
 +    cursor: pointer;
 +
 +    &:hover,
-+    &:focus-visible {
++    &:focus-visible,
++    &.selected {
 +      background-color: color-mix(
 +        in srgb,
 +        var(--textPrimary) 16%,
 +        var(--bgPrimary)
 +      );
++    }
++
++    // the keyboard selection, also visible while the pointer hovers another
++    &.selected {
++      outline: 2px solid var(--colorPrimary);
++      outline-offset: -2px;
 +    }
 +  }
 +}
@@ -91,19 +107,22 @@ index cc431cfabe557c0d47b21f9049fa7caad1853fe5..a5399360b73112c35fd4db74628caca7
          settingsKey='grammarCheck'
          label='Grammar & spelling checker'
 diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
-index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0c2a2fcaa5c73131e60c10e1359a0b33ae8d6ffa 100644
+index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..c9f6e81f72452810e5e46dbaa6af098c7cf86b97 100644
 --- a/packages/frontend/src/components/composer/Composer.tsx
 +++ b/packages/frontend/src/components/composer/Composer.tsx
-@@ -16,6 +16,8 @@ import ComposerMessageInput from './ComposerMessageInput'
+@@ -16,6 +16,11 @@ import ComposerMessageInput from './ComposerMessageInput'
  import { languageToolConfig } from './languageToolCheck'
  import { parseBotCommandsFromStatus } from './completion/botCommandProvider'
  import LinkPreviewGhost from './linkPreview/LinkPreviewGhost'
-+import { StickerSuggestions } from './StickerSuggestions'
++import {
++  StickerSuggestions,
++  type StickerSuggestionsHandle,
++} from './StickerSuggestions'
 +import { singleEmoji } from './singleEmoji'
  import ghostStyles from './linkPreview/styles.module.scss'
  import Icon from '../Icon'
  import { useLinkPreview } from './linkPreview/useLinkPreview'
-@@ -407,7 +409,7 @@ const Composer = forwardRef<
+@@ -407,7 +412,7 @@ const Composer = forwardRef<
    const onStickerClick = useCallback(
      async (stickerPath: string) => {
        if (threadQuoteMissing) {
@@ -112,7 +131,7 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0c2a2fcaa5c73131e60c10e1359a0b33
        }
        const quotedMessageId =
          draftState.quote?.kind === 'WithMessage'
-@@ -421,6 +423,7 @@ const Composer = forwardRef<
+@@ -421,6 +426,7 @@ const Composer = forwardRef<
        if (quotedMessageId) {
          removeQuote()
        }
@@ -120,7 +139,7 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0c2a2fcaa5c73131e60c10e1359a0b33
      },
      [
        accountId,
-@@ -431,6 +434,62 @@ const Composer = forwardRef<
+@@ -431,6 +437,67 @@ const Composer = forwardRef<
        threadQuoteMissing,
      ]
    )
@@ -154,6 +173,11 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0c2a2fcaa5c73131e60c10e1359a0b33
 +      ? singleEmoji(draftState.text)
 +      : null
 +  const suggestionText = draftState.text
++  const suggestionsRef = useRef<StickerSuggestionsHandle>(null)
++  const suggestionsInput = useCallback(
++    () => regularMessageInputRef.current?.textareaRef.current,
++    [regularMessageInputRef]
++  )
 +  const onSuggestionPick = async (stickerPath: string) => {
 +    // the textarea is the live truth; React may not have re-rendered yet
 +    const liveText = regularMessageInputRef.current?.textareaRef.current?.value
@@ -183,7 +207,16 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0c2a2fcaa5c73131e60c10e1359a0b33
    const shiftPressed = useRef(false)
    const onEmojiSelect = (emoji: EmojiMartData) => {
      log.debug(`EmojiPicker: Selected ${emoji.id}`)
-@@ -453,7 +512,9 @@ const Composer = forwardRef<
+@@ -448,12 +515,18 @@ const Composer = forwardRef<
+     const onKey = (ev: KeyboardEvent) => {
+       shiftPressed.current = ev.shiftKey
+       if (ev.type === 'keydown' && ev.code === 'Escape') {
++        // a selected suggestion: the input's handler deselects it, nothing else
++        if (suggestionsRef.current?.hasSelection()) {
++          return
++        }
+         if (
+           !['composer-textarea-edit', 'composer-textarea-non-edit'].includes(
              (ev.target as any).id
            ) &&
            !showEmojiPicker &&
@@ -194,7 +227,7 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0c2a2fcaa5c73131e60c10e1359a0b33
          ) {
            // only handle escape events in composer or related components here
            return
-@@ -467,6 +528,10 @@ const Composer = forwardRef<
+@@ -467,6 +540,10 @@ const Composer = forwardRef<
            setShowAppPicker(false)
            handled = true
          }
@@ -205,7 +238,7 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0c2a2fcaa5c73131e60c10e1359a0b33
          if (!handled && messageEditing.isEditingModeActive) {
            messageEditing.cancelEditing()
            handled = true
-@@ -510,6 +575,7 @@ const Composer = forwardRef<
+@@ -510,6 +587,7 @@ const Composer = forwardRef<
      editMessageInputRef,
      showEmojiPicker,
      showAppPicker,
@@ -213,7 +246,7 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0c2a2fcaa5c73131e60c10e1359a0b33
      draftState.quote,
      removeQuote,
    ])
-@@ -920,6 +986,13 @@ const Composer = forwardRef<
+@@ -920,6 +998,15 @@ const Composer = forwardRef<
            )}
            {settingsStore && !recording && (
              <>
@@ -222,18 +255,59 @@ index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..0c2a2fcaa5c73131e60c10e1359a0b33
 +                  accountId={accountId}
 +                  emoji={suggestionEmoji}
 +                  onPick={onSuggestionPick}
++                  input={suggestionsInput}
++                  ref={suggestionsRef}
 +                />
 +              )}
                <ComposerMessageInput
                  text={draftState.text}
                  // We use `hidden` instead of simply conditionally rendering
+@@ -933,6 +1020,9 @@ const Composer = forwardRef<
+                 hidden={messageEditing.isEditingModeActive}
+                 isMessageEditingMode={false}
+                 ref={regularMessageInputRef}
++                onKeyDownFirst={e =>
++                  suggestionsRef.current?.handleKey(e) ?? false
++                }
+                 enterKeySends={settingsStore?.desktopSettings.enterKeySends}
+                 completionMenu={
+                   settingsStore?.desktopSettings.experimentalCompletionMenu ===
+diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
+index e2d1d889c4589ea2bc7292ebdb239177ad5a2d06..0787817b814e9443f591bfe3a216b7f2a6079e0f 100644
+--- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
++++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
+@@ -69,6 +69,8 @@ type ComposerMessageInputProps = {
+    * Only relevant for non-editing mode.
+    */
+   onArrowUpWhenEmpty?: () => void
++  /** Gets every key before send/edit-last; true = handled (sticker suggestions). */
++  onKeyDownFirst?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean
+ }
+ 
+ type ComposerMessageInputState = {
+@@ -344,7 +346,7 @@ export default class ComposerMessageInput extends React.Component<
+   onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+     // While the completion menu is open it owns Arrow/Enter/Escape, so the
+     // composer's Enter=send and ArrowUp=edit-last never fire.
+-    if (this.onCompletionKeyDown(e)) {
++    if (this.onCompletionKeyDown(e) || this.props.onKeyDownFirst?.(e)) {
+       return
+     }
+ 
 diff --git a/packages/frontend/src/components/composer/StickerSuggestions.tsx b/packages/frontend/src/components/composer/StickerSuggestions.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..4d26512dd46efd1b57a37596de5315e01b941921
+index 0000000000000000000000000000000000000000..9f599efb08cb194bfea6e92d3fa4391aef6ce617
 --- /dev/null
 +++ b/packages/frontend/src/components/composer/StickerSuggestions.tsx
-@@ -0,0 +1,80 @@
-+import React, { useEffect, useReducer } from 'react'
+@@ -0,0 +1,171 @@
++import React, {
++  forwardRef,
++  useEffect,
++  useImperativeHandle,
++  useReducer,
++  useState,
++} from 'react'
++import classNames from 'classnames'
 +
 +import { rpcStickers, type StickerObject } from '../../backend/stickerPacks'
 +import { StickerThumb } from '../StickerPacks'
@@ -247,20 +321,41 @@ index 0000000000000000000000000000000000000000..4d26512dd46efd1b57a37596de5315e0
 +// emoji, so picker or manager edits show up next time (getStickerPacks is cheap).
 +const packsCache = new Map<number, StickerObject[]>()
 +
++export type StickerSuggestionsHandle = {
++  /** A key pressed in the message input; true when the strip used it. */
++  handleKey: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean
++  /** whether a sticker is selected (Escape then only deselects) */
++  hasSelection: () => boolean
++}
++
++const MODIFIERS = ['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock']
++
 +/**
 + * Strip of the pack stickers tagged with `emoji` (already normalized), above
 + * the composer input. Mounted only while the draft is exactly that emoji.
++ *
++ * Keyboard (focus stays in the input, like the :emoji: completion menu):
++ * nothing is selected at first, so Enter still sends the emoji as text. ↑
++ * selects the first sticker; then ←/→ (wrapping) and Home/End move, Enter or
++ * Tab sends it, ↓ or Escape go back to the input, and any other key
++ * deselects and types as usual.
 + */
-+export function StickerSuggestions({
-+  accountId,
-+  emoji,
-+  onPick,
-+}: {
-+  accountId: number
-+  emoji: string
-+  onPick: (path: string) => void
-+}) {
++export const StickerSuggestions = forwardRef<
++  StickerSuggestionsHandle,
++  {
++    accountId: number
++    emoji: string
++    onPick: (path: string) => void
++    /** the message input, which points screen readers at the selection */
++    input: () => HTMLTextAreaElement | null | undefined
++  }
++>(function StickerSuggestions({ accountId, emoji, onPick, input }, ref) {
 +  const tx = useTranslationFunction()
++  // the selection belongs to one emoji and set of stickers; a new one starts
++  // unselected without an extra render
++  const [selection, setSelection] = useState<{ key: string; i: number } | null>(
++    null
++  )
 +  const [, rerender] = useReducer((x: number) => x + 1, 0)
 +
 +  useEffect(() => {
@@ -288,19 +383,82 @@ index 0000000000000000000000000000000000000000..4d26512dd46efd1b57a37596de5315e0
 +        .map(s => [s.path, s])
 +    ).values(),
 +  ]
++  const selectionKey = emoji + '\n' + matches.map(s => s.path).join('\n')
++  const active = selection?.key === selectionKey ? selection.i : null
++  const setSelected = (i: number | null) =>
++    setSelection(i === null ? null : { key: selectionKey, i })
++
++  // aria-activedescendant: the input keeps focus, the reader hears the sticker
++  useEffect(() => {
++    const el = input()
++    if (!el || active === null) return
++    el.setAttribute('aria-activedescendant', `sticker-suggestion-${active}`)
++    document
++      .getElementById(`sticker-suggestion-${active}`)
++      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
++    return () => el.removeAttribute('aria-activedescendant')
++  }, [active, input])
++
++  useImperativeHandle(ref, () => ({
++    hasSelection: () => active !== null,
++    handleKey(e) {
++      const n = matches.length
++      if (n === 0 || e.nativeEvent.isComposing) return false
++      const plain = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
++      const take = (next: number | null) => {
++        e.preventDefault()
++        e.stopPropagation()
++        setSelected(next)
++        return true
++      }
++      if (active === null) {
++        return e.key === 'ArrowUp' && plain ? take(0) : false
++      }
++      if (plain) {
++        switch (e.key) {
++          case 'ArrowLeft':
++            return take((active - 1 + n) % n)
++          case 'ArrowRight':
++            return take((active + 1) % n)
++          case 'Home':
++            return take(0)
++          case 'End':
++            return take(n - 1)
++          case 'ArrowDown':
++          case 'Escape':
++            return take(null)
++          case 'ArrowUp':
++            return take(active) // already in the strip; don't edit the last message
++          case 'Enter':
++          case 'Tab':
++            take(null)
++            onPick(matches[active].path)
++            return true
++        }
++      }
++      // anything else (typing, Shift+Tab, shortcuts) leaves the strip as is
++      if (!MODIFIERS.includes(e.key)) setSelected(null)
++      return false
++    },
++  }))
++
 +  if (matches.length === 0) return null
 +
 +  return (
 +    <div
 +      className='completion-menu sticker-suggestions'
-+      role='group'
++      role='listbox'
 +      aria-label={tx('sticker_packs_suggestions')}
 +      data-testid='sticker-suggestions'
 +    >
-+      {matches.map(s => (
++      {matches.map((s, i) => (
 +        <button
 +          key={s.path}
++          id={`sticker-suggestion-${i}`}
 +          type='button'
++          role='option'
++          aria-selected={i === active}
++          className={classNames({ selected: i === active })}
 +          aria-label={`${tx('sticker')} ${s.emojis.join(' ')}`}
 +          // keep focus in the textarea on mouse/touch; click still fires,
 +          // and Tab + Enter/Space still reach the button
@@ -312,7 +470,7 @@ index 0000000000000000000000000000000000000000..4d26512dd46efd1b57a37596de5315e0
 +      ))}
 +    </div>
 +  )
-+}
++})
 diff --git a/packages/frontend/src/components/composer/singleEmoji.ts b/packages/frontend/src/components/composer/singleEmoji.ts
 new file mode 100644
 index 0000000000000000000000000000000000000000..eee6e0c2ef0609a7e70a8327fcc5290d497a7c3d

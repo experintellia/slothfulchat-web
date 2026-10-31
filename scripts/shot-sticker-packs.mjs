@@ -372,28 +372,84 @@ try {
   }
   const before = await lastMsg()
   await input.fill('🐱')
-  await suggestions.getByRole('button').first().waitFor()
+  await suggestions.getByRole('option').first().waitFor()
   await shot('09-sticker-suggestions')
-  await suggestions.getByRole('button').first().click()
+  await suggestions.getByRole('option').first().click()
   await until(async () => (await lastMsg()).id !== before.id, 'the suggested sticker sent')
   const sent = await lastMsg()
   expect(sent.viewType === 'Sticker' && sent.fromId === 1, 'tapping a suggestion sends that sticker')
   await until(async () => (await input.inputValue()) === '', 'the composer cleared')
   expect((await suggestions.count()) === 0, 'the input is empty and the strip gone after sending')
 
+  // Keyboard: focus stays in the input; ↑ selects, Esc/↓ go back, Tab or Enter send.
+  const option = suggestions.getByRole('option').first()
+  const selectedNow = async () => (await option.getAttribute('aria-selected')) === 'true'
+  await input.fill('🐱')
+  await option.waitFor()
+  expect(!(await selectedNow()), 'nothing is selected at first')
+  await input.press('ArrowUp')
+  expect(
+    (await selectedNow()) &&
+      (await input.getAttribute('aria-activedescendant')) === (await option.getAttribute('id')),
+    '↑ selects the first sticker, the input points screen readers at it'
+  )
+  await input.press('ArrowRight') // wraps around (one match here)
+  expect(await selectedNow(), '→ keeps a selection (wrapping)')
+  await input.press('Escape')
+  expect(
+    !(await selectedNow()) && (await suggestions.count()) === 1 && (await input.inputValue()) === '🐱',
+    'Esc goes back to the input and keeps the strip and the text'
+  )
+  await input.press('ArrowUp')
+  await input.press('ArrowDown')
+  expect(!(await selectedNow()), '↓ goes back to the input')
+  await input.press('ArrowUp')
+  await shot('10-suggestion-keyboard')
+  const beforeTab = await lastMsg()
+  await input.press('Tab')
+  await until(async () => (await lastMsg()).id !== beforeTab.id, 'Tab to send the selected sticker')
+  expect((await lastMsg()).viewType === 'Sticker', 'Tab sends the selected sticker')
+  await until(async () => (await input.inputValue()) === '', 'the composer cleared after Tab')
+  expect(
+    await page.evaluate(() => document.activeElement?.id === 'composer-textarea-non-edit'),
+    'the input keeps focus'
+  )
+  await input.fill('🐱')
+  await option.waitFor()
+  await input.press('ArrowUp')
+  const beforeEnter = await lastMsg()
+  await input.press('Enter')
+  await until(async () => (await lastMsg()).id !== beforeEnter.id, 'Enter to send the selected sticker')
+  expect(
+    (await lastMsg()).viewType === 'Sticker' && (await input.inputValue()) === '',
+    'Enter sends the selected sticker and clears the input'
+  )
+  const afterEnter = await lastMsg()
+  await input.fill('🐱')
+  await option.waitFor()
+  await input.press('ArrowUp')
+  await input.pressSequentially('x')
+  await page.waitForTimeout(500)
+  expect(
+    (await input.inputValue()) === '🐱x' && (await lastMsg()).id === afterEnter.id,
+    'typing while a sticker is selected just types'
+  )
+  await input.fill('')
+
   await input.fill('hello 🐱')
   await page.waitForTimeout(700)
   expect((await suggestions.count()) === 0, 'no suggestions for an emoji inside text')
 
+  const beforeTyping = await lastMsg()
   await input.fill('🐱')
-  await suggestions.getByRole('button').first().waitFor()
+  await suggestions.getByRole('option').first().waitFor()
   await input.press('End')
   await input.pressSequentially('x')
-  await suggestions.getByRole('button').first().click({ timeout: 1000 }).catch(() => {})
+  await suggestions.getByRole('option').first().click({ timeout: 1000 }).catch(() => {})
   await suggestions.waitFor({ state: 'detached' })
   await page.waitForTimeout(700)
   expect(
-    (await lastMsg()).id === sent.id && (await input.inputValue()) === '🐱x',
+    (await lastMsg()).id === beforeTyping.id && (await input.inputValue()) === '🐱x',
     'once more text is typed the strip is gone and nothing is sent or cleared'
   )
   await input.fill('')

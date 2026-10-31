@@ -357,7 +357,10 @@ exists:
 - **Sticker suggestions** (opt-in: Settings → Experimental → Composer) —
   when the message is exactly one emoji, a strip above the input shows the
   stickers tagged with it; tapping one sends it and clears the input, but
-  only if the input still holds just that emoji. Also fixes `useDraft`
+  only if the input still holds just that emoji. Keyboard: ↑ selects a
+  sticker (focus stays in the input), ←/→ and Home/End move, Enter or Tab
+  send it, ↓ or Esc go back — so Enter without a selection still sends the
+  emoji as text. Also fixes `useDraft`
   building a second draft edit in the same event from a stale snapshot.
   `desktop/1072`
 - **Export Chat** — the three-dot menu exports the open chat as a
