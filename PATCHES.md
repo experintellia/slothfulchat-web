@@ -477,6 +477,10 @@ exists:
   after a failure the next one waits 5 s, doubling to 1 min, until one works.
   The CSPs allow `http(s)://*:*/v2/check` — any host/port, that one path, like
   `/unfurl`. `desktop/1065`
+  An extra switch, "Check spelling before sending", holds a message back while
+  anything is still underlined: Send (button or key) then only opens a hint
+  that says why. Ctrl+click, the hint's "Send anyway" or the send key a second
+  time sends regardless. `desktop/1070`
 
 - **Emoji style picker** — an "Emoji style" picker under Settings →
   Appearance (browser edition only) chooses which emoji font the app renders

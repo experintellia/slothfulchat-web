@@ -16,7 +16,7 @@
   "dependencies": {
     "@slothfulchat/calls": "workspace:*",
     "@slothfulchat/core-wasm": "workspace:*",
-    "dompurify": "^3.2.6",
+    "dompurify": "^3.4.18",
     "harper.js": "2.10.0"
   },
   "devDependencies": {

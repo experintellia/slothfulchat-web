@@ -1,4 +1,10 @@
 {
+  "grammar_send_blocked": {
+    "message": "The checker still underlines spelling or grammar issues. Fix or ignore them, or send anyway: Ctrl+click, or the send key again."
+  },
+  "grammar_send_anyway": {
+    "message": "Send anyway"
+  },
   "export_chat_explain": {
     "message": "Exports this chat as a zip archive: a static HTML viewer that looks like the message list, a plain-text transcript, the raw message data and the media files. Read receipts, full HTML e-mail contents and webxdc app contents are not included."
   },

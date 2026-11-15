@@ -1,0 +1,344 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Sun, 15 Nov 2026 16:19:42 +0000
+Subject: [PATCH] web-app: optionally hold Send while the grammar checker still
+ underlines issues
+
+Experimental switch "Check spelling before sending" (grammarCheckBlocksSend,
+off by default, needs the grammar checker of the LanguageTool patch). While
+the composer's checker underlines anything that is neither fixed nor ignored,
+a send attempt (button, send key; edits too) doesn't send but opens a tip
+above the send button that says why. The tip also shows on hover and focus.
+
+Sending anyway: Ctrl/Cmd+click, the tip's "Send anyway" button, or the send
+key a second time while the tip is open. Editing the text closes the tip.
+
+The button is aria-disabled rather than disabled, which would swallow the
+hover and the click. LanguageTool reports its underline count up through
+onIssueCount; the count is what is underlined right now, so text typed and
+sent within the checker's debounce still goes out unchecked.
+
+Strings are in packages/web-app/fork-strings.json; covered by
+scripts/test-grammar-check-e2e.mjs.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ .../frontend/scss/composer/_composer.scss     |  50 +++++++-
+ .../Settings/ExperimentalFeatures.tsx         |   6 +
+ .../src/components/composer/Composer.tsx      | 110 ++++++++++++++----
+ .../composer/ComposerMessageInput.tsx         |   2 +
+ .../src/components/composer/LanguageTool.tsx  |   8 ++
+ packages/shared/shared-types.d.ts             |   2 +
+ packages/shared/state.ts                      |   1 +
+ 7 files changed, 155 insertions(+), 24 deletions(-)
+
+diff --git a/packages/frontend/scss/composer/_composer.scss b/packages/frontend/scss/composer/_composer.scss
+index b62a11edbcb08027d6065bdfb8b36d274ec6e940..dbe71b9b7bc61f00ce5380218bcd3aaa68e42886 100644
+--- a/packages/frontend/scss/composer/_composer.scss
++++ b/packages/frontend/scss/composer/_composer.scss
+@@ -113,6 +113,50 @@
+       }
+     }
+ 
++    .send-button-wrap {
++      position: relative;
++    }
++    // Why the send button is blocked. Shown on hover/focus and after a send
++    // attempt (.open); hoverable itself, so its button can be reached.
++    .send-blocked-tip {
++      position: absolute;
++      inset-inline-end: 4px;
++      bottom: 100%;
++      z-index: 10;
++      box-sizing: border-box;
++      width: max-content;
++      max-width: min(300px, 80vw);
++      padding: 8px 12px;
++      visibility: hidden;
++
++      background-color: var(--bgPrimary);
++      color: var(--textPrimary);
++      border: 1px solid var(--separatorColor);
++      border-radius: 10px;
++      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
++      font-size: 14px;
++      line-height: 1.4;
++
++      &.open {
++        visibility: visible;
++      }
++      button {
++        display: block;
++        margin-top: 6px;
++        padding: 0;
++        border: none;
++        background: none;
++        color: var(--colorPrimary);
++        font: inherit;
++        font-weight: bold;
++        cursor: pointer;
++      }
++    }
++    .send-button-wrap:hover .send-blocked-tip,
++    .send-button-wrap:focus-within .send-blocked-tip {
++      visibility: visible;
++    }
++
+     .send-button {
+       width: 32px;
+       height: 32px;
+@@ -130,8 +174,10 @@
+         outline-offset: 2px;
+       }
+       // E.g. in reply-thread mode until a thread message is quoted; the bar
+-      // above the input says why.
+-      &:disabled {
++      // above the input says why. aria-disabled: unaddressed grammar issues,
++      // .send-blocked-tip says why.
++      &:disabled,
++      &[aria-disabled='true'] {
+         opacity: 0.4;
+         cursor: default;
+       }
+diff --git a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+index cc431cfabe557c0d47b21f9049fa7caad1853fe5..9b8da709eaf9ddb30f3ecbab00ee4c9bcbd55bf4 100644
+--- a/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
++++ b/packages/frontend/src/components/Settings/ExperimentalFeatures.tsx
+@@ -105,6 +105,12 @@ export function ExperimentalFeatures() {
+       >
+         Checker
+       </SettingsSelector>
++      <DesktopSettingsSwitch
++        settingsKey='grammarCheckBlocksSend'
++        label='Check spelling before sending'
++        description='While the checker still underlines something, Send only tells you so. Fix or ignore the issues, or send anyway with Ctrl+click, the send key a second time, or the button in the hint. Needs the checker above. Off by default (experimental).'
++        forkAdded
++      />
+       <DesktopSettingsSwitch
+         settingsKey='voiceRecordingOriginalAudio'
+         label='Record without noise filtering'
+diff --git a/packages/frontend/src/components/composer/Composer.tsx b/packages/frontend/src/components/composer/Composer.tsx
+index e36069ce6a40a96d40185025f7ab1ef6cd7b09a9..1a5e81f012cb9c2e53820d810cf700bd1d28a751 100644
+--- a/packages/frontend/src/components/composer/Composer.tsx
++++ b/packages/frontend/src/components/composer/Composer.tsx
+@@ -389,6 +389,35 @@ const Composer = forwardRef<
+       ? composerSendMessage
+       : messageEditing.doSendEditRequest
+ 
++  // "Check spelling before sending": while the grammar checker still underlines
++  // something, a send attempt only opens a tip that says why. Sending anyway:
++  // Ctrl/Cmd+click, the tip's button, or the send key a second time.
++  // ponytail: counts what is underlined right now, so text typed and sent
++  // within the checker's debounce goes out unchecked; wait for the pending
++  // check here if that turns out to matter.
++  const [draftIssues, setDraftIssues] = useState(0)
++  const [editIssues, setEditIssues] = useState(0)
++  const [sendBlockedTip, setSendBlockedTip] = useState(false)
++  const grammarIssues =
++    languageTool && settingsStore?.desktopSettings.grammarCheckBlocksSend
++      ? messageEditing.isEditingModeActive
++        ? editIssues
++        : draftIssues
++      : 0
++  const sendBlocked = grammarIssues > 0 && sendButtonAction != null
++  const trySend = (send: () => void, force: boolean) => {
++    if (sendBlocked && !force) {
++      setSendBlockedTip(true)
++    } else {
++      setSendBlockedTip(false)
++      send()
++    }
++  }
++  useEffect(
++    () => setSendBlockedTip(false),
++    [draftState.text, messageEditing.newText]
++  )
++
+   useKeyBindingAction(KeybindAction.Composer_SelectReplyToUp, () => {
+     if (messageEditing.isEditingModeActive) {
+       return
+@@ -939,11 +968,12 @@ const Composer = forwardRef<
+                   true
+                 }
+                 languageTool={languageTool}
++                onGrammarIssueCount={setDraftIssues}
+                 botCommands={botCommands}
+                 loadingDraft={draftIsLoading}
+                 sendMessageOrEditRequest={
+-                  (!messageEditing.isEditingModeActive
+-                    ? composerSendMessage
++                  (!messageEditing.isEditingModeActive && composerSendMessage
++                    ? () => trySend(composerSendMessage, sendBlockedTip)
+                     : null) ??
+                   (threadQuoteMissing
+                     ? // The bar above says why; nothing to log.
+@@ -971,9 +1001,13 @@ const Composer = forwardRef<
+                   true
+                 }
+                 languageTool={languageTool}
++                onGrammarIssueCount={setEditIssues}
+                 loadingDraft={false}
+-                sendMessageOrEditRequest={
+-                  messageEditing.doSendEditRequest ?? (() => {})
++                sendMessageOrEditRequest={() =>
++                  trySend(
++                    messageEditing.doSendEditRequest ?? (() => {}),
++                    sendBlockedTip
++                  )
+                 }
+                 chatId={chatId}
+                 // Message editing mode doesn't support file pasting.
+@@ -995,25 +1029,57 @@ const Composer = forwardRef<
+               </button>
+             )}
+           {showSendButton && (
+-            <button
+-              type='button'
+-              // This ensures that the button loses focus as we switch between
+-              // the editing mode and the regular mode,
+-              // so that it's harder to accidentally send a normal message
+-              // right after sending the draft by using the keyboard.
+-              // Conceptually those are two different buttons.
+-              key={messageEditing.isEditingModeActive.toString()}
+-              className='send-button'
+-              // TODO apply `disabled` if the textarea is empty
+-              // or includes only whitespace.
+-              // See `doSendEditRequest`.
+-              disabled={sendButtonAction == null}
+-              onClick={sendButtonAction ?? (() => {})}
+-              aria-label={tx('menu_send')}
+-              aria-keyshortcuts={ariaSendShortcut}
++            <span
++              className='send-button-wrap'
++              // ponytail: closes on focus leaving; a browser that doesn't
++              // focus a clicked button keeps the tip until the text changes
++              onBlur={e =>
++                e.currentTarget.contains(e.relatedTarget) ||
++                setSendBlockedTip(false)
++              }
+             >
+-              <div className='paper-plane'></div>
+-            </button>
++              <button
++                type='button'
++                // This ensures that the button loses focus as we switch between
++                // the editing mode and the regular mode,
++                // so that it's harder to accidentally send a normal message
++                // right after sending the draft by using the keyboard.
++                // Conceptually those are two different buttons.
++                key={messageEditing.isEditingModeActive.toString()}
++                className='send-button'
++                // TODO apply `disabled` if the textarea is empty
++                // or includes only whitespace.
++                // See `doSendEditRequest`.
++                disabled={sendButtonAction == null}
++                // not `disabled`: that would swallow the hover and the click
++                // that say why
++                aria-disabled={sendBlocked || undefined}
++                aria-describedby={sendBlocked ? 'send-blocked-tip' : undefined}
++                onClick={e =>
++                  sendButtonAction &&
++                  trySend(sendButtonAction, e.ctrlKey || e.metaKey)
++                }
++                aria-label={tx('menu_send')}
++                aria-keyshortcuts={ariaSendShortcut}
++              >
++                <div className='paper-plane'></div>
++              </button>
++              {sendBlocked && (
++                <div
++                  id='send-blocked-tip'
++                  role='status'
++                  className={`send-blocked-tip ${sendBlockedTip ? 'open' : ''}`}
++                >
++                  {tx('grammar_send_blocked')}
++                  <button
++                    type='button'
++                    onClick={() => trySend(sendButtonAction, true)}
++                  >
++                    {tx('grammar_send_anyway')}
++                  </button>
++                </div>
++              )}
++            </span>
+           )}
+           {!showSendButton && !voiceMessageDisabled && (
+             <AudioRecorder
+diff --git a/packages/frontend/src/components/composer/ComposerMessageInput.tsx b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
+index e2d1d889c4589ea2bc7292ebdb239177ad5a2d06..8d39343f89e9ee293e747af525634cb67e767bfb 100644
+--- a/packages/frontend/src/components/composer/ComposerMessageInput.tsx
++++ b/packages/frontend/src/components/composer/ComposerMessageInput.tsx
+@@ -61,6 +61,7 @@ type ComposerMessageInputProps = {
+   botCommands?: BotCommand[]
+   /** spelling/grammar check (Harper or LanguageTool); null/undefined = off. */
+   languageTool?: LtConfig | null
++  onGrammarIssueCount?: (count: number) => void
+   onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
+   // used to show/hide send button
+   onChange: (text: string) => void
+@@ -497,6 +498,7 @@ export default class ComposerMessageInput extends React.Component<
+                 dir={writingDirection === 'rtl' ? 'rtl' : 'auto'}
+                 textareaRef={this.textareaRef}
+                 hideCard={completion.open}
++                onIssueCount={this.props.onGrammarIssueCount}
+               />
+             )}
+           </>
+diff --git a/packages/frontend/src/components/composer/LanguageTool.tsx b/packages/frontend/src/components/composer/LanguageTool.tsx
+index 1362943e707c32b3e2ecc1f61923ca48d5ea4f24..30b95896c5d54f4e9e82631d25cbe61c093a5438 100644
+--- a/packages/frontend/src/components/composer/LanguageTool.tsx
++++ b/packages/frontend/src/components/composer/LanguageTool.tsx
+@@ -29,6 +29,8 @@ type Props = LtConfig & {
+   textareaRef: React.RefObject<HTMLTextAreaElement | null>
+   /** keep the suggestion card closed, e.g. while the completion menu is open */
+   hideCard?: boolean
++  /** told how many issues are underlined (not fixed, not ignored) */
++  onIssueCount?: (count: number) => void
+ }
+ 
+ // Room below the box for the last line's wavy underline, which overshoots a
+@@ -139,6 +141,7 @@ export function LanguageTool({
+   dir,
+   textareaRef,
+   hideCard,
++  onIssueCount,
+ }: Props) {
+   const [checked, setChecked] = useState<{ text: string; matches: LtMatch[] }>({
+     text: '',
+@@ -275,6 +278,11 @@ export function LanguageTool({
+     }
+   }
+ 
++  useEffect(
++    () => onIssueCount?.(matches.length),
++    [onIssueCount, matches.length]
++  )
++
+   const active =
+     hideCard || caret === null
+       ? undefined
+diff --git a/packages/shared/shared-types.d.ts b/packages/shared/shared-types.d.ts
+index 69d2e7284980e3535086226a6af883f6d3857b5f..f16952a15e250380005125ca53c0d920c4b34dc5 100644
+--- a/packages/shared/shared-types.d.ts
++++ b/packages/shared/shared-types.d.ts
+@@ -53,6 +53,8 @@ export interface DesktopSettingsType {
+   grammarCheck: boolean
+   /** webapp: which checker: Harper (English only, runs on this device) or LanguageTool (sends the draft to the server below) */
+   grammarCheckEngine: 'harper' | 'languagetool'
++  /** webapp: with grammarCheck on, sending waits while issues are still underlined. Off by default. */
++  grammarCheckBlocksSend: boolean
+   /** webapp: self-hosted LanguageTool server URL, e.g. http://localhost:8081. undefined = languagetool.org */
+   languageToolServer: string | undefined
+   /** webapp: languagetool.org Premium account email + API key. undefined = the free API */
+diff --git a/packages/shared/state.ts b/packages/shared/state.ts
+index efe6b51aa9c95d088f39bc49beceaf73b924dd49..32be47c32621b557d2dd2891dd493afcce99f766 100644
+--- a/packages/shared/state.ts
++++ b/packages/shared/state.ts
+@@ -21,6 +21,7 @@ export function getDefaultState(): DesktopSettingsType {
+     experimentalReplyThreads: false,
+     grammarCheck: false,
+     grammarCheckEngine: 'harper',
++    grammarCheckBlocksSend: false,
+     languageToolServer: undefined,
+     languageToolUsername: undefined,
+     languageToolApiKey: undefined,
