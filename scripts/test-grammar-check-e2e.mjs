@@ -29,7 +29,10 @@ const { cleanup, watchdog } = await startServers({
 const browser = await chromium.launch(
   process.env.CHROMIUM_BIN ? { executablePath: process.env.CHROMIUM_BIN } : {}
 )
-const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+const page = await browser.newPage({
+  viewport: { width: 1280, height: 900 },
+  deviceScaleFactor: 2,
+})
 logPanics(page)
 page.on('pageerror', e => console.error('[pageerror]', e.message))
 await freezeEval(page)
@@ -107,6 +110,64 @@ try {
   await page.screenshot({ path: `${SHOTS}/card.png` })
   await card.getByRole('button', { name: 'test', exact: true }).click()
   expect((await composer.inputValue()) === 'This are a test.', 'the suggestion replaced the typo')
+
+  // "Check spelling before sending" (experimental): a send attempt with issues
+  // underlined only opens the tip. Plain Enter is a newline by default, so the
+  // send key here is Ctrl+Enter.
+  await composer.fill('')
+  await page.getByTestId('open-settings-button').click()
+  await page.getByText('Experimental Features').click()
+  await page.getByText(/^Check spelling before sending/).click()
+  await page.keyboard.press('Escape')
+  const sendBtn = page.locator('.send-button')
+  const tip = page.locator('#send-blocked-tip')
+  const typo = async text => {
+    await composer.fill(text)
+    await issue.waitFor({ timeout: 30_000 })
+    expect((await sendBtn.getAttribute('aria-disabled')) === 'true', `"${text}": Send is aria-disabled`)
+  }
+  const sent = async text => {
+    await page.waitForFunction(() => !document.querySelector('#composer-textarea-non-edit')?.value)
+    await page.locator('.message .msg-body', { hasText: text }).first().waitFor()
+  }
+  const notSent = async text => {
+    await page.waitForTimeout(500)
+    expect((await composer.inputValue()) === text, 'nothing was sent, the text is still in the composer')
+    expect((await tip.getAttribute('class')).split(' ').includes('open'), 'the tip is open')
+  }
+
+  await typo('This are a tset, one.')
+  expect(!(await tip.getAttribute('class')).split(' ').includes('open'), 'the tip stays closed until a send attempt')
+  await sendBtn.click({ force: true })
+  await notSent('This are a tset, one.')
+  await page.screenshot({
+    path: `${SHOTS}/send-blocked-tip.png`,
+    clip: await Promise.all([page.locator('.composer').boundingBox(), tip.boundingBox()]).then(([c, t]) => ({ x: c.x, width: c.width, y: t.y - 20, height: c.y + c.height - t.y + 20 })),
+  })
+  await sendBtn.click({ modifiers: ['Control'], force: true })
+  await sent('This are a tset, one.')
+
+  await typo('This are a tset, two.')
+  await composer.press('Control+Enter')
+  await notSent('This are a tset, two.')
+  await composer.press('Control+Enter')
+  await sent('This are a tset, two.')
+
+  await typo('This are a tset, three.')
+  await sendBtn.click({ force: true })
+  await notSent('This are a tset, three.')
+  await tip.getByRole('button', { name: 'Send anyway' }).click()
+  await sent('This are a tset, three.')
+
+  await typo('This are a tset.')
+  await composer.click()
+  await page.keyboard.press('End')
+  for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowLeft')
+  await card.getByRole('button', { name: 'Ignore' }).click()
+  await page.waitForFunction(() => !document.querySelector('.send-button').hasAttribute('aria-disabled'), null, { timeout: 5000 })
+  console.log('OK: ignoring the issue unblocks Send')
+  await sendBtn.click({ force: true })
+  await sent('This are a tset.')
 } catch (e) {
   failed = true
   console.error('FAIL:', e)

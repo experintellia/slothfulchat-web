@@ -1,5 +1,9 @@
 # Changelog
 
+- **Check spelling before sending (experimental).** With the grammar checker
+  on, a new switch in Settings → Experimental holds a message back while it
+  still has underlined mistakes. Send then tells you why; Ctrl+click or
+  "Send anyway" sends it as it is.
 - **Write to the developer right away.** "Sloth (Slothful.chat Developer)" in
   New Chat now opens the chat immediately, instead of waiting for an invite
   handshake to finish first.
