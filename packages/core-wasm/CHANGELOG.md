@@ -1,5 +1,8 @@
 # Changelog
 
+- Embedders can supply a storage key to encrypt chat history and attachments
+  in the browser, with support for restoring existing Delta Chat backups.
+
 - **No `log`→console bridge any more**: core reports Info/Warning/Error both
   through the `log` facade and as JSON-RPC events, so bridging the facade made
   every core log line appear twice on a page that prints the events. The

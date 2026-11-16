@@ -70,6 +70,7 @@ pnpm --filter @slothfulchat/core-wasm build:wasm  # needs clang + wasm32 target,
 pnpm --filter @slothfulchat/core-wasm gen-template # pre-migrated account db; needs chromium
 pnpm --filter @slothfulchat/core-wasm build
 pnpm smoke                                        # headless verification
+node scripts/test-storage-encryption.mjs          # encrypted storage and backups, offline
 pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/example/index.html
 ```
 
@@ -82,6 +83,16 @@ pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/exampl
   bridge, networking errors at runtime (everything else works).
 - Storage (accounts, messages, blobs) persists in OPFS by default and survives
   reloads; pass `persist: false` for a fresh in-memory core.
+- Opt into encrypted persistence with `startCore({ storageKey })`, where
+  `storageKey` is a cryptographically random 32-byte `Uint8Array`. Supply
+  the same key on later starts. The caller handles creating, protecting,
+  and unlocking the key. Terminate the worker on logout to release it.
+  The encrypted store is separate from the default OPFS store. To move an
+  account between them, use backup export and import.
+- SQLite pages and file contents are encrypted before they reach OPFS.
+  File names, sizes, and the account ID registry remain visible. An
+  explicitly exported backup is portable and should be protected by the
+  caller once it leaves the encrypted store.
 
 ## Current limits
 
@@ -92,5 +103,5 @@ pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/exampl
 - One tab at a time: with persistence on, the core holds an exclusive lock on
   its OPFS storage, so a second tab of the same app fails to start its core
   until the first is closed.
-- No sqlcipher; webxdc and iroh are descoped.
+- Password-protected backup files are unsupported; webxdc and iroh are descoped.
 - Always use release wasm builds; dev-profile wasm crashes the tab.

@@ -34,6 +34,7 @@ use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::StreamExt;
 use hkdf::Hkdf;
 use js_sys::Uint8Array;
+use rusqlite::{Connection, OpenFlags};
 use sha2::Sha256;
 use sqlite_wasm_vfs::sahpool::{
     install as install_sahpool, OpfsSAHPoolCfgBuilder, OpfsSAHPoolUtil,
@@ -831,9 +832,9 @@ async fn hydrate(root: &FileSystemDirectoryHandle) -> Result<(), JsValue> {
 /// removing stale wal/journal leftovers first. All connections to `name`
 /// must be closed.
 pub fn sqlite_vfs_import(name: &str, bytes: &[u8]) -> Result<(), String> {
-    if STORAGE_KEYS.with(|keys| keys.borrow().is_some()) {
-        return Err("backup import is unavailable with encrypted storage".into());
-    }
+    let encrypted = storage_db_key()
+        .map(|key| encrypt_backup_database(name, bytes, &key))
+        .transpose()?;
     SAHPOOL.with(|c| match c.borrow().as_ref() {
         Some(util) => {
             let _ = util.delete_db(name); // overwrite: core pre-creates dc.db on account open
@@ -844,7 +845,11 @@ pub fn sqlite_vfs_import(name: &str, bytes: &[u8]) -> Result<(), String> {
             // like a real but undecryptable account forever, and `remove_file`
             // on wasm can't reach it (dbs never touch the memfs). Delete the
             // half-written slot so the account cleanly does not exist.
-            util.import_db(name, bytes).map_err(|e| {
+            let result = match &encrypted {
+                Some(bytes) => util.import_db_unchecked(name, bytes),
+                None => util.import_db(name, bytes),
+            };
+            result.map_err(|e| {
                 let _ = util.delete_db(name);
                 e.to_string()
             })
@@ -857,6 +862,33 @@ pub fn sqlite_vfs_import(name: &str, bytes: &[u8]) -> Result<(), String> {
             vfs.import_db(name, bytes).map_err(|e| e.to_string())
         }
     })
+}
+
+/// Converts a portable backup entirely in the memory VFS before OPFS sees it.
+fn encrypt_backup_database(name: &str, bytes: &[u8], key: &str) -> Result<Vec<u8>, String> {
+    let vfs = sqlite_wasm_rs::MemVfsUtil::<sqlite_wasm_rs::WasmOsCallback>::new();
+    let name = format!("{name}-restore");
+    vfs.import_db(&name, bytes).map_err(|e| e.to_string())?;
+    let result = (|| {
+        let conn = Connection::open_with_flags_and_vfs(
+            &name,
+            OpenFlags::SQLITE_OPEN_READ_WRITE,
+            "multipleciphers-memvfs",
+        )
+        .map_err(|e| e.to_string())?;
+        conn.pragma_update(None, "temp_store", "MEMORY")
+            .map_err(|e| e.to_string())?;
+        conn.pragma_update(None, "rekey", key)
+            .map_err(|e| e.to_string())?;
+        drop(conn);
+        let encrypted = vfs.export_db(&name).map_err(|e| e.to_string())?;
+        if encrypted.starts_with(b"SQLite format 3\0") || encrypted.is_empty() {
+            return Err("could not encrypt the backup database".into());
+        }
+        Ok(encrypted)
+    })();
+    vfs.delete_db(&name);
+    result
 }
 
 /// Account uuids that have a database in the sahpool VFS — the ground truth of
@@ -959,13 +991,16 @@ pub fn sqlite_vfs_take(name: &str) -> Result<Vec<u8>, String> {
             let _ = util.delete_db(name);
             Ok(bytes)
         }
-        None => {
-            let vfs = sqlite_wasm_rs::MemVfsUtil::<sqlite_wasm_rs::WasmOsCallback>::new();
-            let bytes = vfs.export_db(name).map_err(|e| e.to_string())?;
-            vfs.delete_db(name);
-            Ok(bytes)
-        }
+        None => sqlite_mem_vfs_take(name),
     })
+}
+
+/// Exports and removes a temporary database that must never be persisted.
+pub fn sqlite_mem_vfs_take(name: &str) -> Result<Vec<u8>, String> {
+    let vfs = sqlite_wasm_rs::MemVfsUtil::<sqlite_wasm_rs::WasmOsCallback>::new();
+    let result = vfs.export_db(name).map_err(|e| e.to_string());
+    vfs.delete_db(name);
+    result
 }
 
 /// Frees the sahpool slots of every db whose logical path lives under `prefix`

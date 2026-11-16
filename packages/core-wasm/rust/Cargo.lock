@@ -5881,6 +5881,7 @@ dependencies = [
  "hex",
  "hkdf",
  "js-sys",
+ "rusqlite",
  "serde_json",
  "sha2",
  "sqlite-wasm-rs",
