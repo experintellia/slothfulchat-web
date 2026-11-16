@@ -92,8 +92,16 @@ pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/exampl
   `storageKey` is a cryptographically random 32-byte `Uint8Array`. Supply
   the same key on later starts. The caller handles creating, protecting,
   and unlocking the key. Terminate the worker on logout to release it.
-  The encrypted store is separate from the default OPFS store. To move an
-  account between them, use backup export and import.
+  The encrypted store is separate from the default OPFS store.
+- With both persistent workers closed, call
+  `upgradeAccountStorage(accountId, storageKey)` to move one ordinary browser
+  account into encrypted storage. It returns the new account ID after checking
+  the reopened encrypted database and its attachments and removing the source.
+  The transfer archive stays in memory. Other accounts and exported backups are
+  kept.
+- Use `core.restoreBackup(accountId, bytes)` with an unused account to
+  restore a portable backup without persisting the input archive. Encrypted
+  restores write attachments under opaque names and keep their display names.
 - SQLite pages and file contents are encrypted before they reach OPFS.
   File names, sizes, and the account ID registry remain visible. An
   explicitly exported backup is portable and should be protected by the

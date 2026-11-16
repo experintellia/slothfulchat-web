@@ -18,6 +18,8 @@ interface FsRequest {
   type: 'fs'
   id: number
   op: 'read' | 'write' | 'remove' | 'exists' | 'flush' | 'failed'
+    | 'storage-export' | 'storage-import' | 'storage-verify'
+  accountId?: number
   path: string
   data?: Uint8Array
   /** flush op: failed-counter baseline (a prior `failed` op result) taken
@@ -31,6 +33,7 @@ interface FsResponse {
   ok: boolean
   data?: Uint8Array
   exists?: boolean
+  digest?: string
   /** flush op: writes that did NOT reach OPFS (0 = fully durable). */
   failed?: number
   error?: string
@@ -472,6 +475,12 @@ scope.onmessage = async (
       case 'failed':
         // snapshot of the monotonic failed-write counter, for a later flush
         response.failed = dc.fs_failed()
+        break
+      case 'storage-export':
+      case 'storage-import':
+      case 'storage-verify':
+        if (msg.accountId === undefined) throw new Error('Missing storage transfer account')
+        response.digest = await dc.storage_transfer(msg.op, msg.accountId, msg.path)
         break
       default:
         throw new Error(`unknown fs op: ${(msg as FsRequest).op}`)

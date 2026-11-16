@@ -29,6 +29,7 @@ extern "C" {
 #[wasm_bindgen]
 pub struct DeltaChat {
     session: RpcSession<CommandApi>,
+    accounts: Arc<RwLock<Accounts>>,
 }
 
 /// Starts chatmail core with the accounts directory at `/accounts` (in-memory
@@ -110,7 +111,7 @@ pub async fn init(
         }
     };
     let accounts = Arc::new(RwLock::new(accounts));
-    let state = CommandApi::from_arc(accounts).await;
+    let state = CommandApi::from_arc(accounts.clone()).await;
 
     let (client, mut out_receiver) = RpcClient::new();
     let session = RpcSession::new(client, state);
@@ -126,7 +127,7 @@ pub async fn init(
         }
     });
 
-    Ok(DeltaChat { session })
+    Ok(DeltaChat { session, accounts })
 }
 
 /// Registers the JS handler that runs offloaded crypto ops on the pool
@@ -535,6 +536,26 @@ impl DeltaChat {
         wasm_bindgen_futures::spawn_local(async move {
             session.handle_incoming(&message).await;
         });
+    }
+
+    pub async fn storage_transfer(
+        &self,
+        operation: String,
+        account_id: u32,
+        token: String,
+    ) -> Result<Option<String>, JsValue> {
+        let token = uuid::Uuid::parse_str(&token).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let path = PathBuf::from(tokio::fs::STORAGE_TRANSFER_DIR).join(token.to_string());
+        let context = self.accounts.read().await.get_account(account_id)
+            .ok_or_else(|| JsValue::from_str("Storage transfer account is missing"))?;
+        use deltachat::imex::{export_storage_upgrade, import_storage_upgrade, verify_storage_upgrade};
+        match operation.as_str() {
+            "storage-export" => export_storage_upgrade(&context, &path).await.map(|_| None),
+            "storage-import" => import_storage_upgrade(&context, &path).await.map(|_| None),
+            "storage-verify" => verify_storage_upgrade(&context).await.map(Some),
+            _ => return Err(JsValue::from_str("Unknown storage transfer operation")),
+        }
+        .map_err(|err| JsValue::from_str(&format!("{err:#}")))
     }
 
     // fs side channel into the in-memory filesystem core runs on

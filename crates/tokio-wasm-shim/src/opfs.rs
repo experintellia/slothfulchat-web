@@ -395,7 +395,7 @@ fn open_file(
 /// via the held sync access handles; the queue is only its fallback when
 /// that write fails. No-op unless persistence is enabled.
 pub(crate) fn mark_dirty(path: &Path) {
-    if !ENABLED.load(Ordering::Relaxed) {
+    if !ENABLED.load(Ordering::Relaxed) || path.starts_with(fs::STORAGE_TRANSFER_DIR) {
         return;
     }
     // Component-wise compare (Path, not the raw OsStr): a `sync_rename` can

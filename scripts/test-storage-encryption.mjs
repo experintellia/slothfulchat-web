@@ -15,9 +15,14 @@ const probe = `
   const shortWrites = new WeakSet()
   let shortWriteName
   let shortWriteLength
+  let rejectedName
+  const upgradeBlobLength = Number(new URL(location.href).searchParams.get('failUpgradeBlobLength'))
   FileSystemFileHandle.prototype.createSyncAccessHandle = async function (...args) {
+    if (this.name === rejectedName) throw new Error('legacy attachment path reached OPFS')
     const handle = await getAccessHandle.apply(this, args)
-    if (this.name === shortWriteName) shortWrites.add(handle)
+    if (this.name === shortWriteName || (upgradeBlobLength && /^[0-9a-f-]{36}$/.test(this.name))) {
+      shortWrites.add(handle)
+    }
     return handle
   }
   FileSystemSyncAccessHandle.prototype.write = function (data, options) {
@@ -28,12 +33,13 @@ const probe = `
     // Simulate a real torn write before returning a short byte count. The
     // replacement has a different length from the saved fixture, so saving
     // the old ciphertext in the recovery copy succeeds.
-    if (shortWrites.has(this) && data.byteLength === shortWriteLength && options?.at === 0) {
+    if (shortWrites.has(this) && data.byteLength === (shortWriteLength ?? upgradeBlobLength) && options?.at === 0) {
       return write.call(this, data.subarray(0, 12), options)
     }
     return write.call(this, data, options)
   }
   self.addEventListener('message', event => {
+    if (event.data?.type === 'reject-opfs-name') rejectedName = event.data.name
     if (event.data?.type === 'short-write') {
       shortWriteName = event.data.name
       shortWriteLength = event.data.length
@@ -194,7 +200,16 @@ try {
     check(archiveText.includes('SQLite format 3') && archiveText.includes(databaseMarker),
       'export is not a portable Delta Chat backup')
     const restoredAccount = await rpc.addAccount()
-    await rpc.importBackup(restoredAccount, archivePath, null)
+    const originalFile = await rpc.getMessage(account, fileId)
+    await expectError(() => core.restoreBackup(restoredAccount, new Uint8Array()), 'Backup is empty')
+    core.worker.postMessage({ type: 'reject-opfs-name', name: originalFile.file.split('/').pop() })
+    await core.restoreBackup(restoredAccount, archive)
+    core.worker.postMessage({ type: 'reject-opfs-name' })
+    const restoredFile = await rpc.getMessage(restoredAccount, fileId)
+    check(/^[0-9a-f-]{36}$/.test(restoredFile.file.split('/').pop()),
+      'restore retained the original blob name')
+    check(restoredFile.file.split('/').pop() !== originalFile.file.split('/').pop(),
+      'restore did not assign a new blob name')
     check((await rpc.getMessage(restoredAccount, id)).text === databaseMarker,
       'imported database could not be read')
     await Promise.all([
@@ -256,6 +271,9 @@ try {
     await core.dc.rpc.importBackup(portableAccount, '/import.tar', null)
     check((await core.dc.rpc.getMessage(portableAccount, id)).text === databaseMarker,
       'ordinary store could not restore the portable archive')
+    const portableFile = await core.dc.rpc.getMessage(portableAccount, fileId)
+    check(portableFile.file.split('/').pop() === originalFile.file.split('/').pop(),
+      'ordinary restore changed the original blob name')
     check(await core.fsFlush() === 0, 'ordinary OPFS write failed')
     check((await inspectWrites(core)).includes(databaseMarker), 'plaintext control did not observe OPFS writes')
     core.worker.terminate()
@@ -338,7 +356,101 @@ try {
     if (await core.fsExists('/test.bin')) throw new Error('deletion resurrected the previous contents')
     core.worker.terminate()
   })
-  console.log('Encrypted storage, legacy migration guard, key recovery, short-write recovery, and portable backup checks passed')
+  const upgradePage = await browser.newPage()
+  await upgradePage.goto(`http://127.0.0.1:${server.address().port}`)
+  await upgradePage.evaluate(async () => {
+    const { startCore, upgradeAccountStorage } = await import('/dist/index.js')
+    const key = crypto.getRandomValues(new Uint8Array(32))
+    const worker = new URL('/dist/observed-worker.js', location.href)
+    const check = (ok, message) => { if (!ok) throw new Error(message) }
+    let core = startCore({}, worker)
+    const account = await core.dc.rpc.addAccount()
+    const other = await core.dc.rpc.addAccount()
+    await core.dc.rpc.setConfig(account, 'configured_addr', 'upgrade-test@example.invalid')
+    await core.dc.rpc.setConfig(account, 'bcc_self', '0')
+    const fingerprint = (await core.dc.rpc.getChatSecurejoinQrCode(account, null)).match(/#[A-F0-9]{40}/i)?.[0]
+    check(fingerprint, 'upgrade fixture could not initialize its identity')
+    const chat = await core.dc.rpc.createChatByContactId(account, 1)
+    const text = 'private message - storage test'
+    const id = await core.dc.rpc.miscSendTextMessage(account, chat, text)
+    const data = new TextEncoder().encode('private attachment - storage test')
+    const originalName = 'report.private-legacy-extension'
+    const staged = await core.stageFile(originalName, data)
+    const fileId = await core.dc.rpc.sendMsg(account, chat, {
+      text: null, html: null, viewtype: 'File', ...staged,
+      location: null, overrideSenderName: null, quotedMessageId: null, quotedText: null,
+      width: null, height: null, duration: null,
+    })
+    await core.fsRemove(staged.file)
+    const file = (await core.dc.rpc.getMessage(account, fileId)).file
+    await core.fsWrite(file + '.waveform', new Uint8Array([5]))
+    check(await core.fsFlush() === 0, 'ordinary upgrade fixture not persisted')
+    core.worker.terminate()
+
+    core = startCore({ storageKey: key }, worker)
+    const existing = await core.dc.rpc.addAccount()
+    core.worker.terminate()
+
+    const wrongKey = key.slice()
+    wrongKey[0] ^= 1
+    let failed = false
+    try {
+      await upgradeAccountStorage(account, wrongKey, worker)
+    } catch (error) {
+      failed = error.message.includes('wrong storage key')
+    }
+    check(failed, 'upgrade accepted the wrong destination key')
+
+    const faultyWorker = new URL(worker)
+    faultyWorker.searchParams.set('failUpgradeBlobLength', String(data.length + 40))
+    failed = false
+    try {
+      await upgradeAccountStorage(account, key, faultyWorker)
+    } catch (error) {
+      failed = error.message.includes('Account files did not reach encrypted storage')
+    }
+    check(failed, 'upgrade accepted an attachment write failure')
+
+    core = startCore({}, worker)
+    check((await core.dc.rpc.getMessage(account, id)).text === text, 'failed upgrade removed its source')
+    core.worker.terminate()
+
+    const upgraded = await upgradeAccountStorage(account, key, worker)
+    core = startCore({ storageKey: key }, worker)
+    const accounts = await core.dc.rpc.getAllAccountIds()
+    check(accounts.length === 2 && accounts.includes(existing) && accounts.includes(upgraded),
+      'upgrade removed an existing account or left an incomplete account behind')
+    check((await core.dc.rpc.getMessage(upgraded, id)).text === text, 'upgrade lost the message')
+    check(await core.dc.rpc.getConfig(upgraded, 'bcc_self') === '0', 'upgrade changed the account configuration')
+    check((await core.dc.rpc.getChatSecurejoinQrCode(upgraded, null)).includes(fingerprint),
+      'upgrade replaced the identity')
+    const restored = await core.dc.rpc.getMessage(upgraded, fileId)
+    check(restored.fileName === originalName, 'upgrade lost the attachment display name')
+    check(/^[0-9a-f-]{36}$/.test(restored.file.split('/').pop()), 'upgrade kept the original blob name')
+    check((await core.fsRead(restored.file)).join() === data.join(), 'upgraded attachment bytes changed')
+    check((await core.fsRead(restored.file + '.waveform')).join() === '5', 'upgrade lost the waveform sidecar')
+    core.worker.terminate()
+
+    core = startCore({}, worker)
+    check((await core.dc.rpc.getAllAccountIds()).join() === String(other), 'upgrade removed the wrong ordinary account')
+    core.worker.terminate()
+
+    const opfs = await navigator.storage.getDirectory()
+    async function inspectDirectory(dir) {
+      for await (const handle of dir.values()) {
+        check(handle.name !== '.storage-transfer', 'temporary data reached OPFS')
+        check(!handle.name.includes('private-legacy-extension'), 'attachment name still present in OPFS')
+        if (handle.kind === 'directory') {
+          await inspectDirectory(handle)
+        } else {
+          const content = new TextDecoder().decode(await (await handle.getFile()).arrayBuffer())
+          check(!content.includes(text), 'plaintext message still present in OPFS')
+        }
+      }
+    }
+    await inspectDirectory(opfs)
+  })
+  console.log('Encrypted storage, short-write recovery, portable backups, and storage upgrade checks passed')
 } finally {
   await browser.close()
   server.close()

@@ -45,6 +45,9 @@ pub use crate::opfs::{
     set_db_template, sqlite_mem_vfs_take, sqlite_vfs_account_uuids, sqlite_vfs_import, sqlite_vfs_take, storage_db_key,
 };
 
+/// Backup conversion staging. Paths under this root never reach the OPFS mirror.
+pub const STORAGE_TRANSFER_DIR: &str = "/.storage-transfer";
+
 /// Point-in-time state of one memfs path, for the OPFS write-through.
 pub(crate) enum Snapshot {
     File(Vec<u8>),
