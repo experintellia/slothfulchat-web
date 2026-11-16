@@ -115,8 +115,33 @@ try {
     const fingerprint = (await rpc.getChatSecurejoinQrCode(account, null)).match(/#[A-F0-9]{40}/i)?.[0]
     check(fingerprint, 'test identity did not initialize')
     const chat = await rpc.createChatByContactId(account, 1)
-    const baseline = await core.fsFailed()
     const id = await rpc.miscSendTextMessage(account, chat, databaseMarker)
+    check(await core.fsFlush() === 0, 'OPFS write failed')
+    check((await inspectWrites(core)).length === 0, 'encrypted database wrote plaintext')
+    core.worker.terminate()
+
+    const opfs = await navigator.storage.getDirectory()
+    const pool = await opfs.getDirectoryHandle('.opfs-sahpool-encrypted')
+    const verifier = await pool.getFileHandle('key-check')
+    const badVerifier = new Uint8Array(32)
+    const keyWriter = await verifier.createWritable()
+    await keyWriter.write(badVerifier)
+    await keyWriter.close()
+
+    const wrongKey = storageKey.slice()
+    wrongKey[0] ^= 1
+    core = startCore({ storageKey: wrongKey })
+    await expectError(() => core.dc.rpc.getAllAccountIds(), 'wrong storage key')
+    check(new Uint8Array(await (await verifier.getFile()).arrayBuffer()).every(byte => byte === 0),
+      'wrong key replaced the damaged verifier')
+
+    core = startCore({ storageKey })
+    rpc = core.dc.rpc
+    check((await rpc.getMessage(account, id)).text === databaseMarker, 'could not recover key check')
+    check(new Uint8Array(await (await verifier.getFile()).arrayBuffer()).some(byte => byte !== 0),
+      'correct key did not repair verifier')
+
+    const baseline = await core.fsFailed()
     await core.fsWrite('/input/photo.bin', attachment)
     const fileId = await rpc.sendMsg(account, chat, {
       text: null, html: null, viewtype: 'File', file: '/input/photo.bin', filename: 'photo.bin',
@@ -151,8 +176,6 @@ try {
     check(await core.fsFlush(baseline) === 0, 'OPFS write failed')
     check((await inspectWrites(core)).length === 0, 'encrypted store wrote plaintext to OPFS')
 
-    const opfs = await navigator.storage.getDirectory()
-    const pool = await opfs.getDirectoryHandle('.opfs-sahpool-encrypted')
     const files = await readOpfsFiles(await pool.getDirectoryHandle('.opaque'))
     check(files.some(file => file.length > 8192), 'encrypted database was not stored')
     check(files.every(file => !file.includes('SQLite format 3') && !file.includes(databaseMarker)),
@@ -167,8 +190,6 @@ try {
     await writer.write('truncated encrypted file')
     await writer.close()
 
-    const wrongKey = storageKey.slice()
-    wrongKey[0] ^= 1
     core = startCore({ storageKey: wrongKey })
     await expectError(() => core.dc.rpc.getAllAccountIds(), 'wrong storage key')
 
@@ -203,7 +224,38 @@ try {
       'ordinary account was lost')
     core.worker.terminate()
   })
-  console.log('Encrypted database, attachments, portable backup, key validation, and ordinary store isolation passed')
+  const fileOnlyPage = await browser.newPage()
+  await fileOnlyPage.goto(`http://127.0.0.1:${server.address().port}`)
+  await fileOnlyPage.evaluate(async () => {
+    const { startCore } = await import('/dist/index.js')
+    const storageKey = crypto.getRandomValues(new Uint8Array(32))
+    const wrongKey = storageKey.slice()
+    wrongKey[0] ^= 1
+
+    let core = startCore({ storageKey })
+    await core.fsWrite('/test.bin', new Uint8Array([7]))
+    if (await core.fsFlush() !== 0) throw new Error('file-only OPFS write failed')
+    core.worker.terminate()
+
+    const opfs = await navigator.storage.getDirectory()
+    const pool = await opfs.getDirectoryHandle('.opfs-sahpool-encrypted')
+    await pool.removeEntry('key-check')
+    core = startCore({ storageKey: wrongKey })
+    let error
+    try {
+      await core.dc.rpc.getAllAccountIds()
+    } catch (err) {
+      error = err
+    }
+    core.worker.terminate()
+    if (!error?.message.includes('wrong storage key')) throw new Error('wrong key accepted for file-only store')
+
+    core = startCore({ storageKey })
+    const restored = await core.fsRead('/test.bin')
+    if (restored.length !== 1 || restored[0] !== 7) throw new Error('file-only store did not recover')
+    core.worker.terminate()
+  })
+  console.log('Encrypted storage, legacy migration guard, key recovery, and portable backup checks passed')
 } finally {
   await browser.close()
   server.close()

@@ -174,9 +174,6 @@ pub async fn enable_persistence(storage_key: Option<Vec<u8>>) -> Result<(), Stri
 
     let root = mirror_root(keys.is_some()).await.map_err(js_err)?;
     if let Some(keys) = keys {
-        verify_storage_key(&keys, &util)
-            .await
-            .map_err(|e| format!("opfs key verification: {}", js_err(e)))?;
         // SQLite3MultipleCiphers must wrap a custom VFS before PRAGMA key works.
         // The pool still owns its files and handles as before.
         // SAFETY: this worker has exclusive use of SQLite and no connections are open.
@@ -184,11 +181,15 @@ pub async fn enable_persistence(storage_key: Option<Vec<u8>>) -> Result<(), Stri
         if result != sqlite_wasm_rs::SQLITE_OK {
             return Err(format!("failed to register the SQLite cipher VFS: {result}"));
         }
+        hydrate_encrypted_store(&root, &keys, &util)
+            .await
+            .map_err(|e| format!("opfs encrypted store: {}", js_err(e)))?;
         STORAGE_KEYS.with(|current| *current.borrow_mut() = Some(keys));
+    } else {
+        hydrate(&root, None, true)
+            .await
+            .map_err(|e| format!("opfs hydrate failed: {}", js_err(e)))?;
     }
-    hydrate(&root)
-        .await
-        .map_err(|e| format!("opfs hydrate failed: {}", js_err(e)))?;
 
     // Boot-time orphan sweep: reclaim sahpool slots left by REMOVED accounts,
     // which un-bricks installs already at the 32-slot ceiling (the post-#75
@@ -279,24 +280,59 @@ pub async fn enable_persistence(storage_key: Option<Vec<u8>>) -> Result<(), Stri
     Ok(())
 }
 
-/// Checks the key before touching the registry or sweeping the pool.
-async fn verify_storage_key(keys: &StorageKeys, pool: &OpfsSAHPoolUtil) -> Result<(), JsValue> {
+/// Checks the key and loads mirrored files before repairing or sweeping the
+/// registry. A damaged verifier can be replaced after decrypting existing data.
+async fn hydrate_encrypted_store(
+    root: &FileSystemDirectoryHandle,
+    keys: &StorageKeys,
+    pool: &OpfsSAHPoolUtil,
+) -> Result<(), JsValue> {
     let dir = opfs_directory(ENCRYPTED_POOL_DIR).await?;
     let handle = open_sah(&dir, "key-check").await?;
-    let result = (|| {
+    let result = async {
         let length = handle.get_size()?;
-        if length == 0.0 && pool.list().is_empty() {
-            return sah_write(&handle, &keys.verifier);
-        }
         let mut current = [0u8; 32];
-        let read = handle.read_with_u8_array(&mut current)?;
-        if length != 32.0 || read != 32.0 || !bool::from(current.ct_eq(&keys.verifier)) {
+        if length == 32.0
+            && handle.read_with_u8_array(&mut current)? == length
+            && bool::from(current.ct_eq(&keys.verifier))
+        {
+            hydrate(root, Some(keys), true).await?;
+            return Ok(());
+        }
+
+        let names = pool.list();
+        let database_authenticated = names
+            .iter()
+            .filter(|name| name.ends_with("/dc.db") && registry::account_uuid_of_db(name).is_some())
+            .any(|name| authenticate_database(name, &keys.db_key));
+        let mirror = hydrate(root, Some(keys), database_authenticated).await?;
+        // An intact-length verifier with a different value still protects an
+        // empty store. Initialize a missing or torn verifier without proof
+        // only when there is no encrypted data to protect.
+        let empty_store = length != 32.0 && names.is_empty() && !mirror.has_files;
+        if !database_authenticated && !mirror.authenticated_file && !empty_store {
             return Err(JsValue::from_str("wrong storage key or damaged key check"));
         }
-        Ok(())
-    })();
+        sah_write(&handle, &keys.verifier)
+    }
+    .await;
     handle.close();
     result
+}
+
+fn authenticate_database(name: &str, key: &str) -> bool {
+    let result = (|| {
+        let conn = Connection::open_with_flags(name, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        conn.pragma_update(None, "key", key)?;
+        // An empty database can open successfully with any key. Require a
+        // schema entry from an initialized account.
+        conn.query_row(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'config'",
+            [],
+            |_| Ok(()),
+        )
+    })();
+    result.is_ok()
 }
 
 pub fn storage_db_key() -> Option<Zeroizing<String>> {
@@ -335,24 +371,25 @@ fn seal_file(path: &Path, data: &mut Vec<u8>) -> Result<(), JsValue> {
     })
 }
 
-fn open_file(path: &Path, data: &mut Vec<u8>) -> Result<(), chacha20poly1305::Error> {
-    STORAGE_KEYS.with(|keys| {
-        let keys = keys.borrow();
-        let Some(keys) = keys.as_ref().filter(|_| !is_account_registry(path)) else {
-            return Ok(());
-        };
-        let end = data.len().checked_sub(FILE_NONCE_LEN + FILE_TAG_LEN).ok_or(chacha20poly1305::Error)?;
-        let (ciphertext, trailer) = data.split_at_mut(end);
-        let (nonce, tag) = trailer.split_at(FILE_NONCE_LEN);
-        keys.file_cipher.decrypt_in_place_detached(
-            XNonce::from_slice(nonce),
-            path.as_os_str().as_encoded_bytes(),
-            ciphertext,
-            Tag::from_slice(tag),
-        )?;
-        data.truncate(end);
-        Ok(())
-    })
+fn open_file(
+    cipher: &XChaCha20Poly1305,
+    path: &Path,
+    data: &mut Vec<u8>,
+) -> Result<(), chacha20poly1305::Error> {
+    let end = data
+        .len()
+        .checked_sub(FILE_NONCE_LEN + FILE_TAG_LEN)
+        .ok_or(chacha20poly1305::Error)?;
+    let (ciphertext, trailer) = data.split_at_mut(end);
+    let (nonce, tag) = trailer.split_at(FILE_NONCE_LEN);
+    cipher.decrypt_in_place_detached(
+        XNonce::from_slice(nonce),
+        path.as_os_str().as_encoded_bytes(),
+        ciphertext,
+        Tag::from_slice(tag),
+    )?;
+    data.truncate(end);
+    Ok(())
 }
 
 /// Queues `path` (normalized, absolute) for asynchronous OPFS reconciliation.
@@ -778,9 +815,20 @@ async fn opfs_directory(name: &str) -> Result<FileSystemDirectoryHandle, JsValue
     )
 }
 
+#[derive(Default)]
+struct MirrorContents {
+    has_files: bool,
+    authenticated_file: bool,
+}
+
 /// Loads the whole OPFS mirror into the memfs (files and empty dirs — core
 /// checks blobdir existence on startup, so dirs matter).
-async fn hydrate(root: &FileSystemDirectoryHandle) -> Result<(), JsValue> {
+async fn hydrate(
+    root: &FileSystemDirectoryHandle,
+    keys: Option<&StorageKeys>,
+    key_verified: bool,
+) -> Result<MirrorContents, JsValue> {
+    let mut mirror = MirrorContents::default();
     let mut stack = vec![(root.clone(), PathBuf::from("/"))];
     while let Some((dir, path)) = stack.pop() {
         let iter = dir.entries();
@@ -807,19 +855,23 @@ async fn hydrate(root: &FileSystemDirectoryHandle) -> Result<(), JsValue> {
                         .into();
                 let buf = JsFuture::from(file.array_buffer()).await?;
                 let mut data = Uint8Array::new(&buf).to_vec();
-                if open_file(&child, &mut data).is_err() {
-                    // The key check already passed. A damaged file should be
-                    // unavailable without blocking the rest of the account.
-                    web_sys::console::warn_1(&JsValue::from_str(&format!(
-                        "opfs: ignoring unauthenticated file {child:?}"
-                    )));
-                    continue;
+                if let Some(keys) = keys.filter(|_| !is_account_registry(&child)) {
+                    mirror.has_files = true;
+                    if open_file(&keys.file_cipher, &child, &mut data).is_err() {
+                        if key_verified {
+                            web_sys::console::warn_1(&JsValue::from_str(&format!(
+                                "opfs: ignoring unauthenticated file {child:?}"
+                            )));
+                        }
+                        continue;
+                    }
+                    mirror.authenticated_file = true;
                 }
                 fs::insert_hydrated_file(child, data);
             }
         }
     }
-    Ok(())
+    Ok(mirror)
 }
 
 // --- sqlite VFS byte-level import/export (backup IMEX side channel) ---
