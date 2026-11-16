@@ -104,11 +104,17 @@ export interface Core {
 
 /** Spawns the core worker and returns the typed client.
  * `persist` (default true) keeps accounts/messages/blobs in OPFS across
- * page reloads; pass false for a fresh, fully in-memory core. */
+ * page reloads; pass false for a fresh, fully in-memory core.
+ * `storageKey` is an optional caller-managed 32-byte key for persistent storage.
+ */
 export function startCore(
-  options: { wsProxyUrl?: string; persist?: boolean } = {},
+  options: { wsProxyUrl?: string; persist?: boolean; storageKey?: Uint8Array } = {},
   workerUrl: URL = new URL('./worker.js', import.meta.url),
 ): Core {
+  if (options.storageKey !== undefined &&
+    (options.storageKey.byteLength !== 32 || options.persist === false)) {
+    throw new TypeError('storageKey requires persistence and exactly 32 bytes')
+  }
   const worker = new Worker(workerUrl, { type: 'module' })
   // Config goes via postMessage, not worker-URL query params: a service
   // worker serving the script from cache strips the query string from the
@@ -118,6 +124,7 @@ export function startCore(
     type: 'config',
     proxyUrl: options.wsProxyUrl,
     persist: options.persist !== false,
+    storageKey: options.storageKey,
   })
   const transport = new WasmTransport(worker)
   const dc = new WasmDeltaChat(transport)

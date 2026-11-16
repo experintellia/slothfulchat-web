@@ -42,6 +42,7 @@ interface ConfigMessage {
   proxyUrl?: string
   /** OPFS persistence; false = fresh in-memory core (tests). */
   persist: boolean
+  storageKey?: Uint8Array
 }
 
 const scope = self as unknown as {
@@ -365,7 +366,7 @@ let accountTemplate: Promise<Uint8Array | undefined> | undefined = (async () => 
 })
 
 const ready = (async () => {
-  const { proxyUrl, persist } = await config
+  const { proxyUrl, persist, storageKey } = await config
   await initWasm()
   // non-blocking, like the crypto pool below: boot must never wait on an
   // optimization. Awaiting it here delayed init by the length of a fetch, and
@@ -384,7 +385,11 @@ const ready = (async () => {
     set_crypto_offload((op: string, payload: Uint8Array) => pool.run(op, payload))
   )
   if (persist) await waitForOpfsSyncHandles()
-  return await init((message: string) => scope.postMessage(message), proxyUrl, persist)
+  try {
+    return await init((message: string) => scope.postMessage(message), proxyUrl, persist, storageKey)
+  } finally {
+    storageKey?.fill(0)
+  }
 })()
 // any other init failure (e.g. corrupted persisted state the self-heal could
 // not fix) must reach the page as a dialog, not die as an unhandled rejection

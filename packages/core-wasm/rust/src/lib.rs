@@ -48,7 +48,12 @@ pub async fn init(
     on_message: js_sys::Function,
     ws_proxy_url: Option<String>,
     persist: bool,
+    storage_key: Option<Vec<u8>>,
 ) -> Result<DeltaChat, JsValue> {
+    if let Some(mut storage_key) = storage_key {
+        storage_key.fill(0);
+        return Err(JsValue::from_str("encrypted storage is not enabled in this build"));
+    }
     console_error_panic_hook::set_once();
     // No `log`→console bridge on purpose: core reports its Info/Warning/Error
     // logging as JSON-RPC events too, and the page prints those, so a bridge
