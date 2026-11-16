@@ -30,10 +30,13 @@ use std::time::Duration;
 
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::StreamExt;
+use hkdf::Hkdf;
 use js_sys::Uint8Array;
+use sha2::Sha256;
 use sqlite_wasm_vfs::sahpool::{
     install as install_sahpool, OpfsSAHPoolCfgBuilder, OpfsSAHPoolUtil,
 };
+use subtle::ConstantTimeEq;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
@@ -42,6 +45,8 @@ use web_sys::{
     FileSystemSyncAccessHandle, WorkerGlobalScope,
 };
 
+use zeroize::Zeroizing;
+
 use crate::durability::{self, Next};
 use crate::fs::{self, Snapshot};
 use crate::registry;
@@ -49,6 +54,8 @@ use crate::registry;
 /// OPFS directory mirroring the memfs root ("/" ↔ "memfs/").
 /// Keeps the mirror clearly separated from sahpool's `.opfs-sahpool` dir.
 const MIRROR_DIR: &str = "memfs";
+const ENCRYPTED_MIRROR_DIR: &str = "memfs-encrypted";
+const ENCRYPTED_POOL_DIR: &str = ".opfs-sahpool-encrypted";
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 /// Paths queued for flushing; dedupes queue entries (last state wins anyway).
@@ -82,7 +89,36 @@ const ACCOUNTS_TOML_BAK_PATH: &str = "/accounts/accounts.toml.bak";
 /// incident was ~1 MiB of it) and must never be copied into the backup.
 const CONFIG_BAK_MAX: usize = 512 * 1024;
 
+struct StorageKeys {
+    db_key: Zeroizing<String>,
+    verifier: [u8; 32],
+}
+
+impl StorageKeys {
+    fn derive(key: Vec<u8>) -> Result<Self, String> {
+        let key = Zeroizing::new(key);
+        if key.len() != 32 {
+            return Err("storageKey must contain exactly 32 bytes".into());
+        }
+        let kdf = Hkdf::<Sha256>::new(None, &key);
+        let mut db_key = Zeroizing::new([0u8; 32]);
+        let mut verifier = [0u8; 32];
+        kdf.expand(b"slothfulchat/sqlite/v1", db_key.as_mut())
+            .expect("valid HKDF output length");
+        kdf.expand(b"slothfulchat/key-check/v1", &mut verifier)
+            .expect("valid HKDF output length");
+        // SQLite3MultipleCiphers accepts a hexadecimal raw key with this prefix.
+        let mut encoded = Zeroizing::new("raw:".to_string());
+        encoded.push_str(&Zeroizing::new(hex::encode(db_key.as_ref())));
+        Ok(Self {
+            db_key: encoded,
+            verifier,
+        })
+    }
+}
+
 thread_local! {
+    static STORAGE_KEYS: RefCell<Option<StorageKeys>> = const { RefCell::new(None) };
     /// sahpool management handle; `Some` = persistence is on (util is not Send).
     static SAHPOOL: RefCell<Option<OpfsSAHPoolUtil>> = const { RefCell::new(None) };
     /// Permanently-open sync access handles for (accounts.toml, .bak). Their
@@ -110,7 +146,8 @@ fn js_err(err: JsValue) -> String {
 /// Installs the sahpool sqlite VFS (as default), hydrates the memfs from
 /// OPFS and starts the write-through flusher. Call once, in a dedicated
 /// worker, before opening any database.
-pub async fn enable_persistence() -> Result<(), String> {
+pub async fn enable_persistence(storage_key: Option<Vec<u8>>) -> Result<(), String> {
+    let keys = storage_key.map(StorageKeys::derive).transpose()?;
     // Start at 32 pool files (the historical floor); the reserve below grows
     // it to the live account count. Each account settles at ~1 slot (dc.db);
     // wal/journal are transient (auto-checkpointed). `util` stays a LOCAL here
@@ -118,12 +155,29 @@ pub async fn enable_persistence() -> Result<(), String> {
     // and the final store opens a database, so SAHPOOL can be `None` meanwhile,
     // and keeping the handle local lets us sweep/reserve without a RefCell
     // borrow held across the awaits.
-    let cfg = OpfsSAHPoolCfgBuilder::new().initial_capacity(32).build();
+    let mut builder = OpfsSAHPoolCfgBuilder::new().initial_capacity(32);
+    if keys.is_some() {
+        builder = builder.directory(ENCRYPTED_POOL_DIR);
+    }
+    let cfg = builder.build();
     let util = install_sahpool::<sqlite_wasm_rs::WasmOsCallback>(&cfg, true)
         .await
         .map_err(|e| format!("failed to install opfs-sahpool vfs: {e}"))?;
 
-    let root = mirror_root().await.map_err(js_err)?;
+    let root = mirror_root(keys.is_some()).await.map_err(js_err)?;
+    if let Some(keys) = keys {
+        verify_storage_key(&keys, &util)
+            .await
+            .map_err(|e| format!("opfs key verification: {}", js_err(e)))?;
+        // SQLite3MultipleCiphers must wrap a custom VFS before PRAGMA key works.
+        // The pool still owns its files and handles as before.
+        // SAFETY: this worker has exclusive use of SQLite and no connections are open.
+        let result = unsafe { sqlite_wasm_rs::sqlite3mc_vfs_create(c"opfs-sahpool".as_ptr(), 1) };
+        if result != sqlite_wasm_rs::SQLITE_OK {
+            return Err(format!("failed to register the SQLite cipher VFS: {result}"));
+        }
+        STORAGE_KEYS.with(|current| *current.borrow_mut() = Some(keys));
+    }
     hydrate(&root)
         .await
         .map_err(|e| format!("opfs hydrate failed: {}", js_err(e)))?;
@@ -215,6 +269,30 @@ pub async fn enable_persistence() -> Result<(), String> {
     ENABLED.store(true, Ordering::Relaxed);
     wasm_bindgen_futures::spawn_local(flusher(root, rx));
     Ok(())
+}
+
+/// Checks the key before touching the registry or sweeping the pool.
+async fn verify_storage_key(keys: &StorageKeys, pool: &OpfsSAHPoolUtil) -> Result<(), JsValue> {
+    let dir = opfs_directory(ENCRYPTED_POOL_DIR).await?;
+    let handle = open_sah(&dir, "key-check").await?;
+    let result = (|| {
+        let length = handle.get_size()?;
+        if length == 0.0 && pool.list().is_empty() {
+            return sah_write(&handle, &keys.verifier);
+        }
+        let mut current = [0u8; 32];
+        let read = handle.read_with_u8_array(&mut current)?;
+        if length != 32.0 || read != 32.0 || !bool::from(current.ct_eq(&keys.verifier)) {
+            return Err(JsValue::from_str("wrong storage key or damaged key check"));
+        }
+        Ok(())
+    })();
+    handle.close();
+    result
+}
+
+pub fn storage_db_key() -> Option<Zeroizing<String>> {
+    STORAGE_KEYS.with(|keys| keys.borrow().as_ref().map(|keys| keys.db_key.clone()))
 }
 
 /// Queues `path` (normalized, absolute) for asynchronous OPFS reconciliation.
@@ -505,6 +583,11 @@ async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), 
     }
     match fs::snapshot(path) {
         Snapshot::File(data) => {
+            // Until file encryption is available, only the account registry
+            // can be mirrored in a key-protected store.
+            if !is_config && STORAGE_KEYS.with(|keys| keys.borrow().is_some()) {
+                return Ok(());
+            }
             let dir = ensure_dirs(root, path.parent().unwrap_or(Path::new("/"))).await?;
             let name = file_name(path)?;
             // Sync access handle, NOT createWritable(): WebKit only shipped
@@ -619,7 +702,11 @@ async fn ensure_dirs(
 
 /// OPFS root → `memfs/` mirror directory handle. `window()` is unavailable in
 /// a worker; go through the worker global scope instead.
-async fn mirror_root() -> Result<FileSystemDirectoryHandle, JsValue> {
+async fn mirror_root(encrypted: bool) -> Result<FileSystemDirectoryHandle, JsValue> {
+    opfs_directory(if encrypted { ENCRYPTED_MIRROR_DIR } else { MIRROR_DIR }).await
+}
+
+async fn opfs_directory(name: &str) -> Result<FileSystemDirectoryHandle, JsValue> {
     let scope: WorkerGlobalScope = js_sys::global()
         .dyn_into()
         .map_err(|_| JsValue::from_str("opfs: not running in a worker"))?;
@@ -630,7 +717,7 @@ async fn mirror_root() -> Result<FileSystemDirectoryHandle, JsValue> {
     let create = FileSystemGetDirectoryOptions::new();
     create.set_create(true);
     Ok(
-        JsFuture::from(root.get_directory_handle_with_options(MIRROR_DIR, &create))
+        JsFuture::from(root.get_directory_handle_with_options(name, &create))
             .await?
             .into(),
     )
@@ -681,6 +768,9 @@ async fn hydrate(root: &FileSystemDirectoryHandle) -> Result<(), JsValue> {
 /// removing stale wal/journal leftovers first. All connections to `name`
 /// must be closed.
 pub fn sqlite_vfs_import(name: &str, bytes: &[u8]) -> Result<(), String> {
+    if STORAGE_KEYS.with(|keys| keys.borrow().is_some()) {
+        return Err("backup import is unavailable with encrypted storage".into());
+    }
     SAHPOOL.with(|c| match c.borrow().as_ref() {
         Some(util) => {
             let _ = util.delete_db(name); // overwrite: core pre-creates dc.db on account open

@@ -247,7 +247,7 @@ const pool = new CryptoPool()
  * be exclusively acquired. The wasm side also holds permanent handles on
  * memfs/accounts/accounts.toml{,.bak} (synchronous config write-through), so
  * probe those too. Fresh origins have neither dir — no wait. */
-async function waitForOpfsSyncHandles(): Promise<void> {
+async function waitForOpfsSyncHandles(encrypted: boolean): Promise<void> {
   // Set once the deadline has passed with a probe still outstanding: a hung
   // createSyncAccessHandle cannot be cancelled, but the walk around it can, so
   // the abandoned probe stops opening further handles the moment it un-hangs
@@ -272,7 +272,7 @@ async function waitForOpfsSyncHandles(): Promise<void> {
     // has no pool dir) WITHOUT bailing out of the whole probe — the memfs
     // config locks below must still be checked. Lock errors propagate.
     await root
-      .getDirectoryHandle('.opfs-sahpool')
+      .getDirectoryHandle(encrypted ? '.opfs-sahpool-encrypted' : '.opfs-sahpool')
       .then(probeDir)
       .catch(notFoundOk)
     if (abandoned) return
@@ -280,7 +280,7 @@ async function waitForOpfsSyncHandles(): Promise<void> {
     // the whole memfs mirror (nothing else is ever locked, and account dirs
     // hold arbitrarily many blobs)
     const accounts = await root
-      .getDirectoryHandle('memfs')
+      .getDirectoryHandle(encrypted ? 'memfs-encrypted' : 'memfs')
       .then((m: any) => m.getDirectoryHandle('accounts'))
       .catch(() => null)
     if (!accounts) return
@@ -384,7 +384,7 @@ const ready = (async () => {
   void pool.ready.then(() =>
     set_crypto_offload((op: string, payload: Uint8Array) => pool.run(op, payload))
   )
-  if (persist) await waitForOpfsSyncHandles()
+  if (persist) await waitForOpfsSyncHandles(storageKey !== undefined)
   try {
     return await init((message: string) => scope.postMessage(message), proxyUrl, persist, storageKey)
   } finally {

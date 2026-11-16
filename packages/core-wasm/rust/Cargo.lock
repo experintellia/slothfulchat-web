@@ -5876,10 +5876,14 @@ name = "tokio-wasm-shim"
 version = "1.0.0"
 dependencies = [
  "futures",
+ "hex",
+ "hkdf",
  "js-sys",
  "serde_json",
+ "sha2",
  "sqlite-wasm-rs",
  "sqlite-wasm-vfs",
+ "subtle",
  "tokio",
  "tokio-util",
  "wasm-bindgen",
@@ -5887,6 +5891,7 @@ dependencies = [
  "wasmtimer",
  "web-sys",
  "ws_stream_wasm",
+ "zeroize",
 ]
 
 [[package]]

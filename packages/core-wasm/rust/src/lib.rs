@@ -50,11 +50,10 @@ pub async fn init(
     persist: bool,
     storage_key: Option<Vec<u8>>,
 ) -> Result<DeltaChat, JsValue> {
-    if let Some(mut storage_key) = storage_key {
-        storage_key.fill(0);
-        return Err(JsValue::from_str("encrypted storage is not enabled in this build"));
-    }
     console_error_panic_hook::set_once();
+    if storage_key.is_some() && !persist {
+        return Err(JsValue::from_str("storageKey requires persistence"));
+    }
     // No `log`→console bridge on purpose: core reports its Info/Warning/Error
     // logging as JSON-RPC events too, and the page prints those, so a bridge
     // here makes every core log line appear twice. Our own diagnostics below
@@ -67,7 +66,7 @@ pub async fn init(
     if persist {
         // must run before Accounts::new: makes sahpool the default sqlite VFS
         // and loads the persisted fs tree (accounts.toml, blobs) into memfs
-        tokio::fs::enable_persistence()
+        tokio::fs::enable_persistence(storage_key)
             .await
             .map_err(|e| JsValue::from_str(&format!("failed to enable persistence: {e}")))?;
     }
