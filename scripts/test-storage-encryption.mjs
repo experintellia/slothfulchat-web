@@ -11,14 +11,33 @@ const types = { '.js': 'text/javascript', '.wasm': 'application/wasm' }
 const probe = `
   const write = FileSystemSyncAccessHandle.prototype.write
   const plaintextWrites = []
+  const getAccessHandle = FileSystemFileHandle.prototype.createSyncAccessHandle
+  const shortWrites = new WeakSet()
+  let shortWriteName
+  let shortWriteLength
+  FileSystemFileHandle.prototype.createSyncAccessHandle = async function (...args) {
+    const handle = await getAccessHandle.apply(this, args)
+    if (this.name === shortWriteName) shortWrites.add(handle)
+    return handle
+  }
   FileSystemSyncAccessHandle.prototype.write = function (data, options) {
     const text = new TextDecoder().decode(data)
     for (const marker of ['SQLite format 3', 'private message - storage test', 'private attachment - storage test']) {
       if (text.includes(marker)) plaintextWrites.push(marker)
     }
+    // Simulate a real torn write before returning a short byte count. The
+    // replacement has a different length from the saved fixture, so saving
+    // the old ciphertext in the recovery copy succeeds.
+    if (shortWrites.has(this) && data.byteLength === shortWriteLength && options?.at === 0) {
+      return write.call(this, data.subarray(0, 12), options)
+    }
     return write.call(this, data, options)
   }
   self.addEventListener('message', event => {
+    if (event.data?.type === 'short-write') {
+      shortWriteName = event.data.name
+      shortWriteLength = event.data.length
+    }
     if (event.data?.type === 'inspect-opfs-writes') {
       self.postMessage({ type: 'inspect-opfs-writes', plaintextWrites })
     }
@@ -264,7 +283,9 @@ try {
   const fileOnlyPage = await browser.newPage()
   await fileOnlyPage.goto(`http://127.0.0.1:${server.address().port}`)
   await fileOnlyPage.evaluate(async () => {
-    const { startCore } = await import('/dist/index.js')
+    const sdk = await import('/dist/index.js')
+    const worker = new URL('/dist/observed-worker.js', location.href)
+    const startCore = options => sdk.startCore(options, worker)
     const storageKey = crypto.getRandomValues(new Uint8Array(32))
     const wrongKey = storageKey.slice()
     wrongKey[0] ^= 1
@@ -272,6 +293,14 @@ try {
     let core = startCore({ storageKey })
     await core.fsWrite('/test.bin', new Uint8Array([7]))
     if (await core.fsFlush() !== 0) throw new Error('file-only OPFS write failed')
+    async function failReplacement(bytes) {
+      const before = await core.fsFailed()
+      // The encrypted file adds a 24-byte nonce and a 16-byte tag.
+      core.worker.postMessage({ type: 'short-write', name: 'test.bin', length: bytes.byteLength + 40 })
+      await core.fsWrite('/test.bin', bytes)
+      if (await core.fsFlush(before) !== 1) throw new Error('short write was not reported')
+    }
+    await failReplacement(new Uint8Array([8, 9]))
     core.worker.terminate()
 
     const opfs = await navigator.storage.getDirectory()
@@ -289,10 +318,27 @@ try {
 
     core = startCore({ storageKey })
     const restored = await core.fsRead('/test.bin')
-    if (restored.length !== 1 || restored[0] !== 7) throw new Error('file-only store did not recover')
+    if (restored.length !== 1 || restored[0] !== 7) throw new Error('previous contents lost after short write')
+    await core.fsWrite('/test.bin', new Uint8Array([8, 9]))
+    if (await core.fsFlush() !== 0) throw new Error('replacement after short write failed')
+    core.worker.terminate()
+
+    core = startCore({ storageKey })
+    if ((await core.fsRead('/test.bin')).join() !== '8,9') throw new Error('replacement was not persisted')
+    const recovery = await opfs.getDirectoryHandle('memfs-encrypted-recovery')
+    if (!(await recovery.keys().next()).done) throw new Error('committed write left a recovery copy')
+    await failReplacement(new Uint8Array([10, 11, 12]))
+    const failures = await core.fsFailed()
+    await core.fsRemove('/test.bin')
+    if (await core.fsFlush(failures) !== 0) throw new Error('deletion after short write failed')
+    if (!(await recovery.keys().next()).done) throw new Error('deletion left a recovery copy')
+    core.worker.terminate()
+
+    core = startCore({ storageKey })
+    if (await core.fsExists('/test.bin')) throw new Error('deletion resurrected the previous contents')
     core.worker.terminate()
   })
-  console.log('Encrypted storage, legacy migration guard, key recovery, and portable backup checks passed')
+  console.log('Encrypted storage, legacy migration guard, key recovery, short-write recovery, and portable backup checks passed')
 } finally {
   await browser.close()
   server.close()

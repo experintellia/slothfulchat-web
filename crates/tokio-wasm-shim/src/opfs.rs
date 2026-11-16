@@ -58,6 +58,7 @@ use crate::registry;
 /// Keeps the mirror clearly separated from sahpool's `.opfs-sahpool` dir.
 const MIRROR_DIR: &str = "memfs";
 const ENCRYPTED_MIRROR_DIR: &str = "memfs-encrypted";
+const ENCRYPTED_RECOVERY_DIR: &str = "memfs-encrypted-recovery";
 const ENCRYPTED_POOL_DIR: &str = ".opfs-sahpool-encrypted";
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -173,7 +174,7 @@ pub async fn enable_persistence(storage_key: Option<Vec<u8>>) -> Result<(), Stri
         .map_err(|e| format!("failed to install opfs-sahpool vfs: {e}"))?;
 
     let root = mirror_root(keys.is_some()).await.map_err(js_err)?;
-    if let Some(keys) = keys {
+    let recovery = if let Some(keys) = keys {
         // SQLite3MultipleCiphers must wrap a custom VFS before PRAGMA key works.
         // The pool still owns its files and handles as before.
         // SAFETY: this worker has exclusive use of SQLite and no connections are open.
@@ -181,15 +182,18 @@ pub async fn enable_persistence(storage_key: Option<Vec<u8>>) -> Result<(), Stri
         if result != sqlite_wasm_rs::SQLITE_OK {
             return Err(format!("failed to register the SQLite cipher VFS: {result}"));
         }
-        hydrate_encrypted_store(&root, &keys, &util)
+        let recovery_dir = opfs_directory(ENCRYPTED_RECOVERY_DIR).await.map_err(js_err)?;
+        hydrate_encrypted_store(&root, &recovery_dir, &keys, &util)
             .await
             .map_err(|e| format!("opfs encrypted store: {}", js_err(e)))?;
         STORAGE_KEYS.with(|current| *current.borrow_mut() = Some(keys));
+        Some(recovery_dir)
     } else {
         hydrate(&root, None, true)
             .await
             .map_err(|e| format!("opfs hydrate failed: {}", js_err(e)))?;
-    }
+        None
+    };
 
     // Boot-time orphan sweep: reclaim sahpool slots left by REMOVED accounts,
     // which un-bricks installs already at the 32-slot ceiling (the post-#75
@@ -276,7 +280,7 @@ pub async fn enable_persistence(storage_key: Option<Vec<u8>>) -> Result<(), Stri
     let (tx, rx) = unbounded();
     *PENDING.lock().unwrap() = Some((tx, HashSet::new()));
     ENABLED.store(true, Ordering::Relaxed);
-    wasm_bindgen_futures::spawn_local(flusher(root, rx));
+    wasm_bindgen_futures::spawn_local(flusher(root, recovery, rx));
     Ok(())
 }
 
@@ -284,6 +288,7 @@ pub async fn enable_persistence(storage_key: Option<Vec<u8>>) -> Result<(), Stri
 /// registry. A damaged verifier can be replaced after decrypting existing data.
 async fn hydrate_encrypted_store(
     root: &FileSystemDirectoryHandle,
+    recovery: &FileSystemDirectoryHandle,
     keys: &StorageKeys,
     pool: &OpfsSAHPoolUtil,
 ) -> Result<(), JsValue> {
@@ -296,7 +301,7 @@ async fn hydrate_encrypted_store(
             && handle.read_with_u8_array(&mut current)? == length
             && bool::from(current.ct_eq(&keys.verifier))
         {
-            hydrate(root, Some(keys), true).await?;
+            hydrate(root, Some((keys, recovery)), true).await?;
             return Ok(());
         }
 
@@ -305,7 +310,7 @@ async fn hydrate_encrypted_store(
             .iter()
             .filter(|name| name.ends_with("/dc.db") && registry::account_uuid_of_db(name).is_some())
             .any(|name| authenticate_database(name, &keys.db_key));
-        let mirror = hydrate(root, Some(keys), database_authenticated).await?;
+        let mirror = hydrate(root, Some((keys, recovery)), database_authenticated).await?;
         // An intact-length verifier with a different value still protects an
         // empty store. Initialize a missing or torn verifier without proof
         // only when there is no encrypted data to protect.
@@ -348,27 +353,20 @@ fn is_account_registry(path: &Path) -> bool {
 const FILE_NONCE_LEN: usize = 24;
 const FILE_TAG_LEN: usize = 16;
 
-fn seal_file(path: &Path, data: &mut Vec<u8>) -> Result<(), JsValue> {
-    STORAGE_KEYS.with(|keys| {
-        let keys = keys.borrow();
-        let Some(keys) = keys.as_ref().filter(|_| !is_account_registry(path)) else {
-            return Ok(());
-        };
-
-        // v1 stores ciphertext followed by a fresh nonce and authentication
-        // tag. Bind the envelope to its logical path to reject swapped files.
-        let mut nonce = [0u8; FILE_NONCE_LEN];
-        getrandom::fill(&mut nonce)
-            .map_err(|e| JsValue::from_str(&format!("could not generate file nonce: {e}")))?;
-        let tag = keys
-            .file_cipher
-            .encrypt_in_place_detached((&nonce).into(), path.as_os_str().as_encoded_bytes(), data)
-            .map_err(|_| JsValue::from_str("failed to encrypt OPFS file"))?;
-        data.reserve(nonce.len() + tag.len());
-        data.extend_from_slice(&nonce);
-        data.extend_from_slice(&tag);
-        Ok(())
-    })
+fn seal_file(keys: &StorageKeys, path: &Path, data: &mut Vec<u8>) -> Result<(), JsValue> {
+    // v1 stores ciphertext followed by a fresh nonce and authentication
+    // tag. Bind the envelope to its logical path to reject swapped files.
+    let mut nonce = [0u8; FILE_NONCE_LEN];
+    getrandom::fill(&mut nonce)
+        .map_err(|e| JsValue::from_str(&format!("could not generate file nonce: {e}")))?;
+    let tag = keys
+        .file_cipher
+        .encrypt_in_place_detached((&nonce).into(), path.as_os_str().as_encoded_bytes(), data)
+        .map_err(|_| JsValue::from_str("failed to encrypt OPFS file"))?;
+    data.reserve(nonce.len() + tag.len());
+    data.extend_from_slice(&nonce);
+    data.extend_from_slice(&tag);
+    Ok(())
 }
 
 fn open_file(
@@ -578,9 +576,8 @@ fn write_config_through(
     Ok(())
 }
 
-/// Commits `data` to a sync access handle crash-safely: write at offset 0
-/// first, truncate to the new length last, then flush — a teardown mid-way
-/// leaves old-tail garbage, never an empty or shorter-than-written file.
+/// Writes at offset 0 before trimming the old tail. Callers that need to
+/// preserve the previous version must save it before overwriting the handle.
 fn sah_write(sah: &FileSystemSyncAccessHandle, data: &[u8]) -> Result<(), JsValue> {
     let opts = FileSystemReadWriteOptions::new();
     opts.set_at(0.0);
@@ -612,7 +609,11 @@ async fn open_sah(
         .into())
 }
 
-async fn flusher(root: FileSystemDirectoryHandle, mut rx: UnboundedReceiver<PathBuf>) {
+async fn flusher(
+    root: FileSystemDirectoryHandle,
+    recovery: Option<FileSystemDirectoryHandle>,
+    mut rx: UnboundedReceiver<PathBuf>,
+) {
     while let Some(path) = rx.next().await {
         // un-mark before snapshotting so later mutations re-queue the path
         if let Some((_, pending)) = PENDING.lock().unwrap().as_mut() {
@@ -627,7 +628,7 @@ async fn flusher(root: FileSystemDirectoryHandle, mut rx: UnboundedReceiver<Path
         // tasks are the upgrade if that ever shows up as a stall.
         let mut attempt = 1;
         loop {
-            let err = reconcile(&root, &path).await.err();
+            let err = reconcile(&root, recovery.as_ref(), &path).await.err();
             match durability::next_step(err.is_none(), attempt) {
                 Next::Done => break,
                 Next::Retry(after) => {
@@ -665,7 +666,11 @@ async fn flusher(root: FileSystemDirectoryHandle, mut rx: UnboundedReceiver<Path
 }
 
 /// Makes the OPFS mirror match the current memfs state at `path`.
-async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), JsValue> {
+async fn reconcile(
+    root: &FileSystemDirectoryHandle,
+    recovery: Option<&FileSystemDirectoryHandle>,
+    path: &Path,
+) -> Result<(), JsValue> {
     // accounts.toml and its .bak are owned by the synchronous write-through
     // while CONFIG_SAHS holds their exclusive handles. The generic path below
     // would call open_sah on them — a SECOND createSyncAccessHandle on a
@@ -678,23 +683,24 @@ async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), 
         return Ok(());
     }
     match fs::snapshot(path) {
-        Snapshot::File(mut data) => {
-            seal_file(path, &mut data)?;
-            let dir = ensure_dirs(root, path.parent().unwrap_or(Path::new("/"))).await?;
+        Snapshot::File(data) => {
+            let dir = ensure_dirs(root, parent_path(path)).await?;
             let name = file_name(path)?;
-            // Sync access handle, NOT createWritable(): WebKit only shipped
-            // FileSystemWritableFileStream in Safari 18.4 and we saw it hand
-            // back ~1MB of garbage as accounts.toml on iOS. SAH is the older
-            // API the sahpool sqlite VFS already trusts on the same devices.
-            let sah = open_sah(&dir, &name).await?;
-            let result = sah_write(&sah, &data);
-            sah.close();
-            result?;
+            if let Some(recovery) = recovery.filter(|_| !is_account_registry(path)) {
+                write_encrypted_file(&dir, recovery, path, &name, data).await?;
+            } else {
+                write_mirror_file(&dir, &name, &data).await?;
+            }
         }
         Snapshot::Dir => {
             ensure_dirs(root, path).await?;
         }
         Snapshot::Missing => {
+            if let Some(recovery) = recovery {
+                // Drop the fallback first so a deletion cannot resurrect it.
+                remove_mirror_entry(recovery, path).await?;
+                return remove_mirror_entry(root, path).await;
+            }
             // walk to the parent without creating; missing on the way = already gone
             let mut dir = root.clone();
             for part in normal_components(path.parent().unwrap_or(Path::new("/"))) {
@@ -710,6 +716,136 @@ async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), 
         }
     }
     Ok(())
+}
+
+async fn write_mirror_file(
+    dir: &FileSystemDirectoryHandle,
+    name: &str,
+    data: &[u8],
+) -> Result<(), JsValue> {
+    // The sync-handle API also works on older Safari, which lacks
+    // createWritable(). The encrypted path supplies its own recovery copy.
+    let sah = open_sah(dir, name).await?;
+    let result = sah_write(&sah, data);
+    sah.close();
+    result
+}
+
+async fn write_encrypted_file(
+    dir: &FileSystemDirectoryHandle,
+    recovery: &FileSystemDirectoryHandle,
+    path: &Path,
+    name: &str,
+    mut data: Vec<u8>,
+) -> Result<(), JsValue> {
+    let previous = read_mirror_file_if_present(dir, name).await?;
+    let replacing = previous.is_some();
+    let preserved = STORAGE_KEYS.with(|keys| {
+        let keys = keys.borrow();
+        let keys = keys
+            .as_ref()
+            .expect("encrypted mirror requires storage keys");
+        seal_file(keys, path, &mut data)?;
+        let Some(mut previous) = previous else {
+            return Ok(None);
+        };
+        // A retry may see a torn primary. Leave the last authenticated copy
+        // in recovery alone until a replacement makes it to disk.
+        if open_file(&keys.file_cipher, path, &mut previous).is_err() {
+            return Ok(None);
+        }
+        seal_file(keys, path, &mut previous)?;
+        Ok::<_, JsValue>(Some(previous))
+    })?;
+    if let Some(preserved) = preserved {
+        let backup_dir = ensure_dirs(recovery, parent_path(path)).await?;
+        write_mirror_file(&backup_dir, name, &preserved).await?;
+    }
+    write_mirror_file(dir, name, &data).await?;
+    if replacing {
+        // Once the primary is durable, it wins even if cleanup fails.
+        if let Err(err) = remove_mirror_entry(recovery, path).await {
+            web_sys::console::warn_2(&JsValue::from_str("opfs: recovery cleanup failed"), &err);
+        }
+    }
+    Ok(())
+}
+
+fn parent_path(path: &Path) -> &Path {
+    path.parent().unwrap_or(Path::new("/"))
+}
+
+/// An absent entry is normal following a restart or a coalesced deletion.
+/// Propagate all other errors so the flusher retries instead of losing a write.
+fn existing<T>(result: Result<T, JsValue>) -> Result<Option<T>, JsValue> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(err)
+            if err
+                .dyn_ref::<web_sys::DomException>()
+                .is_some_and(|exception| exception.name() == "NotFoundError") =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+async fn existing_dir(
+    root: &FileSystemDirectoryHandle,
+    path: &Path,
+) -> Result<Option<FileSystemDirectoryHandle>, JsValue> {
+    let mut dir = root.clone();
+    for part in normal_components(path) {
+        let Some(handle) = existing(JsFuture::from(dir.get_directory_handle(&part)).await)? else {
+            return Ok(None);
+        };
+        dir = handle.into();
+    }
+    Ok(Some(dir))
+}
+
+async fn remove_mirror_entry(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), JsValue> {
+    if let Some(dir) = existing_dir(root, parent_path(path)).await? {
+        let opts = FileSystemRemoveOptions::new();
+        opts.set_recursive(true);
+        let name = file_name(path)?;
+        existing(JsFuture::from(dir.remove_entry_with_options(&name, &opts)).await)?;
+    }
+    Ok(())
+}
+
+async fn read_mirror_file(handle: FileSystemFileHandle) -> Result<Vec<u8>, JsValue> {
+    let file: web_sys::File = JsFuture::from(handle.get_file()).await?.into();
+    let buf = JsFuture::from(file.array_buffer()).await?;
+    Ok(Uint8Array::new(&buf).to_vec())
+}
+
+async fn read_mirror_file_if_present(
+    dir: &FileSystemDirectoryHandle,
+    name: &str,
+) -> Result<Option<Vec<u8>>, JsValue> {
+    let handle = existing(JsFuture::from(dir.get_file_handle(name)).await)?;
+    match handle {
+        Some(handle) => Ok(Some(read_mirror_file(handle.into()).await?)),
+        None => Ok(None),
+    }
+}
+
+async fn recover_mirror_file(
+    root: &FileSystemDirectoryHandle,
+    keys: &StorageKeys,
+    path: &Path,
+) -> Result<Option<Vec<u8>>, JsValue> {
+    let Some(dir) = existing_dir(root, parent_path(path)).await? else {
+        return Ok(None);
+    };
+    let Some(mut data) = read_mirror_file_if_present(&dir, &file_name(path)?).await? else {
+        return Ok(None);
+    };
+    Ok(open_file(&keys.file_cipher, path, &mut data)
+        .is_ok()
+        .then_some(data))
 }
 
 /// Flusher-side reconciliation for accounts.toml (and its .bak). Guarantees no
@@ -825,7 +961,7 @@ struct MirrorContents {
 /// checks blobdir existence on startup, so dirs matter).
 async fn hydrate(
     root: &FileSystemDirectoryHandle,
-    keys: Option<&StorageKeys>,
+    encrypted: Option<(&StorageKeys, &FileSystemDirectoryHandle)>,
     key_verified: bool,
 ) -> Result<MirrorContents, JsValue> {
     let mut mirror = MirrorContents::default();
@@ -849,21 +985,21 @@ async fn hydrate(
                 fs::insert_hydrated_dir(child.clone());
                 stack.push((handle.into(), child));
             } else {
-                let file: web_sys::File =
-                    JsFuture::from(FileSystemFileHandle::from(handle).get_file())
-                        .await?
-                        .into();
-                let buf = JsFuture::from(file.array_buffer()).await?;
-                let mut data = Uint8Array::new(&buf).to_vec();
-                if let Some(keys) = keys.filter(|_| !is_account_registry(&child)) {
+                let mut data = read_mirror_file(handle.into()).await?;
+                if let Some((keys, recovery)) = encrypted.filter(|_| !is_account_registry(&child)) {
                     mirror.has_files = true;
                     if open_file(&keys.file_cipher, &child, &mut data).is_err() {
-                        if key_verified {
-                            web_sys::console::warn_1(&JsValue::from_str(&format!(
-                                "opfs: ignoring unauthenticated file {child:?}"
-                            )));
+                        match recover_mirror_file(recovery, keys, &child).await? {
+                            Some(recovered) => data = recovered,
+                            None => {
+                                if key_verified {
+                                    web_sys::console::warn_1(&JsValue::from_str(&format!(
+                                        "opfs: ignoring unauthenticated file {child:?}"
+                                    )));
+                                }
+                                continue;
+                            }
                         }
-                        continue;
                     }
                     mirror.authenticated_file = true;
                 }
