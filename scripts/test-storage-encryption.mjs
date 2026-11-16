@@ -109,6 +109,8 @@ try {
     let core = startCore({ storageKey })
     let rpc = core.dc.rpc
     const account = await rpc.addAccount()
+    await expectError(() => rpc.migrateAccount('/not-a-backup.db'), 'use importBackup')
+    check((await rpc.getAllAccountIds()).join() === String(account), 'migration changed the registry')
     await rpc.setConfig(account, 'configured_addr', 'storage-test@example.invalid')
     const fingerprint = (await rpc.getChatSecurejoinQrCode(account, null)).match(/#[A-F0-9]{40}/i)?.[0]
     check(fingerprint, 'test identity did not initialize')
