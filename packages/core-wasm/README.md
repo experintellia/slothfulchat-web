@@ -92,7 +92,8 @@ pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/exampl
 - SQLite pages and file contents are encrypted before they reach OPFS.
   File names, sizes, and the account ID registry remain visible. An
   explicitly exported backup is portable and should be protected by the
-  caller once it leaves the encrypted store.
+  caller once it leaves the encrypted store. Encrypted mode uses address-free
+  backup names and hides addresses and fingerprints in exported key filenames.
 
 ## Current limits
 

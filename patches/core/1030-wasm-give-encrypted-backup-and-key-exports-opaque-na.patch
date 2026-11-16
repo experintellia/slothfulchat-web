@@ -1,0 +1,142 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Mon, 16 Nov 2026 12:48:30 +0100
+Subject: [PATCH] wasm: give encrypted backup and key exports opaque names
+
+---
+ src/imex.rs | 92 ++++++++++++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 73 insertions(+), 19 deletions(-)
+
+diff --git a/src/imex.rs b/src/imex.rs
+index bd9314debabafe95fdc66a4db249316a07dc0f37..abffe9b13663abc8c6020cbb255f03cf8f852a7c 100644
+--- a/src/imex.rs
++++ b/src/imex.rs
+@@ -486,45 +486,92 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+ /// Returns Ok((temp_db_path, temp_path, dest_path)) on success. Unencrypted database can be
+ /// written to temp_db_path. The backup can then be written to temp_path. If the backup succeeded,
+ /// it can be renamed to dest_path. This guarantees that the backup is complete.
+-fn get_next_backup_path(
++async fn get_next_backup_path(
+     folder: &Path,
+-    addr: &str,
++    addr: Option<&str>,
+     backup_time: i64,
+ ) -> Result<(PathBuf, PathBuf, PathBuf)> {
+-    let folder = PathBuf::from(folder);
+     let stem = chrono::DateTime::<chrono::Utc>::from_timestamp(backup_time, 0)
+         .context("can't get next backup path")?
+         // Don't change this file name format, in `dc_imex_has_backup` we use string comparison to determine which backup is newer:
+         .format("delta-chat-backup-%Y-%m-%d")
+         .to_string();
+ 
+-    // 64 backup files per day should be enough for everyone
+-    for i in 0..64 {
+-        let mut tempdbfile = folder.clone();
+-        tempdbfile.push(format!("{stem}-{i:02}-{addr}.db"));
+-
+-        let mut tempfile = folder.clone();
+-        tempfile.push(format!("{stem}-{i:02}-{addr}.tar.part"));
++    let mut next = 0;
++    if addr.is_none() {
++        // Continue after existing dated archives, including address-bearing
++        // ones from earlier builds. Filling a gap would sort before them.
++        let prefix = format!("{stem}-");
++        let mut entries = fs::read_dir(folder).await?;
++        while let Some(entry) = entries.next_entry().await? {
++            let name = entry.file_name();
++            let Some(tail) = name.to_str().and_then(|name| name.strip_prefix(&prefix)) else {
++                continue;
++            };
++            if let Some(index) = tail.get(..2).and_then(|digits| digits.parse::<u8>().ok())
++                && index < 64
++                && tail.ends_with(".tar")
++                && tail.get(2..).is_some_and(|rest| rest == ".tar" || rest.starts_with('-'))
++            {
++                next = next.max(index.saturating_add(1));
++            }
++        }
++    }
+ 
+-        let mut destfile = folder.clone();
+-        destfile.push(format!("{stem}-{i:02}-{addr}.tar"));
++    // 64 backup files per day should be enough for everyone
++    for i in next..64 {
++        let name = match addr {
++            Some(addr) => format!("{stem}-{i:02}-{addr}"),
++            None => format!("{stem}-{i:02}"),
++        };
++        let destfile = folder.join(format!("{name}.tar"));
++        if path_exists(&destfile) {
++            continue;
++        }
++        let temporary = if addr.is_some() {
++            name
++        } else {
++            uuid::Uuid::new_v4().to_string()
++        };
++        let tempdbfile = folder.join(format!("{temporary}.db"));
++        let tempfile = folder.join(format!("{temporary}.tar.part"));
+ 
+-        if !path_exists(&tempdbfile) && !path_exists(&tempfile) && !path_exists(&destfile) {
++        if !path_exists(&tempdbfile) && !path_exists(&tempfile) {
+             return Ok((tempdbfile, tempfile, destfile));
+         }
+     }
+     bail!("could not create backup file, disk full?");
+ }
+ 
++fn use_opaque_export_names() -> bool {
++    #[cfg(target_arch = "wasm32")]
++    {
++        tokio::fs::storage_db_key().is_some()
++    }
++    #[cfg(not(target_arch = "wasm32"))]
++    {
++        false
++    }
++}
++
+ /// Exports the database to a separate file with the given passphrase.
+ ///
+ /// Set passphrase to empty string to export the database unencrypted.
+ #[expect(clippy::arithmetic_side_effects)]
+ async fn export_backup(context: &Context, dir: &Path, passphrase: String) -> Result<()> {
+-    // get a fine backup file name (the name includes the date so that multiple backup instances are possible)
+-    let now = time();
+     let self_addr = context.get_primary_self_addr().await?;
+-    let (temp_db_path, temp_path, dest_path) = get_next_backup_path(dir, &self_addr, now)?;
++    let addr = (!use_opaque_export_names()).then_some(self_addr.as_str());
++    #[cfg(target_arch = "wasm32")]
++    let _export_guard = if addr.is_none() {
++        // Account exports can share a directory. Reserve each dated sequence
++        // until its archive is published or the export is canceled.
++        static EXPORT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
++        Some(EXPORT_LOCK.lock().await)
++    } else {
++        None
++    };
++    let now = time();
++    let (temp_db_path, temp_path, dest_path) = get_next_backup_path(dir, addr, now).await?;
+     let temp_db_path = TempPathGuard::new(temp_db_path);
+     let temp_path = TempPathGuard::new(temp_path);
+ 
+@@ -789,9 +836,16 @@ async fn export_key_to_asc_file<T>(
+             false => "public",
+             true => "private",
+         };
+-        let id = id.map_or("default".into(), |i| i.to_string());
+-        let fp = key.dc_fingerprint().hex();
+-        format!("{kind}-key-{addr}-{id}-{fp}.asc")
++        if use_opaque_export_names() {
++            // Browser directory iteration is sorted by name. A directory
++            // import selects the first private key it can successfully read.
++            let priority = u8::from(id.is_some());
++            format!("{kind}-key-{priority}-{}.asc", uuid::Uuid::new_v4())
++        } else {
++            let id = id.map_or("default".into(), |i| i.to_string());
++            let fp = key.dc_fingerprint().hex();
++            format!("{kind}-key-{addr}-{id}-{fp}.asc")
++        }
+     };
+     let path = dir.join(&file_name);
+     info!(context, "Exporting key to {}.", path.display());

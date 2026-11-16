@@ -151,6 +151,9 @@ try {
     await core.fsRemove('/input')
     await core.fsWrite('/damaged.bin', attachment)
 
+    const today = new Date().toISOString().slice(0, 10)
+    const previousExport = `/exports/delta-chat-backup-${today}-04-legacy@example.invalid.tar`
+    await core.fsWrite(previousExport, new Uint8Array([0]))
     let archivePath
     core.dc.on('ImexFileWritten', (accountId, event) => {
       if (accountId === account && event.path.endsWith('.tar')) archivePath = event.path
@@ -158,7 +161,12 @@ try {
     await rpc.exportBackup(account, '/exports', null)
     for (let i = 0; i < 50 && !archivePath; i++) await new Promise(resolve => setTimeout(resolve, 100))
     check(archivePath, 'backup export did not produce an archive')
-    const archive = await core.fsRead(archivePath)
+    check(/^\/exports\/delta-chat-backup-\d{4}-\d{2}-\d{2}-\d{2}\.tar$/.test(archivePath),
+      'encrypted backup name contains account details')
+    const firstArchivePath = archivePath
+    check(firstArchivePath > previousExport, 'new archive sorts before an older export')
+    await core.fsRemove(previousExport)
+    const archive = await core.fsRead(firstArchivePath)
     const archiveText = new TextDecoder().decode(archive)
     check(archiveText.includes('SQLite format 3') && archiveText.includes(databaseMarker),
       'export is not a portable Delta Chat backup')
@@ -166,6 +174,18 @@ try {
     await rpc.importBackup(restoredAccount, archivePath, null)
     check((await rpc.getMessage(restoredAccount, id)).text === databaseMarker,
       'imported database could not be read')
+    await Promise.all([
+      rpc.exportBackup(account, '/exports', null),
+      rpc.exportBackup(restoredAccount, '/exports', null),
+    ])
+
+    await rpc.exportSelfKeys(account, '/keys', null)
+    const keyImportAccount = await rpc.addAccount()
+    await rpc.importSelfKeys(keyImportAccount, '/keys')
+    await rpc.setConfig(keyImportAccount, 'configured_addr', 'storage-test@example.invalid')
+    check((await rpc.getChatSecurejoinQrCode(keyImportAccount, null)).includes(fingerprint),
+      'could not restore the default key from opaque exports')
+    await rpc.removeAccount(keyImportAccount)
 
     const failedAccount = await rpc.addAccount()
     await core.fsWrite('/empty-backup.tar', new Uint8Array(1024))
@@ -181,6 +201,14 @@ try {
     check(files.every(file => !file.includes('SQLite format 3') && !file.includes(databaseMarker)),
       'database contains plaintext')
     const mirror = await opfs.getDirectoryHandle('memfs-encrypted')
+    const archives = (await Array.fromAsync((await mirror.getDirectoryHandle('exports')).keys())).sort()
+    check(archives.length === 3 && `/exports/${archives[0]}` === firstArchivePath &&
+      archives.every(name => /^delta-chat-backup-\d{4}-\d{2}-\d{2}-\d{2}\.tar$/.test(name)),
+      'parallel encrypted backup exports did not publish distinct sortable names')
+    const keyNames = await Array.fromAsync((await mirror.getDirectoryHandle('keys')).keys())
+    check(keyNames.length === 2 && keyNames.every(name =>
+      /^(public|private)-key-0-[0-9a-f-]{36}\.asc$/.test(name)),
+      'key export filenames contain account details')
     const mirrorFiles = await readOpfsFiles(mirror)
     check(mirrorFiles.every(file => !file.includes(attachmentMarker)), 'mirror contains plaintext')
     core.worker.terminate()
