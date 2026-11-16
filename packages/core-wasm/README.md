@@ -97,11 +97,13 @@ pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/exampl
   `upgradeAccountStorage(accountId, storageKey)` to move one ordinary browser
   account into encrypted storage. It returns the new account ID after checking
   the reopened encrypted database and its attachments and removing the source.
-  The transfer archive stays in memory. Other accounts and exported backups are
-  kept.
-- Use `core.restoreBackup(accountId, bytes)` with an unused account to
-  restore a portable backup without persisting the input archive. Encrypted
-  restores write attachments under opaque names and keep their display names.
+  The upgrade reads legacy attachments one at a time. Other accounts and
+  exported backups are kept.
+- Pass a `File` or `Blob` to `core.restoreBackup(accountId, file)` to read
+  the backup in chunks. Encrypted restores stage each attachment in an
+  encrypted SQLite store and keep only its filename and size in the in-memory
+  filesystem. Attachment names shown in chat are preserved. The SQLite account
+  database and the current attachment are still buffered during conversion.
 - SQLite pages and file contents are encrypted before they reach OPFS.
   File names, sizes, and the account ID registry remain visible. An
   explicitly exported backup is portable and should be protected by the

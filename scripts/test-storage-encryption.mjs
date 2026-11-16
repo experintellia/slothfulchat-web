@@ -9,6 +9,7 @@ const types = { '.js': 'text/javascript', '.wasm': 'application/wasm' }
 // Observe writes as they happen. A plaintext backup staged and then deleted
 // from the SQLite pool would be invisible to the final disk scan.
 const probe = `
+  import { DeltaChat as ObservedCore } from '../wasm-dist/deltachat_wasm.js'
   const write = FileSystemSyncAccessHandle.prototype.write
   const plaintextWrites = []
   const getAccessHandle = FileSystemFileHandle.prototype.createSyncAccessHandle
@@ -16,11 +17,41 @@ const probe = `
   let shortWriteName
   let shortWriteLength
   let rejectedName
+  let largestBlobRead = 0
+  let metadataOnlySource = false
+  let readingSource = false
+  const arrayBuffer = Blob.prototype.arrayBuffer
+  Blob.prototype.arrayBuffer = function () {
+    if (metadataOnlySource && !readingSource && this.name?.endsWith('.private-legacy-extension')) {
+      throw new Error('upgrade loaded a legacy attachment at startup')
+    }
+    largestBlobRead = Math.max(largestBlobRead, this.size)
+    return arrayBuffer.call(this)
+  }
+  let failWrite = false
   const upgradeBlobLength = Number(new URL(location.href).searchParams.get('failUpgradeBlobLength'))
+  const readSource = ObservedCore.prototype.storage_read
+  ObservedCore.prototype.storage_read = async function (...args) {
+    readingSource = true
+    try {
+      return await readSource.apply(this, args)
+    } finally {
+      readingSource = false
+    }
+  }
+  const stage = ObservedCore.prototype.storage_stage
+  ObservedCore.prototype.storage_stage = function (id, name, data) {
+    failWrite = name && upgradeBlobLength && data.byteLength === upgradeBlobLength
+    try {
+      return stage.call(this, id, name, data)
+    } finally {
+      failWrite = false
+    }
+  }
   FileSystemFileHandle.prototype.createSyncAccessHandle = async function (...args) {
     if (this.name === rejectedName) throw new Error('legacy attachment path reached OPFS')
     const handle = await getAccessHandle.apply(this, args)
-    if (this.name === shortWriteName || (upgradeBlobLength && /^[0-9a-f-]{36}$/.test(this.name))) {
+    if (this.name === shortWriteName) {
       shortWrites.add(handle)
     }
     return handle
@@ -33,13 +64,21 @@ const probe = `
     // Simulate a real torn write before returning a short byte count. The
     // replacement has a different length from the saved fixture, so saving
     // the old ciphertext in the recovery copy succeeds.
-    if (shortWrites.has(this) && data.byteLength === (shortWriteLength ?? upgradeBlobLength) && options?.at === 0) {
+    if (failWrite) throw new DOMException('injected attachment store write failure', 'QuotaExceededError')
+    if (shortWrites.has(this) && data.byteLength === shortWriteLength && options?.at === 0) {
       return write.call(this, data.subarray(0, 12), options)
     }
     return write.call(this, data, options)
   }
   self.addEventListener('message', event => {
-    if (event.data?.type === 'reject-opfs-name') rejectedName = event.data.name
+    if (event.data?.type === 'config') metadataOnlySource = event.data.upgradeSource
+    if (event.data?.type === 'reject-opfs-name') {
+      rejectedName = event.data.name
+      largestBlobRead = 0
+    }
+    if (event.data?.type === 'inspect-blob-reads') {
+      self.postMessage({type: 'inspect-blob-reads', largestBlobRead})
+    }
     if (event.data?.type === 'short-write') {
       shortWriteName = event.data.name
       shortWriteLength = event.data.length
@@ -203,7 +242,17 @@ try {
     const originalFile = await rpc.getMessage(account, fileId)
     await expectError(() => core.restoreBackup(restoredAccount, new Uint8Array()), 'Backup is empty')
     core.worker.postMessage({ type: 'reject-opfs-name', name: originalFile.file.split('/').pop() })
-    await core.restoreBackup(restoredAccount, archive)
+    await core.restoreBackup(restoredAccount, new File([archive], 'backup.tar'))
+    const largestBlobRead = await new Promise(resolve => {
+      function onMessage(event) {
+        if (event.data?.type !== 'inspect-blob-reads') return
+        core.worker.removeEventListener('message', onMessage)
+        resolve(event.data.largestBlobRead)
+      }
+      core.worker.addEventListener('message', onMessage)
+      core.worker.postMessage({ type: 'inspect-blob-reads' })
+    })
+    check(largestBlobRead === 256 * 1024, 'backup reader materialized the whole archive')
     core.worker.postMessage({ type: 'reject-opfs-name' })
     const restoredFile = await rpc.getMessage(restoredAccount, fileId)
     check(/^[0-9a-f-]{36}$/.test(restoredFile.file.split('/').pop()),
@@ -384,6 +433,7 @@ try {
     await core.fsRemove(staged.file)
     const file = (await core.dc.rpc.getMessage(account, fileId)).file
     await core.fsWrite(file + '.waveform', new Uint8Array([5]))
+    await core.fsWrite(file.replace(/[^/]+$/, '000-earlier'), new Uint8Array([6]))
     check(await core.fsFlush() === 0, 'ordinary upgrade fixture not persisted')
     core.worker.terminate()
 
@@ -402,12 +452,12 @@ try {
     check(failed, 'upgrade accepted the wrong destination key')
 
     const faultyWorker = new URL(worker)
-    faultyWorker.searchParams.set('failUpgradeBlobLength', String(data.length + 40))
+    faultyWorker.searchParams.set('failUpgradeBlobLength', String(data.length))
     failed = false
     try {
       await upgradeAccountStorage(account, key, faultyWorker)
     } catch (error) {
-      failed = error.message.includes('Account files did not reach encrypted storage')
+      failed = error.message.includes('Could not persist converted attachment')
     }
     check(failed, 'upgrade accepted an attachment write failure')
 
@@ -428,7 +478,19 @@ try {
     check(restored.fileName === originalName, 'upgrade lost the attachment display name')
     check(/^[0-9a-f-]{36}$/.test(restored.file.split('/').pop()), 'upgrade kept the original blob name')
     check((await core.fsRead(restored.file)).join() === data.join(), 'upgraded attachment bytes changed')
-    check((await core.fsRead(restored.file + '.waveform')).join() === '5', 'upgrade lost the waveform sidecar')
+    const waveform = restored.file + '.waveform'
+    check((await core.fsRead(waveform)).join() === '5', 'upgrade lost the waveform sidecar')
+    await core.fsWrite(waveform, new Uint8Array([9, 8]))
+    core.worker.terminate()
+
+    core = startCore({ storageKey: key }, worker)
+    check((await core.fsRead(waveform)).join() === '9,8', 'disk-backed overwrite was lost')
+    await core.fsRemove(waveform)
+    check(!await core.fsExists(waveform), 'removed disk-backed file is still visible')
+    core.worker.terminate()
+
+    core = startCore({ storageKey: key }, worker)
+    check(!await core.fsExists(waveform), 'removed disk-backed file reappeared')
     core.worker.terminate()
 
     core = startCore({}, worker)
@@ -449,8 +511,31 @@ try {
       }
     }
     await inspectDirectory(opfs)
+
+    core = startCore({ storageKey: key }, worker)
+    await core.dc.rpc.removeAccount(upgraded)
+    await core.dc.rpc.removeAccount(existing)
+    check(await core.fsFlush() === 0, 'encrypted account cleanup failed')
+    core.worker.terminate()
+
+    // Even with no account database left, the encrypted attachment index
+    // authenticates the store if the verifier is lost.
+    const encryptedPool = await opfs.getDirectoryHandle('.opfs-sahpool-encrypted')
+    await encryptedPool.removeEntry('key-check')
+    core = startCore({ storageKey: wrongKey }, worker)
+    failed = false
+    try {
+      await core.dc.rpc.getAllAccountIds()
+    } catch (error) {
+      failed = error.message.includes('wrong storage key')
+    }
+    check(failed, 'wrong key was accepted with only the attachment index left')
+    core = startCore({ storageKey: key }, worker)
+    check((await core.dc.rpc.getAllAccountIds()).length === 0, 'attachment index did not recover the verifier')
+    check(!await core.fsExists(restored.file), 'removing an account left its disk-backed attachment')
+    core.worker.terminate()
   })
-  console.log('Encrypted storage, short-write recovery, portable backups, and storage upgrade checks passed')
+  console.log('Encrypted storage, short-write recovery, streamed backups, and storage upgrade checks passed')
 } finally {
   await browser.close()
   server.close()

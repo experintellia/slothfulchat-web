@@ -49,7 +49,7 @@ chacha20poly1305 = "0.10"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 hex = "0.4"
 hkdf = "0.12"
-rusqlite = "0.40"
+rusqlite = { version = "0.40", features = ["blob"] }
 sha2 = "0.10"
 subtle = "2"
 zeroize = "1"

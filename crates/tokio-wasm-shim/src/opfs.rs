@@ -50,6 +50,7 @@ use web_sys::{
 
 use zeroize::Zeroizing;
 
+use crate::blobstore;
 use crate::durability::{self, Next};
 use crate::fs::{self, Snapshot};
 use crate::registry;
@@ -155,7 +156,10 @@ fn js_err(err: JsValue) -> String {
 /// Installs the sahpool sqlite VFS (as default), hydrates the memfs from
 /// OPFS and starts the write-through flusher. Call once, in a dedicated
 /// worker, before opening any database.
-pub async fn enable_persistence(storage_key: Option<Vec<u8>>) -> Result<(), String> {
+pub async fn enable_persistence(
+    storage_key: Option<Vec<u8>>,
+    upgrade_source: bool,
+) -> Result<(), String> {
     let keys = storage_key.map(StorageKeys::derive).transpose()?;
     // Start at 32 pool files (the historical floor); the reserve below grows
     // it to the live account count. Each account settles at ~1 slot (dc.db);
@@ -186,10 +190,15 @@ pub async fn enable_persistence(storage_key: Option<Vec<u8>>) -> Result<(), Stri
         hydrate_encrypted_store(&root, &recovery_dir, &keys, &util)
             .await
             .map_err(|e| format!("opfs encrypted store: {}", js_err(e)))?;
+        if util.list().iter().any(|name| name == blobstore::DATABASE) {
+            for (path, file) in blobstore::open(&keys.db_key).map_err(|err| err.to_string())? {
+                fs::insert_stored_file(path, file);
+            }
+        }
         STORAGE_KEYS.with(|current| *current.borrow_mut() = Some(keys));
         Some(recovery_dir)
     } else {
-        hydrate(&root, None, true)
+        hydrate(&root, None, true, upgrade_source)
             .await
             .map_err(|e| format!("opfs hydrate failed: {}", js_err(e)))?;
         None
@@ -301,16 +310,21 @@ async fn hydrate_encrypted_store(
             && handle.read_with_u8_array(&mut current)? == length
             && bool::from(current.ct_eq(&keys.verifier))
         {
-            hydrate(root, Some((keys, recovery)), true).await?;
+            hydrate(root, Some((keys, recovery)), true, false).await?;
             return Ok(());
         }
 
         let names = pool.list();
-        let database_authenticated = names
-            .iter()
-            .filter(|name| name.ends_with("/dc.db") && registry::account_uuid_of_db(name).is_some())
-            .any(|name| authenticate_database(name, &keys.db_key));
-        let mirror = hydrate(root, Some((keys, recovery)), database_authenticated).await?;
+        let database_authenticated = names.iter().any(|name| {
+            if name == blobstore::DATABASE {
+                authenticate_database(name, &keys.db_key, "files")
+            } else {
+                name.ends_with("/dc.db")
+                    && registry::account_uuid_of_db(name).is_some()
+                    && authenticate_database(name, &keys.db_key, "config")
+            }
+        });
+        let mirror = hydrate(root, Some((keys, recovery)), database_authenticated, false).await?;
         // An intact-length verifier with a different value still protects an
         // empty store. Initialize a missing or torn verifier without proof
         // only when there is no encrypted data to protect.
@@ -325,15 +339,15 @@ async fn hydrate_encrypted_store(
     result
 }
 
-fn authenticate_database(name: &str, key: &str) -> bool {
+fn authenticate_database(name: &str, key: &str, table: &str) -> bool {
     let result = (|| {
         let conn = Connection::open_with_flags(name, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         conn.pragma_update(None, "key", key)?;
         // An empty database can open successfully with any key. Require a
         // schema entry from an initialized account.
         conn.query_row(
-            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'config'",
-            [],
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?",
+            [table],
             |_| Ok(()),
         )
     })();
@@ -571,7 +585,7 @@ fn write_config_through(
             // not source a pre-quarantine state from here
             LAST_COMMITTED.with(|c| *c.borrow_mut() = None);
         }
-        Snapshot::Dir => {}
+        Snapshot::Stored | Snapshot::Dir => {}
     }
     Ok(())
 }
@@ -695,7 +709,7 @@ async fn reconcile(
         Snapshot::Dir => {
             ensure_dirs(root, path).await?;
         }
-        Snapshot::Missing => {
+        Snapshot::Stored | Snapshot::Missing => {
             if let Some(recovery) = recovery {
                 // Drop the fallback first so a deletion cannot resurrect it.
                 remove_mirror_entry(recovery, path).await?;
@@ -963,6 +977,7 @@ async fn hydrate(
     root: &FileSystemDirectoryHandle,
     encrypted: Option<(&StorageKeys, &FileSystemDirectoryHandle)>,
     key_verified: bool,
+    upgrade_source: bool,
 ) -> Result<MirrorContents, JsValue> {
     let mut mirror = MirrorContents::default();
     let mut stack = vec![(root.clone(), PathBuf::from("/"))];
@@ -984,7 +999,7 @@ async fn hydrate(
             if kind.as_deref() == Some("directory") {
                 fs::insert_hydrated_dir(child.clone());
                 stack.push((handle.into(), child));
-            } else {
+            } else if !upgrade_source || is_account_registry(&child) {
                 let mut data = read_mirror_file(handle.into()).await?;
                 if let Some((keys, recovery)) = encrypted.filter(|_| !is_account_registry(&child)) {
                     mirror.has_files = true;
@@ -1008,6 +1023,55 @@ async fn hydrate(
         }
     }
     Ok(mirror)
+}
+
+/// Lists attachments directly from the ordinary mirror for the isolated upgrade worker.
+pub async fn list_upgrade_attachments(path: &Path) -> std::io::Result<Vec<String>> {
+    async fn list(path: &Path) -> Result<Vec<String>, JsValue> {
+        let root = mirror_root(false).await?;
+        let Some(dir) = existing_dir(&root, path).await? else {
+            return Ok(Vec::new());
+        };
+        let mut names = Vec::new();
+        let entries = dir.values();
+        loop {
+            let next: js_sys::IteratorNext = JsFuture::from(entries.next()?).await?.into();
+            if next.done() {
+                break;
+            }
+            if let Ok(file) = next.value().dyn_into::<FileSystemFileHandle>() {
+                names.push(file.name());
+            }
+        }
+        names.sort_unstable();
+        Ok(names)
+    }
+    list(path).await.map_err(|err| std::io::Error::other(js_err(err)))
+}
+
+/// Reads one legacy attachment for conversion without hydrating its account.
+pub async fn read_upgrade_attachment(dir: &Path, name: &str) -> std::io::Result<Vec<u8>> {
+    async fn read(dir: &Path, name: &str) -> Result<Vec<u8>, JsValue> {
+        let root = mirror_root(false).await?;
+        let dir = existing_dir(&root, dir)
+            .await?
+            .ok_or_else(|| JsValue::from_str("legacy attachment directory is missing"))?;
+        let handle: FileSystemFileHandle = JsFuture::from(dir.get_file_handle(name)).await?.into();
+        let file: web_sys::File = JsFuture::from(handle.get_file()).await?.into();
+        crate::limits::checked_len(file.size() as u64)
+            .map_err(|err| JsValue::from_str(&err.to_string()))?;
+        let bytes = JsFuture::from(file.array_buffer()).await?;
+        Ok(Uint8Array::new(&bytes).to_vec())
+    }
+    read(dir, name).await.map_err(|err| std::io::Error::other(js_err(err)))
+}
+
+pub async fn remove_upgrade_source_mirror(path: &Path) -> std::io::Result<()> {
+    let result = async {
+        let root = mirror_root(false).await?;
+        remove_mirror_entry(&root, path).await
+    }.await;
+    result.map_err(|err| std::io::Error::other(js_err(err)))
 }
 
 // --- sqlite VFS byte-level import/export (backup IMEX side channel) ---
@@ -1215,6 +1279,7 @@ pub(crate) fn purge_pool_files_under(prefix: &Path) {
             // never matches "/accounts/abc/dc.db".
             if Path::new(&name).starts_with(prefix) {
                 if let Err(err) = util.delete_db(&name) {
+                    durability::record_lost();
                     // A still-open db (or any delete failure) leaves a residual
                     // leak — degraded, not fatal (the boot sweep catches it
                     // next time). Warn and keep going.

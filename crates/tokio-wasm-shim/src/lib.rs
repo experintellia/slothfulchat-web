@@ -30,6 +30,10 @@ pub mod limits;
 #[cfg(target_arch = "wasm32")]
 pub mod fs;
 #[cfg(target_arch = "wasm32")]
+mod blobstore;
+#[cfg(target_arch = "wasm32")]
+mod browser_file;
+#[cfg(target_arch = "wasm32")]
 mod opfs;
 #[cfg(target_arch = "wasm32")]
 pub mod net;

@@ -92,7 +92,7 @@ export interface Core {
   fsRemove(path: string): Promise<void>
   fsExists(path: string): Promise<boolean>
   /** Imports a backup into an unused account without mirroring the input archive. */
-  restoreBackup(accountId: number, data: Uint8Array, passphrase?: string): Promise<void>
+  restoreBackup(accountId: number, data: Blob | Uint8Array, passphrase?: string): Promise<void>
   /** Resolves once every queued OPFS write-through is durable (backup-import
    * persistence — see the worker `flush` op). Resolves to the number of writes
    * that did NOT reach OPFS (0 = fully durable) since the `since` baseline —
@@ -107,9 +107,8 @@ export interface Core {
   fsFailed(): Promise<number>
 }
 
-const storageTransferDir = '/.storage-transfer'
-
-type StorageTransferOp = 'storage-export' | 'storage-import' | 'storage-verify'
+type StorageTransferOp = 'storage-list' | 'storage-read' | 'storage-stage'
+  | 'storage-finish' | 'storage-verify' | 'storage-remove'
 
 /** Spawns the core worker and returns the typed client.
  * `persist` (default true) keeps accounts/messages/blobs in OPFS across
@@ -124,7 +123,7 @@ export function startCore(
 }
 
 function startCoreWorker(
-  options: { wsProxyUrl?: string; persist?: boolean; storageKey?: Uint8Array },
+  options: { wsProxyUrl?: string; persist?: boolean; storageKey?: Uint8Array; upgradeSource?: boolean },
   workerUrl: URL,
 ) {
   const storageKey = options.storageKey
@@ -143,6 +142,7 @@ function startCoreWorker(
     proxyUrl: options.wsProxyUrl,
     persist,
     storageKey,
+    upgradeSource: options.upgradeSource ?? false,
   })
   const transport = new WasmTransport(worker)
   const dc = new WasmDeltaChat(transport)
@@ -206,11 +206,12 @@ function startCoreWorker(
   })
 
   const fsRequest = (
-    op: 'read' | 'write' | 'remove' | 'exists' | 'flush' | 'failed' | StorageTransferOp,
+    op: 'read' | 'write' | 'remove' | 'exists' | 'flush' | 'failed' | 'restore-backup' | StorageTransferOp,
     path: string,
     data?: Uint8Array,
     since?: number,
     accountId?: number,
+    archive?: Blob,
   ): Promise<FsResponse> =>
     new Promise((resolve, reject) => {
       if (dead) return reject(dead)
@@ -220,15 +221,16 @@ function startCoreWorker(
           ? resolve(response)
           : reject(new Error(response.error ?? `fs ${op} ${path} failed`)),
       )
-      worker.postMessage({ type: 'fs', id, op, path, data, since, accountId })
+      const transfer = data && op === 'storage-stage' ? [data.buffer as ArrayBuffer] : []
+      worker.postMessage({ type: 'fs', id, op, path, data, since, accountId, archive }, transfer)
     })
 
   return {
     worker,
     transport,
     dc,
-    storageTransfer: async (op: StorageTransferOp, accountId: number, token: string) =>
-      (await fsRequest(op, token, undefined, undefined, accountId)).digest,
+    storageTransfer: (op: StorageTransferOp, accountId: number, filename = '', bytes?: Uint8Array) =>
+      fsRequest(op, filename, bytes, undefined, accountId),
     fsRead: async (path) => (await fsRequest('read', path)).data ?? new Uint8Array(),
     fsWrite: async (path, data) => {
       await fsRequest('write', path, data)
@@ -246,28 +248,25 @@ function startCoreWorker(
     },
     fsExists: async (path) => (await fsRequest('exists', path)).exists === true,
     restoreBackup: async (accountId, data, passphrase) => {
-      if (data.byteLength === 0) throw new Error('Backup is empty')
-      const archive = `${storageTransferDir}/${crypto.randomUUID()}`
+      const archive = data instanceof Blob ? data : new Blob([new Uint8Array(data).buffer])
+      if (archive.size === 0) throw new Error('Backup is empty')
       const before = (await fsRequest('failed', '')).failed ?? 0
-      await fsRequest('write', archive, data)
-      try {
-        await dc.rpc.importBackup(accountId, archive, passphrase ?? null)
-        if ((await fsRequest('flush', '', undefined, before)).failed) {
-          throw new Error('Restored files could not be persisted')
-        }
-      } finally {
-        await fsRequest('remove', archive)
+      await fsRequest('restore-backup', passphrase ?? '', undefined, undefined, accountId, archive)
+      if ((await fsRequest('flush', '', undefined, before)).failed) {
+        throw new Error('Restored files could not be persisted')
       }
     },
     fsFlush: async (since?: number) => (await fsRequest('flush', '', undefined, since)).failed ?? 0,
     fsFailed: async () => (await fsRequest('failed', '')).failed ?? 0,
-  } satisfies Core & { storageTransfer(op: StorageTransferOp, accountId: number, token: string): Promise<string | undefined> }
+  } satisfies Core & {
+    storageTransfer(op: StorageTransferOp, accountId: number, filename?: string, bytes?: Uint8Array): Promise<FsResponse>
+  }
 }
 
 /**
  * Upgrades one account in the ordinary store and returns its new ID.
- * Close both persistent workers before calling. All temporary files stay in
- * memory. The original account is removed only after the encrypted account
+ * Close both persistent workers before calling. Attachments are transferred
+ * individually and staged encrypted. The original account is removed only after the encrypted account
  * has reopened successfully and its attachment contents have been verified.
  */
 export async function upgradeAccountStorage(
@@ -278,9 +277,7 @@ export async function upgradeAccountStorage(
   const key = storageKey.slice()
   if (key.byteLength !== 32) throw new TypeError('storageKey must contain exactly 32 bytes')
 
-  const token = crypto.randomUUID()
-  const archive = `${storageTransferDir}/${token}`
-  const source = startCoreWorker({}, workerUrl)
+  const source = startCoreWorker({ upgradeSource: true }, workerUrl)
   let destination: ReturnType<typeof startCoreWorker> | undefined
   let upgradedId: number | undefined
   let verified = false
@@ -288,33 +285,30 @@ export async function upgradeAccountStorage(
     destination = startCoreWorker({ storageKey: key }, workerUrl)
     await destination.dc.rpc.getAllAccountIds()
     await source.dc.rpc.stopIo(accountId)
-    await source.storageTransfer('storage-export', accountId, token)
-    const bytes = await source.fsRead(archive)
-    try {
-      await destination.fsWrite(archive, bytes)
-    } finally {
-      bytes.fill(0)
-    }
-    await source.fsRemove(archive)
-
     upgradedId = await destination.dc.rpc.addAccount()
-    await destination.storageTransfer('storage-import', upgradedId, token)
-    await destination.fsRemove(archive)
-    const expected = await destination.storageTransfer('storage-verify', upgradedId, token)
+    const database = (await source.storageTransfer('storage-read', accountId)).data
+    if (!database) throw new Error('Source database is missing')
+    await destination.storageTransfer('storage-stage', upgradedId, '', database)
+    const list = (await source.storageTransfer('storage-list', accountId)).digest
+    if (list === undefined) throw new Error('Source attachment list is missing')
+    const filenames: string[] = JSON.parse(list)
+    for (const filename of filenames) {
+      const bytes = (await source.storageTransfer('storage-read', accountId, filename)).data
+      if (!bytes) throw new Error('Source attachment could not be read')
+      await destination.storageTransfer('storage-stage', upgradedId, filename, bytes)
+    }
+    await destination.storageTransfer('storage-finish', upgradedId)
+    const expected = (await destination.storageTransfer('storage-verify', upgradedId)).digest
     destination.worker.terminate()
     destination = undefined
 
     destination = startCoreWorker({ storageKey: key }, workerUrl)
-    const actual = await destination.storageTransfer('storage-verify', upgradedId, token)
+    const actual = (await destination.storageTransfer('storage-verify', upgradedId)).digest
     if (expected === undefined || actual !== expected) {
       throw new Error('Encrypted account changed after reopening')
     }
     verified = true
-    const beforeRemoval = await source.fsFailed()
-    await source.dc.rpc.removeAccount(accountId)
-    if (await source.fsFlush(beforeRemoval) !== 0) {
-      throw new Error('The browser reported a failure removing the original files')
-    }
+    await source.storageTransfer('storage-remove', accountId)
     return upgradedId
   } catch (error) {
     if (!verified && upgradedId !== undefined && destination) {
