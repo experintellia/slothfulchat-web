@@ -18,6 +18,10 @@ interface FsRequest {
   type: 'fs'
   id: number
   op: 'read' | 'write' | 'remove' | 'exists' | 'flush' | 'failed'
+    | 'restore-backup' | 'storage-list' | 'storage-read' | 'storage-stage'
+    | 'storage-finish' | 'storage-verify' | 'storage-remove'
+  accountId?: number
+  archive?: Blob
   path: string
   data?: Uint8Array
   /** flush op: failed-counter baseline (a prior `failed` op result) taken
@@ -31,6 +35,7 @@ interface FsResponse {
   ok: boolean
   data?: Uint8Array
   exists?: boolean
+  digest?: string
   /** flush op: writes that did NOT reach OPFS (0 = fully durable). */
   failed?: number
   error?: string
@@ -42,10 +47,12 @@ interface ConfigMessage {
   proxyUrl?: string
   /** OPFS persistence; false = fresh in-memory core (tests). */
   persist: boolean
+  storageKey?: Uint8Array
+  upgradeSource?: boolean
 }
 
 const scope = self as unknown as {
-  postMessage(message: string | FsResponse): void
+  postMessage(message: string | FsResponse, transfer?: Transferable[]): void
   onmessage: ((event: MessageEvent<string | FsRequest | ConfigMessage>) => void) | null
 }
 
@@ -246,7 +253,7 @@ const pool = new CryptoPool()
  * be exclusively acquired. The wasm side also holds permanent handles on
  * memfs/accounts/accounts.toml{,.bak} (synchronous config write-through), so
  * probe those too. Fresh origins have neither dir — no wait. */
-async function waitForOpfsSyncHandles(): Promise<void> {
+async function waitForOpfsSyncHandles(encrypted: boolean): Promise<void> {
   // Set once the deadline has passed with a probe still outstanding: a hung
   // createSyncAccessHandle cannot be cancelled, but the walk around it can, so
   // the abandoned probe stops opening further handles the moment it un-hangs
@@ -271,7 +278,7 @@ async function waitForOpfsSyncHandles(): Promise<void> {
     // has no pool dir) WITHOUT bailing out of the whole probe — the memfs
     // config locks below must still be checked. Lock errors propagate.
     await root
-      .getDirectoryHandle('.opfs-sahpool')
+      .getDirectoryHandle(encrypted ? '.opfs-sahpool-encrypted' : '.opfs-sahpool')
       .then(probeDir)
       .catch(notFoundOk)
     if (abandoned) return
@@ -279,7 +286,7 @@ async function waitForOpfsSyncHandles(): Promise<void> {
     // the whole memfs mirror (nothing else is ever locked, and account dirs
     // hold arbitrarily many blobs)
     const accounts = await root
-      .getDirectoryHandle('memfs')
+      .getDirectoryHandle(encrypted ? 'memfs-encrypted' : 'memfs')
       .then((m: any) => m.getDirectoryHandle('accounts'))
       .catch(() => null)
     if (!accounts) return
@@ -365,7 +372,7 @@ let accountTemplate: Promise<Uint8Array | undefined> | undefined = (async () => 
 })
 
 const ready = (async () => {
-  const { proxyUrl, persist } = await config
+  const { proxyUrl, persist, storageKey, upgradeSource } = await config
   await initWasm()
   // non-blocking, like the crypto pool below: boot must never wait on an
   // optimization. Awaiting it here delayed init by the length of a fetch, and
@@ -383,8 +390,12 @@ const ready = (async () => {
   void pool.ready.then(() =>
     set_crypto_offload((op: string, payload: Uint8Array) => pool.run(op, payload))
   )
-  if (persist) await waitForOpfsSyncHandles()
-  return await init((message: string) => scope.postMessage(message), proxyUrl, persist)
+  if (persist) await waitForOpfsSyncHandles(storageKey !== undefined)
+  try {
+    return await init((message: string) => scope.postMessage(message), proxyUrl, persist, storageKey, upgradeSource ?? false)
+  } finally {
+    storageKey?.fill(0)
+  }
 })()
 // any other init failure (e.g. corrupted persisted state the self-heal could
 // not fix) must reach the page as a dialog, not die as an unhandled rejection
@@ -468,6 +479,29 @@ scope.onmessage = async (
         // snapshot of the monotonic failed-write counter, for a later flush
         response.failed = dc.fs_failed()
         break
+      case 'restore-backup':
+        if (msg.accountId === undefined || !msg.archive) throw new Error('Missing backup input')
+        await dc.restore_backup(msg.accountId, msg.archive, msg.path)
+        break
+      case 'storage-read':
+        if (msg.accountId === undefined) throw new Error('Missing storage transfer account')
+        response.data = await dc.storage_read(msg.accountId, msg.path || undefined)
+        break
+      case 'storage-stage':
+        if (msg.accountId === undefined || !msg.data) throw new Error('Missing storage transfer data')
+        try {
+          dc.storage_stage(msg.accountId, msg.path || undefined, msg.data)
+        } finally {
+          msg.data.fill(0)
+        }
+        break
+      case 'storage-list':
+      case 'storage-finish':
+      case 'storage-verify':
+      case 'storage-remove':
+        if (msg.accountId === undefined) throw new Error('Missing storage transfer account')
+        response.digest = await dc.storage_transfer(msg.op, msg.accountId)
+        break
       default:
         throw new Error(`unknown fs op: ${(msg as FsRequest).op}`)
     }
@@ -475,5 +509,5 @@ scope.onmessage = async (
     response.ok = false
     response.error = String(err)
   }
-  scope.postMessage(response)
+  scope.postMessage(response, response.data ? [response.data.buffer as ArrayBuffer] : [])
 }

@@ -5,9 +5,11 @@
 //! plain JSON-RPC strings, so the standard `@deltachat/jsonrpc-client`
 //! TypeScript package works on top unchanged.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use deltachat::imex::storage::{self, Conversion};
 use deltachat_jsonrpc::api::{Accounts, CommandApi};
 use futures_lite::stream::StreamExt;
 use tokio::sync::RwLock;
@@ -29,6 +31,9 @@ extern "C" {
 #[wasm_bindgen]
 pub struct DeltaChat {
     session: RpcSession<CommandApi>,
+    accounts: Arc<RwLock<Accounts>>,
+    upgrade_source: bool,
+    conversion: RefCell<Option<(u32, Conversion)>>,
 }
 
 /// Starts chatmail core with the accounts directory at `/accounts` (in-memory
@@ -48,8 +53,16 @@ pub async fn init(
     on_message: js_sys::Function,
     ws_proxy_url: Option<String>,
     persist: bool,
+    storage_key: Option<Vec<u8>>,
+    upgrade_source: bool,
 ) -> Result<DeltaChat, JsValue> {
     console_error_panic_hook::set_once();
+    if storage_key.is_some() && !persist {
+        return Err(JsValue::from_str("storageKey requires persistence"));
+    }
+    if upgrade_source && (!persist || storage_key.is_some()) {
+        return Err(JsValue::from_str("Storage upgrade source must be an ordinary persistent store"));
+    }
     // No `log`→console bridge on purpose: core reports its Info/Warning/Error
     // logging as JSON-RPC events too, and the page prints those, so a bridge
     // here makes every core log line appear twice. Our own diagnostics below
@@ -62,7 +75,7 @@ pub async fn init(
     if persist {
         // must run before Accounts::new: makes sahpool the default sqlite VFS
         // and loads the persisted fs tree (accounts.toml, blobs) into memfs
-        tokio::fs::enable_persistence()
+        tokio::fs::enable_persistence(storage_key, upgrade_source)
             .await
             .map_err(|e| JsValue::from_str(&format!("failed to enable persistence: {e}")))?;
     }
@@ -106,7 +119,7 @@ pub async fn init(
         }
     };
     let accounts = Arc::new(RwLock::new(accounts));
-    let state = CommandApi::from_arc(accounts).await;
+    let state = CommandApi::from_arc(accounts.clone()).await;
 
     let (client, mut out_receiver) = RpcClient::new();
     let session = RpcSession::new(client, state);
@@ -122,7 +135,7 @@ pub async fn init(
         }
     });
 
-    Ok(DeltaChat { session })
+    Ok(DeltaChat { session, accounts, upgrade_source, conversion: RefCell::new(None) })
 }
 
 /// Registers the JS handler that runs offloaded crypto ops on the pool
@@ -522,6 +535,17 @@ fn fs_err(err: std::io::Error) -> JsValue {
     JsValue::from_str(&err.to_string())
 }
 
+fn storage_error(err: impl std::fmt::Display) -> JsValue {
+    JsValue::from_str(&format!("{err:#}"))
+}
+
+impl DeltaChat {
+    async fn account_context(&self, account_id: u32) -> Result<deltachat::context::Context, JsValue> {
+        self.accounts.read().await.get_account(account_id)
+            .ok_or_else(|| JsValue::from_str("Storage transfer account is missing"))
+    }
+}
+
 #[wasm_bindgen]
 impl DeltaChat {
     /// Feeds one incoming JSON-RPC message (request string) to core.
@@ -531,6 +555,86 @@ impl DeltaChat {
         wasm_bindgen_futures::spawn_local(async move {
             session.handle_incoming(&message).await;
         });
+    }
+
+    pub async fn restore_backup(
+        &self, account_id: u32, archive: JsValue, passphrase: String,
+    ) -> Result<(), JsValue> {
+        let context = self.account_context(account_id).await?;
+        let reader = tokio::fs::BrowserFile::new(archive).map_err(fs_err)?;
+        let size = reader.size();
+        deltachat::imex::restore_backup_from_reader(&context, reader, size, passphrase)
+            .await
+            .map_err(storage_error)
+    }
+
+    pub async fn storage_read(
+        &self, account_id: u32, filename: Option<String>,
+    ) -> Result<js_sys::Uint8Array, JsValue> {
+        if !self.upgrade_source {
+            return Err(JsValue::from_str("Storage upgrade source required"));
+        }
+        let context = self.account_context(account_id).await?;
+        let bytes = match filename {
+            Some(name) => tokio::fs::read_upgrade_attachment(context.get_blobdir(), &name)
+                .await.map_err(fs_err)?,
+            None => storage::snapshot_storage_database(&context).await.map_err(storage_error)?,
+        };
+        Ok(js_sys::Uint8Array::from(bytes.as_slice()))
+    }
+
+    pub fn storage_stage(
+        &self, account_id: u32, filename: Option<String>, data: &[u8],
+    ) -> Result<(), JsValue> {
+        let mut slot = self.conversion.borrow_mut();
+        match filename {
+            None => {
+                if slot.is_some() {
+                    return Err(JsValue::from_str("Storage upgrade is already in progress"));
+                }
+                let mut conversion = Conversion::new().map_err(storage_error)?;
+                conversion.set_database(data).map_err(storage_error)?;
+                *slot = Some((account_id, conversion));
+            }
+            Some(filename) => slot.as_mut()
+                .filter(|(id, _)| *id == account_id)
+                .ok_or_else(|| JsValue::from_str("Storage upgrade was not started"))?
+                .1.add_attachment(filename, data).map_err(storage_error)?,
+        }
+        Ok(())
+    }
+
+    pub async fn storage_transfer(
+        &self, operation: String, account_id: u32,
+    ) -> Result<Option<String>, JsValue> {
+        let context = self.account_context(account_id).await?;
+        match operation.as_str() {
+            "storage-list" if self.upgrade_source => {
+                let names = tokio::fs::list_upgrade_attachments(context.get_blobdir()).await.map_err(fs_err)?;
+                serde_json::to_string(&names).map(Some).map_err(|err| JsValue::from_str(&err.to_string()))
+            }
+            "storage-finish" => {
+                let conversion = self.conversion.borrow_mut().take()
+                    .filter(|(id, _)| *id == account_id)
+                    .ok_or_else(|| JsValue::from_str("Storage upgrade was not started"))?.1;
+                conversion.finish(&context, String::new(), true).await.map_err(storage_error)?;
+                Ok(None)
+            }
+            "storage-verify" => storage::verify_storage_upgrade(&context).await.map(Some).map_err(storage_error),
+            "storage-remove" if self.upgrade_source => {
+                let path = context.get_dbfile().parent()
+                    .ok_or_else(|| JsValue::from_str("Missing source account directory"))?.to_path_buf();
+                drop(context);
+                let baseline = tokio::fs::failed_count();
+                self.accounts.write().await.remove_account(account_id).await.map_err(storage_error)?;
+                if tokio::fs::flush_pending(baseline, |_, _| {}).await != 0 {
+                    return Err(JsValue::from_str("Could not remove the original account data"));
+                }
+                tokio::fs::remove_upgrade_source_mirror(&path).await.map_err(fs_err)?;
+                Ok(None)
+            }
+            _ => Err(JsValue::from_str("Unknown or unavailable storage transfer operation")),
+        }
     }
 
     // fs side channel into the in-memory filesystem core runs on

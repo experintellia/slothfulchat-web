@@ -1,0 +1,597 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Mon, 16 Nov 2026 18:47:08 +0100
+Subject: [PATCH] wasm: stream attachments through shared encrypted conversion
+
+Feed tar entries and existing account files into the same conversion without creating a transfer tar. Persist attachments one at a time, rename their storage index entries before rewriting the database references, and hash reopened file contents incrementally.
+---
+ src/imex.rs         | 132 +++++++++------------
+ src/imex/storage.rs | 283 +++++++++++++++++++++++++++++---------------
+ 2 files changed, 244 insertions(+), 171 deletions(-)
+
+diff --git a/src/imex.rs b/src/imex.rs
+index 34990abf5a90341e62ec2b38e313057d33d999e9..871567ba017017e89a61bd166ec9ae1620881440 100644
+--- a/src/imex.rs
++++ b/src/imex.rs
+@@ -28,12 +28,9 @@
+ };
+ 
+ #[cfg(target_arch = "wasm32")]
+-mod storage;
++pub mod storage;
+ mod transfer;
+ 
+-#[cfg(target_arch = "wasm32")]
+-pub use storage::{export_storage_upgrade, import_storage_upgrade, verify_storage_upgrade};
+-
+ use ::pgp::types::KeyDetails;
+ pub use transfer::{BackupProvider, get_backup};
+ 
+@@ -247,11 +244,43 @@ pub(crate) async fn import_backup_stream<R: tokio::io::AsyncRead + Unpin>(
+         "Cannot import backup, IO is running"
+     );
+ 
+-    import_backup_stream_inner(context, backup_file, file_size, passphrase, false)
++    #[cfg(target_arch = "wasm32")]
++    if fs::storage_db_key().is_some() {
++        return storage::restore_archive(context, backup_file, file_size, passphrase).await;
++    }
++
++    import_backup_stream_inner(context, backup_file, file_size, passphrase)
+         .await
+         .0
+ }
+ 
++/// Imports a browser-selected backup directly from its reader.
++#[cfg(target_arch = "wasm32")]
++pub async fn restore_backup_from_reader<R: AsyncRead + Unpin>(
++    context: &Context,
++    reader: R,
++    size: u64,
++    passphrase: String,
++) -> Result<()> {
++    ensure!(size != 0, "Backup is empty");
++    let cancel = context.alloc_ongoing().await?;
++    let result = match context.scheduler.pause(context).await {
++        Ok(_guard) => {
++            context.emit_event(EventType::ImexProgress(1));
++            import_backup_stream(context, reader, size, passphrase)
++                .race(async {
++                    cancel.recv().await.ok();
++                    Err(format_err!("canceled"))
++                })
++                .await
++        }
++        Err(err) => Err(err),
++    };
++    context.free_ongoing().await;
++    context.emit_event(EventType::ImexProgress(if result.is_ok() { 1000 } else { 0 }));
++    result
++}
++
+ /// Highest progress the unpack phase of an import may report, leaving the rest
+ /// of the 0..=1000 range for whatever still has to happen before the caller's
+ /// final 1000. On wasm that tail is the OPFS drain (see
+@@ -355,7 +384,6 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+     backup_file: R,
+     file_size: u64,
+     passphrase: String,
+-    upgrading: bool,
+ ) -> (Result<()>,) {
+     let backup_file = ProgressReader::new(backup_file, context.clone(), file_size);
+     let mut archive = Archive::new(backup_file);
+@@ -364,22 +392,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+         Ok(entries) => entries,
+         Err(e) => return (Err(e).context("Failed to get archive entries"),),
+     };
+-    #[cfg(target_arch = "wasm32")]
+-    let staging = tokio::fs::storage_db_key().map(|_| storage::workspace());
+-    #[cfg(target_arch = "wasm32")]
+-    let unpack_dir = staging.as_deref().unwrap_or(context.get_blobdir());
+-    #[cfg(not(target_arch = "wasm32"))]
+-    let unpack_dir = context.get_blobdir();
+-
+-    #[cfg(target_arch = "wasm32")]
+-    if staging.is_some()
+-        && let Err(err) = fs::create_dir_all(unpack_dir).await
+-    {
+-        return (Err(err).context("Failed to create backup workspace"),);
+-    }
+-
+     let mut blobs = Vec::new();
+-    let mut staged_names = std::collections::HashSet::new();
+     let mut res: Result<()> = loop {
+         let mut f = match entries.try_next().await {
+             Ok(Some(f)) => f,
+@@ -391,35 +404,18 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+             Ok(path) => path.to_path_buf(),
+             Err(e) => break Err(e).context("Failed to get entry path"),
+         };
+-        let extracted = match f.unpack_in(unpack_dir).await {
+-            Ok(None) if unpack_dir != context.get_blobdir() => {
+-                break Err(format_err!("Invalid path in backup"));
+-            }
+-            Ok(path) => path,
+-            Err(e) => break Err(e).context("Failed to unpack file"),
+-        };
+-        let from_path = if unpack_dir != context.get_blobdir() {
+-            extracted.expect("validated archive entry")
+-        } else {
+-            unpack_dir.join(&path)
+-        };
+-        if (unpack_dir == context.get_blobdir()
+-            && path.file_name() == Some(OsStr::new(DBFILE_BACKUP_NAME)))
+-            || from_path == unpack_dir.join(DBFILE_BACKUP_NAME)
+-        {
++        if let Err(e) = f.unpack_in(context.get_blobdir()).await {
++            break Err(e).context("Failed to unpack file");
++        }
++        if path.file_name() == Some(OsStr::new(DBFILE_BACKUP_NAME)) {
+             continue;
+         }
+         // async_tar unpacked to $BLOBDIR/BLOBS_BACKUP_NAME/, so we move the file afterwards.
+         // (`Path::is_file()` silently returns false on wasm, use `path_is_file`)
++        let from_path = context.get_blobdir().join(&path);
+         if path_is_file(&from_path) {
+             if let Some(name) = from_path.file_name() {
+-                let to_path = unpack_dir.join(name);
+-                if unpack_dir != context.get_blobdir()
+-                    && (!staged_names.insert(name.to_os_string())
+-                        || from_path != to_path && path_is_file(&to_path))
+-                {
+-                    break Err(format_err!("Duplicate path in backup"));
+-                }
++                let to_path = context.get_blobdir().join(name);
+                 if let Err(e) = fs::rename(&from_path, &to_path).await {
+                     blobs.push(from_path);
+                     break Err(e).context("Failed to move file to blobdir");
+@@ -431,9 +427,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+         }
+     };
+ 
+-    let unpacked_database = unpack_dir.join(DBFILE_BACKUP_NAME);
+-    #[cfg(target_arch = "wasm32")]
+-    let write_baseline = tokio::fs::failed_count();
++    let unpacked_database = context.get_blobdir().join(DBFILE_BACKUP_NAME);
+     if res.is_ok() {
+         res = context
+             .sql
+@@ -441,7 +435,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+             .await
+             .context("cannot import unpacked database");
+     }
+-    if res.is_ok() && !upgrading {
++    if res.is_ok() {
+         res = check_backup_version(context).await;
+     }
+     fs::remove_file(unpacked_database)
+@@ -451,16 +445,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+         .ok();
+     if res.is_ok() {
+         context.emit_event(EventType::ImexProgress(UNPACK_PROGRESS_MAX));
+-        #[cfg(target_arch = "wasm32")]
+-        if staging.is_some() {
+-            res = storage::finish_restore(context, &mut blobs).await;
+-        } else {
+-            res = context.sql.run_migrations(context).await;
+-        }
+-        #[cfg(not(target_arch = "wasm32"))]
+-        {
+-            res = context.sql.run_migrations(context).await;
+-        }
++        res = context.sql.run_migrations(context).await;
+         context.emit_event(EventType::AccountsItemChanged);
+     }
+     if res.is_err() {
+@@ -484,7 +469,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+             .log_err(context)
+             .ok();
+     }
+-    if res.is_ok() && !upgrading {
++    if res.is_ok() {
+         delete_and_reset_all_device_msgs(context)
+             .await
+             .log_err(context)
+@@ -512,9 +497,11 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+     #[cfg(target_arch = "wasm32")]
+     if res.is_ok() {
+         let mut last = UNPACK_PROGRESS_MAX;
+-        // Existing backup UIs surface failures against their own baseline.
+-        // An account upgrade must fail here so its original is retained.
+-        let failed = tokio::fs::flush_pending(write_baseline, |remaining, initial| {
++        // Baseline 0 = the count of lost write-throughs is deliberately
++        // ignored here: the web app diffs `fs_failed()` across the whole call
++        // and warns the user, and a partly-lost restore must not roll the
++        // imported account back, so it must not reach `res` either.
++        let _ = tokio::fs::flush_pending(0, |remaining, initial| {
+             let progress = drain_progress(remaining, initial);
+             if progress > last {
+                 last = progress;
+@@ -522,9 +509,6 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+             }
+         })
+         .await;
+-        if upgrading && failed != 0 {
+-            res = Err(format_err!("Account files did not reach encrypted storage"));
+-        }
+     }
+     (res,)
+ }
+@@ -607,6 +591,7 @@ fn use_opaque_export_names() -> bool {
+ /// Exports the database to a separate file with the given passphrase.
+ ///
+ /// Set passphrase to empty string to export the database unencrypted.
++#[expect(clippy::arithmetic_side_effects)]
+ async fn export_backup(context: &Context, dir: &Path, passphrase: String) -> Result<()> {
+     let self_addr = context.get_primary_self_addr().await?;
+     let addr = (!use_opaque_export_names()).then_some(self_addr.as_str());
+@@ -638,7 +623,13 @@ async fn export_backup(context: &Context, dir: &Path, passphrase: String) -> Res
+     let file = File::create(&temp_path).await?;
+     let blobdir = BlobDirContents::new(context).await?;
+ 
+-    let file_size = backup_stream_size(&temp_db_path, &blobdir).await?;
++    // tokio::fs metadata rather than std Path::metadata so this works on wasm too
++    let mut file_size = 0;
++    file_size += fs::metadata(&temp_db_path).await?.len();
++    for blob in blobdir.iter() {
++        file_size += fs::metadata(blob.to_abs_path()).await?.len()
++    }
++
+     export_backup_stream(context, &temp_db_path, blobdir, file, file_size)
+         .await
+         .context("Exporting backup to file failed")?;
+@@ -647,15 +638,6 @@ async fn export_backup(context: &Context, dir: &Path, passphrase: String) -> Res
+     Ok(())
+ }
+ 
+-#[expect(clippy::arithmetic_side_effects)]
+-async fn backup_stream_size(db: &Path, blobs: &BlobDirContents<'_>) -> Result<u64> {
+-    let mut size = fs::metadata(db).await?.len();
+-    for blob in blobs.iter() {
+-        size += fs::metadata(blob.to_abs_path()).await?.len();
+-    }
+-    Ok(size)
+-}
+-
+ /// Writer that emits progress events as bytes are written into it.
+ #[pin_project]
+ struct ProgressWriter<W> {
+diff --git a/src/imex/storage.rs b/src/imex/storage.rs
+index 84f5831cb3c2a33fbfb3327fb8712314170e4531..09112ac086b05b82ace30b7b10e321ea5586b90d 100644
+--- a/src/imex/storage.rs
++++ b/src/imex/storage.rs
+@@ -1,23 +1,24 @@
+-//! In-memory staging for encrypted restores and local storage upgrades.
++//! Streams backed-up and legacy attachments into the same encrypted storage.
+ 
+ use std::collections::{HashMap, HashSet};
+-use std::ffi::OsStr;
+-use std::path::{Path, PathBuf};
++use std::path::{Component, Path, PathBuf};
+ 
+ use anyhow::{Context as _, Result, ensure, format_err};
++use futures::TryStreamExt;
+ use tokio::fs::{self, File};
++use tokio::io::{AsyncRead, AsyncReadExt};
++use tokio_tar::Archive;
+ 
+-use super::{backup_stream_size, export_backup_stream, import_backup_stream_inner};
+-use crate::blob::{BlobDirContents, VIDEO_PREVIEW_SUFFIX, file_hash};
++use super::{DBFILE_BACKUP_NAME, ProgressReader, UNPACK_PROGRESS_MAX, check_backup_version};
++use crate::blob::VIDEO_PREVIEW_SUFFIX;
++use crate::chat::delete_and_reset_all_device_msgs;
+ use crate::context::Context;
++use crate::events::EventType;
++use crate::log::LogExt;
+ use crate::param::{Param, Params};
+ use crate::sql;
+ use crate::tools::TempPathGuard;
+ 
+-pub(super) fn workspace() -> TempPathGuard {
+-    TempPathGuard::new(Path::new(fs::STORAGE_TRANSFER_DIR).join(uuid::Uuid::new_v4().to_string()))
+-}
+-
+ fn opaque_name(name: &str, names: &HashMap<String, String>, partials: &HashSet<String>) -> String {
+     // Interrupted downloads have names derived from their IMAP identity.
+     if partials.contains(name) {
+@@ -33,33 +34,177 @@ fn opaque_name(name: &str, names: &HashMap<String, String>, partials: &HashSet<S
+     names[name].clone()
+ }
+ 
+-pub(super) async fn finish_restore(context: &Context, blobs: &mut [PathBuf]) -> Result<()> {
+-    let recode_avatar = context.sql.run_schema_migrations(context).await?;
+-    publish_blobs(context, blobs).await?;
+-    if recode_avatar {
+-        context.sql.recode_migrated_avatar(context).await?;
+-    }
+-    Ok(())
++/// One import's encrypted attachments and in-memory database snapshot.
++#[derive(Debug)]
++pub struct Conversion {
++    workspace: TempPathGuard,
++    names: HashMap<String, String>,
++    published: Vec<PathBuf>,
++    has_db: bool,
+ }
+ 
+-async fn publish_blobs(context: &Context, blobs: &mut [PathBuf]) -> Result<()> {
+-    let names: HashMap<_, _> = blobs
+-        .iter()
+-        .map(|path| {
+-            let name = path.file_name().and_then(OsStr::to_str).context("Invalid blob name")?;
+-            Ok((name.to_owned(), uuid::Uuid::new_v4().to_string()))
++impl Conversion {
++    /// Begins a conversion targeting encrypted storage.
++    pub fn new() -> Result<Self> {
++        ensure!(fs::storage_db_key().is_some(), "Destination requires encrypted storage");
++        let path = Path::new(fs::STORAGE_TRANSFER_DIR).join(uuid::Uuid::new_v4().to_string());
++        Ok(Self {
++            workspace: TempPathGuard::new(path),
++            names: HashMap::new(),
++            published: Vec::new(),
++            has_db: false,
+         })
+-        .collect::<Result<_>>()?;
++    }
++
++    /// Stages the portable SQLite database in memory for the encrypted import.
++    pub fn set_database(&mut self, bytes: &[u8]) -> Result<()> {
++        ensure!(!self.has_db, "Backup has more than one database");
++        fs::sync_write(self.workspace.join(DBFILE_BACKUP_NAME), bytes)?;
++        self.has_db = true;
++        Ok(())
++    }
++
++    /// Writes one attachment under an opaque name in the encrypted attachment store.
++    pub fn add_attachment(&mut self, name: String, bytes: &[u8]) -> Result<()> {
++        ensure!(
++            !name.is_empty() && name != "." && name != ".."
++                && !name.contains(['/', '\\', '\0']),
++            "Invalid attachment name"
++        );
++        ensure!(!self.names.contains_key(&name), "Backup has duplicate attachment names");
++        let staged = uuid::Uuid::new_v4().to_string();
++        fs::store_imported_attachment(&self.workspace.join(&staged), bytes)
++            .context("Could not persist converted attachment")?;
++        self.names.insert(name, staged);
++        Ok(())
++    }
++
++    /// Installs the converted account and preserves device state during local upgrades.
++    pub async fn finish(mut self, context: &Context, passphrase: String, upgrade: bool) -> Result<()> {
++        ensure!(self.has_db, "cannot import unpacked database: backup lacks SQLite database");
++        ensure!(!context.is_configured().await?, "Destination is already configured");
++        let baseline = fs::failed_count();
++        let result = self.install(context, passphrase, upgrade).await;
++        if result.is_err() {
++            context.sql.close().await;
++            fs::remove_file(&context.sql.dbfile).await.log_err(context).ok();
++            let key = fs::storage_db_key().context("missing storage key")?;
++            context.sql.open(context, key.to_string()).await.log_err(context).ok();
++            return result;
++        }
++        // The index and references agree now. Cancellation while the mirror
++        // drains must leave the committed attachment rows in place.
++        self.published.clear();
++        ensure!(
++            fs::flush_pending(baseline, |_, _| {}).await == 0,
++            "Restored files could not be persisted"
++        );
++        Ok(())
++    }
++
++    async fn install(&mut self, context: &Context, passphrase: String, upgrade: bool) -> Result<()> {
++        context.sql.import(&self.workspace.join(DBFILE_BACKUP_NAME), passphrase)
++            .await.context("cannot import unpacked database")?;
++        fs::remove_file(self.workspace.join(DBFILE_BACKUP_NAME)).await?;
++        if !upgrade {
++            check_backup_version(context).await?;
++        }
++        context.emit_event(EventType::ImexProgress(UNPACK_PROGRESS_MAX));
++        let recode_avatar = context.sql.run_schema_migrations(context).await?;
++        let partials = context.sql.call(true, |conn| sql::pending_download_files(conn)).await?;
++        let names: HashMap<_, _> = self.names.keys()
++            .map(|name| (name.clone(), opaque_name(name, &self.names, &partials)))
++            .collect();
++
++        for (name, staged) in &self.names {
++            let dest = context.get_blobdir().join(&names[name]);
++            ensure!(!fs::try_exists(&dest).await?, "Restored blob already exists");
++            fs::rename(self.workspace.join(staged), &dest).await?;
++            self.published.push(dest);
++        }
++        rewrite_blob_references(context, names).await?;
++        if recode_avatar {
++            context.sql.recode_migrated_avatar(context).await?;
++        }
++        if !upgrade {
++            delete_and_reset_all_device_msgs(context).await.log_err(context).ok();
++        }
++        context.emit_event(EventType::AccountsItemChanged);
++        Ok(())
++    }
++}
+ 
+-    let names = context
++impl Drop for Conversion {
++    fn drop(&mut self) {
++        for path in &self.published {
++            let _ = fs::sync_remove(path);
++        }
++    }
++}
++
++pub(super) async fn restore_archive<R: AsyncRead + Unpin>(
++    context: &Context,
++    reader: R,
++    size: u64,
++    passphrase: String,
++) -> Result<()> {
++    ensure!(size != 0, "Backup is empty");
++    ensure!(passphrase.is_empty(), "encrypted backups are not supported on wasm");
++    let mut conversion = Conversion::new()?;
++    let mut archive = Archive::new(ProgressReader::new(reader, context.clone(), size));
++    let mut entries = archive.entries()?;
++    while let Some(mut entry) = entries.try_next().await? {
++        let path = entry.path()?;
++        ensure!(
++            !path.components().any(|part| matches!(part, Component::ParentDir | Component::Prefix(_))),
++            "Invalid path in backup"
++        );
++        let entry_type = entry.header().entry_type();
++        if entry_type.is_dir() {
++            continue;
++        }
++        ensure!(
++            entry_type.is_file() || entry_type.is_gnu_sparse() || entry_type.is_contiguous(),
++            "Unsupported entry type in backup"
++        );
++        let mut components = path.components().filter(|part| matches!(part, Component::Normal(_)));
++        let database = components.next().is_some_and(|part| part.as_os_str() == DBFILE_BACKUP_NAME)
++            && components.next().is_none();
++        let name = path.file_name().and_then(|name| name.to_str()).context("Invalid attachment name")?.to_owned();
++        let len = fs::checked_import_length(entry.header().size()?)?;
++        let mut bytes = Vec::new();
++        bytes.try_reserve_exact(len)?;
++        entry.read_to_end(&mut bytes).await?;
++        ensure!(bytes.len() == len, "Incomplete backup entry");
++        if database {
++            conversion.set_database(&bytes)?;
++        } else {
++            conversion.add_attachment(name, &bytes)?;
++        }
++    }
++    conversion.finish(context, passphrase, false).await
++}
++
++/// Copies the source SQLite database without staging a plaintext snapshot on disk.
++pub async fn snapshot_storage_database(context: &Context) -> Result<Vec<u8>> {
++    ensure!(fs::storage_db_key().is_none(), "Upgrade source must be unencrypted");
++    ensure!(!context.scheduler.is_running().await, "Stop account IO before upgrading storage");
++    ensure!(context.get_migration_error().is_none(), "Open the source account normally before upgrading");
++    let memory_db = format!("/storage-upgrade-{}.db", uuid::Uuid::new_v4());
++    let uri = format!("file:{memory_db}?vfs=memvfs&key=");
++    let result = context.sql.call_write(|conn| {
++        conn.execute("VACUUM INTO ?", [uri])?;
++        Ok(())
++    }).await;
++    let bytes = fs::sqlite_mem_vfs_take(&memory_db);
++    result?;
++    bytes.map_err(|err| format_err!("{err}"))
++}
++
++async fn rewrite_blob_references(context: &Context, names: HashMap<String, String>) -> Result<()> {
++    context
+         .sql
+         .transaction(move |tx| {
+-            let partials = sql::pending_download_files(tx)?;
+-            let names: HashMap<_, _> = names
+-                .keys()
+-                .map(|name| (name.clone(), opaque_name(name, &names, &partials)))
+-                .collect();
+-
+             for (table, keys) in [
+                 ("msgs", &[Param::File, Param::Arg][..]),
+                 ("chats", &[Param::ProfileImage][..]),
+@@ -112,77 +257,14 @@ async fn publish_blobs(context: &Context, blobs: &mut [PathBuf]) -> Result<()> {
+                     }
+                 }
+             }
+-            Ok(names)
++            Ok(())
+         })
+         .await?;
+     context.sql.config_cache.write().await.clear();
+ 
+-    for path in blobs {
+-        let name = path.file_name().and_then(OsStr::to_str).context("Invalid blob name")?;
+-        let dest = context.get_blobdir().join(&names[name]);
+-        ensure!(!fs::try_exists(&dest).await?, "Restored blob already exists");
+-        fs::rename(&path, &dest).await?;
+-        // The caller removes published files if a later operation fails.
+-        *path = dest;
+-    }
+     Ok(())
+ }
+ 
+-/// Copies an unencrypted account into a memory-only archive for storage upgrade.
+-pub async fn export_storage_upgrade(context: &Context, destination: &Path) -> Result<()> {
+-    ensure!(
+-        fs::storage_db_key().is_none(),
+-        "Upgrade source must be unencrypted"
+-    );
+-    ensure!(
+-        destination.parent() == Some(Path::new(fs::STORAGE_TRANSFER_DIR)),
+-        "Upgrade archive must remain in memory"
+-    );
+-    ensure!(
+-        !context.scheduler.is_running().await,
+-        "Stop account IO before upgrading storage"
+-    );
+-    let workspace = workspace();
+-    fs::create_dir_all(&*workspace).await?;
+-    let archive_db = workspace.join("dc.db");
+-    let memory_db = format!("/storage-upgrade-{}.db", uuid::Uuid::new_v4());
+-    let uri = format!("file:{memory_db}?vfs=memvfs&key=");
+-    let result = context
+-        .sql
+-        .call_write(|conn| {
+-            conn.execute("VACUUM INTO ?", [uri])?;
+-            Ok(())
+-        })
+-        .await;
+-    let bytes = fs::sqlite_mem_vfs_take(&memory_db);
+-    result?;
+-    fs::write(&archive_db, bytes.map_err(|e| format_err!("{e}"))?).await?;
+-    let blobs = BlobDirContents::new(context).await?;
+-    let size = backup_stream_size(&archive_db, &blobs).await?;
+-    export_backup_stream(context, &archive_db, blobs, File::create(destination).await?, size).await
+-}
+-
+-/// Imports a local storage upgrade, preserving the device state of the source account.
+-pub async fn import_storage_upgrade(context: &Context, source: &Path) -> Result<()> {
+-    ensure!(
+-        fs::storage_db_key().is_some(),
+-        "Upgrade destination requires encrypted storage"
+-    );
+-    ensure!(
+-        !context.is_configured().await?,
+-        "Upgrade destination is already configured"
+-    );
+-    ensure!(
+-        !context.scheduler.is_running().await,
+-        "Upgrade destination is running"
+-    );
+-    let archive = File::open(source).await?;
+-    let size = archive.metadata().await?.len();
+-    import_backup_stream_inner(context, archive, size, String::new(), true)
+-        .await
+-        .0
+-}
+-
+ /// Checks the restored database and returns a digest to compare after reopening.
+ pub async fn verify_storage_upgrade(context: &Context) -> Result<String> {
+     let (address, message_count, key_count): (String, i64, i64) = context.sql
+@@ -201,11 +283,20 @@ pub async fn verify_storage_upgrade(context: &Context) -> Result<String> {
+ 
+     let mut files = fs::read_dir(context.get_blobdir()).await?;
+     let mut checksums = Vec::new();
++    let mut buffer = vec![0; 64 * 1024];
+     while let Some(entry) = files.next_entry().await? {
+         if entry.file_type().await?.is_file() {
+             let name = entry.file_name().into_string().map_err(|_| format_err!("Invalid blob name"))?;
+-            let hash = file_hash(&entry.path())?;
+-            checksums.push((name, hash));
++            let mut file = File::open(entry.path()).await?;
++            let mut hash = blake3::Hasher::new();
++            loop {
++                let size = file.read(&mut buffer).await?;
++                if size == 0 {
++                    break;
++                }
++                hash.update(&buffer[..size]);
++            }
++            checksums.push((name, hash.finalize()));
+         }
+     }
+     checksums.sort_unstable_by(|a, b| a.0.cmp(&b.0));

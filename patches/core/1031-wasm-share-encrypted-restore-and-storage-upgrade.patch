@@ -1,0 +1,571 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Mon, 16 Nov 2026 17:41:55 +0100
+Subject: [PATCH] wasm: share encrypted restore and storage upgrade conversion
+
+Stage unpacked files outside the persistent mirror. Rewrite attachment references alongside opaque blob names and let existing SQLite and OPFS encryption persist the result. Use the same import path for local account snapshots and retain the original until the caller verifies the reopened account.
+---
+ src/blob.rs         |   2 +-
+ src/imex.rs         | 100 +++++++++++++++-----
+ src/imex/storage.rs | 223 ++++++++++++++++++++++++++++++++++++++++++++
+ src/sql.rs          |  76 ++++++---------
+ 4 files changed, 331 insertions(+), 70 deletions(-)
+ create mode 100644 src/imex/storage.rs
+
+diff --git a/src/blob.rs b/src/blob.rs
+index cd0e145a1010cf610e29d7712335b2c2c0909230..2c194c96aad1cb668856c473e67729044fe61a7d 100644
+--- a/src/blob.rs
++++ b/src/blob.rs
+@@ -574,7 +574,7 @@ fn check_or_recode_to_size(
+     }
+ }
+ 
+-fn file_hash(src: &Path) -> Result<blake3::Hash> {
++pub(crate) fn file_hash(src: &Path) -> Result<blake3::Hash> {
+     ensure!(
+         !src.starts_with("$BLOBDIR/"),
+         "Use `get_abs_path()` to get the absolute path of the blobfile"
+diff --git a/src/imex.rs b/src/imex.rs
+index abffe9b13663abc8c6020cbb255f03cf8f852a7c..34990abf5a90341e62ec2b38e313057d33d999e9 100644
+--- a/src/imex.rs
++++ b/src/imex.rs
+@@ -27,8 +27,13 @@
+     read_file, time, usize_to_u64, write_file,
+ };
+ 
++#[cfg(target_arch = "wasm32")]
++mod storage;
+ mod transfer;
+ 
++#[cfg(target_arch = "wasm32")]
++pub use storage::{export_storage_upgrade, import_storage_upgrade, verify_storage_upgrade};
++
+ use ::pgp::types::KeyDetails;
+ pub use transfer::{BackupProvider, get_backup};
+ 
+@@ -242,7 +247,7 @@ pub(crate) async fn import_backup_stream<R: tokio::io::AsyncRead + Unpin>(
+         "Cannot import backup, IO is running"
+     );
+ 
+-    import_backup_stream_inner(context, backup_file, file_size, passphrase)
++    import_backup_stream_inner(context, backup_file, file_size, passphrase, false)
+         .await
+         .0
+ }
+@@ -350,6 +355,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+     backup_file: R,
+     file_size: u64,
+     passphrase: String,
++    upgrading: bool,
+ ) -> (Result<()>,) {
+     let backup_file = ProgressReader::new(backup_file, context.clone(), file_size);
+     let mut archive = Archive::new(backup_file);
+@@ -358,7 +364,22 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+         Ok(entries) => entries,
+         Err(e) => return (Err(e).context("Failed to get archive entries"),),
+     };
++    #[cfg(target_arch = "wasm32")]
++    let staging = tokio::fs::storage_db_key().map(|_| storage::workspace());
++    #[cfg(target_arch = "wasm32")]
++    let unpack_dir = staging.as_deref().unwrap_or(context.get_blobdir());
++    #[cfg(not(target_arch = "wasm32"))]
++    let unpack_dir = context.get_blobdir();
++
++    #[cfg(target_arch = "wasm32")]
++    if staging.is_some()
++        && let Err(err) = fs::create_dir_all(unpack_dir).await
++    {
++        return (Err(err).context("Failed to create backup workspace"),);
++    }
++
+     let mut blobs = Vec::new();
++    let mut staged_names = std::collections::HashSet::new();
+     let mut res: Result<()> = loop {
+         let mut f = match entries.try_next().await {
+             Ok(Some(f)) => f,
+@@ -370,18 +391,35 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+             Ok(path) => path.to_path_buf(),
+             Err(e) => break Err(e).context("Failed to get entry path"),
+         };
+-        if let Err(e) = f.unpack_in(context.get_blobdir()).await {
+-            break Err(e).context("Failed to unpack file");
+-        }
+-        if path.file_name() == Some(OsStr::new(DBFILE_BACKUP_NAME)) {
++        let extracted = match f.unpack_in(unpack_dir).await {
++            Ok(None) if unpack_dir != context.get_blobdir() => {
++                break Err(format_err!("Invalid path in backup"));
++            }
++            Ok(path) => path,
++            Err(e) => break Err(e).context("Failed to unpack file"),
++        };
++        let from_path = if unpack_dir != context.get_blobdir() {
++            extracted.expect("validated archive entry")
++        } else {
++            unpack_dir.join(&path)
++        };
++        if (unpack_dir == context.get_blobdir()
++            && path.file_name() == Some(OsStr::new(DBFILE_BACKUP_NAME)))
++            || from_path == unpack_dir.join(DBFILE_BACKUP_NAME)
++        {
+             continue;
+         }
+         // async_tar unpacked to $BLOBDIR/BLOBS_BACKUP_NAME/, so we move the file afterwards.
+         // (`Path::is_file()` silently returns false on wasm, use `path_is_file`)
+-        let from_path = context.get_blobdir().join(&path);
+         if path_is_file(&from_path) {
+             if let Some(name) = from_path.file_name() {
+-                let to_path = context.get_blobdir().join(name);
++                let to_path = unpack_dir.join(name);
++                if unpack_dir != context.get_blobdir()
++                    && (!staged_names.insert(name.to_os_string())
++                        || from_path != to_path && path_is_file(&to_path))
++                {
++                    break Err(format_err!("Duplicate path in backup"));
++                }
+                 if let Err(e) = fs::rename(&from_path, &to_path).await {
+                     blobs.push(from_path);
+                     break Err(e).context("Failed to move file to blobdir");
+@@ -393,7 +431,9 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+         }
+     };
+ 
+-    let unpacked_database = context.get_blobdir().join(DBFILE_BACKUP_NAME);
++    let unpacked_database = unpack_dir.join(DBFILE_BACKUP_NAME);
++    #[cfg(target_arch = "wasm32")]
++    let write_baseline = tokio::fs::failed_count();
+     if res.is_ok() {
+         res = context
+             .sql
+@@ -401,7 +441,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+             .await
+             .context("cannot import unpacked database");
+     }
+-    if res.is_ok() {
++    if res.is_ok() && !upgrading {
+         res = check_backup_version(context).await;
+     }
+     fs::remove_file(unpacked_database)
+@@ -411,7 +451,16 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+         .ok();
+     if res.is_ok() {
+         context.emit_event(EventType::ImexProgress(UNPACK_PROGRESS_MAX));
+-        res = context.sql.run_migrations(context).await;
++        #[cfg(target_arch = "wasm32")]
++        if staging.is_some() {
++            res = storage::finish_restore(context, &mut blobs).await;
++        } else {
++            res = context.sql.run_migrations(context).await;
++        }
++        #[cfg(not(target_arch = "wasm32"))]
++        {
++            res = context.sql.run_migrations(context).await;
++        }
+         context.emit_event(EventType::AccountsItemChanged);
+     }
+     if res.is_err() {
+@@ -435,7 +484,7 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+             .log_err(context)
+             .ok();
+     }
+-    if res.is_ok() {
++    if res.is_ok() && !upgrading {
+         delete_and_reset_all_device_msgs(context)
+             .await
+             .log_err(context)
+@@ -463,11 +512,9 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+     #[cfg(target_arch = "wasm32")]
+     if res.is_ok() {
+         let mut last = UNPACK_PROGRESS_MAX;
+-        // Baseline 0 = the count of lost write-throughs is deliberately
+-        // ignored here: the web app diffs `fs_failed()` across the whole call
+-        // and warns the user, and a partly-lost restore must not roll the
+-        // imported account back, so it must not reach `res` either.
+-        let _ = tokio::fs::flush_pending(0, |remaining, initial| {
++        // Existing backup UIs surface failures against their own baseline.
++        // An account upgrade must fail here so its original is retained.
++        let failed = tokio::fs::flush_pending(write_baseline, |remaining, initial| {
+             let progress = drain_progress(remaining, initial);
+             if progress > last {
+                 last = progress;
+@@ -475,6 +522,9 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+             }
+         })
+         .await;
++        if upgrading && failed != 0 {
++            res = Err(format_err!("Account files did not reach encrypted storage"));
++        }
+     }
+     (res,)
+ }
+@@ -557,7 +607,6 @@ fn use_opaque_export_names() -> bool {
+ /// Exports the database to a separate file with the given passphrase.
+ ///
+ /// Set passphrase to empty string to export the database unencrypted.
+-#[expect(clippy::arithmetic_side_effects)]
+ async fn export_backup(context: &Context, dir: &Path, passphrase: String) -> Result<()> {
+     let self_addr = context.get_primary_self_addr().await?;
+     let addr = (!use_opaque_export_names()).then_some(self_addr.as_str());
+@@ -589,13 +638,7 @@ async fn export_backup(context: &Context, dir: &Path, passphrase: String) -> Res
+     let file = File::create(&temp_path).await?;
+     let blobdir = BlobDirContents::new(context).await?;
+ 
+-    // tokio::fs metadata rather than std Path::metadata so this works on wasm too
+-    let mut file_size = 0;
+-    file_size += fs::metadata(&temp_db_path).await?.len();
+-    for blob in blobdir.iter() {
+-        file_size += fs::metadata(blob.to_abs_path()).await?.len()
+-    }
+-
++    let file_size = backup_stream_size(&temp_db_path, &blobdir).await?;
+     export_backup_stream(context, &temp_db_path, blobdir, file, file_size)
+         .await
+         .context("Exporting backup to file failed")?;
+@@ -604,6 +647,15 @@ async fn export_backup(context: &Context, dir: &Path, passphrase: String) -> Res
+     Ok(())
+ }
+ 
++#[expect(clippy::arithmetic_side_effects)]
++async fn backup_stream_size(db: &Path, blobs: &BlobDirContents<'_>) -> Result<u64> {
++    let mut size = fs::metadata(db).await?.len();
++    for blob in blobs.iter() {
++        size += fs::metadata(blob.to_abs_path()).await?.len();
++    }
++    Ok(size)
++}
++
+ /// Writer that emits progress events as bytes are written into it.
+ #[pin_project]
+ struct ProgressWriter<W> {
+diff --git a/src/imex/storage.rs b/src/imex/storage.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..84f5831cb3c2a33fbfb3327fb8712314170e4531
+--- /dev/null
++++ b/src/imex/storage.rs
+@@ -0,0 +1,223 @@
++//! In-memory staging for encrypted restores and local storage upgrades.
++
++use std::collections::{HashMap, HashSet};
++use std::ffi::OsStr;
++use std::path::{Path, PathBuf};
++
++use anyhow::{Context as _, Result, ensure, format_err};
++use tokio::fs::{self, File};
++
++use super::{backup_stream_size, export_backup_stream, import_backup_stream_inner};
++use crate::blob::{BlobDirContents, VIDEO_PREVIEW_SUFFIX, file_hash};
++use crate::context::Context;
++use crate::param::{Param, Params};
++use crate::sql;
++use crate::tools::TempPathGuard;
++
++pub(super) fn workspace() -> TempPathGuard {
++    TempPathGuard::new(Path::new(fs::STORAGE_TRANSFER_DIR).join(uuid::Uuid::new_v4().to_string()))
++}
++
++fn opaque_name(name: &str, names: &HashMap<String, String>, partials: &HashSet<String>) -> String {
++    // Interrupted downloads have names derived from their IMAP identity.
++    if partials.contains(name) {
++        return name.to_owned();
++    }
++    for suffix in [".waveform", VIDEO_PREVIEW_SUFFIX] {
++        if let Some(base) = name.strip_suffix(suffix)
++            && let Some(replacement) = names.get(base)
++        {
++            return format!("{replacement}{suffix}");
++        }
++    }
++    names[name].clone()
++}
++
++pub(super) async fn finish_restore(context: &Context, blobs: &mut [PathBuf]) -> Result<()> {
++    let recode_avatar = context.sql.run_schema_migrations(context).await?;
++    publish_blobs(context, blobs).await?;
++    if recode_avatar {
++        context.sql.recode_migrated_avatar(context).await?;
++    }
++    Ok(())
++}
++
++async fn publish_blobs(context: &Context, blobs: &mut [PathBuf]) -> Result<()> {
++    let names: HashMap<_, _> = blobs
++        .iter()
++        .map(|path| {
++            let name = path.file_name().and_then(OsStr::to_str).context("Invalid blob name")?;
++            Ok((name.to_owned(), uuid::Uuid::new_v4().to_string()))
++        })
++        .collect::<Result<_>>()?;
++
++    let names = context
++        .sql
++        .transaction(move |tx| {
++            let partials = sql::pending_download_files(tx)?;
++            let names: HashMap<_, _> = names
++                .keys()
++                .map(|name| (name.clone(), opaque_name(name, &names, &partials)))
++                .collect();
++
++            for (table, keys) in [
++                ("msgs", &[Param::File, Param::Arg][..]),
++                ("chats", &[Param::ProfileImage][..]),
++                ("contacts", &[Param::ProfileImage][..]),
++            ] {
++                let ids = tx
++                    .prepare(&format!(
++                        "SELECT id FROM {table} WHERE instr(param, '$BLOBDIR/') > 0"
++                    ))?
++                    .query_map([], |row| row.get::<_, i64>(0))?
++                    .collect::<rusqlite::Result<Vec<_>>>()?;
++                let mut select = tx.prepare(&format!("SELECT param FROM {table} WHERE id=?"))?;
++                let mut update = tx.prepare(&format!("UPDATE {table} SET param=? WHERE id=?"))?;
++                for id in ids {
++                    let value: String = select.query_row([id], |row| row.get(0))?;
++                    let mut params: Params = value.parse()?;
++                    let mut changed = false;
++                    for key in keys {
++                        if let Some(name) = params.get(*key).and_then(|s| s.strip_prefix("$BLOBDIR/"))
++                            && let Some(replacement) = names.get(name)
++                            && name != replacement
++                        {
++                            if *key == Param::File && !params.exists(Param::Filename) {
++                                let filename = name.to_owned();
++                                params.set(Param::Filename, filename);
++                            }
++                            params.set(*key, format!("$BLOBDIR/{replacement}"));
++                            changed = true;
++                        }
++                    }
++                    if changed {
++                        update.execute((params.to_string(), id))?;
++                    }
++                }
++            }
++            for (table, column) in [("config", "value"), ("http_cache", "blobname")] {
++                let mut select = tx.prepare(&format!(
++                    "SELECT rowid, {column} FROM {table} WHERE {column} LIKE '$BLOBDIR/%'"
++                ))?;
++                let rows = select
++                    .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
++                    .collect::<rusqlite::Result<Vec<_>>>()?;
++                let mut update = tx.prepare(&format!("UPDATE {table} SET {column}=? WHERE rowid=?"))?;
++                for (id, value) in rows {
++                    if let Some(old) = value.strip_prefix("$BLOBDIR/")
++                        && let Some(new) = names.get(old)
++                        && old != new
++                    {
++                        update.execute((format!("$BLOBDIR/{new}"), id))?;
++                    }
++                }
++            }
++            Ok(names)
++        })
++        .await?;
++    context.sql.config_cache.write().await.clear();
++
++    for path in blobs {
++        let name = path.file_name().and_then(OsStr::to_str).context("Invalid blob name")?;
++        let dest = context.get_blobdir().join(&names[name]);
++        ensure!(!fs::try_exists(&dest).await?, "Restored blob already exists");
++        fs::rename(&path, &dest).await?;
++        // The caller removes published files if a later operation fails.
++        *path = dest;
++    }
++    Ok(())
++}
++
++/// Copies an unencrypted account into a memory-only archive for storage upgrade.
++pub async fn export_storage_upgrade(context: &Context, destination: &Path) -> Result<()> {
++    ensure!(
++        fs::storage_db_key().is_none(),
++        "Upgrade source must be unencrypted"
++    );
++    ensure!(
++        destination.parent() == Some(Path::new(fs::STORAGE_TRANSFER_DIR)),
++        "Upgrade archive must remain in memory"
++    );
++    ensure!(
++        !context.scheduler.is_running().await,
++        "Stop account IO before upgrading storage"
++    );
++    let workspace = workspace();
++    fs::create_dir_all(&*workspace).await?;
++    let archive_db = workspace.join("dc.db");
++    let memory_db = format!("/storage-upgrade-{}.db", uuid::Uuid::new_v4());
++    let uri = format!("file:{memory_db}?vfs=memvfs&key=");
++    let result = context
++        .sql
++        .call_write(|conn| {
++            conn.execute("VACUUM INTO ?", [uri])?;
++            Ok(())
++        })
++        .await;
++    let bytes = fs::sqlite_mem_vfs_take(&memory_db);
++    result?;
++    fs::write(&archive_db, bytes.map_err(|e| format_err!("{e}"))?).await?;
++    let blobs = BlobDirContents::new(context).await?;
++    let size = backup_stream_size(&archive_db, &blobs).await?;
++    export_backup_stream(context, &archive_db, blobs, File::create(destination).await?, size).await
++}
++
++/// Imports a local storage upgrade, preserving the device state of the source account.
++pub async fn import_storage_upgrade(context: &Context, source: &Path) -> Result<()> {
++    ensure!(
++        fs::storage_db_key().is_some(),
++        "Upgrade destination requires encrypted storage"
++    );
++    ensure!(
++        !context.is_configured().await?,
++        "Upgrade destination is already configured"
++    );
++    ensure!(
++        !context.scheduler.is_running().await,
++        "Upgrade destination is running"
++    );
++    let archive = File::open(source).await?;
++    let size = archive.metadata().await?.len();
++    import_backup_stream_inner(context, archive, size, String::new(), true)
++        .await
++        .0
++}
++
++/// Checks the restored database and returns a digest to compare after reopening.
++pub async fn verify_storage_upgrade(context: &Context) -> Result<String> {
++    let (address, message_count, key_count): (String, i64, i64) = context.sql
++        .call(true, |conn| {
++            let check: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
++            ensure!(check == "ok", "Restored database failed integrity check: {check}");
++            Ok(conn.query_row(
++                "SELECT coalesce((SELECT value FROM config WHERE keyname='configured_addr'), ''),
++                        (SELECT count(*) FROM msgs),
++                        (SELECT count(*) FROM keypairs)",
++                [],
++                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
++            )?)
++        })
++        .await?;
++
++    let mut files = fs::read_dir(context.get_blobdir()).await?;
++    let mut checksums = Vec::new();
++    while let Some(entry) = files.next_entry().await? {
++        if entry.file_type().await?.is_file() {
++            let name = entry.file_name().into_string().map_err(|_| format_err!("Invalid blob name"))?;
++            let hash = file_hash(&entry.path())?;
++            checksums.push((name, hash));
++        }
++    }
++    checksums.sort_unstable_by(|a, b| a.0.cmp(&b.0));
++    let mut digest = blake3::Hasher::new();
++    digest.update(&message_count.to_le_bytes());
++    digest.update(&key_count.to_le_bytes());
++    digest.update(address.as_bytes());
++    digest.update(&[0]);
++    for (name, hash) in checksums {
++        digest.update(name.as_bytes());
++        digest.update(&[0]);
++        digest.update(hash.as_bytes());
++    }
++    Ok(digest.finalize().to_hex().to_string())
++}
+diff --git a/src/sql.rs b/src/sql.rs
+index c3120cd7126b9453132235360f81728871664a9b..eab6f4bb8b2fd69296919f9f6eb0a6f9dee59469 100644
+--- a/src/sql.rs
++++ b/src/sql.rs
+@@ -292,18 +292,20 @@ async fn try_open(&self, context: &Context, dbfile: &Path, passphrase: String) -
+ 
+     /// Updates SQL schema to the latest version.
+     pub async fn run_migrations(&self, context: &Context) -> Result<()> {
+-        // (1) update low-level database structure.
+-        // this should be done before updates that use high-level objects that
+-        // rely themselves on the low-level structure.
++        if self.run_schema_migrations(context).await? {
++            self.recode_migrated_avatar(context).await?;
++        }
++        Ok(())
++    }
+ 
+-        let recode_avatar = migrations::run(context, self)
++    pub(crate) async fn run_schema_migrations(&self, context: &Context) -> Result<bool> {
++        migrations::run(context, self)
+             .await
+-            .context("failed to run migrations")?;
+-
+-        // (2) updates that require high-level objects
+-        // the structure is complete now and all objects are usable
++            .context("failed to run migrations")
++    }
+ 
+-        if recode_avatar && let Some(avatar) = context.get_config(Config::Selfavatar).await? {
++    pub(crate) async fn recode_migrated_avatar(&self, context: &Context) -> Result<()> {
++        if let Some(avatar) = context.get_config(Config::Selfavatar).await? {
+             let mut blob = BlobObject::from_path(context, Path::new(&avatar))?;
+             match blob.recode_to_avatar_size(context).await {
+                 Ok(()) => {
+@@ -1073,42 +1075,8 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
+         .await
+         .context("Failed to SELECT blobname FROM http_cache")?;
+ 
+-    // Keep staging files of pending chunked downloads
+-    // (see `download::StagingFile`); interrupted downloads resume from them.
+-    context
+-        .sql
+-        .query_map(
+-            "SELECT imap.transport_id, imap.folder, imap.uidvalidity, imap.uid
+-             FROM download JOIN imap ON download.rfc724_mid=imap.rfc724_mid
+-             WHERE imap.target!=''
+-             UNION
+-             SELECT imap.transport_id, imap.folder, imap.uidvalidity, imap.uid
+-             FROM available_post_msgs JOIN imap
+-               ON available_post_msgs.rfc724_mid=imap.rfc724_mid
+-             WHERE imap.target!=''",
+-            (),
+-            |row| {
+-                let transport_id: u32 = row.get(0)?;
+-                let folder: String = row.get(1)?;
+-                let uidvalidity: u32 = row.get(2)?;
+-                let uid: u32 = row.get(3)?;
+-                Ok((transport_id, folder, uidvalidity, uid))
+-            },
+-            |rows| {
+-                for row in rows {
+-                    let (transport_id, folder, uidvalidity, uid) = row?;
+-                    files_in_use.insert(crate::download::StagingFile::name(
+-                        transport_id,
+-                        &folder,
+-                        uidvalidity,
+-                        uid,
+-                    ));
+-                }
+-                Ok(())
+-            },
+-        )
+-        .await
+-        .context("Failed to SELECT pending downloads")?;
++    // Interrupted chunked downloads resume from their staging files.
++    files_in_use.extend(context.sql.call(true, |conn| pending_download_files(conn)).await?);
+ 
+     info!(context, "{} files in use.", files_in_use.len());
+     /* go through directories and delete unused files */
+@@ -1216,6 +1184,24 @@ pub async fn remove_unused_files(context: &Context) -> Result<()> {
+     Ok(())
+ }
+ 
++pub(crate) fn pending_download_files(conn: &Connection) -> Result<HashSet<String>> {
++    let mut query = conn.prepare(
++        "SELECT imap.transport_id, imap.folder, imap.uidvalidity, imap.uid
++             FROM download JOIN imap ON download.rfc724_mid=imap.rfc724_mid
++             WHERE imap.target!=''
++             UNION
++             SELECT imap.transport_id, imap.folder, imap.uidvalidity, imap.uid
++             FROM available_post_msgs JOIN imap
++               ON available_post_msgs.rfc724_mid=imap.rfc724_mid
++             WHERE imap.target!=''",
++    )?;
++    let names = query.query_map([], |row| {
++        let folder: String = row.get(1)?;
++        Ok(crate::download::StagingFile::name(row.get(0)?, &folder, row.get(2)?, row.get(3)?))
++    })?;
++    Ok(names.collect::<rusqlite::Result<_>>()?)
++}
++
+ fn is_file_in_use(files_in_use: &HashSet<String>, namespc_opt: Option<&str>, name: &str) -> bool {
+     let name_to_check = if let Some(namespc) = namespc_opt {
+         let Some(name) = name.strip_suffix(namespc) else {

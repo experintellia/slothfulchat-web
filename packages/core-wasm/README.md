@@ -55,6 +55,11 @@ await core.fsRead('/tmp/a/b.bin')   // -> Uint8Array, rejects if missing
 await core.fsRemove('/tmp/a/b.bin') // file or directory tree
 ```
 
+For attachments, `core.stageFile(name, bytes)` returns `{ file, filename }`
+to pass to `dc.rpc.sendMsg()`. With a storage key, the staged path is
+random and the original name is passed separately. Use `fsWrite` when the
+caller needs to choose the path.
+
 ## Build (from repo root)
 
 ```sh
@@ -70,6 +75,7 @@ pnpm --filter @slothfulchat/core-wasm build:wasm  # needs clang + wasm32 target,
 pnpm --filter @slothfulchat/core-wasm gen-template # pre-migrated account db; needs chromium
 pnpm --filter @slothfulchat/core-wasm build
 pnpm smoke                                        # headless verification
+node scripts/test-storage-encryption.mjs          # encrypted storage and backups, offline
 pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/example/index.html
 ```
 
@@ -82,6 +88,27 @@ pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/exampl
   bridge, networking errors at runtime (everything else works).
 - Storage (accounts, messages, blobs) persists in OPFS by default and survives
   reloads; pass `persist: false` for a fresh in-memory core.
+- Opt into encrypted persistence with `startCore({ storageKey })`, where
+  `storageKey` is a cryptographically random 32-byte `Uint8Array`. Supply
+  the same key on later starts. The caller handles creating, protecting,
+  and unlocking the key. Terminate the worker on logout to release it.
+  The encrypted store is separate from the default OPFS store.
+- With both persistent workers closed, call
+  `upgradeAccountStorage(accountId, storageKey)` to move one ordinary browser
+  account into encrypted storage. It returns the new account ID after checking
+  the reopened encrypted database and its attachments and removing the source.
+  The upgrade reads legacy attachments one at a time. Other accounts and
+  exported backups are kept.
+- Pass a `File` or `Blob` to `core.restoreBackup(accountId, file)` to read
+  the backup in chunks. Encrypted restores stage each attachment in an
+  encrypted SQLite store and keep only its filename and size in the in-memory
+  filesystem. Attachment names shown in chat are preserved. The SQLite account
+  database and the current attachment are still buffered during conversion.
+- SQLite pages and file contents are encrypted before they reach OPFS.
+  File names, sizes, and the account ID registry remain visible. An
+  explicitly exported backup is portable and should be protected by the
+  caller once it leaves the encrypted store. Encrypted mode uses address-free
+  backup names and hides addresses and fingerprints in exported key filenames.
 
 ## Current limits
 
@@ -92,5 +119,5 @@ pnpm --filter @slothfulchat/core-wasm example     # http://localhost:8642/exampl
 - One tab at a time: with persistence on, the core holds an exclusive lock on
   its OPFS storage, so a second tab of the same app fails to start its core
   until the first is closed.
-- No sqlcipher; webxdc and iroh are descoped.
+- Password-protected backup files are unsupported; webxdc and iroh are descoped.
 - Always use release wasm builds; dev-profile wasm crashes the tab.

@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Mon, 16 Nov 2026 10:44:02 +0100
+Subject: [PATCH] wasm: reject legacy migration before touching a keyed store
+
+---
+ src/accounts.rs | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/accounts.rs b/src/accounts.rs
+index 6df24537143dd08028dbdaf9de1726235f8e8244..e53de612a220dbc200db3a799976c1882c22edb6 100644
+--- a/src/accounts.rs
++++ b/src/accounts.rs
+@@ -247,6 +247,11 @@ pub async fn remove_account(&mut self, id: u32) -> Result<()> {
+     ///
+     /// Returns the ID of new account.
+     pub async fn migrate_account(&mut self, dbfile: PathBuf) -> Result<u32> {
++        #[cfg(target_arch = "wasm32")]
++        ensure!(
++            tokio::fs::storage_db_key().is_none(),
++            "migrateAccount is unavailable with encrypted storage; use importBackup"
++        );
+         let blobdir = Context::derive_blobdir(&dbfile);
+         let walfile = Context::derive_walfile(&dbfile);
+ 

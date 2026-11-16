@@ -28,12 +28,18 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use chacha20poly1305::aead::{AeadInPlace, KeyInit};
+use chacha20poly1305::{Tag, XChaCha20Poly1305, XNonce};
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::StreamExt;
+use hkdf::Hkdf;
 use js_sys::Uint8Array;
+use rusqlite::{Connection, OpenFlags};
+use sha2::Sha256;
 use sqlite_wasm_vfs::sahpool::{
     install as install_sahpool, OpfsSAHPoolCfgBuilder, OpfsSAHPoolUtil,
 };
+use subtle::ConstantTimeEq;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
@@ -42,6 +48,9 @@ use web_sys::{
     FileSystemSyncAccessHandle, WorkerGlobalScope,
 };
 
+use zeroize::Zeroizing;
+
+use crate::blobstore;
 use crate::durability::{self, Next};
 use crate::fs::{self, Snapshot};
 use crate::registry;
@@ -49,6 +58,9 @@ use crate::registry;
 /// OPFS directory mirroring the memfs root ("/" ↔ "memfs/").
 /// Keeps the mirror clearly separated from sahpool's `.opfs-sahpool` dir.
 const MIRROR_DIR: &str = "memfs";
+const ENCRYPTED_MIRROR_DIR: &str = "memfs-encrypted";
+const ENCRYPTED_RECOVERY_DIR: &str = "memfs-encrypted-recovery";
+const ENCRYPTED_POOL_DIR: &str = ".opfs-sahpool-encrypted";
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 /// Paths queued for flushing; dedupes queue entries (last state wins anyway).
@@ -82,7 +94,41 @@ const ACCOUNTS_TOML_BAK_PATH: &str = "/accounts/accounts.toml.bak";
 /// incident was ~1 MiB of it) and must never be copied into the backup.
 const CONFIG_BAK_MAX: usize = 512 * 1024;
 
+struct StorageKeys {
+    db_key: Zeroizing<String>,
+    verifier: [u8; 32],
+    file_cipher: XChaCha20Poly1305,
+}
+
+impl StorageKeys {
+    fn derive(key: Vec<u8>) -> Result<Self, String> {
+        let key = Zeroizing::new(key);
+        if key.len() != 32 {
+            return Err("storageKey must contain exactly 32 bytes".into());
+        }
+        let kdf = Hkdf::<Sha256>::new(None, &key);
+        let mut db_key = Zeroizing::new([0u8; 32]);
+        let mut verifier = [0u8; 32];
+        let mut file_key = Zeroizing::new([0u8; 32]);
+        kdf.expand(b"slothfulchat/memfs/v1", file_key.as_mut())
+            .expect("valid HKDF output length");
+        kdf.expand(b"slothfulchat/sqlite/v1", db_key.as_mut())
+            .expect("valid HKDF output length");
+        kdf.expand(b"slothfulchat/key-check/v1", &mut verifier)
+            .expect("valid HKDF output length");
+        // SQLite3MultipleCiphers accepts a hexadecimal raw key with this prefix.
+        let mut encoded = Zeroizing::new("raw:".to_string());
+        encoded.push_str(&Zeroizing::new(hex::encode(db_key.as_ref())));
+        Ok(Self {
+            db_key: encoded,
+            verifier,
+            file_cipher: XChaCha20Poly1305::new((&*file_key).into()),
+        })
+    }
+}
+
 thread_local! {
+    static STORAGE_KEYS: RefCell<Option<StorageKeys>> = const { RefCell::new(None) };
     /// sahpool management handle; `Some` = persistence is on (util is not Send).
     static SAHPOOL: RefCell<Option<OpfsSAHPoolUtil>> = const { RefCell::new(None) };
     /// Permanently-open sync access handles for (accounts.toml, .bak). Their
@@ -110,7 +156,11 @@ fn js_err(err: JsValue) -> String {
 /// Installs the sahpool sqlite VFS (as default), hydrates the memfs from
 /// OPFS and starts the write-through flusher. Call once, in a dedicated
 /// worker, before opening any database.
-pub async fn enable_persistence() -> Result<(), String> {
+pub async fn enable_persistence(
+    storage_key: Option<Vec<u8>>,
+    upgrade_source: bool,
+) -> Result<(), String> {
+    let keys = storage_key.map(StorageKeys::derive).transpose()?;
     // Start at 32 pool files (the historical floor); the reserve below grows
     // it to the live account count. Each account settles at ~1 slot (dc.db);
     // wal/journal are transient (auto-checkpointed). `util` stays a LOCAL here
@@ -118,15 +168,41 @@ pub async fn enable_persistence() -> Result<(), String> {
     // and the final store opens a database, so SAHPOOL can be `None` meanwhile,
     // and keeping the handle local lets us sweep/reserve without a RefCell
     // borrow held across the awaits.
-    let cfg = OpfsSAHPoolCfgBuilder::new().initial_capacity(32).build();
+    let mut builder = OpfsSAHPoolCfgBuilder::new().initial_capacity(32);
+    if keys.is_some() {
+        builder = builder.directory(ENCRYPTED_POOL_DIR);
+    }
+    let cfg = builder.build();
     let util = install_sahpool::<sqlite_wasm_rs::WasmOsCallback>(&cfg, true)
         .await
         .map_err(|e| format!("failed to install opfs-sahpool vfs: {e}"))?;
 
-    let root = mirror_root().await.map_err(js_err)?;
-    hydrate(&root)
-        .await
-        .map_err(|e| format!("opfs hydrate failed: {}", js_err(e)))?;
+    let root = mirror_root(keys.is_some()).await.map_err(js_err)?;
+    let recovery = if let Some(keys) = keys {
+        // SQLite3MultipleCiphers must wrap a custom VFS before PRAGMA key works.
+        // The pool still owns its files and handles as before.
+        // SAFETY: this worker has exclusive use of SQLite and no connections are open.
+        let result = unsafe { sqlite_wasm_rs::sqlite3mc_vfs_create(c"opfs-sahpool".as_ptr(), 1) };
+        if result != sqlite_wasm_rs::SQLITE_OK {
+            return Err(format!("failed to register the SQLite cipher VFS: {result}"));
+        }
+        let recovery_dir = opfs_directory(ENCRYPTED_RECOVERY_DIR).await.map_err(js_err)?;
+        hydrate_encrypted_store(&root, &recovery_dir, &keys, &util)
+            .await
+            .map_err(|e| format!("opfs encrypted store: {}", js_err(e)))?;
+        if util.list().iter().any(|name| name == blobstore::DATABASE) {
+            for (path, file) in blobstore::open(&keys.db_key).map_err(|err| err.to_string())? {
+                fs::insert_stored_file(path, file);
+            }
+        }
+        STORAGE_KEYS.with(|current| *current.borrow_mut() = Some(keys));
+        Some(recovery_dir)
+    } else {
+        hydrate(&root, None, true, upgrade_source)
+            .await
+            .map_err(|e| format!("opfs hydrate failed: {}", js_err(e)))?;
+        None
+    };
 
     // Boot-time orphan sweep: reclaim sahpool slots left by REMOVED accounts,
     // which un-bricks installs already at the 32-slot ceiling (the post-#75
@@ -213,7 +289,118 @@ pub async fn enable_persistence() -> Result<(), String> {
     let (tx, rx) = unbounded();
     *PENDING.lock().unwrap() = Some((tx, HashSet::new()));
     ENABLED.store(true, Ordering::Relaxed);
-    wasm_bindgen_futures::spawn_local(flusher(root, rx));
+    wasm_bindgen_futures::spawn_local(flusher(root, recovery, rx));
+    Ok(())
+}
+
+/// Checks the key and loads mirrored files before repairing or sweeping the
+/// registry. A damaged verifier can be replaced after decrypting existing data.
+async fn hydrate_encrypted_store(
+    root: &FileSystemDirectoryHandle,
+    recovery: &FileSystemDirectoryHandle,
+    keys: &StorageKeys,
+    pool: &OpfsSAHPoolUtil,
+) -> Result<(), JsValue> {
+    let dir = opfs_directory(ENCRYPTED_POOL_DIR).await?;
+    let handle = open_sah(&dir, "key-check").await?;
+    let result = async {
+        let length = handle.get_size()?;
+        let mut current = [0u8; 32];
+        if length == 32.0
+            && handle.read_with_u8_array(&mut current)? == length
+            && bool::from(current.ct_eq(&keys.verifier))
+        {
+            hydrate(root, Some((keys, recovery)), true, false).await?;
+            return Ok(());
+        }
+
+        let names = pool.list();
+        let database_authenticated = names.iter().any(|name| {
+            if name == blobstore::DATABASE {
+                authenticate_database(name, &keys.db_key, "files")
+            } else {
+                name.ends_with("/dc.db")
+                    && registry::account_uuid_of_db(name).is_some()
+                    && authenticate_database(name, &keys.db_key, "config")
+            }
+        });
+        let mirror = hydrate(root, Some((keys, recovery)), database_authenticated, false).await?;
+        // An intact-length verifier with a different value still protects an
+        // empty store. Initialize a missing or torn verifier without proof
+        // only when there is no encrypted data to protect.
+        let empty_store = length != 32.0 && names.is_empty() && !mirror.has_files;
+        if !database_authenticated && !mirror.authenticated_file && !empty_store {
+            return Err(JsValue::from_str("wrong storage key or damaged key check"));
+        }
+        sah_write(&handle, &keys.verifier)
+    }
+    .await;
+    handle.close();
+    result
+}
+
+fn authenticate_database(name: &str, key: &str, table: &str) -> bool {
+    let result = (|| {
+        let conn = Connection::open_with_flags(name, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        conn.pragma_update(None, "key", key)?;
+        // An empty database can open successfully with any key. Require a
+        // schema entry from an initialized account.
+        conn.query_row(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?",
+            [table],
+            |_| Ok(()),
+        )
+    })();
+    result.is_ok()
+}
+
+pub fn storage_db_key() -> Option<Zeroizing<String>> {
+    STORAGE_KEYS.with(|keys| keys.borrow().as_ref().map(|keys| keys.db_key.clone()))
+}
+
+// The registry has its own synchronous recovery protocol and stores only
+// account IDs, UUIDs, and relative directories. Every other file is sealed.
+fn is_account_registry(path: &Path) -> bool {
+    path == Path::new(ACCOUNTS_TOML) || path == Path::new(ACCOUNTS_TOML_BAK_PATH)
+}
+
+const FILE_NONCE_LEN: usize = 24;
+const FILE_TAG_LEN: usize = 16;
+
+fn seal_file(keys: &StorageKeys, path: &Path, data: &mut Vec<u8>) -> Result<(), JsValue> {
+    // v1 stores ciphertext followed by a fresh nonce and authentication
+    // tag. Bind the envelope to its logical path to reject swapped files.
+    let mut nonce = [0u8; FILE_NONCE_LEN];
+    getrandom::fill(&mut nonce)
+        .map_err(|e| JsValue::from_str(&format!("could not generate file nonce: {e}")))?;
+    let tag = keys
+        .file_cipher
+        .encrypt_in_place_detached((&nonce).into(), path.as_os_str().as_encoded_bytes(), data)
+        .map_err(|_| JsValue::from_str("failed to encrypt OPFS file"))?;
+    data.reserve(nonce.len() + tag.len());
+    data.extend_from_slice(&nonce);
+    data.extend_from_slice(&tag);
+    Ok(())
+}
+
+fn open_file(
+    cipher: &XChaCha20Poly1305,
+    path: &Path,
+    data: &mut Vec<u8>,
+) -> Result<(), chacha20poly1305::Error> {
+    let end = data
+        .len()
+        .checked_sub(FILE_NONCE_LEN + FILE_TAG_LEN)
+        .ok_or(chacha20poly1305::Error)?;
+    let (ciphertext, trailer) = data.split_at_mut(end);
+    let (nonce, tag) = trailer.split_at(FILE_NONCE_LEN);
+    cipher.decrypt_in_place_detached(
+        XNonce::from_slice(nonce),
+        path.as_os_str().as_encoded_bytes(),
+        ciphertext,
+        Tag::from_slice(tag),
+    )?;
+    data.truncate(end);
     Ok(())
 }
 
@@ -222,7 +409,7 @@ pub async fn enable_persistence() -> Result<(), String> {
 /// via the held sync access handles; the queue is only its fallback when
 /// that write fails. No-op unless persistence is enabled.
 pub(crate) fn mark_dirty(path: &Path) {
-    if !ENABLED.load(Ordering::Relaxed) {
+    if !ENABLED.load(Ordering::Relaxed) || path.starts_with(fs::STORAGE_TRANSFER_DIR) {
         return;
     }
     // Component-wise compare (Path, not the raw OsStr): a `sync_rename` can
@@ -398,14 +585,13 @@ fn write_config_through(
             // not source a pre-quarantine state from here
             LAST_COMMITTED.with(|c| *c.borrow_mut() = None);
         }
-        Snapshot::Dir => {}
+        Snapshot::Stored | Snapshot::Dir => {}
     }
     Ok(())
 }
 
-/// Commits `data` to a sync access handle crash-safely: write at offset 0
-/// first, truncate to the new length last, then flush — a teardown mid-way
-/// leaves old-tail garbage, never an empty or shorter-than-written file.
+/// Writes at offset 0 before trimming the old tail. Callers that need to
+/// preserve the previous version must save it before overwriting the handle.
 fn sah_write(sah: &FileSystemSyncAccessHandle, data: &[u8]) -> Result<(), JsValue> {
     let opts = FileSystemReadWriteOptions::new();
     opts.set_at(0.0);
@@ -437,7 +623,11 @@ async fn open_sah(
         .into())
 }
 
-async fn flusher(root: FileSystemDirectoryHandle, mut rx: UnboundedReceiver<PathBuf>) {
+async fn flusher(
+    root: FileSystemDirectoryHandle,
+    recovery: Option<FileSystemDirectoryHandle>,
+    mut rx: UnboundedReceiver<PathBuf>,
+) {
     while let Some(path) = rx.next().await {
         // un-mark before snapshotting so later mutations re-queue the path
         if let Some((_, pending)) = PENDING.lock().unwrap().as_mut() {
@@ -452,7 +642,7 @@ async fn flusher(root: FileSystemDirectoryHandle, mut rx: UnboundedReceiver<Path
         // tasks are the upgrade if that ever shows up as a stall.
         let mut attempt = 1;
         loop {
-            let err = reconcile(&root, &path).await.err();
+            let err = reconcile(&root, recovery.as_ref(), &path).await.err();
             match durability::next_step(err.is_none(), attempt) {
                 Next::Done => break,
                 Next::Retry(after) => {
@@ -490,7 +680,11 @@ async fn flusher(root: FileSystemDirectoryHandle, mut rx: UnboundedReceiver<Path
 }
 
 /// Makes the OPFS mirror match the current memfs state at `path`.
-async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), JsValue> {
+async fn reconcile(
+    root: &FileSystemDirectoryHandle,
+    recovery: Option<&FileSystemDirectoryHandle>,
+    path: &Path,
+) -> Result<(), JsValue> {
     // accounts.toml and its .bak are owned by the synchronous write-through
     // while CONFIG_SAHS holds their exclusive handles. The generic path below
     // would call open_sah on them — a SECOND createSyncAccessHandle on a
@@ -499,27 +693,28 @@ async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), 
     // the held handles; only fall through here when no handles are held
     // (reconcile_config returns false → CONFIG_SAHS is None, persistence setup
     // failed half-way, so the generic open_sah path below is correct).
-    let is_config = path == Path::new(ACCOUNTS_TOML) || path == Path::new(ACCOUNTS_TOML_BAK_PATH);
-    if is_config && reconcile_config(root, path).await? {
+    if is_account_registry(path) && reconcile_config(root, path).await? {
         return Ok(());
     }
     match fs::snapshot(path) {
         Snapshot::File(data) => {
-            let dir = ensure_dirs(root, path.parent().unwrap_or(Path::new("/"))).await?;
+            let dir = ensure_dirs(root, parent_path(path)).await?;
             let name = file_name(path)?;
-            // Sync access handle, NOT createWritable(): WebKit only shipped
-            // FileSystemWritableFileStream in Safari 18.4 and we saw it hand
-            // back ~1MB of garbage as accounts.toml on iOS. SAH is the older
-            // API the sahpool sqlite VFS already trusts on the same devices.
-            let sah = open_sah(&dir, &name).await?;
-            let result = sah_write(&sah, &data);
-            sah.close();
-            result?;
+            if let Some(recovery) = recovery.filter(|_| !is_account_registry(path)) {
+                write_encrypted_file(&dir, recovery, path, &name, data).await?;
+            } else {
+                write_mirror_file(&dir, &name, &data).await?;
+            }
         }
         Snapshot::Dir => {
             ensure_dirs(root, path).await?;
         }
-        Snapshot::Missing => {
+        Snapshot::Stored | Snapshot::Missing => {
+            if let Some(recovery) = recovery {
+                // Drop the fallback first so a deletion cannot resurrect it.
+                remove_mirror_entry(recovery, path).await?;
+                return remove_mirror_entry(root, path).await;
+            }
             // walk to the parent without creating; missing on the way = already gone
             let mut dir = root.clone();
             for part in normal_components(path.parent().unwrap_or(Path::new("/"))) {
@@ -535,6 +730,136 @@ async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), 
         }
     }
     Ok(())
+}
+
+async fn write_mirror_file(
+    dir: &FileSystemDirectoryHandle,
+    name: &str,
+    data: &[u8],
+) -> Result<(), JsValue> {
+    // The sync-handle API also works on older Safari, which lacks
+    // createWritable(). The encrypted path supplies its own recovery copy.
+    let sah = open_sah(dir, name).await?;
+    let result = sah_write(&sah, data);
+    sah.close();
+    result
+}
+
+async fn write_encrypted_file(
+    dir: &FileSystemDirectoryHandle,
+    recovery: &FileSystemDirectoryHandle,
+    path: &Path,
+    name: &str,
+    mut data: Vec<u8>,
+) -> Result<(), JsValue> {
+    let previous = read_mirror_file_if_present(dir, name).await?;
+    let replacing = previous.is_some();
+    let preserved = STORAGE_KEYS.with(|keys| {
+        let keys = keys.borrow();
+        let keys = keys
+            .as_ref()
+            .expect("encrypted mirror requires storage keys");
+        seal_file(keys, path, &mut data)?;
+        let Some(mut previous) = previous else {
+            return Ok(None);
+        };
+        // A retry may see a torn primary. Leave the last authenticated copy
+        // in recovery alone until a replacement makes it to disk.
+        if open_file(&keys.file_cipher, path, &mut previous).is_err() {
+            return Ok(None);
+        }
+        seal_file(keys, path, &mut previous)?;
+        Ok::<_, JsValue>(Some(previous))
+    })?;
+    if let Some(preserved) = preserved {
+        let backup_dir = ensure_dirs(recovery, parent_path(path)).await?;
+        write_mirror_file(&backup_dir, name, &preserved).await?;
+    }
+    write_mirror_file(dir, name, &data).await?;
+    if replacing {
+        // Once the primary is durable, it wins even if cleanup fails.
+        if let Err(err) = remove_mirror_entry(recovery, path).await {
+            web_sys::console::warn_2(&JsValue::from_str("opfs: recovery cleanup failed"), &err);
+        }
+    }
+    Ok(())
+}
+
+fn parent_path(path: &Path) -> &Path {
+    path.parent().unwrap_or(Path::new("/"))
+}
+
+/// An absent entry is normal following a restart or a coalesced deletion.
+/// Propagate all other errors so the flusher retries instead of losing a write.
+fn existing<T>(result: Result<T, JsValue>) -> Result<Option<T>, JsValue> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(err)
+            if err
+                .dyn_ref::<web_sys::DomException>()
+                .is_some_and(|exception| exception.name() == "NotFoundError") =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+async fn existing_dir(
+    root: &FileSystemDirectoryHandle,
+    path: &Path,
+) -> Result<Option<FileSystemDirectoryHandle>, JsValue> {
+    let mut dir = root.clone();
+    for part in normal_components(path) {
+        let Some(handle) = existing(JsFuture::from(dir.get_directory_handle(&part)).await)? else {
+            return Ok(None);
+        };
+        dir = handle.into();
+    }
+    Ok(Some(dir))
+}
+
+async fn remove_mirror_entry(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), JsValue> {
+    if let Some(dir) = existing_dir(root, parent_path(path)).await? {
+        let opts = FileSystemRemoveOptions::new();
+        opts.set_recursive(true);
+        let name = file_name(path)?;
+        existing(JsFuture::from(dir.remove_entry_with_options(&name, &opts)).await)?;
+    }
+    Ok(())
+}
+
+async fn read_mirror_file(handle: FileSystemFileHandle) -> Result<Vec<u8>, JsValue> {
+    let file: web_sys::File = JsFuture::from(handle.get_file()).await?.into();
+    let buf = JsFuture::from(file.array_buffer()).await?;
+    Ok(Uint8Array::new(&buf).to_vec())
+}
+
+async fn read_mirror_file_if_present(
+    dir: &FileSystemDirectoryHandle,
+    name: &str,
+) -> Result<Option<Vec<u8>>, JsValue> {
+    let handle = existing(JsFuture::from(dir.get_file_handle(name)).await)?;
+    match handle {
+        Some(handle) => Ok(Some(read_mirror_file(handle.into()).await?)),
+        None => Ok(None),
+    }
+}
+
+async fn recover_mirror_file(
+    root: &FileSystemDirectoryHandle,
+    keys: &StorageKeys,
+    path: &Path,
+) -> Result<Option<Vec<u8>>, JsValue> {
+    let Some(dir) = existing_dir(root, parent_path(path)).await? else {
+        return Ok(None);
+    };
+    let Some(mut data) = read_mirror_file_if_present(&dir, &file_name(path)?).await? else {
+        return Ok(None);
+    };
+    Ok(open_file(&keys.file_cipher, path, &mut data)
+        .is_ok()
+        .then_some(data))
 }
 
 /// Flusher-side reconciliation for accounts.toml (and its .bak). Guarantees no
@@ -619,7 +944,11 @@ async fn ensure_dirs(
 
 /// OPFS root → `memfs/` mirror directory handle. `window()` is unavailable in
 /// a worker; go through the worker global scope instead.
-async fn mirror_root() -> Result<FileSystemDirectoryHandle, JsValue> {
+async fn mirror_root(encrypted: bool) -> Result<FileSystemDirectoryHandle, JsValue> {
+    opfs_directory(if encrypted { ENCRYPTED_MIRROR_DIR } else { MIRROR_DIR }).await
+}
+
+async fn opfs_directory(name: &str) -> Result<FileSystemDirectoryHandle, JsValue> {
     let scope: WorkerGlobalScope = js_sys::global()
         .dyn_into()
         .map_err(|_| JsValue::from_str("opfs: not running in a worker"))?;
@@ -630,15 +959,27 @@ async fn mirror_root() -> Result<FileSystemDirectoryHandle, JsValue> {
     let create = FileSystemGetDirectoryOptions::new();
     create.set_create(true);
     Ok(
-        JsFuture::from(root.get_directory_handle_with_options(MIRROR_DIR, &create))
+        JsFuture::from(root.get_directory_handle_with_options(name, &create))
             .await?
             .into(),
     )
 }
 
+#[derive(Default)]
+struct MirrorContents {
+    has_files: bool,
+    authenticated_file: bool,
+}
+
 /// Loads the whole OPFS mirror into the memfs (files and empty dirs — core
 /// checks blobdir existence on startup, so dirs matter).
-async fn hydrate(root: &FileSystemDirectoryHandle) -> Result<(), JsValue> {
+async fn hydrate(
+    root: &FileSystemDirectoryHandle,
+    encrypted: Option<(&StorageKeys, &FileSystemDirectoryHandle)>,
+    key_verified: bool,
+    upgrade_source: bool,
+) -> Result<MirrorContents, JsValue> {
+    let mut mirror = MirrorContents::default();
     let mut stack = vec![(root.clone(), PathBuf::from("/"))];
     while let Some((dir, path)) = stack.pop() {
         let iter = dir.entries();
@@ -658,17 +999,79 @@ async fn hydrate(root: &FileSystemDirectoryHandle) -> Result<(), JsValue> {
             if kind.as_deref() == Some("directory") {
                 fs::insert_hydrated_dir(child.clone());
                 stack.push((handle.into(), child));
-            } else {
-                let file: web_sys::File =
-                    JsFuture::from(FileSystemFileHandle::from(handle).get_file())
-                        .await?
-                        .into();
-                let buf = JsFuture::from(file.array_buffer()).await?;
-                fs::insert_hydrated_file(child, Uint8Array::new(&buf).to_vec());
+            } else if !upgrade_source || is_account_registry(&child) {
+                let mut data = read_mirror_file(handle.into()).await?;
+                if let Some((keys, recovery)) = encrypted.filter(|_| !is_account_registry(&child)) {
+                    mirror.has_files = true;
+                    if open_file(&keys.file_cipher, &child, &mut data).is_err() {
+                        match recover_mirror_file(recovery, keys, &child).await? {
+                            Some(recovered) => data = recovered,
+                            None => {
+                                if key_verified {
+                                    web_sys::console::warn_1(&JsValue::from_str(&format!(
+                                        "opfs: ignoring unauthenticated file {child:?}"
+                                    )));
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    mirror.authenticated_file = true;
+                }
+                fs::insert_hydrated_file(child, data);
             }
         }
     }
-    Ok(())
+    Ok(mirror)
+}
+
+/// Lists attachments directly from the ordinary mirror for the isolated upgrade worker.
+pub async fn list_upgrade_attachments(path: &Path) -> std::io::Result<Vec<String>> {
+    async fn list(path: &Path) -> Result<Vec<String>, JsValue> {
+        let root = mirror_root(false).await?;
+        let Some(dir) = existing_dir(&root, path).await? else {
+            return Ok(Vec::new());
+        };
+        let mut names = Vec::new();
+        let entries = dir.values();
+        loop {
+            let next: js_sys::IteratorNext = JsFuture::from(entries.next()?).await?.into();
+            if next.done() {
+                break;
+            }
+            if let Ok(file) = next.value().dyn_into::<FileSystemFileHandle>() {
+                names.push(file.name());
+            }
+        }
+        names.sort_unstable();
+        Ok(names)
+    }
+    list(path).await.map_err(|err| std::io::Error::other(js_err(err)))
+}
+
+/// Reads one legacy attachment for conversion without hydrating its account.
+pub async fn read_upgrade_attachment(dir: &Path, name: &str) -> std::io::Result<Vec<u8>> {
+    async fn read(dir: &Path, name: &str) -> Result<Vec<u8>, JsValue> {
+        let root = mirror_root(false).await?;
+        let dir = existing_dir(&root, dir)
+            .await?
+            .ok_or_else(|| JsValue::from_str("legacy attachment directory is missing"))?;
+        let handle: FileSystemFileHandle = JsFuture::from(dir.get_file_handle(name)).await?.into();
+        let file: web_sys::File = JsFuture::from(handle.get_file()).await?.into();
+        crate::limits::checked_len(file.size() as u64)
+            .map_err(|err| JsValue::from_str(&err.to_string()))?;
+        let bytes = JsFuture::from(file.array_buffer()).await?;
+        Ok(Uint8Array::new(&bytes).to_vec())
+    }
+    read(dir, name).await.map_err(|err| std::io::Error::other(js_err(err)))
+}
+
+pub async fn remove_upgrade_source_mirror(path: &Path) -> std::io::Result<()> {
+    let result = async {
+        let root = mirror_root(false).await?;
+        remove_mirror_entry(&root, path).await
+    }.await;
+    result.map_err(|err| std::io::Error::other(js_err(err)))
 }
 
 // --- sqlite VFS byte-level import/export (backup IMEX side channel) ---
@@ -681,6 +1084,9 @@ async fn hydrate(root: &FileSystemDirectoryHandle) -> Result<(), JsValue> {
 /// removing stale wal/journal leftovers first. All connections to `name`
 /// must be closed.
 pub fn sqlite_vfs_import(name: &str, bytes: &[u8]) -> Result<(), String> {
+    let encrypted = storage_db_key()
+        .map(|key| encrypt_backup_database(name, bytes, &key))
+        .transpose()?;
     SAHPOOL.with(|c| match c.borrow().as_ref() {
         Some(util) => {
             let _ = util.delete_db(name); // overwrite: core pre-creates dc.db on account open
@@ -691,7 +1097,11 @@ pub fn sqlite_vfs_import(name: &str, bytes: &[u8]) -> Result<(), String> {
             // like a real but undecryptable account forever, and `remove_file`
             // on wasm can't reach it (dbs never touch the memfs). Delete the
             // half-written slot so the account cleanly does not exist.
-            util.import_db(name, bytes).map_err(|e| {
+            let result = match &encrypted {
+                Some(bytes) => util.import_db_unchecked(name, bytes),
+                None => util.import_db(name, bytes),
+            };
+            result.map_err(|e| {
                 let _ = util.delete_db(name);
                 e.to_string()
             })
@@ -704,6 +1114,33 @@ pub fn sqlite_vfs_import(name: &str, bytes: &[u8]) -> Result<(), String> {
             vfs.import_db(name, bytes).map_err(|e| e.to_string())
         }
     })
+}
+
+/// Converts a portable backup entirely in the memory VFS before OPFS sees it.
+fn encrypt_backup_database(name: &str, bytes: &[u8], key: &str) -> Result<Vec<u8>, String> {
+    let vfs = sqlite_wasm_rs::MemVfsUtil::<sqlite_wasm_rs::WasmOsCallback>::new();
+    let name = format!("{name}-restore");
+    vfs.import_db(&name, bytes).map_err(|e| e.to_string())?;
+    let result = (|| {
+        let conn = Connection::open_with_flags_and_vfs(
+            &name,
+            OpenFlags::SQLITE_OPEN_READ_WRITE,
+            "multipleciphers-memvfs",
+        )
+        .map_err(|e| e.to_string())?;
+        conn.pragma_update(None, "temp_store", "MEMORY")
+            .map_err(|e| e.to_string())?;
+        conn.pragma_update(None, "rekey", key)
+            .map_err(|e| e.to_string())?;
+        drop(conn);
+        let encrypted = vfs.export_db(&name).map_err(|e| e.to_string())?;
+        if encrypted.starts_with(b"SQLite format 3\0") || encrypted.is_empty() {
+            return Err("could not encrypt the backup database".into());
+        }
+        Ok(encrypted)
+    })();
+    vfs.delete_db(&name);
+    result
 }
 
 /// Account uuids that have a database in the sahpool VFS — the ground truth of
@@ -806,13 +1243,16 @@ pub fn sqlite_vfs_take(name: &str) -> Result<Vec<u8>, String> {
             let _ = util.delete_db(name);
             Ok(bytes)
         }
-        None => {
-            let vfs = sqlite_wasm_rs::MemVfsUtil::<sqlite_wasm_rs::WasmOsCallback>::new();
-            let bytes = vfs.export_db(name).map_err(|e| e.to_string())?;
-            vfs.delete_db(name);
-            Ok(bytes)
-        }
+        None => sqlite_mem_vfs_take(name),
     })
+}
+
+/// Exports and removes a temporary database that must never be persisted.
+pub fn sqlite_mem_vfs_take(name: &str) -> Result<Vec<u8>, String> {
+    let vfs = sqlite_wasm_rs::MemVfsUtil::<sqlite_wasm_rs::WasmOsCallback>::new();
+    let result = vfs.export_db(name).map_err(|e| e.to_string());
+    vfs.delete_db(name);
+    result
 }
 
 /// Frees the sahpool slots of every db whose logical path lives under `prefix`
@@ -839,6 +1279,7 @@ pub(crate) fn purge_pool_files_under(prefix: &Path) {
             // never matches "/accounts/abc/dc.db".
             if Path::new(&name).starts_with(prefix) {
                 if let Err(err) = util.delete_db(&name) {
+                    durability::record_lost();
                     // A still-open db (or any delete failure) leaves a residual
                     // leak — degraded, not fatal (the boot sweep catches it
                     // next time). Warn and keep going.

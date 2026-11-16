@@ -891,8 +891,9 @@ the full table with what re-enabling each one would take.
 - **Maps / location streaming** — no map UI ships (it's a webxdc upstream).
   When it lands, the plan is to adopt ArcaneChat's per-message POI location
   API so a shared pin is tappable (issue #36).
-- **Database encryption (sqlcipher)** — doesn't build for wasm32; OPFS
-  storage is origin-sandboxed by the browser instead.
+- **Password-protected backup files** — WASM exports portable, unkeyed
+  archives. Opt-in OPFS encryption covers the live database and file mirror
+  and converts restored databases in memory. `core/1027`, `core/1028`.
 
 Like ArcaneChat, this fork experiments a few steps ahead of upstream Delta
 Chat while staying protocol-compatible with it; where ArcaneChat (or a

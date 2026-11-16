@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: slothfulchat <patches@slothfulchat.invalid>
+Date: Mon, 16 Nov 2026 10:10:56 +0100
+Subject: [PATCH] wasm: keep backup databases in the correct storage domain
+
+---
+ src/imex.rs | 52 ++++++++++++++++++++++++++++++++++++----------------
+ src/sql.rs  |  7 ++++---
+ 2 files changed, 40 insertions(+), 19 deletions(-)
+
+diff --git a/src/imex.rs b/src/imex.rs
+index 30d1e72a2fe4b12c272dd10a46835cf3eaed05bf..bd9314debabafe95fdc66a4db249316a07dc0f37 100644
+--- a/src/imex.rs
++++ b/src/imex.rs
+@@ -200,11 +200,6 @@ async fn import_backup(
+     backup_to_import: &Path,
+     passphrase: String,
+ ) -> Result<()> {
+-    #[cfg(target_arch = "wasm32")]
+-    ensure!(
+-        tokio::fs::storage_db_key().is_none(),
+-        "backup import is unavailable with encrypted storage"
+-    );
+     let backup_file = File::open(backup_to_import).await?;
+     let file_size = backup_file.metadata().await?.len();
+     info!(
+@@ -428,9 +423,14 @@ async fn import_backup_stream_inner<R: tokio::io::AsyncRead + Unpin>(
+         for blob in blobs {
+             fs::remove_file(&blob).await.log_err(context).ok();
+         }
++        let database_key = String::new();
++        #[cfg(target_arch = "wasm32")]
++        let database_key = tokio::fs::storage_db_key()
++            .map(|key| key.to_string())
++            .unwrap_or(database_key);
+         context
+             .sql
+-            .open(context, "".to_string())
++            .open(context, database_key)
+             .await
+             .log_err(context)
+             .ok();
+@@ -833,10 +833,6 @@ async fn export_database(
+         passphrase.is_empty(),
+         "encrypted backup export is not supported on wasm"
+     );
+-    ensure!(
+-        tokio::fs::storage_db_key().is_none(),
+-        "backup export is unavailable with encrypted storage"
+-    );
+     let timestamp = timestamp.try_into().context("32-bit UNIX time overflow")?;
+     let dest_str = dest
+         .to_str()
+@@ -853,19 +849,38 @@ async fn export_database(
+         .set_raw_config_int("backup_version", DCBACKUP_VERSION)
+         .await?;
+     sql::housekeeping(context).await.log_err(context).ok();
+-    let vacuum_dest = dest_str.clone();
+-    context
++    // A portable archive uses an unkeyed database. In keyed mode, even its
++    // intermediate SQLite file must be confined to the memory VFS.
++    let keyed = tokio::fs::storage_db_key().is_some();
++    let backup_db = if keyed {
++        format!("/slothfulchat-export-{}.sqlite", uuid::Uuid::new_v4())
++    } else {
++        dest_str
++    };
++    let vacuum_dest = if keyed {
++        format!("file:{backup_db}?vfs=memvfs&key=")
++    } else {
++        backup_db.clone()
++    };
++    let vacuum_path = vacuum_dest.clone();
++    let result = context
+         .sql
+         .call_write(move |conn| {
+             conn.execute("VACUUM INTO ?", (vacuum_dest,))
+                 .context("failed to VACUUM INTO backup database")?;
+             Ok(())
+         })
+-        .await?;
++        .await;
++    if let Err(error) = result {
++        if keyed {
++            let _ = tokio::fs::sqlite_mem_vfs_take(&backup_db);
++        }
++        return Err(error);
++    }
+ 
+     // Downgrade verified_one_on_one_chats in the backup, like the native version.
+     // Deprecated 2025-07. If verified_one_on_one_chats was not set, this errors, which we ignore.
+-    if let Ok(conn) = rusqlite::Connection::open(&dest_str) {
++    if let Ok(conn) = rusqlite::Connection::open(&vacuum_path) {
+         conn.execute(
+             "UPDATE config SET value='0' WHERE keyname='verified_one_on_one_chats';",
+             [],
+@@ -876,8 +891,13 @@ async fn export_database(
+     // Move the bytes from sqlite's default VFS (memory, or opfs-sahpool when
+     // persistence is enabled) into the tokio memfs so the tar builder can
+     // read them.
+-    let bytes = tokio::fs::sqlite_vfs_take(&dest_str)
+-        .map_err(|e| format_err!("failed to export database from sqlite VFS: {e}"))?;
++    let bytes = if keyed {
++        tokio::fs::sqlite_mem_vfs_take(&backup_db)
++    } else {
++        tokio::fs::sqlite_vfs_take(&backup_db)
++    }
++    .map_err(|e| format_err!("failed to export database from sqlite VFS: {e}"))?;
++    ensure!(bytes.starts_with(b"SQLite format 3\0"), "backup database is not portable");
+     fs::write(dest, bytes).await?;
+     Ok(())
+ }
+diff --git a/src/sql.rs b/src/sql.rs
+index 6ffa5f1a9dabdb9cb8972c0fe3ef26fd272064d7..c3120cd7126b9453132235360f81728871664a9b 100644
+--- a/src/sql.rs
++++ b/src/sql.rs
+@@ -168,8 +168,8 @@ pub(crate) async fn close(&self) {
+     /// wasm variant: sqlite on wasm (sqlite-wasm-rs) has no `sqlcipher_export()`,
+     /// so instead of copying table-by-table into the open database we close the
+     /// pool, swap the database file bytes inside sqlite's in-memory VFS and reopen.
+-    /// ponytail: encrypted backups are unsupported on wasm (needs sqlcipher);
+-    /// the main database on wasm is always unencrypted.
++    /// A protected store encrypts the portable database in memory before
++    /// replacing the on-disk copy.
+     #[cfg(target_arch = "wasm32")]
+     pub(crate) async fn import(&self, path: &Path, passphrase: String) -> Result<()> {
+         anyhow::ensure!(
+@@ -198,7 +198,8 @@ pub(crate) async fn import(&self, path: &Path, passphrase: String) -> Result<()>
+         tokio::fs::sqlite_vfs_import(&dbfile, &bytes)
+             .map_err(|e| anyhow::anyhow!("failed to import database into sqlite VFS: {e}"))?;
+ 
+-        *pool = Some(Self::new_pool(&self.dbfile, passphrase)?);
++        let storage_passphrase = tokio::fs::storage_db_key().map(|key| key.to_string());
++        *pool = Some(Self::new_pool(&self.dbfile, storage_passphrase.unwrap_or(passphrase))?);
+         Ok(())
+     }
+ 

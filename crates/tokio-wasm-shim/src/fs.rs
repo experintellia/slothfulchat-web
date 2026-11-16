@@ -18,12 +18,16 @@ use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 #[derive(Clone)]
 enum Node {
     File { data: Vec<u8>, modified: SystemTime },
+    Stored { file: StoredFile, modified: SystemTime },
     Dir,
 }
 
 static FS: Mutex<BTreeMap<PathBuf, Node>> = Mutex::new(BTreeMap::new());
 
+use crate::blobstore::{self, StoredFile};
+pub use crate::browser_file::BrowserFile;
 use crate::limits::checked_len;
+pub use crate::limits::checked_len as checked_import_length;
 use crate::opfs::{mark_dirty, purge_pool_files_under};
 
 /// [`checked_len`] plus a console warning. The bound tripping means an import
@@ -41,13 +45,18 @@ fn checked_len_logged(path: &Path, size: u64) -> io::Result<usize> {
 }
 // re-exported here so the core can reach persistence entry points via `tokio::fs::*`
 pub use crate::opfs::{
-    discard_db_template, enable_persistence, failed_count, flush_pending, seed_db_from_template,
-    set_db_template, sqlite_vfs_account_uuids, sqlite_vfs_import, sqlite_vfs_take,
+    discard_db_template, enable_persistence, failed_count, flush_pending,
+    list_upgrade_attachments, read_upgrade_attachment, seed_db_from_template, remove_upgrade_source_mirror,
+    set_db_template, sqlite_mem_vfs_take, sqlite_vfs_account_uuids, sqlite_vfs_import, sqlite_vfs_take, storage_db_key,
 };
+
+/// Backup conversion staging. Paths under this root never reach the OPFS mirror.
+pub const STORAGE_TRANSFER_DIR: &str = "/.storage-transfer";
 
 /// Point-in-time state of one memfs path, for the OPFS write-through.
 pub(crate) enum Snapshot {
     File(Vec<u8>),
+    Stored,
     Dir,
     Missing,
 }
@@ -55,6 +64,7 @@ pub(crate) enum Snapshot {
 pub(crate) fn snapshot(path: &Path) -> Snapshot {
     match FS.lock().unwrap().get(&normalize(path)) {
         Some(Node::File { data, .. }) => Snapshot::File(data.clone()),
+        Some(Node::Stored { .. }) => Snapshot::Stored,
         Some(Node::Dir) => Snapshot::Dir,
         None => Snapshot::Missing,
     }
@@ -76,6 +86,37 @@ pub(crate) fn insert_hydrated_file(path: PathBuf, data: Vec<u8>) {
             modified: now(),
         },
     );
+}
+
+pub(crate) fn insert_stored_file(path: PathBuf, file: StoredFile) {
+    let mut files = FS.lock().unwrap();
+    let mut parent = path.clone();
+    while parent.pop() && parent != Path::new("/") {
+        files.entry(parent.clone()).or_insert(Node::Dir);
+    }
+    files.insert(path, Node::Stored { file, modified: now() });
+}
+
+/// Stores a complete attachment without adding its bytes to the in-memory filesystem.
+pub fn store_imported_attachment(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let path = normalize(path);
+    if sync_exists(&path) {
+        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "attachment path already exists"));
+    }
+    if !blobstore::is_open() {
+        let key = storage_db_key().ok_or_else(|| io::Error::other("encrypted storage required"))?;
+        blobstore::open(&key)?;
+    }
+    let file = blobstore::insert(&path, bytes)?;
+    insert_stored_file(path, file);
+    Ok(())
+}
+
+fn stored_node(node: &Node) -> Option<StoredFile> {
+    match node {
+        Node::Stored { file, .. } => Some(*file),
+        _ => None,
+    }
 }
 
 /// Dir twin of [`insert_hydrated_file`].
@@ -119,6 +160,13 @@ pub async fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
 pub fn sync_read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
     match FS.lock().unwrap().get(&normalize(path.as_ref())) {
         Some(Node::File { data, .. }) => Ok(data.clone()),
+        Some(Node::Stored { file, .. }) => {
+            let mut bytes = vec![0; file.len];
+            if file.read(0, &mut bytes)? != bytes.len() {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete stored attachment"));
+            }
+            Ok(bytes)
+        }
         Some(Node::Dir) => Err(is_dir_err()),
         None => Err(not_found()),
     }
@@ -129,9 +177,14 @@ pub async fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
     String::from_utf8(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-fn write_sync(path: &Path, contents: &[u8]) {
+fn write_sync(path: &Path, contents: &[u8]) -> io::Result<()> {
     let path = normalize(path);
     let mut fs = FS.lock().unwrap();
+    if let Some(Node::Stored { file, modified }) = fs.get_mut(&path) {
+        file.replace(contents)?;
+        *modified = now();
+        return Ok(());
+    }
     // Auto-create parent directories: core calls create_dir_all before writes,
     // being permissive here just removes an error source.
     let mut parent = path.clone();
@@ -147,6 +200,7 @@ fn write_sync(path: &Path, contents: &[u8]) {
     );
     drop(fs);
     mark_dirty(&path);
+    Ok(())
 }
 
 pub async fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
@@ -155,13 +209,17 @@ pub async fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Re
 
 /// Synchronous write (see [`sync_read`]).
 pub fn sync_write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
-    write_sync(path.as_ref(), contents.as_ref());
-    Ok(())
+    write_sync(path.as_ref(), contents.as_ref())
 }
 
 pub async fn create_dir(path: impl AsRef<Path>) -> io::Result<()> {
     let path = normalize(path.as_ref());
-    FS.lock().unwrap().insert(path.clone(), Node::Dir);
+    let mut fs = FS.lock().unwrap();
+    if fs.get(&path).and_then(stored_node).is_some() {
+        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "attachment path already exists"));
+    }
+    fs.insert(path.clone(), Node::Dir);
+    drop(fs);
     mark_dirty(&path);
     Ok(())
 }
@@ -203,6 +261,7 @@ pub fn sync_remove(path: impl AsRef<Path>) -> io::Result<()> {
         purge_pool_files_under(&prefix);
         return Err(not_found());
     }
+    blobstore::remove(keys.iter().filter_map(|key| fs.get(key).and_then(stored_node)))?;
     for key in keys {
         fs.remove(&key);
     }
@@ -220,7 +279,11 @@ pub async fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
     let path = normalize(path.as_ref());
     // bind before matching: the scrutinee temporary would hold the FS lock
     // across mark_dirty, which re-locks for the accounts.toml write-through
-    let removed = FS.lock().unwrap().remove(&path);
+    let removed = {
+        let mut fs = FS.lock().unwrap();
+        blobstore::remove(fs.get(&path).and_then(stored_node).into_iter())?;
+        fs.remove(&path)
+    };
     if removed.is_some() {
         mark_dirty(&path);
     }
@@ -257,6 +320,7 @@ pub async fn remove_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
         purge_pool_files_under(&prefix);
         return Err(not_found());
     }
+    blobstore::remove(keys.iter().filter_map(|key| fs.get(key).and_then(stored_node)))?;
     for key in keys {
         fs.remove(&key);
     }
@@ -291,27 +355,55 @@ pub fn sync_rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<(
     if keys.is_empty() {
         return Err(not_found());
     }
-    let mut moved = Vec::new();
-    for key in keys {
-        let node = fs.remove(&key).unwrap();
-        let suffix = key.strip_prefix(&from).unwrap();
-        // `to.join("")` appends a trailing slash ("/accounts/accounts.toml/"),
-        // and such a key never component-compares equal to the real path — it
-        // slips past the accounts.toml write-through guard and the file rots
-        // to 0 bytes in OPFS (issue #75). When `key` IS `from` (single-file
-        // rename — core writes accounts.toml exactly this way, via
-        // write-tmp-then-rename), the target is simply `to`.
-        let target = if suffix.as_os_str().is_empty() {
-            to.clone()
-        } else {
-            to.join(suffix)
-        };
-        fs.insert(target.clone(), node);
-        moved.push(target);
+    if from == to {
+        drop(fs);
+        mark_dirty(&from);
+        return Ok(());
+    }
+    let moved: Vec<_> = keys
+        .into_iter()
+        .map(|key| {
+            let suffix = key.strip_prefix(&from).unwrap();
+            let target = if suffix.as_os_str().is_empty() { to.clone() } else { to.join(suffix) };
+            (key, target)
+        })
+        .collect();
+    let mut replaced = BTreeMap::new();
+    if moved.iter().any(|(key, target)| {
+        fs.get(key).and_then(stored_node).is_some() || fs.get(target).and_then(stored_node).is_some()
+    }) {
+        if from.starts_with(&to) || to.starts_with(&from) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "overlapping attachment rename"));
+        }
+        blobstore::change(|tx| {
+            for (key, target) in &moved {
+                let destination = fs.get(target).and_then(stored_node);
+                match fs.get(key) {
+                    Some(Node::File { data, modified }) if destination.is_some() => {
+                        let mut destination = destination.unwrap();
+                        destination.replace_in(tx, data)?;
+                        replaced.insert(target.clone(), Node::Stored { file: destination, modified: *modified });
+                    }
+                    source => {
+                        if let Some(destination) = destination {
+                            blobstore::delete(tx, destination)?;
+                        }
+                        if let Some(source) = source.and_then(stored_node) {
+                            blobstore::rename(tx, source, target)?;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })?;
+    }
+    for (key, target) in &moved {
+        let node = fs.remove(key).unwrap();
+        fs.insert(target.clone(), replaced.remove(target).unwrap_or(node));
     }
     drop(fs);
     mark_dirty(&from); // deletes the whole old subtree in OPFS
-    for target in moved {
+    for (_, target) in moved {
         mark_dirty(&target);
     }
     Ok(())
@@ -361,7 +453,7 @@ pub fn sync_is_dir(path: impl AsRef<Path>) -> bool {
 pub fn sync_is_file(path: impl AsRef<Path>) -> bool {
     matches!(
         FS.lock().unwrap().get(&normalize(path.as_ref())),
-        Some(Node::File { .. })
+        Some(Node::File { .. } | Node::Stored { .. })
     )
 }
 
@@ -447,6 +539,11 @@ fn metadata_sync(path: &Path) -> io::Result<Metadata> {
     match FS.lock().unwrap().get(&normalize(path)) {
         Some(Node::File { data, modified }) => Ok(Metadata {
             len: data.len() as u64,
+            is_dir: false,
+            modified: *modified,
+        }),
+        Some(Node::Stored { file, modified }) => Ok(Metadata {
+            len: file.len as u64,
             is_dir: false,
             modified: *modified,
         }),
@@ -601,12 +698,12 @@ impl OpenOptions {
         }
         if !exists {
             if self.create || self.create_new {
-                write_sync(&path, &[]);
+                write_sync(&path, &[])?;
             } else {
                 return Err(not_found());
             }
         } else if self.truncate {
-            write_sync(&path, &[]);
+            write_sync(&path, &[])?;
         }
         let pos = if self.append {
             metadata_sync(&path)?.len()
@@ -652,6 +749,11 @@ impl File {
                     data.resize(size, 0);
                     *modified = now();
                 }
+                Some(Node::Stored { file, modified }) => {
+                    file.resize(size)?;
+                    *modified = now();
+                    return Ok(());
+                }
                 _ => return Err(not_found()),
             }
         }
@@ -695,6 +797,13 @@ impl AsyncRead for File {
     ) -> Poll<io::Result<()>> {
         let fs = FS.lock().unwrap();
         let data = match fs.get(&self.path) {
+            Some(Node::Stored { file, .. }) => {
+                let start = usize::try_from(self.pos).unwrap_or(usize::MAX);
+                let count = file.read(start, buf.initialize_unfilled())?;
+                buf.advance(count);
+                self.pos += count as u64;
+                return Poll::Ready(Ok(()));
+            }
             Some(Node::File { data, .. }) => data,
             _ => return Poll::Ready(Err(not_found())),
         };
@@ -717,11 +826,6 @@ impl AsyncWrite for File {
         _cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        let mut fs = FS.lock().unwrap();
-        let (data, modified) = match fs.get_mut(&self.path) {
-            Some(Node::File { data, modified }) => (data, modified),
-            _ => return Poll::Ready(Err(not_found())),
-        };
         // Same bound as `set_len`, for the other way to grow a file: seek far
         // out, write one byte. `as usize` also wrapped a >4 GiB position into a
         // small one on wasm32 and wrote at the wrong offset.
@@ -730,6 +834,17 @@ impl AsyncWrite for File {
             Err(e) => return Poll::Ready(Err(e)),
         };
         let pos = end - buf.len();
+        let mut fs = FS.lock().unwrap();
+        let (data, modified) = match fs.get_mut(&self.path) {
+            Some(Node::Stored { file, modified }) => {
+                file.write(pos, buf)?;
+                *modified = now();
+                self.pos += buf.len() as u64;
+                return Poll::Ready(Ok(buf.len()));
+            }
+            Some(Node::File { data, modified }) => (data, modified),
+            _ => return Poll::Ready(Err(not_found())),
+        };
         if data.len() < end {
             data.resize(end, 0); // zero-fills any gap left by the seek
         }
