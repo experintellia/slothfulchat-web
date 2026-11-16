@@ -85,6 +85,8 @@ export interface Core {
   fsRead(path: string): Promise<Uint8Array>
   /** Writes a file, creating parent directories. */
   fsWrite(path: string, data: Uint8Array): Promise<void>
+  /** Stages an attachment under /tmp and returns the file and display name for sendMsg. */
+  stageFile(name: string, data: Uint8Array): Promise<{ file: string; filename: string }>
   /** Removes a file or directory tree. */
   fsRemove(path: string): Promise<void>
   fsExists(path: string): Promise<boolean>
@@ -111,8 +113,10 @@ export function startCore(
   options: { wsProxyUrl?: string; persist?: boolean; storageKey?: Uint8Array } = {},
   workerUrl: URL = new URL('./worker.js', import.meta.url),
 ): Core {
-  if (options.storageKey !== undefined &&
-    (options.storageKey.byteLength !== 32 || options.persist === false)) {
+  const storageKey = options.storageKey
+  const persist = options.persist !== false
+  const encrypted = storageKey !== undefined
+  if (encrypted && (storageKey.byteLength !== 32 || !persist)) {
     throw new TypeError('storageKey requires persistence and exactly 32 bytes')
   }
   const worker = new Worker(workerUrl, { type: 'module' })
@@ -123,8 +127,8 @@ export function startCore(
   worker.postMessage({
     type: 'config',
     proxyUrl: options.wsProxyUrl,
-    persist: options.persist !== false,
-    storageKey: options.storageKey,
+    persist,
+    storageKey,
   })
   const transport = new WasmTransport(worker)
   const dc = new WasmDeltaChat(transport)
@@ -211,6 +215,14 @@ export function startCore(
     fsRead: async (path) => (await fsRequest('read', path)).data ?? new Uint8Array(),
     fsWrite: async (path, data) => {
       await fsRequest('write', path, data)
+    },
+    stageFile: async (name, data) => {
+      const basename = name.split(/[/\\]/).pop()
+      const filename = !basename || basename === '.' || basename === '..' ? 'file' : basename
+      const temporary = `/tmp/${crypto.randomUUID()}`
+      const file = encrypted ? temporary : `${temporary}/${filename}`
+      await fsRequest('write', file, data)
+      return { file, filename }
     },
     fsRemove: async (path) => {
       await fsRequest('remove', path)

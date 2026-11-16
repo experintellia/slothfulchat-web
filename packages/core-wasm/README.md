@@ -55,6 +55,11 @@ await core.fsRead('/tmp/a/b.bin')   // -> Uint8Array, rejects if missing
 await core.fsRemove('/tmp/a/b.bin') // file or directory tree
 ```
 
+For attachments, `core.stageFile(name, bytes)` returns `{ file, filename }`
+to pass to `dc.rpc.sendMsg()`. With a storage key, the staged path is
+random and the original name is passed separately. Use `fsWrite` when the
+caller needs to choose the path.
+
 ## Build (from repo root)
 
 ```sh

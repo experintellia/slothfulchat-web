@@ -142,13 +142,17 @@ try {
       'correct key did not repair verifier')
 
     const baseline = await core.fsFailed()
-    await core.fsWrite('/input/photo.bin', attachment)
+    const staged = await core.stageFile('report with a private name.bin', attachment)
+    check(/^\/tmp\/[0-9a-f-]{36}$/.test(staged.file), 'encrypted staging path reveals the filename')
+    check(await core.fsFlush(baseline) === 0, 'staged attachment was not persisted')
+    const stagedDir = await (await opfs.getDirectoryHandle('memfs-encrypted')).getDirectoryHandle('tmp')
+    await stagedDir.getFileHandle(staged.file.split('/').pop())
     const fileId = await rpc.sendMsg(account, chat, {
-      text: null, html: null, viewtype: 'File', file: '/input/photo.bin', filename: 'photo.bin',
+      text: null, html: null, viewtype: 'File', ...staged,
       location: null, overrideSenderName: null, quotedMessageId: null, quotedText: null,
       width: null, height: null, duration: null,
     })
-    await core.fsRemove('/input')
+    await core.fsRemove(staged.file)
     await core.fsWrite('/damaged.bin', attachment)
 
     const today = new Date().toISOString().slice(0, 10)
@@ -225,6 +229,9 @@ try {
     check((await core.dc.rpc.getAllAccountIds()).length === 0, 'unkeyed worker can see encrypted accounts')
     const legacyId = await core.dc.rpc.addAccount()
     await core.dc.rpc.setConfig(legacyId, 'displayname', 'Unencrypted control')
+    const ordinary = await core.stageFile('ordinary.txt', new Uint8Array([1]))
+    check(ordinary.file.endsWith('/ordinary.txt'), 'ordinary staging path changed')
+    await core.fsRemove(ordinary.file)
     await core.fsWrite('/import.tar', archive)
     const portableAccount = await core.dc.rpc.addAccount()
     await core.dc.rpc.importBackup(portableAccount, '/import.tar', null)
@@ -239,7 +246,9 @@ try {
     check((await rpc.getAllAccountIds()).length === 2, 'encrypted account was lost')
     for (const accountId of [account, restoredAccount]) {
       check((await rpc.getMessage(accountId, id)).text === databaseMarker, 'message was lost')
-      const restored = await core.fsRead((await rpc.getMessage(accountId, fileId)).file)
+      const message = await rpc.getMessage(accountId, fileId)
+      check(message.fileName === staged.filename, 'attachment display name was lost')
+      const restored = await core.fsRead(message.file)
       check(restored.length === attachment.length && restored.every((byte, i) => byte === attachment[i]),
         'attachment changed on restart')
       check((await rpc.getChatSecurejoinQrCode(accountId, null)).includes(fingerprint), 'identity changed')
