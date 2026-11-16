@@ -37,6 +37,9 @@ try {
     const { startCore } = await import('/dist/index.js')
     const storageKey = crypto.getRandomValues(new Uint8Array(32))
     const databaseMarker = 'private message - storage test'
+    const attachmentMarker = 'private attachment - storage test'
+    const attachment = new Uint8Array(2 * 1024 * 1024)
+    attachment.set(new TextEncoder().encode(attachmentMarker), 1024)
     const check = (value, label) => {
       if (!value) throw new Error(label)
     }
@@ -71,8 +74,17 @@ try {
     const fingerprint = (await rpc.getChatSecurejoinQrCode(account, null)).match(/#[A-F0-9]{40}/i)?.[0]
     check(fingerprint, 'test identity did not initialize')
     const chat = await rpc.createChatByContactId(account, 1)
+    const baseline = await core.fsFailed()
     const id = await rpc.miscSendTextMessage(account, chat, databaseMarker)
-    check(await core.fsFlush() === 0, 'OPFS write failed')
+    await core.fsWrite('/input/photo.bin', attachment)
+    const fileId = await rpc.sendMsg(account, chat, {
+      text: null, html: null, viewtype: 'File', file: '/input/photo.bin', filename: 'photo.bin',
+      location: null, overrideSenderName: null, quotedMessageId: null, quotedText: null,
+      width: null, height: null, duration: null,
+    })
+    await core.fsRemove('/input')
+    await core.fsWrite('/damaged.bin', attachment)
+    check(await core.fsFlush(baseline) === 0, 'OPFS write failed')
 
     const opfs = await navigator.storage.getDirectory()
     const pool = await opfs.getDirectoryHandle('.opfs-sahpool-encrypted')
@@ -80,7 +92,15 @@ try {
     check(files.some(file => file.length > 8192), 'encrypted database was not stored')
     check(files.every(file => !file.includes('SQLite format 3') && !file.includes(databaseMarker)),
       'database contains plaintext')
+    const mirror = await opfs.getDirectoryHandle('memfs-encrypted')
+    const mirrorFiles = await readOpfsFiles(mirror)
+    check(mirrorFiles.every(file => !file.includes(attachmentMarker)), 'mirror contains plaintext')
     core.worker.terminate()
+
+    const damaged = await mirror.getFileHandle('damaged.bin')
+    const writer = await damaged.createWritable()
+    await writer.write('truncated encrypted file')
+    await writer.close()
 
     const wrongKey = storageKey.slice()
     wrongKey[0] ^= 1
@@ -98,6 +118,10 @@ try {
     rpc = core.dc.rpc
     check((await rpc.getAllAccountIds()).length === 1, 'encrypted account was lost')
     check((await rpc.getMessage(account, id)).text === databaseMarker, 'message was lost')
+    const restored = await core.fsRead((await rpc.getMessage(account, fileId)).file)
+    check(restored.length === attachment.length && restored.every((byte, i) => byte === attachment[i]),
+      'attachment changed on restart')
+    check(!await core.fsExists('/damaged.bin'), 'corrupted file was exposed')
     check((await rpc.getChatSecurejoinQrCode(account, null)).includes(fingerprint), 'identity changed')
     core.worker.terminate()
 
@@ -106,7 +130,7 @@ try {
       'ordinary account was lost')
     core.worker.terminate()
   })
-  console.log('Encrypted database, key validation, and ordinary store isolation passed')
+  console.log('Encrypted database, attachments, key validation, and ordinary store isolation passed')
 } finally {
   await browser.close()
   server.close()

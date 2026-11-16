@@ -28,6 +28,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use chacha20poly1305::aead::{AeadInPlace, KeyInit};
+use chacha20poly1305::{Tag, XChaCha20Poly1305, XNonce};
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::StreamExt;
 use hkdf::Hkdf;
@@ -92,6 +94,7 @@ const CONFIG_BAK_MAX: usize = 512 * 1024;
 struct StorageKeys {
     db_key: Zeroizing<String>,
     verifier: [u8; 32],
+    file_cipher: XChaCha20Poly1305,
 }
 
 impl StorageKeys {
@@ -103,6 +106,9 @@ impl StorageKeys {
         let kdf = Hkdf::<Sha256>::new(None, &key);
         let mut db_key = Zeroizing::new([0u8; 32]);
         let mut verifier = [0u8; 32];
+        let mut file_key = Zeroizing::new([0u8; 32]);
+        kdf.expand(b"slothfulchat/memfs/v1", file_key.as_mut())
+            .expect("valid HKDF output length");
         kdf.expand(b"slothfulchat/sqlite/v1", db_key.as_mut())
             .expect("valid HKDF output length");
         kdf.expand(b"slothfulchat/key-check/v1", &mut verifier)
@@ -113,6 +119,7 @@ impl StorageKeys {
         Ok(Self {
             db_key: encoded,
             verifier,
+            file_cipher: XChaCha20Poly1305::new((&*file_key).into()),
         })
     }
 }
@@ -293,6 +300,58 @@ async fn verify_storage_key(keys: &StorageKeys, pool: &OpfsSAHPoolUtil) -> Resul
 
 pub fn storage_db_key() -> Option<Zeroizing<String>> {
     STORAGE_KEYS.with(|keys| keys.borrow().as_ref().map(|keys| keys.db_key.clone()))
+}
+
+// The registry has its own synchronous recovery protocol and stores only
+// account IDs, UUIDs, and relative directories. Every other file is sealed.
+fn is_account_registry(path: &Path) -> bool {
+    path == Path::new(ACCOUNTS_TOML) || path == Path::new(ACCOUNTS_TOML_BAK_PATH)
+}
+
+const FILE_NONCE_LEN: usize = 24;
+const FILE_TAG_LEN: usize = 16;
+
+fn seal_file(path: &Path, data: &mut Vec<u8>) -> Result<(), JsValue> {
+    STORAGE_KEYS.with(|keys| {
+        let keys = keys.borrow();
+        let Some(keys) = keys.as_ref().filter(|_| !is_account_registry(path)) else {
+            return Ok(());
+        };
+
+        // v1 stores ciphertext followed by a fresh nonce and authentication
+        // tag. Bind the envelope to its logical path to reject swapped files.
+        let mut nonce = [0u8; FILE_NONCE_LEN];
+        getrandom::fill(&mut nonce)
+            .map_err(|e| JsValue::from_str(&format!("could not generate file nonce: {e}")))?;
+        let tag = keys
+            .file_cipher
+            .encrypt_in_place_detached((&nonce).into(), path.as_os_str().as_encoded_bytes(), data)
+            .map_err(|_| JsValue::from_str("failed to encrypt OPFS file"))?;
+        data.reserve(nonce.len() + tag.len());
+        data.extend_from_slice(&nonce);
+        data.extend_from_slice(&tag);
+        Ok(())
+    })
+}
+
+fn open_file(path: &Path, data: &mut Vec<u8>) -> Result<(), chacha20poly1305::Error> {
+    STORAGE_KEYS.with(|keys| {
+        let keys = keys.borrow();
+        let Some(keys) = keys.as_ref().filter(|_| !is_account_registry(path)) else {
+            return Ok(());
+        };
+        let end = data.len().checked_sub(FILE_NONCE_LEN + FILE_TAG_LEN).ok_or(chacha20poly1305::Error)?;
+        let (ciphertext, trailer) = data.split_at_mut(end);
+        let (nonce, tag) = trailer.split_at(FILE_NONCE_LEN);
+        keys.file_cipher.decrypt_in_place_detached(
+            XNonce::from_slice(nonce),
+            path.as_os_str().as_encoded_bytes(),
+            ciphertext,
+            Tag::from_slice(tag),
+        )?;
+        data.truncate(end);
+        Ok(())
+    })
 }
 
 /// Queues `path` (normalized, absolute) for asynchronous OPFS reconciliation.
@@ -577,17 +636,12 @@ async fn reconcile(root: &FileSystemDirectoryHandle, path: &Path) -> Result<(), 
     // the held handles; only fall through here when no handles are held
     // (reconcile_config returns false → CONFIG_SAHS is None, persistence setup
     // failed half-way, so the generic open_sah path below is correct).
-    let is_config = path == Path::new(ACCOUNTS_TOML) || path == Path::new(ACCOUNTS_TOML_BAK_PATH);
-    if is_config && reconcile_config(root, path).await? {
+    if is_account_registry(path) && reconcile_config(root, path).await? {
         return Ok(());
     }
     match fs::snapshot(path) {
-        Snapshot::File(data) => {
-            // Until file encryption is available, only the account registry
-            // can be mirrored in a key-protected store.
-            if !is_config && STORAGE_KEYS.with(|keys| keys.borrow().is_some()) {
-                return Ok(());
-            }
+        Snapshot::File(mut data) => {
+            seal_file(path, &mut data)?;
             let dir = ensure_dirs(root, path.parent().unwrap_or(Path::new("/"))).await?;
             let name = file_name(path)?;
             // Sync access handle, NOT createWritable(): WebKit only shipped
@@ -751,7 +805,16 @@ async fn hydrate(root: &FileSystemDirectoryHandle) -> Result<(), JsValue> {
                         .await?
                         .into();
                 let buf = JsFuture::from(file.array_buffer()).await?;
-                fs::insert_hydrated_file(child, Uint8Array::new(&buf).to_vec());
+                let mut data = Uint8Array::new(&buf).to_vec();
+                if open_file(&child, &mut data).is_err() {
+                    // The key check already passed. A damaged file should be
+                    // unavailable without blocking the rest of the account.
+                    web_sys::console::warn_1(&JsValue::from_str(&format!(
+                        "opfs: ignoring unauthenticated file {child:?}"
+                    )));
+                    continue;
+                }
+                fs::insert_hydrated_file(child, data);
             }
         }
     }
